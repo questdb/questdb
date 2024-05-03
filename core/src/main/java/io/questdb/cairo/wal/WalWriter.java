@@ -499,7 +499,8 @@ public class WalWriter implements TableWriterAPI {
                                 .$(path).$(Files.SEPARATOR).$(oldSegmentId)
                                 .$(", lastSegmentTxn=").$(lastSegmentTxn)
                                 .$(", newSegmentId=").$(newSegmentId)
-                                .$(", uncommittedRows=").$(uncommittedRows)
+                                .$(", skipRows=").$(currentTxnStartRowNum)
+                                .$(", rowCount=").$(uncommittedRows)
                                 .I$();
                     } else {
                         int existingType = metadata.getColumnType(convertColumnIndex);
@@ -507,7 +508,8 @@ public class WalWriter implements TableWriterAPI {
                                 .$(path).$(Files.SEPARATOR).$(oldSegmentId)
                                 .$(", lastSegmentTxn=").$(lastSegmentTxn)
                                 .$(", newSegmentId=").$(newSegmentId)
-                                .$(", uncommittedRows=").$(uncommittedRows)
+                                .$(", skipRows=").$(currentTxnStartRowNum)
+                                .$(", rowCount=").$(uncommittedRows)
                                 .$(", existingType=").$(ColumnType.nameOf(existingType))
                                 .$(", newType=").$(ColumnType.nameOf(convertToColumnType))
                                 .I$();

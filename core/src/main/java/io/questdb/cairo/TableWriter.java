@@ -1337,7 +1337,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (ColumnType.isVarSize(columnType)) {
                     throw CairoException.critical(0).put("Unsupported column type used as deduplicate key [table=")
                             .put(tableToken.getTableName())
-                            .put(", column=").put(metadata.getColumnName(dedupColIndex))
+                            .put(", column=").put(getColumnNameSafe(dedupColIndex))
                             .put(", columnType=").put(ColumnType.nameOf(columnType));
                 } else if (columnType < 0) {
                     throw CairoException.critical(0).put("Invalid column used as deduplicate key, column is dropped [table=")
@@ -1346,7 +1346,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (i > 0) {
                     logRec.$(',');
                 }
-                logRec.$(metadata.getColumnName(dedupColIndex)).$(':').$(ColumnType.nameOf(columnType));
+                logRec.$(getColumnNameSafe(dedupColIndex)).$(':').$(ColumnType.nameOf(columnType));
             }
         } finally {
             logRec.I$();
@@ -2978,7 +2978,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // This is very suspicious. The column was deleted in the detached partition,
                     // but it exists in the target table.
                     LOG.info().$("detached partition has column deleted while the table has the same column alive [tableName=").utf8(tableToken.getTableName())
-                            .$(", columnName=").utf8(columnName)
+                            .$(", column=").utf8(columnName)
                             .$(", columnType=").$(ColumnType.nameOf(tableColType))
                             .I$();
                     columnVersionWriter.upsertColumnTop(partitionTimestamp, colIdx, partitionSize);
@@ -3684,6 +3684,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         if (bytesWritten != dataVectorCopySize) {
                             throw CairoException.critical(ff.errno())
                                     .put("could not copy WAL column (fd-fd) [dstFd=").put(dstDataMem.getFd())
+                                    .put(", column=").put(getColumnNameSafe(columnIndex))
                                     .put(", o3dstDataOffset=").put(o3dstDataOffset)
                                     .put(", srcFd=").put(o3SrcDataMem.getFd())
                                     .put(", dataVectorCopySize=").put(dataVectorCopySize)
@@ -3695,6 +3696,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         if (bytesWritten != dataVectorCopySize) {
                             throw CairoException.critical(ff.errno())
                                     .put("could not copy WAL column (mem-fd) [fd=").put(dstDataMem.getFd())
+                                    .put(", column=").put(getColumnNameSafe(columnIndex))
+                                    .put(", columnType").put(ColumnType.nameOf(columnType))
                                     .put(", o3dstDataOffset=").put(o3dstDataOffset)
                                     .put(", o3srcDataOffset=").put(o3srcDataOffset)
                                     .put(", dataVectorCopySize=").put(dataVectorCopySize)
@@ -3768,7 +3771,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (srcLag == 0 && lagRows != 0) {
                     throw CairoException.critical(0)
                             .put("cannot sort WAL data, lag rows are missing [table").put(tableToken.getTableName())
-                            .put(", columnName=").put(metadata.getColumnName(columnIndex))
+                            .put(", column=").put(getColumnNameSafe(columnIndex))
                             .put(", type=").put(ColumnType.nameOf(columnType))
                             .put(", lagRows=").put(lagRows)
                             .put(']');
@@ -3776,14 +3779,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (srcMapped == 0) {
                     throw CairoException.critical(0)
                             .put("cannot sort WAL data, rows are missing [table").put(tableToken.getTableName())
-                            .put(", columnName=").put(metadata.getColumnName(columnIndex))
+                            .put(", column=").put(getColumnNameSafe(columnIndex))
                             .put(", type=").put(ColumnType.nameOf(columnType))
                             .put(']');
                 }
                 if (dest == 0) {
                     throw CairoException.critical(0)
                             .put("cannot sort WAL data, destination buffer is empty [table").put(tableToken.getTableName())
-                            .put(", columnName=").put(metadata.getColumnName(columnIndex))
+                            .put(", column=").put(getColumnNameSafe(columnIndex))
                             .put(", type=").put(ColumnType.nameOf(columnType))
                             .put(']');
                 }
@@ -4717,6 +4720,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 (avgRecordSize != 0 ? avgRecordSize : (avgRecordSize = TableUtils.estimateAvgRecordSize(metadata))));
     }
 
+    private CharSequence getColumnNameSafe(int columnIndex) {
+        try {
+            return metadata.getColumnName(columnIndex);
+        } catch (Throwable th) {
+            return "<unknown, index: " + columnIndex + ">";
+        }
+    }
+
     private void handleColumnTaskException(
             String message,
             int columnIndex,
@@ -4729,8 +4740,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     ) {
         o3ErrorCount.incrementAndGet();
         LogRecord logRecord = LOG.critical().$(message + " [table=").$(tableToken.getTableName())
-                .$(", column=").$(columnIndex)
-                .$(", type=").$(columnType)
+                .$(", column=").$(getColumnNameSafe(columnIndex))
+                .$(", type=").$(ColumnType.nameOf(columnType))
                 .$(", long0=").$(long0)
                 .$(", long1=").$(long1)
                 .$(", long2=").$(long2)
@@ -6605,7 +6616,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } else {
             LOG.critical()
                     .$("o3 ignoring removal of column in read-only partition [table=").utf8(tableToken.getTableName())
-                    .$(", columnName=").utf8(columnName)
+                    .$(", column=").utf8(columnName)
                     .$(", timestamp=").$ts(partitionTimestamp)
                     .$();
         }

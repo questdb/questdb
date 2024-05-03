@@ -63,11 +63,11 @@ public class ColumnTypeConverter {
             long appendPageSize,
             ColumnConversionOffsetSink columnSizesSink
     ) {
+        assert skipRows > -1 && rowCount > -1;
         if (ColumnType.isSymbol(srcColumnType)) {
             assert symbolTable != null;
             return convertFromSymbol(skipRows, rowCount, srcFixFd, symbolTable, dstColumnType, dstFixFd, dstVarFd, ff, appendPageSize, columnSizesSink);
-        }
-        if (ColumnType.isFixedSize(srcColumnType) && ColumnType.isFixedSize(dstColumnType)) {
+        } else if (ColumnType.isFixedSize(srcColumnType) && ColumnType.isFixedSize(dstColumnType)) {
             return convertFixedToFixed(rowCount, skipRows, srcFixFd, dstFixFd, srcColumnType, dstColumnType, ff, columnSizesSink);
         } else if (ColumnType.isVarSize(srcColumnType)) {
             switch (srcColumnType) {
@@ -89,12 +89,17 @@ public class ColumnTypeConverter {
         long srcMapAddressRaw = 0;
         long dstMapAddressRaw = 0;
 
+        long skipBytes = skipRows * srcColumnTypeSize;
+        long mapBytes = rowCount * srcColumnTypeSize;
+        long dstMapBytes = rowCount * dstColumnTypeSize;
+
         try {
-            srcMapAddressRaw = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipRows * srcColumnTypeSize, rowCount * srcColumnTypeSize, false, memoryTag);
-            columnSizesSink.setSrcOffsets(rowCount * srcColumnTypeSize, -1);
-            ff.truncate(dstFixFd, rowCount * dstColumnTypeSize);
-            dstMapAddressRaw = TableUtils.mapAppendColumnBuffer(ff, dstFixFd, 0, rowCount * dstColumnTypeSize, true, memoryTag);
-            columnSizesSink.setDestSizes(rowCount * dstColumnTypeSize, -1);
+            srcMapAddressRaw = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipBytes, mapBytes, false, memoryTag);
+            columnSizesSink.setSrcOffsets(skipBytes, -1);
+
+            ff.truncate(dstFixFd, dstMapBytes);
+            dstMapAddressRaw = TableUtils.mapAppendColumnBuffer(ff, dstFixFd, 0, dstMapBytes, true, memoryTag);
+            columnSizesSink.setDestSizes(dstMapBytes, -1);
 
             long succeeded = ConvertersNative.fixedToFixed(Math.abs(srcMapAddressRaw), srcColumnType, Math.abs(dstMapAddressRaw), dstColumnType, rowCount);
             switch ((int) succeeded) {
@@ -106,8 +111,12 @@ public class ColumnTypeConverter {
                     throw CairoException.critical(0).put("Unknown return code from native call: ").put(succeeded);
             }
         } finally {
-            TableUtils.mapAppendColumnBufferRelease(ff, srcMapAddressRaw, skipRows * srcColumnTypeSize, rowCount * srcColumnTypeSize, memoryTag);
-            TableUtils.mapAppendColumnBufferRelease(ff, dstMapAddressRaw, 0, rowCount * dstColumnTypeSize, memoryTag);
+            if (srcMapAddressRaw != 0) {
+                TableUtils.mapAppendColumnBufferRelease(ff, srcMapAddressRaw, skipBytes, mapBytes, memoryTag);
+            }
+            if (dstMapAddressRaw != 0) {
+                TableUtils.mapAppendColumnBufferRelease(ff, dstMapAddressRaw, 0, dstMapBytes, memoryTag);
+            }
         }
     }
 
