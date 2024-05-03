@@ -271,16 +271,15 @@ public final class Os {
                 throw new Error("Unsupported OS: " + osName);
             }
 
-            String prdLibRoot = "/io/questdb/bin/";
+            String prdLibRoot = "/io/questdb/bin/" + name + '-' + archName + '/';
             String devCXXLibRoot = "/io/questdb/bin-local/";
             String cxxLibName = "libquestdb" + outputLibExt;
-            String prdCXXLibSuffix = name + '-' + archName + '/' + cxxLibName;
             String devCXXLib = devCXXLibRoot + cxxLibName;
 
             // try dev CXX lib first
             InputStream libCXXStream = Os.class.getResourceAsStream(devCXXLib);
             if (libCXXStream == null) {
-                loadLib(prdLibRoot + prdCXXLibSuffix);
+                loadLib(prdLibRoot + cxxLibName);
             } else {
                 System.err.println("Loading DEV CXX library: " + devCXXLib);
                 loadLib(devCXXLib, libCXXStream);
