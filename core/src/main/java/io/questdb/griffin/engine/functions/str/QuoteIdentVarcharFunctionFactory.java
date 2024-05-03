@@ -37,7 +37,10 @@ import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.*;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
 
 
@@ -112,24 +115,24 @@ public class QuoteIdentVarcharFunctionFactory implements FunctionFactory {
             return false;
         }
 
-        private static Utf8StringSink quote(Utf8StringSink sink, Utf8Sequence str) {
-            if (str == null) {
+        private static Utf8StringSink quote(Utf8StringSink sink, Utf8Sequence utf8Str) {
+            if (utf8Str == null) {
                 return null;
             }
 
             sink.clear();
 
             boolean needsQuoting = false;
-            int len = Utf8s.validateUtf8(str);
+            int len = Utf8s.validateUtf8(utf8Str);
 
             int pc; // current tuple packed char
             short n; // decoded bytes
             char c; // utf16 char
 
             for (int i = 0; i < len; i += n) {
-                pc = Utf8s.utf8CharDecode(str, i); // next char
+                pc = Utf8s.utf8CharDecode(utf8Str, i); // next char
                 n = Numbers.decodeLowShort(pc); // num bytes
-                c = (char)Numbers.decodeHighShort(pc); // utf16 char
+                c = (char) Numbers.decodeHighShort(pc); // utf16 char
 
                 if (!(Character.isLetter(c) ||
                         Character.isDigit(c) ||
@@ -141,13 +144,13 @@ public class QuoteIdentVarcharFunctionFactory implements FunctionFactory {
             }
 
             if (!needsQuoting) {
-                sink.put(str);
+                sink.put(utf8Str);
             } else {
                 sink.put('"');
                 for (int i = 0; i < len; i += n) {
-                    pc = Utf8s.utf8CharDecode(str, i); // next char
+                    pc = Utf8s.utf8CharDecode(utf8Str, i); // next char
                     n = Numbers.decodeLowShort(pc); // num bytes
-                    c = (char)Numbers.decodeHighShort(pc); // utf16 char
+                    c = (char) Numbers.decodeHighShort(pc); // utf16 char
 
                     if (c != '"') {
                         sink.put(c);

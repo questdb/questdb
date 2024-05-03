@@ -445,6 +445,69 @@ public final class Utf8s {
         return -1;
     }
 
+    public static int indexOf(@NotNull Utf8Sequence seq, int seqLo, int seqHi, @NotNull Utf8Sequence term, int occurrence) {
+        if (occurrence == 0) {
+            return -1;
+        }
+
+        int termSize = term.size();
+        if (termSize == 0) {
+            return 0;
+        }
+
+        byte first = term.byteAt(0);
+        int max = seqHi - termSize;
+
+        int count = 0;
+        if (occurrence > 0) {
+            for (int i = seqLo; i <= max; i++) {
+                if (seq.byteAt(i) != first) {
+                    do {
+                        ++i;
+                    } while (i <= max && seq.byteAt(i) != first);
+                }
+
+                if (i <= max) {
+                    int j = i + 1;
+                    int end = j + termSize - 1;
+                    for (int k = 1; j < end && seq.byteAt(j) == term.byteAt(k); ++k) {
+                        ++j;
+                    }
+                    if (j == end) {
+                        count++;
+                        if (count == occurrence) {
+                            return i;
+                        }
+                    }
+                }
+            }
+        } else {    // if occurrence is negative, search in reverse
+            for (int i = seqHi - termSize; i >= seqLo; i--) {
+                if (seq.byteAt(i) != first) {
+                    do {
+                        --i;
+                    } while (i >= seqLo && seq.byteAt(i) != first);
+                }
+
+                if (i >= seqLo) {
+                    int j = i + 1;
+                    int end = j + termSize - 1;
+                    for (int k = 1; j < end && seq.byteAt(j) == term.byteAt(k); ++k) {
+                        ++j;
+                    }
+                    if (j == end) {
+                        count--;
+                        if (count == occurrence) {
+                            return i;
+                        }
+                    }
+                }
+            }
+        }
+
+        return -1;
+    }
+
     public static int indexOfAscii(@NotNull Utf8Sequence seq, char asciiChar) {
         return indexOfAscii(seq, 0, asciiChar);
     }
@@ -912,7 +975,7 @@ public final class Utf8s {
      * A specialised function to decode a single UTF-8 character.
      * Used when it doesn't make sense to allocate a temporary sink.
      *
-     * @param seq input sequence
+     * @param seq    input sequence
      * @param offset offset into the sequence
      * @return an integer-encoded tuple (decoded number of bytes, character in UTF-16 encoding, stored as short type)
      */
