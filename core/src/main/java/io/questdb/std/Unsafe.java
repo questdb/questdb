@@ -59,9 +59,9 @@ public final class Unsafe {
     private static final AtomicLong REALLOC_COUNT = new AtomicLong(0);
     private static final sun.misc.Unsafe UNSAFE;
     private static final AnonymousClassDefiner anonymousClassDefiner;
+    private static long WRITER_MEM_LIMIT = 0;
     //#if jdk.version!=8
     private static final Method implAddExports;
-    private static long WRITER_MEM_LIMIT = 0;
     //#endif
 
     private Unsafe() {
