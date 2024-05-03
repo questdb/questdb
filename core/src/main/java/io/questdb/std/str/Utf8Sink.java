@@ -113,9 +113,14 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
 
     /**
      * For impls that care about the distinction between ASCII and non-ASCII:
-     * Appends a non-ASCII byte, dropping the `isAscii()` status.
-     * To append a known-ASCII byte, call {@link #putAscii(char)}.
+     * Appends a non-ASCII byte, dropping the `isAscii()` status. If you call it
+     * with an ASCII byte, you may get an assertion failure. In that case, choose
+     * one of the following alternatives:
      * <br/>
+     * - to append a known-ASCII byte, call {@link #putAscii(char)}.
+     * <br/>
+     * - to append any kind of byte, call {@link #putAny(byte)}.
+     * <p>
      * For impls that don't care about the ASCII/non-ASCII distinction:
      * Appends any kind of byte.
      *
