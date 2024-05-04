@@ -394,7 +394,7 @@ public class RetryIODispatcherTest extends AbstractTest {
                         } else {
                             new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                                     "GET /query?query=insert+into+copy+select+*+from+%22fhv_tripdata_2017-02.csv%22&count=true HTTP/1.1\r\n",
-                                    IODispatcherTest.JSON_DDL_RESPONSE
+                                    IODispatcherTest.INSERT_QUERY_RESPONSE
                             );
                         }
 
@@ -632,7 +632,7 @@ public class RetryIODispatcherTest extends AbstractTest {
                                                 .withClientLinger(60)
                                                 .executeWithStandardHeaders(
                                                         "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(1%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n",
-                                                        IODispatcherTest.JSON_DDL_RESPONSE
+                                                        IODispatcherTest.INSERT_QUERY_RESPONSE
                                                 );
                                     } catch (AssertionError ase) {
                                         fails.incrementAndGet();
@@ -695,7 +695,7 @@ public class RetryIODispatcherTest extends AbstractTest {
                                                 .withClientLinger(60)
                                                 .executeWithStandardHeaders(
                                                         "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(1%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n",
-                                                        IODispatcherTest.JSON_DDL_RESPONSE
+                                                        IODispatcherTest.INSERT_QUERY_RESPONSE
                                                 );
                                     } catch (Exception e) {
                                         LOG.error().$("Failed execute insert http request. Server error ").$(e).$();
