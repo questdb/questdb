@@ -368,10 +368,10 @@ jobs:
           git config --global user.email 'jaromir@questdb.io'
           git add core/src/main/resources/io/questdb/bin/darwin-aarch64/libquestdb.dylib
           git add core/src/main/resources/io/questdb/bin/darwin-aarch64/libquestdbr.dylib
-          git add core/src/main/bin/darwin-aarch64/libjemlloc.dylib
+          git add core/src/main/bin/darwin-aarch64/libjemalloc.dylib
           git add core/src/main/resources/io/questdb/bin/darwin-amd64/libquestdb.dylib
           git add core/src/main/resources/io/questdb/bin/darwin-amd64/libquestdbr.dylib
-          git add core/src/main/bin/darwin-amd64/libjemlloc.dylib
+          git add core/src/main/bin/darwin-amd64/libjemalloc.dylib
           git add core/src/main/resources/io/questdb/bin/freebsd-amd64/libquestdb.so
           git add core/src/main/resources/io/questdb/bin/freebsd-amd64/libquestdbr.so
           git add core/src/main/bin/freebsd-amd64/libjemalloc.so
