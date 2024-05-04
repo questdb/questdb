@@ -61,12 +61,13 @@ jobs:
             cd core
             cmake -B build/release -DCMAKE_BUILD_TYPE=Release
             cmake --build build/release --config Release
+            mkdir -p src/main/resources/io/questdb/bin/freebsd-aarch64/
+            mkdir -p src/main/bin/freebsd-aarch64/
+            cp target/classes/io/questdb/bin-local/libquestdb.so ../../src/main/resources/io/questdb/bin/freebsd-aarch64/
+            cp target/classes/io/questdb/bin-local/libjemalloc.so ../../src/main/resources/io/questdb/bin/freebsd-aarch64/
             cd rust/qdbr
             cargo build --release
-            mkdir -p ../../src/main/resources/io/questdb/bin/freebsd-aarch64/
-            mkdir -p ../../src/main/bin/freebsd-aarch64/
             cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/freebsd-aarch64/
-            cp target/classes/io/questdb/bin-local/libquestdb.so ../../src/main/resources/io/questdb/bin/freebsd-aarch64/
       - name: log git status
         run: |
           git status
