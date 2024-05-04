@@ -893,13 +893,8 @@ public final class Chars {
         if (cs == null || starts == null) {
             return false;
         }
-
         int l = starts.length();
-        if (l == 0) {
-            return true;
-        }
-
-        return cs.length() >= l && equalsChars(cs, starts, l);
+        return l == 0 || cs.length() >= l && equalsChars(cs, starts, l);
     }
 
     public static boolean startsWith(CharSequence _this, int thisLo, int thisHi, CharSequence that) {

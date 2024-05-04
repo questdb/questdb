@@ -954,7 +954,7 @@ public class MemoryCARWImplTest {
 
             Utf8String us = new Utf8String("foobar");
             mem.putVarchar(256, us);
-            TestUtils.assertEquals(us, mem.getVarcharA(256, us.size(), true));
+            TestUtils.assertEquals(us, mem.getDirectVarcharA(256, us.size(), true));
             offset += us.size();
 
             mem.putStr(offset, "foobar");

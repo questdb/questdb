@@ -242,10 +242,8 @@ public class WalColFirstRecord implements Record, Sinkable {
     @Override
     public @Nullable Utf8Sequence getVarcharA(int col) {
         final int absoluteColumnIndex = getPrimaryColumnIndex(col);
-        return VarcharTypeDriver.getValue(
-                recordIndex,
-                reader.getColumn(absoluteColumnIndex),
-                reader.getColumn(absoluteColumnIndex + 1),
+        return VarcharTypeDriver.getSplitValue(
+                reader.getColumn(absoluteColumnIndex + 1), reader.getColumn(absoluteColumnIndex), recordIndex,
                 1
         );
     }
@@ -253,10 +251,8 @@ public class WalColFirstRecord implements Record, Sinkable {
     @Override
     public @Nullable Utf8Sequence getVarcharB(int col) {
         final int absoluteColumnIndex = getPrimaryColumnIndex(col);
-        return VarcharTypeDriver.getValue(
-                recordIndex,
-                reader.getColumn(absoluteColumnIndex),
-                reader.getColumn(absoluteColumnIndex + 1),
+        return VarcharTypeDriver.getSplitValue(
+                reader.getColumn(absoluteColumnIndex + 1), reader.getColumn(absoluteColumnIndex), recordIndex,
                 2
         );
     }

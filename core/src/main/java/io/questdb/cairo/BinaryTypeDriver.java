@@ -37,7 +37,7 @@ public class BinaryTypeDriver extends StringTypeDriver {
     }
 
     @Override
-    public void appendNull(MemoryA dataMem, MemoryA auxMem) {
+    public void appendNull(MemoryA auxMem, MemoryA dataMem) {
         auxMem.putLong(dataMem.putNullBin());
     }
 

@@ -33,14 +33,14 @@ import io.questdb.std.str.*;
 public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
 
     private final MemoryCR.ByteSequenceView bsview = new MemoryCR.ByteSequenceView();
-    private final DirectString csviewA;
-    private final DirectString csviewB;
+    private final DirectString csViewA;
+    private final DirectString csViewB;
     private final Long256Impl long256A = new Long256Impl();
     private final Long256Impl long256B = new Long256Impl();
     private final Utf8SplitString utf8SplitViewA;
     private final Utf8SplitString utf8SplitViewB;
-    private final DirectUtf8String utf8viewA;
-    private final DirectUtf8String utf8viewB;
+    private final DirectUtf8String utf8ViewA;
+    private final DirectUtf8String utf8ViewB;
     protected FilesFacade ff;
     protected long lim;
     protected long pageAddress = 0;
@@ -48,16 +48,16 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
 
     public AbstractMemoryCR(boolean stableStrings) {
         if (stableStrings) {
-            csviewA = new StableDirectString();
-            csviewB = new StableDirectString();
+            csViewA = new StableDirectString();
+            csViewB = new StableDirectString();
         } else {
-            csviewA = new DirectString();
-            csviewB = new DirectString();
+            csViewA = new DirectString();
+            csViewB = new DirectString();
         }
         utf8SplitViewA = new Utf8SplitString(stableStrings);
         utf8SplitViewB = new Utf8SplitString(stableStrings);
-        utf8viewA = new DirectUtf8String(stableStrings);
-        utf8viewB = new DirectUtf8String(stableStrings);
+        utf8ViewA = new DirectUtf8String(stableStrings);
+        utf8ViewB = new DirectUtf8String(stableStrings);
     }
 
     public long addressOf(long offset) {
@@ -69,15 +69,23 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
         // avoid debugger seg faulting when memory is closed
         utf8SplitViewA.clear();
         utf8SplitViewB.clear();
-        utf8viewA.clear();
-        utf8viewB.clear();
-        csviewA.clear();
-        csviewB.clear();
+        csViewA.clear();
+        csViewB.clear();
         bsview.clear();
     }
 
     public final BinarySequence getBin(long offset) {
         return getBin(offset, bsview);
+    }
+
+    @Override
+    public DirectUtf8Sequence getDirectVarcharA(long offset, int size, boolean ascii) {
+        return getDirectVarchar(offset, size, utf8ViewA, ascii);
+    }
+
+    @Override
+    public DirectUtf8Sequence getDirectVarcharB(long offset, int size, boolean ascii) {
+        return getDirectVarchar(offset, size, utf8ViewB, ascii);
     }
 
     public FilesFacade getFilesFacade() {
@@ -115,21 +123,11 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     }
 
     public final CharSequence getStrA(long offset) {
-        return getStr(offset, csviewA);
+        return getStr(offset, csViewA);
     }
 
     public final CharSequence getStrB(long offset) {
-        return getStr(offset, csviewB);
-    }
-
-    @Override
-    public DirectUtf8Sequence getVarcharA(long offset, int size, boolean ascii) {
-        return getVarchar(offset, size, utf8viewA, ascii);
-    }
-
-    @Override
-    public DirectUtf8Sequence getVarcharB(long offset, int size, boolean ascii) {
-        return getVarchar(offset, size, utf8viewB, ascii);
+        return getStr(offset, csViewB);
     }
 
     @Override
@@ -153,19 +151,19 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
         return size;
     }
 
-    private DirectUtf8String getVarchar(long offset, int size, DirectUtf8String u8view, boolean ascii) {
+    private DirectUtf8String getDirectVarchar(long offset, int size, DirectUtf8String u8view, boolean ascii) {
         long addr = addressOf(offset);
         assert addr > 0;
-        if (hasBytes(offset, size)) {
-            return u8view.of(addr, addr + size, ascii);
+        if (!hasBytes(offset, size)) {
+            throw CairoException.critical(0)
+                    .put("String is outside of file boundary [offset=")
+                    .put(offset)
+                    .put(", size=")
+                    .put(size)
+                    .put(", size()=")
+                    .put(size())
+                    .put(']');
         }
-        throw CairoException.critical(0)
-                .put("String is outside of file boundary [offset=")
-                .put(offset)
-                .put(", size=")
-                .put(size)
-                .put(", size()=")
-                .put(size())
-                .put(']');
+        return u8view.of(addr, addr + size, ascii);
     }
 }

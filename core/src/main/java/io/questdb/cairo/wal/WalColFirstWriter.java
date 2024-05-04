@@ -607,7 +607,7 @@ public class WalColFirstWriter implements WalWriter {
         int columnTag = ColumnType.tagOf(type);
         if (ColumnType.isVarSize(columnTag)) {
             final ColumnTypeDriver typeDriver = ColumnType.getDriver(columnTag);
-            nullers.add(() -> typeDriver.appendNull(dataMem, auxMem));
+            nullers.add(() -> typeDriver.appendNull(auxMem, dataMem));
         } else {
             switch (columnTag) {
                 case ColumnType.BOOLEAN:
@@ -2105,8 +2105,7 @@ public class WalColFirstWriter implements WalWriter {
             tempUtf8Sink.clear();
             tempUtf8Sink.put(value);
             VarcharTypeDriver.appendValue(
-                    getPrimaryColumn(columnIndex),
-                    getSecondaryColumn(columnIndex),
+                    getSecondaryColumn(columnIndex), getPrimaryColumn(columnIndex),
                     tempUtf8Sink
             );
             setRowValueNotNull(columnIndex);
@@ -2115,8 +2114,7 @@ public class WalColFirstWriter implements WalWriter {
         @Override
         public void putVarchar(int columnIndex, Utf8Sequence value) {
             VarcharTypeDriver.appendValue(
-                    getPrimaryColumn(columnIndex),
-                    getSecondaryColumn(columnIndex),
+                    getSecondaryColumn(columnIndex), getPrimaryColumn(columnIndex),
                     value
             );
             setRowValueNotNull(columnIndex);
