@@ -64,7 +64,6 @@ jobs:
             cargo build --release
             cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/freebsd-amd64/
             cp target/classes/io/questdb/bin-local/libquestdb.so ../../src/main/resources/io/questdb/bin/freebsd-amd64/
-            cp target/classes/io/questdb/bin-local/libjemalloc.so ../../src/main/bin/freebsd-amd64/
       - name: log git status
         run: |
           git status
@@ -181,19 +180,20 @@ jobs:
         run: |
           cd core
           cmake --build cmake-build-release --config Release
+          cp target/classes/io/questdb/bin-local/libquestdb.so ../../src/main/resources/io/questdb/bin/linux-amd64/
       - name: Build linux-amd64 Rust Library
         run: |
           cd core/rust/qdbr
           cargo clean
           cargo build --release
           mkdir -p ../../src/main/resources/io/questdb/bin/linux/
-          cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/linux/
+          cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/linux-amd64/
       - name: Save linux-amd64 Libraries to Cache
         uses: actions/cache/save@v3
         with:
           path: |
-            core/src/main/resources/io/questdb/bin/linux/libquestdb.so
-            core/src/main/resources/io/questdb/bin/linux/libquestdbr.so
+            core/src/main/resources/io/questdb/bin/linux-amd64/libquestdb.so
+            core/src/main/resources/io/questdb/bin/linux-amd64/libquestdbr.so
           key: nativelibs-linux-${{ github.sha }}
   build-all-linux-aarch64:
     runs-on: ubuntu-latest
