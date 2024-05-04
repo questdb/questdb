@@ -33,12 +33,12 @@ jobs:
       - name: Copy Rust Library to the final directory
         run: |
           mkdir -p core/src/main/resources/io/questdb/bin/windows-amd64/
-          cp core/rust/qdbr/target/release/questdbr.dll core/src/main/resources/io/questdb/bin/windows-amd64/libquestdbr.dll
+          cp core/rust/qdbr/target/release/questdbr.dll core/src/main/resources/io/questdb/bin/windows-amd64/
       - name: Save Windows Rust Library to Cache
         uses: actions/cache/save@v3
         with:
           path: |
-            core/src/main/resources/io/questdb/bin/windows-amd64/libquestdbr.dll
+            core/src/main/resources/io/questdb/bin/windows-amd64/questdbr.dll
           key: nativelibs-windows-rust-${{ github.sha }}
           enableCrossOsArchive: true
   build-all-freebsd:
@@ -356,7 +356,7 @@ jobs:
         uses: actions/cache/restore@v3
         with:
           path: |
-            core/src/main/resources/io/questdb/bin/windows-amd64/libquestdbr.dll
+            core/src/main/resources/io/questdb/bin/windows-amd64/questdbr.dll
           key: nativelibs-windows-rust-${{ github.sha }}
           enableCrossOsArchive: true
       - name: Check git status before
@@ -382,7 +382,7 @@ jobs:
           git add core/src/main/resources/io/questdb/bin/linux-aarch64/libquestdbr.so
           git add core/src/main/bin/linux-aarch64/libjemalloc.so
           git add core/src/main/resources/io/questdb/bin/windows-amd64/libquestdb.dll
-          git add core/src/main/resources/io/questdb/bin/windows-amd64/libquestdbr.dll
+          git add core/src/main/resources/io/questdb/bin/windows-amd64/questdbr.dll
           git commit -m "chore(build): rebuild CXX/Rust libraries"
       - name: Check git status after
         run: |
