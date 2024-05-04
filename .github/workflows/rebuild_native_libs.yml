@@ -73,7 +73,6 @@ jobs:
           path: |
             core/src/main/resources/io/questdb/bin/freebsd-amd64/libquestdb.so
             core/src/main/resources/io/questdb/bin/freebsd-amd64/libquestdbr.so
-            core/src/main/bin/freebsd-amd64/libjemalloc.so
           key: nativelibs-freebsd-${{ github.sha }}
   build-all-macos:
     strategy:
