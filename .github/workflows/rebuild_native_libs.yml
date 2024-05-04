@@ -1,4 +1,4 @@
-name: Rebuild Native C++ Libraries and Push to PR
+name: Build and Push Release CXX/Rust libraries
 on:
   workflow_dispatch:
 # This workflow is triggered manually from the Actions tab.
