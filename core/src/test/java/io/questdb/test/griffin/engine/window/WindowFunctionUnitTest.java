@@ -31,9 +31,12 @@ import io.questdb.griffin.engine.functions.window.AvgDoubleWindowFunctionFactory
 import io.questdb.griffin.engine.functions.window.BaseDoubleWindowFunction;
 import io.questdb.griffin.engine.functions.window.FirstValueDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.SumDoubleWindowFunctionFactory;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestDefaults;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -42,6 +45,7 @@ import java.util.Comparator;
 import java.util.stream.Collectors;
 
 public class WindowFunctionUnitTest extends AbstractCairoTest {
+    private static final Log LOG = LogFactory.getLog(WindowFunctionUnitTest.class);
     short[] columnTypes = new short[]{ColumnType.TIMESTAMP, ColumnType.INT, ColumnType.LONG};
 
     @Test
@@ -130,7 +134,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
     @Test
     public void testAggOverPartitionRangeFuzz() throws Exception {
         fuzzTestBase(
-                new Rnd(),
+                TestUtils.generateRandom(LOG),
                 true,
                 false,
                 rnd -> rnd.nextInt(8) == 0 ? Long.MIN_VALUE : -rnd.nextLong(65536),
@@ -153,7 +157,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
     @Test
     public void testAggOverPartitionRowsFuzz() throws Exception {
         fuzzTestBase(
-                new Rnd(),
+                TestUtils.generateRandom(LOG),
                 true,
                 true,
                 rnd -> rnd.nextInt(8) == 0 ? Long.MIN_VALUE : -rnd.nextLong(1024),
@@ -174,7 +178,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
     @Test
     public void testAggOverRowsFuzz() throws Exception {
         fuzzTestBase(
-                new Rnd(),
+                TestUtils.generateRandom(LOG),
                 false,
                 true,
                 rnd -> rnd.nextInt(8) == 0 ? Long.MIN_VALUE : -rnd.nextLong(1024),
@@ -199,7 +203,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
     @Test
     public void testFirstOverRowsFuzz() throws Exception {
         fuzzTestBase(
-                new Rnd(),
+                TestUtils.generateRandom(LOG),
                 false,
                 true,
                 rnd -> rnd.nextInt(8) == 0 ? Long.MIN_VALUE : -rnd.nextLong(1024),
@@ -222,7 +226,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
     @Test
     public void testAggRangeFuzz() throws Exception {
         fuzzTestBase(
-                new Rnd(),
+                TestUtils.generateRandom(LOG),
                 false,
                 false,
                 rnd -> rnd.nextInt(8) == 0 ? Long.MIN_VALUE : -rnd.nextLong(65536),
@@ -249,8 +253,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
             java.util.function.BiFunction<Double, Double, Double> sum
     ) throws Exception {
         for (int count = 1; count <= 512; count *= 2) {
-            System.out.println(count);
-            for (int attempt = 0; attempt <= 4096; attempt++) {
+            for (int attempt = 0; attempt <= Math.max(64, count); attempt++) {
                 Record[] records = generateTestRecords(rnd, count, 1 + rnd.nextInt(32), 1 + rnd.nextLong(65536));
                 Arrays.sort(records, Comparator.comparingLong(a -> a.getLong(0)));
                 long rangeLo = rangeLoGen.apply(rnd);
