@@ -180,13 +180,16 @@ jobs:
         run: |
           cd core
           cmake --build cmake-build-release --config Release
+          mkdir -p ../../src/main/resources/io/questdb/bin/linux-amd64/
+          mkdir -p ../../src/main/bin/linux-amd64/
           cp target/classes/io/questdb/bin-local/libquestdb.so ../../src/main/resources/io/questdb/bin/linux-amd64/
+          cp target/classes/io/questdb/bin-local/libjemalloc.so ../../src/main/bin/linux-amd64/
       - name: Build linux-amd64 Rust Library
         run: |
           cd core/rust/qdbr
           cargo clean
           cargo build --release
-          mkdir -p ../../src/main/resources/io/questdb/bin/linux/
+          mkdir -p ../../src/main/resources/io/questdb/bin/linux-amd64/
           cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/linux-amd64/
       - name: Save linux-amd64 Libraries to Cache
         uses: actions/cache/save@v3
