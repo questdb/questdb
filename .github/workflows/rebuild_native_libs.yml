@@ -32,6 +32,7 @@ jobs:
           git status
       - name: Copy Rust Library to the final directory
         run: |
+          mkdir -p core/src/main/resources/io/questdb/bin/windows-amd64/
           cp core/rust/qdbr/target/release/questdbr.dll core/src/main/resources/io/questdb/bin/windows-amd64/libquestdbr.dll
       - name: Save Windows Rust Library to Cache
         uses: actions/cache/save@v3
