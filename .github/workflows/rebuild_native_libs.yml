@@ -197,6 +197,7 @@ jobs:
           path: |
             core/src/main/resources/io/questdb/bin/linux-amd64/libquestdb.so
             core/src/main/resources/io/questdb/bin/linux-amd64/libquestdbr.so
+            core/src/main/bin/linux-amd64/libjemalloc.so
           key: nativelibs-linux-${{ github.sha }}
   build-all-linux-aarch64:
     runs-on: ubuntu-latest
@@ -224,13 +225,17 @@ jobs:
         run: |
           cd core
           cmake --build cmake-build-release-arm64 --config Release
+          mkdir -p ../../src/main/resources/io/questdb/bin/linux-aarch64/
+          mkdir -p ../../src/main/bin/linux-aarch64/
+          cp target/classes/io/questdb/bin-local/libquestdb.so ../../src/main/resources/io/questdb/bin/linux-aarch64/
+          cp target/classes/io/questdb/bin-local/libjemalloc.so ../../src/main/bin/linux-aarch64/
       - name: Build linux-aarch64 Rust Library
         run: |
           cd core/rust/qdbr
           cargo clean
           cross build --target aarch64-unknown-linux-gnu --release --target-dir `pwd`/target
-          mkdir -p ../../src/main/resources/io/questdb/bin/armlinux/
-          cp target/aarch64-unknown-linux-gnu/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/armlinux/
+          mkdir -p ../../src/main/resources/io/questdb/bin/linux-aarch64/
+          cp target/aarch64-unknown-linux-gnu/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/linux-aarch64/
       - name: Check git status
         run: |
           git status
@@ -238,8 +243,9 @@ jobs:
         uses: actions/cache/save@v3
         with:
           path: |
-            core/src/main/resources/io/questdb/bin/armlinux/libquestdb.so
-            core/src/main/resources/io/questdb/bin/armlinux/libquestdbr.so
+            core/src/main/resources/io/questdb/bin/linux-aarch64/libquestdb.so
+            core/src/main/resources/io/questdb/bin/linux-aarch64/libquestdbr.so
+            core/src/main/bin/linux-aarch64/libjemalloc.so
           key: nativelibs-armlinux-${{ github.sha }}
   build-cxx-windows:
     runs-on: ubuntu-latest
