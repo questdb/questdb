@@ -61,13 +61,13 @@ jobs:
             cd core
             cmake -B build/release -DCMAKE_BUILD_TYPE=Release
             cmake --build build/release --config Release
-            mkdir -p src/main/resources/io/questdb/bin/freebsd-aarch64/
-            mkdir -p src/main/bin/freebsd-aarch64/
-            cp target/classes/io/questdb/bin-local/libquestdb.so src/main/resources/io/questdb/bin/freebsd-aarch64/
-            cp target/classes/io/questdb/bin-local/libjemalloc.so src/main/bin/freebsd-aarch64/
+            mkdir -p src/main/resources/io/questdb/bin/freebsd-amd64/
+            mkdir -p src/main/bin/freebsd-amd64/
+            cp target/classes/io/questdb/bin-local/libquestdb.so src/main/resources/io/questdb/bin/freebsd-amd64/
+            cp target/classes/io/questdb/bin-local/libjemalloc.so src/main/bin/freebsd-amd64/
             cd rust/qdbr
             cargo build --release
-            cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/freebsd-aarch64/
+            cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/freebsd-amd64/
       - name: log git status
         run: |
           git status
@@ -75,9 +75,9 @@ jobs:
         uses: actions/cache/save@v3
         with:
           path: |
-            core/src/main/bin/freebsd-aarch64/libjemalloc.so
-            core/src/main/resources/io/questdb/bin/freebsd-aarch64/libquestdb.so
-            core/src/main/resources/io/questdb/bin/freebsd-aarch64/libquestdbr.so
+            core/src/main/bin/freebsd-amd64/libjemalloc.so
+            core/src/main/resources/io/questdb/bin/freebsd-amd64/libquestdb.so
+            core/src/main/resources/io/questdb/bin/freebsd-amd64/libquestdbr.so
           key: nativelibs-freebsd-${{ github.sha }}
   build-all-macos:
     strategy:
@@ -310,9 +310,9 @@ jobs:
         uses: actions/cache/restore@v3
         with:
           path: |
-            core/src/main/bin/freebsd-aarch64/libjemalloc.so
-            core/src/main/resources/io/questdb/bin/freebsd-aarch64/libquestdb.so
-            core/src/main/resources/io/questdb/bin/freebsd-aarch64/libquestdbr.so
+            core/src/main/bin/freebsd-amd64/libjemalloc.so
+            core/src/main/resources/io/questdb/bin/freebsd-amd64/libquestdb.so
+            core/src/main/resources/io/questdb/bin/freebsd-amd64/libquestdbr.so
           key: nativelibs-freebsd-${{ github.sha }}
       - name: Restore darwin-aarch64 Libraries from Cache
         uses: actions/cache/restore@v3
