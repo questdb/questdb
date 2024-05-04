@@ -75,9 +75,9 @@ jobs:
         uses: actions/cache/save@v3
         with:
           path: |
-            core/src/main/resources/io/questdb/bin/freebsd-amd64/libquestdb.so
-            core/src/main/resources/io/questdb/bin/freebsd-amd64/libquestdbr.so
-            core/src/main/bin/freebsd-amd64/libjemalloc.so
+            core/src/main/bin/freebsd-aarch64/libjemalloc.so
+            core/src/main/resources/io/questdb/bin/freebsd-aarch64/libquestdb.so
+            core/src/main/resources/io/questdb/bin/freebsd-aarch64/libquestdbr.so
           key: nativelibs-freebsd-${{ github.sha }}
   build-all-macos:
     strategy:
@@ -310,9 +310,9 @@ jobs:
         uses: actions/cache/restore@v3
         with:
           path: |
-            core/src/main/resources/io/questdb/bin/freebsd-amd64/libquestdb.so
-            core/src/main/resources/io/questdb/bin/freebsd-amd-64/libquestdbr.so
-            core/src/main/bin/freebsd-amd-64/libjemalloc.so
+            core/src/main/bin/freebsd-aarch64/libjemalloc.so
+            core/src/main/resources/io/questdb/bin/freebsd-aarch64/libquestdb.so
+            core/src/main/resources/io/questdb/bin/freebsd-aarch64/libquestdbr.so
           key: nativelibs-freebsd-${{ github.sha }}
       - name: Restore darwin-aarch64 Libraries from Cache
         uses: actions/cache/restore@v3
