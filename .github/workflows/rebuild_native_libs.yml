@@ -294,7 +294,7 @@ jobs:
         uses: actions/cache/save@v3
         with:
           path: |
-            core/src/main/resources/io/questdb/bin/windows/libquestdb.dll
+            core/src/main/resources/io/questdb/bin/windows-amd64/libquestdb.dll
           key: nativelibs-windows-${{ github.sha }}
   collect-commit-and-push:
     needs: [ build-all-freebsd, build-all-macos,build-cxx-windows, build-rust-windows, build-all-linux-amd64, build-all-linux-aarch64 ]
