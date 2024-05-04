@@ -359,6 +359,9 @@ jobs:
             core/src/main/resources/io/questdb/bin/windows-amd64/libquestdbr.dll
           key: nativelibs-windows-rust-${{ github.sha }}
           enableCrossOsArchive: true
+      - name: Check git status before
+        run: |
+          git status
       - name: Commit the files
         run: |
           git config --global user.name 'GitHub Actions - Rebuild Native Libraries'
@@ -381,7 +384,7 @@ jobs:
           git add core/src/main/resources/io/questdb/bin/windows-amd64/libquestdb.dll
           git add core/src/main/resources/io/questdb/bin/windows-amd64/libquestdbr.dll
           git commit -m "chore(build): rebuild CXX/Rust libraries"
-      - name: Check git status
+      - name: Check git status after
         run: |
           git status
       - name: Print file sizes after
