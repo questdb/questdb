@@ -3461,7 +3461,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             switch (ColumnType.tagOf(columnType)) {
                 case ColumnType.VARCHAR:
                     final Utf8Sequence us = VarcharTypeDriver.getPlainValue(srcMem, offset, 1);
-                    VarcharTypeDriver.appendValue(destDataMem, destAuxMem, us);
+                    VarcharTypeDriver.appendValue(destAuxMem, destDataMem, us);
                     return VarcharTypeDriver.getPlainValueByteCount(us);
                 case ColumnType.STRING:
                     final CharSequence cs = srcMem.getStrA(offset);
