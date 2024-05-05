@@ -95,6 +95,7 @@ set(SRCS
         "${LIBRARY_DIR}/src/ticker.c"
         "${LIBRARY_DIR}/src/tsd.c"
         "${LIBRARY_DIR}/src/witness.c"
+        "${LIBRARY_DIR}/src/util.c"
 )
 if (OS_DARWIN)
     list(APPEND SRCS "${LIBRARY_DIR}/src/zone.c")
