@@ -109,6 +109,20 @@ function export_java {
     echo "JAVA: $JAVA"
 }
 
+function export_jemalloc() {
+    if [ "$QDB_JEMALLOC" != "" ]; then
+      export jemalloc_so=$(ls $BASE/libjemalloc*)
+      if [ -r "$jemalloc_so" ]; then
+          if [ "$(uname)" == "Darwin" ]; then
+              export DYLD_INSERT_LIBRARIES=$jemalloc_so
+          else
+              export LD_PRELOAD $jemalloc_so
+          fi
+          echo "Using jemalloc"
+      fi
+    fi
+}
+
 function export_args {
 
     export QDB_OVERWRITE_PUBLIC=""
@@ -164,6 +178,7 @@ function start {
     fi
 
     export_java
+    export_jemalloc
 
     # create root directory if it does not exist
     if [ ! -d "$QDB_ROOT" ]; then
