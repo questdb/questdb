@@ -110,7 +110,7 @@ function export_java {
 }
 
 function export_jemalloc() {
-    if [ "$QDB_JEMALLOC" != "" ]; then
+    if [ "$QDB_JEMALLOC" = "true" ]; then
       export jemalloc_so=$(ls $BASE/libjemalloc*)
       if [ -r "$jemalloc_so" ]; then
           if [ "$(uname)" == "Darwin" ]; then
