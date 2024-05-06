@@ -56,6 +56,12 @@ public class TableData {
         }
     }
 
+    public synchronized void clear() {
+        rows.clear();
+        index.clear();
+        writePermits.set(0);
+    }
+
     public synchronized CharSequence generateRows(TableReaderMetadata metadata) {
         final StringBuilder sb = new StringBuilder();
         final ObjList<CharSequence> columns = new ObjList<>();
@@ -103,12 +109,6 @@ public class TableData {
         writePermits.decrementAndGet();
     }
 
-    public synchronized void clear() {
-        rows.clear();
-        index.clear();
-        writePermits.set(0);
-    }
-
     public synchronized int size() {
         int count = 0;
         for (int i = 0, n = rows.size(); i < n; i++) {
@@ -130,6 +130,7 @@ public class TableData {
                 return "null";
             case STRING:
             case SYMBOL:
+            case VARCHAR:
             case TIMESTAMP:
                 return "";
             default:
