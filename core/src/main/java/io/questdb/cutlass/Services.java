@@ -25,12 +25,15 @@
 package io.questdb.cutlass;
 
 import io.questdb.Metrics;
-import io.questdb.PublicPassthroughConfiguration;
+import io.questdb.ServerConfiguration;
 import io.questdb.WorkerPoolManager;
 import io.questdb.WorkerPoolManager.Requester;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.http.*;
-import io.questdb.cutlass.http.processors.*;
+import io.questdb.cutlass.http.processors.HealthCheckProcessor;
+import io.questdb.cutlass.http.processors.JsonQueryProcessor;
+import io.questdb.cutlass.http.processors.LineHttpProcessor;
+import io.questdb.cutlass.http.processors.PrometheusMetricsProcessor;
 import io.questdb.cutlass.line.tcp.LineTcpReceiver;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.AbstractLineProtoUdpReceiver;
@@ -53,13 +56,13 @@ public class Services {
 
     @Nullable
     public HttpServer createHttpServer(
-            HttpServerConfiguration configuration,
-            PublicPassthroughConfiguration publicPassthroughConfiguration,
+            ServerConfiguration serverConfiguration,
             CairoEngine cairoEngine,
             WorkerPoolManager workerPoolManager,
             Metrics metrics
     ) {
-        if (!configuration.isEnabled()) {
+        HttpServerConfiguration httpServerConfiguration = serverConfiguration.getHttpServerConfiguration();
+        if (!httpServerConfiguration.isEnabled()) {
             return null;
         }
 
@@ -67,10 +70,9 @@ public class Services {
         // - DEDICATED when PropertyKey.HTTP_WORKER_COUNT is > 0
         // - SHARED otherwise
         return createHttpServer(
-                configuration,
-                publicPassthroughConfiguration,
+                serverConfiguration,
                 cairoEngine,
-                workerPoolManager.getInstance(configuration, metrics, Requester.HTTP_SERVER),
+                workerPoolManager.getInstance(httpServerConfiguration, metrics, Requester.HTTP_SERVER),
                 workerPoolManager.getSharedWorkerCount(),
                 metrics
         );
@@ -78,24 +80,24 @@ public class Services {
 
     @Nullable
     public HttpServer createHttpServer(
-            HttpServerConfiguration configuration,
-            PublicPassthroughConfiguration publicPassthroughConfiguration,
+            ServerConfiguration serverConfiguration,
             CairoEngine cairoEngine,
             WorkerPool workerPool,
             int sharedWorkerCount,
             Metrics metrics
     ) {
-        if (!configuration.isEnabled()) {
+        final HttpServerConfiguration httpServerConfiguration = serverConfiguration.getHttpServerConfiguration();
+        if (!httpServerConfiguration.isEnabled()) {
             return null;
         }
 
-        final HttpCookieHandler cookieHandler = configuration.getFactoryProvider().getHttpCookieHandler();
-        final HttpHeaderParserFactory headerParserFactory = configuration.getFactoryProvider().getHttpHeaderParserFactory();
-        final HttpServer server = new HttpServer(configuration, metrics, workerPool,
-                configuration.getFactoryProvider().getHttpSocketFactory(), cookieHandler, headerParserFactory
+        final HttpCookieHandler cookieHandler = serverConfiguration.getFactoryProvider().getHttpCookieHandler();
+        final HttpHeaderParserFactory headerParserFactory = serverConfiguration.getFactoryProvider().getHttpHeaderParserFactory();
+        final HttpServer server = new HttpServer(httpServerConfiguration, metrics, workerPool,
+                serverConfiguration.getFactoryProvider().getHttpSocketFactory(), cookieHandler, headerParserFactory
         );
         HttpServer.HttpRequestProcessorBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
-                configuration.getJsonQueryProcessorConfiguration(),
+                httpServerConfiguration.getJsonQueryProcessorConfiguration(),
                 cairoEngine,
                 workerPool.getWorkerCount(),
                 sharedWorkerCount
@@ -103,15 +105,14 @@ public class Services {
 
         HttpServer.HttpRequestProcessorBuilder ilpV2WriteProcessorBuilder = () -> new LineHttpProcessor(
                 cairoEngine,
-                configuration.getHttpContextConfiguration().getRecvBufferSize(),
-                configuration.getHttpContextConfiguration().getSendBufferSize(),
-                configuration.getLineHttpProcessorConfiguration()
+                httpServerConfiguration.getHttpContextConfiguration().getRecvBufferSize(),
+                httpServerConfiguration.getHttpContextConfiguration().getSendBufferSize(),
+                httpServerConfiguration.getLineHttpProcessorConfiguration()
         );
 
         HttpServer.addDefaultEndpoints(
                 server,
-                configuration,
-                publicPassthroughConfiguration,
+                serverConfiguration,
                 cairoEngine,
                 workerPool,
                 sharedWorkerCount,
@@ -176,7 +177,6 @@ public class Services {
     @Nullable
     public HttpServer createMinHttpServer(
             HttpMinServerConfiguration configuration,
-            CairoEngine cairoEngine,
             WorkerPoolManager workerPoolManager,
             Metrics metrics
     ) {
@@ -193,16 +193,11 @@ public class Services {
                 metrics,
                 Requester.HTTP_MIN_SERVER
         );
-        return createMinHttpServer(configuration, cairoEngine, workerPool, metrics);
+        return createMinHttpServer(configuration, workerPool, metrics);
     }
 
     @Nullable
-    public HttpServer createMinHttpServer(
-            HttpMinServerConfiguration configuration,
-            CairoEngine cairoEngine,
-            WorkerPool workerPool,
-            Metrics metrics
-    ) {
+    public HttpServer createMinHttpServer(HttpMinServerConfiguration configuration, WorkerPool workerPool, Metrics metrics) {
         if (!configuration.isEnabled()) {
             return null;
         }

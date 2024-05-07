@@ -224,8 +224,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean parallelIndexingEnabled;
     private final boolean pgEnabled;
     private final PGWireConfiguration pgWireConfiguration = new PropPGWireConfiguration();
+    private final String posthogApiKey;
+    private final boolean posthogEnabled;
     private final PropPGWireDispatcherConfiguration propPGWireDispatcherConfiguration = new PropPGWireDispatcherConfiguration();
     private final String publicDirectory;
+    private final PublicPassthroughConfiguration publicPassthroughConfiguration = new PropPublicPassthroughConfiguration();
     private final long queryTimeout;
     private final int readerPoolMaxSegments;
     private final int repeatMigrationFromVersion;
@@ -499,10 +502,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean symbolAsFieldSupported;
     private long symbolCacheWaitUsBeforeReload;
     private boolean useLegacyStringDefault;
-
-    private final boolean posthogEnabled;
-    private final String posthogApiKey;
-    private final PublicPassthroughConfiguration publicPassthroughConfiguration = new PropPublicPassthroughConfiguration();
 
     public PropServerConfiguration(
             String root,
@@ -1306,9 +1305,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @Override
-    public PublicPassthroughConfiguration getPublicPassthroughConfiguration(){ return publicPassthroughConfiguration; }
-
-    @Override
     public FactoryProvider getFactoryProvider() {
         if (factoryProvider == null) {
             throw new IllegalStateException("configuration.init() has not been invoked");
@@ -1344,6 +1340,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     @Override
     public PGWireConfiguration getPGWireConfiguration() {
         return pgWireConfiguration;
+    }
+
+    @Override
+    public PublicPassthroughConfiguration getPublicPassthroughConfiguration() {
+        return publicPassthroughConfiguration;
     }
 
     @Override
@@ -1886,22 +1887,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         private ValidationResult(boolean isError, String message) {
             this.isError = isError;
             this.message = message;
-        }
-    }
-
-    class PropPublicPassthroughConfiguration implements PublicPassthroughConfiguration {
-        @Override
-        public String getPosthogApiKey() {
-            return posthogApiKey;
-        }
-        @Override
-        public boolean isPosthogEnabled() {
-            return posthogEnabled;
-        }
-
-        public void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
-            settings.put(PropertyKey.POSTHOG_ENABLED.getPropertyPath(),JsonPropertyValueFormatter.bool(isPosthogEnabled()));
-            settings.put(PropertyKey.POSTHOG_API_KEY.getPropertyPath(),str(getPosthogApiKey()));
         }
     }
 
@@ -4247,6 +4232,23 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getTimeout() {
             return pgNetIdleConnectionTimeout;
+        }
+    }
+
+    class PropPublicPassthroughConfiguration implements PublicPassthroughConfiguration {
+        @Override
+        public String getPosthogApiKey() {
+            return posthogApiKey;
+        }
+
+        @Override
+        public boolean isPosthogEnabled() {
+            return posthogEnabled;
+        }
+
+        public void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
+            settings.put(PropertyKey.POSTHOG_ENABLED.getPropertyPath(), JsonPropertyValueFormatter.bool(isPosthogEnabled()));
+            settings.put(PropertyKey.POSTHOG_API_KEY.getPropertyPath(), str(getPosthogApiKey()));
         }
     }
 

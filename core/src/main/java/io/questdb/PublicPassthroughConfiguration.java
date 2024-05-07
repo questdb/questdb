@@ -28,7 +28,9 @@ import io.questdb.std.CharSequenceObjHashMap;
 
 public interface PublicPassthroughConfiguration {
     String getPosthogApiKey();
+
     boolean isPosthogEnabled();
+
     default void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
     }
 }

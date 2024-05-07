@@ -24,7 +24,7 @@
 
 package io.questdb;
 
-public class DefaultPublicPassthroughConfiguration implements  PublicPassthroughConfiguration{
+public class DefaultPublicPassthroughConfiguration implements PublicPassthroughConfiguration {
     @Override
     public String getPosthogApiKey() {
         return null;

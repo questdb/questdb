@@ -24,10 +24,9 @@
 
 package io.questdb.test.cutlass.http;
 
-import io.questdb.DefaultPublicPassthroughConfiguration;
 import io.questdb.DefaultServerConfiguration;
 import io.questdb.Metrics;
-import io.questdb.PublicPassthroughConfiguration;
+import io.questdb.ServerConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -972,26 +971,31 @@ public class IODispatcherTest extends AbstractTest {
         final String expectedTableMetadata = "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"LONG256\"},{\"index\":1,\"name\":\"f1\",\"type\":\"CHAR\"}],\"timestampIndex\":-1}";
 
         final String baseDir = root;
-        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
+        final HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
+            @Override
+            public MillisecondClock getMillisecondClock() {
+                return StationaryMillisClock.INSTANCE;
+            }
+
+            @Override
+            public NanosecondClock getNanosecondClock() {
+                return StationaryNanosClock.INSTANCE;
+            }
+        });
+
+        final ServerConfiguration serverConfiguration = new DefaultServerConfiguration(baseDir) {
+            @Override
+            public HttpServerConfiguration getHttpServerConfiguration() {
+                return httpServerConfiguration;
+            }
+        };
+
+        final CairoConfiguration cairoConfiguration = serverConfiguration.getCairoConfiguration();
         final TestWorkerPool workerPool = new TestWorkerPool(2, metrics);
         try (
-                CairoEngine cairoEngine = new CairoEngine(configuration, metrics);
-                HttpServer ignored = createHttpServer(
-                        new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
-                            @Override
-                            public MillisecondClock getMillisecondClock() {
-                                return StationaryMillisClock.INSTANCE;
-                            }
-
-                            @Override
-                            public NanosecondClock getNanosecondClock() {
-                                return StationaryNanosClock.INSTANCE;
-                            }
-                        }),
-                        new DefaultPublicPassthroughConfiguration(),
-                        cairoEngine,
-                        workerPool
-                )) {
+                CairoEngine cairoEngine = new CairoEngine(cairoConfiguration, metrics);
+                HttpServer ignored = createHttpServer(serverConfiguration, cairoEngine, workerPool)
+        ) {
 
             workerPool.start(LOG);
             try {
@@ -1047,26 +1051,29 @@ public class IODispatcherTest extends AbstractTest {
         final String expectedTableMetadata = "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"LONG256\"},{\"index\":1,\"name\":\"f1\",\"type\":\"CHAR\"}],\"timestampIndex\":-1}";
 
         final String baseDir = root;
-        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
+        final HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
+            @Override
+            public MillisecondClock getMillisecondClock() {
+                return StationaryMillisClock.INSTANCE;
+            }
+
+            @Override
+            public NanosecondClock getNanosecondClock() {
+                return StationaryNanosClock.INSTANCE;
+            }
+        });
+        final ServerConfiguration serverConfiguration = new DefaultServerConfiguration(baseDir) {
+            @Override
+            public HttpServerConfiguration getHttpServerConfiguration() {
+                return httpServerConfiguration;
+            }
+        };
+        final CairoConfiguration cairoConfiguration = serverConfiguration.getCairoConfiguration();
         TestWorkerPool workerPool = new TestWorkerPool(2, metrics);
         try (
-                CairoEngine cairoEngine = new CairoEngine(configuration, metrics);
-                HttpServer ignored = createHttpServer(
-                        new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
-                            @Override
-                            public MillisecondClock getMillisecondClock() {
-                                return StationaryMillisClock.INSTANCE;
-                            }
-
-                            @Override
-                            public NanosecondClock getNanosecondClock() {
-                                return StationaryNanosClock.INSTANCE;
-                            }
-                        }),
-                        new DefaultPublicPassthroughConfiguration(),
-                        cairoEngine,
-                        workerPool
-                )) {
+                CairoEngine cairoEngine = new CairoEngine(cairoConfiguration, metrics);
+                HttpServer ignored = createHttpServer(serverConfiguration, cairoEngine, workerPool)
+        ) {
 
             workerPool.start(LOG);
             try {
@@ -8117,14 +8124,12 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     private static HttpServer createHttpServer(
-            HttpServerConfiguration configuration,
-            PublicPassthroughConfiguration publicPassthroughConfiguration,
+            ServerConfiguration serverConfiguration,
             CairoEngine cairoEngine,
             WorkerPool workerPool
     ) {
         return Services.INSTANCE.createHttpServer(
-                configuration,
-                publicPassthroughConfiguration,
+                serverConfiguration,
                 cairoEngine,
                 workerPool,
                 workerPool.getWorkerCount(),

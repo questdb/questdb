@@ -24,8 +24,7 @@
 
 package io.questdb.cutlass.http.processors;
 
-import io.questdb.PublicPassthroughConfiguration;
-import io.questdb.cairo.CairoConfiguration;
+import io.questdb.ServerConfiguration;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
@@ -41,11 +40,10 @@ import java.net.HttpURLConnection;
 public class SettingsProcessor implements HttpRequestProcessor {
     private final Utf8StringSink sink = new Utf8StringSink();
 
-    public SettingsProcessor(CairoConfiguration cairoConfiguration, PublicPassthroughConfiguration passthroughConfiguration) {
+    public SettingsProcessor(ServerConfiguration serverConfiguration) {
         final CharSequenceObjHashMap<CharSequence> settings = new CharSequenceObjHashMap<>();
-        cairoConfiguration.populateSettings(settings);
-        passthroughConfiguration.populateSettings(settings);
-
+        serverConfiguration.getCairoConfiguration().populateSettings(settings);
+        serverConfiguration.getPublicPassthroughConfiguration().populateSettings(settings);
         sink.putAscii('{');
         final ObjList<CharSequence> keys = settings.keys();
         for (int i = 0, n = keys.size(); i < n; i++) {
