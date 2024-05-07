@@ -24,19 +24,30 @@
 
 package io.questdb.compat;
 
-import io.questdb.Bootstrap;
-import io.questdb.DefaultBootstrapConfiguration;
-import io.questdb.DefaultHttpClientConfiguration;
-import io.questdb.ServerMain;
-import io.questdb.cairo.CairoException;
+import io.questdb.*;
+import io.questdb.cairo.*;
+import io.questdb.cutlass.http.DefaultHttpContextConfiguration;
+import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
+import io.questdb.cutlass.http.HttpMinServerConfiguration;
+import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
+import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
+import io.questdb.cutlass.line.LineNanoTimestampAdapter;
+import io.questdb.cutlass.line.LineTcpTimestampAdapter;
+import io.questdb.cutlass.line.tcp.DefaultLineTcpReceiverConfiguration;
+import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
+import io.questdb.cutlass.line.udp.DefaultLineUdpReceiverConfiguration;
+import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
 import org.influxdb.InfluxDB;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -49,6 +60,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static io.questdb.cairo.wal.WalUtils.EVENT_INDEX_FILE_NAME;
 
 public class InfluxDBClientFailureTest extends AbstractTest {
+
     @Test
     public void testAppendErrors() {
         final FilesFacade filesFacade = new FilesFacadeImpl() {
@@ -63,12 +75,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             }
         };
 
-        final Bootstrap bootstrap = new Bootstrap(new DefaultBootstrapConfiguration() {
-            @Override
-            public FilesFacade getFilesFacade() {
-                return filesFacade;
-            }
-        }, Bootstrap.getServerMainArgs(root));
+        final Bootstrap bootstrap = createBootstrap(filesFacade, WalFormat.WAL_FORMAT_COL_FIRST);
 
         try (final ServerMain serverMain = new ServerMain(bootstrap)) {
             serverMain.start();
@@ -77,7 +84,10 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
                 InfluxDBUtils.assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,y=12i");
 
-                InfluxDBUtils.assertRequestErrorContains(influxDB, points, "m1,tag1=value1 f1=1i,x=12i",
+                InfluxDBUtils.assertRequestErrorContains(
+                        influxDB,
+                        points,
+                        "m1,tag1=value1 f1=1i,x=12i",
                         "errors encountered on line(s):write error: m1, errno: ",
                         ",\"errorId\":",
                         ", error: could not open read-write"
@@ -103,12 +113,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             }
         };
 
-        final Bootstrap bootstrap = new Bootstrap(new DefaultBootstrapConfiguration() {
-            @Override
-            public FilesFacade getFilesFacade() {
-                return filesFacade;
-            }
-        }, Bootstrap.getServerMainArgs(root));
+        final Bootstrap bootstrap = createBootstrap(filesFacade, WalFormat.WAL_FORMAT_COL_FIRST);
 
         try (final ServerMain serverMain = new ServerMain(bootstrap)) {
             serverMain.start();
@@ -155,12 +160,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             }
         };
 
-        final Bootstrap bootstrap = new Bootstrap(new DefaultBootstrapConfiguration() {
-            @Override
-            public FilesFacade getFilesFacade() {
-                return filesFacade;
-            }
-        }, Bootstrap.getServerMainArgs(root));
+        final Bootstrap bootstrap = createBootstrap(filesFacade, WalFormat.WAL_FORMAT_ROW_FIRST);
 
         try (final ServerMain serverMain = new ServerMain(bootstrap)) {
             serverMain.start();
@@ -198,12 +198,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             }
         };
 
-        final Bootstrap bootstrap = new Bootstrap(new DefaultBootstrapConfiguration() {
-            @Override
-            public FilesFacade getFilesFacade() {
-                return filesFacade;
-            }
-        }, Bootstrap.getServerMainArgs(root));
+        final Bootstrap bootstrap = createBootstrap(filesFacade, WalFormat.WAL_FORMAT_COL_FIRST);
 
         try (final ServerMain serverMain = new ServerMain(bootstrap)) {
             serverMain.start();
@@ -238,12 +233,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             }
         };
 
-        final Bootstrap bootstrap = new Bootstrap(new DefaultBootstrapConfiguration() {
-            @Override
-            public FilesFacade getFilesFacade() {
-                return filesFacade;
-            }
-        }, Bootstrap.getServerMainArgs(root));
+        final Bootstrap bootstrap = createBootstrap(filesFacade, WalFormat.WAL_FORMAT_COL_FIRST);
 
         long timestamp = IntervalUtils.parseFloorPartialTimestamp("2023-11-27T18:53:24.834Z");
         try (final ServerMain serverMain = new ServerMain(bootstrap)) {
@@ -277,7 +267,10 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
                 influxDB.setLogLevel(InfluxDB.LogLevel.BASIC);
                 influxDB.enableGzip();
-                InfluxDBUtils.assertRequestErrorContains(influxDB, points, "m1,tag1=value1 f1=1i,x=12i",
+                InfluxDBUtils.assertRequestErrorContains(
+                        influxDB,
+                        points,
+                        "m1,tag1=value1 f1=1i,x=12i",
                         "\"message\":\"gzip encoding is not supported\","
                 );
 
@@ -302,12 +295,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             }
         };
 
-        final Bootstrap bootstrap = new Bootstrap(new DefaultBootstrapConfiguration() {
-            @Override
-            public FilesFacade getFilesFacade() {
-                return filesFacade;
-            }
-        }, Bootstrap.getServerMainArgs(root));
+        final Bootstrap bootstrap = createBootstrap(filesFacade, WalFormat.WAL_FORMAT_COL_FIRST);
 
         try (final ServerMain serverMain = new ServerMain(bootstrap)) {
             serverMain.start();
@@ -355,12 +343,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             }
         };
 
-        final Bootstrap bootstrap = new Bootstrap(new DefaultBootstrapConfiguration() {
-            @Override
-            public FilesFacade getFilesFacade() {
-                return filesFacade;
-            }
-        }, Bootstrap.getServerMainArgs(root));
+        final Bootstrap bootstrap = createBootstrap(filesFacade, WalFormat.WAL_FORMAT_COL_FIRST);
 
         try (final ServerMain serverMain = new ServerMain(bootstrap)) {
             serverMain.start();
@@ -386,8 +369,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
                 Assert.assertNotNull(serverMain.getEngine().getTableTokenIfExists("good"));
 
                 serverMain.awaitTable("good");
-                assertSql(serverMain.getEngine(), "select count from good", "count\n" +
-                        "3\n");
+                assertSql(serverMain.getEngine(), "select count from good", "count\n3\n");
 
                 // This should re-create table "drop"
                 points.add("good,tag1=value1 f1=1i");
@@ -417,5 +399,147 @@ public class InfluxDBClientFailureTest extends AbstractTest {
                 }
             }
         }
+    }
+
+    private static @NotNull Bootstrap createBootstrap(FilesFacade filesFacade, int walFormat) {
+        final CairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(root) {
+            @Override
+            public @NotNull FilesFacade getFilesFacade() {
+                return filesFacade;
+            }
+
+            @Override
+            public int getWalDefaultFormat() {
+                return walFormat;
+            }
+        };
+        final LineHttpProcessorConfiguration lineHttpProcessorConfiguration = new LineHttpProcessorConfiguration() {
+            @Override
+            public boolean autoCreateNewColumns() {
+                return true;
+            }
+
+            @Override
+            public boolean autoCreateNewTables() {
+                return true;
+            }
+
+            @Override
+            public short getDefaultColumnTypeForFloat() {
+                return ColumnType.DOUBLE;
+            }
+
+            @Override
+            public short getDefaultColumnTypeForInteger() {
+                return ColumnType.LONG;
+            }
+
+            @Override
+            public int getDefaultPartitionBy() {
+                return PartitionBy.DAY;
+            }
+
+            @Override
+            public CharSequence getInfluxPingVersion() {
+                return "v2.7.4";
+            }
+
+            @Override
+            public MicrosecondClock getMicrosecondClock() {
+                return MicrosecondClockImpl.INSTANCE;
+            }
+
+            @Override
+            public long getSymbolCacheWaitUsBeforeReload() {
+                return 500_000;
+            }
+
+            @Override
+            public LineTcpTimestampAdapter getTimestampAdapter() {
+                return new LineTcpTimestampAdapter(LineNanoTimestampAdapter.INSTANCE);
+            }
+
+            @Override
+            public boolean isEnabled() {
+                return true;
+            }
+
+            @Override
+            public boolean isStringAsTagSupported() {
+                return true;
+            }
+
+            @Override
+            public boolean isStringToCharCastAllowed() {
+                return true;
+            }
+
+            @Override
+            public boolean isSymbolAsFieldSupported() {
+                return true;
+            }
+
+            @Override
+            public boolean isUseLegacyStringDefault() {
+                return false;
+            }
+        };
+        final ServerConfiguration serverConfiguration = new DefaultServerConfiguration(root) {
+            @Override
+            public CairoConfiguration getCairoConfiguration() {
+                return cairoConfiguration;
+            }
+
+            @Override
+            public HttpMinServerConfiguration getHttpMinServerConfiguration() {
+                return new DefaultHttpServerConfiguration() {
+                    @Override
+                    public boolean isEnabled() {
+                        return false;
+                    }
+                };
+            }
+
+            @Override
+            public HttpServerConfiguration getHttpServerConfiguration() {
+                return new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration()) {
+                    @Override
+                    public LineHttpProcessorConfiguration getLineHttpProcessorConfiguration() {
+                        return lineHttpProcessorConfiguration;
+                    }
+                };
+            }
+
+            @Override
+            public LineTcpReceiverConfiguration getLineTcpReceiverConfiguration() {
+                return new DefaultLineTcpReceiverConfiguration() {
+                    @Override
+                    public boolean isEnabled() {
+                        return false;
+                    }
+                };
+            }
+
+            @Override
+            public LineUdpReceiverConfiguration getLineUdpReceiverConfiguration() {
+                return new DefaultLineUdpReceiverConfiguration() {
+                    @Override
+                    public boolean isEnabled() {
+                        return false;
+                    }
+                };
+            }
+        };
+        return new Bootstrap(new DefaultBootstrapConfiguration() {
+            @Override
+            public FilesFacade getFilesFacade() {
+                return filesFacade;
+            }
+
+            @Override
+            public ServerConfiguration getServerConfiguration(Bootstrap bootstrap1) {
+                return serverConfiguration;
+            }
+        }, Bootstrap.getServerMainArgs(root));
     }
 }
