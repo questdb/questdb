@@ -832,7 +832,7 @@ public final class Utf8s {
 
     public static void strCpy(long srcLo, long srcHi, @NotNull Utf8Sink dest) {
         for (long i = srcLo; i < srcHi; i++) {
-            dest.put(Unsafe.getUnsafe().getByte(i));
+            dest.putAny(Unsafe.getUnsafe().getByte(i));
         }
     }
 
@@ -934,7 +934,7 @@ public final class Utf8s {
         final int lastChar = end - 1;
         for (int i = start; i < end; i++) {
             byte b = us.byteAt(i);
-            sink.put(b);
+            sink.putAny(b);
             if (b == unescapeAscii && i < lastChar && us.byteAt(i + 1) == unescapeAscii) {
                 i++;
             }
@@ -1223,7 +1223,7 @@ public final class Utf8s {
             if (b == 0) {
                 break;
             }
-            sink.put(b);
+            sink.putAny(b);
         }
     }
 
