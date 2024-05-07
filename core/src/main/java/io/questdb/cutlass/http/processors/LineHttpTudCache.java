@@ -153,7 +153,7 @@ public class LineHttpTudCache implements QuietCloseable {
         WalTableUpdateDetails tud = new WalTableUpdateDetails(
                 engine,
                 securityContext,
-                engine.getWalColFirstWriter(tableToken),
+                engine.getWalWriter(tableToken),
                 defaultColumnTypes,
                 nameUtf8,
                 symbolCachePool,
