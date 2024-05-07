@@ -41,6 +41,7 @@ import io.questdb.tasks.WalTxnNotificationTask;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.griffin.AbstractMultiNodeTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -147,11 +148,14 @@ public class WalWriterFuzzTest extends AbstractMultiNodeTest {
                 drainWalQueue();
             }
 
-            assertSql("i\tts\n" +
-                    "2\t1970-01-01T00:00:00.000500Z\n" +
-                    "1\t1970-01-01T00:00:00.001000Z\n" +
-                    "3\t1970-01-01T00:00:00.001500Z\n" +
-                    "4\t1970-01-01T00:00:00.001500Z\n", tableName);
+            assertSql(
+                    "i\tts\n" +
+                            "2\t1970-01-01T00:00:00.000500Z\n" +
+                            "1\t1970-01-01T00:00:00.001000Z\n" +
+                            "3\t1970-01-01T00:00:00.001500Z\n" +
+                            "4\t1970-01-01T00:00:00.001500Z\n",
+                    tableName
+            );
         });
     }
 
@@ -231,6 +235,55 @@ public class WalWriterFuzzTest extends AbstractMultiNodeTest {
             ) {
                 long start = now;
                 WalWriter[] writers = new WalWriter[]{walWriter1, walWriter2, walWriter3};
+
+                for (int i = 0; i < 5; i++) {
+                    boolean inOrder = rnd.nextBoolean();
+                    int walIndex = rnd.nextInt(writers.length);
+                    WalWriter walWriter = writers[walIndex];
+                    int rowCount = rnd.nextInt(1000) + 2;
+                    tsIncrement = rnd.nextLong(Timestamps.MINUTE_MICROS);
+
+                    LOG.infoW().$("generating wal [")
+                            .$("iteration:").$(i)
+                            .$(", walIndex: ").$(walIndex)
+                            .$(", inOrder: ").$(inOrder)
+                            .$(" rowCount: ").$(rowCount)
+                            .$(" tsIncrement: ").$(tsIncrement)
+                            .I$();
+
+                    addRowsToWalAndApplyToTable(i, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, inOrder);
+
+                    LOG.info().$("verifying wal [").$("iteration:").$(i).I$();
+                    TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+
+                    start += rowCount * tsIncrement + 1;
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRandomInOutOfOrderMultipleWalInserts_mixedWalFormats() throws Exception {
+        // We use both formats in this test, so no need to run it twice.
+        Assume.assumeTrue(walFormat == WalFormat.ROW_FIRST);
+
+        assertMemoryLeak(() -> {
+            final String tableName = getTableName();
+            final String tableCopyName = tableName + "_copy";
+            TableToken tt = createTableAndCopy(tableName, tableCopyName);
+
+            long tsIncrement;
+            long now = Os.currentTimeMicros();
+            LOG.info().$("now :").$(now).$();
+            Rnd rnd = TestUtils.generateRandom(LOG);
+
+            try (
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    WalWriter walWriter1 = engine.getWalRowFirstWriter(tt);
+                    WalWriter walWriter2 = engine.getWalColFirstWriter(tt)
+            ) {
+                long start = now;
+                WalWriter[] writers = new WalWriter[]{walWriter1, walWriter2};
 
                 for (int i = 0; i < 5; i++) {
                     boolean inOrder = rnd.nextBoolean();
