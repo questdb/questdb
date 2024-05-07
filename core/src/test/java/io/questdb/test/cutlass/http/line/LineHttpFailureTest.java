@@ -358,7 +358,7 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
     @Test
     public void testPutAndGetAreNotSupported() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
                 put(DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), "5");
             }})) {
                 serverMain.start();
