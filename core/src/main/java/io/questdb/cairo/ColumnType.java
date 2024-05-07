@@ -346,14 +346,6 @@ public final class ColumnType {
         return nameTypeMap.get(name);
     }
 
-    public static int variableColumnLengthBytes(int columnType) {
-        if (columnType == ColumnType.STRING) {
-            return Integer.BYTES;
-        }
-        assert columnType == ColumnType.BINARY;
-        return Long.BYTES;
-    }
-
     private static boolean isGeoHashWideningCast(int fromType, int toType) {
         final int toTag = tagOf(toType);
         final int fromTag = tagOf(fromType);
