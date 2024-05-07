@@ -1227,7 +1227,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     log.info().$("invalid default column type for integer ").$(integerDefaultColumnTypeName).$(", will use LONG").$();
                     this.integerDefaultColumnType = ColumnType.LONG;
                 }
-                this.lineUseLegacyStringDefault = getBoolean(properties, env, PropertyKey.LINE_USE_LEGACY_STRING_DEFAULT, true);
+                this.lineUseLegacyStringDefault = getBoolean(properties, env, PropertyKey.LINE_USE_LEGACY_STRING_DEFAULT, false);
             }
 
             this.textUseLegacyStringDefault = getBoolean(properties, env, PropertyKey.TEXT_USE_LEGACY_STRING_DEFAULT, false);
