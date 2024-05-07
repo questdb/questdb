@@ -1044,12 +1044,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             metrics.tableWriter().incrementCommits();
             metrics.tableWriter().addCommittedRows(rowsAdded);
 
+            resetO3Mem();
             return rowsAdded;
         }
 
         // Nothing was committed to the table, only copied to LAG.
         // Keep in memory last committed seq txn, but do not write it to _txn file.
         txWriter.setLagTxnCount((int) (seqTxn - txWriter.getSeqTxn()));
+        resetO3Mem();
         return 0L;
     }
 
@@ -7135,6 +7137,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
         clearTodoLog();
         processPartitionRemoveCandidates();
+    }
+
+    private void resetO3Mem() {
+        for (int i = 0, n = o3MemColumns1.size(); i < n; i++) {
+            MemoryCARW o3mem = o3MemColumns1.getQuick(i);
+            if (o3mem != null) {
+                o3mem.reset();
+            }
+        }
+        for (int i = 0, n = o3MemColumns2.size(); i < n; i++) {
+            MemoryCARW o3mem2 = o3MemColumns2.getQuick(i);
+            if (o3mem2 != null) {
+                o3mem2.reset();
+            }
+        }
+        if (walTimestampMem != null) {
+            walTimestampMem.reset();
+        }
     }
 
     private void resizePartitionUpdateSink() {
