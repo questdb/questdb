@@ -203,7 +203,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         return sequence.of(dataMemAddr + Integer.BYTES, dataMemAddr + Integer.BYTES + size(header), isAscii(header));
     }
 
-    public static long getPlainValueByteCount(@Nullable Utf8Sequence value) {
+    public static int getPlainValueByteCount(@Nullable Utf8Sequence value) {
         return value != null ? Integer.BYTES + value.size() : Integer.BYTES;
     }
 
