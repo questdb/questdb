@@ -2322,7 +2322,6 @@ public class IODispatcherTest extends AbstractTest {
             }
         };
 
-        final AtomicBoolean disconnected = new AtomicBoolean(false);
         new HttpQueryTestBuilder()
                 .withTempFolder(root)
                 .withWorkerCount(2)
@@ -2352,19 +2351,8 @@ public class IODispatcherTest extends AbstractTest {
                                 new SendAndReceiveRequestBuilder()
                                         .withNetworkFacade(nf)
                                         .withPauseBetweenSendAndReceive(0)
-                                        .withPrintOnly(false)
                                         .withRequestCount(1)
-                                        .executeUntilDisconnect(request, fd, 1, ptr, new HttpClientStateListener() {
-                                            @Override
-                                            public void onClosed() {
-                                                disconnected.set(true);
-                                            }
-
-                                            @Override
-                                            public void onReceived(int nBytes) {
-                                                throw new RuntimeException("Unexpected HTTP response bytes");
-                                            }
-                                        });
+                                        .executeUntilTimeoutExpires(request, 300);
                             } finally {
                                 Unsafe.free(ptr, bufLen, MemoryTag.NATIVE_DEFAULT);
                             }
@@ -2375,7 +2363,6 @@ public class IODispatcherTest extends AbstractTest {
                         nf.close(fd);
                     }
                 });
-        assertTrue(disconnected.get());
     }
 
     @Test
