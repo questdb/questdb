@@ -878,30 +878,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private boolean isCompatibleColumnTypeChange(int from, int to) {
-        if (castGroups.getQuick(ColumnType.tagOf(from)) == castGroups.getQuick(ColumnType.tagOf(to))) {
+        int castFrom = castGroups.getQuick(ColumnType.tagOf(from));
+        int castTo = castGroups.getQuick(ColumnType.tagOf(to));
+        if (castFrom == castTo) {
             return true;
         }
         // some exceptions
-        switch (from) {
-            case ColumnType.STRING:
-            case ColumnType.SYMBOL:
-            case ColumnType.VARCHAR:
-                switch (to) {
-                    case ColumnType.IPv4:
-                    case ColumnType.UUID:
-                    case ColumnType.INT:
-                    case ColumnType.SHORT:
-                    case ColumnType.BYTE:
-                    case ColumnType.CHAR:
-                    case ColumnType.LONG:
-                    case ColumnType.DOUBLE:
-                    case ColumnType.FLOAT:
-                    case ColumnType.DATE:
-                    case ColumnType.TIMESTAMP:
-                        return true;
-                }
+        if ((castFrom == 1 && castTo == 3) || (castFrom == 3 && castTo == 1)) {
+            return true;
         }
-        return false;
+        if ((from == ColumnType.IPv4 || from == ColumnType.UUID) && castTo == 3) {
+            return true;
+        }
+        return (to == ColumnType.IPv4 || to == ColumnType.UUID) && castFrom == 3;
     }
 
     private void alterTableColumnAddIndex(

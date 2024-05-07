@@ -36,13 +36,21 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
-import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.str.*;
 import org.jetbrains.annotations.Nullable;
 
 public class ColumnTypeConverter {
     private static final Log LOG = LogFactory.getLog(ColumnTypeConverter.class);
+    private static final Fixed2VarConverter converterByteString = ColumnTypeConverter::stringFromByte;
+    private static final Fixed2VarConverter converterCharString = ColumnTypeConverter::stringFromChar;
+    private static final Fixed2VarConverter converterDateString = ColumnTypeConverter::stringFromDate;
+    private static final Fixed2VarConverter converterDoubleString = ColumnTypeConverter::stringFromDouble;
+    private static final Fixed2VarConverter converterFloatString = ColumnTypeConverter::stringFromFloat;
+    private static final Fixed2VarConverter converterIPv4String = ColumnTypeConverter::stringFromIPv4;
+    private static final Fixed2VarConverter converterInt2String = ColumnTypeConverter::stringFromInt;
+    private static final Fixed2VarConverter converterLongString = ColumnTypeConverter::stringFromLong;
+    private static final Fixed2VarConverter converterShortString = ColumnTypeConverter::stringFromShort;
     private static final Var2FixedConverter<CharSequence> converterStr2Byte = ColumnTypeConverter::str2Byte;
     private static final Var2FixedConverter<CharSequence> converterStr2Char = ColumnTypeConverter::str2Char;
     private static final Var2FixedConverter<CharSequence> converterStr2Date = ColumnTypeConverter::str2Date;
@@ -54,6 +62,8 @@ public class ColumnTypeConverter {
     private static final Var2FixedConverter<CharSequence> converterStr2Short = ColumnTypeConverter::str2Short;
     private static final Var2FixedConverter<CharSequence> converterStr2Timestamp = ColumnTypeConverter::str2Timestamp;
     private static final Var2FixedConverter<CharSequence> converterStr2Uuid = ColumnTypeConverter::str2Uuid;
+    private static final Fixed2VarConverter converterTimestampString = ColumnTypeConverter::stringFromTimestamp;
+    private static final Fixed2VarConverter converterUuidString = ColumnTypeConverter::stringFromUuid;
     private static final ThreadLocal<MemoryCMARW> dstFixMemTL = new ThreadLocal<>(io.questdb.cairo.vm.MemoryCMARWImpl::new);
     private static final ThreadLocal<MemoryCMARW> dstVarMemTL = new ThreadLocal<>(io.questdb.cairo.vm.MemoryCMARWImpl::new);
     private static final int memoryTag = MemoryTag.MMAP_TABLE_WRITER;
@@ -92,6 +102,18 @@ public class ColumnTypeConverter {
                 default:
                     throw unsupportedConversion(srcColumnType, dstColumnType);
             }
+        } else if (ColumnType.isFixedSize(srcColumnType) && ColumnType.isVarSize(dstColumnType)) {
+            switch (dstColumnType) {
+                case ColumnType.STRING:
+                    return convertFixedToString(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstVarFd, ff, appendPageSize, columnSizesSink);
+                case ColumnType.VARCHAR:
+                    return convertFixedToVarchar(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstVarFd, ff, appendPageSize, columnSizesSink);
+                default:
+                    throw unsupportedConversion(srcColumnType, dstColumnType);
+            }
+        } else if (ColumnType.isFixedSize(srcColumnType) && dstColumnType == ColumnType.SYMBOL) {
+            assert symbolMapWriter != null;
+            return convertFixedToSymbol(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, symbolMapWriter, ff, appendPageSize, columnSizesSink);
         } else {
             throw unsupportedConversion(srcColumnType, dstColumnType);
         }
@@ -130,6 +152,243 @@ public class ColumnTypeConverter {
             }
             if (dstMapAddressRaw != 0) {
                 TableUtils.mapAppendColumnBufferRelease(ff, dstMapAddressRaw, 0, dstMapBytes, memoryTag);
+            }
+        }
+    }
+
+    private static boolean convertFixedToString(long skipRows, long rowCount, int srcFixFd, int srcColumnType, int dstFixFd, int dstVarFd, FilesFacade ff, long appendPageSize, ColumnConversionOffsetSink columnSizesSink) {
+        final long srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
+        assert srcColumnTypeSize > 0;
+        long srcMapAddressRaw;
+
+        long skipBytes = skipRows * srcColumnTypeSize;
+        long mapBytes = rowCount * srcColumnTypeSize;
+        MemoryCMARW dstVarMem = dstVarMemTL.get();
+        MemoryCMARW dstFixMem = dstFixMemTL.get();
+
+        srcMapAddressRaw = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipBytes, mapBytes, false, memoryTag);
+        try {
+            dstVarMem.of(ff, dstVarFd, null, appendPageSize, appendPageSize, memoryTag);
+            dstVarMem.jumpTo(0);
+            dstFixMem.of(ff, dstFixFd, null, appendPageSize, StringTypeDriver.INSTANCE.getAuxVectorSize(rowCount), memoryTag);
+            dstFixMem.jumpTo(0);
+            dstFixMem.putLong(0L);
+            StringSink sink = sinkUtf16TL.get();
+            columnSizesSink.setSrcOffsets(skipBytes, -1);
+
+            switch (srcColumnType) {
+                case ColumnType.INT:
+                    convertFixedToString0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterInt2String);
+                    break;
+                case ColumnType.UUID:
+                    convertFixedToString0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterUuidString);
+                    break;
+                case ColumnType.IPv4:
+                    convertFixedToString0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterIPv4String);
+                    break;
+                case ColumnType.SHORT:
+                    convertFixedToString0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterShortString);
+                    break;
+                case ColumnType.BYTE:
+                    convertFixedToString0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterByteString);
+                    break;
+                case ColumnType.CHAR:
+                    convertFixedToString0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterCharString);
+                    break;
+                case ColumnType.LONG:
+                    convertFixedToString0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterLongString);
+                    break;
+                case ColumnType.DOUBLE:
+                    convertFixedToString0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterDoubleString);
+                    break;
+                case ColumnType.FLOAT:
+                    convertFixedToString0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterFloatString);
+                    break;
+                case ColumnType.DATE:
+                    convertFixedToString0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterDateString);
+                    break;
+                case ColumnType.TIMESTAMP:
+                    convertFixedToString0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterTimestampString);
+                    break;
+                default:
+                    throw unsupportedConversion(srcColumnType, ColumnType.STRING);
+            }
+            columnSizesSink.setDestSizes(dstVarMem.getAppendOffset(), dstFixMem.getAppendOffset());
+        } finally {
+            TableUtils.mapAppendColumnBufferRelease(ff, srcMapAddressRaw, skipBytes, mapBytes, memoryTag);
+            dstFixMem.detachFdClose();
+            dstVarMem.detachFdClose();
+        }
+        return true;
+    }
+
+    private static void convertFixedToString0(long rowCount, long srcMapAddress, MemoryCMARW dstFixMem, MemoryCMARW dstVarMem, StringSink sink, int srcColumnType, Fixed2VarConverter converterInt2String) {
+        int srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
+        long hi = srcMapAddress + srcColumnTypeSize * rowCount;
+        sink.clear();
+        for (long addr = srcMapAddress; addr < hi; addr += srcColumnTypeSize) {
+            if (converterInt2String.convert(addr, sink)) {
+                StringTypeDriver.appendValue(dstVarMem, dstFixMem, sink);
+                sink.clear();
+            } else {
+                StringTypeDriver.INSTANCE.appendNull(dstFixMem, dstVarMem);
+            }
+        }
+    }
+
+
+    private static void convertFixedToSymbo0(long rowCount, long srcMapAddress, MemoryCMARW dstFixMem, SymbolMapWriterLite symbolMapWriter, StringSink sink, int srcColumnType, Fixed2VarConverter converterInt2String) {
+        int srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
+        long hi = srcMapAddress + srcColumnTypeSize * rowCount;
+        sink.clear();
+        for (long addr = srcMapAddress; addr < hi; addr += srcColumnTypeSize) {
+            if (converterInt2String.convert(addr, sink)) {
+                int value = symbolMapWriter.resolveSymbol(sink);
+                dstFixMem.putInt(value);
+                sink.clear();
+            } else {
+                int value = symbolMapWriter.resolveSymbol(null);
+                dstFixMem.putInt(value);
+            }
+        }
+    }
+
+    private static boolean convertFixedToSymbol(long skipRows, long rowCount, int srcFixFd, int srcColumnType, int dstFixFd, SymbolMapWriterLite symbolMapWriter, FilesFacade ff, long appendPageSize, ColumnConversionOffsetSink columnSizesSink) {
+        final long srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
+        assert srcColumnTypeSize > 0;
+        long srcMapAddressRaw;
+
+        long skipBytes = skipRows * srcColumnTypeSize;
+        long mapBytes = rowCount * srcColumnTypeSize;
+        MemoryCMARW dstFixMem = dstFixMemTL.get();
+
+        srcMapAddressRaw = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipBytes, mapBytes, false, memoryTag);
+        try {
+            dstFixMem.of(ff, dstFixFd, null, appendPageSize, StringTypeDriver.INSTANCE.getAuxVectorSize(rowCount), memoryTag);
+            dstFixMem.jumpTo(0);
+            StringSink sink = sinkUtf16TL.get();
+            columnSizesSink.setSrcOffsets(skipBytes, -1);
+
+            switch (srcColumnType) {
+                case ColumnType.INT:
+                    convertFixedToSymbo0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, symbolMapWriter, sink, srcColumnType, converterInt2String);
+                    break;
+                case ColumnType.UUID:
+                    convertFixedToSymbo0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, symbolMapWriter, sink, srcColumnType, converterUuidString);
+                    break;
+                case ColumnType.IPv4:
+                    convertFixedToSymbo0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, symbolMapWriter, sink, srcColumnType, converterIPv4String);
+                    break;
+                case ColumnType.SHORT:
+                    convertFixedToSymbo0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, symbolMapWriter, sink, srcColumnType, converterShortString);
+                    break;
+                case ColumnType.BYTE:
+                    convertFixedToSymbo0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, symbolMapWriter, sink, srcColumnType, converterByteString);
+                    break;
+                case ColumnType.CHAR:
+                    convertFixedToSymbo0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, symbolMapWriter, sink, srcColumnType, converterCharString);
+                    break;
+                case ColumnType.LONG:
+                    convertFixedToSymbo0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, symbolMapWriter, sink, srcColumnType, converterLongString);
+                    break;
+                case ColumnType.DOUBLE:
+                    convertFixedToSymbo0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, symbolMapWriter, sink, srcColumnType, converterDoubleString);
+                    break;
+                case ColumnType.FLOAT:
+                    convertFixedToSymbo0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, symbolMapWriter, sink, srcColumnType, converterFloatString);
+                    break;
+                case ColumnType.DATE:
+                    convertFixedToSymbo0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, symbolMapWriter, sink, srcColumnType, converterDateString);
+                    break;
+                case ColumnType.TIMESTAMP:
+                    convertFixedToSymbo0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, symbolMapWriter, sink, srcColumnType, converterTimestampString);
+                    break;
+                default:
+                    throw unsupportedConversion(srcColumnType, ColumnType.STRING);
+            }
+            columnSizesSink.setDestSizes(dstFixMem.getAppendOffset(), -1);
+        } finally {
+            TableUtils.mapAppendColumnBufferRelease(ff, srcMapAddressRaw, skipBytes, mapBytes, memoryTag);
+            dstFixMem.detachFdClose();
+        }
+        return true;
+    }
+
+    private static boolean convertFixedToVarchar(long skipRows, long rowCount, int srcFixFd, int srcColumnType, int dstFixFd, int dstVarFd, FilesFacade ff, long appendPageSize, ColumnConversionOffsetSink columnSizesSink) {
+        final long srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
+        assert srcColumnTypeSize > 0;
+        long srcMapAddressRaw;
+
+        long skipBytes = skipRows * srcColumnTypeSize;
+        long mapBytes = rowCount * srcColumnTypeSize;
+        MemoryCMARW dstVarMem = dstVarMemTL.get();
+        MemoryCMARW dstFixMem = dstFixMemTL.get();
+
+        srcMapAddressRaw = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipBytes, mapBytes, false, memoryTag);
+        try {
+            dstVarMem.of(ff, dstVarFd, null, appendPageSize, appendPageSize, memoryTag);
+            dstVarMem.jumpTo(0);
+            dstFixMem.of(ff, dstFixFd, null, appendPageSize, StringTypeDriver.INSTANCE.getAuxVectorSize(rowCount), memoryTag);
+            dstFixMem.jumpTo(0);
+            Utf8StringSink sink = sinkUtf8TL.get();
+            columnSizesSink.setSrcOffsets(skipBytes, -1);
+
+            switch (srcColumnType) {
+                case ColumnType.INT:
+                    convertFixedToVarchar0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterInt2String);
+                    break;
+                case ColumnType.UUID:
+                    convertFixedToVarchar0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterUuidString);
+                    break;
+                case ColumnType.IPv4:
+                    convertFixedToVarchar0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterIPv4String);
+                    break;
+                case ColumnType.SHORT:
+                    convertFixedToVarchar0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterShortString);
+                    break;
+                case ColumnType.BYTE:
+                    convertFixedToVarchar0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterByteString);
+                    break;
+                case ColumnType.CHAR:
+                    convertFixedToVarchar0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterCharString);
+                    break;
+                case ColumnType.LONG:
+                    convertFixedToVarchar0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterLongString);
+                    break;
+                case ColumnType.DOUBLE:
+                    convertFixedToVarchar0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterDoubleString);
+                    break;
+                case ColumnType.FLOAT:
+                    convertFixedToVarchar0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterFloatString);
+                    break;
+                case ColumnType.DATE:
+                    convertFixedToVarchar0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterDateString);
+                    break;
+                case ColumnType.TIMESTAMP:
+                    convertFixedToVarchar0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterTimestampString);
+                    break;
+                default:
+                    throw unsupportedConversion(srcColumnType, ColumnType.STRING);
+            }
+            columnSizesSink.setDestSizes(dstVarMem.getAppendOffset(), dstFixMem.getAppendOffset());
+        } finally {
+            TableUtils.mapAppendColumnBufferRelease(ff, srcMapAddressRaw, skipBytes, mapBytes, memoryTag);
+            dstFixMem.detachFdClose();
+            dstVarMem.detachFdClose();
+        }
+        return true;
+    }
+
+    private static void convertFixedToVarchar0(long rowCount, long srcMapAddress, MemoryCMARW dstFixMem, MemoryCMARW dstVarMem, Utf8StringSink sink, int srcColumnType, Fixed2VarConverter converterInt2String) {
+        int srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
+        long hi = srcMapAddress + srcColumnTypeSize * rowCount;
+        sink.clear();
+        for (long addr = srcMapAddress; addr < hi; addr += srcColumnTypeSize) {
+            if (converterInt2String.convert(addr, sink)) {
+                VarcharTypeDriver.appendValue(dstFixMem, dstVarMem, sink);
+                sink.clear();
+            } else {
+                VarcharTypeDriver.INSTANCE.appendNull(dstFixMem, dstVarMem);
             }
         }
     }
@@ -356,7 +615,6 @@ public class ColumnTypeConverter {
         int dstTypeSize = ColumnType.sizeOf(dstColumnType);
         dstFixMem.of(ff, dstFixFd, null, Files.PAGE_SIZE, (rowHi - rowLo) * dstTypeSize, memoryTag);
         dstFixMem.jumpTo(0);
-        StringSink sink = sinkUtf16TL.get();
 
         try {
             for (long i = rowLo; i < rowHi; i++) {
@@ -707,8 +965,104 @@ public class ColumnTypeConverter {
         dstFixMem.putLong(Numbers.LONG_NULL);
     }
 
+    private static boolean stringFromByte(long srcAddr, CharSink<?> sink) {
+        byte value = Unsafe.getUnsafe().getByte(srcAddr);
+        sink.put(value);
+        return true;
+    }
+
+    private static boolean stringFromChar(long srcAddr, CharSink<?> sink) {
+        char value = Unsafe.getUnsafe().getChar(srcAddr);
+        sink.put(value);
+        return true;
+    }
+
+    private static boolean stringFromDate(long srcAddr, CharSink<?> sink) {
+        long value = Unsafe.getUnsafe().getLong(srcAddr);
+        if (value != Numbers.LONG_NULL) {
+            sink.putISODateMillis(value);
+            return true;
+        }
+        return false;
+    }
+
+    private static boolean stringFromDouble(long srcAddr, CharSink<?> sink) {
+        double value = Unsafe.getUnsafe().getDouble(srcAddr);
+        if (value != Numbers.LONG_NULL) {
+            sink.put(value);
+            return true;
+        }
+        return false;
+    }
+
+    private static boolean stringFromFloat(long srcAddr, CharSink<?> sink) {
+        float value = Unsafe.getUnsafe().getFloat(srcAddr);
+        if (value != Numbers.LONG_NULL) {
+            sink.put(value, 4);
+            return true;
+        }
+        return false;
+    }
+
+    private static boolean stringFromIPv4(long srcAddr, CharSink<?> sink) {
+        int value = Unsafe.getUnsafe().getInt(srcAddr);
+        if (value != Numbers.IPv4_NULL) {
+            Numbers.intToIPv4Sink(sink, value);
+            return true;
+        }
+        return false;
+    }
+
+    private static boolean stringFromInt(long srcAddr, CharSink<?> sink) {
+        int value = Unsafe.getUnsafe().getInt(srcAddr);
+        if (value != Numbers.INT_NULL) {
+            sink.put(value);
+            return true;
+        }
+        return false;
+    }
+
+    private static boolean stringFromLong(long srcAddr, CharSink<?> sink) {
+        long value = Unsafe.getUnsafe().getLong(srcAddr);
+        if (value != Numbers.LONG_NULL) {
+            sink.put(value);
+            return true;
+        }
+        return false;
+    }
+
+    private static boolean stringFromShort(long srcAddr, CharSink<?> sink) {
+        short value = Unsafe.getUnsafe().getShort(srcAddr);
+        sink.put(value);
+        return true;
+    }
+
+    private static boolean stringFromTimestamp(long srcAddr, CharSink<?> sink) {
+        long value = Unsafe.getUnsafe().getLong(srcAddr);
+        if (value != Numbers.LONG_NULL) {
+            TimestampFormatUtils.appendDateTimeUSec(sink, value);
+            return true;
+        }
+        return false;
+    }
+
+    private static boolean stringFromUuid(long srcAddr, CharSink<?> sink) {
+        long lo = Unsafe.getUnsafe().getLong(srcAddr);
+        long hi = Unsafe.getUnsafe().getLong(srcAddr + 8L);
+        if (lo != Numbers.LONG_NULL || hi != Numbers.LONG_NULL) {
+            Numbers.appendUuid(lo, hi, sink);
+            return true;
+        }
+        return false;
+    }
+
     private static CairoException unsupportedConversion(int srcColumnType, int dstColumnType) {
         return CairoException.critical(0).put("Unsupported conversion from ").put(ColumnType.nameOf(srcColumnType)).put(" to ").put(ColumnType.nameOf(dstColumnType));
+    }
+
+    @FunctionalInterface
+    private interface Fixed2VarConverter {
+        boolean convert(long fixedAddr, CharSink<?> stringSink);
     }
 
     @FunctionalInterface

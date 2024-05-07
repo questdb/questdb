@@ -244,7 +244,7 @@ public class ConvertOperatorImpl implements Closeable {
                     .$(", to=").$(ColumnType.nameOf(newType))
                     .$(", partitions=").$(partitionUpdated)
                     .$(", rows=").$(totalRows)
-                    .$(", elapsed=").$(elapsed).$("μs]").I$();
+                    .$(", elapsed=").$(elapsed / 1000).$("ms]").I$();
         } finally {
             path.trimTo(rootLen);
         }
