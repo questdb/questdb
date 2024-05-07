@@ -25,6 +25,7 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.Metrics;
+import io.questdb.PublicPassthroughConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.http.processors.*;
 import io.questdb.mp.Job;
@@ -103,6 +104,7 @@ public class HttpServer implements Closeable {
     public static void addDefaultEndpoints(
             HttpServer server,
             HttpServerConfiguration configuration,
+            PublicPassthroughConfiguration publicPassthroughConfiguration,
             CairoEngine cairoEngine,
             WorkerPool workerPool,
             int sharedWorkerCount,
@@ -152,7 +154,7 @@ public class HttpServer implements Closeable {
             });
         }
 
-        final SettingsProcessor settingsProcessor = new SettingsProcessor(cairoEngine.getConfiguration());
+        final SettingsProcessor settingsProcessor = new SettingsProcessor(cairoEngine.getConfiguration(), publicPassthroughConfiguration);
         server.bind(new HttpRequestProcessorFactory() {
             @Override
             public String getUrl() {

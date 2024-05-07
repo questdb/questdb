@@ -368,6 +368,7 @@ public class ServerMain implements Closeable {
         // http
         freeOnExit.register(httpServer = services().createHttpServer(
                 config.getHttpServerConfiguration(),
+                config.getPublicPassthroughConfiguration(),
                 engine,
                 workerPoolManager,
                 metrics

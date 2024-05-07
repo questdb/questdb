@@ -25,6 +25,7 @@
 package io.questdb.cutlass;
 
 import io.questdb.Metrics;
+import io.questdb.PublicPassthroughConfiguration;
 import io.questdb.WorkerPoolManager;
 import io.questdb.WorkerPoolManager.Requester;
 import io.questdb.cairo.CairoEngine;
@@ -53,6 +54,7 @@ public class Services {
     @Nullable
     public HttpServer createHttpServer(
             HttpServerConfiguration configuration,
+            PublicPassthroughConfiguration publicPassthroughConfiguration,
             CairoEngine cairoEngine,
             WorkerPoolManager workerPoolManager,
             Metrics metrics
@@ -66,6 +68,7 @@ public class Services {
         // - SHARED otherwise
         return createHttpServer(
                 configuration,
+                publicPassthroughConfiguration,
                 cairoEngine,
                 workerPoolManager.getInstance(configuration, metrics, Requester.HTTP_SERVER),
                 workerPoolManager.getSharedWorkerCount(),
@@ -76,6 +79,7 @@ public class Services {
     @Nullable
     public HttpServer createHttpServer(
             HttpServerConfiguration configuration,
+            PublicPassthroughConfiguration publicPassthroughConfiguration,
             CairoEngine cairoEngine,
             WorkerPool workerPool,
             int sharedWorkerCount,
@@ -107,6 +111,7 @@ public class Services {
         HttpServer.addDefaultEndpoints(
                 server,
                 configuration,
+                publicPassthroughConfiguration,
                 cairoEngine,
                 workerPool,
                 sharedWorkerCount,

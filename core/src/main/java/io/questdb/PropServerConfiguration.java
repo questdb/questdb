@@ -500,6 +500,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long symbolCacheWaitUsBeforeReload;
     private boolean useLegacyStringDefault;
 
+    private final boolean posthogEnabled;
+    private final String posthogApiKey;
+    private final PublicPassthroughConfiguration publicPassthroughConfiguration = new PropPublicPassthroughConfiguration();
+
     public PropServerConfiguration(
             String root,
             Properties properties,
@@ -1266,6 +1270,9 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
         this.allowTableRegistrySharedWrite = getBoolean(properties, env, PropertyKey.DEBUG_ALLOW_TABLE_REGISTRY_SHARED_WRITE, false);
         this.enableTestFactories = getBoolean(properties, env, PropertyKey.DEBUG_ENABLE_TEST_FACTORIES, false);
+
+        this.posthogEnabled = getBoolean(properties, env, PropertyKey.POSTHOG_ENABLED, false);
+        this.posthogApiKey = getString(properties, env, PropertyKey.POSTHOG_API_KEY, null);
     }
 
     public static String rootSubdir(CharSequence dbRoot, CharSequence subdir) {
@@ -1297,6 +1304,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     public CairoConfiguration getCairoConfiguration() {
         return cairoConfiguration;
     }
+
+    @Override
+    public PublicPassthroughConfiguration getPublicPassthroughConfiguration(){ return publicPassthroughConfiguration; }
 
     @Override
     public FactoryProvider getFactoryProvider() {
@@ -1876,6 +1886,22 @@ public class PropServerConfiguration implements ServerConfiguration {
         private ValidationResult(boolean isError, String message) {
             this.isError = isError;
             this.message = message;
+        }
+    }
+
+    class PropPublicPassthroughConfiguration implements PublicPassthroughConfiguration {
+        @Override
+        public String getPosthogApiKey() {
+            return posthogApiKey;
+        }
+        @Override
+        public boolean isPosthogEnabled() {
+            return posthogEnabled;
+        }
+
+        public void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
+            settings.put(PropertyKey.POSTHOG_ENABLED.getPropertyPath(),JsonPropertyValueFormatter.bool(isPosthogEnabled()));
+            settings.put(PropertyKey.POSTHOG_API_KEY.getPropertyPath(),str(getPosthogApiKey()));
         }
     }
 
