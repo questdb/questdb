@@ -30,7 +30,6 @@ import io.questdb.std.Os;
 import org.junit.Test;
 
 public class LineHttpReceiverFuzzTest extends AbstractLineHttpFuzzTest {
-
     private static final Log LOG = LogFactory.getLog(LineHttpReceiverFuzzTest.class);
 
     @Test

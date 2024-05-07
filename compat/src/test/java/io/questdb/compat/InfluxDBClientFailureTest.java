@@ -25,25 +25,13 @@
 package io.questdb.compat;
 
 import io.questdb.*;
-import io.questdb.cairo.*;
-import io.questdb.cutlass.http.DefaultHttpContextConfiguration;
-import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
-import io.questdb.cutlass.http.HttpMinServerConfiguration;
-import io.questdb.cutlass.http.HttpServerConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.WalFormat;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
-import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
-import io.questdb.cutlass.line.LineNanoTimestampAdapter;
-import io.questdb.cutlass.line.LineTcpTimestampAdapter;
-import io.questdb.cutlass.line.tcp.DefaultLineTcpReceiverConfiguration;
-import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
-import io.questdb.cutlass.line.udp.DefaultLineUdpReceiverConfiguration;
-import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
 import org.influxdb.InfluxDB;
@@ -52,7 +40,9 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -402,143 +392,17 @@ public class InfluxDBClientFailureTest extends AbstractTest {
     }
 
     private static @NotNull Bootstrap createBootstrap(FilesFacade filesFacade, int walFormat) {
-        final CairoConfiguration cairoConfiguration = new DefaultCairoConfiguration(root) {
-            @Override
-            public @NotNull FilesFacade getFilesFacade() {
-                return filesFacade;
-            }
-
-            @Override
-            public int getWalDefaultFormat() {
-                return walFormat;
-            }
-        };
-        final LineHttpProcessorConfiguration lineHttpProcessorConfiguration = new LineHttpProcessorConfiguration() {
-            @Override
-            public boolean autoCreateNewColumns() {
-                return true;
-            }
-
-            @Override
-            public boolean autoCreateNewTables() {
-                return true;
-            }
-
-            @Override
-            public short getDefaultColumnTypeForFloat() {
-                return ColumnType.DOUBLE;
-            }
-
-            @Override
-            public short getDefaultColumnTypeForInteger() {
-                return ColumnType.LONG;
-            }
-
-            @Override
-            public int getDefaultPartitionBy() {
-                return PartitionBy.DAY;
-            }
-
-            @Override
-            public CharSequence getInfluxPingVersion() {
-                return "v2.7.4";
-            }
-
-            @Override
-            public MicrosecondClock getMicrosecondClock() {
-                return MicrosecondClockImpl.INSTANCE;
-            }
-
-            @Override
-            public long getSymbolCacheWaitUsBeforeReload() {
-                return 500_000;
-            }
-
-            @Override
-            public LineTcpTimestampAdapter getTimestampAdapter() {
-                return new LineTcpTimestampAdapter(LineNanoTimestampAdapter.INSTANCE);
-            }
-
-            @Override
-            public boolean isEnabled() {
-                return true;
-            }
-
-            @Override
-            public boolean isStringAsTagSupported() {
-                return true;
-            }
-
-            @Override
-            public boolean isStringToCharCastAllowed() {
-                return true;
-            }
-
-            @Override
-            public boolean isSymbolAsFieldSupported() {
-                return true;
-            }
-
-            @Override
-            public boolean isUseLegacyStringDefault() {
-                return false;
-            }
-        };
-        final ServerConfiguration serverConfiguration = new DefaultServerConfiguration(root) {
-            @Override
-            public CairoConfiguration getCairoConfiguration() {
-                return cairoConfiguration;
-            }
-
-            @Override
-            public HttpMinServerConfiguration getHttpMinServerConfiguration() {
-                return new DefaultHttpServerConfiguration() {
-                    @Override
-                    public boolean isEnabled() {
-                        return false;
-                    }
-                };
-            }
-
-            @Override
-            public HttpServerConfiguration getHttpServerConfiguration() {
-                return new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration()) {
-                    @Override
-                    public LineHttpProcessorConfiguration getLineHttpProcessorConfiguration() {
-                        return lineHttpProcessorConfiguration;
-                    }
-                };
-            }
-
-            @Override
-            public LineTcpReceiverConfiguration getLineTcpReceiverConfiguration() {
-                return new DefaultLineTcpReceiverConfiguration() {
-                    @Override
-                    public boolean isEnabled() {
-                        return false;
-                    }
-                };
-            }
-
-            @Override
-            public LineUdpReceiverConfiguration getLineUdpReceiverConfiguration() {
-                return new DefaultLineUdpReceiverConfiguration() {
-                    @Override
-                    public boolean isEnabled() {
-                        return false;
-                    }
-                };
-            }
-        };
+        final Map<String, String> env = new HashMap<>(System.getenv());
+        env.put(PropertyKey.CAIRO_WAL_DEFAULT_FORMAT.getEnvVarName(), walFormat == WalFormat.WAL_FORMAT_ROW_FIRST ? "row" : "column");
         return new Bootstrap(new DefaultBootstrapConfiguration() {
+            @Override
+            public Map<String, String> getEnv() {
+                return env;
+            }
+
             @Override
             public FilesFacade getFilesFacade() {
                 return filesFacade;
-            }
-
-            @Override
-            public ServerConfiguration getServerConfiguration(Bootstrap bootstrap1) {
-                return serverConfiguration;
             }
         }, Bootstrap.getServerMainArgs(root));
     }

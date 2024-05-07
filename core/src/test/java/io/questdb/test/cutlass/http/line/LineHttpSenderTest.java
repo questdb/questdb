@@ -35,24 +35,45 @@ import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractBootstrapTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.Arrays;
+import java.util.Collection;
 
 import static io.questdb.PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE;
 import static io.questdb.PropertyKey.LINE_HTTP_ENABLED;
 
+@RunWith(Parameterized.class)
 public class LineHttpSenderTest extends AbstractBootstrapTest {
+    private final AbstractCairoTest.WalFormat walFormat;
+
+    public LineHttpSenderTest(AbstractCairoTest.WalFormat walFormat) {
+        this.walFormat = walFormat;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {AbstractCairoTest.WalFormat.ROW_FIRST},
+                {AbstractCairoTest.WalFormat.COL_FIRST}
+        });
+    }
 
     @Before
     public void setUp() {
         super.setUp();
-        TestUtils.unchecked(() -> createDummyConfiguration());
+        TestUtils.unchecked(() -> createDummyConfiguration(
+                PropertyKey.CAIRO_WAL_DEFAULT_FORMAT + "=" + (walFormat == AbstractCairoTest.WalFormat.ROW_FIRST ? "row" : "column")
+        ));
         dbPath.parent().$();
     }
 
@@ -116,6 +137,39 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testAutoFlush() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        TestUtils.assertMemoryLeak(() -> {
+            int fragmentation = 1 + rnd.nextInt(5);
+            LOG.info().$("=== fragmentation=").$(fragmentation).$();
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), String.valueOf(fragmentation)
+            )) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                int totalCount = 100_000;
+                int autoFlushRows = 1000;
+                try (LineHttpSender sender = new LineHttpSender("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, null, autoFlushRows, null, null, null, 0, 0, Long.MAX_VALUE)) {
+                    for (int i = 0; i < totalCount; i++) {
+                        if (i != 0 && i % autoFlushRows == 0) {
+                            serverMain.awaitTable("table with space");
+                            serverMain.assertSql("select count() from 'table with space'", "count\n" +
+                                    i + "\n");
+                        }
+                        sender.table("table with space")
+                                .symbol("tag1", "value" + i % 10)
+                                .timestampColumn("tcol4", 10, ChronoUnit.HOURS)
+                                .atNow();
+                    }
+                    serverMain.awaitTable("table with space");
+                    serverMain.assertSql("select count() from 'table with space'", "count\n" +
+                            totalCount + "\n");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testFlushAfterTimeout() throws Exception {
         // this is a regression test
         // there was a bug that flushes due to interval did not increase row count
@@ -162,43 +216,31 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testAutoFlush() throws Exception {
-        Rnd rnd = TestUtils.generateRandom(LOG);
+    public void testInsertWithIlpHttp() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            int fragmentation = 1 + rnd.nextInt(5);
-            LOG.info().$("=== fragmentation=").$(fragmentation).$();
             try (final TestServerMain serverMain = startWithEnvVariables(
-                    DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), String.valueOf(fragmentation)
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
             )) {
-                int httpPort = serverMain.getHttpServerPort();
+                serverMain.start();
 
-                int totalCount = 100_000;
-                int autoFlushRows = 1000;
-                try (LineHttpSender sender = new LineHttpSender("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, null, autoFlushRows, null, null, null, 0, 0, Long.MAX_VALUE)) {
-                    for (int i = 0; i < totalCount; i++) {
-                        if (i != 0 && i % autoFlushRows == 0) {
-                            serverMain.awaitTable("table with space");
-                            serverMain.assertSql("select count() from 'table with space'", "count\n" +
-                                    i + "\n");
-                        }
-                        sender.table("table with space")
-                                .symbol("tag1", "value" + i % 10)
-                                .timestampColumn("tcol4", 10, ChronoUnit.HOURS)
-                                .atNow();
-                    }
-                    serverMain.awaitTable("table with space");
-                    serverMain.assertSql("select count() from 'table with space'", "count\n" +
-                            totalCount + "\n");
-                }
+                String tableName = "h2o_feet";
+                int count = 9250;
+
+                sendIlp(tableName, count, serverMain);
+
+                serverMain.awaitTxn(tableName, 2);
+                serverMain.assertSql("SELECT count() FROM h2o_feet", "count\n" + count + "\n");
+                serverMain.assertSql("SELECT sum(water_level) FROM h2o_feet", "sum\n" + (count * (count - 1) / 2) + "\n");
             }
         });
     }
 
     @Test
-    public void testInsertWithIlpHttp() throws Exception {
+    public void testInsertWithIlpHttpServerKeepAliveOff() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048",
+                    PropertyKey.HTTP_SERVER_KEEP_ALIVE.getEnvVarName(), "false"
             )) {
                 serverMain.start();
 
@@ -251,27 +293,6 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
 
                 serverMain.awaitTxn(tableName, 1);
                 serverMain.assertSql("SELECT level FROM h2o_feet", expectedString.toString());
-            }
-        });
-    }
-
-    @Test
-    public void testInsertWithIlpHttpServerKeepAliveOff() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048",
-                    PropertyKey.HTTP_SERVER_KEEP_ALIVE.getEnvVarName(), "false"
-            )) {
-                serverMain.start();
-
-                String tableName = "h2o_feet";
-                int count = 9250;
-
-                sendIlp(tableName, count, serverMain);
-
-                serverMain.awaitTxn(tableName, 2);
-                serverMain.assertSql("SELECT count() FROM h2o_feet", "count\n" + count + "\n");
-                serverMain.assertSql("SELECT sum(water_level) FROM h2o_feet", "sum\n" + (count * (count - 1) / 2) + "\n");
             }
         });
     }

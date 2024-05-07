@@ -24,6 +24,7 @@
 
 package io.questdb.test;
 
+import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
@@ -36,19 +37,40 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
+
+@RunWith(Parameterized.class)
 public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
+    private final AbstractCairoTest.WalFormat walFormat;
+
+    public ServerMainCleanStartupTest(AbstractCairoTest.WalFormat walFormat) {
+        this.walFormat = walFormat;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {AbstractCairoTest.WalFormat.ROW_FIRST},
+                {AbstractCairoTest.WalFormat.COL_FIRST}
+        });
+    }
+
     @Before
     public void setUp() {
         super.setUp();
-        TestUtils.unchecked(() -> createDummyConfiguration());
+        TestUtils.unchecked(() -> createDummyConfiguration(
+                PropertyKey.CAIRO_WAL_DEFAULT_FORMAT + "=" + (walFormat == AbstractCairoTest.WalFormat.ROW_FIRST ? "row" : "column")
+        ));
         dbPath.parent().$();
     }
 
     @Test
     public void testServerMainCleanStart() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-
             StringSink sink = new StringSink();
 
             // create two tables:
@@ -69,7 +91,7 @@ public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
                 // wait for the row count
                 try (RecordCursorFactory rfc = serverMain.getEngine().select("select count() from y", sqlExecutionContext)) {
                     while (true) {
-                        try (RecordCursor cursor = rfc.getCursor(sqlExecutionContext)){
+                        try (RecordCursor cursor = rfc.getCursor(sqlExecutionContext)) {
                             Record rec = cursor.getRecord();
                             if (cursor.hasNext()) {
                                 if (rec.getLong(0) == 2) {
