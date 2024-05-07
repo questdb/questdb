@@ -410,11 +410,13 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private static void sendInsertConfirmation(
             JsonQueryProcessorState state,
             CharSequence keepAliveHeader
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException
-    {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final HttpConnectionContext context = state.getHttpConnectionContext();
         final HttpChunkedResponse response = context.getChunkedResponse();
         header(response, context, keepAliveHeader, 200);
+        response.put('{')
+                .putAsciiQuoted("dml").putAscii(':').putAsciiQuoted("OK")
+                .put('}');
         response.sendChunk(true);
         readyForNextRequest(context);
     }
@@ -428,7 +430,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final HttpChunkedResponse response = context.getChunkedResponse();
         header(response, context, keepAliveHeader, 200);
         response.put('{')
-                .putAsciiQuoted("ddl").putAscii(':').putAsciiQuoted("OK").putAscii(',')
+                .putAsciiQuoted("dml").putAscii(':').putAsciiQuoted("OK").putAscii(',')
                 .putAsciiQuoted("updated").putAscii(':').put(updateRecords)
                 .put('}');
         response.sendChunk(true);
