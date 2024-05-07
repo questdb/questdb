@@ -84,11 +84,11 @@ public class OutOfMemoryTest extends AbstractCairoTest {
 
     @Test
     public void testOrderBy() throws Exception {
-        long limitMB = 12;
+        long limitMB = 10;
         Unsafe.setRssMemLimit(limitMB * 1_000_000);
         assertMemoryLeak(() -> {
             try {
-                ddl("create table x as (select rnd_varchar(10, 1000, 0) val, from long_sequence(500000));");
+                ddl("create table x as (select rnd_varchar(10, 1000, 0) val, from long_sequence(200000));");
                 select("x order by val").close();
                 fail("Query completed with RSS limit " + limitMB + " MB");
             } catch (CairoException e) {
