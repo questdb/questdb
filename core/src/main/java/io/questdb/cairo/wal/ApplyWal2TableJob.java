@@ -361,6 +361,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 }
             } finally {
                 Misc.free(structuralChangeCursor);
+                writer.shrinkO3Mem();
             }
         }
     }
