@@ -61,9 +61,7 @@ jobs:
             cmake -B build/release -DCMAKE_BUILD_TYPE=Release
             cmake --build build/release --config Release
             mkdir -p src/main/resources/io/questdb/bin/freebsd-amd64/
-            mkdir -p src/main/bin/freebsd-amd64/
             cp target/classes/io/questdb/bin-local/libquestdb.so src/main/resources/io/questdb/bin/freebsd-amd64/
-            cp target/classes/io/questdb/bin-local/libjemalloc.so src/main/bin/freebsd-amd64/
             cd rust/qdbr
             cargo build --release
             cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/freebsd-amd64/
@@ -74,7 +72,6 @@ jobs:
         uses: actions/cache/save@v3
         with:
           path: |
-            core/src/main/bin/freebsd-amd64/libjemalloc.so
             core/src/main/resources/io/questdb/bin/freebsd-amd64/libquestdb.so
             core/src/main/resources/io/questdb/bin/freebsd-amd64/libquestdbr.so
           key: nativelibs-freebsd-${{ github.sha }}
@@ -309,7 +306,6 @@ jobs:
         uses: actions/cache/restore@v3
         with:
           path: |
-            core/src/main/bin/freebsd-amd64/libjemalloc.so
             core/src/main/resources/io/questdb/bin/freebsd-amd64/libquestdb.so
             core/src/main/resources/io/questdb/bin/freebsd-amd64/libquestdbr.so
           key: nativelibs-freebsd-${{ github.sha }}
@@ -373,7 +369,6 @@ jobs:
           git add core/src/main/bin/darwin-amd64/libjemalloc.dylib
           git add core/src/main/resources/io/questdb/bin/freebsd-amd64/libquestdb.so
           git add core/src/main/resources/io/questdb/bin/freebsd-amd64/libquestdbr.so
-          git add core/src/main/bin/freebsd-amd64/libjemalloc.so
           git add core/src/main/resources/io/questdb/bin/linux-amd64/libquestdb.so
           git add core/src/main/resources/io/questdb/bin/linux-amd64/libquestdbr.so
           git add core/src/main/bin/linux-amd64/libjemalloc.so
