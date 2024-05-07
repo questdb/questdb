@@ -158,7 +158,7 @@ public class IODispatcherTest extends AbstractTest {
     public void testBadImplicitStrToLongCast() throws Exception {
         getSimpleTester().run(engine -> {
             testHttpClient.assertGet("{\"ddl\":\"OK\"}", "create table tab (value int, when long, ts timestamp) timestamp(ts) partition by day bypass wal;");
-            testHttpClient.assertGet("{\"dml\":\"OK\"}", "insert into tab values(1, now(), now());"); // it should not be DDL:OK. change me when https://github.com/questdb/questdb/issues/3858 is fixed
+            testHttpClient.assertGet("{\"dml\":\"OK\"}", "insert into tab values(1, now(), now());");
             testHttpClient.assertGet(
                     "{\"query\":\"select * from tab where when = '2023-10-17';\",\"error\":\"inconvertible value: `2023-10-17` [STRING -> LONG]\",\"position\":0}",
                     "select * from tab where when = '2023-10-17';"
