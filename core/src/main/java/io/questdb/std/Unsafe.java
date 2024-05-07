@@ -300,22 +300,24 @@ public final class Unsafe {
     //#endif
 
     private static void checkAllocLimit(long size, int memoryTag) {
-        if (RSS_MEM_LIMIT > 0 && memoryTag >= NATIVE_DEFAULT) {
-            long usage = RSS_MEM_USED.get();
-            if (usage + size > RSS_MEM_LIMIT) {
-                throw CairoException.nonCritical().put("RSS memory limit exceeded [usage=")
-                        .put(usage)
-                        .put(", limit=").put(RSS_MEM_LIMIT)
-                        .put(", allocation=").put(size)
-                        .put(']');
-            }
-        }
         if (WRITER_MEM_LIMIT > 0 && memoryTag == NATIVE_O3 && COUNTERS[memoryTag].sum() + size > WRITER_MEM_LIMIT) {
             long usage = COUNTERS[memoryTag].sum();
             if (usage + size > WRITER_MEM_LIMIT) {
                 throw CairoException.critical(0).put("table writing memory limit reached [usage=")
                         .put(usage)
                         .put(", limit=").put(WRITER_MEM_LIMIT)
+                        .put(", allocation=").put(size)
+                        .put(']');
+            }
+        }
+        if (RSS_MEM_LIMIT > 0 && memoryTag >= NATIVE_DEFAULT) {
+            long usage = RSS_MEM_USED.get();
+            System.out.printf("checkAllocLimit %,d + %,d = %,d, limit %,d\n", usage, size, usage + size, RSS_MEM_LIMIT);
+            if (usage + size > RSS_MEM_LIMIT) {
+                throw CairoException.nonCritical().setOutOfMemory(true)
+                        .put("global RSS memory limit exceeded [usage=")
+                        .put(usage)
+                        .put(", limit=").put(RSS_MEM_LIMIT)
                         .put(", allocation=").put(size)
                         .put(']');
             }
