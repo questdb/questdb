@@ -3448,13 +3448,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         metadata.setMetadataVersion(txWriter.getMetadataVersion() + 1);
     }
 
-    private long copyWalRowValue(int columnIndex, int columnType, long offset, MemoryCMOR srcMem) {
-        final int size = columnSizeCache.getQuick(columnIndex);
-        if (size > 0) {
+    private long copyWalRowValue(int columnSize, int columnIndex, int columnType, long offset, MemoryCMOR srcMem) {
+        if (columnSize > 0) {
             // fixed-size column
             final MemoryCARW destMem = walColumns.getQuick(getPrimaryColumnIndex(columnIndex));
-            destMem.putBlockOfBytes(srcMem.addressOf(offset), size);
-            return size;
+            destMem.putBlockOfBytes(srcMem.addressOf(offset), columnSize);
+            return columnSize;
         } else {
             // var-size column
             final MemoryCARW destDataMem = walColumns.getQuick(getPrimaryColumnIndex(columnIndex));
@@ -6399,9 +6398,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int nonDroppedColumnCount = 0;
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 final int columnType = metadata.getColumnType(columnIndex);
+                final int columnSize = ColumnType.sizeOfWalDataColumn(Math.abs(columnType), columnIndex == timestampIndex);
+                columnSizeCache.setQuick(columnIndex, columnSize);
                 if (columnType > 0) {
-                    final int size = ColumnType.sizeOfWalDataColumn(columnType, columnIndex == timestampIndex);
-                    columnSizeCache.setQuick(columnIndex, size);
                     final int sizeBitsPow2 = ColumnType.getWalDataColumnShl(columnType, columnIndex == timestampIndex);
                     if (ColumnType.isVarSize(columnType)) {
                         final MemoryCARW dataMem = o3MemColumns1.getQuick(getPrimaryColumnIndex(columnIndex));
@@ -6430,7 +6429,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                     nonDroppedColumnCount++;
                 } else {
-                    columnSizeCache.setQuick(columnIndex, -1);
                     walColumns.add(NullMemory.INSTANCE);
                     walColumns.add(NullMemory.INSTANCE);
                 }
@@ -6457,12 +6455,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     continue;
                 }
                 final int columnType = metadata.getColumnType(columnIndex);
+                final int columnSize = columnSizeCache.getQuick(columnIndex);
                 if (columnType > -1) {
-                    offset += copyWalRowValue(columnIndex, columnType, offset, walRowMemory);
+                    offset += copyWalRowValue(columnSize, columnIndex, columnType, offset, walRowMemory);
                     rowValueIsNotNull.setQuick(columnIndex, 1);
                     nonNullColumns++;
                 } else {
-                    offset += skipWalRowValue(columnIndex, Math.abs(columnType), offset, walRowMemory);
+                    offset += skipWalRowValue(columnSize, Math.abs(columnType), offset, walRowMemory);
                 }
             }
             if (rows != rowHi - rowLo) {
@@ -7290,10 +7289,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private long skipWalRowValue(int columnIndex, int columnType, long offset, MemoryCMOR srcMem) {
-        final int size = columnSizeCache.getQuick(columnIndex);
-        if (size > 0) {
-            return size;
+    private long skipWalRowValue(int columnSize, int columnType, long offset, MemoryCMOR srcMem) {
+        if (columnSize > 0) {
+            return columnSize;
         } else {
             switch (ColumnType.tagOf(columnType)) {
                 case ColumnType.VARCHAR:
