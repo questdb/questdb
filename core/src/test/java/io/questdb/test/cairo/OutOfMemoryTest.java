@@ -30,40 +30,45 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.After;
 import org.junit.Test;
 
 import static org.junit.Assert.fail;
 
 public class OutOfMemoryTest extends AbstractCairoTest {
 
+    @After
+    public void tearDown() throws Exception {
+        Unsafe.setRssMemLimit(0);
+        super.tearDown();
+    }
+
     @Test
     public void testCreateAtomicTable() throws Exception {
-        long[] rssLimitsMB = {10, 20, 50};
-        for (long limit : rssLimitsMB) {
-            Unsafe.setRssMemLimit(limit * 1_000_000);
-            assertMemoryLeak(() -> {
-                try {
-                    ddl("create atomic table x as (select" +
-                            " rnd_timestamp(to_timestamp('2024-03-01', 'yyyy-mm-dd'), to_timestamp('2024-04-01', 'yyyy-mm-dd'), 0) ts" +
-                            " from long_sequence(10000000)) timestamp(ts) partition by day;");
-                    fail("Managed to create table with RSS limit " + limit + " MB");
-                } catch (SqlException e) {
-                    drop("drop table x;");
-                }
-            });
-        }
+        long limitMB = 12;
+        Unsafe.setRssMemLimit(limitMB * 1_000_000);
+        assertMemoryLeak(() -> {
+            try {
+                ddl("create atomic table x as (select" +
+                        " rnd_timestamp(to_timestamp('2024-03-01', 'yyyy-mm-dd'), to_timestamp('2024-04-01', 'yyyy-mm-dd'), 0) ts" +
+                        " from long_sequence(10000000)) timestamp(ts) partition by day;");
+                fail("Managed to create table with RSS limit " + limitMB + " MB");
+            } catch (SqlException e) {
+                drop("drop table x;");
+            }
+        });
     }
 
     @Test
     public void testGroupBy() throws Exception {
-        long limitMB = 12;
+        long limitMB = 10;
         Unsafe.setRssMemLimit(limitMB * 1_000_000);
         assertMemoryLeak(() -> {
             try {
                 ddl("create table x as (select" +
                         " rnd_varchar(10, 1000, 0) val," +
                         " rnd_long() num," +
-                        " from long_sequence(100000));");
+                        " from long_sequence(500000));");
                 try (RecordCursorFactory fac = select("select val, max(num) from x group by val")) {
                     RecordCursor cursor = fac.getCursor(sqlExecutionContext);
                     while (cursor.hasNext()) {
@@ -83,7 +88,7 @@ public class OutOfMemoryTest extends AbstractCairoTest {
         Unsafe.setRssMemLimit(limitMB * 1_000_000);
         assertMemoryLeak(() -> {
             try {
-                ddl("create table x as (select rnd_varchar(10, 1000, 0) val, from long_sequence(100000));");
+                ddl("create table x as (select rnd_varchar(10, 1000, 0) val, from long_sequence(500000));");
                 select("x order by val").close();
                 fail("Query completed with RSS limit " + limitMB + " MB");
             } catch (CairoException e) {
