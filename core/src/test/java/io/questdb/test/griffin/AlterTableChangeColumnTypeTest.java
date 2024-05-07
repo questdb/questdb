@@ -705,6 +705,71 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVarcharToFixedConversions() throws Exception {
+        assertMemoryLeak(() -> {
+            assumeNonWal();
+
+            ddl(
+                    "create table x as (" +
+                            "select" +
+                            " rnd_uuid4() guid," +
+                            " rnd_int() rint," +
+                            " rnd_ipv4() ip," +
+                            " rnd_long() i64," +
+                            " rnd_short() i16," +
+                            " rnd_byte() i8," +
+                            " rnd_double() f64," +
+                            " rnd_float() f32," +
+                            " rnd_char() ch," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 ts," +
+                            " cast(to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 as date) dt," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 timestamp" +
+                            " from long_sequence(1000)" +
+                            ")"
+            );
+            // add nulls last line
+            insert("insert into x(timestamp) values('2018-01-03T23:23')", sqlExecutionContext);
+
+            ddl("create table y as (" +
+                    "select cast(guid as varchar) as guid," +
+                    " cast(cast(rint as string) as varchar) as rint," +
+                    " cast(cast(ip as string) as varchar) as ip," +
+                    " cast(cast(i64 as string) as varchar) as i64," +
+                    " cast(cast(i16 as string) as varchar) as i16," +
+                    " cast(cast(i8 as string) as varchar) as i8," +
+                    " cast(cast(f64 as string) as varchar) as f64," +
+                    " cast(cast(f32 as string) as varchar) as f32," +
+                    " cast(cast(ch as string) as varchar) as ch," +
+                    " cast(cast(ts as string) as varchar) as ts," +
+                    " cast(cast(dt as string) as varchar) as dt," +
+                    " timestamp from x) " +
+                    "timestamp (timestamp) partition by DAY;", sqlExecutionContext);
+
+            // Insert garbage data
+            insert("insert into y(guid, rint, ip, i64, i8, i16, f64, f32, ch, ts, dt, timestamp) values('abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', '2018-01-03T23:23:10')", sqlExecutionContext);
+            // Expect nulls
+            insert("insert into x(timestamp) values('2018-01-03T23:23:10')", sqlExecutionContext);
+
+            ddl("alter table y alter column guid type uuid", sqlExecutionContext);
+            ddl("alter table y alter column rint type int", sqlExecutionContext);
+            ddl("alter table y alter column ip type ipv4", sqlExecutionContext);
+            ddl("alter table y alter column i64 type long", sqlExecutionContext);
+            ddl("alter table y alter column i16 type short", sqlExecutionContext);
+            ddl("alter table y alter column i8 type byte", sqlExecutionContext);
+            ddl("alter table y alter column f64 type double", sqlExecutionContext);
+            ddl("alter table y alter column f32 type float", sqlExecutionContext);
+            ddl("alter table y alter column ch type char", sqlExecutionContext);
+            ddl("alter table y alter column ts type timestamp", sqlExecutionContext);
+            ddl("alter table y alter column dt type date", sqlExecutionContext);
+
+            assertSqlCursorsConvertedStrings(
+                    "select * from x",
+                    "select * from y"
+            );
+        });
+    }
+
+    @Test
     public void testFixedSizeColumnLongToInt() throws Exception {
         assertMemoryLeak(() -> {
             createX();

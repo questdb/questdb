@@ -885,6 +885,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         switch (from) {
             case ColumnType.STRING:
             case ColumnType.SYMBOL:
+            case ColumnType.VARCHAR:
                 switch (to) {
                     case ColumnType.IPv4:
                     case ColumnType.UUID:

@@ -306,6 +306,39 @@ public class ColumnTypeConverter {
                 case ColumnType.SYMBOL:
                     convertFromVarcharToSymbol(skipRows, skipRows + rowCount, dstFixFd, ff, symbolMapWriter, srcVarMem, srcFixMem, columnSizesSink);
                     break;
+                case ColumnType.IPv4:
+                    convertFromVarcharToFixed(skipRows, skipRows + rowCount, dstFixFd, ff, srcVarMem, srcFixMem, columnSizesSink, dstColumnType, converterStr2IPv4);
+                    break;
+                case ColumnType.UUID:
+                    convertFromVarcharToFixed(skipRows, skipRows + rowCount, dstFixFd, ff, srcVarMem, srcFixMem, columnSizesSink, dstColumnType, converterStr2Uuid);
+                    break;
+                case ColumnType.INT:
+                    convertFromVarcharToFixed(skipRows, skipRows + rowCount, dstFixFd, ff, srcVarMem, srcFixMem, columnSizesSink, dstColumnType, converterStr2Int);
+                    break;
+                case ColumnType.SHORT:
+                    convertFromVarcharToFixed(skipRows, skipRows + rowCount, dstFixFd, ff, srcVarMem, srcFixMem, columnSizesSink, dstColumnType, converterStr2Short);
+                    break;
+                case ColumnType.BYTE:
+                    convertFromVarcharToFixed(skipRows, skipRows + rowCount, dstFixFd, ff, srcVarMem, srcFixMem, columnSizesSink, dstColumnType, converterStr2Byte);
+                    break;
+                case ColumnType.CHAR:
+                    convertFromVarcharToFixed(skipRows, skipRows + rowCount, dstFixFd, ff, srcVarMem, srcFixMem, columnSizesSink, dstColumnType, converterStr2Char);
+                    break;
+                case ColumnType.LONG:
+                    convertFromVarcharToFixed(skipRows, skipRows + rowCount, dstFixFd, ff, srcVarMem, srcFixMem, columnSizesSink, dstColumnType, converterStr2Long);
+                    break;
+                case ColumnType.DOUBLE:
+                    convertFromVarcharToFixed(skipRows, skipRows + rowCount, dstFixFd, ff, srcVarMem, srcFixMem, columnSizesSink, dstColumnType, converterStr2Double);
+                    break;
+                case ColumnType.FLOAT:
+                    convertFromVarcharToFixed(skipRows, skipRows + rowCount, dstFixFd, ff, srcVarMem, srcFixMem, columnSizesSink, dstColumnType, converterStr2Float);
+                    break;
+                case ColumnType.DATE:
+                    convertFromVarcharToFixed(skipRows, skipRows + rowCount, dstFixFd, ff, srcVarMem, srcFixMem, columnSizesSink, dstColumnType, converterStr2Date);
+                    break;
+                case ColumnType.TIMESTAMP:
+                    convertFromVarcharToFixed(skipRows, skipRows + rowCount, dstFixFd, ff, srcVarMem, srcFixMem, columnSizesSink, dstColumnType, converterStr2Timestamp);
+                    break;
                 default:
                     throw unsupportedConversion(ColumnType.VARCHAR, dstColumnType);
             }
@@ -316,6 +349,25 @@ public class ColumnTypeConverter {
             srcFixMem.detachFdClose();
         }
         return true;
+    }
+
+    private static void convertFromVarcharToFixed(long rowLo, long rowHi, int dstFixFd, FilesFacade ff, @Nullable MemoryCMORImpl srcVarMem, MemoryCMORImpl srcFixMem, ColumnConversionOffsetSink columnSizesSink, int dstColumnType, Var2FixedConverter<CharSequence> converter) {
+        MemoryCMARW dstFixMem = dstFixMemTL.get();
+        int dstTypeSize = ColumnType.sizeOf(dstColumnType);
+        dstFixMem.of(ff, dstFixFd, null, Files.PAGE_SIZE, (rowHi - rowLo) * dstTypeSize, memoryTag);
+        dstFixMem.jumpTo(0);
+        StringSink sink = sinkUtf16TL.get();
+
+        try {
+            for (long i = rowLo; i < rowHi; i++) {
+                Utf8Sequence utf8 = VarcharTypeDriver.getSplitValue(srcFixMem, srcVarMem, i, 1);
+                converter.convert(utf8 != null ? utf8.asAsciiCharSequence() : null, dstFixMem);
+            }
+            assert dstFixMem.getAppendOffset() == (rowHi - rowLo) * dstTypeSize;
+            columnSizesSink.setDestSizes(dstFixMem.getAppendOffset(), -1);
+        } finally {
+            dstFixMem.detachFdClose();
+        }
     }
 
     private static void convertFromVarcharToString(long rowLo, long rowHi, int dstFixFd, int dstVarFd, FilesFacade ff, long appendPageSize,
@@ -349,8 +401,7 @@ public class ColumnTypeConverter {
         }
     }
 
-    private static void convertFromVarcharToSymbol(long rowLo, long rowHi, int dstFixFd, FilesFacade ff, SymbolMapWriterLite symbolMapWriterLite,
-                                                   @Nullable MemoryCMORImpl srcVarMem, MemoryCMORImpl srcFixMem, ColumnConversionOffsetSink columnSizesSink) {
+    private static void convertFromVarcharToSymbol(long rowLo, long rowHi, int dstFixFd, FilesFacade ff, SymbolMapWriterLite symbolMapWriterLite, @Nullable MemoryCMORImpl srcVarMem, MemoryCMORImpl srcFixMem, ColumnConversionOffsetSink columnSizesSink) {
         MemoryCMARW dstFixMem = dstFixMemTL.get();
 
         dstFixMem.of(ff, dstFixFd, null, Files.PAGE_SIZE, (rowHi - rowLo) * Integer.BYTES, memoryTag);
