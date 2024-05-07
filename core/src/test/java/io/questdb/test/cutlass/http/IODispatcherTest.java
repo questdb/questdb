@@ -24,7 +24,10 @@
 
 package io.questdb.test.cutlass.http;
 
+import io.questdb.DefaultPublicPassthroughConfiguration;
+import io.questdb.DefaultServerConfiguration;
 import io.questdb.Metrics;
+import io.questdb.PublicPassthroughConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -985,6 +988,7 @@ public class IODispatcherTest extends AbstractTest {
                                 return StationaryNanosClock.INSTANCE;
                             }
                         }),
+                        new DefaultPublicPassthroughConfiguration(),
                         cairoEngine,
                         workerPool
                 )) {
@@ -1059,6 +1063,7 @@ public class IODispatcherTest extends AbstractTest {
                                 return StationaryNanosClock.INSTANCE;
                             }
                         }),
+                        new DefaultPublicPassthroughConfiguration(),
                         cairoEngine,
                         workerPool
                 )) {
@@ -8113,11 +8118,13 @@ public class IODispatcherTest extends AbstractTest {
 
     private static HttpServer createHttpServer(
             HttpServerConfiguration configuration,
+            PublicPassthroughConfiguration publicPassthroughConfiguration,
             CairoEngine cairoEngine,
             WorkerPool workerPool
     ) {
         return Services.INSTANCE.createHttpServer(
                 configuration,
+                publicPassthroughConfiguration,
                 cairoEngine,
                 workerPool,
                 workerPool.getWorkerCount(),
