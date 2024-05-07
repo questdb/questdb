@@ -35,6 +35,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Os;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.ColumnTask;
 import org.jetbrains.annotations.NotNull;
@@ -70,6 +71,7 @@ public class ConvertOperatorImpl implements Closeable {
     private final PurgingOperator purgingOperator;
     private final int rootLen;
     private final TableWriter tableWriter;
+    private final MicrosecondClock timer;
     private CharSequence columnName;
     private int partitionUpdated;
     private SymbolMapReaderImpl symbolMapReader;
@@ -88,6 +90,7 @@ public class ConvertOperatorImpl implements Closeable {
         this.appendPageSize = configuration.getDataAppendPageSize();
         this.messageBus = messageBus;
         this.countDownLatch = new SOUnboundedCountDownLatch();
+        this.timer = configuration.getMicrosecondClock();
     }
 
     @Override
@@ -163,6 +166,8 @@ public class ConvertOperatorImpl implements Closeable {
             int queueCount = 0;
             countDownLatch.reset();
             asyncProcessingErrorCount.set(0);
+            long start = timer.getTicks();
+            long totalRows = 0;
 
             for (int partitionIndex = 0, n = tableWriter.getPartitionCount(); partitionIndex < n; partitionIndex++) {
                 if (asyncProcessingErrorCount.get() == 0) {
@@ -196,6 +201,7 @@ public class ConvertOperatorImpl implements Closeable {
                                             .$(", to=").$(ColumnType.nameOf(newType))
                                             .$(", rowCount=").$(rowCount)
                                             .I$();
+                                    totalRows += rowCount;
                                 } catch (Throwable th) {
                                     closeFds(srcFixFd, srcVarFd, dstFixFd, dstVarFd);
                                     throw th;
@@ -232,6 +238,13 @@ public class ConvertOperatorImpl implements Closeable {
                 }
             }
             consumeConversionTasks(messageBus.getColumnTaskQueue(), queueCount, true);
+            long elapsed = timer.getTicks() - start;
+            LOG.info().$("completed column conversion [at=").$(tableWriter.getTableToken().getDirNameUtf8())
+                    .$(", column=").$(columnName).$(", from=").$(ColumnType.nameOf(existingType))
+                    .$(", to=").$(ColumnType.nameOf(newType))
+                    .$(", partitions=").$(partitionUpdated)
+                    .$(", rows=").$(totalRows)
+                    .$(", elapsed=").$(elapsed).$("μs]").I$();
         } finally {
             path.trimTo(rootLen);
         }

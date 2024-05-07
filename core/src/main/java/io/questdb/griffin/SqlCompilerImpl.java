@@ -878,7 +878,29 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private boolean isCompatibleColumnTypeChange(int from, int to) {
-        return castGroups.getQuick(ColumnType.tagOf(from)) == castGroups.getQuick(ColumnType.tagOf(to));
+        if (castGroups.getQuick(ColumnType.tagOf(from)) == castGroups.getQuick(ColumnType.tagOf(to))) {
+            return true;
+        }
+        // some exceptions
+        switch (from) {
+            case ColumnType.STRING:
+            case ColumnType.SYMBOL:
+                switch (to) {
+                    case ColumnType.IPv4:
+                    case ColumnType.UUID:
+                    case ColumnType.INT:
+                    case ColumnType.SHORT:
+                    case ColumnType.BYTE:
+                    case ColumnType.CHAR:
+                    case ColumnType.LONG:
+                    case ColumnType.DOUBLE:
+                    case ColumnType.FLOAT:
+                    case ColumnType.DATE:
+                    case ColumnType.TIMESTAMP:
+                        return true;
+                }
+        }
+        return false;
     }
 
     private void alterTableColumnAddIndex(
