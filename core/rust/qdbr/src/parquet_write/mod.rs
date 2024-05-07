@@ -1,17 +1,16 @@
 mod primitive;
 mod schema;
+pub(crate) mod file;
+mod boolean;
 
-use parquet2::encoding::hybrid_rle::encode_bool;
 use parquet2::encoding::Encoding;
 use parquet2::metadata::Descriptor;
 use parquet2::page::{DataPage, DataPageHeader, DataPageHeaderV1, DataPageHeaderV2, Page};
 use parquet2::schema::types::PrimitiveType;
 use parquet2::statistics::{serialize_statistics, ParquetStatistics, PrimitiveStatistics};
 use parquet2::types::NativeType;
-use parquet2::write::{DynIter, Version};
-use std::io;
+use parquet2::write::{DynIter};
 
-const DEFAULT_PAGE_SIZE: usize = 1024 * 1024;
 
 pub fn column_chunk_to_pages(
     column_type: PrimitiveType,
@@ -20,7 +19,7 @@ pub fn column_chunk_to_pages(
     _encoding: Encoding,
 ) -> DynIter<'_, parquet2::error::Result<Page>> {
     let number_of_rows = slice.len();
-    let max_page_size = data_pagesize_limit.unwrap_or(DEFAULT_PAGE_SIZE);
+    let max_page_size = data_pagesize_limit.unwrap_or(10);
     let max_page_size = max_page_size.min(2usize.pow(31) - 2usize.pow(25));
     let rows_per_page = (max_page_size / (std::mem::size_of::<i32>() + 1)).max(1);
 
@@ -64,7 +63,7 @@ pub fn slice_to_page(column_type: PrimitiveType, chunk: &[i32]) -> Page {
     });
 
     let mut buffer = vec![];
-    encode_iter(&mut buffer, nulls_iter, Version::V1).expect("nulls encoding");
+    // encode_iter(&mut buffer, nulls_iter, Version::V1).expect("nulls encoding");
     let _definition_levels_byte_length = buffer.len();
 
     buffer.extend_from_slice(&values);
@@ -91,33 +90,6 @@ pub fn slice_to_page(column_type: PrimitiveType, chunk: &[i32]) -> Page {
     ))
 }
 
-fn encode_iter_v1<I: Iterator<Item = bool>>(buffer: &mut Vec<u8>, iter: I) -> io::Result<()> {
-    buffer.extend_from_slice(&[0; 4]);
-    let start = buffer.len();
-    encode_bool(buffer, iter)?;
-    let end = buffer.len();
-    let length = end - start;
-
-    // write the first 4 bytes as length
-    let length = (length as i32).to_le_bytes();
-    (0..4).for_each(|i| buffer[start - 4 + i] = length[i]);
-    Ok(())
-}
-
-fn encode_iter_v2<I: Iterator<Item = bool>>(writer: &mut Vec<u8>, iter: I) -> io::Result<()> {
-    encode_bool(writer, iter)
-}
-
-fn encode_iter<I: Iterator<Item = bool>>(
-    writer: &mut Vec<u8>,
-    iter: I,
-    version: Version,
-) -> io::Result<()> {
-    match version {
-        Version::V1 => encode_iter_v1(writer, iter),
-        Version::V2 => encode_iter_v2(writer, iter),
-    }
-}
 #[allow(clippy::too_many_arguments)]
 pub fn build_page_v1(
     buffer: Vec<u8>,
@@ -203,6 +175,88 @@ mod tests {
     };
     use parquet2::FallibleStreamingIterator;
     use std::io::Cursor;
+    use std::ptr::null;
+    use std::sync::Arc;
+    use crate::parquet_write::file::ParquetWriter;
+    use crate::parquet_write::schema::{ColumnImpl, Partition};
+
+    #[test]
+    fn test_write_parquet_with_fixed_sized_columns() {
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let col1 = vec![1i32,2,3];
+        let expected1 = vec![Some(1i32), Some(2), Some(3)];
+        let col2 = vec![0.5f32, 0.001, 3.14];
+        let col1_w = Arc::new(ColumnImpl::from_raw_data("col1", 5, 3,  col1.as_ptr() as *const u8, null(), 0).unwrap());
+        let col2_w = Arc::new(ColumnImpl::from_raw_data("col2", 9, 3, col2.as_ptr() as *const u8, null(), 0).unwrap());
+
+        let partition = Partition {
+           table: "test_table".to_string(),
+            columns: [col1_w, col2_w].to_vec()
+        };
+
+        ParquetWriter::new(&mut buf)
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+
+        let metadata = read_metadata(&mut buf).expect("meta");
+
+        let mut iter = ColumnIterator::new(
+            buf,
+            metadata.row_groups[0].columns().to_vec(),
+            None,
+            vec![],
+            usize::MAX, // we trust the file is correct
+        );
+
+        loop {
+            match iter.advance().expect("advance") {
+                State::Some(mut new_iter) => {
+                    if let Some((pages, _descriptor)) = new_iter.get() {
+                        let mut iterator = BasicDecompressor::new(pages, vec![]);
+                        while let Some(page) = iterator.next().unwrap() {
+                            // do something with it
+                            match page {
+                                parquet2::page::Page::Data(page) => {
+                                    let is_optional =
+                                        page.descriptor.primitive_type.field_info.repetition
+                                            == Repetition::Optional;
+                                    match (page.encoding(), is_optional) {
+                                        (Encoding::Plain, true) => {
+                                            let (_, def_levels, _) =
+                                                split_buffer(page).expect("split");
+                                            let validity =
+                                                HybridRleDecoderIter::new(HybridRleIter::new(
+                                                    Decoder::new(def_levels, 1),
+                                                    page.num_values(),
+                                                ));
+                                            let values = native_cast(page).expect("cast");
+                                            let values: Result<
+                                                Vec<Option<i32>>,
+                                                parquet2::error::Error,
+                                            > = OptionalValues::new(validity, values).collect();
+                                            if let Ok(v) = values {
+                                                assert_eq!(v, expected1);
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        let _internal_buffer = iterator.into_inner();
+                    }
+                    iter = new_iter;
+                }
+                State::Finished(_buffer) => {
+                    assert!(_buffer.is_empty()); // data is uncompressed => buffer is always moved
+                    break;
+                }
+            }
+        }
+    }
     #[test]
     fn encode_column_tops() {
         let def_level_count: usize = 113_000_000;
