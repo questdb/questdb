@@ -27,9 +27,6 @@ package io.questdb.std.str;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
-import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_BYTES;
-import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_MASK;
-
 /**
  * A sequence of UTF-8 bytes.
  */
@@ -122,15 +119,6 @@ public interface Utf8Sequence {
      * shouldn't be called unless looking to optimize the access of the VARCHAR column.
      */
     default long zeroPaddedSixPrefix() {
-        final int size = size();
-        if (size >= Long.BYTES) {
-            return longAt(0) & VARCHAR_INLINED_PREFIX_MASK;
-        }
-        final long limit = Math.min(size, VARCHAR_INLINED_PREFIX_BYTES);
-        long result = 0;
-        for (int i = 0; i < limit; i++) {
-            result |= (byteAt(i) & 0xffL) << (8 * i);
-        }
-        return result;
+        return Utf8s.zeroPaddedSixPrefix(this);
     }
 }

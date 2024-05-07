@@ -6430,7 +6430,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                     nonDroppedColumnCount++;
                 } else {
-                    columnSizeCache.setQuick(columnIndex, 0);
+                    columnSizeCache.setQuick(columnIndex, -1);
                     walColumns.add(NullMemory.INSTANCE);
                     walColumns.add(NullMemory.INSTANCE);
                 }
