@@ -202,7 +202,7 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
             }
 
             if (setDefault && unprobed) {
-                columnTypes.setQuick(i, typeManager.getTypeAdapter(ColumnType.STRING));
+                columnTypes.setQuick(i, typeManager.getTypeAdapter(ColumnType.VARCHAR));
             }
         }
 
