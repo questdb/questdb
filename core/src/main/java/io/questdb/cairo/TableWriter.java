@@ -1044,12 +1044,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             metrics.tableWriter().incrementCommits();
             metrics.tableWriter().addCommittedRows(rowsAdded);
 
+            shrinkMem();
             return rowsAdded;
         }
 
         // Nothing was committed to the table, only copied to LAG.
         // Keep in memory last committed seq txn, but do not write it to _txn file.
         txWriter.setLagTxnCount((int) (seqTxn - txWriter.getSeqTxn()));
+        shrinkMem();
         return 0L;
     }
 
@@ -2242,25 +2244,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public void setSeqTxn(long seqTxn) {
         assert txWriter.getLagRowCount() == 0 && txWriter.getLagTxnCount() == 0;
         txWriter.setSeqTxn(seqTxn);
-    }
-
-    public void shrinkO3Mem() {
-        for (int i = 0, n = o3MemColumns1.size(); i < n; i++) {
-            MemoryCARW o3mem = o3MemColumns1.getQuick(i);
-            if (o3mem != null) {
-                // truncate will shrink the memory to a single page
-                o3mem.truncate();
-            }
-        }
-        for (int i = 0, n = o3MemColumns2.size(); i < n; i++) {
-            MemoryCARW o3mem2 = o3MemColumns2.getQuick(i);
-            if (o3mem2 != null) {
-                o3mem2.truncate();
-            }
-        }
-        if (walTimestampMem != null) {
-            walTimestampMem.truncate();
-        }
     }
 
     public long size() {
@@ -7285,6 +7268,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long partitionTxnName = PartitionBy.isPartitioned(partitionBy) ? txWriter.getTxn() - 1 : -1;
         partitionTxnName = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp, partitionTxnName);
         TableUtils.setPathForPartition(path, partitionBy, timestamp, partitionTxnName);
+    }
+
+    private void shrinkMem() {
+        for (int i = 0, n = o3MemColumns1.size(); i < n; i++) {
+            MemoryCARW o3mem = o3MemColumns1.getQuick(i);
+            if (o3mem != null) {
+                // truncate will shrink the memory to a single page
+                o3mem.truncate();
+            }
+        }
+        for (int i = 0, n = o3MemColumns2.size(); i < n; i++) {
+            MemoryCARW o3mem2 = o3MemColumns2.getQuick(i);
+            if (o3mem2 != null) {
+                o3mem2.truncate();
+            }
+        }
+        if (walTimestampMem != null) {
+            walTimestampMem.truncate();
+        }
     }
 
     private long skipWalRowValue(int columnSize, int columnType, long offset, MemoryCMOR srcMem) {
