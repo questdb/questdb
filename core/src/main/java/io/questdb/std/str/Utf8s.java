@@ -1194,7 +1194,7 @@ public final class Utf8s {
      * @param seq UTF8 sequence
      * @return up to 6 initial bytes
      */
-    public static long zeroPaddedSixPrefix(Utf8Sequence seq) {
+    public static long zeroPaddedSixPrefix(@NotNull Utf8Sequence seq) {
         final int size = seq.size();
         if (size >= Long.BYTES) {
             return seq.longAt(0) & VARCHAR_INLINED_PREFIX_MASK;

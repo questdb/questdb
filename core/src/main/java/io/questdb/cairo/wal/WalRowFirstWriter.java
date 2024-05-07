@@ -1692,7 +1692,7 @@ public class WalRowFirstWriter implements WalWriter {
         @Override
         public void putSymUtf8(int columnIndex, DirectUtf8Sequence value) {
             // this method will write column name to the buffer if it has to be UTF-8 decoded
-            // otherwise it will write nothing.
+            // otherwise it will write nothing
             final SymbolMapReader symbolMapReader = symbolMapReaders.getQuick(columnIndex);
             if (symbolMapReader != null) {
                 Utf8StringIntHashMap utf8Map = utf8SymbolMaps.getQuick(columnIndex);
@@ -1701,7 +1701,7 @@ public class WalRowFirstWriter implements WalWriter {
                     rowMem.putInt(columnIndex);
                     rowMem.putInt(utf8Map.valueAt(index));
                 } else {
-                    // slow path, symbol is not in utf8 cache
+                    // slow path, symbol is not in UTF-8 cache
                     utf8Map.putAt(
                             index,
                             Utf8String.newInstance(value),
