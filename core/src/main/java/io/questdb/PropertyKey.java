@@ -344,6 +344,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     LINE_USE_LEGACY_STRING_DEFAULT("line.use.legacy.string.default"),
     LINE_TCP_NET_IO_QUEUE_CAPACITY("line.tcp.net.io.queue.capacity"),
     LINE_TCP_IO_AGGRESSIVE_RECV("line.tcp.io.aggressive.recv"),
+    TEXT_USE_LEGACY_STRING_DEFAULT("text.use.legacy.string.default"),
     LINE_HTTP_HEADER_MAX_SIZE("line.http.header.max.size"),
     METRICS_ENABLED("metrics.enabled"),
     NET_TEST_CONNECTION_BUFFER_SIZE("net.test.connection.buffer.size"),

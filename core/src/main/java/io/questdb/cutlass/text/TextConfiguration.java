@@ -56,4 +56,6 @@ public interface TextConfiguration {
     int getTimestampAdapterPoolCapacity();
 
     int getUtf8SinkSize();
+
+    boolean isUseLegacyStringDefault();
 }

@@ -342,6 +342,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int textAnalysisMaxLines;
     private final TextConfiguration textConfiguration = new PropTextConfiguration();
     private final int textLexerStringPoolCapacity;
+    private final boolean textUseLegacyStringDefault;
     private final int timestampAdapterPoolCapacity;
     private final int utf8SinkSize;
     private final PropertyValidator validator;
@@ -451,6 +452,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int lineUdpBindIPV4Address;
     private int lineUdpDefaultPartitionBy;
     private int lineUdpPort;
+    private boolean lineUseLegacyStringDefault;
     private MimeTypesCache mimeTypesCache;
     private long minIdleMsBeforeWriterRelease;
     private int netTestConnectionBufferSize;
@@ -498,7 +500,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean stringToCharCastAllowed;
     private boolean symbolAsFieldSupported;
     private long symbolCacheWaitUsBeforeReload;
-    private boolean useLegacyStringDefault;
 
     public PropServerConfiguration(
             String root,
@@ -1226,9 +1227,10 @@ public class PropServerConfiguration implements ServerConfiguration {
                     log.info().$("invalid default column type for integer ").$(integerDefaultColumnTypeName).$(", will use LONG").$();
                     this.integerDefaultColumnType = ColumnType.LONG;
                 }
-                this.useLegacyStringDefault = getBoolean(properties, env, PropertyKey.LINE_USE_LEGACY_STRING_DEFAULT, true);
+                this.lineUseLegacyStringDefault = getBoolean(properties, env, PropertyKey.LINE_USE_LEGACY_STRING_DEFAULT, true);
             }
 
+            this.textUseLegacyStringDefault = getBoolean(properties, env, PropertyKey.TEXT_USE_LEGACY_STRING_DEFAULT, false);
             this.ilpAutoCreateNewColumns = getBoolean(properties, env, PropertyKey.LINE_AUTO_CREATE_NEW_COLUMNS, true);
             this.ilpAutoCreateNewTables = getBoolean(properties, env, PropertyKey.LINE_AUTO_CREATE_NEW_TABLES, true);
             this.sharedWorkerCount = getInt(properties, env, PropertyKey.SHARED_WORKER_COUNT, Math.max(4, cpuAvailable - cpuSpare - cpuUsed));
@@ -3502,7 +3504,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public boolean isUseLegacyStringDefault() {
-            return useLegacyStringDefault;
+            return lineUseLegacyStringDefault;
         }
     }
 
@@ -3699,7 +3701,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public boolean isUseLegacyStringDefault() {
-            return useLegacyStringDefault;
+            return lineUseLegacyStringDefault;
         }
     }
 
@@ -3911,7 +3913,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public boolean isUseLegacyStringDefault() {
-            return useLegacyStringDefault;
+            return lineUseLegacyStringDefault;
         }
 
         @Override
@@ -4395,6 +4397,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getUtf8SinkSize() {
             return utf8SinkSize;
+        }
+
+        @Override
+        public boolean isUseLegacyStringDefault() {
+            return textUseLegacyStringDefault;
         }
     }
 

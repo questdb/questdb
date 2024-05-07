@@ -418,6 +418,7 @@ public class PropServerConfigurationTest {
 
         Assert.assertEquals(20, configuration.getCairoConfiguration().getO3LastPartitionMaxSplits());
         Assert.assertEquals(50 * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getPartitionO3SplitMinSize());
+        Assert.assertFalse(configuration.getCairoConfiguration().getTextConfiguration().isUseLegacyStringDefault());
     }
 
     @Test
@@ -607,6 +608,9 @@ public class PropServerConfigurationTest {
 
         properties.setProperty("cairo.o3.max.lag", "60");
 
+        properties.setProperty("text.use.legacy.string.default", "false");
+        env.put("QDB_TEXT_USE_LEGACY_STRING_DEFAULT", "true");
+
         PropServerConfiguration configuration = newPropServerConfiguration(root, properties, env, new BuildInformationHolder());
         Assert.assertEquals(1.5, configuration.getCairoConfiguration().getTextConfiguration().getMaxRequiredDelimiterStdDev(), 0.000001);
         Assert.assertEquals(3000, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionStringPoolCapacity());
@@ -618,6 +622,7 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().readOnlySecurityContext());
         Assert.assertEquals(9663676416L, configuration.getCairoConfiguration().getDataAppendPageSize());
         Assert.assertEquals(60_000, configuration.getCairoConfiguration().getO3MaxLag());
+        Assert.assertTrue(configuration.getCairoConfiguration().getTextConfiguration().isUseLegacyStringDefault());
     }
 
     @Test

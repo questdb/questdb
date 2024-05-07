@@ -40,6 +40,7 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
     private final IntList _histogram = new IntList();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final ObjList<TypeAdapter> columnTypes = new ObjList<>();
+    private final int defaultColumnType;
     private final CharSequenceObjHashMap<TypeAdapter> schemaColumns = new CharSequenceObjHashMap<>();
     private final StringSink tempSink = new StringSink();
     private final TypeManager typeManager;
@@ -56,6 +57,7 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
     ) {
         this.typeManager = typeManager;
         this.utf8Sink = new DirectUtf16Sink(textConfiguration.getUtf8SinkSize());
+        this.defaultColumnType = textConfiguration.isUseLegacyStringDefault() ? ColumnType.STRING : ColumnType.VARCHAR;
     }
 
     @Override
@@ -202,7 +204,7 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
             }
 
             if (setDefault && unprobed) {
-                columnTypes.setQuick(i, typeManager.getTypeAdapter(ColumnType.VARCHAR));
+                columnTypes.setQuick(i, typeManager.getTypeAdapter(defaultColumnType));
             }
         }
 

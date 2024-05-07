@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.text;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cutlass.http.ex.NotEnoughLinesException;
@@ -42,12 +43,15 @@ import io.questdb.test.cairo.TestFilesFacade;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.*;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
+@RunWith(Parameterized.class)
 public class TextLoaderTest extends AbstractCairoTest {
 
     private static final ByteManipulator ENTITY_MANIPULATOR = (index, len, b) -> b;
@@ -56,13 +60,26 @@ public class TextLoaderTest extends AbstractCairoTest {
     private static final Utf8String TEST_TABLE_NAME = new Utf8String("test");
     private static final Utf8String TEST_TS_COL_NAME = new Utf8String("ts");
     private static final JsonLexer jsonLexer = new JsonLexer(1024, 1024);
-    private static final String sqlStringTypeName = ColumnType.nameOf(ColumnType.typeOf("STRING"));
-    private static final String stringTypeName = ColumnType.nameOf(ColumnType.VARCHAR);
+
+    private final String sqlStringTypeName = ColumnType.nameOf(ColumnType.typeOf("STRING"));
+    private final String stringTypeName;
+    private final boolean useLegacyStringDefault;
+
+    public TextLoaderTest(boolean useLegacyStringDefault) {
+        this.useLegacyStringDefault = useLegacyStringDefault;
+        node1.getConfigurationOverrides().setProperty(PropertyKey.TEXT_USE_LEGACY_STRING_DEFAULT, String.valueOf(useLegacyStringDefault));
+        stringTypeName = ColumnType.nameOf(useLegacyStringDefault ? ColumnType.STRING : ColumnType.VARCHAR);
+    }
 
     @AfterClass
     public static void tearDownClass() throws Exception {
         jsonLexer.close();
         AbstractCairoTest.tearDownStatic();
+    }
+
+    @Parameterized.Parameters()
+    public static Iterable<Object[]> useLegacyStringType() {
+        return Arrays.asList(new Object[]{true}, new Object[]{false});
     }
 
     @After
@@ -1019,6 +1036,11 @@ public class TextLoaderTest extends AbstractCairoTest {
                 public int getRollBufferSize() {
                     return 32;
                 }
+
+                @Override
+                public boolean isUseLegacyStringDefault() {
+                    return useLegacyStringDefault;
+                }
             };
 
             CairoConfiguration cairoConfiguration = new DefaultTestCairoConfiguration(root) {
@@ -1404,6 +1426,11 @@ public class TextLoaderTest extends AbstractCairoTest {
             public int getTextAnalysisMaxLines() {
                 return 3;
             }
+
+            @Override
+            public boolean isUseLegacyStringDefault() {
+                return useLegacyStringDefault;
+            }
         };
 
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
@@ -1465,6 +1492,11 @@ public class TextLoaderTest extends AbstractCairoTest {
             @Override
             public int getTextAnalysisMaxLines() {
                 return 3;
+            }
+
+            @Override
+            public boolean isUseLegacyStringDefault() {
+                return useLegacyStringDefault;
             }
         };
 
@@ -1554,6 +1586,11 @@ public class TextLoaderTest extends AbstractCairoTest {
                 @Override
                 public int getRollBufferSize() {
                     return 32;
+                }
+
+                @Override
+                public boolean isUseLegacyStringDefault() {
+                    return useLegacyStringDefault;
                 }
             };
 
@@ -2147,6 +2184,11 @@ public class TextLoaderTest extends AbstractCairoTest {
             @Override
             public int getTextAnalysisMaxLines() {
                 return 3;
+            }
+
+            @Override
+            public boolean isUseLegacyStringDefault() {
+                return useLegacyStringDefault;
             }
         };
 
