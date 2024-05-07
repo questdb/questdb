@@ -67,7 +67,7 @@ public class TextLoaderTest extends AbstractCairoTest {
 
     public TextLoaderTest(boolean useLegacyStringDefault) {
         this.useLegacyStringDefault = useLegacyStringDefault;
-        node1.getConfigurationOverrides().setProperty(PropertyKey.TEXT_USE_LEGACY_STRING_DEFAULT, String.valueOf(useLegacyStringDefault));
+        node1.getConfigurationOverrides().setProperty(PropertyKey.USE_LEGACY_STRING_DEFAULT, String.valueOf(useLegacyStringDefault));
         stringTypeName = ColumnType.nameOf(useLegacyStringDefault ? ColumnType.STRING : ColumnType.VARCHAR);
     }
 

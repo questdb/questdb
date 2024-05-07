@@ -608,8 +608,8 @@ public class PropServerConfigurationTest {
 
         properties.setProperty("cairo.o3.max.lag", "60");
 
-        properties.setProperty("text.use.legacy.string.default", "false");
-        env.put("QDB_TEXT_USE_LEGACY_STRING_DEFAULT", "true");
+        properties.setProperty("use.legacy.string.default", "false");
+        env.put("QDB_USE_LEGACY_STRING_DEFAULT", "true");
 
         PropServerConfiguration configuration = newPropServerConfiguration(root, properties, env, new BuildInformationHolder());
         Assert.assertEquals(1.5, configuration.getCairoConfiguration().getTextConfiguration().getMaxRequiredDelimiterStdDev(), 0.000001);

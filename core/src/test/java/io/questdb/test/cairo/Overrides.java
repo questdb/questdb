@@ -292,7 +292,7 @@ public class Overrides {
         properties.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED.getPropertyPath(), "true");
         properties.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED.getPropertyPath(), "true");
         properties.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT.getPropertyPath(), "false");
-        properties.setProperty(PropertyKey.TEXT_USE_LEGACY_STRING_DEFAULT.getPropertyPath(), "false");
+        properties.setProperty(PropertyKey.USE_LEGACY_STRING_DEFAULT.getPropertyPath(), "false");
     }
 
     private CairoConfiguration getDefaultConfiguration(String root) {
