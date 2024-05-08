@@ -278,7 +278,7 @@ public class NetTest {
             Assert.assertEquals(2304, Net.getRcvBuf(clientFd));
         } else {
             int rcvBuf = Net.getRcvBuf(clientFd);
-            if (Os.type == Os.OSX_AMD64 || Os.type == Os.OSX_ARM64) {
+            if (Os.type == Os.DARWIN) {
                 // OSX can ignore setsockopt SO_RCVBUF sometimes
                 Assert.assertTrue(rcvBuf == 512 || rcvBuf == 261824);
             } else {

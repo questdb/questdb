@@ -168,8 +168,7 @@ public final class Utf8s {
      */
     public static boolean equals(@NotNull DirectUtf8Sequence l, @NotNull Utf8String r) {
         final int lSize = l.size();
-        return lSize == r.size() && l.zeroPaddedSixPrefix() == r.zeroPaddedSixPrefix()
-                && dataEquals(l, r, VARCHAR_INLINED_PREFIX_BYTES, lSize);
+        return lSize == r.size() && dataEquals(l, r, 0, lSize);
     }
 
     public static boolean equals(@NotNull Utf8Sequence l, long lSixPrefix, @NotNull Utf8Sequence r, long rSixPrefix) {
