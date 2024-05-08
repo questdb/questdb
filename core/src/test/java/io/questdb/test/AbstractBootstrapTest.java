@@ -35,7 +35,6 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Files;
 import io.questdb.std.Misc;
-import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -242,13 +241,9 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             writer.print("<html><body><p>Dummy Web Console</p></body></html>");
         }
 
-        long lastModified;
         try (Path indexPath = new Path().of(indexFile).$()) {
-            while ((lastModified = Files.getLastModified(indexPath)) < 0) {
-                Os.sleep(100);
-            }
+            return Files.getLastModified(indexPath);
         }
-        return lastModified;
     }
 
     protected static void drainWalQueue(CairoEngine engine) {
