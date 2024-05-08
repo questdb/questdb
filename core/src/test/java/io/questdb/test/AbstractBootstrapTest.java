@@ -33,10 +33,7 @@ import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.Misc;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -245,7 +242,11 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
 
         final FilesFacade ff = new FilesFacadeImpl();
         try (Path indexPath = new Path().of(indexFile)) {
-            return ff.getLastModified(indexPath);
+            long lastModified;
+            while ((lastModified = ff.getLastModified(indexPath)) < 0) {
+                Os.sleep(100);
+            }
+            return lastModified;
         }
     }
 

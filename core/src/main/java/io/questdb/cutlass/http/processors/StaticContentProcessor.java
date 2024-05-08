@@ -168,7 +168,6 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
             try {
                 long that = Numbers.parseLong(val, 1, l - 1);
                 long lastModified = ff.getLastModified(path);
-                System.out.println("!!!!! lastModified=" + lastModified);
                 if (that == lastModified) {
                     context.simpleResponse().sendStatusNoContent(304);
                     return;

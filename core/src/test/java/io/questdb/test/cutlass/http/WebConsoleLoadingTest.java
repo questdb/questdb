@@ -53,7 +53,6 @@ public class WebConsoleLoadingTest extends AbstractBootstrapTest {
         TestUtils.unchecked(() -> {
             createDummyConfiguration();
             indexFileLastModified = createDummyWebConsole();
-            System.out.println("!!!!! indexFileLastModified=" + indexFileLastModified);
         });
         dbPath.parent().$();
     }
