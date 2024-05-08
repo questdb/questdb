@@ -272,10 +272,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
         this.tableToken = tableToken;
         this.o3QuickSortEnabled = configuration.isO3QuickSortEnabled();
-        this.path = new Path().of(root).concat(tableToken);
-        this.other = new Path().of(root).concat(tableToken);
-        this.rootLen = path.size();
         try {
+            this.path = new Path().of(root).concat(tableToken);
+            this.other = new Path().of(root).concat(tableToken);
+            this.rootLen = path.size();
             if (lock) {
                 lock();
             } else {
