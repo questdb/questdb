@@ -11,3 +11,8 @@ crate-type = ["dylib"]
 jni = "0.21.1"
 num-traits = "0.2.18"
 parquet2 = { path = "parquet2" }
+
+[dev-dependencies]
+parquet = "51.0.0"
+arrow = "51.0.0"
+bytes = "1.6.0"

@@ -1,20 +1,20 @@
-use std::{cmp, io};
 use parquet2::compression::CompressionOptions;
-use parquet2::encoding::Encoding;
 use parquet2::encoding::hybrid_rle::encode_bool;
+use parquet2::encoding::Encoding;
 use parquet2::metadata::Descriptor;
 use parquet2::page::{DataPage, DataPageHeader, DataPageHeaderV1, DataPageHeaderV2};
 use parquet2::schema::types::PrimitiveType;
 use parquet2::statistics::ParquetStatistics;
 use parquet2::types::NativeType;
-use parquet2::write::{Version};
+use parquet2::write::Version;
+use std::{cmp, io};
 
 use crate::parquet_write::file::WriteOptions;
 #[derive(Debug)]
 pub struct MaxMin<T> {
     max: T,
     min: T,
-    is_updated: bool
+    is_updated: bool,
 }
 
 impl<T: Copy + NativeType + num_traits::Bounded> MaxMin<T> {

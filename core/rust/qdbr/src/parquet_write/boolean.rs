@@ -1,13 +1,18 @@
-use parquet2::encoding::Encoding;
-use parquet2::encoding::hybrid_rle::bitpacked_encode;
-use parquet2::page::{Page};
-use parquet2::schema::types::PrimitiveType;
-use parquet2::statistics::{BooleanStatistics, ParquetStatistics, serialize_statistics, Statistics};
 use crate::parquet_write::file::WriteOptions;
 use crate::util;
 use crate::util::MaxMin;
+use parquet2::encoding::hybrid_rle::bitpacked_encode;
+use parquet2::encoding::Encoding;
+use parquet2::page::Page;
+use parquet2::schema::types::PrimitiveType;
+use parquet2::statistics::{
+    serialize_statistics, BooleanStatistics, ParquetStatistics, Statistics,
+};
 
-fn encode_plain(iterator: impl Iterator<Item = bool>, buffer: &mut Vec<u8>) -> parquet2::error::Result<()> {
+fn encode_plain(
+    iterator: impl Iterator<Item = bool>,
+    buffer: &mut Vec<u8>,
+) -> parquet2::error::Result<()> {
     // encode values using bitpacking
     let len = buffer.len();
     let mut buffer = std::io::Cursor::new(buffer);
@@ -20,13 +25,15 @@ pub fn slice_to_page(
     options: WriteOptions,
     type_: PrimitiveType,
 ) -> parquet2::error::Result<Page> {
-
     let mut buffer = vec![];
     let mut stats = MaxMin::new();
-    encode_plain(slice.iter().map(|x| {
-        stats.update(*x as i32);
-        *x != 0
-    }), &mut buffer)?;
+    encode_plain(
+        slice.iter().map(|x| {
+            stats.update(*x as i32);
+            *x != 0
+        }),
+        &mut buffer,
+    )?;
 
     let statistics = if options.write_statistics {
         Some(build_statistics(stats))
@@ -45,7 +52,8 @@ pub fn slice_to_page(
         type_,
         options,
         Encoding::Plain,
-    ).map(Page::Data)
+    )
+    .map(Page::Data)
 }
 fn build_statistics(bool_statistics: MaxMin<i32>) -> ParquetStatistics {
     let (max, min) = bool_statistics.get_current_values();

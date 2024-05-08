@@ -1,13 +1,18 @@
-use std::io::{Write};
-use std::mem;
+use crate::parquet_write::schema::{
+    to_encodings, to_parquet_schema, Column, ColumnType, Partition,
+};
+use crate::parquet_write::{boolean, primitive};
 use parquet2::compression::CompressionOptions;
 use parquet2::encoding::Encoding;
 use parquet2::metadata::SchemaDescriptor;
 use parquet2::page::{CompressedPage, Page};
 use parquet2::schema::types::{ParquetType, PrimitiveType};
-use parquet2::write::{Compressor, DynIter, DynStreamingIterator, FileWriter, RowGroupIter, Version, WriteOptions as FileWriteOptions};
-use crate::parquet_write::schema::{Column, ColumnType, Partition, to_encodings, to_parquet_schema};
-use crate::parquet_write::{boolean, primitive};
+use parquet2::write::{
+    Compressor, DynIter, DynStreamingIterator, FileWriter, RowGroupIter, Version,
+    WriteOptions as FileWriteOptions,
+};
+use std::io::Write;
+use std::mem;
 const DEFAULT_PAGE_SIZE: usize = 1024 * 1024;
 const DEFAULT_ROW_GROUP_SIZE: usize = 512 * 512;
 
@@ -40,8 +45,8 @@ pub struct ParquetWriter<W: Write> {
 impl<W: Write> ParquetWriter<W> {
     /// Create a new writer
     pub fn new(writer: W) -> Self
-        where
-            W: Write,
+    where
+        W: Write,
     {
         ParquetWriter {
             writer,
@@ -50,7 +55,6 @@ impl<W: Write> ParquetWriter<W> {
             row_group_size: None,
             data_page_size: None,
         }
-
     }
 
     /// Set the compression used. Defaults to `Uncompressed`.
@@ -94,11 +98,16 @@ impl<W: Write> ParquetWriter<W> {
         let options = self.write_options();
         let file_write_options = FileWriteOptions {
             write_statistics: options.write_statistics,
-            version: options.version
+            version: options.version,
         };
 
         let created_by = Some("QuestDB".to_string());
-        let writer = FileWriter::new(self.writer, parquet_schema.clone(), file_write_options, created_by);
+        let writer = FileWriter::new(
+            self.writer,
+            parquet_schema.clone(),
+            file_write_options,
+            created_by,
+        );
         Ok(ChunkedWriter {
             writer,
             parquet_schema,
@@ -127,7 +136,10 @@ impl<W: Write> ChunkedWriter<W> {
     pub fn write_chunk(&mut self, partition: Partition) -> parquet2::error::Result<()> {
         let schema = to_parquet_schema(&partition)?;
         let encodings = to_encodings(&partition);
-        let row_group_size = self.options.row_group_size.unwrap_or(DEFAULT_ROW_GROUP_SIZE);
+        let row_group_size = self
+            .options
+            .row_group_size
+            .unwrap_or(DEFAULT_ROW_GROUP_SIZE);
         let partition_length = partition.columns[0].row_count;
         let row_group_range = (0..partition_length)
             .step_by(row_group_size)
@@ -146,7 +158,7 @@ impl<W: Write> ChunkedWriter<W> {
                 length,
                 schema.fields(),
                 &encodings,
-                self.options
+                self.options,
             );
             self.writer.write(row_group?)?;
         }
@@ -172,24 +184,33 @@ fn create_row_group(
     encoding: &[Encoding],
     options: WriteOptions,
 ) -> parquet2::error::Result<RowGroupIter<'static, parquet2::error::Error>> {
-   let func =  move |((column, column_type), encoding): ((&Column, &ParquetType), &Encoding)|
-       -> parquet2::error::Result<DynStreamingIterator<CompressedPage, parquet2::error::Error>>{
-       let encoded_column = column_chunk_to_pages(
-           column.clone(),
-           column_type.clone(),
-           offset,
-           length,
-           options,
-           *encoding).expect("encoded_column");
+    let func = move |((column, column_type), encoding): ((&Column, &ParquetType), &Encoding)| -> parquet2::error::Result<
+        DynStreamingIterator<CompressedPage, parquet2::error::Error>,
+    > {
+        let encoded_column = column_chunk_to_pages(
+            column.clone(),
+            column_type.clone(),
+            offset,
+            length,
+            options,
+            *encoding,
+        )
+        .expect("encoded_column");
 
-       Ok(DynStreamingIterator::new(Compressor::new(encoded_column, options.compression, vec![])))
-   };
+        Ok(DynStreamingIterator::new(Compressor::new(
+            encoded_column,
+            options.compression,
+            vec![],
+        )))
+    };
 
-   let columns = partition.columns.iter()
-       .zip(column_types)
-       .zip(encoding)
-       .flat_map(func)
-       .collect::<Vec<_>>();
+    let columns = partition
+        .columns
+        .iter()
+        .zip(column_types)
+        .zip(encoding)
+        .flat_map(func)
+        .collect::<Vec<_>>();
 
     Ok(DynIter::new(columns.into_iter().map(|x| Ok(x))))
 }
@@ -221,7 +242,7 @@ fn column_chunk_to_pages(
 
     let primitive_type = match type_ {
         ParquetType::PrimitiveType(primitive) => primitive,
-        _ => unreachable!("GroupType is not supported")
+        _ => unreachable!("GroupType is not supported"),
     };
 
     let pages = rows.map(move |(offset, length)| {
@@ -247,68 +268,44 @@ fn chunk_to_page(
     encoding: Encoding,
 ) -> parquet2::error::Result<Page> {
     match column.data_type {
-            ColumnType::Boolean => {
-                let chunk: &[u8]= unsafe { mem::transmute(&column.fixed_len_data[offset..offset + length]) };
-                boolean::slice_to_page(chunk, options, type_)
-            },
-            ColumnType::Byte => {
-                let chunk: &[i8]= unsafe { mem::transmute(&column.fixed_len_data[offset..offset + length]) };
-                primitive::int_slice_to_page::<i8, i32>(
-                    chunk,
-                    None,
-                    options,
-                    type_,
-                    encoding,
-                )
-            },
-            ColumnType::Short => {
-                let chunk: &[i16]= unsafe { mem::transmute(&column.fixed_len_data[offset..offset + length]) };
-                primitive::int_slice_to_page::<i16, i32>(
-                    chunk,
-                    None,
-                    options,
-                    type_,
-                    encoding,
-                )
-            },
-            ColumnType::Int => {
-                let chunk: &[i32]= unsafe { mem::transmute(&column.fixed_len_data[offset..offset + length]) };
-                primitive::int_slice_to_page::<i32, i32>(
-                    chunk,
-                    Some(i32::MIN),
-                    options,
-                    type_,
-                    encoding,
-                )
-            },
-            ColumnType::Long => {
-                let chunk: &[i64]= unsafe { mem::transmute(&column.fixed_len_data[offset..offset + length]) };
-                primitive::int_slice_to_page::<i64, i64>(
-                    chunk,
-                    Some(i64::MIN),
-                    options,
-                    type_,
-                    encoding,
-                )
-            },
-            ColumnType::Float => {
-                let chunk: &[f32]= unsafe { mem::transmute(&column.fixed_len_data[offset..offset + length]) };
-                primitive::float_slice_to_page_plain::<f32, f32>(
-                    chunk,
-                    options,
-                    type_,
-                )
-            },
-            ColumnType::Double =>  {
-                let chunk: &[f64]= unsafe { mem::transmute(&column.fixed_len_data[offset..offset + length]) };
-                primitive::float_slice_to_page_plain::<f64, f64>(
-                    chunk,
-                    options,
-                    type_,
-                )
-            },
-            other => Err(parquet2::error::Error::FeatureNotSupported(
-                format!("Writing parquet pages for data type {:?}", other))
-            )
+        ColumnType::Boolean => {
+            let chunk: &[u8] =
+                unsafe { mem::transmute(&column.fixed_len_data[offset..offset + length]) };
+            boolean::slice_to_page(chunk, options, type_)
         }
+        ColumnType::Byte => {
+            let chunk: &[i8] =
+                unsafe { mem::transmute(&column.fixed_len_data[offset..offset + length]) };
+            primitive::int_slice_to_page::<i8, i32>(chunk, options, type_, encoding)
+        }
+        ColumnType::Short => {
+            let chunk: &[i16] =
+                unsafe { mem::transmute(&column.fixed_len_data[offset..offset + length]) };
+            primitive::int_slice_to_page::<i16, i32>(chunk, options, type_, encoding)
+        }
+        ColumnType::Int => {
+            let chunk: &[i32] =
+                unsafe { mem::transmute(&column.fixed_len_data[offset..offset + length]) };
+            primitive::int_slice_to_page::<i32, i32>(chunk, options, type_, encoding)
+        }
+        ColumnType::Long => {
+            let chunk: &[i64] =
+                unsafe { mem::transmute(&column.fixed_len_data[offset..offset + length]) };
+            primitive::int_slice_to_page::<i64, i64>(chunk, options, type_, encoding)
+        }
+        ColumnType::Float => {
+            let chunk: &[f32] =
+                unsafe { mem::transmute(&column.fixed_len_data[offset..offset + length]) };
+            primitive::float_slice_to_page_plain::<f32, f32>(chunk, options, type_)
+        }
+        ColumnType::Double => {
+            let chunk: &[f64] =
+                unsafe { mem::transmute(&column.fixed_len_data[offset..offset + length]) };
+            primitive::float_slice_to_page_plain::<f64, f64>(chunk, options, type_)
+        }
+        other => Err(parquet2::error::Error::FeatureNotSupported(format!(
+            "Writing parquet pages for data type {:?}",
+            other
+        ))),
+    }
 }

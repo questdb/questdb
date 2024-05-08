@@ -1,9 +1,11 @@
-use std::slice::from_raw_parts;
-use std::sync::Arc;
 use parquet2::encoding::Encoding;
 use parquet2::metadata::SchemaDescriptor;
-use parquet2::schema::types::{IntegerType, ParquetType, PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType, TimeUnit};
+use parquet2::schema::types::{
+    IntegerType, ParquetType, PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType, TimeUnit,
+};
 use parquet2::schema::Repetition;
+use std::slice::from_raw_parts;
+use std::sync::Arc;
 
 #[derive(Debug, Copy, Clone)]
 pub enum ColumnType {
@@ -225,31 +227,35 @@ pub struct ColumnImpl {
 pub type Column = Arc<ColumnImpl>;
 
 impl ColumnImpl {
-   pub fn from_raw_data(
-       name: &str,
-       column_type: i32,
-       row_count: usize,
-       fixed_len_data_ptr: *const u8,
-       variable_len_data_ptr: *const u8,
-       variable_len_data_size: usize,
-   ) -> parquet2::error::Result<Self> {
-       assert!(row_count > 0);
-       let column_type: ColumnType = column_type.try_into().map_err(|err| parquet2::error::Error::InvalidParameter(err))?;
-       assert!(!fixed_len_data_ptr.is_null());
+    pub fn from_raw_data(
+        name: &str,
+        column_type: i32,
+        row_count: usize,
+        fixed_len_data_ptr: *const u8,
+        variable_len_data_ptr: *const u8,
+        variable_len_data_size: usize,
+    ) -> parquet2::error::Result<Self> {
+        assert!(row_count > 0);
+        let column_type: ColumnType = column_type
+            .try_into()
+            .map_err(|err| parquet2::error::Error::InvalidParameter(err))?;
+        assert!(!fixed_len_data_ptr.is_null());
 
-       let fixed_len_data = unsafe { from_raw_parts(fixed_len_data_ptr, row_count) };
-       let variable_len_data = if variable_len_data_ptr.is_null() { None } else {
-           Some(unsafe { from_raw_parts(variable_len_data_ptr, variable_len_data_size) })
-       };
+        let fixed_len_data = unsafe { from_raw_parts(fixed_len_data_ptr, row_count) };
+        let variable_len_data = if variable_len_data_ptr.is_null() {
+            None
+        } else {
+            Some(unsafe { from_raw_parts(variable_len_data_ptr, variable_len_data_size) })
+        };
 
-       Ok(ColumnImpl {
-           name: name.to_string(),
-           data_type: column_type,
-           row_count,
-           fixed_len_data,
-           variable_len_data
-       })
-   }
+        Ok(ColumnImpl {
+            name: name.to_string(),
+            data_type: column_type,
+            row_count,
+            fixed_len_data,
+            variable_len_data,
+        })
+    }
 }
 
 pub struct Partition {
@@ -263,11 +269,18 @@ pub fn to_parquet_schema(partition: &Partition) -> parquet2::error::Result<Schem
         .iter()
         .map(|c| column_type_to_parquet_type(&c.name, c.data_type))
         .collect::<parquet2::error::Result<Vec<_>>>()?;
-    Ok(SchemaDescriptor::new(partition.table.clone(), parquet_types))
+    Ok(SchemaDescriptor::new(
+        partition.table.clone(),
+        parquet_types,
+    ))
 }
 
 pub fn to_encodings(partition: &Partition) -> Vec<Encoding> {
-    partition.columns.iter().map(|c| encoding_map(c.data_type)).collect()
+    partition
+        .columns
+        .iter()
+        .map(|c| encoding_map(c.data_type))
+        .collect()
 }
 
 fn encoding_map(data_type: ColumnType) -> Encoding {

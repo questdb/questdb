@@ -1,7 +1,7 @@
+mod boolean;
+pub(crate) mod file;
 mod primitive;
 mod schema;
-pub(crate) mod file;
-mod boolean;
 
 use parquet2::encoding::Encoding;
 use parquet2::metadata::Descriptor;
@@ -9,8 +9,52 @@ use parquet2::page::{DataPage, DataPageHeader, DataPageHeaderV1, DataPageHeaderV
 use parquet2::schema::types::PrimitiveType;
 use parquet2::statistics::{serialize_statistics, ParquetStatistics, PrimitiveStatistics};
 use parquet2::types::NativeType;
-use parquet2::write::{DynIter};
+use parquet2::write::DynIter;
 
+pub trait Nullable {
+    fn is_null(&self) -> bool;
+}
+
+impl Nullable for i8 {
+    fn is_null(&self) -> bool {
+        false
+    }
+}
+
+impl Nullable for bool {
+    fn is_null(&self) -> bool {
+        false
+    }
+}
+
+impl Nullable for i16 {
+    fn is_null(&self) -> bool {
+        false
+    }
+}
+
+impl Nullable for i32 {
+    fn is_null(&self) -> bool {
+        *self == i32::MIN
+    }
+}
+impl Nullable for i64 {
+    fn is_null(&self) -> bool {
+        *self == i64::MIN
+    }
+}
+
+impl Nullable for f32 {
+    fn is_null(&self) -> bool {
+        self.is_nan()
+    }
+}
+
+impl Nullable for f64 {
+    fn is_null(&self) -> bool {
+        self.is_nan()
+    }
+}
 
 pub fn column_chunk_to_pages(
     column_type: PrimitiveType,
@@ -157,6 +201,11 @@ pub fn _build_page_v2(
 #[cfg(test)]
 mod tests {
     use crate::parquet_write::column_chunk_to_pages;
+    use crate::parquet_write::file::ParquetWriter;
+    use crate::parquet_write::schema::{ColumnImpl, Partition};
+    use bytes::Bytes;
+    use num_traits::Float;
+    use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
     use parquet2::compression::CompressionOptions;
     use parquet2::deserialize::{
         native_cast, HybridEncoded, HybridRleDecoderIter, HybridRleIter, OptionalValues,
@@ -177,21 +226,28 @@ mod tests {
     use std::io::Cursor;
     use std::ptr::null;
     use std::sync::Arc;
-    use crate::parquet_write::file::ParquetWriter;
-    use crate::parquet_write::schema::{ColumnImpl, Partition};
+    use arrow::array::Array;
 
     #[test]
     fn test_write_parquet_with_fixed_sized_columns() {
         let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
-        let col1 = vec![1i32,2,3];
-        let expected1 = vec![Some(1i32), Some(2), Some(3)];
-        let col2 = vec![0.5f32, 0.001, 3.14];
-        let col1_w = Arc::new(ColumnImpl::from_raw_data("col1", 5, 3,  col1.as_ptr() as *const u8, null(), 0).unwrap());
-        let col2_w = Arc::new(ColumnImpl::from_raw_data("col2", 9, 3, col2.as_ptr() as *const u8, null(), 0).unwrap());
+        let col1 = vec![1i32, 2, i32::MIN, 3];
+        let expected1 = vec![Some(1i32), Some(2), None, Some(3)];
+        let col2 = vec![0.5f32, 0.001, f32::nan(), 3.14];
+        let expected2 = vec![Some(0.5f32), Some(0.001), None, Some(3.14)];
+
+        let col1_w = Arc::new(
+            ColumnImpl::from_raw_data("col1", 5, col1.len(), col1.as_ptr() as *const u8, null(), 0)
+                .unwrap(),
+        );
+        let col2_w = Arc::new(
+            ColumnImpl::from_raw_data("col2", 9, col2.len(), col2.as_ptr() as *const u8, null(), 0)
+                .unwrap(),
+        );
 
         let partition = Partition {
-           table: "test_table".to_string(),
-            columns: [col1_w, col2_w].to_vec()
+            table: "test_table".to_string(),
+            columns: [col1_w, col2_w].to_vec(),
         };
 
         ParquetWriter::new(&mut buf)
@@ -199,64 +255,33 @@ mod tests {
             .expect("parquet writer");
 
         buf.set_position(0);
+        let bytes: Bytes = buf.into_inner().into();
+        let parquet_reader = ParquetRecordBatchReaderBuilder::try_new(bytes)
+            .expect("reader")
+            .with_batch_size(8192)
+            .build()
+            .expect("builder");
 
-        let metadata = read_metadata(&mut buf).expect("meta");
-
-        let mut iter = ColumnIterator::new(
-            buf,
-            metadata.row_groups[0].columns().to_vec(),
-            None,
-            vec![],
-            usize::MAX, // we trust the file is correct
-        );
-
-        loop {
-            match iter.advance().expect("advance") {
-                State::Some(mut new_iter) => {
-                    if let Some((pages, _descriptor)) = new_iter.get() {
-                        let mut iterator = BasicDecompressor::new(pages, vec![]);
-                        while let Some(page) = iterator.next().unwrap() {
-                            // do something with it
-                            match page {
-                                parquet2::page::Page::Data(page) => {
-                                    let is_optional =
-                                        page.descriptor.primitive_type.field_info.repetition
-                                            == Repetition::Optional;
-                                    match (page.encoding(), is_optional) {
-                                        (Encoding::Plain, true) => {
-                                            let (_, def_levels, _) =
-                                                split_buffer(page).expect("split");
-                                            let validity =
-                                                HybridRleDecoderIter::new(HybridRleIter::new(
-                                                    Decoder::new(def_levels, 1),
-                                                    page.num_values(),
-                                                ));
-                                            let values = native_cast(page).expect("cast");
-                                            let values: Result<
-                                                Vec<Option<i32>>,
-                                                parquet2::error::Error,
-                                            > = OptionalValues::new(validity, values).collect();
-                                            if let Ok(v) = values {
-                                                assert_eq!(v, expected1);
-                                            }
-                                        }
-                                        _ => {}
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                        let _internal_buffer = iterator.into_inner();
-                    }
-                    iter = new_iter;
-                }
-                State::Finished(_buffer) => {
-                    assert!(_buffer.is_empty()); // data is uncompressed => buffer is always moved
-                    break;
-                }
+        for batch in parquet_reader {
+            if let Ok(batch) = batch {
+                let i32array = batch
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<arrow::array::Int32Array>()
+                    .expect("Failed to downcast");
+                let collected: Vec<_> = i32array.iter().collect();
+                assert_eq!(collected, expected1);
+                let f32array = batch
+                    .column(1)
+                    .as_any()
+                    .downcast_ref::<arrow::array::Float32Array>()
+                    .expect("Failed to downcast");
+                let collected: Vec<_> = f32array.iter().collect();
+                assert_eq!(collected, expected2);
             }
         }
     }
+
     #[test]
     fn encode_column_tops() {
         let def_level_count: usize = 113_000_000;
