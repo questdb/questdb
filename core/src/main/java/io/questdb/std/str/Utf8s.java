@@ -33,6 +33,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_BYTES;
+import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_MASK;
 
 /**
  * UTF-8 specific variant of the {@link Chars} utility.
@@ -168,8 +169,7 @@ public final class Utf8s {
      */
     public static boolean equals(@NotNull DirectUtf8Sequence l, @NotNull Utf8String r) {
         final int lSize = l.size();
-        return lSize == r.size() && l.zeroPaddedSixPrefix() == r.zeroPaddedSixPrefix()
-                && dataEquals(l, r, VARCHAR_INLINED_PREFIX_BYTES, lSize);
+        return lSize == r.size() && dataEquals(l, r, 0, lSize);
     }
 
     public static boolean equals(@NotNull Utf8Sequence l, long lSixPrefix, @NotNull Utf8Sequence r, long rSixPrefix) {
@@ -1259,6 +1259,29 @@ public final class Utf8s {
             return validateUtf8Decode3Bytes(lo, hi, b);
         }
         return validateUtf8Decode4Bytes(lo, hi, b);
+    }
+
+    /**
+     * Returns up to 6 initial bytes of the given UTF-8 sequence (less if it's shorter)
+     * packed into a zero-padded long value, in little-endian order. This prefix is
+     * stored inline in the auxiliary vector of a VARCHAR column, so asking for it is a
+     * matter of optimized data access. This is not a general access method, it
+     * shouldn't be called unless looking to optimize the access of the VARCHAR column.
+     *
+     * @param seq UTF8 sequence
+     * @return up to 6 initial bytes
+     */
+    public static long zeroPaddedSixPrefix(@NotNull Utf8Sequence seq) {
+        final int size = seq.size();
+        if (size >= Long.BYTES) {
+            return seq.longAt(0) & VARCHAR_INLINED_PREFIX_MASK;
+        }
+        final long limit = Math.min(size, VARCHAR_INLINED_PREFIX_BYTES);
+        long result = 0;
+        for (int i = 0; i < limit; i++) {
+            result |= (seq.byteAt(i) & 0xffL) << (8 * i);
+        }
+        return result;
     }
 
     private static boolean dataEquals(@NotNull Utf8Sequence l, @NotNull Utf8Sequence r, int start, int limit) {
