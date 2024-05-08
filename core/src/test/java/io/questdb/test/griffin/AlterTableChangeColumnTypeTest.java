@@ -553,10 +553,6 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                                 false,
                                 true
                         );
-                        assertQuery("column\ttype\n" +
-                                "converted\t" + dstType + "\n" +
-                                "casted\t" + dstType + "\n" +
-                                "original\t" + srcType + "\n", "select \"column\", type from table_columns('y')", null, false, false);
                     } catch (AssertionError e) {
                         // if the column wasn't converted
                         if (e.getMessage().contains("column")) {
@@ -565,10 +561,21 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                             // dump the difference in data
                             assertSql("\nFailed equivalent conversion from `" + srcType + "` to `" + dstType + "`.\n", "select converted, casted, original from y");
                         }
-                    } finally {
-                        drop("drop table y", sqlExecutionContext);
-                        drainWalQueue();
                     }
+                    assertQuery(
+                            "column\ttype\n" +
+                                    "converted\t" + dstType + "\n" +
+                                    "casted\t" + dstType + "\n" +
+                                    "original\t" + srcType + "\n",
+                            "select \"column\", type from table_columns('y')",
+                            null,
+                            false,
+                            false
+                    );
+
+                    drop("drop table y", sqlExecutionContext);
+                    drainWalQueue();
+
                 }
 
             }
@@ -674,14 +681,6 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testStrToFixedConversions() throws Exception {
-        assertMemoryLeak(() -> {
-            assumeNonWal();
-            testConvertVarToFixed("string");
-        });
-    }
-
-    @Test
     public void testNewTypeInvalid() throws Exception {
         assumeNonWal();
         assertFailure("alter table x alter column c type abracadabra", 34, "invalid type");
@@ -694,12 +693,26 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStrToFixedConversions() throws Exception {
+        assertMemoryLeak(() -> {
+            assumeNonWal();
+            testConvertVarToFixed("string");
+        });
+    }
+
+    @Test
     public void testSymbolToFixedConversions() throws Exception {
         assertMemoryLeak(() -> {
             assumeNonWal();
 
             testConvertFixedToVar("symbol");
         });
+    }
+
+    @Test
+    public void testTimestampConversionInvalid() throws Exception {
+        Assume.assumeTrue(!walEnabled && partitioned);
+        assertFailure("alter table x alter column timestamp type long", 42, "cannot change type of designated timestamp column");
     }
 
     @Test
@@ -711,9 +724,33 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTimestampConversionInvalid() throws Exception {
-        Assume.assumeTrue(!walEnabled && partitioned);
-        assertFailure("alter table x alter column timestamp type long", 42, "cannot change type of designated timestamp column");
+    public void testWalWriterConvertsRowOnUncommittedDataStringToSymbol() throws Exception {
+        assertMemoryLeak(() -> testWalRollUncommittedConversion(ColumnType.STRING, " rnd_str(5,1024,2) c,", "symbol"));
+    }
+
+    @Test
+    public void testWalWriterConvertsRowOnUncommittedDataStringToVarchar() throws Exception {
+        assertMemoryLeak(() -> testWalRollUncommittedConversion(ColumnType.STRING, " rnd_str(5,1024,2) c,", "varchar"));
+    }
+
+    @Test
+    public void testWalWriterConvertsRowOnUncommittedDataSymbolToString() throws Exception {
+        assertMemoryLeak(() -> testWalRollUncommittedConversion(ColumnType.SYMBOL, " rnd_symbol('a', 'b', 'c', null) c,", "string"));
+    }
+
+    @Test
+    public void testWalWriterConvertsRowOnUncommittedDataSymbolToVarchar() throws Exception {
+        assertMemoryLeak(() -> testWalRollUncommittedConversion(ColumnType.SYMBOL, " rnd_symbol('a', 'b', 'c', null) c,", "varchar"));
+    }
+
+    @Test
+    public void testWalWriterConvertsRowOnUncommittedDataVarcharToString() throws Exception {
+        assertMemoryLeak(() -> testWalRollUncommittedConversion(ColumnType.VARCHAR, " rnd_varchar(5,1024,2) c,", "string"));
+    }
+
+    @Test
+    public void testWalWriterConvertsRowOnUncommittedDataVarcharToSymbol() throws Exception {
+        assertMemoryLeak(() -> testWalRollUncommittedConversion(ColumnType.VARCHAR, " rnd_varchar(5,1024,2) c,", "symbol"));
     }
 
     private static void testConvertFixedToVar(String varTypeName) throws SqlException {
@@ -772,36 +809,6 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                 "select * from x",
                 "select * from y"
         );
-    }
-
-    @Test
-    public void testWalWriterConvertsRowOnUncommittedDataStringToSymbol() throws Exception {
-        assertMemoryLeak(() -> testWalRollUncommittedConversion(ColumnType.STRING, " rnd_str(5,1024,2) c,", "symbol"));
-    }
-
-    @Test
-    public void testWalWriterConvertsRowOnUncommittedDataStringToVarchar() throws Exception {
-        assertMemoryLeak(() -> testWalRollUncommittedConversion(ColumnType.STRING, " rnd_str(5,1024,2) c,", "varchar"));
-    }
-
-    @Test
-    public void testWalWriterConvertsRowOnUncommittedDataSymbolToString() throws Exception {
-        assertMemoryLeak(() -> testWalRollUncommittedConversion(ColumnType.SYMBOL, " rnd_symbol('a', 'b', 'c', null) c,", "string"));
-    }
-
-    @Test
-    public void testWalWriterConvertsRowOnUncommittedDataSymbolToVarchar() throws Exception {
-        assertMemoryLeak(() -> testWalRollUncommittedConversion(ColumnType.SYMBOL, " rnd_symbol('a', 'b', 'c', null) c,", "varchar"));
-    }
-
-    @Test
-    public void testWalWriterConvertsRowOnUncommittedDataVarcharToString() throws Exception {
-        assertMemoryLeak(() -> testWalRollUncommittedConversion(ColumnType.VARCHAR, " rnd_varchar(5,1024,2) c,", "string"));
-    }
-
-    @Test
-    public void testWalWriterConvertsRowOnUncommittedDataVarcharToSymbol() throws Exception {
-        assertMemoryLeak(() -> testWalRollUncommittedConversion(ColumnType.VARCHAR, " rnd_varchar(5,1024,2) c,", "symbol"));
     }
 
     private static void testConvertVarToFixed(String varType) throws SqlException {
