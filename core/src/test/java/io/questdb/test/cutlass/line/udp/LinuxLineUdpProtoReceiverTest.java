@@ -40,6 +40,7 @@ import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
@@ -81,49 +82,37 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
 
     @Test
     public void testLinuxCannotBindSocket() throws Exception {
-        if (Os.type != Os.LINUX_AMD64) {
-            return;
-        }
+        Assume.assumeTrue(Os.isLinux());
         assertCannotBindSocket(LINUX_FACTORY);
     }
 
     @Test
     public void testLinuxCannotJoin() throws Exception {
-        if (Os.type != Os.LINUX_AMD64) {
-            return;
-        }
+        Assume.assumeTrue(Os.isLinux());
         assertCannotJoin(LINUX_FACTORY);
     }
 
     @Test
     public void testLinuxCannotOpenSocket() throws Exception {
-        if (Os.type != Os.LINUX_AMD64) {
-            return;
-        }
+        Assume.assumeTrue(Os.isLinux());
         assertCannotOpenSocket(LINUX_FACTORY);
     }
 
     @Test
     public void testLinuxCannotSetReceiveBuffer() throws Exception {
-        if (Os.type != Os.LINUX_AMD64) {
-            return;
-        }
+        Assume.assumeTrue(Os.isLinux());
         assertCannotSetReceiveBuffer(LINUX_FACTORY);
     }
 
     @Test
     public void testLinuxFrequentCommit() throws Exception {
-        if (Os.type != Os.LINUX_AMD64) {
-            return;
-        }
+        Assume.assumeTrue(Os.isLinux());
         assertFrequentCommit(LINUX_FACTORY);
     }
 
     @Test
     public void testLinuxSimpleReceive() throws Exception {
-        if (Os.type != Os.LINUX_AMD64) {
-            return;
-        }
+        Assume.assumeTrue(Os.isLinux());
         assertReceive(new DefaultLineUdpReceiverConfiguration(), LINUX_FACTORY);
     }
 
