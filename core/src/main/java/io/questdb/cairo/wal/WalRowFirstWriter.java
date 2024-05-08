@@ -1496,9 +1496,14 @@ public class WalRowFirstWriter implements WalWriter {
 
         @Override
         public void append() {
-            txnMaxTimestamp = Math.max(txnMaxTimestamp, timestamp);
-            txnMinTimestamp = Math.min(txnMinTimestamp, timestamp);
-            txnOutOfOrder |= (txnMaxTimestamp != timestamp);
+            if (timestamp > txnMaxTimestamp) {
+                txnMaxTimestamp = timestamp;
+            } else {
+                txnOutOfOrder |= (txnMaxTimestamp != timestamp);
+            }
+            if (timestamp < txnMinTimestamp) {
+                txnMinTimestamp = timestamp;
+            }
 
             segmentRowCount++;
             rowMem.putInt(NEW_ROW_SEPARATOR);
