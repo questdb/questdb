@@ -115,6 +115,14 @@ public class QuoteIdentVarcharFunctionFactory implements FunctionFactory {
             return false;
         }
 
+        /**
+         * Quotes the varchar.
+         * Surrogate pairs are NOT handled. Surrogate pairs will be converted to `0` ie `NUL`.
+         *
+         * @param sink    output varchar sink
+         * @param utf8Str input varchar
+         * @return a possibly quoted varchar
+         */
         private static Utf8StringSink quote(Utf8StringSink sink, Utf8Sequence utf8Str) {
             if (utf8Str == null) {
                 return null;

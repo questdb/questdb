@@ -972,6 +972,7 @@ public final class Utf8s {
     /**
      * A specialised function to decode a single UTF-8 character.
      * Used when it doesn't make sense to allocate a temporary sink.
+     * Returns 0 in the case of a surrogate pair.
      *
      * @param seq input sequence
      * @return an integer-encoded tuple (decoded number of bytes, character in UTF-16 encoding, stored as short type)
@@ -983,6 +984,7 @@ public final class Utf8s {
     /**
      * A specialised function to decode a single UTF-8 character.
      * Used when it doesn't make sense to allocate a temporary sink.
+     * Returns 0 in the case of a surrogate pair.
      *
      * @param seq    input sequence
      * @param offset offset into the sequence
