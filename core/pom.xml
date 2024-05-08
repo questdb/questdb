@@ -443,7 +443,7 @@
                                 </goals>
                                 <configuration>
                                     <descriptors>
-                                        <descriptor>src/main/assembly/binaries.xml</descriptor>
+                                        <descriptor>src/main/assembly/no-jre.xml</descriptor>
                                     </descriptors>
                                     <finalName>questdb</finalName>
                                 </configuration>
@@ -511,7 +511,7 @@
             <properties>
                 <archive.name>${project.version}-rt-windows-amd64</archive.name>
                 <runtime.name>questdb-${project.version}-rt-windows-amd64</runtime.name>
-                <runtime.assembly>src/main/assembly/windows-runtime.xml</runtime.assembly>
+                <runtime.assembly>src/main/assembly/rt-win.xml</runtime.assembly>
             </properties>
         </profile>
         <profile>
@@ -525,7 +525,8 @@
             <properties>
                 <archive.name>${project.version}-rt-linux-amd64</archive.name>
                 <runtime.name>questdb-${project.version}-rt-linux-amd64</runtime.name>
-                <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
+                <runtime.assembly>src/main/assembly/rt-unix.xml</runtime.assembly>
+                <jemalloc.so>linux-amd64/libjemalloc.so</jemalloc.so>
             </properties>
         </profile>
         <profile>
@@ -539,7 +540,8 @@
             <properties>
                 <archive.name>${project.version}-rt-freebsd-amd64</archive.name>
                 <runtime.name>questdb-${project.version}-rt-freebsd-amd64</runtime.name>
-                <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
+                <runtime.assembly>src/main/assembly/rt-unix.xml</runtime.assembly>
+                <jemalloc.so>freebsd-amd64/libjemalloc.so</jemalloc.so>
             </properties>
         </profile>
         <profile>
@@ -553,7 +555,8 @@
             <properties>
                 <archive.name>${project.version}-rt-linux-aarch64</archive.name>
                 <runtime.name>questdb-${project.version}-rt-linux-aarch64</runtime.name>
-                <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
+                <runtime.assembly>src/main/assembly/rt-unix.xml</runtime.assembly>
+                <jemalloc.so>linux-aarch64/libjemalloc.so</jemalloc.so>
             </properties>
         </profile>
         <profile>
@@ -561,12 +564,29 @@
             <activation>
                 <os>
                     <family>Mac</family>
+                    <arch>amd64</arch>
                 </os>
             </activation>
             <properties>
                 <archive.name>${project.version}-rt-osx-amd64</archive.name>
                 <runtime.name>questdb-${project.version}-rt-osx-amd64</runtime.name>
-                <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
+                <runtime.assembly>src/main/assembly/rt-unix.xml</runtime.assembly>
+                <jemalloc.so>darwin-amd64/libjemalloc.dylib</jemalloc.so>
+            </properties>
+        </profile>
+        <profile>
+            <id>platform-osx-aarch64</id>
+            <activation>
+                <os>
+                    <family>Mac</family>
+                    <arch>aarch64</arch>
+                </os>
+            </activation>
+            <properties>
+                <archive.name>${project.version}-rt-osx-aarch64</archive.name>
+                <runtime.name>questdb-${project.version}-rt-osx-aarch64</runtime.name>
+                <runtime.assembly>src/main/assembly/rt-unix.xml</runtime.assembly>
+                <jemalloc.so>darwin-aarch64/libjemalloc.dylib</jemalloc.so>
             </properties>
         </profile>
         <profile>

@@ -43,6 +43,7 @@ public class GcUtf8String implements DirectUtf8Sequence {
     private final String original;
     private final long ptr;
     private final int size;
+    private final long zeroPaddedSixPrefix;
 
     public GcUtf8String(@NotNull String original) {
         // ***** NOTE *****
@@ -57,6 +58,7 @@ public class GcUtf8String implements DirectUtf8Sequence {
         this.buffer.rewind();
         this.ptr = Unsafe.getUnsafe().getLong(this.buffer, BUFFER_ADDRESS_OFFSET);
         this.size = bytes.length;
+        this.zeroPaddedSixPrefix = Utf8s.zeroPaddedSixPrefix(this);
     }
 
     @Override
@@ -104,6 +106,11 @@ public class GcUtf8String implements DirectUtf8Sequence {
     @Override
     public String toString() {
         return original;
+    }
+
+    @Override
+    public long zeroPaddedSixPrefix() {
+        return zeroPaddedSixPrefix;
     }
 
     static {

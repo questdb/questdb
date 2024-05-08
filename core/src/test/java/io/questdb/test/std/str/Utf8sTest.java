@@ -544,6 +544,11 @@ public class Utf8sTest {
         Utf8String asciiShort = utf8("abcdef");
         Utf8String asciiMid = utf8("abcdefgh");
         Utf8String asciiLong = utf8("abcdefghijk");
+
+        Assert.assertEquals(Utf8s.zeroPaddedSixPrefix(asciiShort), asciiShort.zeroPaddedSixPrefix());
+        Assert.assertEquals(Utf8s.zeroPaddedSixPrefix(asciiMid), asciiMid.zeroPaddedSixPrefix());
+        Assert.assertEquals(Utf8s.zeroPaddedSixPrefix(asciiLong), asciiLong.zeroPaddedSixPrefix());
+
         long sixPrefixShort = asciiShort.zeroPaddedSixPrefix();
         long sixPrefixMid = asciiMid.zeroPaddedSixPrefix();
         long sixPrefixLong = asciiLong.zeroPaddedSixPrefix();
