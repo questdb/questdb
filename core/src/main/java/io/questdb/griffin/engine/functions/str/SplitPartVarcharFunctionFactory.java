@@ -68,7 +68,7 @@ public class SplitPartVarcharFunctionFactory implements FunctionFactory {
                 return new SplitPartVarcharConstIndexFunction(varcharFunc, delimiterFunc, indexFunc, indexPosition, index);
             }
         } else if (!indexFunc.isRuntimeConstant()) {
-            throw SqlException.$(indexPosition, "index must be a constant or runtime-constant");
+            throw SqlException.$(indexPosition, "index must be either a constant expression or a placeholder");
         }
         return new SplitPartVarcharFunction(varcharFunc, delimiterFunc, indexFunc, indexPosition);
     }
