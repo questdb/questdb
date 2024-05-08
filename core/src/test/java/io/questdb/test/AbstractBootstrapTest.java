@@ -33,7 +33,9 @@ import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.Misc;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -237,17 +239,16 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
 
         final String indexFile = publicPath + Files.SEPARATOR + "index.html";
         try (PrintWriter writer = new PrintWriter(indexFile, CHARSET)) {
-            writer.println("<html><body><p>Dummy Web Console</p></body></html>");
+            writer.print("<html><body><p>Dummy Web Console</p></body></html>");
         }
 
-        final FilesFacade ff = new FilesFacadeImpl();
-        try (Path indexPath = new Path().of(indexFile)) {
-            long lastModified;
-            while ((lastModified = ff.getLastModified(indexPath)) < 0) {
+        long lastModified;
+        try (Path indexPath = new Path().of(indexFile).$()) {
+            while ((lastModified = Files.getLastModified(indexPath)) < 0) {
                 Os.sleep(100);
             }
-            return lastModified;
         }
+        return lastModified;
     }
 
     protected static void drainWalQueue(CairoEngine engine) {

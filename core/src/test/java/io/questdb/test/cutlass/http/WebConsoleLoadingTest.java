@@ -43,7 +43,7 @@ import java.util.Map;
 import static io.questdb.cutlass.http.HttpConstants.HEADER_IF_NONE_MATCH;
 
 public class WebConsoleLoadingTest extends AbstractBootstrapTest {
-    private static final String TEST_PAYLOAD = "<html><body><p>Dummy Web Console</p></body></html>\n";
+    private static final String TEST_PAYLOAD = "<html><body><p>Dummy Web Console</p></body></html>";
 
     private long indexFileLastModified;
 
