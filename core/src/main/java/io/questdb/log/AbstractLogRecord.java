@@ -180,6 +180,12 @@ abstract class AbstractLogRecord implements LogRecord, Log {
     }
 
     @Override
+    public LogRecord $uuid(long lo, long hi) {
+        Numbers.appendUuid(lo, hi, this);
+        return this;
+    }
+
+    @Override
     public LogRecord $(boolean x) {
         sink().put(x);
         return this;
