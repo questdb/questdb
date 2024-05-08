@@ -37,25 +37,30 @@ public class Utf8String implements Utf8Sequence {
     private final boolean ascii;
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
     private final byte[] bytes;
+    private final long zeroPaddedSixPrefix;
 
     public Utf8String(byte @NotNull [] bytes, boolean ascii) {
         this.bytes = bytes;
         this.ascii = ascii;
+        this.zeroPaddedSixPrefix = Utf8s.zeroPaddedSixPrefix(this);
     }
 
     public Utf8String(@NotNull String str) {
         this.bytes = str.getBytes(StandardCharsets.UTF_8);
         this.ascii = (str.length() == bytes.length);
+        this.zeroPaddedSixPrefix = Utf8s.zeroPaddedSixPrefix(this);
     }
 
     public Utf8String(char ch) {
         this.bytes = String.valueOf(ch).getBytes(StandardCharsets.UTF_8);
         this.ascii = (bytes.length == 1);
+        this.zeroPaddedSixPrefix = Utf8s.zeroPaddedSixPrefix(this);
     }
 
     public Utf8String(@NotNull CharSequence seq) {
         this.bytes = seq.toString().getBytes(StandardCharsets.UTF_8);
         this.ascii = (seq.length() == bytes.length);
+        this.zeroPaddedSixPrefix = Utf8s.zeroPaddedSixPrefix(this);
     }
 
     public static Utf8String newInstance(@NotNull Utf8Sequence src) {
@@ -98,5 +103,10 @@ public class Utf8String implements Utf8Sequence {
     @Override
     public @NotNull String toString() {
         return Utf8s.stringFromUtf8Bytes(this);
+    }
+
+    @Override
+    public long zeroPaddedSixPrefix() {
+        return zeroPaddedSixPrefix;
     }
 }

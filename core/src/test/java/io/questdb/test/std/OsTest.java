@@ -38,7 +38,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class OsTest {
     @Test
     public void testAffinity() throws Exception {
-        if (Os.type != Os.OSX_ARM64) {
+        if (Os.arch != Os.ARCH_AARCH64 || Os.type != Os.DARWIN) {
             Assert.assertEquals(0, Os.setCurrentThreadAffinity(0));
 
             AtomicInteger result = new AtomicInteger(-1);

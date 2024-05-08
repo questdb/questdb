@@ -23,7 +23,7 @@
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
 <assembly>
-    <id>${artifact.version}-no-jre-bin</id>
+    <id>${archive.name}</id>
     <formats>
         <format>tar.gz</format>
     </formats>
@@ -31,33 +31,24 @@
     <files>
         <file>
             <source>../LICENSE.txt</source>
-            <outputDirectory>questdb-${artifact.version}-no-jre-bin</outputDirectory>
+            <outputDirectory>${runtime.name}/legal</outputDirectory>
+        </file>
+        <file>
+            <source>src/main/bin/${jemalloc.so}</source>
+            <outputDirectory>${runtime.name}/bin</outputDirectory>
         </file>
     </files>
-    <dependencySets>
-        <dependencySet>
-            <outputDirectory>questdb-${artifact.version}-no-jre-bin</outputDirectory>
-            <outputFileNameMapping>questdb.jar</outputFileNameMapping>
-            <useProjectArtifact>true</useProjectArtifact>
-            <scope>runtime</scope>
-        </dependencySet>
-    </dependencySets>
     <fileSets>
         <fileSet>
             <directory>src/main/bin</directory>
             <includes>
                 <include>*.sh</include>
             </includes>
-            <outputDirectory>questdb-${artifact.version}-no-jre-bin</outputDirectory>
-            <fileMode>755</fileMode>
-            <lineEnding>unix</lineEnding>
+            <outputDirectory>${runtime.name}/bin</outputDirectory>
         </fileSet>
         <fileSet>
-            <directory>src/main/bin</directory>
-            <includes>
-                <include>*.exe</include>
-            </includes>
-            <outputDirectory>questdb-${artifact.version}-no-jre-bin</outputDirectory>
+            <directory>target/runtime</directory>
+            <outputDirectory>${runtime.name}</outputDirectory>
         </fileSet>
     </fileSets>
 </assembly>
