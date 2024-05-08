@@ -125,14 +125,10 @@ public class QuoteIdentVarcharFunctionFactory implements FunctionFactory {
             boolean needsQuoting = false;
             int len = Utf8s.length(utf8Str);
 
-            int pc; // current tuple packed char
-            short n; // decoded bytes
-            char c; // utf16 char
-
-            for (int i = 0; i < len; i += n) {
-                pc = Utf8s.utf8CharDecode(utf8Str, i); // next char
-                n = Numbers.decodeLowShort(pc); // num bytes
-                c = (char) Numbers.decodeHighShort(pc); // utf16 char
+            for (int i = 0, n; i < len; i += n) {
+                final int pc = Utf8s.utf8CharDecode(utf8Str, i); // current tuple packed char
+                n = Numbers.decodeLowShort(pc); // number of decoded bytes
+                final char c = (char) Numbers.decodeHighShort(pc); // utf16 char
 
                 if (!(Character.isLetter(c) ||
                         Character.isDigit(c) ||
@@ -147,11 +143,10 @@ public class QuoteIdentVarcharFunctionFactory implements FunctionFactory {
                 sink.put(utf8Str);
             } else {
                 sink.put('"');
-                for (int i = 0; i < len; i += n) {
-                    pc = Utf8s.utf8CharDecode(utf8Str, i); // next char
-                    n = Numbers.decodeLowShort(pc); // num bytes
-                    c = (char) Numbers.decodeHighShort(pc); // utf16 char
-
+                for (int i = 0, n; i < len; i += n) {
+                    final int pc = Utf8s.utf8CharDecode(utf8Str, i); // current tuple packed char
+                    n = Numbers.decodeLowShort(pc); // number of decoded bytes
+                    final char c = (char) Numbers.decodeHighShort(pc); // utf16 char
                     if (c != '"') {
                         sink.put(c);
                     } else {
