@@ -67,10 +67,10 @@ public class QuoteIdentVarcharFunctionFactory implements FunctionFactory {
             if (val == null) {
                 return VarcharConstant.NULL;
             } else {
-                Utf8Sink quotedVal = QuoteIdentVarcharFunctionFactory
+                Utf8StringSink quotedVal = QuoteIdentVarcharFunctionFactory
                         .QuoteIdentVarcharFunction
                         .quote(Misc.getThreadLocalUtf8Sink(), val);
-                return new VarcharConstant(quotedVal.toString());
+                return new VarcharConstant(quotedVal);
             }
         }
         return new QuoteIdentVarcharFunctionFactory.QuoteIdentVarcharFunction(arg);
