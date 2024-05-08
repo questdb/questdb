@@ -27,7 +27,6 @@ package io.questdb.test;
 import io.questdb.Bootstrap;
 import io.questdb.PropBootstrapConfiguration;
 import io.questdb.PropServerConfiguration;
-import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -35,6 +34,8 @@ import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -231,6 +232,21 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
 
     protected static void createDummyConfigurationInRoot(String root, String... extra) throws Exception {
         createDummyConfiguration(HTTP_PORT, HTTP_MIN_PORT, PG_PORT, ILP_PORT, root, extra);
+    }
+
+    protected static long createDummyWebConsole() throws Exception {
+        final String publicPath = root + Files.SEPARATOR + "public";
+        TestUtils.createTestPath(publicPath);
+
+        final String indexFile = publicPath + Files.SEPARATOR + "index.html";
+        try (PrintWriter writer = new PrintWriter(indexFile, CHARSET)) {
+            writer.println("<html><body><p>Dummy Web Console</p></body></html>");
+        }
+
+        final FilesFacade ff = new FilesFacadeImpl();
+        try (Path indexPath = new Path().of(indexFile)) {
+            return ff.getLastModified(indexPath);
+        }
     }
 
     protected static void drainWalQueue(CairoEngine engine) {
