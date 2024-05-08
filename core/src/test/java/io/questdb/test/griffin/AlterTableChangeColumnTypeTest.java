@@ -541,14 +541,12 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     ddl("alter table y alter column converted type " + dstType, sqlExecutionContext);
 
                     try {
-                        assertQuery(
+                        assertSql(
                                 "count\n0\n",
-                                "select count(*) from y where converted <> casted",
-                                null,
-                                false,
-                                true
+                                "select count(*) from y where converted <> casted"
                         );
                     } catch (AssertionError e) {
+                        LOG.error().$("failed, error: ").$(e).$();
                         // if the column wasn't converted
                         if (e.getMessage().contains("column")) {
                             throw e;
@@ -557,17 +555,13 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                             assertSql("\nFailed equivalent conversion from `" + srcType + "` to `" + dstType + "`.\n", "select converted, casted, original from y");
                         }
                     }
-                    assertQuery(
+                    assertSql(
                             "column\ttype\n" +
                                     "converted\t" + dstType + "\n" +
                                     "casted\t" + dstType + "\n" +
                                     "original\t" + srcType + "\n",
-                            "select \"column\", type from table_columns('y')",
-                            null,
-                            false,
-                            false
+                            "select \"column\", type from table_columns('y')"
                     );
-
                     drop("drop table y", sqlExecutionContext);
                     drainWalQueue();
 
@@ -601,7 +595,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> {
             drainWalQueue();
-            final String[] types = {"BYTE", "SHORT", "INT", "LONG", "FLOAT", "DOUBLE", "TIMESTAMP"};
+            final String[] types = {"BYTE", "SHORT", "INT", "LONG", "FLOAT", "DOUBLE", "TIMESTAMP", "BOOLEAN"};
 
             for (int i = 0, n = types.length; i < n; i++) {
                 for (int j = 0, m = types.length; j < m; j++) {
@@ -620,14 +614,12 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     ddl("alter table y alter column converted type " + dstType, sqlExecutionContext);
 
                     try {
-                        assertQuery(
+                        assertSql(
                                 "count\n0\n",
-                                "select count(*) from y where converted <> casted",
-                                null,
-                                false,
-                                true
+                                "select count(*) from y where converted <> casted"
                         );
                     } catch (AssertionError e) {
+                        LOG.error().$("failed, error: ").$(e).$();
                         // if the column wasn't converted
                         if (e.getMessage().contains("column")) {
                             throw e;
@@ -636,10 +628,13 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                             assertSql("\nFailed equivalent conversion from `" + srcType + "` to `" + dstType + "`.\n", "select converted, casted, original from y");
                         }
                     }
-                    assertQuery("column\ttype\n" +
+                    assertSql(
+                            "column\ttype\n" +
                             "converted\t" + dstType + "\n" +
                             "casted\t" + dstType + "\n" +
-                            "original\t" + srcType + "\n", "select \"column\", type from table_columns('y')", null, false, false);
+                                    "original\t" + srcType + "\n",
+                            "select \"column\", type from table_columns('y')"
+                    );
                     drop("drop table y", sqlExecutionContext);
                     drainWalQueue();
                 }
