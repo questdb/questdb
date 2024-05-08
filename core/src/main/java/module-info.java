@@ -116,8 +116,14 @@ open module io.questdb {
     exports io.questdb.std.histogram.org.HdrHistogram.packedarray;
     exports io.questdb.client.impl;
     exports io.questdb.griffin.engine.groupby.hyperloglog;
+    exports io.questdb.griffin.engine.functions.finance;
 
     provides FunctionFactory with
+
+            // finance
+            io.questdb.griffin.engine.functions.finance.LevelTwoPriceFunctionFactory,
+
+
             // query activity functions
             io.questdb.griffin.engine.functions.activity.CancelQueryFunctionFactory,
             io.questdb.griffin.engine.functions.activity.QueryActivityFunctionFactory,
@@ -922,6 +928,7 @@ open module io.questdb {
 
             // starts_with
             io.questdb.griffin.engine.functions.str.StartsWithStrFunctionFactory,
+            io.questdb.griffin.engine.functions.str.StartsWithVarcharFunctionFactory,
             // split_part
             io.questdb.griffin.engine.functions.str.SplitPartFunctionFactory,
             io.questdb.griffin.engine.functions.str.SplitPartCharFunctionFactory,

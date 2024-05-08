@@ -305,7 +305,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
         if (ColumnType.isVarSize(columnTag)) {
             final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnTag);
             for (long row = fromRow; row < toRow; row++) {
-                columnTypeDriver.appendNull(dstDataMem, dstAuxMem);
+                columnTypeDriver.appendNull(dstAuxMem, dstDataMem);
             }
         } else {
             final long rowCount = toRow - fromRow;
@@ -429,7 +429,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                     dstFixMem.putLong(dstVarMem.putStr(masterRecord.getStrA(i)));
                     break;
                 case ColumnType.VARCHAR:
-                    VarcharTypeDriver.appendValue(dstVarMem, dstFixMem, masterRecord.getVarcharA(i));
+                    VarcharTypeDriver.appendValue(dstFixMem, dstVarMem, masterRecord.getVarcharA(i));
                     break;
                 case ColumnType.BINARY:
                     dstFixMem.putLong(dstVarMem.putBin(masterRecord.getBin(i)));

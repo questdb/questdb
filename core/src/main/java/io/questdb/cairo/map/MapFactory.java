@@ -132,6 +132,15 @@ public class MapFactory {
                         configuration.getSqlMapMaxResizes()
                 );
             }
+        } else if (keyTypes.getColumnCount() == 1 && keyTypes.getColumnType(0) == ColumnType.VARCHAR && 2 * Long.BYTES + valueSize <= maxEntrySize) {
+            return new UnorderedVarcharMap(
+                    valueTypes,
+                    keyCapacity,
+                    configuration.getSqlFastMapLoadFactor(),
+                    configuration.getSqlMapMaxResizes(),
+                    configuration.getGroupByAllocatorDefaultChunkSize(),
+                    configuration.getGroupByAllocatorMaxChunkSize()
+            );
         }
 
         return new OrderedMap(

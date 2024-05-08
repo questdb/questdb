@@ -4502,7 +4502,7 @@ public class SqlOptimiser implements Mutable {
                     // still nothing? Let's try table prefix very last time.
                     if (timestampAlias == null && nested.getTableName() != null) {
                         CharacterStoreEntry e = characterStore.newEntry();
-                        e.put(nested.getTimestamp()).putAscii('.').put(timestamp.token);
+                        e.put(nested.getTableName()).putAscii('.').put(timestamp.token);
                         CharSequence tableNamePrefixedTimestampColumn = e.toImmutable();
                         timestampAlias = model.getColumnNameToAliasMap().get(tableNamePrefixedTimestampColumn);
 

@@ -35,6 +35,7 @@ import io.questdb.std.bytes.Bytes;
  * Thread-unsafe allocator implementation.
  */
 public class GroupByAllocatorArena implements GroupByAllocator {
+    private final boolean aligned;
     // Holds <ptr, size> pairs.
     private final LongLongHashMap chunks = new LongLongHashMap();
     private final long defaultChunkSize;
@@ -44,8 +45,13 @@ public class GroupByAllocatorArena implements GroupByAllocator {
     private long ptr;
 
     public GroupByAllocatorArena(long defaultChunkSize, long maxChunkSize) {
+        this(defaultChunkSize, maxChunkSize, true);
+    }
+
+    public GroupByAllocatorArena(long defaultChunkSize, long maxChunkSize, boolean aligned) {
         this.defaultChunkSize = defaultChunkSize;
         this.maxChunkSize = maxChunkSize;
+        this.aligned = aligned;
     }
 
     // Allocated chunks total (bytes).
@@ -82,7 +88,7 @@ public class GroupByAllocatorArena implements GroupByAllocator {
                 Unsafe.free(ptr, chunkSize, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
                 chunks.removeAt(index);
                 allocated -= chunkSize;
-                if (this.ptr == Bytes.align8b(ptr + chunkSize)) {
+                if (this.ptr == alignMaybe(ptr + chunkSize)) {
                     this.ptr = lim = 0;
                 }
             }
@@ -97,7 +103,7 @@ public class GroupByAllocatorArena implements GroupByAllocator {
 
         if (ptr + size <= lim) {
             long allocatedPtr = ptr;
-            ptr = Bytes.align8b(allocatedPtr + size);
+            ptr = alignMaybe(allocatedPtr + size);
             return allocatedPtr;
         }
 
@@ -105,7 +111,7 @@ public class GroupByAllocatorArena implements GroupByAllocator {
         long allocatedPtr = Unsafe.malloc(chunkSize, MemoryTag.NATIVE_GROUP_BY_FUNCTION);
         chunks.put(allocatedPtr, chunkSize);
         allocated += chunkSize;
-        ptr = Bytes.align8b(allocatedPtr + size);
+        ptr = alignMaybe(allocatedPtr + size);
         lim = allocatedPtr + chunkSize;
         return allocatedPtr;
     }
@@ -119,12 +125,12 @@ public class GroupByAllocatorArena implements GroupByAllocator {
             return ptr;
         }
 
-        if (this.ptr == Bytes.align8b(ptr + oldSize)) {
+        if (this.ptr == alignMaybe(ptr + oldSize)) {
             // Potential fast path:
             // we've just allocated this memory, so maybe we don't need to do anything?
             if (ptr + newSize <= lim) {
                 // Great, we can simply use the remaining part of the chunk.
-                this.ptr = Bytes.align8b(ptr + newSize);
+                this.ptr = alignMaybe(ptr + newSize);
                 return ptr;
             }
         }
@@ -142,7 +148,7 @@ public class GroupByAllocatorArena implements GroupByAllocator {
                     chunks.removeAt(index);
                     chunks.put(chunkPtr, newSize);
                     lim = chunkPtr + newSize;
-                    this.ptr = Bytes.align8b(lim);
+                    this.ptr = alignMaybe(lim);
                     return chunkPtr;
                 }
             }
@@ -152,5 +158,9 @@ public class GroupByAllocatorArena implements GroupByAllocator {
         long allocatedPtr = malloc(newSize);
         Vect.memcpy(allocatedPtr, ptr, oldSize);
         return allocatedPtr;
+    }
+
+    private long alignMaybe(long ptr) {
+        return aligned ? Bytes.align8b(ptr) : ptr;
     }
 }
