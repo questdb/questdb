@@ -71,6 +71,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private static final IntList castGroups = new IntList();
     @SuppressWarnings("FieldMayBeFinal")
     private static Log LOG = LogFactory.getLog(SqlCompilerImpl.class);
+    private static final boolean[][] columnConverstionSupport = new boolean[ColumnType.NULL][ColumnType.NULL];
     protected final AlterOperationBuilder alterOperationBuilder;
     protected final SqlCodeGenerator codeGenerator;
     protected final CompiledQueryImpl compiledQuery;
@@ -358,6 +359,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         clear();
         lexer.of(expression);
         parser.expr(lexer, listener, this);
+    }
+
+    private static void addSupportedConversion(short fromType, short... toTypes) {
+        for (short toType : toTypes) {
+            columnConverstionSupport[fromType][toType] = true;
+            // Make it symmetrical
+            columnConverstionSupport[toType][fromType] = true;
+        }
     }
 
     private static void configureLexer(GenericLexer lexer) {
@@ -842,10 +851,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 tableToken,
                 tableMetadata.getTableId()
         );
+        int existingColumnType = tableMetadata.getColumnType(columnIndex);
         int newColumnType = addColumnWithType(changeColumn, columnName, columnNamePosition);
         if (tableMetadata.isWalEnabled()
                 && ColumnType.isVarSize(newColumnType)
-                && !ColumnType.isVarSize(tableMetadata.getColumnType(columnIndex))
+                && !ColumnType.isVarSize(existingColumnType)
         ) {
             // This may remove deduplication from the column since var len columns don't support deduplication.
             // Check for it.
@@ -865,7 +875,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (columnIndex == tableMetadata.getTimestampIndex()) {
             throw SqlException.$(lexer.lastTokenPosition(), "cannot change type of designated timestamp column");
         }
-        int existingColumnType = tableMetadata.getColumnType(columnIndex);
         if (newColumnType == existingColumnType) {
             throw SqlException.$(lexer.lastTokenPosition(), "column '").put(columnName)
                     .put("' type is already '").put(ColumnType.nameOf(existingColumnType)).put('\'');
@@ -875,22 +884,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     .put(ColumnType.nameOf(existingColumnType)).put(", new=").put(ColumnType.nameOf(newColumnType)).put(']');
         }
         compiledQuery.ofAlter(alterOperationBuilder.build());
-    }
-
-    private boolean isCompatibleColumnTypeChange(int from, int to) {
-        int castFrom = castGroups.getQuick(ColumnType.tagOf(from));
-        int castTo = castGroups.getQuick(ColumnType.tagOf(to));
-        if (castFrom == castTo) {
-            return true;
-        }
-        // some exceptions
-        if ((castFrom == 1 && castTo == 3) || (castFrom == 3 && castTo == 1)) {
-            return true;
-        }
-        if ((from == ColumnType.IPv4 || from == ColumnType.UUID) && castTo == 3) {
-            return true;
-        }
-        return (to == ColumnType.IPv4 || to == ColumnType.UUID) && castFrom == 3;
     }
 
     private void alterTableColumnAddIndex(
@@ -2546,6 +2539,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         );
     }
 
+    private boolean isCompatibleColumnTypeChange(int from, int to) {
+        return columnConverstionSupport[ColumnType.tagOf(from)][ColumnType.tagOf(to)];
+    }
+
     private void lightlyValidateInsertModel(InsertModel model) throws SqlException {
         ExpressionNode tableNameExpr = model.getTableNameExpr();
         if (tableNameExpr.type != ExpressionNode.LITERAL) {
@@ -3685,5 +3682,27 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         sqlControlSymbols.add("--");
         sqlControlSymbols.add("[");
         sqlControlSymbols.add("]");
+
+        short[] numericTypes = {ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.TIMESTAMP, ColumnType.BOOLEAN, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL};
+        addSupportedConversion(ColumnType.BYTE, numericTypes);
+        addSupportedConversion(ColumnType.SHORT, numericTypes);
+        addSupportedConversion(ColumnType.INT, numericTypes);
+        addSupportedConversion(ColumnType.LONG, numericTypes);
+        addSupportedConversion(ColumnType.FLOAT, numericTypes);
+        addSupportedConversion(ColumnType.DOUBLE, numericTypes);
+        addSupportedConversion(ColumnType.TIMESTAMP, numericTypes);
+        addSupportedConversion(ColumnType.BOOLEAN, numericTypes);
+
+
+        // Other exotics <-> strings
+        addSupportedConversion(ColumnType.IPv4, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL);
+        addSupportedConversion(ColumnType.UUID, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL);
+        addSupportedConversion(ColumnType.DATE, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL);
+        addSupportedConversion(ColumnType.CHAR, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL);
+
+        // Strings <-> Strings
+        addSupportedConversion(ColumnType.SYMBOL, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL);
+        addSupportedConversion(ColumnType.STRING, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL);
+        addSupportedConversion(ColumnType.VARCHAR, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL);
     }
 }

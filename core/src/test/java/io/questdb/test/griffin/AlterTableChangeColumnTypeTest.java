@@ -483,16 +483,16 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             engine.releaseInactive();
             checkDedupSet("x", "ik", false);
 
-            insert("insert into x(ik, d, timestamp) values('abc', 1.2, '2044-02-24')", sqlExecutionContext);
-            insert("insert into x(ik, d, timestamp) values('abc', 1.3, '2044-02-25')", sqlExecutionContext);
-            insert("insert into x(ik, d, timestamp) values('def', 1.4, '2044-02-25')", sqlExecutionContext);
+            insert("insert into x(ik, d, timestamp) values('abc', 2, '2044-02-24')", sqlExecutionContext);
+            insert("insert into x(ik, d, timestamp) values('abc', 3, '2044-02-25')", sqlExecutionContext);
+            insert("insert into x(ik, d, timestamp) values('def', 4, '2044-02-25')", sqlExecutionContext);
 
             drainWalQueue();
 
             assertSql("timestamp\td\tik\n" +
-                    "2018-01-01T02:00:00.000000Z\t0.05601088107501384\tHYRX\n" +
-                    "2044-02-24T00:00:00.000000Z\t1.2\tabc\n" +
-                    "2044-02-25T00:00:00.000000Z\t1.4\tdef\n", "select timestamp, d, ik from x limit -3");
+                    "2018-01-01T02:00:00.000000Z\t0.04488373772232379\tCPSW\n" +
+                    "2044-02-24T00:00:00.000000Z\t2.0\tabc\n" +
+                    "2044-02-25T00:00:00.000000Z\t4.0\tdef\n", "select timestamp, d, ik from x limit -3");
         });
     }
 
@@ -517,10 +517,11 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     @Test
     public void testFixedSizeColumnEquivalentToCast() throws Exception {
         assertMemoryLeak(() -> {
+            assumeNonWal();
             createX();
             drainWalQueue();
-            final String[] types = {"BYTE", "SHORT", "INT", "LONG", "FLOAT", "DOUBLE", "TIMESTAMP"};
-            final char[] col_names = {'l', 'f', 'i', 'j', 'e', 'd', 'k'};
+            final String[] types = {"BYTE", "SHORT", "INT", "LONG", "FLOAT", "DOUBLE", "TIMESTAMP", "BOOLEAN"};
+            final char[] col_names = {'l', 'f', 'i', 'j', 'e', 'd', 'k', 't'};
             char srcColName;
             String srcType;
             String dstType;
@@ -539,15 +540,15 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     LOG.info().$("checking `" + srcType + "` to `" + dstType + "` conversion").$();
 
                     ddl("create table y ( converted " + srcType + ", casted " + dstType + ", original " + srcType + ")", sqlExecutionContext);
-                    insert("insert into y select " + srcColName + " as converted, " + srcColName + "::" + dstType + " as casted, " + srcColName + " as original from x", sqlExecutionContext);
+                    insert("insert into y select " + srcColName + " as converted, cast(" + srcColName + " as " + dstType + ") as casted, " + srcColName + " as original from x", sqlExecutionContext);
                     drainWalQueue();
                     ddl("alter table y alter column converted type " + dstType, sqlExecutionContext);
                     drainWalQueue();
 
                     try {
                         assertQuery(
-                                "count_distinct\tfirst\n1\ttrue\n",
-                                "select count_distinct('equivalent'), first(equivalent) from (select (converted = casted) as equivalent from y)",
+                                "count\n0\n",
+                                "select count() from y where converted <> casted",
                                 null,
                                 false,
                                 true
@@ -652,59 +653,15 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     public void testFixedToStrConversions() throws Exception {
         assertMemoryLeak(() -> {
             assumeNonWal();
+            testConvertFixedToVar("string");
+        });
+    }
 
-            ddl(
-                    "create table x as (" +
-                            "select" +
-                            " rnd_uuid4() guid," +
-                            " rnd_int() rint," +
-                            " rnd_ipv4() ip," +
-                            " rnd_long() i64," +
-                            " rnd_short() i16," +
-                            " rnd_byte() i8," +
-                            " rnd_double() f64," +
-                            " rnd_float() f32," +
-                            " rnd_char() ch," +
-                            " to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 ts," +
-                            " cast(to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 as date) dt," +
-                            " to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 timestamp" +
-                            " from long_sequence(1000)" +
-                            ")"
-            );
-            // add nulls last line
-            insert("insert into x(timestamp) values('2018-01-03T23:23')", sqlExecutionContext);
-
-            ddl("create table y as (" +
-                    "select cast(guid as string) as guid," +
-                    " cast(rint as string) as rint," +
-                    " cast(ip as string) as ip," +
-                    " cast(i64 as string) as i64," +
-                    " cast(i16 as string) as i16," +
-                    " cast(i8 as string) as i8," +
-                    " cast(f64 as string) as f64," +
-                    " cast(f32 as string) as f32," +
-                    " cast(ch as string) as ch," +
-                    " cast(ts as string) as ts," +
-                    " cast(dt as string) as dt," +
-                    " timestamp from x) " +
-                    "timestamp (timestamp) partition by DAY;", sqlExecutionContext);
-
-            ddl("alter table x alter column guid type string", sqlExecutionContext);
-            ddl("alter table x alter column rint type string", sqlExecutionContext);
-            ddl("alter table x alter column ip type string", sqlExecutionContext);
-            ddl("alter table x alter column i64 type string", sqlExecutionContext);
-            ddl("alter table x alter column i16 type string", sqlExecutionContext);
-            ddl("alter table x alter column i8 type string", sqlExecutionContext);
-            ddl("alter table x alter column f64 type string", sqlExecutionContext);
-            ddl("alter table x alter column f32 type string", sqlExecutionContext);
-            ddl("alter table x alter column ch type string", sqlExecutionContext);
-            ddl("alter table x alter column ts type string", sqlExecutionContext);
-            ddl("alter table x alter column dt type string", sqlExecutionContext);
-
-            assertSqlCursorsConvertedStrings(
-                    "select * from x",
-                    "select * from y"
-            );
+    @Test
+    public void testFixedToSymbolConversions() throws Exception {
+        assertMemoryLeak(() -> {
+            assumeNonWal();
+            testConvertVarToFixed("symbol");
         });
     }
 
@@ -712,59 +669,15 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     public void testFixedToVarcharConversions() throws Exception {
         assertMemoryLeak(() -> {
             assumeNonWal();
+            testConvertFixedToVar("varchar");
+        });
+    }
 
-            ddl(
-                    "create table x as (" +
-                            "select" +
-                            " rnd_uuid4() guid," +
-                            " rnd_int() rint," +
-                            " rnd_ipv4() ip," +
-                            " rnd_long() i64," +
-                            " rnd_short() i16," +
-                            " rnd_byte() i8," +
-                            " rnd_double() f64," +
-                            " rnd_float() f32," +
-                            " rnd_char() ch," +
-                            " to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 ts," +
-                            " cast(to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 as date) dt," +
-                            " to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 timestamp" +
-                            " from long_sequence(1000)" +
-                            ")"
-            );
-            // add nulls last line
-            insert("insert into x(timestamp) values('2018-01-03T23:23')", sqlExecutionContext);
-
-            ddl("create table y as (" +
-                    "select cast(guid as varchar) as guid," +
-                    " cast(rint as varchar) as rint," +
-                    " cast(ip as varchar) as ip," +
-                    " cast(i64 as varchar) as i64," +
-                    " cast(i16 as varchar) as i16," +
-                    " cast(i8 as varchar) as i8," +
-                    " cast(f64 as varchar) as f64," +
-                    " cast(f32 as varchar) as f32," +
-                    " cast(ch as varchar) as ch," +
-                    " cast(ts as varchar) as ts," +
-                    " cast(dt as varchar) as dt," +
-                    " timestamp from x) " +
-                    "timestamp (timestamp) partition by DAY;", sqlExecutionContext);
-
-            ddl("alter table x alter column guid type varchar", sqlExecutionContext);
-            ddl("alter table x alter column rint type varchar", sqlExecutionContext);
-            ddl("alter table x alter column ip type varchar", sqlExecutionContext);
-            ddl("alter table x alter column i64 type varchar", sqlExecutionContext);
-            ddl("alter table x alter column i16 type varchar", sqlExecutionContext);
-            ddl("alter table x alter column i8 type varchar", sqlExecutionContext);
-            ddl("alter table x alter column f64 type varchar", sqlExecutionContext);
-            ddl("alter table x alter column f32 type varchar", sqlExecutionContext);
-            ddl("alter table x alter column ch type varchar", sqlExecutionContext);
-            ddl("alter table x alter column ts type varchar", sqlExecutionContext);
-            ddl("alter table x alter column dt type varchar", sqlExecutionContext);
-
-            assertSqlCursorsConvertedStrings(
-                    "select * from x",
-                    "select * from y"
-            );
+    @Test
+    public void testStrToFixedConversions() throws Exception {
+        assertMemoryLeak(() -> {
+            assumeNonWal();
+            testConvertVarToFixed("string");
         });
     }
 
@@ -781,192 +694,19 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testStrToFixedConversions() throws Exception {
-        assertMemoryLeak(() -> {
-            assumeNonWal();
-
-            ddl(
-                    "create table x as (" +
-                            "select" +
-                            " rnd_uuid4() guid," +
-                            " rnd_int() rint," +
-                            " rnd_ipv4() ip," +
-                            " rnd_long() i64," +
-                            " rnd_short() i16," +
-                            " rnd_byte() i8," +
-                            " rnd_double() f64," +
-                            " rnd_float() f32," +
-                            " rnd_char() ch," +
-                            " to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 ts," +
-                            " cast(to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 as date) dt," +
-                            " to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 timestamp" +
-                            " from long_sequence(1000)" +
-                            ")"
-            );
-            // add nulls last line
-            insert("insert into x(timestamp) values('2018-01-03T23:23')", sqlExecutionContext);
-
-            ddl("create table y as (" +
-                    "select cast(guid as string) as guid," +
-                    " cast(rint as string) as rint," +
-                    " cast(ip as string) as ip," +
-                    " cast(i64 as string) as i64," +
-                    " cast(i16 as string) as i16," +
-                    " cast(i8 as string) as i8," +
-                    " cast(f64 as string) as f64," +
-                    " cast(f32 as string) as f32," +
-                    " cast(ch as string) as ch," +
-                    " cast(ts as string) as ts," +
-                    " cast(dt as string) as dt," +
-                    " timestamp from x) " +
-                    "timestamp (timestamp) partition by DAY;", sqlExecutionContext);
-
-            // Insert garbage data
-            insert("insert into y(guid, rint, ip, i64, i8, i16, f64, f32, ch, ts, dt, timestamp) values('abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', '2018-01-03T23:23:10')", sqlExecutionContext);
-            // Expect nulls
-            insert("insert into x(timestamp) values('2018-01-03T23:23:10')", sqlExecutionContext);
-
-            ddl("alter table y alter column guid type uuid", sqlExecutionContext);
-            ddl("alter table y alter column rint type int", sqlExecutionContext);
-            ddl("alter table y alter column ip type ipv4", sqlExecutionContext);
-            ddl("alter table y alter column i64 type long", sqlExecutionContext);
-            ddl("alter table y alter column i16 type short", sqlExecutionContext);
-            ddl("alter table y alter column i8 type byte", sqlExecutionContext);
-            ddl("alter table y alter column f64 type double", sqlExecutionContext);
-            ddl("alter table y alter column f32 type float", sqlExecutionContext);
-            ddl("alter table y alter column ch type char", sqlExecutionContext);
-            ddl("alter table y alter column ts type timestamp", sqlExecutionContext);
-            ddl("alter table y alter column dt type date", sqlExecutionContext);
-
-            assertSqlCursorsConvertedStrings(
-                    "select * from x",
-                    "select * from y"
-            );
-        });
-    }
-
-    @Test
-    public void testSymboToFixedConversions() throws Exception {
-        assertMemoryLeak(() -> {
-            assumeNonWal();
-
-            ddl(
-                    "create table x as (" +
-                            "select" +
-                            " rnd_uuid4() guid," +
-                            " rnd_int() rint," +
-                            " rnd_ipv4() ip," +
-                            " rnd_long() i64," +
-                            " rnd_short() i16," +
-                            " rnd_byte() i8," +
-                            " rnd_double() f64," +
-                            " rnd_float() f32," +
-                            " rnd_char() ch," +
-                            " to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 ts," +
-                            " cast(to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 as date) dt," +
-                            " to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 timestamp" +
-                            " from long_sequence(1000)" +
-                            ")"
-            );
-            // add nulls last line
-            insert("insert into x(timestamp) values('2018-01-03T23:23')", sqlExecutionContext);
-
-            ddl("create table y as (" +
-                    "select cast(guid as symbol) as guid," +
-                    " cast(cast(rint as string) as symbol) as rint," +
-                    " cast(cast(ip as string) as symbol) as ip," +
-                    " cast(cast(i64 as string) as symbol) as i64," +
-                    " cast(cast(i16 as string) as symbol) as i16," +
-                    " cast(cast(i8 as string) as symbol) as i8," +
-                    " cast(cast(f64 as string) as symbol) as f64," +
-                    " cast(cast(f32 as string) as symbol) as f32," +
-                    " cast(cast(ch as string) as symbol) as ch," +
-                    " cast(cast(ts as string) as symbol) as ts," +
-                    " cast(cast(dt as string) as symbol) as dt," +
-                    " timestamp from x) " +
-                    "timestamp (timestamp) partition by DAY;", sqlExecutionContext);
-
-            ddl("alter table x alter column guid type symbol", sqlExecutionContext);
-            ddl("alter table x alter column rint type symbol", sqlExecutionContext);
-            ddl("alter table x alter column ip type symbol", sqlExecutionContext);
-            ddl("alter table x alter column i64 type symbol", sqlExecutionContext);
-            ddl("alter table x alter column i16 type symbol", sqlExecutionContext);
-            ddl("alter table x alter column i8 type symbol", sqlExecutionContext);
-            ddl("alter table x alter column f64 type symbol", sqlExecutionContext);
-            ddl("alter table x alter column f32 type symbol", sqlExecutionContext);
-            ddl("alter table x alter column ch type symbol", sqlExecutionContext);
-            ddl("alter table x alter column ts type symbol", sqlExecutionContext);
-            ddl("alter table x alter column dt type symbol", sqlExecutionContext);
-
-            assertSqlCursorsConvertedStrings(
-                    "select * from x",
-                    "select * from y"
-            );
-        });
-    }
-
-    @Test
     public void testSymbolToFixedConversions() throws Exception {
         assertMemoryLeak(() -> {
             assumeNonWal();
 
-            ddl(
-                    "create table x as (" +
-                            "select" +
-                            " rnd_uuid4() guid," +
-                            " rnd_int() rint," +
-                            " rnd_ipv4() ip," +
-                            " rnd_long() i64," +
-                            " rnd_short() i16," +
-                            " rnd_byte() i8," +
-                            " rnd_double() f64," +
-                            " rnd_float() f32," +
-                            " rnd_char() ch," +
-                            " to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 ts," +
-                            " cast(to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 as date) dt," +
-                            " to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 timestamp" +
-                            " from long_sequence(1000)" +
-                            ")"
-            );
-            // add nulls last line
-            insert("insert into x(timestamp) values('2018-01-03T23:23')", sqlExecutionContext);
+            testConvertFixedToVar("symbol");
+        });
+    }
 
-            ddl("create table y as (" +
-                    "select cast(guid as symbol) as guid," +
-                    " cast(cast(rint as string) as symbol) as rint," +
-                    " cast(cast(ip as string) as symbol) as ip," +
-                    " cast(cast(i64 as string) as symbol) as i64," +
-                    " cast(cast(i16 as string) as symbol) as i16," +
-                    " cast(cast(i8 as string) as symbol) as i8," +
-                    " cast(cast(f64 as string) as symbol) as f64," +
-                    " cast(cast(f32 as string) as symbol) as f32," +
-                    " cast(cast(ch as string) as symbol) as ch," +
-                    " cast(cast(ts as string) as symbol) as ts," +
-                    " cast(cast(dt as string) as symbol) as dt," +
-                    " timestamp from x) " +
-                    "timestamp (timestamp) partition by DAY;", sqlExecutionContext);
-
-            // Insert garbage data
-            insert("insert into y(guid, rint, ip, i64, i8, i16, f64, f32, ch, ts, dt, timestamp) values('abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', '2018-01-03T23:23:10')", sqlExecutionContext);
-            // Expect nulls
-            insert("insert into x(timestamp) values('2018-01-03T23:23:10')", sqlExecutionContext);
-
-            ddl("alter table y alter column guid type uuid", sqlExecutionContext);
-            ddl("alter table y alter column rint type int", sqlExecutionContext);
-            ddl("alter table y alter column ip type ipv4", sqlExecutionContext);
-            ddl("alter table y alter column i64 type long", sqlExecutionContext);
-            ddl("alter table y alter column i16 type short", sqlExecutionContext);
-            ddl("alter table y alter column i8 type byte", sqlExecutionContext);
-            ddl("alter table y alter column f64 type double", sqlExecutionContext);
-            ddl("alter table y alter column f32 type float", sqlExecutionContext);
-            ddl("alter table y alter column ch type char", sqlExecutionContext);
-            ddl("alter table y alter column ts type timestamp", sqlExecutionContext);
-            ddl("alter table y alter column dt type date", sqlExecutionContext);
-
-            assertSqlCursorsConvertedStrings(
-                    "select * from x",
-                    "select * from y"
-            );
+    @Test
+    public void testVarcharToFixedConversions() throws Exception {
+        assertMemoryLeak(() -> {
+            assumeNonWal();
+            testConvertVarToFixed("varchar");
         });
     }
 
@@ -976,69 +716,62 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         assertFailure("alter table x alter column timestamp type long", 42, "cannot change type of designated timestamp column");
     }
 
-    @Test
-    public void testVarcharToFixedConversions() throws Exception {
-        assertMemoryLeak(() -> {
-            assumeNonWal();
+    private static void testConvertFixedToVar(String varTypeName) throws SqlException {
+        ddl(
+                "create table x as (" +
+                        "select" +
+                        " rnd_uuid4() guid," +
+                        " rnd_int() rint," +
+                        " rnd_ipv4() ip," +
+                        " rnd_long() i64," +
+                        " rnd_short() i16," +
+                        " rnd_byte() i8," +
+                        " rnd_double() f64," +
+                        " rnd_float() f32," +
+                        " rnd_char() ch," +
+                        " rnd_boolean() b," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 ts," +
+                        " cast(to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 as date) dt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 timestamp" +
+                        " from long_sequence(1000)" +
+                        ")"
+        );
+        // add nulls last line
+        insert("insert into x(timestamp) values('2018-01-03T23:23')", sqlExecutionContext);
 
-            ddl(
-                    "create table x as (" +
-                            "select" +
-                            " rnd_uuid4() guid," +
-                            " rnd_int() rint," +
-                            " rnd_ipv4() ip," +
-                            " rnd_long() i64," +
-                            " rnd_short() i16," +
-                            " rnd_byte() i8," +
-                            " rnd_double() f64," +
-                            " rnd_float() f32," +
-                            " rnd_char() ch," +
-                            " to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 ts," +
-                            " cast(to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 as date) dt," +
-                            " to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 timestamp" +
-                            " from long_sequence(1000)" +
-                            ")"
-            );
-            // add nulls last line
-            insert("insert into x(timestamp) values('2018-01-03T23:23')", sqlExecutionContext);
+        ddl("create table y as (" +
+                "select cast(cast(guid as string) as " + varTypeName + ") as guid," +
+                " cast(cast(rint as string) as " + varTypeName + ") as rint," +
+                " cast(cast(ip as string) as " + varTypeName + ") as ip," +
+                " cast(cast(i64 as string) as " + varTypeName + ") as i64," +
+                " cast(cast(i16 as string) as " + varTypeName + ") as i16," +
+                " cast(cast(i8 as string) as " + varTypeName + ") as i8," +
+                " cast(cast(f64 as string) as " + varTypeName + ") as f64," +
+                " cast(cast(f32 as string) as " + varTypeName + ") as f32," +
+                " cast(cast(ch as string) as " + varTypeName + ") as ch," +
+                " cast(cast(b as string) as " + varTypeName + ") as b," +
+                " cast(cast(ts as string) as " + varTypeName + ") as ts," +
+                " cast(cast(dt as string) as " + varTypeName + ") as dt," +
+                " timestamp from x) " +
+                "timestamp (timestamp) partition by DAY;", sqlExecutionContext);
 
-            ddl("create table y as (" +
-                    "select cast(guid as varchar) as guid," +
-                    " cast(cast(rint as string) as varchar) as rint," +
-                    " cast(cast(ip as string) as varchar) as ip," +
-                    " cast(cast(i64 as string) as varchar) as i64," +
-                    " cast(cast(i16 as string) as varchar) as i16," +
-                    " cast(cast(i8 as string) as varchar) as i8," +
-                    " cast(cast(f64 as string) as varchar) as f64," +
-                    " cast(cast(f32 as string) as varchar) as f32," +
-                    " cast(cast(ch as string) as varchar) as ch," +
-                    " cast(cast(ts as string) as varchar) as ts," +
-                    " cast(cast(dt as string) as varchar) as dt," +
-                    " timestamp from x) " +
-                    "timestamp (timestamp) partition by DAY;", sqlExecutionContext);
+        ddl("alter table x alter column guid type " + varTypeName, sqlExecutionContext);
+        ddl("alter table x alter column rint type " + varTypeName, sqlExecutionContext);
+        ddl("alter table x alter column ip type " + varTypeName, sqlExecutionContext);
+        ddl("alter table x alter column i64 type " + varTypeName, sqlExecutionContext);
+        ddl("alter table x alter column i16 type " + varTypeName, sqlExecutionContext);
+        ddl("alter table x alter column i8 type " + varTypeName, sqlExecutionContext);
+        ddl("alter table x alter column f64 type " + varTypeName, sqlExecutionContext);
+        ddl("alter table x alter column f32 type " + varTypeName, sqlExecutionContext);
+        ddl("alter table x alter column ch type " + varTypeName, sqlExecutionContext);
+        ddl("alter table x alter column ts type " + varTypeName, sqlExecutionContext);
+        ddl("alter table x alter column dt type " + varTypeName, sqlExecutionContext);
+        ddl("alter table x alter column b type " + varTypeName, sqlExecutionContext);
 
-            // Insert garbage data
-            insert("insert into y(guid, rint, ip, i64, i8, i16, f64, f32, ch, ts, dt, timestamp) values('abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', '2018-01-03T23:23:10')", sqlExecutionContext);
-            // Expect nulls
-            insert("insert into x(timestamp) values('2018-01-03T23:23:10')", sqlExecutionContext);
-
-            ddl("alter table y alter column guid type uuid", sqlExecutionContext);
-            ddl("alter table y alter column rint type int", sqlExecutionContext);
-            ddl("alter table y alter column ip type ipv4", sqlExecutionContext);
-            ddl("alter table y alter column i64 type long", sqlExecutionContext);
-            ddl("alter table y alter column i16 type short", sqlExecutionContext);
-            ddl("alter table y alter column i8 type byte", sqlExecutionContext);
-            ddl("alter table y alter column f64 type double", sqlExecutionContext);
-            ddl("alter table y alter column f32 type float", sqlExecutionContext);
-            ddl("alter table y alter column ch type char", sqlExecutionContext);
-            ddl("alter table y alter column ts type timestamp", sqlExecutionContext);
-            ddl("alter table y alter column dt type date", sqlExecutionContext);
-
-            assertSqlCursorsConvertedStrings(
-                    "select * from x",
-                    "select * from y"
-            );
-        });
+        assertSqlCursorsConvertedStrings(
+                "select * from x",
+                "select * from y"
+        );
     }
 
     @Test
@@ -1069,6 +802,69 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     @Test
     public void testWalWriterConvertsRowOnUncommittedDataVarcharToSymbol() throws Exception {
         assertMemoryLeak(() -> testWalRollUncommittedConversion(ColumnType.VARCHAR, " rnd_varchar(5,1024,2) c,", "symbol"));
+    }
+
+    private static void testConvertVarToFixed(String varType) throws SqlException {
+        ddl(
+                "create table x as (" +
+                        "select" +
+                        " rnd_uuid4() guid," +
+                        " rnd_int() rint," +
+                        " rnd_ipv4() ip," +
+                        " rnd_long() i64," +
+                        " rnd_short() i16," +
+                        " rnd_byte() i8," +
+                        " rnd_double() f64," +
+                        " rnd_float() f32," +
+                        " rnd_char() ch," +
+                        " rnd_boolean() b," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 ts," +
+                        " cast(to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 as date) dt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 timestamp" +
+                        " from long_sequence(1000)" +
+                        ")"
+        );
+        // add nulls last line
+        insert("insert into x(timestamp) values('2018-01-03T23:23')", sqlExecutionContext);
+
+        ddl("create table y as (" +
+                "select cast(guid as " + varType + ") as guid," +
+                " cast(cast(rint as string) as " + varType + ") as rint," +
+                " cast(cast(ip as string) as " + varType + ") as ip," +
+                " cast(cast(i64 as string) as " + varType + ") as i64," +
+                " cast(cast(i16 as string) as " + varType + ") as i16," +
+                " cast(cast(i8 as string) as " + varType + ") as i8," +
+                " cast(cast(f64 as string) as " + varType + ") as f64," +
+                " cast(cast(f32 as string) as " + varType + ") as f32," +
+                " cast(cast(ch as string) as " + varType + ") as ch," +
+                " cast(cast(b as string) as " + varType + ") as b," +
+                " cast(cast(ts as string) as " + varType + ") as ts," +
+                " cast(cast(dt as string) as " + varType + ") as dt," +
+                " timestamp from x) " +
+                "timestamp (timestamp) partition by DAY;", sqlExecutionContext);
+
+        // Insert garbage data
+        insert("insert into y(guid, rint, ip, i64, i8, i16, f64, f32, ch, ts, dt, timestamp) values('abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', '2018-01-03T23:23:10')", sqlExecutionContext);
+        // Expect nulls
+        insert("insert into x(timestamp) values('2018-01-03T23:23:10')", sqlExecutionContext);
+
+        ddl("alter table y alter column guid type uuid", sqlExecutionContext);
+        ddl("alter table y alter column rint type int", sqlExecutionContext);
+        ddl("alter table y alter column ip type ipv4", sqlExecutionContext);
+        ddl("alter table y alter column i64 type long", sqlExecutionContext);
+        ddl("alter table y alter column i16 type short", sqlExecutionContext);
+        ddl("alter table y alter column i8 type byte", sqlExecutionContext);
+        ddl("alter table y alter column f64 type double", sqlExecutionContext);
+        ddl("alter table y alter column f32 type float", sqlExecutionContext);
+        ddl("alter table y alter column ch type char", sqlExecutionContext);
+        ddl("alter table y alter column b type boolean", sqlExecutionContext);
+        ddl("alter table y alter column ts type timestamp", sqlExecutionContext);
+        ddl("alter table y alter column dt type date", sqlExecutionContext);
+
+        assertSqlCursorsConvertedStrings(
+                "select * from x",
+                "select * from y"
+        );
     }
 
     private void assertFailure(String sql, int position, String message) throws Exception {
@@ -1103,7 +899,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         ddl(
                 "create table x as (" +
                         "select" +
-                        " cast(x as int) i," +
+                        " case WHEN x % 10 = 0 THEN NULL WHEN x % 10 = 1 THEN 0 ELSE cast(x as int) END i," +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
                         " round(rnd_double(0)*100, 3) amt," +
                         " to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 timestamp," +
@@ -1114,9 +910,10 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                         " rnd_short(10,1024) f," +
                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
                         " rnd_symbol(4,4,4,2) ik," +
-                        " rnd_long() j," +
-                        " timestamp_sequence(0, 1000000000) k," +
+                        " case WHEN x % 10 = 0 THEN NULL WHEN x % 10 = 1 THEN 0 ELSE rnd_long() END j," +
+                        " case WHEN x % 10 = 0 THEN NULL WHEN x % 10 = 1 THEN CAST('1970-01-01' AS TIMESTAMP) ELSE timestamp_sequence(0, 1000000000) END k," +
                         " rnd_byte(2,50) l," +
+                        " rnd_boolean() t," +
                         " rnd_bin(10, 20, 2) m," +
                         " rnd_varchar(5,64,2) v" +
                         " from long_sequence(1000)" +

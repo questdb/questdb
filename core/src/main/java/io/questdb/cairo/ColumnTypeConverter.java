@@ -30,6 +30,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.griffin.ColumnConversionOffsetSink;
 import io.questdb.griffin.ConvertersNative;
+import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.SymbolMapWriterLite;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
@@ -42,15 +43,19 @@ import org.jetbrains.annotations.Nullable;
 
 public class ColumnTypeConverter {
     private static final Log LOG = LogFactory.getLog(ColumnTypeConverter.class);
-    private static final Fixed2VarConverter converterByteString = ColumnTypeConverter::stringFromByte;
-    private static final Fixed2VarConverter converterCharString = ColumnTypeConverter::stringFromChar;
-    private static final Fixed2VarConverter converterDateString = ColumnTypeConverter::stringFromDate;
-    private static final Fixed2VarConverter converterDoubleString = ColumnTypeConverter::stringFromDouble;
-    private static final Fixed2VarConverter converterFloatString = ColumnTypeConverter::stringFromFloat;
-    private static final Fixed2VarConverter converterIPv4String = ColumnTypeConverter::stringFromIPv4;
-    private static final Fixed2VarConverter converterInt2String = ColumnTypeConverter::stringFromInt;
-    private static final Fixed2VarConverter converterLongString = ColumnTypeConverter::stringFromLong;
-    private static final Fixed2VarConverter converterShortString = ColumnTypeConverter::stringFromShort;
+    private static final Fixed2VarConverter converterFromBoolean2String = ColumnTypeConverter::stringFromBoolean;
+    private static final Fixed2VarConverter converterFromByte2String = ColumnTypeConverter::stringFromByte;
+    private static final Fixed2VarConverter converterFromChar2String = ColumnTypeConverter::stringFromChar;
+    private static final Fixed2VarConverter converterFromDate2String = ColumnTypeConverter::stringFromDate;
+    private static final Fixed2VarConverter converterFromDouble2String = ColumnTypeConverter::stringFromDouble;
+    private static final Fixed2VarConverter converterFromFloat2String = ColumnTypeConverter::stringFromFloat;
+    private static final Fixed2VarConverter converterFromIPv42String = ColumnTypeConverter::stringFromIPv4;
+    private static final Fixed2VarConverter converterFromInt2String = ColumnTypeConverter::stringFromInt;
+    private static final Fixed2VarConverter converterFromLong2String = ColumnTypeConverter::stringFromLong;
+    private static final Fixed2VarConverter converterFromShort2String = ColumnTypeConverter::stringFromShort;
+    private static final Fixed2VarConverter converterFromTimestamp2String = ColumnTypeConverter::stringFromTimestamp;
+    private static final Fixed2VarConverter converterFromUuid2String = ColumnTypeConverter::stringFromUuid;
+    private static final Var2FixedConverter<CharSequence> converterStr2Boolean = ColumnTypeConverter::str2Boolean;
     private static final Var2FixedConverter<CharSequence> converterStr2Byte = ColumnTypeConverter::str2Byte;
     private static final Var2FixedConverter<CharSequence> converterStr2Char = ColumnTypeConverter::str2Char;
     private static final Var2FixedConverter<CharSequence> converterStr2Date = ColumnTypeConverter::str2Date;
@@ -62,8 +67,6 @@ public class ColumnTypeConverter {
     private static final Var2FixedConverter<CharSequence> converterStr2Short = ColumnTypeConverter::str2Short;
     private static final Var2FixedConverter<CharSequence> converterStr2Timestamp = ColumnTypeConverter::str2Timestamp;
     private static final Var2FixedConverter<CharSequence> converterStr2Uuid = ColumnTypeConverter::str2Uuid;
-    private static final Fixed2VarConverter converterTimestampString = ColumnTypeConverter::stringFromTimestamp;
-    private static final Fixed2VarConverter converterUuidString = ColumnTypeConverter::stringFromUuid;
     private static final ThreadLocal<MemoryCMARW> dstFixMemTL = new ThreadLocal<>(io.questdb.cairo.vm.MemoryCMARWImpl::new);
     private static final ThreadLocal<MemoryCMARW> dstVarMemTL = new ThreadLocal<>(io.questdb.cairo.vm.MemoryCMARWImpl::new);
     private static final int memoryTag = MemoryTag.MMAP_TABLE_WRITER;
@@ -90,7 +93,8 @@ public class ColumnTypeConverter {
         assert skipRows > -1 && rowCount > -1;
         if (ColumnType.isSymbol(srcColumnType)) {
             assert symbolTable != null;
-            return convertFromSymbol(skipRows, rowCount, srcFixFd, symbolTable, dstColumnType, dstFixFd, dstVarFd, ff, appendPageSize, columnSizesSink);
+            convertFromSymbol(skipRows, rowCount, srcFixFd, symbolTable, dstColumnType, dstFixFd, dstVarFd, ff, appendPageSize, columnSizesSink);
+            return true;
         } else if (ColumnType.isFixedSize(srcColumnType) && ColumnType.isFixedSize(dstColumnType)) {
             return convertFixedToFixed(rowCount, skipRows, srcFixFd, dstFixFd, srcColumnType, dstColumnType, ff, columnSizesSink);
         } else if (ColumnType.isVarSize(srcColumnType)) {
@@ -116,6 +120,37 @@ public class ColumnTypeConverter {
             return convertFixedToSymbol(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, symbolMapWriter, ff, appendPageSize, columnSizesSink);
         } else {
             throw unsupportedConversion(srcColumnType, dstColumnType);
+        }
+    }
+
+    public static Var2FixedConverter<CharSequence> getConverterFromVarToFixed(short srcType, int dstColumnType) {
+        switch (dstColumnType) {
+            case ColumnType.IPv4:
+                return converterStr2IPv4;
+            case ColumnType.UUID:
+                return converterStr2Uuid;
+            case ColumnType.INT:
+                return converterStr2Int;
+            case ColumnType.SHORT:
+                return converterStr2Short;
+            case ColumnType.BYTE:
+                return converterStr2Byte;
+            case ColumnType.CHAR:
+                return converterStr2Char;
+            case ColumnType.LONG:
+                return converterStr2Long;
+            case ColumnType.DOUBLE:
+                return converterStr2Double;
+            case ColumnType.FLOAT:
+                return converterStr2Float;
+            case ColumnType.DATE:
+                return converterStr2Date;
+            case ColumnType.TIMESTAMP:
+                return converterStr2Timestamp;
+            case ColumnType.BOOLEAN:
+                return converterStr2Boolean;
+            default:
+                throw unsupportedConversion(srcType, dstColumnType);
         }
     }
 
@@ -176,43 +211,8 @@ public class ColumnTypeConverter {
             StringSink sink = sinkUtf16TL.get();
             columnSizesSink.setSrcOffsets(skipBytes, -1);
 
-            switch (srcColumnType) {
-                case ColumnType.INT:
-                    convertFixedToString0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterInt2String);
-                    break;
-                case ColumnType.UUID:
-                    convertFixedToString0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterUuidString);
-                    break;
-                case ColumnType.IPv4:
-                    convertFixedToString0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterIPv4String);
-                    break;
-                case ColumnType.SHORT:
-                    convertFixedToString0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterShortString);
-                    break;
-                case ColumnType.BYTE:
-                    convertFixedToString0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterByteString);
-                    break;
-                case ColumnType.CHAR:
-                    convertFixedToString0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterCharString);
-                    break;
-                case ColumnType.LONG:
-                    convertFixedToString0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterLongString);
-                    break;
-                case ColumnType.DOUBLE:
-                    convertFixedToString0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterDoubleString);
-                    break;
-                case ColumnType.FLOAT:
-                    convertFixedToString0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterFloatString);
-                    break;
-                case ColumnType.DATE:
-                    convertFixedToString0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterDateString);
-                    break;
-                case ColumnType.TIMESTAMP:
-                    convertFixedToString0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterTimestampString);
-                    break;
-                default:
-                    throw unsupportedConversion(srcColumnType, ColumnType.STRING);
-            }
+            Fixed2VarConverter converter = getFixedToVarConverter(srcColumnType, ColumnType.STRING);
+            convertFixedToString0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converter);
             columnSizesSink.setDestSizes(dstVarMem.getAppendOffset(), dstFixMem.getAppendOffset());
         } finally {
             TableUtils.mapAppendColumnBufferRelease(ff, srcMapAddressRaw, skipBytes, mapBytes, memoryTag);
@@ -235,7 +235,6 @@ public class ColumnTypeConverter {
             }
         }
     }
-
 
     private static void convertFixedToSymbo0(long rowCount, long srcMapAddress, MemoryCMARW dstFixMem, SymbolMapWriterLite symbolMapWriter, StringSink sink, int srcColumnType, Fixed2VarConverter converterInt2String) {
         int srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
@@ -269,43 +268,8 @@ public class ColumnTypeConverter {
             StringSink sink = sinkUtf16TL.get();
             columnSizesSink.setSrcOffsets(skipBytes, -1);
 
-            switch (srcColumnType) {
-                case ColumnType.INT:
-                    convertFixedToSymbo0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, symbolMapWriter, sink, srcColumnType, converterInt2String);
-                    break;
-                case ColumnType.UUID:
-                    convertFixedToSymbo0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, symbolMapWriter, sink, srcColumnType, converterUuidString);
-                    break;
-                case ColumnType.IPv4:
-                    convertFixedToSymbo0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, symbolMapWriter, sink, srcColumnType, converterIPv4String);
-                    break;
-                case ColumnType.SHORT:
-                    convertFixedToSymbo0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, symbolMapWriter, sink, srcColumnType, converterShortString);
-                    break;
-                case ColumnType.BYTE:
-                    convertFixedToSymbo0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, symbolMapWriter, sink, srcColumnType, converterByteString);
-                    break;
-                case ColumnType.CHAR:
-                    convertFixedToSymbo0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, symbolMapWriter, sink, srcColumnType, converterCharString);
-                    break;
-                case ColumnType.LONG:
-                    convertFixedToSymbo0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, symbolMapWriter, sink, srcColumnType, converterLongString);
-                    break;
-                case ColumnType.DOUBLE:
-                    convertFixedToSymbo0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, symbolMapWriter, sink, srcColumnType, converterDoubleString);
-                    break;
-                case ColumnType.FLOAT:
-                    convertFixedToSymbo0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, symbolMapWriter, sink, srcColumnType, converterFloatString);
-                    break;
-                case ColumnType.DATE:
-                    convertFixedToSymbo0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, symbolMapWriter, sink, srcColumnType, converterDateString);
-                    break;
-                case ColumnType.TIMESTAMP:
-                    convertFixedToSymbo0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, symbolMapWriter, sink, srcColumnType, converterTimestampString);
-                    break;
-                default:
-                    throw unsupportedConversion(srcColumnType, ColumnType.STRING);
-            }
+            Fixed2VarConverter converter = getFixedToVarConverter(srcColumnType, ColumnType.SYMBOL);
+            convertFixedToSymbo0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, symbolMapWriter, sink, srcColumnType, converter);
             columnSizesSink.setDestSizes(dstFixMem.getAppendOffset(), -1);
         } finally {
             TableUtils.mapAppendColumnBufferRelease(ff, srcMapAddressRaw, skipBytes, mapBytes, memoryTag);
@@ -333,43 +297,8 @@ public class ColumnTypeConverter {
             Utf8StringSink sink = sinkUtf8TL.get();
             columnSizesSink.setSrcOffsets(skipBytes, -1);
 
-            switch (srcColumnType) {
-                case ColumnType.INT:
-                    convertFixedToVarchar0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterInt2String);
-                    break;
-                case ColumnType.UUID:
-                    convertFixedToVarchar0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterUuidString);
-                    break;
-                case ColumnType.IPv4:
-                    convertFixedToVarchar0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterIPv4String);
-                    break;
-                case ColumnType.SHORT:
-                    convertFixedToVarchar0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterShortString);
-                    break;
-                case ColumnType.BYTE:
-                    convertFixedToVarchar0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterByteString);
-                    break;
-                case ColumnType.CHAR:
-                    convertFixedToVarchar0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterCharString);
-                    break;
-                case ColumnType.LONG:
-                    convertFixedToVarchar0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterLongString);
-                    break;
-                case ColumnType.DOUBLE:
-                    convertFixedToVarchar0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterDoubleString);
-                    break;
-                case ColumnType.FLOAT:
-                    convertFixedToVarchar0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterFloatString);
-                    break;
-                case ColumnType.DATE:
-                    convertFixedToVarchar0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterDateString);
-                    break;
-                case ColumnType.TIMESTAMP:
-                    convertFixedToVarchar0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converterTimestampString);
-                    break;
-                default:
-                    throw unsupportedConversion(srcColumnType, ColumnType.STRING);
-            }
+            Fixed2VarConverter converter = getFixedToVarConverter(srcColumnType, ColumnType.VARCHAR);
+            convertFixedToVarchar0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converter);
             columnSizesSink.setDestSizes(dstVarMem.getAppendOffset(), dstFixMem.getAppendOffset());
         } finally {
             TableUtils.mapAppendColumnBufferRelease(ff, srcMapAddressRaw, skipBytes, mapBytes, memoryTag);
@@ -417,57 +346,23 @@ public class ColumnTypeConverter {
 
         try {
             srcVarMem.ofOffset(ff, srcVarFd, null, skipDataSize, dataSize, memoryTag, CairoConfiguration.O_NONE);
-
             switch (dstColumnType) {
                 case ColumnType.VARCHAR:
                     convertStringToVarchar(skipDataSize, rowCount, dstFixFd, dstVarFd, ff, appendPageSize, srcVarMem, columnSizesSink);
-                    break;
+                    return true;
                 case ColumnType.SYMBOL:
                     convertStringToSymbol(skipDataSize, rowCount, dstFixFd, ff, symbolMapWriter, srcVarMem, columnSizesSink);
-                    break;
-                case ColumnType.IPv4:
-                    convertStringToFixed(skipDataSize, rowCount, dstFixFd, ff, srcVarMem, columnSizesSink, dstColumnType, converterStr2IPv4);
-                    break;
-                case ColumnType.UUID:
-                    convertStringToFixed(skipDataSize, rowCount, dstFixFd, ff, srcVarMem, columnSizesSink, dstColumnType, converterStr2Uuid);
-                    break;
-                case ColumnType.INT:
-                    convertStringToFixed(skipDataSize, rowCount, dstFixFd, ff, srcVarMem, columnSizesSink, dstColumnType, converterStr2Int);
-                    break;
-                case ColumnType.SHORT:
-                    convertStringToFixed(skipDataSize, rowCount, dstFixFd, ff, srcVarMem, columnSizesSink, dstColumnType, converterStr2Short);
-                    break;
-                case ColumnType.BYTE:
-                    convertStringToFixed(skipDataSize, rowCount, dstFixFd, ff, srcVarMem, columnSizesSink, dstColumnType, converterStr2Byte);
-                    break;
-                case ColumnType.CHAR:
-                    convertStringToFixed(skipDataSize, rowCount, dstFixFd, ff, srcVarMem, columnSizesSink, dstColumnType, converterStr2Char);
-                    break;
-                case ColumnType.LONG:
-                    convertStringToFixed(skipDataSize, rowCount, dstFixFd, ff, srcVarMem, columnSizesSink, dstColumnType, converterStr2Long);
-                    break;
-                case ColumnType.DOUBLE:
-                    convertStringToFixed(skipDataSize, rowCount, dstFixFd, ff, srcVarMem, columnSizesSink, dstColumnType, converterStr2Double);
-                    break;
-                case ColumnType.FLOAT:
-                    convertStringToFixed(skipDataSize, rowCount, dstFixFd, ff, srcVarMem, columnSizesSink, dstColumnType, converterStr2Float);
-                    break;
-                case ColumnType.DATE:
-                    convertStringToFixed(skipDataSize, rowCount, dstFixFd, ff, srcVarMem, columnSizesSink, dstColumnType, converterStr2Date);
-                    break;
-                case ColumnType.TIMESTAMP:
-                    convertStringToFixed(skipDataSize, rowCount, dstFixFd, ff, srcVarMem, columnSizesSink, dstColumnType, converterStr2Timestamp);
-                    break;
-                default:
-                    throw unsupportedConversion(ColumnType.STRING, dstColumnType);
+                    return true;
             }
+            Var2FixedConverter<CharSequence> converter = getConverterFromVarToFixed(ColumnType.STRING, dstColumnType);
+            convertStringToFixed(skipDataSize, rowCount, dstFixFd, ff, srcVarMem, columnSizesSink, dstColumnType, converter);
         } finally {
             srcVarMem.detachFdClose();
         }
         return true;
     }
 
-    private static boolean convertFromSymbol(
+    private static void convertFromSymbol(
             long skipRows,
             long rowCount,
             int srcFixFd,
@@ -488,50 +383,16 @@ public class ColumnTypeConverter {
             switch (ColumnType.tagOf(dstColumnType)) {
                 case ColumnType.STRING:
                     convertSymbolToString(rowCount, symbolMapAddress, dstFixFd, dstVarFd, ff, appendPageSize, symbolTable, columnSizesSink);
-                    break;
+                    return;
                 case ColumnType.VARCHAR:
                     convertSymbolToVarchar(rowCount, symbolMapAddress, dstFixFd, dstVarFd, ff, appendPageSize, symbolTable, columnSizesSink);
-                    break;
-                case ColumnType.IPv4:
-                    convertSymbolToFixed(rowCount, symbolMapAddress, dstFixFd, ff, appendPageSize, symbolTable, columnSizesSink, dstColumnType, converterStr2IPv4);
-                    break;
-                case ColumnType.UUID:
-                    convertSymbolToFixed(rowCount, symbolMapAddress, dstFixFd, ff, appendPageSize, symbolTable, columnSizesSink, dstColumnType, converterStr2Uuid);
-                    break;
-                case ColumnType.INT:
-                    convertSymbolToFixed(rowCount, symbolMapAddress, dstFixFd, ff, appendPageSize, symbolTable, columnSizesSink, dstColumnType, converterStr2Int);
-                    break;
-                case ColumnType.SHORT:
-                    convertSymbolToFixed(rowCount, symbolMapAddress, dstFixFd, ff, appendPageSize, symbolTable, columnSizesSink, dstColumnType, converterStr2Short);
-                    break;
-                case ColumnType.BYTE:
-                    convertSymbolToFixed(rowCount, symbolMapAddress, dstFixFd, ff, appendPageSize, symbolTable, columnSizesSink, dstColumnType, converterStr2Byte);
-                    break;
-                case ColumnType.CHAR:
-                    convertSymbolToFixed(rowCount, symbolMapAddress, dstFixFd, ff, appendPageSize, symbolTable, columnSizesSink, dstColumnType, converterStr2Char);
-                    break;
-                case ColumnType.LONG:
-                    convertSymbolToFixed(rowCount, symbolMapAddress, dstFixFd, ff, appendPageSize, symbolTable, columnSizesSink, dstColumnType, converterStr2Long);
-                    break;
-                case ColumnType.DOUBLE:
-                    convertSymbolToFixed(rowCount, symbolMapAddress, dstFixFd, ff, appendPageSize, symbolTable, columnSizesSink, dstColumnType, converterStr2Double);
-                    break;
-                case ColumnType.FLOAT:
-                    convertSymbolToFixed(rowCount, symbolMapAddress, dstFixFd, ff, appendPageSize, symbolTable, columnSizesSink, dstColumnType, converterStr2Float);
-                    break;
-                case ColumnType.DATE:
-                    convertSymbolToFixed(rowCount, symbolMapAddress, dstFixFd, ff, appendPageSize, symbolTable, columnSizesSink, dstColumnType, converterStr2Date);
-                    break;
-                case ColumnType.TIMESTAMP:
-                    convertSymbolToFixed(rowCount, symbolMapAddress, dstFixFd, ff, appendPageSize, symbolTable, columnSizesSink, dstColumnType, converterStr2Timestamp);
-                    break;
-                default:
-                    throw unsupportedConversion(ColumnType.SYMBOL, dstColumnType);
+                    return;
             }
+            Var2FixedConverter<CharSequence> converter = getConverterFromVarToFixed(ColumnType.SYMBOL, dstColumnType);
+            convertSymbolToFixed(rowCount, symbolMapAddress, dstFixFd, ff, appendPageSize, symbolTable, columnSizesSink, dstColumnType, converter);
         } finally {
             TableUtils.mapAppendColumnBufferRelease(ff, symbolMapAddressRaw, skipRows * Integer.BYTES, rowCount * Integer.BYTES, memoryTag);
         }
-        return true;
     }
 
     private static boolean convertFromVarchar(long skipRows, long rowCount, int srcFixFd, int srcVarFd, int dstFixFd, int dstVarFd, int dstColumnType, FilesFacade ff, long appendPageSize, SymbolMapWriterLite symbolMapWriter, ColumnConversionOffsetSink columnSizesSink) {
@@ -561,46 +422,13 @@ public class ColumnTypeConverter {
             switch (ColumnType.tagOf(dstColumnType)) {
                 case ColumnType.STRING:
                     convertFromVarcharToString(skipRows, skipRows + rowCount, dstFixFd, dstVarFd, ff, appendPageSize, srcVarMem, srcFixMem, columnSizesSink);
-                    break;
+                    return true;
                 case ColumnType.SYMBOL:
                     convertFromVarcharToSymbol(skipRows, skipRows + rowCount, dstFixFd, ff, symbolMapWriter, srcVarMem, srcFixMem, columnSizesSink);
-                    break;
-                case ColumnType.IPv4:
-                    convertFromVarcharToFixed(skipRows, skipRows + rowCount, dstFixFd, ff, srcVarMem, srcFixMem, columnSizesSink, dstColumnType, converterStr2IPv4);
-                    break;
-                case ColumnType.UUID:
-                    convertFromVarcharToFixed(skipRows, skipRows + rowCount, dstFixFd, ff, srcVarMem, srcFixMem, columnSizesSink, dstColumnType, converterStr2Uuid);
-                    break;
-                case ColumnType.INT:
-                    convertFromVarcharToFixed(skipRows, skipRows + rowCount, dstFixFd, ff, srcVarMem, srcFixMem, columnSizesSink, dstColumnType, converterStr2Int);
-                    break;
-                case ColumnType.SHORT:
-                    convertFromVarcharToFixed(skipRows, skipRows + rowCount, dstFixFd, ff, srcVarMem, srcFixMem, columnSizesSink, dstColumnType, converterStr2Short);
-                    break;
-                case ColumnType.BYTE:
-                    convertFromVarcharToFixed(skipRows, skipRows + rowCount, dstFixFd, ff, srcVarMem, srcFixMem, columnSizesSink, dstColumnType, converterStr2Byte);
-                    break;
-                case ColumnType.CHAR:
-                    convertFromVarcharToFixed(skipRows, skipRows + rowCount, dstFixFd, ff, srcVarMem, srcFixMem, columnSizesSink, dstColumnType, converterStr2Char);
-                    break;
-                case ColumnType.LONG:
-                    convertFromVarcharToFixed(skipRows, skipRows + rowCount, dstFixFd, ff, srcVarMem, srcFixMem, columnSizesSink, dstColumnType, converterStr2Long);
-                    break;
-                case ColumnType.DOUBLE:
-                    convertFromVarcharToFixed(skipRows, skipRows + rowCount, dstFixFd, ff, srcVarMem, srcFixMem, columnSizesSink, dstColumnType, converterStr2Double);
-                    break;
-                case ColumnType.FLOAT:
-                    convertFromVarcharToFixed(skipRows, skipRows + rowCount, dstFixFd, ff, srcVarMem, srcFixMem, columnSizesSink, dstColumnType, converterStr2Float);
-                    break;
-                case ColumnType.DATE:
-                    convertFromVarcharToFixed(skipRows, skipRows + rowCount, dstFixFd, ff, srcVarMem, srcFixMem, columnSizesSink, dstColumnType, converterStr2Date);
-                    break;
-                case ColumnType.TIMESTAMP:
-                    convertFromVarcharToFixed(skipRows, skipRows + rowCount, dstFixFd, ff, srcVarMem, srcFixMem, columnSizesSink, dstColumnType, converterStr2Timestamp);
-                    break;
-                default:
-                    throw unsupportedConversion(ColumnType.VARCHAR, dstColumnType);
+                    return true;
             }
+            Var2FixedConverter<CharSequence> converter = getConverterFromVarToFixed(ColumnType.VARCHAR, dstColumnType);
+            convertFromVarcharToFixed(skipRows, skipRows + rowCount, dstFixFd, ff, srcVarMem, srcFixMem, columnSizesSink, dstColumnType, converter);
         } finally {
             if (srcVarMem != null) {
                 srcVarMem.detachFdClose();
@@ -843,6 +671,41 @@ public class ColumnTypeConverter {
         }
     }
 
+    private static Fixed2VarConverter getFixedToVarConverter(int srcColumnType, int dstColumnType) {
+        switch (srcColumnType) {
+            case ColumnType.INT:
+                return (converterFromInt2String);
+            case ColumnType.UUID:
+                return (converterFromUuid2String);
+            case ColumnType.IPv4:
+                return (converterFromIPv42String);
+            case ColumnType.SHORT:
+                return (converterFromShort2String);
+            case ColumnType.BYTE:
+                return (converterFromByte2String);
+            case ColumnType.CHAR:
+                return (converterFromChar2String);
+            case ColumnType.LONG:
+                return (converterFromLong2String);
+            case ColumnType.DOUBLE:
+                return (converterFromDouble2String);
+            case ColumnType.FLOAT:
+                return (converterFromFloat2String);
+            case ColumnType.DATE:
+                return (converterFromDate2String);
+            case ColumnType.TIMESTAMP:
+                return (converterFromTimestamp2String);
+            case ColumnType.BOOLEAN:
+                return (converterFromBoolean2String);
+            default:
+                throw unsupportedConversion(srcColumnType, dstColumnType);
+        }
+    }
+
+    private static void str2Boolean(CharSequence str, MemoryCMARW memoryCMARW) {
+        memoryCMARW.putBool(str != null && SqlKeywords.isTrueKeyword(str));
+    }
+
     private static void str2Byte(CharSequence str, MemoryCMARW memoryCMARW) {
         // Same as CAST(str as BYTE), same null, overflow problems
         byte num = (byte) Numbers.parseIntQuiet(str);
@@ -965,6 +828,12 @@ public class ColumnTypeConverter {
         dstFixMem.putLong(Numbers.LONG_NULL);
     }
 
+    private static boolean stringFromBoolean(long srcAddr, CharSink<?> sink) {
+        byte value = Unsafe.getUnsafe().getByte(srcAddr);
+        sink.put(value != 0);
+        return true;
+    }
+
     private static boolean stringFromByte(long srcAddr, CharSink<?> sink) {
         byte value = Unsafe.getUnsafe().getByte(srcAddr);
         sink.put(value);
@@ -988,7 +857,7 @@ public class ColumnTypeConverter {
 
     private static boolean stringFromDouble(long srcAddr, CharSink<?> sink) {
         double value = Unsafe.getUnsafe().getDouble(srcAddr);
-        if (value != Numbers.LONG_NULL) {
+        if (!Numbers.isNull(value)) {
             sink.put(value);
             return true;
         }
@@ -997,7 +866,7 @@ public class ColumnTypeConverter {
 
     private static boolean stringFromFloat(long srcAddr, CharSink<?> sink) {
         float value = Unsafe.getUnsafe().getFloat(srcAddr);
-        if (value != Numbers.LONG_NULL) {
+        if (!Numbers.isNull(value)) {
             sink.put(value, 4);
             return true;
         }

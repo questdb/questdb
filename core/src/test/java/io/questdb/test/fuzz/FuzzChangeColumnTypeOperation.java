@@ -37,7 +37,7 @@ import io.questdb.std.Rnd;
 public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
     private static final short[] numericConvertableColumnTypes = {
             ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG,
-            ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.TIMESTAMP,
+            ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.TIMESTAMP, ColumnType.BOOLEAN,
             ColumnType.STRING, ColumnType.VARCHAR
     };
     private static final short[] specialFixedColumnTypes = {
@@ -45,7 +45,7 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
     };
     private static final short[] varSizeConvertableColumnTypes = {
             ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG,
-            ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.TIMESTAMP,
+            ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.TIMESTAMP, ColumnType.BOOLEAN,
             ColumnType.DATE, ColumnType.UUID, ColumnType.IPv4,
             ColumnType.STRING, ColumnType.SYMBOL, ColumnType.VARCHAR
     };
@@ -206,6 +206,7 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
             case ColumnType.SHORT:
             case ColumnType.UUID:
             case ColumnType.IPv4:
+            case ColumnType.BOOLEAN:
                 return false;
             default:
                 return true;

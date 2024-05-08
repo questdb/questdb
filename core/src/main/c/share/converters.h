@@ -89,6 +89,9 @@ enum class ConversionError {
  */
 template<ColumnType C, typename T>
 constexpr bool is_matching_type() {
+    if constexpr (C == ColumnType::BOOLEAN && std::is_same<T, bool>()) {
+        return true;
+    }
     if constexpr (C == ColumnType::BYTE && std::is_same<T, int8_t>()) {
         return true;
     }
@@ -132,6 +135,9 @@ T get_null_sentinel() {
     } else if (C == ColumnType::DOUBLE) {
         // ReSharper disable once CppCStyleCast
         return *((double *) (&DOUBLE_NULL_SENTINEL)); // INTENTIONAL
+    } else if (C == ColumnType::BOOLEAN) {
+        // ReSharper disable once CppCStyleCast
+        return static_cast<T>(false); // INTENTIONAL
     } else {
         return static_cast<T>(0);
     }
