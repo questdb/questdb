@@ -123,7 +123,7 @@ public class QuoteIdentVarcharFunctionFactory implements FunctionFactory {
             sink.clear();
 
             boolean needsQuoting = false;
-            int len = Utf8s.validateUtf8(utf8Str);
+            int len = Utf8s.length(utf8Str);
 
             int pc; // current tuple packed char
             short n; // decoded bytes
