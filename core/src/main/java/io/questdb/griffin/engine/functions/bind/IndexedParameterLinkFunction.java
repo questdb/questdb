@@ -241,6 +241,7 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
         if (base == null) {
             throw SqlException.position(0).put("undefined bind variable: ").put(variableIndex);
         }
+        this.type = base.getType();
         base.init(symbolTableSource, executionContext);
     }
 

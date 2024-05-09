@@ -8472,7 +8472,7 @@ create table tab as (
     @Test
     public void testSingleInClauseNonDedicatedTimestamp() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary, mode, port) -> {
             try (PreparedStatement statement = connection.prepareStatement(
                     "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + "))")) {
                 statement.execute();

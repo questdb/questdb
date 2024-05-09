@@ -86,6 +86,7 @@ public class InStrFunctionFactory implements FunctionFactory {
                     set.add(String.valueOf(func.getChar(null)));
                     break;
                 case ColumnType.UNDEFINED:
+                    // todo: if link function is runtime constant, this branch can be merged with with first one
                     if (deferredValues == null) {
                         deferredValues = new ObjList<>();
                     }

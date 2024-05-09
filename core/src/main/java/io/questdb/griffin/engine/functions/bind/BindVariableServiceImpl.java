@@ -103,6 +103,9 @@ public class BindVariableServiceImpl implements BindVariableService {
     @Override
     public int define(int index, int type, int position) throws SqlException {
         switch (ColumnType.tagOf(type)) {
+            // unable to define undefined type
+            case ColumnType.UNDEFINED:
+                return type;
             case ColumnType.BOOLEAN:
                 setBoolean(index);
                 return type;
@@ -1244,9 +1247,6 @@ public class BindVariableServiceImpl implements BindVariableService {
                         break;
                     case ColumnType.LONG256:
                         SqlUtil.implicitCastStrAsLong256(charSeq, ((Long256BindVariable) function).value);
-                        break;
-                    default:
-                        assert false;
                         break;
                 }
                 break;

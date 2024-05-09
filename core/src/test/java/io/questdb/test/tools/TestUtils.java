@@ -140,21 +140,12 @@ public final class TestUtils {
         assertEquals(expected, sink);
     }
 
-    public static void assertCursor(
-            CharSequence expected, RecordCursor cursor, RecordMetadata metadata,
-            boolean header, boolean printTypes, MutableUtf16Sink sink
-    ) {
+    public static void assertCursor(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header, boolean printTypes, MutableUtf16Sink sink) {
         CursorPrinter.println(cursor, metadata, sink, header, printTypes);
         assertEquals(expected, sink);
     }
 
-    public static void assertEquals(
-            RecordCursor cursorExpected,
-            RecordMetadata metadataExpected,
-            RecordCursor cursorActual,
-            RecordMetadata metadataActual,
-            boolean genericStringMatch
-    ) {
+    public static void assertEquals(RecordCursor cursorExpected, RecordMetadata metadataExpected, RecordCursor cursorActual, RecordMetadata metadataActual, boolean genericStringMatch) {
         StringSink sink = getTlSink();
         assertEquals(metadataExpected, metadataActual, genericStringMatch);
         Record r = cursorExpected.getRecord();
@@ -186,17 +177,7 @@ public final class TestUtils {
 
                 // check if we can bail out early because current record timestamps do not match
                 if (tsL != tsR) {
-                    throw new AssertionError(
-                            String.format(
-                                    "Row %d column %s[%s] %s. Expected %s but found %s",
-                                    rowIndex,
-                                    metadataActual.getColumnName(timestampIndex),
-                                    ColumnType.TIMESTAMP,
-                                    "timestamp mismatch",
-                                    Timestamps.toUSecString(tsL),
-                                    Timestamps.toUSecString(tsR)
-                            )
-                    );
+                    throw new AssertionError(String.format("Row %d column %s[%s] %s. Expected %s but found %s", rowIndex, metadataActual.getColumnName(timestampIndex), ColumnType.TIMESTAMP, "timestamp mismatch", Timestamps.toUSecString(tsL), Timestamps.toUSecString(tsR)));
                 }
 
                 // compare accumulated records
@@ -326,10 +307,7 @@ public final class TestUtils {
                             byte bb = Unsafe.getUnsafe().getByte(strp);
                             strp++;
                             if (b != bb) {
-                                Assert.fail(
-                                        "expected: '" + (char) (bb) + "'(" + bb + ")" +
-                                                ", actual: '" + (char) (b) + "'(" + b + ")" +
-                                                ", at: " + (offset + i - 1));
+                                Assert.fail("expected: '" + (char) (bb) + "'(" + bb + ")" + ", actual: '" + (char) (b) + "'(" + b + ")" + ", at: " + (offset + i - 1));
                             }
                         }
 
@@ -481,29 +459,13 @@ public final class TestUtils {
         }
     }
 
-    public static void assertEquals(
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            String expectedSql,
-            String actualSql
-    ) throws SqlException {
-        try (
-                RecordCursorFactory f1 = compiler.compile(expectedSql, sqlExecutionContext).getRecordCursorFactory();
-                RecordCursorFactory f2 = compiler.compile(actualSql, sqlExecutionContext).getRecordCursorFactory();
-                RecordCursor c1 = f1.getCursor(sqlExecutionContext);
-                RecordCursor c2 = f2.getCursor(sqlExecutionContext)
-        ) {
+    public static void assertEquals(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String expectedSql, String actualSql) throws SqlException {
+        try (RecordCursorFactory f1 = compiler.compile(expectedSql, sqlExecutionContext).getRecordCursorFactory(); RecordCursorFactory f2 = compiler.compile(actualSql, sqlExecutionContext).getRecordCursorFactory(); RecordCursor c1 = f1.getCursor(sqlExecutionContext); RecordCursor c2 = f2.getCursor(sqlExecutionContext)) {
             assertEquals(c1, f1.getMetadata(), c2, f2.getMetadata(), true);
         }
     }
 
-    public static void assertEqualsExactOrder(
-            RecordCursor cursorExpected,
-            RecordMetadata metadataExpected,
-            RecordCursor cursorActual,
-            RecordMetadata metadataActual,
-            boolean genericStringMatch
-    ) {
+    public static void assertEqualsExactOrder(RecordCursor cursorExpected, RecordMetadata metadataExpected, RecordCursor cursorActual, RecordMetadata metadataActual, boolean genericStringMatch) {
         assertEquals(metadataExpected, metadataActual, genericStringMatch);
         Record r = cursorExpected.getRecord();
         Record l = cursorActual.getRecord();
@@ -519,18 +481,8 @@ public final class TestUtils {
         Assert.assertFalse("Expected cursor misses record " + rowIndex, cursorActual.hasNext());
     }
 
-    public static void assertEqualsExactOrder(
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            String expectedSql,
-            String actualSql
-    ) throws SqlException {
-        try (
-                RecordCursorFactory f1 = compiler.compile(expectedSql, sqlExecutionContext).getRecordCursorFactory();
-                RecordCursorFactory f2 = compiler.compile(actualSql, sqlExecutionContext).getRecordCursorFactory();
-                RecordCursor c1 = f1.getCursor(sqlExecutionContext);
-                RecordCursor c2 = f2.getCursor(sqlExecutionContext)
-        ) {
+    public static void assertEqualsExactOrder(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String expectedSql, String actualSql) throws SqlException {
+        try (RecordCursorFactory f1 = compiler.compile(expectedSql, sqlExecutionContext).getRecordCursorFactory(); RecordCursorFactory f2 = compiler.compile(actualSql, sqlExecutionContext).getRecordCursorFactory(); RecordCursor c1 = f1.getCursor(sqlExecutionContext); RecordCursor c2 = f2.getCursor(sqlExecutionContext)) {
             assertEqualsExactOrder(c1, f1.getMetadata(), c2, f2.getMetadata(), true);
         }
     }
@@ -587,8 +539,7 @@ public final class TestUtils {
     }
 
     public static void assertFileContentsEquals(Path expected, Path actual) throws IOException {
-        try (BufferedInputStream expectedStream = new BufferedInputStream(new FileInputStream(expected.toString()));
-             BufferedInputStream actualStream = new BufferedInputStream(new FileInputStream(actual.toString()))) {
+        try (BufferedInputStream expectedStream = new BufferedInputStream(new FileInputStream(expected.toString())); BufferedInputStream actualStream = new BufferedInputStream(new FileInputStream(actual.toString()))) {
             int byte1, byte2;
             long length = 0;
             do {
@@ -682,13 +633,7 @@ public final class TestUtils {
     }
 
     public static void assertReader(CharSequence expected, TableReader reader, MutableUtf16Sink sink) {
-        assertCursor(
-                expected,
-                reader.getCursor(),
-                reader.getMetadata(),
-                true,
-                sink
-        );
+        assertCursor(expected, reader.getCursor(), reader.getMetadata(), true, sink);
     }
 
     public static void assertSql(
@@ -708,15 +653,21 @@ public final class TestUtils {
             SqlExecutionContext sqlExecutionContext,
             CharSequence sql,
             MutableUtf16Sink sink,
+            CharSequence expected,
+            @Nullable Runnable runnable
+    ) throws SqlException {
+        printSql(compiler, sqlExecutionContext, sql, sink, runnable);
+        assertEquals(expected, sink);
+    }
+
+    public static void assertSql(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sql,
+            MutableUtf16Sink sink,
             CharSequence expected
     ) throws SqlException {
-        printSql(
-                compiler,
-                sqlExecutionContext,
-                sql,
-                sink
-        );
-        assertEquals(expected, sink);
+        assertSql(compiler, sqlExecutionContext, sql, sink, expected, null);
     }
 
     public static void assertSqlCursors(CairoEngine engine, SqlExecutionContext sqlExecutionContext, CharSequence expected, CharSequence actual, Log log) throws SqlException {
@@ -769,16 +720,10 @@ public final class TestUtils {
     }
 
     public static void assertSqlCursors(QuestDBTestNode node, ObjList<QuestDBTestNode> nodes, String expected, String actual, Log log, boolean genericStringMatch) throws SqlException {
-        try (
-                SqlCompiler compiler = node.getEngine().getSqlCompiler();
-                RecordCursorFactory factory = compiler.compile(expected, node.getSqlExecutionContext()).getRecordCursorFactory()
-        ) {
+        try (SqlCompiler compiler = node.getEngine().getSqlCompiler(); RecordCursorFactory factory = compiler.compile(expected, node.getSqlExecutionContext()).getRecordCursorFactory()) {
             for (int i = 0, n = nodes.size(); i < n; i++) {
                 final QuestDBTestNode dbNode = nodes.get(i);
-                try (
-                        SqlCompiler compiler2 = dbNode.getEngine().getSqlCompiler();
-                        RecordCursorFactory factory2 = compiler2.compile(actual, dbNode.getSqlExecutionContext()).getRecordCursorFactory()
-                ) {
+                try (SqlCompiler compiler2 = dbNode.getEngine().getSqlCompiler(); RecordCursorFactory factory2 = compiler2.compile(actual, dbNode.getSqlExecutionContext()).getRecordCursorFactory()) {
                     try (RecordCursor cursor1 = factory.getCursor(node.getSqlExecutionContext())) {
                         try (RecordCursor cursor2 = factory2.getCursor(dbNode.getSqlExecutionContext())) {
                             assertEquals(cursor1, factory.getMetadata(), cursor2, factory2.getMetadata(), genericStringMatch);
@@ -810,19 +755,8 @@ public final class TestUtils {
         }
     }
 
-    public static void assertSqlWithTypes(
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            CharSequence sql,
-            MutableUtf16Sink sink,
-            CharSequence expected
-    ) throws SqlException {
-        printSqlWithTypes(
-                compiler,
-                sqlExecutionContext,
-                sql,
-                sink
-        );
+    public static void assertSqlWithTypes(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence sql, MutableUtf16Sink sink, CharSequence expected) throws SqlException {
+        printSqlWithTypes(compiler, sqlExecutionContext, sql, sink);
         assertEquals(expected, sink);
     }
 
@@ -887,53 +821,15 @@ public final class TestUtils {
         return tableToken;
     }
 
-    public static void createPopulateTable(
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            TableModel tableModel,
-            int totalRows,
-            String startDate,
-            int partitionCount
-    ) throws NumericException, SqlException {
-        createPopulateTable(
-                tableModel.getTableName(),
-                compiler,
-                sqlExecutionContext,
-                tableModel,
-                totalRows,
-                startDate,
-                partitionCount
-        );
+    public static void createPopulateTable(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, TableModel tableModel, int totalRows, String startDate, int partitionCount) throws NumericException, SqlException {
+        createPopulateTable(tableModel.getTableName(), compiler, sqlExecutionContext, tableModel, totalRows, startDate, partitionCount);
     }
 
-    public static void createPopulateTable(
-            CharSequence tableName,
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            TableModel tableModel,
-            int totalRows,
-            String startDate,
-            int partitionCount
-    ) throws NumericException, SqlException {
-        compiler.compile(
-                createPopulateTableStmt(
-                        tableName,
-                        tableModel,
-                        totalRows,
-                        startDate,
-                        partitionCount
-                ),
-                sqlExecutionContext
-        );
+    public static void createPopulateTable(CharSequence tableName, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, TableModel tableModel, int totalRows, String startDate, int partitionCount) throws NumericException, SqlException {
+        compiler.compile(createPopulateTableStmt(tableName, tableModel, totalRows, startDate, partitionCount), sqlExecutionContext);
     }
 
-    public static String createPopulateTableStmt(
-            CharSequence tableName,
-            TableModel tableModel,
-            int totalRows,
-            String startDate,
-            int partitionCount
-    ) throws NumericException {
+    public static String createPopulateTableStmt(CharSequence tableName, TableModel tableModel, int totalRows, String startDate, int partitionCount) throws NumericException {
         long fromTimestamp = IntervalUtils.parseFloorPartialTimestamp(startDate);
         long increment = partitionIncrement(tableModel.getPartitionBy(), fromTimestamp, totalRows, partitionCount);
         if (PartitionBy.isPartitioned(tableModel.getPartitionBy())) {
@@ -1042,19 +938,8 @@ public final class TestUtils {
     }
 
     public static void createTable(TableModel model, CairoConfiguration configuration, int tableVersion, int tableId, TableToken tableToken) {
-        try (
-                Path path = new Path();
-                MemoryMARW mem = Vm.getMARWInstance()
-        ) {
-            TableUtils.createTable(
-                    configuration,
-                    mem,
-                    path,
-                    model,
-                    tableVersion,
-                    tableId,
-                    tableToken.getDirName()
-            );
+        try (Path path = new Path(); MemoryMARW mem = Vm.getMARWInstance()) {
+            TableUtils.createTable(configuration, mem, path, model, tableVersion, tableId, tableToken.getDirName());
         }
     }
 
@@ -1116,20 +1001,10 @@ public final class TestUtils {
         return true;
     }
 
-    public static void execute(
-            @Nullable WorkerPool pool,
-            CustomisableRunnable runnable,
-            CairoConfiguration configuration,
-            Metrics metrics,
-            Log log
-    ) throws Exception {
+    public static void execute(@Nullable WorkerPool pool, CustomisableRunnable runnable, CairoConfiguration configuration, Metrics metrics, Log log) throws Exception {
         final int workerCount = pool != null ? pool.getWorkerCount() : 1;
         final BindVariableServiceImpl bindVariableService = new BindVariableServiceImpl(configuration);
-        try (
-                final CairoEngine engine = new CairoEngine(configuration, metrics);
-                final SqlCompiler compiler = engine.getSqlCompiler();
-                final SqlExecutionContext sqlExecutionContext = createSqlExecutionCtx(engine, bindVariableService, workerCount)
-        ) {
+        try (final CairoEngine engine = new CairoEngine(configuration, metrics); final SqlCompiler compiler = engine.getSqlCompiler(); final SqlExecutionContext sqlExecutionContext = createSqlExecutionCtx(engine, bindVariableService, workerCount)) {
             try {
                 if (pool != null) {
                     setupWorkerPool(pool, engine);
@@ -1147,12 +1022,7 @@ public final class TestUtils {
         }
     }
 
-    public static void execute(
-            @Nullable WorkerPool pool,
-            CustomisableRunnable runner,
-            CairoConfiguration configuration,
-            Log log
-    ) throws Exception {
+    public static void execute(@Nullable WorkerPool pool, CustomisableRunnable runner, CairoConfiguration configuration, Log log) throws Exception {
         execute(pool, runner, configuration, Metrics.disabled(), log);
     }
 
@@ -1255,12 +1125,7 @@ public final class TestUtils {
         return engine.getWriter(tableToken, "test");
     }
 
-    public static String insertFromSelectPopulateTableStmt(
-            TableModel tableModel,
-            int totalRows,
-            String startDate,
-            int partitionCount
-    ) throws NumericException {
+    public static String insertFromSelectPopulateTableStmt(TableModel tableModel, int totalRows, String startDate, int partitionCount) throws NumericException {
         long fromTimestamp = IntervalUtils.parseFloorPartialTimestamp(startDate);
         long increment = partitionIncrement(tableModel.getPartitionBy(), fromTimestamp, totalRows, partitionCount);
 
@@ -1370,14 +1235,7 @@ public final class TestUtils {
 
     public static void messTxnUnallocated(FilesFacade ff, Path path, Rnd rnd, TableToken tableToken) {
         path.concat(tableToken).concat(TableUtils.TXN_FILE_NAME);
-        try (MemoryMARW txFile = Vm.getCMARWInstance(
-                ff,
-                path.$(),
-                Files.PAGE_SIZE,
-                -1,
-                MemoryTag.NATIVE_MIG_MMAP,
-                CairoConfiguration.O_NONE
-        )) {
+        try (MemoryMARW txFile = Vm.getCMARWInstance(ff, path.$(), Files.PAGE_SIZE, -1, MemoryTag.NATIVE_MIG_MMAP, CairoConfiguration.O_NONE)) {
             long version = txFile.getLong(TableUtils.TX_BASE_OFFSET_VERSION_64);
             boolean isA = (version & 1L) == 0L;
             long baseOffset = isA ? txFile.getInt(TX_BASE_OFFSET_A_32) : txFile.getInt(TX_BASE_OFFSET_B_32);
@@ -1398,44 +1256,30 @@ public final class TestUtils {
         return newOffPoolWriter(configuration, tableToken, metrics, new MessageBusImpl(configuration));
     }
 
-    public static TableWriter newOffPoolWriter(
-            CairoConfiguration configuration,
-            TableToken tableToken,
-            Metrics metrics,
-            MessageBus messageBus
-    ) {
-        return new TableWriter(
-                configuration,
-                tableToken,
-                null,
-                messageBus,
-                true,
-                DefaultLifecycleManager.INSTANCE,
-                configuration.getRoot(),
-                DefaultDdlListener.INSTANCE,
-                () -> false,
-                metrics
-        );
+    public static TableWriter newOffPoolWriter(CairoConfiguration configuration, TableToken tableToken, Metrics metrics, MessageBus messageBus) {
+        return new TableWriter(configuration, tableToken, null, messageBus, true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), DefaultDdlListener.INSTANCE, () -> false, metrics);
     }
 
-    public static void printSql(
-            CairoEngine engine,
-            SqlExecutionContext sqlExecutionContext,
-            CharSequence sql,
-            MutableUtf16Sink sink
-    ) throws SqlException {
+    public static void printSql(CairoEngine engine, SqlExecutionContext sqlExecutionContext, CharSequence sql, MutableUtf16Sink sink) throws SqlException {
+        printSql(engine, sqlExecutionContext, sql, sink, null);
+    }
+
+    public static void printSql(CairoEngine engine, SqlExecutionContext sqlExecutionContext, CharSequence sql, MutableUtf16Sink sink, @Nullable Runnable runnable) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            printSql(compiler, sqlExecutionContext, sql, sink);
+            printSql(compiler, sqlExecutionContext, sql, sink, runnable);
         }
     }
 
-    public static void printSql(
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            CharSequence sql,
-            MutableUtf16Sink sink
-    ) throws SqlException {
+    public static void printSql(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence sql, MutableUtf16Sink sink) throws SqlException {
+        printSql(compiler, sqlExecutionContext, sql, sink, null);
+    }
+
+    public static void printSql(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence sql, MutableUtf16Sink sink, @Nullable Runnable afterCompile) throws SqlException {
         try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+            // allow caller to set bind variables
+            if (afterCompile != null) {
+                afterCompile.run();
+            }
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 RecordMetadata metadata = factory.getMetadata();
                 sink.clear();
@@ -1449,12 +1293,7 @@ public final class TestUtils {
         }
     }
 
-    public static void printSqlWithTypes(
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            CharSequence sql,
-            MutableUtf16Sink sink
-    ) throws SqlException {
+    public static void printSqlWithTypes(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence sql, MutableUtf16Sink sink) throws SqlException {
         try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 RecordMetadata metadata = factory.getMetadata();
@@ -1504,12 +1343,10 @@ public final class TestUtils {
     public static String readStringFromFile(File file) {
         try {
             try (FileInputStream fis = new FileInputStream(file)) {
-                byte[] buffer
-                        = new byte[(int) fis.getChannel().size()];
+                byte[] buffer = new byte[(int) fis.getChannel().size()];
                 int totalRead = 0;
                 int read;
-                while (totalRead < buffer.length
-                        && (read = fis.read(buffer, totalRead, buffer.length - totalRead)) > 0) {
+                while (totalRead < buffer.length && (read = fis.read(buffer, totalRead, buffer.length - totalRead)) > 0) {
                     totalRead += read;
                 }
                 return new String(buffer, Files.UTF_8);
@@ -1592,14 +1429,7 @@ public final class TestUtils {
         Assert.assertEquals(rr.getChar(col), lr.getChar(col));
     }
 
-    private static void assertColumnValues(
-            RecordMetadata metadataExpected,
-            RecordMetadata metadataActual,
-            Record lr,
-            Record rr,
-            long rowIndex,
-            boolean genericStringMatch
-    ) {
+    private static void assertColumnValues(RecordMetadata metadataExpected, RecordMetadata metadataActual, Record lr, Record rr, long rowIndex, boolean genericStringMatch) {
         int columnType = 0;
         for (int i = 0, n = metadataExpected.getColumnCount(); i < n; i++) {
             String columnName = metadataExpected.getColumnName(i);
@@ -1679,11 +1509,7 @@ public final class TestUtils {
             } catch (AssertionError e) {
                 String expected = recordToString(rr, metadataExpected, genericStringMatch);
                 String actual = recordToString(lr, metadataActual, genericStringMatch);
-                Assert.assertEquals(
-                        String.format(String.format("Row %d column %s[%s]", rowIndex, columnName, ColumnType.nameOf(columnType))),
-                        expected,
-                        actual
-                );
+                Assert.assertEquals(String.format(String.format("Row %d column %s[%s]", rowIndex, columnName, ColumnType.nameOf(columnType))), expected, actual);
                 // If above didn't fail because of types not included or double precision not enough, throw here anyway
                 throw new AssertionError(String.format("Row %d column %s[%s] %s", rowIndex, columnName, ColumnType.nameOf(columnType), e.getMessage()));
             }
@@ -1696,10 +1522,7 @@ public final class TestUtils {
             Assert.fail("Expected " + toHexString(expected) + ", but was: null");
         }
 
-        if (expected.getLong0() != actual.getLong0()
-                || expected.getLong1() != actual.getLong1()
-                || expected.getLong2() != actual.getLong2()
-                || expected.getLong3() != actual.getLong3()) {
+        if (expected.getLong0() != actual.getLong0() || expected.getLong1() != actual.getLong1() || expected.getLong2() != actual.getLong2() || expected.getLong3() != actual.getLong3()) {
             Assert.assertEquals(toHexString(expected), toHexString(actual));
         }
     }
@@ -1822,10 +1645,7 @@ public final class TestUtils {
     }
 
     private static String toHexString(Long256 expected) {
-        return Long.toHexString(expected.getLong0()) + " " +
-                Long.toHexString(expected.getLong1()) + " " +
-                Long.toHexString(expected.getLong2()) + " " +
-                Long.toHexString(expected.getLong3());
+        return Long.toHexString(expected.getLong0()) + " " + Long.toHexString(expected.getLong1()) + " " + Long.toHexString(expected.getLong2()) + " " + Long.toHexString(expected.getLong3());
     }
 
     static void addAllRecordsToMap(StringSink sink, RecordCursor cursor, RecordMetadata metadata, Map<String, Integer> map) {

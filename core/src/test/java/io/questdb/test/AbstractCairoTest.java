@@ -1339,7 +1339,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static void printSql(CharSequence sql, boolean fullFatJoins) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             compiler.setFullFatJoins(fullFatJoins);
-            TestUtils.printSql(compiler, sqlExecutionContext, sql, sink);
+            TestUtils.printSql(compiler, sqlExecutionContext, sql, sink, null);
         }
     }
 
@@ -1691,8 +1691,12 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected void assertSql(CharSequence expected, CharSequence sql) throws SqlException {
+        assertSql(expected, sql, null);
+    }
+
+    protected void assertSql(CharSequence expected, CharSequence sql, Runnable runnable) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            TestUtils.assertSql(compiler, sqlExecutionContext, sql, sink, expected);
+            TestUtils.assertSql(compiler, sqlExecutionContext, sql, sink, expected, runnable);
         }
     }
 

@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -56,7 +57,8 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         boolean allConst = true;
-        for (int i = 1, n = args.size(); i < n; i++) {
+        boolean allRuntimeConst = true;
+        for (int i = 1, n = args.size(); i < n && (allConst || allRuntimeConst); i++) {
             Function func = args.getQuick(i);
             switch (ColumnType.tagOf(func.getType())) {
                 case ColumnType.NULL:
@@ -68,12 +70,17 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                 case ColumnType.SYMBOL:
                 case ColumnType.VARCHAR:
                     break;
+                case ColumnType.UNDEFINED:
+                    break;
                 default:
                     throw SqlException.position(0).put("cannot compare TIMESTAMP with type ").put(ColumnType.nameOf(func.getType()));
             }
             if (!func.isConstant()) {
                 allConst = false;
-                break;
+            }
+
+            if (!func.isRuntimeConstant()) {
+                allRuntimeConst = false;
             }
         }
 
@@ -86,6 +93,20 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             return new InTimestampStrFunctionFactory.EqTimestampStrFunction(args.get(0), args.get(1));
         }
 
+        if (allRuntimeConst) {
+            if (args.size() == 2) {
+                // this is an odd case, we have something like this
+                //
+                // where ts in ?
+                //
+                // Type of the runtime constant may not be known upfront.
+                // When user passes string as the value we perform the interval lookup,
+                // otherwise it is discrete value
+                assert false;
+
+            }
+            return new InTimestampManyRuntimeConstantsFunction(new ObjList<>(args));
+        }
         // have to copy, args is mutable
         return new InTimestampVarFunction(new ObjList<>(args));
     }
@@ -183,6 +204,67 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                         val = str != null ? IntervalUtils.tryParseTimestamp(str) : Numbers.LONG_NULL;
                         break;
                 }
+                if (val == ts) {
+                    return !negated;
+                }
+            }
+            return negated;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(args.getQuick(0));
+            if (negated) {
+                sink.val(" not");
+            }
+            sink.val(" in ");
+            sink.val(args, 1);
+        }
+    }
+
+    private static class InTimestampManyRuntimeConstantsFunction extends NegatableBooleanFunction implements MultiArgFunction {
+        private final ObjList<Function> args;
+        private final LongList timestampValues;
+
+        public InTimestampManyRuntimeConstantsFunction(ObjList<Function> args) {
+            this.args = args;
+            this.timestampValues = new LongList(args.size());
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            MultiArgFunction.super.init(symbolTableSource, executionContext);
+            timestampValues.clear();
+            for (int i = 1, n = args.size(); i < n; i++) {
+                Function func = args.getQuick(i);
+                long val = Numbers.LONG_NULL;
+                switch (ColumnType.tagOf(func.getType())) {
+                    case ColumnType.TIMESTAMP:
+                    case ColumnType.LONG:
+                    case ColumnType.INT:
+                        val = func.getTimestamp(null);
+                        break;
+                    case ColumnType.STRING:
+                    case ColumnType.SYMBOL:
+                    case ColumnType.VARCHAR:
+                        CharSequence str = func.getStrA(null);
+                        val = str != null ? IntervalUtils.tryParseTimestamp(str) : Numbers.LONG_NULL;
+                        break;
+                }
+                timestampValues.add(val);
+            }
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            return args;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            long ts = args.getQuick(0).getTimestamp(rec);
+            for (int i = 0, n = timestampValues.size(); i < n; i++) {
+                long val = timestampValues.getQuick(i);
                 if (val == ts) {
                     return !negated;
                 }

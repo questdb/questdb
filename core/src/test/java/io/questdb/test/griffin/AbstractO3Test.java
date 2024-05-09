@@ -420,7 +420,7 @@ public class AbstractO3Test extends AbstractTest {
             SqlExecutionContext sqlExecutionContext,
             String sql
     ) throws SqlException {
-        TestUtils.printSql(compiler, sqlExecutionContext, sql, sink);
+        TestUtils.printSql(compiler, sqlExecutionContext, sql, sink, null);
     }
 
     protected void insertUncommitted(
