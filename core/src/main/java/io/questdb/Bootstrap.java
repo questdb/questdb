@@ -270,9 +270,9 @@ public class Bootstrap {
 
     public void extractSite() throws IOException {
         final byte[] buffer = new byte[1024 * 1024];
-        final URL resource = getResourceClass().getResource(getPublicZipPath());
+        final URL resource = ServerMain.class.getResource(PUBLIC_ZIP);
         if (resource == null) {
-            log.infoW().$("Web Console build [").$(getPublicZipPath()).$("] not found").$();
+            log.infoW().$("Web Console build [").$(PUBLIC_ZIP).$("] not found").$();
             extractConfDir(buffer);
         } else {
             long thisVersion = resource.openConnection().getLastModified();
@@ -317,10 +317,6 @@ public class Bootstrap {
                 log.infoW().$("Web Console is up to date").$();
             }
         }
-    }
-
-    public String getBanner() {
-        return banner;
     }
 
     public BuildInformation getBuildInformation() {
@@ -410,6 +406,15 @@ public class Bootstrap {
         return null;
     }
 
+    private static void padToNextCol(StringBuilder sb, int headerWidth) {
+        int colWidth = 32;
+        // Insert at least one space between columns
+        sb.append("  ");
+        for (int i = headerWidth + 2; i < colWidth; i++) {
+            sb.append(' ');
+        }
+    }
+
     private static void setPublicVersion(String publicDir, String version) throws IOException {
         File f = new File(publicDir, PUBLIC_VERSION_TXT);
         File publicFolder = f.getParentFile();
@@ -443,25 +448,18 @@ public class Bootstrap {
         ff.remove(path);
     }
 
-    private void extractSite0(String publicDir, byte[] buffer, String thisVersion) throws IOException {
-        try (final InputStream is = getResourceClass().getResourceAsStream(getPublicZipPath())) {
-            if (is != null) {
-                try (ZipInputStream zip = new ZipInputStream(is)) {
-                    ZipEntry ze;
-                    while ((ze = zip.getNextEntry()) != null) {
-                        final File dest = new File(publicDir, ze.getName());
-                        if (!ze.isDirectory()) {
-                            copyInputStream(true, buffer, dest, zip, log);
-                        }
-                        zip.closeEntry();
-                    }
-                }
-            } else {
-                log.errorW().$("could not find site [resource=").$(getPublicZipPath()).$(']').$();
-            }
+    private void createHelloFile(String helloMsg) {
+        final File helloFile = new File(rootDirectory, "log/hello.txt");
+        final File growingFile = new File(helloFile.getParentFile(), helloFile.getName() + ".tmp");
+        try (Writer w = new FileWriter(growingFile)) {
+            w.write(helloMsg);
+        } catch (IOException e) {
+            log.infoW().$("Failed to create ").$(growingFile.getAbsolutePath()).$();
         }
-        setPublicVersion(publicDir, thisVersion);
-        extractConfDir(buffer);
+        if (!growingFile.renameTo(helloFile)) {
+            log.infoW().$("Failed to rename ").$(growingFile.getAbsolutePath()).$(" to ").$(helloFile.getName()).$();
+        }
+        helloFile.deleteOnExit();
     }
 
     private void extractConfDir(byte[] buffer) throws IOException {
@@ -476,6 +474,27 @@ public class Bootstrap {
         }
         copyConfResource(rootDirectory, false, buffer, "conf/server.conf", log);
         copyConfResource(rootDirectory, false, buffer, "conf/log.conf", log);
+    }
+
+    private void extractSite0(String publicDir, byte[] buffer, String thisVersion) throws IOException {
+        try (final InputStream is = ServerMain.class.getResourceAsStream(PUBLIC_ZIP)) {
+            if (is != null) {
+                try (ZipInputStream zip = new ZipInputStream(is)) {
+                    ZipEntry ze;
+                    while ((ze = zip.getNextEntry()) != null) {
+                        final File dest = new File(publicDir, ze.getName());
+                        if (!ze.isDirectory()) {
+                            copyInputStream(true, buffer, dest, zip, log);
+                        }
+                        zip.closeEntry();
+                    }
+                }
+            } else {
+                log.errorW().$("could not find site [resource=").$(PUBLIC_ZIP).$(']').$();
+            }
+        }
+        setPublicVersion(publicDir, thisVersion);
+        extractConfDir(buffer);
     }
 
     private void reportValidateConfig() {
@@ -634,37 +653,6 @@ public class Bootstrap {
         final String helloMsg = sb.toString();
         log.infoW().$(helloMsg).$();
         createHelloFile(helloMsg);
-    }
-
-    private static void padToNextCol(StringBuilder sb, int headerWidth) {
-        int colWidth = 32;
-        // Insert at least one space between columns
-        sb.append("  ");
-        for (int i = headerWidth + 2; i < colWidth; i++) {
-            sb.append(' ');
-        }
-    }
-
-    private void createHelloFile(String helloMsg) {
-        final File helloFile = new File(rootDirectory, "log/hello.txt");
-        final File growingFile = new File(helloFile.getParentFile(), helloFile.getName() + ".tmp");
-        try (Writer w = new FileWriter(growingFile)) {
-            w.write(helloMsg);
-        } catch (IOException e) {
-            log.infoW().$("Failed to create ").$(growingFile.getAbsolutePath()).$();
-        }
-        if (!growingFile.renameTo(helloFile)) {
-            log.infoW().$("Failed to rename ").$(growingFile.getAbsolutePath()).$(" to ").$(helloFile.getName()).$();
-        }
-        helloFile.deleteOnExit();
-    }
-
-    protected String getPublicZipPath() {
-        return PUBLIC_ZIP;
-    }
-
-    protected Class<?> getResourceClass() {
-        return ServerMain.class;
     }
 
     public static class BootstrapException extends RuntimeException {
