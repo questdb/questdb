@@ -766,8 +766,8 @@ namespace questdb::x86 {
         c.comment("float_cmp_epsilon_start");
         Gp int_r = c.newInt32("tmp_int_r");
         c.movd(int_r, xmm0);
-        c.and_(int_r, 0x7FF00000);
-        c.cmp(int_r,  0x7FF00000);
+        c.and_(int_r, 0x7F800000);
+        c.cmp(int_r,  0x7F800000);
         c.jne(l_nan);
         Gp r = c.newInt32();
         if (eq) {
@@ -776,8 +776,8 @@ namespace questdb::x86 {
             c.xor_(r, r);
         }
         c.movd(int_r, xmm1);
-        c.and_(int_r, 0x7FF00000);
-        c.cmp(int_r,  0x7FF00000);
+        c.and_(int_r, 0x7F800000);
+        c.cmp(int_r,  0x7F800000);
         c.jne(l_nan);
         c.jmp(l_exit);
 
