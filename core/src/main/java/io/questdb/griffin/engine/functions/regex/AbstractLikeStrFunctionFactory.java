@@ -48,9 +48,17 @@ import java.util.regex.Pattern;
 
 public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory {
 
-    public static String escapeSpecialChars(CharSequence pattern, CharSequence prev) throws SqlException {
+    public static String escapeSpecialChars(CharSequence pattern, CharSequence prev, CharSequence escape) throws SqlException {
         int len = pattern.length();
-
+        char escapeChar;
+        if (escape == null) {
+            escapeChar = '\\';
+        } else {
+            if (escape.length() > 1) {
+                throw SqlException.parserErr(1, escape, "Escape symbol must be one character");
+            }
+            escapeChar = escape.charAt(0);
+        }
         StringSink sink = Misc.getThreadLocalSink();
         for (int i = 0; i < len; i++) {
             char c = pattern.charAt(i);
@@ -61,10 +69,10 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
             } else if ("[](){}.*+?$^|#".indexOf(c) != -1) {
                 sink.put("\\");
                 sink.put(c);
-            } else if (c == '\\') {
+            } else if (c == escapeChar) {
                 i++;
                 if (i >= len) {
-                    throw SqlException.parserErr(i - 1, pattern, "LIKE pattern must not end with escape character");
+                    throw SqlException.parserErr(i - 1, pattern, "LIKE/ILIKE pattern must not end with escape character");
                 }
                 c = pattern.charAt(i);
                 if ("[](){}.*+?$^|#\\".indexOf(c) != -1) {
@@ -100,11 +108,8 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
             int len;
             if (likeSeq != null && (len = likeSeq.length()) > 0) {
                 int oneCount = countChar(likeSeq, '_');
-                if (oneCount == 0) {
-                    if (likeSeq.charAt(len - 1) == '\\') {
-                        throw SqlException.parserErr(len - 1, likeSeq, "LIKE pattern must not end with escape character");
-                    }
-
+                //Performs optimization when % is certainly not escaped
+                if (oneCount == 0 && args.size() < 3 && countChar(likeSeq, '\\') == 0) {
                     int anyCount = countChar(likeSeq, '%');
                     if (anyCount == 1) {
                         if (len == 1) {
@@ -140,8 +145,12 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
                         }
                     }
                 }
-
-                String p = escapeSpecialChars(likeSeq, null);
+                String p;
+                if (args.size() < 3) {
+                    p = escapeSpecialChars(likeSeq, null, null);
+                } else {
+                    p = escapeSpecialChars(likeSeq, null, args.getQuick(2).getStrA(null));
+                }
                 assert p != null;
                 int flags = Pattern.DOTALL;
                 if (isCaseInsensitive()) {
@@ -210,7 +219,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
             // this is bind variable, we can use it as constant
             final CharSequence patternValue = pattern.getStrA(null);
             if (patternValue != null && patternValue.length() > 0) {
-                String p = escapeSpecialChars(patternValue, lastPattern);
+                String p = escapeSpecialChars(patternValue, lastPattern, null);
                 if (p != null) {
                     int flags = Pattern.DOTALL;
                     if (caseInsensitive) {

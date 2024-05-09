@@ -63,11 +63,8 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
             int len;
             if (likeSeq != null && (len = likeSeq.length()) > 0) {
                 int oneCount = countChar(likeSeq, '_');
-                if (oneCount == 0) {
-                    if (likeSeq.charAt(len - 1) == '\\') {
-                        throw SqlException.parserErr(len - 1, likeSeq, "LIKE pattern must not end with escape character");
-                    }
-
+                //Performs optimization when % is certainly not escaped
+                if (oneCount == 0 && args.size() < 3 && countChar(likeSeq, '\\') == 0) {
                     int anyCount = countChar(likeSeq, '%');
                     if (anyCount == 1) {
                         if (len == 1) {
@@ -119,8 +116,12 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
                         }
                     }
                 }
-
-                String p = escapeSpecialChars(likeSeq, null);
+                String p;
+                if (args.size() < 3) {
+                    p = escapeSpecialChars(likeSeq, null, null);
+                } else {
+                    p = escapeSpecialChars(likeSeq, null, args.getQuick(2).getStrA(null));
+                }
                 assert p != null;
                 int flags = Pattern.DOTALL;
                 if (isCaseInsensitive()) {
