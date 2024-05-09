@@ -1015,7 +1015,7 @@ public class ExpressionParser {
                         // push o1 onto the operator stack.
                         while ((other = opStack.peek()) != null) {
                             boolean greaterPrecedence = (op.leftAssociative && op.precedence >= other.precedence) || (!op.leftAssociative && op.precedence > other.precedence);
-                            // NOT unary infix operator can't pop binary operator from the left, although it have very high precedence (this is made to allow usage of subexpressions like y = FALSE AND NOT x = TRUE)
+                            // NOT unary infix operator can't pop binary operator from the left, although it has very high precedence (that's to allow usage of subexpressions like `y = FALSE AND NOT x = TRUE`)
                             if (unaryOperator && other.paramCount > 0) {
                                 break;
                             }
