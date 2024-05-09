@@ -855,7 +855,7 @@ public class ExpressionParser {
 
                                 // there is one case for valid dangling expression - when we create an alias for column (`'value' 'x'` equivalent to `'value' as 'x'`)
                                 // this helper works for simple cases leaving unparsed last token and gives a chance for the caller to analyze aliasing
-                                // although for complex cases it will not work (like 'a' || 'b' 'x' will not be parsed as 'a' || 'b' as 'x' without explicit braces)
+                                // although for complex cases it will not work (`'a' || 'b' 'x'` will not be parsed as `'a' || 'b' as 'x'` without explicit braces)
                                 if (opStack.size() > 1) {
                                     throw SqlException.$(lastPos, "dangling expression");
                                 }
