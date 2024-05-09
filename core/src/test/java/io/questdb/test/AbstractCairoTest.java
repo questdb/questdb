@@ -949,6 +949,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         TestUtils.assertMemoryLeak(() -> {
             AbstractCairoTest.ff = ff2;
             try {
+                Unsafe.setRssMemLimit(8_900_000);
                 code.run();
                 forEachNode(node -> releaseInactive(node.getEngine()));
             } catch (Throwable th) {

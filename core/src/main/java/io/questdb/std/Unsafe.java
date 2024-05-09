@@ -314,12 +314,14 @@ public final class Unsafe {
             long usage = RSS_MEM_USED.get();
             System.out.printf("checkAllocLimit %,d + %,d = %,d, limit %,d\n", usage, size, usage + size, RSS_MEM_LIMIT);
             if (usage + size > RSS_MEM_LIMIT) {
-                throw CairoException.nonCritical().setOutOfMemory(true)
+                CairoException e = CairoException.nonCritical().setOutOfMemory(true)
                         .put("global RSS memory limit exceeded [usage=")
                         .put(usage)
                         .put(", limit=").put(RSS_MEM_LIMIT)
                         .put(", allocation=").put(size)
                         .put(']');
+                e.printStackTrace();
+                throw e;
             }
         }
     }
