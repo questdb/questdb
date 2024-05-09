@@ -33,10 +33,6 @@
             <source>../LICENSE.txt</source>
             <outputDirectory>questdb-${artifact.version}-no-jre-bin</outputDirectory>
         </file>
-        <file>
-            <source>src/main/bin/${jemalloc.so}</source>
-            <outputDirectory>questdb-${artifact.version}-no-jre-bin</outputDirectory>
-        </file>
     </files>
     <dependencySets>
         <dependencySet>
