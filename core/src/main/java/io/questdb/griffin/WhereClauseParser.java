@@ -213,13 +213,14 @@ public final class WhereClauseParser implements Mutable {
 
     private static long getTimestampFromConstFunction(
             Function function,
-            int functionPosition
+            int functionPosition,
+            boolean detectIntervals
     ) throws SqlException {
         if (!ColumnType.isSymbolOrString(function.getType())) {
             return function.getTimestamp(null);
         }
         CharSequence str = function.getStrA(null);
-        return parseStringAsTimestamp(str, functionPosition);
+        return parseStringAsTimestamp(str, functionPosition, detectIntervals);
     }
 
     private static boolean isFunc(ExpressionNode n) {
@@ -251,10 +252,17 @@ public final class WhereClauseParser implements Mutable {
                 && Chars.equals(left.token, right.token);
     }
 
-    private static long parseStringAsTimestamp(CharSequence str, int position) throws SqlException {
+    private static long parseStringAsTimestamp(CharSequence str, int position, boolean detectIntervals) throws SqlException {
         try {
             return IntervalUtils.parseFloorPartialTimestamp(str);
         } catch (NumericException ignore) {
+            if (detectIntervals) {
+                for (int i = 0, lim = str.length(); i < lim; i++) {
+                    if (str.charAt(i) == ';') {
+                        throw SqlException.$(position, "Not a date, use IN keyword with intervals");
+                    }
+                }
+            }
             throw SqlException.invalidDate(str, position);
         }
     }
@@ -681,7 +689,7 @@ public final class WhereClauseParser implements Mutable {
                         ts = parseTokenAsTimestamp(inListItem);
                     } else {
                         Function fun = moreThanOneTimestampFunc ? functionParser.parseFunction(inListItem, metadata, executionContext) : timestampFunc;
-                        ts = getTimestampFromConstFunction(fun, inListItem.position);
+                        ts = getTimestampFromConstFunction(fun, inListItem.position, false);
                     }
                     if (!isNegated) {
                         if (i == 0) {
@@ -1263,7 +1271,7 @@ public final class WhereClauseParser implements Mutable {
             int functionPosition
     ) throws SqlException {
         if (function.isConstant()) {
-            long value = getTimestampFromConstFunction(function, functionPosition);
+            long value = getTimestampFromConstFunction(function, functionPosition, true);
             if (value == Numbers.LONG_NULL) {
                 // make it empty set
                 model.intersectEmpty();
@@ -1308,7 +1316,7 @@ public final class WhereClauseParser implements Mutable {
             checkFunctionCanBeTimestamp(metadata, executionContext, function, compareWithNode.position);
 
             if (function.isConstant()) {
-                lo = getTimestampFromConstFunction(function, compareWithNode.position);
+                lo = getTimestampFromConstFunction(function, compareWithNode.position, false);
                 if (lo == Numbers.LONG_NULL) {
                     // make it empty set
                     model.intersectEmpty();
@@ -1354,7 +1362,7 @@ public final class WhereClauseParser implements Mutable {
             checkFunctionCanBeTimestamp(metadata, executionContext, function, compareWithNode.position);
 
             if (function.isConstant()) {
-                long hi = getTimestampFromConstFunction(function, compareWithNode.position);
+                long hi = getTimestampFromConstFunction(function, compareWithNode.position, false);
                 if (hi == Numbers.LONG_NULL) {
                     model.intersectEmpty();
                 } else {
@@ -1379,7 +1387,7 @@ public final class WhereClauseParser implements Mutable {
             int functionPosition
     ) throws SqlException {
         if (function.isConstant()) {
-            long value = getTimestampFromConstFunction(function, functionPosition);
+            long value = getTimestampFromConstFunction(function, functionPosition, true);
             model.subtractIntervals(value, value);
             node.intrinsicValue = IntrinsicModel.TRUE;
             return true;
@@ -1975,7 +1983,7 @@ public final class WhereClauseParser implements Mutable {
             Function function = functionParser.parseFunction(node, metadata, executionContext);
             checkFunctionCanBeTimestamp(metadata, executionContext, function, node.position);
             if (function.isConstant()) {
-                long timestamp = getTimestampFromConstFunction(function, node.position);
+                long timestamp = getTimestampFromConstFunction(function, node.position, false);
                 model.setBetweenBoundary(timestamp);
             } else if (function.isRuntimeConstant()) {
                 model.setBetweenBoundary(function);

@@ -41,7 +41,10 @@ import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 public class WhereClauseParserTest extends AbstractCairoTest {
 
@@ -251,13 +254,12 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
-    @Ignore("TODO: intervals currently work with string literals only, need to add support for functions")
     public void testBadCountInIntervalVarchar() {
         try {
             modelOf("timestamp = '2015-02-23T10:00:55.000Z;30m;10;z'::varchar");
             Assert.fail();
         } catch (SqlException e) {
-            Assert.assertEquals("[12] Not a date, use IN keyword with intervals", e.getMessage());
+            Assert.assertEquals("[47] Not a date, use IN keyword with intervals", e.getMessage());
         }
     }
 
