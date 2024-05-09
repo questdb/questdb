@@ -85,6 +85,12 @@ public class InStrFunctionFactory implements FunctionFactory {
                 case ColumnType.CHAR:
                     set.add(String.valueOf(func.getChar(null)));
                     break;
+                case ColumnType.UNDEFINED:
+                    if (deferredValues == null) {
+                        deferredValues = new ObjList<>();
+                    }
+                    deferredValues.add(func);
+                    break;
                 default:
                     throw SqlException.$(argPositions.getQuick(i), "STRING constant expected");
             }

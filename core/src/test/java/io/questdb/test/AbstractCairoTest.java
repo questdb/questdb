@@ -893,6 +893,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static void assertException(CharSequence sql, int errorPos, CharSequence contains, boolean fullFatJoins) throws Exception {
+        Assert.assertNotNull(contains);
+        Assert.assertTrue(contains.length() > 0);
         try {
             assertException(sql, sqlExecutionContext, fullFatJoins);
         } catch (Throwable e) {

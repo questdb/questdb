@@ -98,7 +98,7 @@ public class CaseCommon {
 
     // public for testing
     public static int getCommonType(int commonType, int valueType, int valuePos) throws SqlException {
-        if (commonType == -1 || ColumnType.isNull(commonType)) {
+        if (commonType == -1 || ColumnType.isNull(commonType) || commonType == 0) {
             return valueType;
         }
         if (ColumnType.isNull(valueType)) {
@@ -174,251 +174,76 @@ public class CaseCommon {
 
     static {
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BYTE, ColumnType.BYTE), ColumnType.BYTE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BYTE, ColumnType.BOOLEAN), ColumnType.BYTE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BYTE, ColumnType.CHAR), ColumnType.CHAR);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BYTE, ColumnType.SHORT), ColumnType.SHORT);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BYTE, ColumnType.INT), ColumnType.INT);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BYTE, ColumnType.LONG), ColumnType.LONG);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BYTE, ColumnType.LONG256), ColumnType.LONG256);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BYTE, ColumnType.FLOAT), ColumnType.FLOAT);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BYTE, ColumnType.DOUBLE), ColumnType.DOUBLE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BYTE, ColumnType.DATE), ColumnType.DATE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BYTE, ColumnType.TIMESTAMP), ColumnType.TIMESTAMP);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BYTE, ColumnType.STRING), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BYTE, ColumnType.VARCHAR), ColumnType.VARCHAR);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BYTE, ColumnType.SYMBOL), ColumnType.SYMBOL);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BYTE, ColumnType.UUID), ColumnType.STRING);
 
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.CHAR, ColumnType.BYTE), ColumnType.CHAR);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.CHAR, ColumnType.BOOLEAN), ColumnType.CHAR);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.CHAR, ColumnType.CHAR), ColumnType.CHAR);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.CHAR, ColumnType.SHORT), ColumnType.SHORT);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.CHAR, ColumnType.INT), ColumnType.INT);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.CHAR, ColumnType.LONG), ColumnType.LONG);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.CHAR, ColumnType.LONG256), ColumnType.LONG256);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.CHAR, ColumnType.FLOAT), ColumnType.FLOAT);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.CHAR, ColumnType.DOUBLE), ColumnType.DOUBLE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.CHAR, ColumnType.DATE), ColumnType.DATE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.CHAR, ColumnType.TIMESTAMP), ColumnType.TIMESTAMP);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.CHAR, ColumnType.STRING), ColumnType.STRING);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.CHAR, ColumnType.VARCHAR), ColumnType.VARCHAR);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.CHAR, ColumnType.SYMBOL), ColumnType.SYMBOL);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.CHAR, ColumnType.UUID), ColumnType.STRING);
 
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SHORT, ColumnType.BYTE), ColumnType.SHORT);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SHORT, ColumnType.BOOLEAN), ColumnType.SHORT);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SHORT, ColumnType.CHAR), ColumnType.SHORT);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SHORT, ColumnType.SHORT), ColumnType.SHORT);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SHORT, ColumnType.INT), ColumnType.INT);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SHORT, ColumnType.LONG), ColumnType.LONG);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SHORT, ColumnType.LONG256), ColumnType.LONG256);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SHORT, ColumnType.FLOAT), ColumnType.FLOAT);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SHORT, ColumnType.DOUBLE), ColumnType.DOUBLE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SHORT, ColumnType.DATE), ColumnType.DATE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SHORT, ColumnType.TIMESTAMP), ColumnType.TIMESTAMP);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SHORT, ColumnType.STRING), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SHORT, ColumnType.VARCHAR), ColumnType.VARCHAR);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SHORT, ColumnType.SYMBOL), ColumnType.SYMBOL);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SHORT, ColumnType.UUID), ColumnType.STRING);
 
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.INT, ColumnType.BYTE), ColumnType.INT);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.INT, ColumnType.BOOLEAN), ColumnType.INT);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.INT, ColumnType.CHAR), ColumnType.INT);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.INT, ColumnType.SHORT), ColumnType.INT);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.INT, ColumnType.INT), ColumnType.INT);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.INT, ColumnType.LONG), ColumnType.LONG);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.INT, ColumnType.LONG256), ColumnType.LONG256);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.INT, ColumnType.FLOAT), ColumnType.FLOAT);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.INT, ColumnType.DOUBLE), ColumnType.DOUBLE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.INT, ColumnType.DATE), ColumnType.DATE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.INT, ColumnType.TIMESTAMP), ColumnType.TIMESTAMP);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.INT, ColumnType.STRING), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.INT, ColumnType.VARCHAR), ColumnType.VARCHAR);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.INT, ColumnType.SYMBOL), ColumnType.SYMBOL);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.INT, ColumnType.UUID), ColumnType.STRING);
 
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.IPv4, ColumnType.IPv4), ColumnType.IPv4);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.IPv4, ColumnType.STRING), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.IPv4, ColumnType.VARCHAR), ColumnType.VARCHAR);
 
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG, ColumnType.BYTE), ColumnType.LONG);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG, ColumnType.BOOLEAN), ColumnType.LONG);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG, ColumnType.CHAR), ColumnType.LONG);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG, ColumnType.SHORT), ColumnType.LONG);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG, ColumnType.INT), ColumnType.LONG);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG, ColumnType.LONG), ColumnType.LONG);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG, ColumnType.LONG256), ColumnType.LONG256);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG, ColumnType.FLOAT), ColumnType.FLOAT);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG, ColumnType.DOUBLE), ColumnType.DOUBLE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG, ColumnType.DATE), ColumnType.DATE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG, ColumnType.TIMESTAMP), ColumnType.TIMESTAMP);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG, ColumnType.STRING), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG, ColumnType.VARCHAR), ColumnType.VARCHAR);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG, ColumnType.SYMBOL), ColumnType.SYMBOL);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG, ColumnType.UUID), ColumnType.STRING);
 
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.FLOAT, ColumnType.BYTE), ColumnType.FLOAT);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.FLOAT, ColumnType.BOOLEAN), ColumnType.FLOAT);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.FLOAT, ColumnType.CHAR), ColumnType.FLOAT);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.FLOAT, ColumnType.SHORT), ColumnType.FLOAT);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.FLOAT, ColumnType.INT), ColumnType.FLOAT);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.FLOAT, ColumnType.LONG), ColumnType.FLOAT);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.FLOAT, ColumnType.LONG256), ColumnType.LONG256);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.FLOAT, ColumnType.FLOAT), ColumnType.FLOAT);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.FLOAT, ColumnType.DOUBLE), ColumnType.DOUBLE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.FLOAT, ColumnType.DATE), ColumnType.DATE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.FLOAT, ColumnType.TIMESTAMP), ColumnType.DATE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.FLOAT, ColumnType.STRING), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.FLOAT, ColumnType.VARCHAR), ColumnType.VARCHAR);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.FLOAT, ColumnType.SYMBOL), ColumnType.SYMBOL);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.FLOAT, ColumnType.UUID), ColumnType.STRING);
 
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DOUBLE, ColumnType.BYTE), ColumnType.DOUBLE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DOUBLE, ColumnType.BOOLEAN), ColumnType.DOUBLE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DOUBLE, ColumnType.CHAR), ColumnType.DOUBLE);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DOUBLE, ColumnType.SHORT), ColumnType.DOUBLE);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DOUBLE, ColumnType.INT), ColumnType.DOUBLE);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DOUBLE, ColumnType.LONG), ColumnType.DOUBLE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DOUBLE, ColumnType.LONG256), ColumnType.LONG256);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DOUBLE, ColumnType.FLOAT), ColumnType.DOUBLE);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DOUBLE, ColumnType.DOUBLE), ColumnType.DOUBLE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DOUBLE, ColumnType.DATE), ColumnType.DOUBLE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DOUBLE, ColumnType.TIMESTAMP), ColumnType.DOUBLE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DOUBLE, ColumnType.STRING), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DOUBLE, ColumnType.VARCHAR), ColumnType.VARCHAR);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DOUBLE, ColumnType.SYMBOL), ColumnType.SYMBOL);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DOUBLE, ColumnType.UUID), ColumnType.STRING);
 
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DATE, ColumnType.BYTE), ColumnType.DATE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DATE, ColumnType.BOOLEAN), ColumnType.DATE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DATE, ColumnType.CHAR), ColumnType.DATE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DATE, ColumnType.SHORT), ColumnType.DATE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DATE, ColumnType.INT), ColumnType.DATE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DATE, ColumnType.LONG), ColumnType.DATE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DATE, ColumnType.LONG256), ColumnType.LONG256);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DATE, ColumnType.FLOAT), ColumnType.FLOAT);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DATE, ColumnType.DOUBLE), ColumnType.DOUBLE);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DATE, ColumnType.DATE), ColumnType.DATE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DATE, ColumnType.TIMESTAMP), ColumnType.TIMESTAMP);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DATE, ColumnType.STRING), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DATE, ColumnType.VARCHAR), ColumnType.VARCHAR);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DATE, ColumnType.SYMBOL), ColumnType.SYMBOL);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.DATE, ColumnType.UUID), ColumnType.STRING);
-
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.TIMESTAMP, ColumnType.BYTE), ColumnType.TIMESTAMP);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.TIMESTAMP, ColumnType.BOOLEAN), ColumnType.TIMESTAMP);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.TIMESTAMP, ColumnType.CHAR), ColumnType.TIMESTAMP);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.TIMESTAMP, ColumnType.SHORT), ColumnType.TIMESTAMP);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.TIMESTAMP, ColumnType.INT), ColumnType.TIMESTAMP);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.TIMESTAMP, ColumnType.LONG), ColumnType.TIMESTAMP);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.TIMESTAMP, ColumnType.LONG256), ColumnType.LONG256);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.TIMESTAMP, ColumnType.FLOAT), ColumnType.FLOAT);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.TIMESTAMP, ColumnType.DOUBLE), ColumnType.DOUBLE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.TIMESTAMP, ColumnType.DATE), ColumnType.TIMESTAMP);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.TIMESTAMP, ColumnType.TIMESTAMP), ColumnType.TIMESTAMP);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.TIMESTAMP, ColumnType.STRING), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.TIMESTAMP, ColumnType.VARCHAR), ColumnType.VARCHAR);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.TIMESTAMP, ColumnType.SYMBOL), ColumnType.SYMBOL);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.TIMESTAMP, ColumnType.UUID), ColumnType.STRING);
 
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.STRING, ColumnType.BYTE), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.STRING, ColumnType.BOOLEAN), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.STRING, ColumnType.CHAR), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.STRING, ColumnType.SHORT), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.STRING, ColumnType.INT), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.STRING, ColumnType.LONG), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.STRING, ColumnType.LONG256), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.STRING, ColumnType.FLOAT), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.STRING, ColumnType.DOUBLE), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.STRING, ColumnType.DATE), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.STRING, ColumnType.TIMESTAMP), ColumnType.STRING);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.STRING, ColumnType.STRING), ColumnType.STRING);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.STRING, ColumnType.SYMBOL), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.STRING, ColumnType.UUID), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.STRING, ColumnType.IPv4), ColumnType.STRING);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.STRING, ColumnType.VARCHAR), ColumnType.VARCHAR);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.STRING, ColumnType.CHAR), ColumnType.STRING);
 
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.VARCHAR, ColumnType.BYTE), ColumnType.VARCHAR);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.VARCHAR, ColumnType.BOOLEAN), ColumnType.VARCHAR);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.VARCHAR, ColumnType.CHAR), ColumnType.VARCHAR);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.VARCHAR, ColumnType.SHORT), ColumnType.VARCHAR);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.VARCHAR, ColumnType.INT), ColumnType.VARCHAR);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.VARCHAR, ColumnType.LONG), ColumnType.VARCHAR);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.VARCHAR, ColumnType.LONG256), ColumnType.VARCHAR);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.VARCHAR, ColumnType.FLOAT), ColumnType.VARCHAR);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.VARCHAR, ColumnType.DOUBLE), ColumnType.VARCHAR);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.VARCHAR, ColumnType.DATE), ColumnType.VARCHAR);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.VARCHAR, ColumnType.TIMESTAMP), ColumnType.VARCHAR);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.VARCHAR, ColumnType.STRING), ColumnType.VARCHAR);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.VARCHAR, ColumnType.VARCHAR), ColumnType.VARCHAR);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.VARCHAR, ColumnType.SYMBOL), ColumnType.VARCHAR);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.VARCHAR, ColumnType.UUID), ColumnType.VARCHAR);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.VARCHAR, ColumnType.IPv4), ColumnType.VARCHAR);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.VARCHAR, ColumnType.CHAR), ColumnType.VARCHAR);
 
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SYMBOL, ColumnType.BYTE), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SYMBOL, ColumnType.BOOLEAN), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SYMBOL, ColumnType.CHAR), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SYMBOL, ColumnType.SHORT), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SYMBOL, ColumnType.INT), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SYMBOL, ColumnType.LONG), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SYMBOL, ColumnType.LONG256), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SYMBOL, ColumnType.FLOAT), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SYMBOL, ColumnType.DOUBLE), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SYMBOL, ColumnType.DATE), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SYMBOL, ColumnType.TIMESTAMP), ColumnType.STRING);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SYMBOL, ColumnType.STRING), ColumnType.STRING);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SYMBOL, ColumnType.VARCHAR), ColumnType.VARCHAR);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SYMBOL, ColumnType.SYMBOL), ColumnType.SYMBOL);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SYMBOL, ColumnType.UUID), ColumnType.STRING);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.SYMBOL, ColumnType.CHAR), ColumnType.STRING);
 
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BOOLEAN, ColumnType.BYTE), ColumnType.BYTE);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BOOLEAN, ColumnType.BOOLEAN), ColumnType.BOOLEAN);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BOOLEAN, ColumnType.CHAR), ColumnType.CHAR);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BOOLEAN, ColumnType.SHORT), ColumnType.SHORT);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BOOLEAN, ColumnType.INT), ColumnType.INT);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BOOLEAN, ColumnType.LONG), ColumnType.LONG);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BOOLEAN, ColumnType.LONG256), ColumnType.LONG256);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BOOLEAN, ColumnType.FLOAT), ColumnType.FLOAT);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BOOLEAN, ColumnType.DOUBLE), ColumnType.DOUBLE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BOOLEAN, ColumnType.DATE), ColumnType.DATE);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BOOLEAN, ColumnType.TIMESTAMP), ColumnType.TIMESTAMP);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BOOLEAN, ColumnType.STRING), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BOOLEAN, ColumnType.VARCHAR), ColumnType.VARCHAR);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BOOLEAN, ColumnType.SYMBOL), ColumnType.SYMBOL);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BOOLEAN, ColumnType.UUID), ColumnType.STRING);
 
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG256, ColumnType.BYTE), ColumnType.LONG256);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG256, ColumnType.BOOLEAN), ColumnType.LONG256);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG256, ColumnType.CHAR), ColumnType.LONG256);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG256, ColumnType.SHORT), ColumnType.LONG256);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG256, ColumnType.INT), ColumnType.LONG256);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG256, ColumnType.LONG), ColumnType.LONG256);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG256, ColumnType.LONG256), ColumnType.LONG256);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG256, ColumnType.FLOAT), ColumnType.LONG256);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG256, ColumnType.DOUBLE), ColumnType.LONG256);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG256, ColumnType.DATE), ColumnType.LONG256);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG256, ColumnType.TIMESTAMP), ColumnType.LONG256);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG256, ColumnType.STRING), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG256, ColumnType.VARCHAR), ColumnType.VARCHAR);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG256, ColumnType.SYMBOL), ColumnType.SYMBOL);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.LONG256, ColumnType.UUID), ColumnType.STRING);
-
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.UUID, ColumnType.BYTE), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.UUID, ColumnType.BOOLEAN), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.UUID, ColumnType.CHAR), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.UUID, ColumnType.SHORT), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.UUID, ColumnType.INT), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.UUID, ColumnType.LONG), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.UUID, ColumnType.LONG256), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.UUID, ColumnType.FLOAT), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.UUID, ColumnType.DOUBLE), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.UUID, ColumnType.DATE), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.UUID, ColumnType.TIMESTAMP), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.UUID, ColumnType.STRING), ColumnType.STRING);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.UUID, ColumnType.VARCHAR), ColumnType.VARCHAR);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.UUID, ColumnType.SYMBOL), ColumnType.STRING);
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.UUID, ColumnType.UUID), ColumnType.UUID);
-
         typeEscalationMap.put(Numbers.encodeLowHighInts(ColumnType.BINARY, ColumnType.BINARY), ColumnType.BINARY);
     }
 

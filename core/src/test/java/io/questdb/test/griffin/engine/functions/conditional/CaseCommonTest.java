@@ -44,7 +44,6 @@ public class CaseCommonTest extends BaseFunctionFactoryTest {
 
     @Before
     public void setUpParser() {
-//        functionParser = createFunctionParser();
         functionParser = new FunctionParser(configuration, new FunctionFactoryCache(configuration, ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())));
     }
 
@@ -82,23 +81,318 @@ public class CaseCommonTest extends BaseFunctionFactoryTest {
             res.put(i, new HashSet<>());
         }
         addGlobalExceptions(res);
-        addIgnored(res, ColumnType.BOOLEAN, ColumnType.LONG128, ColumnType.IPv4);
-        addIgnored(res, ColumnType.BYTE, ColumnType.LONG128, ColumnType.IPv4);
-        addIgnored(res, ColumnType.SHORT, ColumnType.LONG128, ColumnType.IPv4);
-        addIgnored(res, ColumnType.CHAR, ColumnType.LONG128, ColumnType.IPv4);
-        addIgnored(res, ColumnType.INT, ColumnType.LONG128, ColumnType.IPv4);
-        addIgnored(res, ColumnType.LONG, ColumnType.LONG128, ColumnType.IPv4);
-        addIgnored(res, ColumnType.DATE, ColumnType.LONG128, ColumnType.IPv4);
-        addIgnored(res, ColumnType.TIMESTAMP, ColumnType.LONG128, ColumnType.IPv4);
-        addIgnored(res, ColumnType.FLOAT, ColumnType.LONG128, ColumnType.IPv4);
-        addIgnored(res, ColumnType.DOUBLE, ColumnType.LONG128, ColumnType.IPv4);
-        addIgnored(res, ColumnType.STRING, ColumnType.LONG128); // we can find a common type for String and IPv4 -> String
-        addIgnored(res, ColumnType.SYMBOL, ColumnType.LONG128, ColumnType.IPv4); // but we some reason SYMBOL and IPv4 don't have common type, that's strange
-        addIgnored(res, ColumnType.LONG256, ColumnType.LONG128, ColumnType.IPv4);
-        addIgnored(res, ColumnType.UUID, ColumnType.LONG128, ColumnType.IPv4); // UUID and Long128 do not have common type, but they should
+        addIgnored(
+                res,
+                ColumnType.BOOLEAN,
+                ColumnType.BYTE,
+                ColumnType.SHORT,
+                ColumnType.INT,
+                ColumnType.LONG,
+                ColumnType.FLOAT,
+                ColumnType.DOUBLE,
+                ColumnType.LONG128,
+                ColumnType.LONG256,
+                ColumnType.IPv4,
+                ColumnType.UUID,
+                ColumnType.STRING,
+                ColumnType.VARCHAR,
+                ColumnType.CHAR,
+                ColumnType.SYMBOL,
+                ColumnType.DATE,
+                ColumnType.TIMESTAMP
+        );
+        addIgnored(
+                res,
+                ColumnType.BYTE,
+                ColumnType.BOOLEAN,
+                ColumnType.LONG128,
+                ColumnType.LONG256,
+                ColumnType.IPv4,
+                ColumnType.UUID,
+                ColumnType.STRING,
+                ColumnType.VARCHAR,
+                ColumnType.CHAR,
+                ColumnType.SYMBOL,
+                ColumnType.DATE,
+                ColumnType.TIMESTAMP
+        );
+        addIgnored(
+                res,
+                ColumnType.SHORT,
+                ColumnType.BOOLEAN,
+                ColumnType.LONG128,
+                ColumnType.LONG256,
+                ColumnType.IPv4,
+                ColumnType.UUID,
+                ColumnType.STRING,
+                ColumnType.VARCHAR,
+                ColumnType.CHAR,
+                ColumnType.SYMBOL,
+                ColumnType.DATE,
+                ColumnType.TIMESTAMP
+        );
+        addIgnored(
+                res,
+                ColumnType.CHAR,
+                ColumnType.BOOLEAN,
+                ColumnType.BYTE,
+                ColumnType.SHORT,
+                ColumnType.INT,
+                ColumnType.LONG,
+                ColumnType.FLOAT,
+                ColumnType.DOUBLE,
+                ColumnType.LONG128,
+                ColumnType.LONG256,
+                ColumnType.IPv4,
+                ColumnType.UUID,
+                ColumnType.DATE,
+                ColumnType.TIMESTAMP
+        );
+
+        addIgnored(
+                res,
+                ColumnType.INT,
+                ColumnType.BOOLEAN,
+                ColumnType.LONG128,
+                ColumnType.LONG256,
+                ColumnType.IPv4,
+                ColumnType.UUID,
+                ColumnType.STRING,
+                ColumnType.VARCHAR,
+                ColumnType.CHAR,
+                ColumnType.SYMBOL,
+                ColumnType.DATE,
+                ColumnType.TIMESTAMP
+        );
+
+        addIgnored(
+                res,
+                ColumnType.LONG,
+                ColumnType.BOOLEAN,
+                ColumnType.LONG128,
+                ColumnType.LONG256,
+                ColumnType.IPv4,
+                ColumnType.UUID,
+                ColumnType.STRING,
+                ColumnType.VARCHAR,
+                ColumnType.CHAR,
+                ColumnType.SYMBOL,
+                ColumnType.DATE,
+                ColumnType.TIMESTAMP
+        );
+
+        addIgnored(
+                res,
+                ColumnType.DATE,
+                ColumnType.BOOLEAN,
+                ColumnType.BYTE,
+                ColumnType.SHORT,
+                ColumnType.INT,
+                ColumnType.LONG,
+                ColumnType.FLOAT,
+                ColumnType.DOUBLE,
+                ColumnType.LONG128,
+                ColumnType.LONG256,
+                ColumnType.IPv4,
+                ColumnType.UUID,
+                ColumnType.STRING,
+                ColumnType.VARCHAR,
+                ColumnType.CHAR,
+                ColumnType.SYMBOL,
+                ColumnType.TIMESTAMP
+        );
+
+        addIgnored(
+                res,
+                ColumnType.TIMESTAMP,
+                ColumnType.BOOLEAN,
+                ColumnType.BYTE,
+                ColumnType.SHORT,
+                ColumnType.INT,
+                ColumnType.LONG,
+                ColumnType.FLOAT,
+                ColumnType.DOUBLE,
+                ColumnType.LONG128,
+                ColumnType.LONG256,
+                ColumnType.IPv4,
+                ColumnType.UUID,
+                ColumnType.STRING,
+                ColumnType.VARCHAR,
+                ColumnType.CHAR,
+                ColumnType.SYMBOL,
+                ColumnType.DATE
+        );
+
+        addIgnored(
+                res,
+                ColumnType.FLOAT,
+                ColumnType.BOOLEAN,
+                ColumnType.LONG128,
+                ColumnType.LONG256,
+                ColumnType.IPv4,
+                ColumnType.UUID,
+                ColumnType.STRING,
+                ColumnType.VARCHAR,
+                ColumnType.CHAR,
+                ColumnType.SYMBOL,
+                ColumnType.DATE,
+                ColumnType.TIMESTAMP
+        );
+
+        addIgnored(
+                res,
+                ColumnType.DOUBLE,
+                ColumnType.BOOLEAN,
+                ColumnType.LONG128,
+                ColumnType.LONG256,
+                ColumnType.IPv4,
+                ColumnType.UUID,
+                ColumnType.STRING,
+                ColumnType.VARCHAR,
+                ColumnType.CHAR,
+                ColumnType.SYMBOL,
+                ColumnType.DATE,
+                ColumnType.TIMESTAMP
+        );
+
+        addIgnored(
+                res,
+                ColumnType.STRING,
+                ColumnType.BOOLEAN,
+                ColumnType.BYTE,
+                ColumnType.SHORT,
+                ColumnType.INT,
+                ColumnType.LONG,
+                ColumnType.FLOAT,
+                ColumnType.DOUBLE,
+                ColumnType.LONG128,
+                ColumnType.LONG256,
+                ColumnType.IPv4,
+                ColumnType.UUID,
+                ColumnType.DATE,
+                ColumnType.TIMESTAMP
+        ); // we can find a common type for String and IPv4 -> String
+
+        addIgnored(
+                res,
+                ColumnType.SYMBOL,
+                ColumnType.BOOLEAN,
+                ColumnType.BYTE,
+                ColumnType.SHORT,
+                ColumnType.INT,
+                ColumnType.LONG,
+                ColumnType.FLOAT,
+                ColumnType.DOUBLE,
+                ColumnType.LONG128,
+                ColumnType.LONG256,
+                ColumnType.IPv4,
+                ColumnType.UUID,
+                ColumnType.DATE,
+                ColumnType.TIMESTAMP
+        );
+
+        // string types do not have common type with numerics and exotics
+        addIgnored(
+                res,
+                ColumnType.CHAR,
+                ColumnType.BOOLEAN,
+                ColumnType.BYTE,
+                ColumnType.SHORT,
+                ColumnType.INT,
+                ColumnType.LONG,
+                ColumnType.FLOAT,
+                ColumnType.DOUBLE,
+                ColumnType.LONG128,
+                ColumnType.LONG256,
+                ColumnType.IPv4,
+                ColumnType.UUID,
+                ColumnType.DATE,
+                ColumnType.TIMESTAMP
+        );
+
+        addIgnored(
+                res,
+                ColumnType.VARCHAR,
+                ColumnType.BOOLEAN,
+                ColumnType.BYTE,
+                ColumnType.SHORT,
+                ColumnType.INT,
+                ColumnType.LONG,
+                ColumnType.FLOAT,
+                ColumnType.DOUBLE,
+                ColumnType.LONG128,
+                ColumnType.LONG256,
+                ColumnType.IPv4,
+                ColumnType.UUID,
+                ColumnType.DATE,
+                ColumnType.TIMESTAMP
+        );
+
+        addIgnored(
+                res,
+                ColumnType.LONG256,
+                ColumnType.BOOLEAN,
+                ColumnType.BYTE,
+                ColumnType.SHORT,
+                ColumnType.INT,
+                ColumnType.LONG,
+                ColumnType.FLOAT,
+                ColumnType.DOUBLE,
+                ColumnType.LONG128,
+                ColumnType.IPv4,
+                ColumnType.UUID,
+                ColumnType.STRING,
+                ColumnType.VARCHAR,
+                ColumnType.CHAR,
+                ColumnType.SYMBOL,
+                ColumnType.DATE,
+                ColumnType.TIMESTAMP
+        );
+
+        addIgnored(
+                res,
+                ColumnType.UUID,
+                ColumnType.BOOLEAN,
+                ColumnType.BYTE,
+                ColumnType.SHORT,
+                ColumnType.INT,
+                ColumnType.LONG,
+                ColumnType.FLOAT,
+                ColumnType.DOUBLE,
+                ColumnType.LONG128,
+                ColumnType.LONG256,
+                ColumnType.IPv4,
+                ColumnType.STRING,
+                ColumnType.VARCHAR,
+                ColumnType.CHAR,
+                ColumnType.SYMBOL,
+                ColumnType.DATE,
+                ColumnType.TIMESTAMP
+        ); // UUID and Long128 do not have common type, but they should
+
 
         // IPv4 has very little common types implemented
-        addIgnored(res, ColumnType.IPv4, ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.CHAR, ColumnType.INT, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.SYMBOL, ColumnType.LONG256, ColumnType.UUID);
+        addIgnored(
+                res,
+                ColumnType.IPv4,
+                ColumnType.BOOLEAN,
+                ColumnType.BOOLEAN,
+                ColumnType.BYTE,
+                ColumnType.SHORT,
+                ColumnType.INT,
+                ColumnType.LONG,
+                ColumnType.FLOAT,
+                ColumnType.DOUBLE,
+                ColumnType.LONG128,
+                ColumnType.LONG256,
+                ColumnType.UUID,
+                ColumnType.STRING,
+                ColumnType.VARCHAR,
+                ColumnType.CHAR,
+                ColumnType.SYMBOL,
+                ColumnType.DATE,
+                ColumnType.TIMESTAMP
+        );
         return res;
     }
 
@@ -156,7 +450,7 @@ public class CaseCommonTest extends BaseFunctionFactoryTest {
         //    this protects us against a missing entry in CaseFunction.castFactories
 
         // this test is relatively invasive, it tests against internals thus do not be afraid to change it if you need to
-        
+
         assertMemoryLeak(() -> {
             SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1);
             for (short l = MIN_COLUMN_TYPE_ID; l <= MAX_COLUMN_TYPE_ID; l++) {

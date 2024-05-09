@@ -6862,6 +6862,38 @@ nodejs code:
     }
 
     @Test
+    public void testUndefinedBindVariableInSymbol() throws Exception {
+        final String[] values = {"'5'", "null", "'5' || ''", "replace(null, 'A', 'A')", "?5", "?null"};
+        final CharSequenceObjHashMap<String> valMap = new CharSequenceObjHashMap<>();
+        valMap.put("5", "5");
+        valMap.put("'5'", "5");
+        valMap.put("null", "null");
+        valMap.put("'5' || ''", "5");
+        valMap.put("replace(null, 'A', 'A')", "null");
+
+        final String[] tsOptions = {"", "timestamp(ts)", "timestamp(ts) partition by HOUR"};
+        final String strType = ColumnType.nameOf(ColumnType.STRING).toLowerCase();
+        for (String tsOption : tsOptions) {
+            assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary, mode, port) -> {
+                drop("drop table if exists tab");
+                ddl("create table tab (s symbol index, ts timestamp) " + tsOption);
+                insert("insert into tab select case when x = 10 then null::" + strType + " else x::" + strType + " end, x::timestamp from long_sequence(10) ");
+                drainWalQueue();
+
+                ResultProducer sameValIfParamsTheSame = (paramVals, isBindVals, bindVals, output) -> {
+                    String left = isBindVals[0] ? bindVals[0] : paramVals[0];
+                    String right = isBindVals[1] ? bindVals[1] : paramVals[1];
+                    boolean isSame = valMap.get(left).equals(valMap.get(right));
+                    if (isSame) {
+                        output.put(valMap.get(left)).put('\n');
+                    }
+                };
+                assertQueryAgainstIndexedSymbol(values, "s in (#X1) and s in (#X2)", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParamsTheSame);
+            });
+        }
+    }
+
+    @Test
     public void testQueryCountWithTsSmallerThanMinTsInTable() throws Exception {
         assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (conn, binary, mode, port) -> {
             ddl(
@@ -10076,6 +10108,8 @@ create table tab as (
 
             String query = "select s from tab where " + where;
 
+            System.out.println("iter: " + iter + ", sql:" + query);
+
             sink.clear();
             expSink.clear();
             expSink.put("s[VARCHAR]\n");
@@ -10087,6 +10121,9 @@ create table tab as (
             }
             metaSink.put("\nts option: ").put(tsOption);
 
+            if (iter == 5) {
+                System.out.println("crunch time");
+            }
             try (PreparedStatement ps = connection.prepareStatement(query)) {
                 int bindIdx = 1;
                 for (int p = 0; p < paramValues.length; p++) {
@@ -11830,7 +11867,6 @@ create table tab as (
                                 assertEquals(2, numOfRowsUpdated1);
                             } catch (Throwable e) {
                                 Assert.fail(e.getMessage());
-                                e.printStackTrace();
                             } finally {
                                 finished.countDown();
                             }

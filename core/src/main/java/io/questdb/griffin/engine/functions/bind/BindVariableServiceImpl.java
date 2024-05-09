@@ -138,6 +138,8 @@ public class BindVariableServiceImpl implements BindVariableService {
                 return type;
             case ColumnType.STRING:
             case ColumnType.SYMBOL:
+                setStr(index);
+                return ColumnType.STRING;
             case ColumnType.VAR_ARG:
                 setStr(index);
                 return ColumnType.STRING;

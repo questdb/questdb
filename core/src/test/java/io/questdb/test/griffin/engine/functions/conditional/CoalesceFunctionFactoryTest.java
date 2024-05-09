@@ -696,15 +696,9 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testTestCoalesceImplicitCasts() throws Exception {
-        assertCoalesce("1::byte", "1");
-        assertCoalesce("1::short", "1");
-        assertCoalesce("1", "1");
-        assertCoalesce("1L", "1");
-        assertCoalesce("1.0f", "1.0000");
-        assertCoalesce("1.0d", "1.0");
-        assertCoalesce("'10000000-0000-0000-2000-000000000000'::uuid", "10000000-0000-0000-2000-000000000000");
-        assertCoalesce("cast('0.0.1.1' as ipv4)", "0.0.1.1");
         assertCoalesce("cast('0.0.1.1' as varchar)", "0.0.1.1");
+        assertCoalesce("'2'", "2");
+        assertCoalesce("'abc'::symbol", "abc");
     }
 
     @Test
