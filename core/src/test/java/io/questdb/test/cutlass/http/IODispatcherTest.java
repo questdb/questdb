@@ -78,12 +78,18 @@ import java.util.concurrent.locks.LockSupport;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 import static io.questdb.test.tools.TestUtils.drainWalQueue;
+import static org.junit.Assert.assertTrue;
 
 public class IODispatcherTest extends AbstractTest {
     public static final String JSON_DDL_RESPONSE = "0c\r\n" +
             "{\"ddl\":\"OK\"}\r\n" +
             "00\r\n" +
             "\r\n";
+    public static final String INSERT_QUERY_RESPONSE = "0c\r\n" +
+            "{\"dml\":\"OK\"}\r\n" +
+            "00\r\n" +
+            "\r\n";
+
     private static final RescheduleContext EmptyRescheduleContext = (retry) -> {
     };
     private static final Log LOG = LogFactory.getLog(IODispatcherTest.class);
@@ -153,7 +159,7 @@ public class IODispatcherTest extends AbstractTest {
     public void testBadImplicitStrToLongCast() throws Exception {
         getSimpleTester().run(engine -> {
             testHttpClient.assertGet("{\"ddl\":\"OK\"}", "create table tab (value int, when long, ts timestamp) timestamp(ts) partition by day bypass wal;");
-            testHttpClient.assertGet("{\"ddl\":\"OK\"}", "insert into tab values(1, now(), now());"); // it should not be DDL:OK. change me when https://github.com/questdb/questdb/issues/3858 is fixed
+            testHttpClient.assertGet("{\"dml\":\"OK\"}", "insert into tab values(1, now(), now());");
             testHttpClient.assertGet(
                     "{\"query\":\"select * from tab where when = '2023-10-17';\",\"error\":\"inconvertible value: `2023-10-17` [STRING -> LONG]\",\"position\":0}",
                     "select * from tab where when = '2023-10-17';"
@@ -1155,7 +1161,7 @@ public class IODispatcherTest extends AbstractTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            JSON_DDL_RESPONSE,
+                            INSERT_QUERY_RESPONSE,
                     1,
                     0,
                     false
@@ -2253,6 +2259,118 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testImportMultipleOnSameConnectionInvalidTrailingBoundary() throws Exception {
+        // notice, that the last '-' is missing from the trailing boundary
+        // i.e. "--------------------------27d997ca93d2689d-" instead of "--------------------------27d997ca93d2689d--"
+        final String request = "POST /upload HTTP/1.1\r\n" +
+                "Host: localhost:9001\r\n" +
+                "User-Agent: curl/7.64.0\r\n" +
+                "Accept: */*\r\n" +
+                "Content-Length: 437760673\r\n" +
+                "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
+                "Expect: 100-continue\r\n" +
+                "\r\n" +
+                "--------------------------27d997ca93d2689d\r\n" +
+                "Content-Disposition: form-data; name=\"schema\"; filename=\"schema.json\"\r\n" +
+                "Content-Type: application/octet-stream\r\n" +
+                "\r\n" +
+                "[\r\n" +
+                "  {\r\n" +
+                "    \"name\": \"date\",\r\n" +
+                "    \"type\": \"DATE\",\r\n" +
+                "    \"pattern\": \"d MMMM y.\",\r\n" +
+                "    \"locale\": \"ru-RU\"\r\n" +
+                "  }\r\n" +
+                "]\r\n" +
+                "\r\n" +
+                "--------------------------27d997ca93d2689d\r\n" +
+                "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
+                "Content-Type: application/octet-stream\r\n" +
+                "\r\n" +
+                "Dispatching_base_num,Pickup_DateTime,DropOff_datetime,PUlocationID,DOlocationID\r\n" +
+                "B00008,2017-02-01 00:30:00,,,\r\n" +
+                "B00008,2017-02-01 00:40:00,,,\r\n" +
+                "B00009,2017-02-01 00:30:00,,,\r\n" +
+                "B00013,2017-02-01 00:11:00,,,\r\n" +
+                "B00013,2017-02-01 00:41:00,,,\r\n" +
+                "B00013,2017-02-01 00:00:00,,,\r\n" +
+                "B00013,2017-02-01 00:53:00,,,\r\n" +
+                "B00013,2017-02-01 00:44:00,,,\r\n" +
+                "B00013,2017-02-01 00:05:00,,,\r\n" +
+                "B00013,2017-02-01 00:54:00,,,\r\n" +
+                "B00014,2017-02-01 00:45:00,,,\r\n" +
+                "B00014,2017-02-01 00:45:00,,,\r\n" +
+                "B00014,2017-02-01 00:46:00,,,\r\n" +
+                "B00014,2017-02-01 00:54:00,,,\r\n" +
+                "B00014,2017-02-01 00:45:00,,,\r\n" +
+                "B00014,2017-02-01 00:45:00,,,\r\n" +
+                "B00014,2017-02-01 00:45:00,,,\r\n" +
+                "B00014,2017-02-01 00:26:00,,,\r\n" +
+                "B00014,2017-02-01 00:55:00,,,\r\n" +
+                "B00014,2017-02-01 00:47:00,,,\r\n" +
+                "B00014,2017-02-01 00:05:00,,,\r\n" +
+                "B00014,2017-02-01 00:58:00,,,\r\n" +
+                "B00014,2017-02-01 00:33:00,,,\r\n" +
+                "B00014,2017-02-01 00:45:00,,,\r\n" +
+                "\r\n" +
+                "--------------------------27d997ca93d2689d-";
+
+        // ensure we do not send more than one byte at a time
+        final NetworkFacade nf = new NetworkFacadeImpl() {
+            @Override
+            public int sendRaw(int fd, long buffer, int bufferLen) {
+                // ensure we do not send more than one byte at a time
+                if (bufferLen > 0) {
+                    return super.sendRaw(fd, buffer, 1);
+                }
+                return 0;
+            }
+        };
+
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(
+                        new HttpServerConfigurationBuilder()
+                                .withNetwork(nf)
+                                .withDumpingTraffic(false)
+                                .withAllowDeflateBeforeSend(false)
+                                .withHttpProtocolVersion("HTTP/1.1 ")
+                                .withServerKeepAlive(true)
+                )
+                .withTelemetry(false)
+                .withQueryTimeout(100)
+                .run(engine -> {
+                    final int fd = nf.socketTcp(true);
+                    try {
+                        final long sockAddrInfo = nf.getAddrInfo("127.0.0.1", 9001);
+                        assert sockAddrInfo != -1;
+                        try {
+                            TestUtils.assertConnectAddrInfo(fd, sockAddrInfo);
+                            Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
+                            nf.configureNonBlocking(fd);
+
+                            final long bufLen = request.length();
+                            final long ptr = Unsafe.malloc(bufLen, MemoryTag.NATIVE_DEFAULT);
+                            try {
+                                new SendAndReceiveRequestBuilder()
+                                        .withNetworkFacade(nf)
+                                        .withPauseBetweenSendAndReceive(0)
+                                        .withRequestCount(1)
+                                        .executeUntilTimeoutExpires(request, 300);
+                            } finally {
+                                Unsafe.free(ptr, bufLen, MemoryTag.NATIVE_DEFAULT);
+                            }
+                        } finally {
+                            nf.freeAddrInfo(sockAddrInfo);
+                        }
+                    } finally {
+                        nf.close(fd);
+                    }
+                });
+    }
+
+    @Test
     public void testImportMultipleOnSameConnectionSlow() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = root;
@@ -2734,7 +2852,8 @@ public class IODispatcherTest extends AbstractTest {
                             "Accept-Encoding: gzip, deflate, br\r\n" +
                             "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
                             "\r\n";
-                    new SendAndReceiveRequestBuilder().execute(request,
+                    new SendAndReceiveRequestBuilder().execute(
+                            request,
                             "HTTP/1.1 400 Bad request\r\n" +
                                     "Server: questDB/1.0\r\n" +
                                     "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -2744,7 +2863,8 @@ public class IODispatcherTest extends AbstractTest {
                                     "16\r\n" +
                                     "Method not supported\r\n" +
                                     "\r\n" +
-                                    "00\r\n");
+                                    "00\r\n"
+                    );
                 });
     }
 
@@ -3111,7 +3231,7 @@ public class IODispatcherTest extends AbstractTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            JSON_DDL_RESPONSE,
+                            INSERT_QUERY_RESPONSE,
                     1,
                     0,
                     false
@@ -3202,7 +3322,7 @@ public class IODispatcherTest extends AbstractTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            JSON_DDL_RESPONSE,
+                            INSERT_QUERY_RESPONSE,
                     1,
                     0,
                     false
@@ -3295,7 +3415,7 @@ public class IODispatcherTest extends AbstractTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            JSON_DDL_RESPONSE,
+                            INSERT_QUERY_RESPONSE,
                     1,
                     0,
                     false
@@ -3495,7 +3615,7 @@ public class IODispatcherTest extends AbstractTest {
                                 Utf8s.strCpyAscii(request, reqLen, ptr);
                                 while (sent < reqLen) {
                                     int n = NetworkFacadeImpl.INSTANCE.sendRaw(fd, ptr + sent, reqLen - sent);
-                                    Assert.assertTrue(n > -1);
+                                    assertTrue(n > -1);
                                     sent += n;
                                 }
 
@@ -3510,7 +3630,7 @@ public class IODispatcherTest extends AbstractTest {
                                         break;
                                     }
                                 }
-                                Assert.assertTrue("disconnect expected", disconnected);
+                                assertTrue("disconnect expected", disconnected);
                             } finally {
                                 Unsafe.free(ptr, len, MemoryTag.NATIVE_DEFAULT);
                             }
@@ -3551,7 +3671,7 @@ public class IODispatcherTest extends AbstractTest {
                         nf.close(fd);
                         fd = -1;
                         // Check that I/O dispatcher closes the event once it detects the disconnect.
-                        TestUtils.assertEventually(() -> Assert.assertTrue(eventRef.get().isClosedByAtLeastOneSide()), 10);
+                        TestUtils.assertEventually(() -> assertTrue(eventRef.get().isClosedByAtLeastOneSide()), 10);
                     } finally {
                         if (fd > -1) {
                             nf.close(fd);
@@ -4524,7 +4644,7 @@ public class IODispatcherTest extends AbstractTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            JSON_DDL_RESPONSE,
+                            INSERT_QUERY_RESPONSE,
                     1,
                     0,
                     false
@@ -5226,7 +5346,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
                     // depending on how quick the CI hardware is we may end up processing different
                     // number of rows before query is interrupted
-                    Assert.assertTrue(tableRowCount > TestLatchedCounterFunctionFactory.getCount());
+                    assertTrue(tableRowCount > TestLatchedCounterFunctionFactory.getCount());
                 } finally {
                     workerPool.halt();
                 }
@@ -6545,7 +6665,7 @@ public class IODispatcherTest extends AbstractTest {
                             int read = 0;
                             while (read < expectedLen) {
                                 int n = Net.recv(fd, buffer, len);
-                                Assert.assertTrue(n > 0);
+                                assertTrue(n > 0);
 
                                 for (int i = 0; i < n; i++) {
                                     sink2.put((char) Unsafe.getUnsafe().getByte(buffer + i));
@@ -6712,7 +6832,7 @@ public class IODispatcherTest extends AbstractTest {
                         Assert.assertEquals(0, dispatcher.getConnectionCount());
 
                         // do not close client side before server does theirs
-                        Assert.assertTrue(Net.isDead(fd));
+                        assertTrue(Net.isDead(fd));
 
                         TestUtils.assertEquals("", sink);
                     } finally {
@@ -7710,7 +7830,7 @@ public class IODispatcherTest extends AbstractTest {
                         }
                         boolean valid = queue.get(cursor).valid;
                         subSeq.done(cursor);
-                        Assert.assertTrue(valid);
+                        assertTrue(valid);
                         receiveCount++;
                     }
                 } finally {
@@ -7770,7 +7890,7 @@ public class IODispatcherTest extends AbstractTest {
                             try (TestHttpClient testHttpClient = new TestHttpClient()) {
                                 started.countDown();
                                 try {
-                                    testHttpClient.assertGetRegexp(url, ".*(\"ddl\":\"OK\").*", command, null, null, null);
+                                    testHttpClient.assertGetRegexp(url, ".*(\"dml\":\"OK\").*", command, null, null, null);
                                 } catch (Throwable e) {
                                     queryError.set(e);
                                 }
@@ -7936,7 +8056,7 @@ public class IODispatcherTest extends AbstractTest {
                         try (TestHttpClient testHttpClient = new TestHttpClient()) {
                             started.countDown();
                             try {
-                                testHttpClient.assertGetRegexp("/query", ".*(\"ddl\":\"OK\").*", command, null, null, null);
+                                testHttpClient.assertGetRegexp("/query", ".*(\"dml\":\"OK\").*", command, null, null, null);
                             } catch (Throwable e) {
                                 queryError.set(e);
                             }
@@ -8060,7 +8180,7 @@ public class IODispatcherTest extends AbstractTest {
         while (downloadedSoFar < expectedResponseLen) {
             int contentOffset = 0;
             int n = Net.recv(fd, buffer, len);
-            Assert.assertTrue(n > -1);
+            assertTrue(n > -1);
             if (n > 0) {
                 if (headerCheckRemaining > 0) {
                     for (int i = 0; i < n && headerCheckRemaining > 0; i++) {
@@ -8485,7 +8605,7 @@ public class IODispatcherTest extends AbstractTest {
                 // We re-create the table when overwrite is set.
                 extraMsyncs += msyncsPerTableCreation;
             }
-            Assert.assertTrue("at least " + (extraMsyncs + 1) + " msync calls expected, was " + msyncCallCount.get(), msyncCallCount.get() > extraMsyncs);
+            assertTrue("at least " + (extraMsyncs + 1) + " msync calls expected, was " + msyncCallCount.get(), msyncCallCount.get() > extraMsyncs);
         }
     }
 
@@ -9125,7 +9245,7 @@ public class IODispatcherTest extends AbstractTest {
                 int nClientConnectRefused = 0;
                 for (int i = 0; i < listenBackLog + activeConnectionLimit; i++) {
                     int fd = Net.socketTcp(true);
-                    Assert.assertTrue(fd > -1);
+                    assertTrue(fd > -1);
                     clientActiveFds.add(fd);
                     if (Net.connect(fd, sockAddr) != 0) {
                         nClientConnectRefused++;
@@ -9165,7 +9285,7 @@ public class IODispatcherTest extends AbstractTest {
                 nClientConnectRefused = 0;
                 for (int i = 0; i < listenBackLog + activeConnectionLimit; i++) {
                     int fd = Net.socketTcp(true);
-                    Assert.assertTrue(fd > -1);
+                    assertTrue(fd > -1);
                     clientActiveFds.add(fd);
                     if (Net.connect(fd, sockAddr) != 0) {
                         nClientConnectRefused++;
@@ -9207,7 +9327,7 @@ public class IODispatcherTest extends AbstractTest {
 
     private void writeRandomFile(Path path, Rnd rnd, long lastModified) {
         if (Files.exists(path)) {
-            Assert.assertTrue(Files.remove(path));
+            assertTrue(Files.remove(path));
         }
         int fd = Files.openAppend(path);
 
