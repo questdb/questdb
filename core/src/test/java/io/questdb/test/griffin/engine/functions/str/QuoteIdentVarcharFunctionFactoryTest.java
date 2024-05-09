@@ -36,7 +36,7 @@ public class QuoteIdentVarcharFunctionFactoryTest extends AbstractFunctionFactor
     @Test
     public void test() throws SqlException {
         call(utf8("")).andAssert("");
-        call((Utf8Sequence) null).andAssert(null);
+        call(utf8(null)).andAssert(null);
         call(utf8("test")).andAssert("test");
         call(utf8("TEST")).andAssert("TEST");
 
