@@ -45,9 +45,7 @@ public class SizePrettyFunctionFactory implements FunctionFactory {
     // Bytes, Kilo, Mega, Giga, Tera, Peta, Exa, Zetta
     // bytes, kibibyte, mebibyte, gibibyte, tebibyte, pebibyte, exbibyte, zebibyte
     // B, KiB, MiB, GiB, TiB, PiB, EiB, ZiB (this last is out of range for a long)
-
     private static final char[] SCALE = {'B', 'K', 'M', 'G', 'T', 'P', 'E', 'Z'};
-
 
     public static void toSizePretty(StringSink sink, long size) {
         sink.clear();
@@ -113,7 +111,7 @@ public class SizePrettyFunctionFactory implements FunctionFactory {
 
         @Nullable
         private StringSink getStr0(long s, StringSink sink) {
-            if (s != Numbers.LONG_NaN) {
+            if (s != Numbers.LONG_NULL) {
                 toSizePretty(sink, s);
                 return sink;
             }

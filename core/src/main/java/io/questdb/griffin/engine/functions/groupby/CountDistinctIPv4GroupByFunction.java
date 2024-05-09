@@ -127,13 +127,13 @@ public class CountDistinctIPv4GroupByFunction extends LongFunction implements Un
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcCount = srcValue.getLong(valueIndex);
-        if (srcCount == 0 || srcCount == Numbers.LONG_NaN) {
+        if (srcCount == 0 || srcCount == Numbers.LONG_NULL) {
             return;
         }
         long srcPtr = srcValue.getLong(valueIndex + 1);
 
         long destCount = destValue.getLong(valueIndex);
-        if (destCount == 0 || destCount == Numbers.LONG_NaN) {
+        if (destCount == 0 || destCount == Numbers.LONG_NULL) {
             destValue.putLong(valueIndex, srcCount);
             destValue.putLong(valueIndex + 1, srcPtr);
             return;

@@ -52,7 +52,7 @@ public class CastTimestampToCharFunctionFactory implements FunctionFactory {
         @Override
         public char getChar(Record rec) {
             final long value = arg.getTimestamp(rec);
-            return value != Numbers.LONG_NaN ? (char) value : 0;
+            return value != Numbers.LONG_NULL ? (char) value : 0;
         }
     }
 }

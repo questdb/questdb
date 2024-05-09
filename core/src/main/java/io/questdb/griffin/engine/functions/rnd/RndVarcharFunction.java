@@ -31,7 +31,9 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.std.Rnd;
-import io.questdb.std.str.*;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.Utf8StringSink;
 
 class RndVarcharFunction extends VarcharFunction implements Function {
     private final int lo;
@@ -86,6 +88,11 @@ class RndVarcharFunction extends VarcharFunction implements Function {
     }
 
     private void sinkRnd(Utf8Sink utf8Sink) {
-        rnd.nextUtf8Str(lo + rnd.nextPositiveInt() % range, utf8Sink);
+        int len = lo + rnd.nextPositiveInt() % range;
+        if (rnd.nextBoolean()) {
+            rnd.nextUtf8AsciiStr(len, utf8Sink);
+        } else {
+            rnd.nextUtf8Str(len, utf8Sink);
+        }
     }
 }

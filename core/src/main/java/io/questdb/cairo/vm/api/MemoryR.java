@@ -28,7 +28,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8SplitString;
 
 import java.io.Closeable;
@@ -52,6 +52,14 @@ public interface MemoryR extends Closeable {
     byte getByte(long offset);
 
     char getChar(long offset);
+
+    default DirectUtf8Sequence getDirectVarcharA(long offset, int size, boolean ascii) {
+        throw new UnsupportedOperationException();
+    }
+
+    default DirectUtf8Sequence getDirectVarcharB(long offset, int size, boolean ascii) {
+        throw new UnsupportedOperationException();
+    }
 
     double getDouble(long offset);
 
@@ -94,10 +102,6 @@ public interface MemoryR extends Closeable {
     CharSequence getStrB(long offset);
 
     int getStrLen(long offset);
-
-    Utf8Sequence getVarcharA(long offset, int size, boolean ascii);
-
-    Utf8Sequence getVarcharB(long offset, int size, boolean ascii);
 
     long offsetInPage(long offset);
 

@@ -30,7 +30,7 @@ import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.Numbers;
 
 public class LongConstant extends LongFunction implements ConstantFunction {
-    public final static LongConstant NULL = new LongConstant(Numbers.LONG_NaN);
+    public final static LongConstant NULL = new LongConstant(Numbers.LONG_NULL);
     public final static LongConstant ZERO = new LongConstant(0);
     private final long value;
 
@@ -43,7 +43,7 @@ public class LongConstant extends LongFunction implements ConstantFunction {
             return LongConstant.ZERO;
         }
 
-        if (value != Numbers.LONG_NaN) {
+        if (value != Numbers.LONG_NULL) {
             return new LongConstant(value);
         }
 
@@ -53,6 +53,11 @@ public class LongConstant extends LongFunction implements ConstantFunction {
     @Override
     public long getLong(Record rec) {
         return value;
+    }
+
+    @Override
+    public boolean isNullConstant() {
+        return value == Numbers.LONG_NULL;
     }
 
     public void toPlan(PlanSink sink) {

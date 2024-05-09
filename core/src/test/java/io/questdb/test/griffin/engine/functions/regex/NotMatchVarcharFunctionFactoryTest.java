@@ -62,15 +62,17 @@ public class NotMatchVarcharFunctionFactoryTest extends AbstractCairoTest {
     public void testSimple() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = "name\n" +
-                    "\uD95A\uDFD9唶鴙\uDAE2\uDC5E͛Ԉ\n" +
-                    "\uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46\n" +
-                    "\u0093ً\uDAF5\uDE17qRӽ-\uDBED\uDC98\uDA30\uDEE0\n" +
-                    "W씌䒙\uD8F2\uDE8E>\uDAE6\uDEE3gX夺\n" +
-                    "ץ;윦\u0382宏㔸\n" +
-                    "\uDAEE\uDC4FƑ䈔b\n" +
-                    "4h볱9\n" +
-                    "\uDB0D\uDF729\uD8FA\uDE36\u05EC\n" +
-                    "혾{>\n";
+                    "8#3TsZ\n" +
+                    "zV衞͛Ԉ龘и\uDA89\uDFA4~\n" +
+                    "\uDBAE\uDD12ɜ|\n" +
+                    "\uDB59\uDF3B룒jᷚ\n" +
+                    "p-鳓w\n" +
+                    "h\uDAF5\uDE17qRӽ-\n" +
+                    "Ǆ Ԡ阷l싒8쮠\n" +
+                    "kɷ씌䒙\uD8F2\uDE8E>\uDAE6\uDEE3\n" +
+                    "\uD908\uDECBŗ\uDB47\uDD9C\uDA96\uDF8F㔸\n" +
+                    "91g>\n" +
+                    "h볱9\n";
             ddl("create table x as (select rnd_varchar() name from long_sequence(20))");
             assertSql(
                     expected,

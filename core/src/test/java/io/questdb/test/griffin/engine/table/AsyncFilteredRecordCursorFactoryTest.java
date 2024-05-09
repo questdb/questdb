@@ -689,9 +689,9 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     // We expect both cursors to be able to make progress even though only one of them
                     // occupies the reduce queue most of the time. The second one should be using a local task.
                     while (c1.hasNext()) {
-                        CursorPrinter.println(r1, f1.getMetadata(), sink1);
+                        TestUtils.println(r1, f1.getMetadata(), sink1);
                         if (c2.hasNext()) {
-                            CursorPrinter.println(r2, f2.getMetadata(), sink2);
+                            TestUtils.println(r2, f2.getMetadata(), sink2);
                         }
                     }
 

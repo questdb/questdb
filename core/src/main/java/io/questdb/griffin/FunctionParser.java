@@ -560,7 +560,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 && argCount == 2
                 && args.getQuick(0).isUndefined()
                 && args.getQuick(1).isConstant()
-        ) skipAssigningType: {
+        ) skipAssigningType:{
             final Function undefinedArg = args.getQuick(0);
             final int castToType = args.getQuick(1).getType();
             final int assignType;
@@ -697,7 +697,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         // Overload when arg is double NaN to func which accepts INT, LONG
                         overloadPossible |= argTypeTag == ColumnType.DOUBLE &&
                                 arg.isConstant() &&
-                                Double.isNaN(arg.getDouble(null)) &&
+                                Numbers.isNull(arg.getDouble(null)) &&
                                 (sigArgTypeTag == ColumnType.LONG || sigArgTypeTag == ColumnType.INT);
 
                         // Implicit cast from CHAR to STRING
@@ -841,14 +841,14 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             final short sigArgTypeTag = FunctionFactoryDescriptor.toType(candidateDescriptor.getArgTypeMask(k));
             final short argTypeTag = ColumnType.tagOf(arg.getType());
 
-            if (argTypeTag == ColumnType.DOUBLE && arg.isConstant() && Double.isNaN(arg.getDouble(null))) {
+            if (argTypeTag == ColumnType.DOUBLE && arg.isConstant() && Numbers.isNull(arg.getDouble(null))) {
                 // substitute NaNs with appropriate types
                 if (sigArgTypeTag == ColumnType.LONG) {
                     args.setQuick(k, LongConstant.NULL);
                 } else if (sigArgTypeTag == ColumnType.INT) {
                     args.setQuick(k, IntConstant.NULL);
                 }
-            } else if ((argTypeTag == ColumnType.STRING || argTypeTag == ColumnType.SYMBOL) && arg.isConstant()) {
+            } else if ((argTypeTag == ColumnType.STRING || argTypeTag == ColumnType.SYMBOL || argTypeTag == ColumnType.VARCHAR) && arg.isConstant()) {
                 if (sigArgTypeTag == ColumnType.TIMESTAMP) {
                     int position = argPositions.getQuick(k);
                     long timestamp = parseTimestamp(arg.getStrA(null), position);

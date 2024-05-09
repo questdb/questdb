@@ -525,7 +525,7 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
         }
 
         @Override
-        public Utf8Sink putUtf8(long lo, long hi) {
+        public Utf8Sink putNonAscii(long lo, long hi) {
             final long size = hi - lo;
             checkCapacity(size);
             Vect.memcpy(sendBufWritePos, lo, size);

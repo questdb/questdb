@@ -105,7 +105,7 @@ public class MaxTimestampGroupByFunction extends TimestampFunction implements Gr
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putTimestamp(valueIndex, Numbers.LONG_NaN);
+        mapValue.putTimestamp(valueIndex, Numbers.LONG_NULL);
     }
 
     @Override

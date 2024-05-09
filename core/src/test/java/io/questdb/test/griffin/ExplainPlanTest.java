@@ -49,6 +49,7 @@ import io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.*;
 import io.questdb.griffin.engine.functions.date.*;
 import io.questdb.griffin.engine.functions.eq.*;
+import io.questdb.griffin.engine.functions.finance.LevelTwoPriceFunctionFactory;
 import io.questdb.griffin.engine.functions.lt.LtIPv4StrFunctionFactory;
 import io.questdb.griffin.engine.functions.lt.LtStrIPv4FunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
@@ -2269,6 +2270,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     sigArgType = ColumnType.TIMESTAMP;
                                 } else if (factory instanceof InDoubleFunctionFactory) {
                                     sigArgType = ColumnType.DOUBLE;
+                                } else if (factory instanceof LevelTwoPriceFunctionFactory) {
+                                    sigArgType = ColumnType.DOUBLE;
                                 } else {
                                     sigArgType = ColumnType.STRING;
                                 }
@@ -2341,6 +2344,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         }
 
                         argPositions.setAll(args.size(), 0);
+
+                        // l2price requires an odd number of arguments
+                        if (factory instanceof LevelTwoPriceFunctionFactory) {
+                            if (args.size() % 2 == 0) {
+                                args.add(new DoubleConstant(1234));
+                            }
+                        }
 
                         // TODO: test with partition by, order by and various frame modes
                         if (factory.isWindow()) {
@@ -7791,7 +7801,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan(
                     "select * from t where l in (5, -1, 1, null)",
                     "Async Filter workers: 1\n" +
-                            "  filter: l in [NaN,-1,1,5]\n" +
+                            "  filter: l in [null,-1,1,5]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: t\n"
@@ -7800,7 +7810,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlan(
                     "select * from t where l not in (5, -1, 1, null)",
                     "Async Filter workers: 1\n" +
-                            "  filter: not (l in [NaN,-1,1,5])\n" +
+                            "  filter: not (l in [null,-1,1,5])\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: t\n"

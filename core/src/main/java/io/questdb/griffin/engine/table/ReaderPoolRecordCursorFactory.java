@@ -157,7 +157,7 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
             public long getLong(int col) {
                 switch (col) {
                     case OWNER_THREAD_COLUMN_INDEX:
-                        return owner_thread == -1 ? Numbers.LONG_NaN : owner_thread;
+                        return owner_thread == -1 ? Numbers.LONG_NULL : owner_thread;
                     case CURRENT_TXN_COLUMN_INDEX:
                         return currentTxn;
                     default:

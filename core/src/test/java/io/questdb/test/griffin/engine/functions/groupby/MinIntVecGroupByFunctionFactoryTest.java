@@ -52,14 +52,14 @@ public class MinIntVecGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testAllNullThenOne() throws Exception {
         assertQuery("min\n" +
-                        "NaN\n", "select min(f) from tab", "create table tab as (select cast(null as int) f from long_sequence(33))", null, "insert into tab select 4567866 from long_sequence(1)", "min\n" +
+                "null\n", "select min(f) from tab", "create table tab as (select cast(null as int) f from long_sequence(33))", null, "insert into tab select 4567866 from long_sequence(1)", "min\n" +
                         "4567866\n", false, true, false);
     }
 
     @Test
     public void testMaxIntOrNullThenMaxInt() throws Exception {
         assertQuery("min\n" +
-                        "NaN\n", "select min(f) from tab", "create table tab as (select cast(null as int) f from long_sequence(33))", null, "insert into tab select 2147483647 from long_sequence(1)", "min\n" +
+                "null\n", "select min(f) from tab", "create table tab as (select cast(null as int) f from long_sequence(33))", null, "insert into tab select 2147483647 from long_sequence(1)", "min\n" +
                         "2147483647\n", false, true, false);
     }
 

@@ -52,7 +52,7 @@ public class CastDateToByteFunctionFactory implements FunctionFactory {
         @Override
         public byte getByte(Record rec) {
             final long value = arg.getDate(rec);
-            return value != Numbers.LONG_NaN ? (byte) value : 0;
+            return value != Numbers.LONG_NULL ? (byte) value : 0;
         }
     }
 }

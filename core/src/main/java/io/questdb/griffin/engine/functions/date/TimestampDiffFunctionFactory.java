@@ -65,10 +65,10 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
             if (period < diffFunctionsMax) {
                 final LongDiffFunction func = diffFunctions.getQuick(period);
                 if (func != null) {
-                    if (start.isConstant() && start.getTimestamp(null) != Numbers.LONG_NaN) {
+                    if (start.isConstant() && start.getTimestamp(null) != Numbers.LONG_NULL) {
                         return new DiffVarConstFunction(args.getQuick(2), start.getLong(null), func, period);
                     }
-                    if (end.isConstant() && end.getTimestamp(null) != Numbers.LONG_NaN) {
+                    if (end.isConstant() && end.getTimestamp(null) != Numbers.LONG_NULL) {
                         return new DiffVarConstFunction(args.getQuick(1), end.getLong(null), func, period);
                     }
                     return new DiffVarVarFunction(args.getQuick(1), args.getQuick(2), func, period);
@@ -110,8 +110,8 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
             final char l = left.getChar(rec);
             final long c = center.getTimestamp(rec);
             final long r = right.getTimestamp(rec);
-            if (c == Numbers.LONG_NaN || r == Numbers.LONG_NaN) {
-                return Numbers.LONG_NaN;
+            if (c == Numbers.LONG_NULL || r == Numbers.LONG_NULL) {
+                return Numbers.LONG_NULL;
             }
             return Timestamps.getPeriodBetween(l, c, r);
         }
@@ -148,8 +148,8 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
         @Override
         public long getLong(Record rec) {
             final long l = arg.getTimestamp(rec);
-            if (l == Numbers.LONG_NaN) {
-                return Numbers.LONG_NaN;
+            if (l == Numbers.LONG_NULL) {
+                return Numbers.LONG_NULL;
             }
             return func.diff(l, constantTime);
         }
@@ -182,8 +182,8 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
         public long getLong(Record rec) {
             final long l = left.getTimestamp(rec);
             final long r = right.getTimestamp(rec);
-            if (l == Numbers.LONG_NaN || r == Numbers.LONG_NaN) {
-                return Numbers.LONG_NaN;
+            if (l == Numbers.LONG_NULL || r == Numbers.LONG_NULL) {
+                return Numbers.LONG_NULL;
             }
             return func.diff(l, r);
         }

@@ -69,6 +69,7 @@ public interface BinaryFunction extends Function {
         return getLeft().isReadThreadSafe() && getRight().isReadThreadSafe();
     }
 
+    @Override
     default boolean isRuntimeConstant() {
         final Function l = getLeft();
         final Function r = getRight();

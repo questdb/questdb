@@ -88,11 +88,11 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     public void testCoalesceVarchar() throws Exception {
         assertQuery(
                 "c1\tc2\ta\tb\tx\n" +
-                        "핕\u05FA씎鈄۲ӄǈ2L\t핕\u05FA씎鈄۲ӄǈ2L\t\t핕\u05FA씎鈄۲ӄǈ2L\t\n" +
-                        "\uD95A\uDFD9唶鴙\uDAE2\uDC5E͛Ԉ\t\t\t\t\uD95A\uDFD9唶鴙\uDAE2\uDC5E͛Ԉ\n" +
+                        "&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t\t&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\t\n" +
+                        "8#3TsZ\t\t\t\t8#3TsZ\n" +
                         "\t\t\t\t\n" +
-                        "\uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46\t\uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46\t\uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46\t\t蝰L➤~2\uDAC6\uDED3ڎBH뤻\n" +
-                        "Fг\uDBAE\uDD12ɜ|\\軦۽\tFг\uDBAE\uDD12ɜ|\\軦۽\t\tFг\uDBAE\uDD12ɜ|\\軦۽\t\n",
+                        "ṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\tṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\tṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\t\tzV衞͛Ԉ龘и\uDA89\uDFA4~\n" +
+                        "\uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46OF\t\uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46OF\t\t\uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46OF\t\n",
                 "select coalesce(a, b, x) as c1, coalesce(a, b) c2, a, b, x \n" +
                         "from t",
                 "create table t as (" +
@@ -141,10 +141,10 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
         assertQuery(
                 "coalesce\n" +
                         "10.0\n" +
-                        "NaN\n" +
+                        "null\n" +
                         "0.5\n" +
                         "10.0\n" +
-                        "NaN\n" +
+                        "null\n" +
                         "0.5\n",
                 "select coalesce(b, a, x) " +
                         "from alex",
@@ -164,11 +164,11 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     public void testDoubleAndLongMixed3Args() throws Exception {
         assertQuery(
                 "c1\tc2\ta\tb\tx\n" +
-                        "10.0\t10.0\tNaN\t10.0\t0.1\n" +
-                        "0.2\tNaN\tNaN\tNaN\t0.2\n" +
-                        "100.0\t100.0\t100\tNaN\t0.3\n" +
-                        "10.0\t10.0\tNaN\t10.0\t0.4\n" +
-                        "0.5\tNaN\tNaN\tNaN\t0.5\n",
+                        "10.0\t10.0\tnull\t10.0\t0.1\n" +
+                        "0.2\tnull\tnull\tnull\t0.2\n" +
+                        "100.0\t100.0\t100\tnull\t0.3\n" +
+                        "10.0\t10.0\tnull\t10.0\t0.4\n" +
+                        "0.5\tnull\tnull\tnull\t0.5\n",
                 "select coalesce(b, a, x) c1, coalesce(b, a) c2, a, b, x\n" +
                         "from alex",
                 "create table alex as (" +
@@ -226,11 +226,11 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     public void testFloat3Args() throws Exception {
         assertQuery(
                 "c1\tc2\ta\tb\tx\n" +
-                        "10.0000\t10.0000\tNaN\t10.0000\tNaN\n" +
-                        "NaN\tNaN\tNaN\tNaN\tNaN\n" +
-                        "0.5000\t0.5000\t0.5000\tNaN\tNaN\n" +
-                        "10.0000\t10.0000\tNaN\t10.0000\t4.0000\n" +
-                        "5.0000\tNaN\tNaN\tNaN\t5.0000\n",
+                        "10.0000\t10.0000\tnull\t10.0000\tnull\n" +
+                        "null\tnull\tnull\tnull\tnull\n" +
+                        "0.5000\t0.5000\t0.5000\tnull\tnull\n" +
+                        "10.0000\t10.0000\tnull\t10.0000\t4.0000\n" +
+                        "5.0000\tnull\tnull\tnull\t5.0000\n",
                 "select coalesce(b, a, x) c1, coalesce(b, a) c2, a, b, x\n" +
                         "from alex",
                 "create table alex as (" +
@@ -274,11 +274,11 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     public void testIntArgs() throws Exception {
         assertQuery(
                 "c1\tc2\ta\tb\tx\n" +
-                        "10\t10\tNaN\t10\tNaN\n" +
-                        "NaN\tNaN\tNaN\tNaN\tNaN\n" +
-                        "6\t6\t6\tNaN\tNaN\n" +
-                        "40\t40\tNaN\t40\t4\n" +
-                        "5\tNaN\tNaN\tNaN\t5\n",
+                        "10\t10\tnull\t10\tnull\n" +
+                        "null\tnull\tnull\tnull\tnull\n" +
+                        "6\t6\t6\tnull\tnull\n" +
+                        "40\t40\tnull\t40\t4\n" +
+                        "5\tnull\tnull\tnull\t5\n",
                 "select coalesce(a, b, x) c1, coalesce(a, b) c2, a, b, x\n" +
                         "from alex",
                 "create table alex as (" +
@@ -298,12 +298,12 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     public void testLong2Args() throws Exception {
         assertQuery(
                 "c1\tc2\ta\tb\tx\n" +
-                        "3\t3\tNaN\t3\t1\n" +
-                        "NaN\tNaN\tNaN\tNaN\tNaN\n" +
-                        "6\t6\t6\tNaN\t3\n" +
-                        "12\t12\tNaN\t12\tNaN\n" +
-                        "5\tNaN\tNaN\tNaN\t5\n" +
-                        "12\t12\t12\tNaN\tNaN\n",
+                        "3\t3\tnull\t3\t1\n" +
+                        "null\tnull\tnull\tnull\tnull\n" +
+                        "6\t6\t6\tnull\t3\n" +
+                        "12\t12\tnull\t12\tnull\n" +
+                        "5\tnull\tnull\tnull\t5\n" +
+                        "12\t12\t12\tnull\tnull\n",
                 "select coalesce(b, a, x) c1, coalesce(b, a) c2, a, b, x\n" +
                         "from alex",
                 "create table alex as (" +
@@ -322,12 +322,12 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     public void testLong2ArgsWithNulls() throws Exception {
         assertQuery(
                 "c1\tc2\ta\tb\tx\n" +
-                        "3\t3\tNaN\t3\t1\n" +
-                        "NaN\tNaN\tNaN\tNaN\tNaN\n" +
-                        "6\t6\t6\tNaN\t3\n" +
-                        "12\t12\tNaN\t12\tNaN\n" +
-                        "5\tNaN\tNaN\tNaN\t5\n" +
-                        "12\t12\t12\tNaN\tNaN\n",
+                        "3\t3\tnull\t3\t1\n" +
+                        "null\tnull\tnull\tnull\tnull\n" +
+                        "6\t6\t6\tnull\t3\n" +
+                        "12\t12\tnull\t12\tnull\n" +
+                        "5\tnull\tnull\tnull\t5\n" +
+                        "12\t12\t12\tnull\tnull\n",
                 "select coalesce(b, a, x) c1, coalesce(b, a) c2, a, b, x\n" +
                         "from alex",
                 "create table alex as (" +

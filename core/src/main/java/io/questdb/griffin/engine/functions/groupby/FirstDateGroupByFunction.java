@@ -95,7 +95,7 @@ public class FirstDateGroupByFunction extends DateFunction implements GroupByFun
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
-        if (srcRowId != Numbers.LONG_NaN && (srcRowId < destRowId || destRowId == Numbers.LONG_NaN)) {
+        if (srcRowId != Numbers.LONG_NULL && (srcRowId < destRowId || destRowId == Numbers.LONG_NULL)) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putDate(valueIndex + 1, srcValue.getDate(valueIndex + 1));
         }
@@ -103,8 +103,8 @@ public class FirstDateGroupByFunction extends DateFunction implements GroupByFun
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putLong(valueIndex, Numbers.LONG_NaN);
-        mapValue.putDate(valueIndex + 1, Numbers.LONG_NaN);
+        mapValue.putLong(valueIndex, Numbers.LONG_NULL);
+        mapValue.putDate(valueIndex + 1, Numbers.LONG_NULL);
     }
 
     @Override

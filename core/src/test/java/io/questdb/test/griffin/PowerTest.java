@@ -49,7 +49,7 @@ public class PowerTest extends AbstractCairoTest {
                 "select power(NaN, 3)",
                 sink,
                 "power\n" +
-                        "NaN\n"
+                        "null\n"
         ));
     }
 
@@ -61,7 +61,7 @@ public class PowerTest extends AbstractCairoTest {
                 "select power(1.5, NaN)",
                 sink,
                 "power\n" +
-                        "NaN\n"
+                        "null\n"
         ));
     }
 }

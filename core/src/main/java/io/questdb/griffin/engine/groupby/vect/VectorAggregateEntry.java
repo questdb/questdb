@@ -91,8 +91,9 @@ public class VectorAggregateEntry implements Mutable {
             return;
         }
 
-        final int slot = perWorkerLocks.acquireSlot(workerId, circuitBreaker);
+        int slot = -1;
         try {
+            slot = perWorkerLocks.acquireSlot(workerId, circuitBreaker);
             if (pRosti != null) {
                 long oldSize = Rosti.getAllocMemory(pRosti[slot]);
                 if (!func.aggregate(pRosti[slot], keyAddress, valueAddress, valueCount, columnSizeShr, slot)) {

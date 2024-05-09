@@ -931,6 +931,11 @@ public class LogFactory implements Closeable {
         }
 
         @Override
+        public LogRecord $uuid(long lo, long hi) {
+            return this;
+        }
+
+        @Override
         public LogRecord $(@Nullable Sinkable x) {
             return this;
         }
@@ -996,7 +1001,7 @@ public class LogFactory implements Closeable {
         }
 
         @Override
-        public LogRecord putUtf8(long lo, long hi) {
+        public LogRecord putNonAscii(long lo, long hi) {
             return this;
         }
 

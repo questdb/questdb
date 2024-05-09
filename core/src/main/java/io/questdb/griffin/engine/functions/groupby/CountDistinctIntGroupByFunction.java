@@ -58,10 +58,10 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         int val = arg.getInt(record);
-        if (val != Numbers.INT_NaN) {
+        if (val != Numbers.INT_NULL) {
             mapValue.putLong(valueIndex, 1);
             // Remap zero since it's used as the no entry key.
-            val = (val == 0) ? Numbers.INT_NaN : val;
+            val = (val == 0) ? Numbers.INT_NULL : val;
             setA.of(0).add(val);
             mapValue.putLong(valueIndex + 1, setA.ptr());
         } else {
@@ -73,10 +73,10 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         int val = arg.getInt(record);
-        if (val != Numbers.INT_NaN) {
+        if (val != Numbers.INT_NULL) {
             long ptr = mapValue.getLong(valueIndex + 1);
             // Remap zero since it's used as the no entry key.
-            val = (val == 0) ? Numbers.INT_NaN : val;
+            val = (val == 0) ? Numbers.INT_NULL : val;
             final long index = setA.of(ptr).keyIndex(val);
             if (index >= 0) {
                 setA.addAt(index, val);
@@ -131,13 +131,13 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcCount = srcValue.getLong(valueIndex);
-        if (srcCount == 0 || srcCount == Numbers.LONG_NaN) {
+        if (srcCount == 0 || srcCount == Numbers.LONG_NULL) {
             return;
         }
         long srcPtr = srcValue.getLong(valueIndex + 1);
 
         long destCount = destValue.getLong(valueIndex);
-        if (destCount == 0 || destCount == Numbers.LONG_NaN) {
+        if (destCount == 0 || destCount == Numbers.LONG_NULL) {
             destValue.putLong(valueIndex, srcCount);
             destValue.putLong(valueIndex + 1, srcPtr);
             return;
@@ -179,7 +179,7 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putLong(valueIndex, Numbers.LONG_NaN);
+        mapValue.putLong(valueIndex, Numbers.LONG_NULL);
         mapValue.putLong(valueIndex + 1, 0);
     }
 

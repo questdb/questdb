@@ -25,10 +25,15 @@
 package io.questdb.std.str;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableUtils;
+import io.questdb.griffin.engine.functions.str.TrimType;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+
+import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_BYTES;
+import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_MASK;
 
 /**
  * UTF-8 specific variant of the {@link Chars} utility.
@@ -93,6 +98,17 @@ public final class Utf8s {
         return indexOfLowerCaseAscii(sequence, 0, sequence.size(), asciiTerm) != -1;
     }
 
+    public static CharSequence directUtf8ToUtf16(
+            @NotNull DirectUtf8Sequence utf8CharSeq,
+            @NotNull MutableUtf16Sink tempSink
+    ) {
+        if (utf8CharSeq.isAscii()) {
+            return utf8CharSeq.asAsciiCharSequence();
+        }
+        utf8ToUtf16Unchecked(utf8CharSeq, tempSink);
+        return tempSink;
+    }
+
     public static int encodeUtf16Char(@NotNull Utf8Sink sink, @NotNull CharSequence cs, int hi, int i, char c) {
         if (c < 2048) {
             sink.put((byte) (192 | c >> 6));
@@ -107,14 +123,13 @@ public final class Utf8s {
         return i;
     }
 
-    public static boolean endsWith(@NotNull Utf8Sequence seq, @NotNull Utf8Sequence ends) {
-        int size = ends.size();
-        if (size == 0) {
+    public static boolean endsWith(@NotNull Utf8Sequence seq, @NotNull Utf8Sequence endsWith) {
+        int endsWithSize = endsWith.size();
+        if (endsWithSize == 0) {
             return true;
         }
-
         int seqSize = seq.size();
-        return !(seqSize == 0 || seqSize < size) && equalsBytes(ends, seq, seqSize - size, seqSize);
+        return seqSize >= endsWithSize && equalSuffixBytes(seq, endsWith, seqSize, endsWithSize);
     }
 
     public static boolean endsWithAscii(@NotNull Utf8Sequence seq, @NotNull CharSequence endsAscii) {
@@ -142,50 +157,36 @@ public final class Utf8s {
         return !(seqSize == 0 || seqSize < size) && equalsAsciiLowerCase(asciiEnds, seq, seqSize - size, seqSize);
     }
 
-    public static boolean equals(@NotNull DirectUtf8String l, @NotNull Utf8String r) {
-        int size;
-        if ((size = l.size()) != r.size()) {
-            return false;
-        }
-        final long lo = l.lo();
-        int i = 0;
-        for (; i + 3 < size; i += 4) {
-            if (Unsafe.getUnsafe().getInt(lo + i) != r.intAt(i)) {
-                return false;
-            }
-        }
-        for (; i < size; i++) {
-            if (Unsafe.getUnsafe().getByte(lo + i) != r.byteAt(i)) {
-                return false;
-            }
-        }
-        return true;
+    /**
+     * Checks if the given UTF-8 sequences contain equal strings. Co-exists with
+     * {@link #equals(Utf8Sequence, Utf8Sequence)} merely to avoid megamorphism
+     * in {@link Utf8StringIntHashMap} and {@link Utf8StringObjHashMap}. Also, unlike
+     * the general equals method, this one doesn't allow nulls.
+     *
+     * @param l left sequence to compare
+     * @param r right sequence to compare
+     * @return true if the sequences contain equal strings, false otherwise
+     */
+    public static boolean equals(@NotNull DirectUtf8Sequence l, @NotNull Utf8String r) {
+        final int lSize = l.size();
+        return lSize == r.size() && dataEquals(l, r, 0, lSize);
     }
 
-    public static boolean equals(@NotNull Utf8String l, @NotNull Utf8String r) {
-        if (l == r) {
+    public static boolean equals(@NotNull Utf8Sequence l, long lSixPrefix, @NotNull Utf8Sequence r, long rSixPrefix) {
+        final int lSize = l.size();
+        return lSize == r.size() && lSixPrefix == rSixPrefix && dataEquals(l, r, VARCHAR_INLINED_PREFIX_BYTES, lSize);
+    }
+
+    public static boolean equals(@Nullable Utf8Sequence l, @Nullable Utf8Sequence r) {
+        if (l == null && r == null) {
             return true;
         }
-        int size;
-        if ((size = l.size()) != r.size()) {
+        if (l == null || r == null) {
             return false;
         }
-        int i = 0;
-        for (; i + 3 < size; i += 4) {
-            if (l.intAt(i) != r.intAt(i)) {
-                return false;
-            }
-        }
-        for (; i < size; i++) {
-            if (l.byteAt(i) != r.byteAt(i)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    public static boolean equals(@NotNull Utf8Sequence l, @NotNull Utf8Sequence r) {
-        return l.size() == r.size() && l.equalsAssumingSameSize(r);
+        final int lSize = l.size();
+        return lSize == r.size() && l.zeroPaddedSixPrefix() == r.zeroPaddedSixPrefix()
+                && dataEquals(l, r, VARCHAR_INLINED_PREFIX_BYTES, lSize);
     }
 
     public static boolean equals(@NotNull Utf8Sequence l, int lLo, int lHi, @NotNull Utf8Sequence r, int rLo, int rHi) {
@@ -202,16 +203,6 @@ public final class Utf8s {
             }
         }
         return true;
-    }
-
-    public static boolean equals(@NotNull DirectUtf8Sequence l, @NotNull DirectUtf8Sequence r) {
-        if (l == r) {
-            return true;
-        }
-        if (l.ptr() == r.ptr() && l.size() == r.size()) {
-            return true;
-        }
-        return equals(l, (Utf8Sequence) r);
     }
 
     public static boolean equalsAscii(@NotNull CharSequence lAsciiSeq, int lLo, int lHi, @NotNull Utf8Sequence rSeq, int rLo, int rHi) {
@@ -241,11 +232,10 @@ public final class Utf8s {
     }
 
     public static boolean equalsAscii(@NotNull CharSequence lAsciiSeq, @NotNull Utf8Sequence rSeq, int rLo, int rHi) {
-        int ll;
-        if ((ll = lAsciiSeq.length()) != rHi - rLo) {
+        int ll = lAsciiSeq.length();
+        if (ll != rHi - rLo) {
             return false;
         }
-
         for (int i = 0; i < ll; i++) {
             if (lAsciiSeq.charAt(i) != rSeq.byteAt(i + rLo)) {
                 return false;
@@ -296,18 +286,6 @@ public final class Utf8s {
         return true;
     }
 
-    public static boolean equalsNc(@Nullable Utf8Sequence l, @Nullable Utf8Sequence r) {
-        if (l == null && r == null) {
-            return true;
-        }
-
-        if (l == null || r == null) {
-            return false;
-        }
-
-        return equals(l, r);
-    }
-
     public static boolean equalsNcAscii(@NotNull CharSequence asciiSeq, @Nullable Utf8Sequence seq) {
         return seq != null && equalsAscii(asciiSeq, seq);
     }
@@ -349,6 +327,63 @@ public final class Utf8s {
 
     public static int getUtf8Codepoint(int b1, int b2, int b3, int b4) {
         return b1 << 18 ^ b2 << 12 ^ b3 << 6 ^ b4 ^ 3678080;
+    }
+
+    /**
+     * Validates if the bytes between lo,hi addresses belong to a valid UTF8 sequence.
+     *
+     * @return -1 if bytes are not a UTF8 sequence, 0 if this is ASCII sequence and 1 if it is non-ascii UTF8 sequence.
+     */
+    public static int getUtf8SequenceType(long lo, long hi) {
+        long p = lo;
+        int sequenceType = 0;
+        while (p < hi) {
+            byte b = Unsafe.getUnsafe().getByte(p);
+            if (b < 0) {
+                int n = validateUtf8MultiByte(p, hi, b);
+                if (n == -1) {
+                    // UTF8 error
+                    return -1;
+                }
+                p += n;
+                // non-ASCII sequence
+                sequenceType = 1;
+            } else {
+                ++p;
+            }
+        }
+        return sequenceType;
+    }
+
+    /**
+     * Strictly greater than (&gt;) comparison of two UTF8 sequences in lexicographical
+     * order. For example, for:
+     * l = aaaaa
+     * r = aaaaaaa
+     * the l &gt; r will produce "false", however for:
+     * l = bbbb
+     * r = aaaaaaa
+     * the l &gt; r will produce "true", because b &gt; a.
+     *
+     * @param l left sequence, can be null
+     * @param r right sequence, can be null
+     * @return if either l or r is "null", the return value false, otherwise sequences are compared lexicographically.
+     */
+    public static boolean greaterThan(@Nullable Utf8Sequence l, @Nullable Utf8Sequence r) {
+        if (l == null || r == null) {
+            return false;
+        }
+
+        final int ll = l.size();
+        final int rl = r.size();
+        final int min = Math.min(ll, rl);
+        for (int i = 0; i < min; i++) {
+            final int k = Numbers.compareUnsigned(l.byteAt(i), r.byteAt(i));
+            if (k != 0) {
+                return k > 0;
+            }
+        }
+        return ll > rl;
     }
 
     public static int hashCode(@NotNull Utf8Sequence value) {
@@ -580,6 +615,19 @@ public final class Utf8s {
         return -1;
     }
 
+    public static boolean isAscii(Utf8Sequence utf8) {
+        boolean ascii = true;
+        if (utf8 != null) {
+            for (int k = 0, kl = utf8.size(); k < kl; k++) {
+                if (utf8.byteAt(k) < 0) {
+                    ascii = false;
+                    break;
+                }
+            }
+        }
+        return ascii;
+    }
+
     public static int lastIndexOfAscii(@NotNull Utf8Sequence seq, char asciiTerm) {
         for (int i = seq.size() - 1; i > -1; i--) {
             if (seq.byteAt(i) == asciiTerm) {
@@ -587,6 +635,74 @@ public final class Utf8s {
             }
         }
         return -1;
+    }
+
+    /**
+     * Returns the length of the UTF-8 sequence as the count of code points.
+     * NOTE: this number is different from the length of the equivalent Java String,
+     * which counts UTF-16 code words. A surrogate pair encodes one code point, but
+     * counts as two in the length of a Java String.
+     */
+    public static int length(Utf8Sequence value) {
+        if (value == null) {
+            return TableUtils.NULL_LEN;
+        }
+        final int size = value.size();
+
+        int continuationByteCount = 0;
+        int i = 0;
+        for (; i <= size - Long.BYTES; i += Long.BYTES) {
+            long c = value.longAt(i);
+            long x = c & 0x8080808080808080L;
+            long y = ~c << 1;
+            long swarDelta = x & y;
+            int delta = Long.bitCount(swarDelta);
+            continuationByteCount += delta;
+        }
+        for (; i < size; i++) {
+            int c = value.byteAt(i);
+            int x = c & 0x80;
+            int y = ~c << 1;
+            int delta = (x & y) >>> 7;
+            continuationByteCount += delta;
+        }
+        return size - continuationByteCount;
+    }
+
+    /**
+     * Strictly less than (&lt;) comparison of two UTF8 sequences in lexicographical
+     * order. For example, for:
+     * l = aaaaa
+     * r = aaaaaaa
+     * the l &lt; r will produce "true", however for:
+     * l = bbbb
+     * r = aaaaaaa
+     * the l &lt; r will produce "false", because b &lt; a.
+     *
+     * @param l left sequence, can be null
+     * @param r right sequence, can be null
+     * @return if either l or r is "null", the return value false, otherwise sequences are compared lexicographically.
+     */
+    public static boolean lessThan(@Nullable Utf8Sequence l, @Nullable Utf8Sequence r) {
+        if (l == null || r == null) {
+            return false;
+        }
+
+        final int ll = l.size();
+        final int rl = r.size();
+        final int min = Math.min(ll, rl);
+        for (int i = 0; i < min; i++) {
+            final int k = Numbers.compareUnsigned(l.byteAt(i), r.byteAt(i));
+            if (k != 0) {
+                return k < 0;
+            }
+        }
+        return ll < rl;
+    }
+
+    public static boolean lessThan(@Nullable Utf8Sequence l, @Nullable Utf8Sequence r, boolean negated) {
+        final boolean eq = Utf8s.equals(l, r);
+        return negated ? (eq || Utf8s.greaterThan(l, r)) : (!eq && Utf8s.lessThan(l, r));
     }
 
     public static int lowerCaseAsciiHashCode(@NotNull Utf8Sequence value) {
@@ -612,9 +728,23 @@ public final class Utf8s {
         return h;
     }
 
-    public static boolean startsWith(@NotNull Utf8Sequence seq, @NotNull Utf8Sequence starts) {
-        final int size = starts.size();
-        return seq.size() >= size && equalsBytes(seq, starts, size);
+    /**
+     * Does not delegate to {@link #startsWith(Utf8Sequence, long, Utf8Sequence, long)} in order
+     * to prevent unneeded calculation of six-prefix when an earlier check fails.
+     */
+    public static boolean startsWith(@NotNull Utf8Sequence seq, @NotNull Utf8Sequence startsWith) {
+        final int startsWithSize = startsWith.size();
+        return startsWithSize == 0 || seq.size() >= startsWithSize && equalPrefixBytes(
+                seq, seq.zeroPaddedSixPrefix(), startsWith, startsWith.zeroPaddedSixPrefix(), startsWithSize
+        );
+    }
+
+    public static boolean startsWith(
+            @NotNull Utf8Sequence seq, long seqSixPrefix, @NotNull Utf8Sequence startsWith, long startsWithSixPrefix
+    ) {
+        final int startsWithSize = startsWith.size();
+        return startsWithSize == 0 || seq.size() >= startsWithSize &&
+                equalPrefixBytes(seq, seqSixPrefix, startsWith, startsWithSixPrefix, startsWithSize);
     }
 
     public static boolean startsWithAscii(@NotNull Utf8Sequence seq, @NotNull CharSequence asciiStarts) {
@@ -639,7 +769,7 @@ public final class Utf8s {
 
     public static void strCpy(long srcLo, long srcHi, @NotNull Utf8Sink dest) {
         for (long i = srcLo; i < srcHi; i++) {
-            dest.put(Unsafe.getUnsafe().getByte(i));
+            dest.putAny(Unsafe.getUnsafe().getByte(i));
         }
     }
 
@@ -655,38 +785,12 @@ public final class Utf8s {
     public static int strCpy(@NotNull Utf8Sequence seq, int charLo, int charHi, @NotNull Utf8Sink sink) {
         if (seq.isAscii()) {
             for (int i = charLo; i < charHi; i++) {
-                sink.put(seq.byteAt(i));
+                sink.putAscii((char) seq.byteAt(i));
             }
             return charHi - charLo;
         }
 
-        int charPos = 0;
-        int bytesCopied = 0;
-        for (int i = 0, hi = seq.size(); i < hi && charPos < charHi; charPos++) {
-            byte b = seq.byteAt(i);
-            if (b < 0) {
-                int n = validateUtf8MultiByte(seq, i, b);
-                if (n == -1) {
-                    // UTF-8 error
-                    return -1;
-                }
-                if (charPos >= charLo) {
-                    sink.put(b);
-                    for (int j = 1; j < n; j++) {
-                        sink.put(seq.byteAt(i + j));
-                    }
-                    bytesCopied += n;
-                }
-                i += n;
-            } else {
-                if (charPos >= charLo) {
-                    sink.put(b);
-                    bytesCopied++;
-                }
-                i++;
-            }
-        }
-        return bytesCopied;
+        return strCpyNonAscii(seq, charLo, charHi, sink);
     }
 
     public static void strCpyAscii(char @NotNull [] srcChars, int srcLo, int srcLen, long destAddr) {
@@ -728,12 +832,46 @@ public final class Utf8s {
         return b.toString();
     }
 
+    /**
+     * Implements strpos() with SQL semantics. Returns the 1-based position of a non-null
+     * needle within a non-null haystack, and 0 if needle doesn't occur within haystack. An
+     * empty needle is specified to occur at position 1 of any haystack (even an empty one).
+     */
+    public static int strpos(@NotNull Utf8Sequence haystack, @NotNull Utf8Sequence needle) {
+        final int substrSize = needle.size();
+        if (substrSize < 1) {
+            return 1;
+        }
+        final int strSize = haystack.size();
+        if (strSize < 1) {
+            return 0;
+        }
+
+        OUTER:
+        for (int i = 0, strPos = 0, n = strSize - substrSize + 1; i < n; i++) {
+            final byte c = haystack.byteAt(i);
+            // Only advance strPos if c is not a continuation byte
+            if ((c & 0b1100_0000) != 0b1000_0000) {
+                strPos++;
+            }
+            if (c == needle.byteAt(0)) {
+                for (int k = 1; k < substrSize; k++) {
+                    if (haystack.byteAt(i + k) != needle.byteAt(k)) {
+                        continue OUTER;
+                    }
+                }
+                return strPos;
+            }
+        }
+        return 0;
+    }
+
     public static String toString(@NotNull Utf8Sequence us, int start, int end, byte unescapeAscii) {
         final Utf8Sink sink = Misc.getThreadLocalUtf8Sink();
         final int lastChar = end - 1;
         for (int i = start; i < end; i++) {
             byte b = us.byteAt(i);
-            sink.put(b);
+            sink.putAny(b);
             if (b == unescapeAscii && i < lastChar && us.byteAt(i + 1) == unescapeAscii) {
                 i++;
             }
@@ -749,6 +887,24 @@ public final class Utf8s {
         return s == null ? null : Utf8String.newInstance(s);
     }
 
+    public static void trim(TrimType type, Utf8Sequence source, Utf8Sink sink) {
+        if (source == null || source.size() == 0) {
+            return;
+        }
+        int start = 0;
+        int limit = source.size();
+        if (type != TrimType.RTRIM) {
+            while (start < limit && source.byteAt(start) == ' ') {
+                start++;
+            }
+        }
+        if (type != TrimType.LTRIM) {
+            while (limit > start && source.byteAt(limit - 1) == ' ') {
+                limit--;
+            }
+        }
+        sink.putAny(source, start, limit);
+    }
 
     /**
      * A specialised function to decode a single UTF-8 character.
@@ -803,18 +959,6 @@ public final class Utf8s {
 
     public static char utf8ToChar(byte b1, byte b2, byte b3) {
         return (char) (b1 << 12 ^ b2 << 6 ^ b3 ^ -123008);
-    }
-
-    public static CharSequence utf8ToUtf16(
-            @NotNull DirectUtf8Sequence utf8CharSeq,
-            @NotNull MutableUtf16Sink tempSink,
-            boolean hasNonAsciiChars
-    ) {
-        if (hasNonAsciiChars) {
-            utf8ToUtf16Unchecked(utf8CharSeq, tempSink);
-            return tempSink;
-        }
-        return utf8CharSeq.asAsciiCharSequence();
     }
 
     /**
@@ -1004,7 +1148,7 @@ public final class Utf8s {
             if (b == 0) {
                 break;
             }
-            sink.put(b);
+            sink.putAny(b);
         }
     }
 
@@ -1030,31 +1174,6 @@ public final class Utf8s {
         return len;
     }
 
-    /**
-     * Validates bytes between lo,hi addresses.
-     *
-     * @return string length if input is proper UTF-8 and -1 otherwise.
-     */
-    public static int validateUtf8(long lo, long hi) {
-        int len = 0;
-        long p = lo;
-        while (p < hi) {
-            byte b = Unsafe.getUnsafe().getByte(p);
-            if (b < 0) {
-                int n = validateUtf8MultiByte(p, hi, b);
-                if (n == -1) {
-                    // UTF8 error
-                    return -1;
-                }
-                p += n;
-            } else {
-                ++p;
-            }
-            ++len;
-        }
-        return len;
-    }
-
     public static int validateUtf8MultiByte(long lo, long hi, byte b) {
         if (b >> 5 == -2 && (b & 30) != 0) {
             return validateUtf8Decode2Bytes(lo, hi);
@@ -1063,6 +1182,44 @@ public final class Utf8s {
             return validateUtf8Decode3Bytes(lo, hi, b);
         }
         return validateUtf8Decode4Bytes(lo, hi, b);
+    }
+
+    /**
+     * Returns up to 6 initial bytes of the given UTF-8 sequence (less if it's shorter)
+     * packed into a zero-padded long value, in little-endian order. This prefix is
+     * stored inline in the auxiliary vector of a VARCHAR column, so asking for it is a
+     * matter of optimized data access. This is not a general access method, it
+     * shouldn't be called unless looking to optimize the access of the VARCHAR column.
+     *
+     * @param seq UTF8 sequence
+     * @return up to 6 initial bytes
+     */
+    public static long zeroPaddedSixPrefix(@NotNull Utf8Sequence seq) {
+        final int size = seq.size();
+        if (size >= Long.BYTES) {
+            return seq.longAt(0) & VARCHAR_INLINED_PREFIX_MASK;
+        }
+        final long limit = Math.min(size, VARCHAR_INLINED_PREFIX_BYTES);
+        long result = 0;
+        for (int i = 0; i < limit; i++) {
+            result |= (seq.byteAt(i) & 0xffL) << (8 * i);
+        }
+        return result;
+    }
+
+    private static boolean dataEquals(@NotNull Utf8Sequence l, @NotNull Utf8Sequence r, int start, int limit) {
+        int i = start;
+        for (; i <= limit - Long.BYTES; i += Long.BYTES) {
+            if (l.longAt(i) != r.longAt(i)) {
+                return false;
+            }
+        }
+        for (; i < limit; i++) {
+            if (l.byteAt(i) != r.byteAt(i)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static int encodeUtf16Surrogate(@NotNull Utf8Sink sink, char c, @NotNull CharSequence in, int pos, int hi) {
@@ -1093,6 +1250,32 @@ public final class Utf8s {
         return pos;
     }
 
+    private static boolean equalPrefixBytes(
+            @NotNull Utf8Sequence l, long lSixPrefix, @NotNull Utf8Sequence r, long rSixPrefix, int prefixSize
+    ) {
+        long prefixMask = (1L << 8 * Math.min(VARCHAR_INLINED_PREFIX_BYTES, prefixSize)) - 1;
+        return ((lSixPrefix ^ rSixPrefix) & prefixMask) == 0
+                && dataEquals(l, r, VARCHAR_INLINED_PREFIX_BYTES, prefixSize);
+    }
+
+    private static boolean equalSuffixBytes(
+            @NotNull Utf8Sequence seq, @NotNull Utf8Sequence suffix, int seqSize, int suffixSize
+    ) {
+        int seqLo = seqSize - suffixSize;
+        int i = 0;
+        for (; i <= suffixSize - Long.BYTES; i += Long.BYTES) {
+            if (suffix.longAt(i) != seq.longAt(i + seqLo)) {
+                return false;
+            }
+        }
+        for (; i < suffixSize; i++) {
+            if (suffix.byteAt(i) != seq.byteAt(i + seqLo)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     // Left hand has to be lower-case.
     private static boolean equalsAsciiLowerCase(@NotNull Utf8Sequence lLC, @NotNull Utf8Sequence r, int size) {
         for (int i = 0; i < size; i++) {
@@ -1118,29 +1301,6 @@ public final class Utf8s {
         return true;
     }
 
-    private static boolean equalsBytes(@NotNull Utf8Sequence l, @NotNull Utf8Sequence r, int size) {
-        for (int i = 0; i < size; i++) {
-            if (l.byteAt(i) != r.byteAt(i)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private static boolean equalsBytes(@NotNull Utf8Sequence l, @NotNull Utf8Sequence r, int rLo, int rHi) {
-        int lsize = l.size();
-        if (lsize != rHi - rLo) {
-            return false;
-        }
-
-        for (int i = 0; i < lsize; i++) {
-            if (l.byteAt(i) != r.byteAt(i + rLo)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     private static StringSink getThreadLocalSink() {
         StringSink b = tlSink.get();
         b.clear();
@@ -1157,6 +1317,36 @@ public final class Utf8s {
 
     private static boolean isNotContinuation(int b) {
         return (b & 192) != 128;
+    }
+
+    private static int strCpyNonAscii(@NotNull Utf8Sequence seq, int charLo, int charHi, @NotNull Utf8Sink sink) {
+        int charPos = 0;
+        int bytesCopied = 0;
+        for (int i = 0, hi = seq.size(); i < hi && charPos < charHi; charPos++) {
+            byte b = seq.byteAt(i);
+            if (b < 0) {
+                int n = validateUtf8MultiByte(seq, i, b);
+                if (n == -1) {
+                    // UTF-8 error
+                    return -1;
+                }
+                if (charPos >= charLo) {
+                    sink.put(b);
+                    for (int j = 1; j < n; j++) {
+                        sink.put(seq.byteAt(i + j));
+                    }
+                    bytesCopied += n;
+                }
+                i += n;
+            } else {
+                if (charPos >= charLo) {
+                    sink.putAscii((char) b);
+                    bytesCopied++;
+                }
+                i++;
+            }
+        }
+        return bytesCopied;
     }
 
     private static byte toLowerCaseAscii(byte b) {

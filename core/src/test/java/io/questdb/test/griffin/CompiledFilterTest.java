@@ -138,7 +138,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
 
             final String query = "select * from t1 where x = $1";
             final String expected = "x\tts\tj\n" +
-                    "3\t1970-01-01T00:00:02.000000Z\tNaN\n" +
+                    "3\t1970-01-01T00:00:02.000000Z\tnull\n" +
                     "3\t1970-01-01T00:01:42.000000Z\t7746536061816329025\n";
 
             testFilterWithColTops(query, expected, SqlJitMode.JIT_MODE_ENABLED, false);
@@ -347,8 +347,8 @@ public class CompiledFilterTest extends AbstractCairoTest {
 
             final String query = "select * from x where l > 3 and j = null";
             final String expected = "l\tts\tj\n" +
-                    "4\t1970-01-05T15:31:40.000000Z\tNaN\n" +
-                    "5\t1970-01-05T15:40:00.000000Z\tNaN\n";
+                    "4\t1970-01-05T15:31:40.000000Z\tnull\n" +
+                    "5\t1970-01-05T15:40:00.000000Z\tnull\n";
 
             assertSql(expected, query);
             assertSqlRunWithJit(query);
@@ -585,11 +585,11 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     " from long_sequence(1)) timestamp(ts)");
 
             bindVariableService.clear();
-            bindVariableService.setLong("l", Numbers.LONG_NaN);
+            bindVariableService.setLong("l", Numbers.LONG_NULL);
 
             // Here we expect a NULL value on the left side of the predicate,
             // so no rows should be returned
-            final String query = "select * from x where l + :l = " + (Numbers.LONG_NaN + value);
+            final String query = "select * from x where l + :l = " + (Numbers.LONG_NULL + value);
             final String expected = "l\tts\n";
 
             assertSql(expected, query);
@@ -623,8 +623,8 @@ public class CompiledFilterTest extends AbstractCairoTest {
     private void testSelectAllBothPageFramesFilterWithColTops(int jitMode, boolean preTouch) throws Exception {
         final String query = "select * from t1 where x >= 3 and x <= 4";
         final String expected = "x\tts\tj\n" +
-                "3\t1970-01-01T00:00:02.000000Z\tNaN\n" +
-                "4\t1970-01-01T00:00:03.000000Z\tNaN\n" +
+                "3\t1970-01-01T00:00:02.000000Z\tnull\n" +
+                "4\t1970-01-01T00:00:03.000000Z\tnull\n" +
                 "3\t1970-01-01T00:01:42.000000Z\t7746536061816329025\n" +
                 "4\t1970-01-01T00:01:43.000000Z\t-6945921502384501475\n";
 

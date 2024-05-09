@@ -73,13 +73,13 @@ public final class CastStrToUuidFunctionFactory implements FunctionFactory {
         public long getLong128Hi(Record rec) {
             final CharSequence value = arg.getStrA(rec);
             if (value == null) {
-                return Numbers.LONG_NaN;
+                return Numbers.LONG_NULL;
             }
             try {
                 Uuid.checkDashesAndLength(value);
                 return Uuid.parseHi(value);
             } catch (NumericException e) {
-                return Numbers.LONG_NaN;
+                return Numbers.LONG_NULL;
             }
         }
 
@@ -87,13 +87,13 @@ public final class CastStrToUuidFunctionFactory implements FunctionFactory {
         public long getLong128Lo(Record rec) {
             final CharSequence value = arg.getStrA(rec);
             if (value == null) {
-                return Numbers.LONG_NaN;
+                return Numbers.LONG_NULL;
             }
             try {
                 Uuid.checkDashesAndLength(value);
                 return Uuid.parseLo(value);
             } catch (NumericException e) {
-                return Numbers.LONG_NaN;
+                return Numbers.LONG_NULL;
             }
         }
     }

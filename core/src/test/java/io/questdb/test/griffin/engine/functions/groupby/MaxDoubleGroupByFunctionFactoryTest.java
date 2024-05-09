@@ -28,9 +28,10 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -54,7 +55,7 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
-                Assert.assertTrue(Double.isNaN(record.getDouble(0)));
+                Assert.assertTrue(Numbers.isNull(record.getDouble(0)));
             }
         }
     }
@@ -161,8 +162,8 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "CGFN\t2.7171094533334066\t1970-01-03T00:00:00.000000Z\n" +
                         "NPIW\t4.115364146194077\t1970-01-03T00:00:00.000000Z\n" +
                         "PEVM\t-3.7258904043577563\t1970-01-03T00:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T00:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T00:00:00.000000Z\n" +
+                "WGRM\tnull\t1970-01-03T00:00:00.000000Z\n" +
+                "ZNFK\tnull\t1970-01-03T00:00:00.000000Z\n" +
                         "\t0.8940917126581895\t1970-01-03T03:00:00.000000Z\n" +
                         "VTJW\t0.9441658975532605\t1970-01-03T03:00:00.000000Z\n" +
                         "CPSW\t0.9457212646911386\t1970-01-03T03:00:00.000000Z\n" +
@@ -172,8 +173,8 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "CGFN\t2.505608562668917\t1970-01-03T03:00:00.000000Z\n" +
                         "NPIW\t3.750106582628655\t1970-01-03T03:00:00.000000Z\n" +
                         "PEVM\t-3.2686892469469284\t1970-01-03T03:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T03:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T03:00:00.000000Z\n" +
+                "WGRM\tnull\t1970-01-03T03:00:00.000000Z\n" +
+                "ZNFK\tnull\t1970-01-03T03:00:00.000000Z\n" +
                         "\t0.9423671624137644\t1970-01-03T06:00:00.000000Z\n" +
                         "VTJW\t0.8196554745841765\t1970-01-03T06:00:00.000000Z\n" +
                         "HYRX\t0.5780746276543334\t1970-01-03T06:00:00.000000Z\n" +
@@ -183,8 +184,8 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "CGFN\t2.294107672004426\t1970-01-03T06:00:00.000000Z\n" +
                         "NPIW\t3.3848490190632345\t1970-01-03T06:00:00.000000Z\n" +
                         "PEVM\t-2.8114880895361005\t1970-01-03T06:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T06:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T06:00:00.000000Z\n" +
+                "WGRM\tnull\t1970-01-03T06:00:00.000000Z\n" +
+                "ZNFK\tnull\t1970-01-03T06:00:00.000000Z\n" +
                         "\t0.8379891991223047\t1970-01-03T09:00:00.000000Z\n" +
                         "RXGZ\t0.7272119755925095\t1970-01-03T09:00:00.000000Z\n" +
                         "VTJW\t0.7732229848518976\t1970-01-03T09:00:00.000000Z\n" +
@@ -194,8 +195,8 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "CGFN\t2.0826067813399365\t1970-01-03T09:00:00.000000Z\n" +
                         "NPIW\t3.0195914554978125\t1970-01-03T09:00:00.000000Z\n" +
                         "PEVM\t-2.354286932125272\t1970-01-03T09:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T09:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T09:00:00.000000Z\n" +
+                "WGRM\tnull\t1970-01-03T09:00:00.000000Z\n" +
+                "ZNFK\tnull\t1970-01-03T09:00:00.000000Z\n" +
                         "\t0.8468512597855531\t1970-01-03T12:00:00.000000Z\n" +
                         "VTJW\t0.7267904951196187\t1970-01-03T12:00:00.000000Z\n" +
                         "RXGZ\t0.7642262733785008\t1970-01-03T12:00:00.000000Z\n" +
@@ -205,8 +206,8 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "CGFN\t1.8711058906754459\t1970-01-03T12:00:00.000000Z\n" +
                         "NPIW\t2.6543338919323913\t1970-01-03T12:00:00.000000Z\n" +
                         "PEVM\t-1.8970857747144447\t1970-01-03T12:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T12:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T12:00:00.000000Z\n" +
+                "WGRM\tnull\t1970-01-03T12:00:00.000000Z\n" +
+                "ZNFK\tnull\t1970-01-03T12:00:00.000000Z\n" +
                         "\t0.8557133204488016\t1970-01-03T15:00:00.000000Z\n" +
                         "VTJW\t0.6803580053873398\t1970-01-03T15:00:00.000000Z\n" +
                         "RXGZ\t0.8012405711644923\t1970-01-03T15:00:00.000000Z\n" +
@@ -216,8 +217,8 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "CGFN\t1.6596050000109557\t1970-01-03T15:00:00.000000Z\n" +
                         "NPIW\t2.28907632836697\t1970-01-03T15:00:00.000000Z\n" +
                         "PEVM\t-1.4398846173036166\t1970-01-03T15:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T15:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T15:00:00.000000Z\n" +
+                "WGRM\tnull\t1970-01-03T15:00:00.000000Z\n" +
+                "ZNFK\tnull\t1970-01-03T15:00:00.000000Z\n" +
                         "\t0.8645753811120501\t1970-01-03T18:00:00.000000Z\n" +
                         "VTJW\t0.6339255156550605\t1970-01-03T18:00:00.000000Z\n" +
                         "RXGZ\t0.8382548689504835\t1970-01-03T18:00:00.000000Z\n" +
@@ -227,8 +228,8 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "CGFN\t1.4481041093464653\t1970-01-03T18:00:00.000000Z\n" +
                         "NPIW\t1.9238187648015488\t1970-01-03T18:00:00.000000Z\n" +
                         "PEVM\t-0.9826834598927885\t1970-01-03T18:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T18:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T18:00:00.000000Z\n" +
+                "WGRM\tnull\t1970-01-03T18:00:00.000000Z\n" +
+                "ZNFK\tnull\t1970-01-03T18:00:00.000000Z\n" +
                         "\t0.8734374417752984\t1970-01-03T21:00:00.000000Z\n" +
                         "VTJW\t0.5874930259227816\t1970-01-03T21:00:00.000000Z\n" +
                         "RXGZ\t0.8752691667364753\t1970-01-03T21:00:00.000000Z\n" +
@@ -238,8 +239,8 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "CGFN\t1.2366032186819753\t1970-01-03T21:00:00.000000Z\n" +
                         "NPIW\t1.5585612012361274\t1970-01-03T21:00:00.000000Z\n" +
                         "PEVM\t-0.5254823024819606\t1970-01-03T21:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-03T21:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-03T21:00:00.000000Z\n" +
+                "WGRM\tnull\t1970-01-03T21:00:00.000000Z\n" +
+                "ZNFK\tnull\t1970-01-03T21:00:00.000000Z\n" +
                         "\t0.8822995024385468\t1970-01-04T00:00:00.000000Z\n" +
                         "VTJW\t0.5410605361905028\t1970-01-04T00:00:00.000000Z\n" +
                         "RXGZ\t0.9122834645224663\t1970-01-04T00:00:00.000000Z\n" +
@@ -249,8 +250,8 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "CGFN\t1.025102328017485\t1970-01-04T00:00:00.000000Z\n" +
                         "NPIW\t1.1933036376707062\t1970-01-04T00:00:00.000000Z\n" +
                         "PEVM\t-0.06828114507113253\t1970-01-04T00:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-04T00:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-04T00:00:00.000000Z\n" +
+                "WGRM\tnull\t1970-01-04T00:00:00.000000Z\n" +
+                "ZNFK\tnull\t1970-01-04T00:00:00.000000Z\n" +
                         "\t0.8911615631017953\t1970-01-04T03:00:00.000000Z\n" +
                         "CGFN\t0.8136014373529948\t1970-01-04T03:00:00.000000Z\n" +
                         "NPIW\t0.8280460741052847\t1970-01-04T03:00:00.000000Z\n" +
@@ -260,8 +261,8 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "PEHN\t-1.6786720005549198\t1970-01-04T03:00:00.000000Z\n" +
                         "HYRX\t-1.9945280821270364\t1970-01-04T03:00:00.000000Z\n" +
                         "CPSW\t3.1094837445303205\t1970-01-04T03:00:00.000000Z\n" +
-                        "WGRM\tNaN\t1970-01-04T03:00:00.000000Z\n" +
-                        "ZNFK\tNaN\t1970-01-04T03:00:00.000000Z\n" +
+                "WGRM\tnull\t1970-01-04T03:00:00.000000Z\n" +
+                "ZNFK\tnull\t1970-01-04T03:00:00.000000Z\n" +
                         "WGRM\t0.8514849800664227\t1970-01-04T06:00:00.000000Z\n" +
                         "CGFN\t0.6021005466885047\t1970-01-04T06:00:00.000000Z\n" +
                         "\t0.9435138098640453\t1970-01-04T06:00:00.000000Z\n" +
@@ -289,7 +290,7 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "VTJW\t0.7732229848518976\t1970-01-03T09:18:00.000000Z\n",
                 "select b, max(a), k from " +
                         " (x where b = 'PEHN' union all x where b = 'VTJW' ) timestamp(k)" +
-                        "sample by 3h fill(linear) order by 3, 2, 1",
+                        "sample by 3h fill(linear) align to first observation order by 3, 2, 1",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -299,6 +300,24 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                         " from" +
                         " long_sequence(100)" +
                         ") timestamp(k) partition by NONE",
+                "k",
+                true,
+                true
+        );
+
+        assertQuery(
+                "b\tmax\tk\n" +
+                        "PEHN\t0.8445258177211064\t1970-01-03T00:00:00.000000Z\n" +
+                        "VTJW\t0.9125204540487346\t1970-01-03T00:00:00.000000Z\n" +
+                        "PEHN\t0.7365115215570027\t1970-01-03T03:00:00.000000Z\n" +
+                        "VTJW\t0.8660879643164553\t1970-01-03T03:00:00.000000Z\n" +
+                        "PEHN\t0.4346135812930124\t1970-01-03T06:00:00.000000Z\n" +
+                        "VTJW\t0.8196554745841765\t1970-01-03T06:00:00.000000Z\n" +
+                        "PEHN\t0.13271564102902209\t1970-01-03T09:00:00.000000Z\n" +
+                        "VTJW\t0.7732229848518976\t1970-01-03T09:00:00.000000Z\n",
+                "select b, max(a), k from " +
+                        " (x where b = 'PEHN' union all x where b = 'VTJW' ) timestamp(k)" +
+                        "sample by 3h fill(linear) align to calendar order by 3, 2, 1",
                 "k",
                 true,
                 true

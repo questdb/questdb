@@ -147,9 +147,9 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertSql("x\tsym\tstr\tts\tsym2\tnew_column\n" +
-                    "101\ta1a1\tstr-1\t2022-02-24T01:00:00.000000Z\ta2a2\tNaN\n" +
-                    "101\ta1a1\tstr-1\t2022-02-24T01:00:00.000000Z\ta2a2\tNaN\n" +
-                    "101\ta1a1\tstr-1\t2022-02-24T01:00:00.000000Z\ta2a2\tNaN\n" +
+                    "101\ta1a1\tstr-1\t2022-02-24T01:00:00.000000Z\ta2a2\tnull\n" +
+                    "101\ta1a1\tstr-1\t2022-02-24T01:00:00.000000Z\ta2a2\tnull\n" +
+                    "101\ta1a1\tstr-1\t2022-02-24T01:00:00.000000Z\ta2a2\tnull\n" +
                     "103\tdfd\tstr-2\t2022-02-24T02:00:00.000000Z\tasdd\t1234\n", tableName);
         });
     }
@@ -183,7 +183,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertSql("x\tsym\tts\tsym2\tjjj\n" +
-                    "101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2\tNaN\n" +
+                    "101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2\tnull\n" +
                     "103\tdfd\t2022-02-24T01:00:00.000000Z\tasdd\t1234\n", tableName);
 
         });
@@ -220,7 +220,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertSql("x\tsym\tts\tsym2\tjjj\tcol_str\tcol_var\n" +
-                    "101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2\tNaN\t\t\n" +
+                    "101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2\tnull\t\t\n" +
                     "103\tdfd\t2022-02-24T01:00:00.000000Z\tasdd\t1234\tsss-value\tvar-val\n", tableName);
 
         });
@@ -254,7 +254,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertSql("x\tsym\tts\tsym2\tjjj\n" +
-                    "101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2\tNaN\n" +
+                    "101\ta1a1\t2022-02-24T01:00:00.000000Z\ta2a2\tnull\n" +
                     "103\tdfd\t2022-02-24T01:00:00.000000Z\tasdd\t1234\n", tableName);
 
         });
@@ -360,11 +360,10 @@ public class WalTableSqlTest extends AbstractCairoTest {
                         .concat(WalUtils.EVENT_FILE_NAME).$();
                 FilesFacade ff = engine.getConfiguration().getFilesFacade();
                 int fd = TableUtils.openRW(ff, path, LOG, configuration.getWriterFileOpenOpts());
-                long intAddr = Unsafe.getUnsafe().allocateMemory(4);
+                long intAddr = Unsafe.malloc(4, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.getUnsafe().putInt(intAddr, 10);
                 ff.write(fd, intAddr, 4, 0);
-
-                Unsafe.getUnsafe().freeMemory(intAddr);
+                Unsafe.free(intAddr, 4, MemoryTag.NATIVE_DEFAULT);
                 ff.close(fd);
             }
 
@@ -462,7 +461,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             assertSql(
                     "ts\tcol1\tcol2\n" +
-                            "2022-02-24T00:00:00.000000Z\tNaN\tNaN\n" +
+                            "2022-02-24T00:00:00.000000Z\tnull\tnull\n" +
                             "2022-02-24T01:00:00.000000Z\t1\t2\n",
                     "select ts, col1, col2 from " + tableName
             );
@@ -478,8 +477,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             assertSql(
                     "ts\tcol1\tcol3\n" +
-                            "2022-02-24T00:00:00.000000Z\tNaN\tNaN\n" +
-                            "2022-02-24T01:00:00.000000Z\t1\tNaN\n" +
+                            "2022-02-24T00:00:00.000000Z\tnull\tnull\n" +
+                            "2022-02-24T01:00:00.000000Z\t1\tnull\n" +
                             "2022-02-24T01:00:00.000000Z\t3\t4\n",
                     "select ts, col1, col3 from " + tableName
             );
@@ -1955,7 +1954,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertSql("nuuid\tlns\thst\tslt\tise\tvvv\tcut\tmup\tmub\tnrb\tntb\tdup\ttimestamp\n" +
-                    "asdf\t123\tasdff\t222\ttrue\t1.2.3\tNaN\tNaN\tNaN\tNaN\tNaN\tNaN\t1970-01-01T03:25:21.312321Z\n", "nhs");
+                    "asdf\t123\tasdff\t222\ttrue\t1.2.3\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-01T03:25:21.312321Z\n", "nhs");
 
         });
     }

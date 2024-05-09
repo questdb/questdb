@@ -68,8 +68,8 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
         double lat2Degrees = latDegree.getDouble(record);
         double lon2Degrees = lonDegree.getDouble(record);
         long timestamp2 = timestamp.getTimestamp(record);
-        if (!Double.isNaN(lat1Degrees) && !Double.isNaN(lon1Degrees) && timestamp1 != Numbers.LONG_NaN) {
-            if (!Double.isNaN(lat2Degrees) && !Double.isNaN(lon2Degrees) && timestamp2 != Numbers.LONG_NaN) {
+        if (Numbers.isFinite(lat1Degrees) && Numbers.isFinite(lon1Degrees) && timestamp1 != Numbers.LONG_NULL) {
+            if (Numbers.isFinite(lat2Degrees) && Numbers.isFinite(lon2Degrees) && timestamp2 != Numbers.LONG_NULL) {
                 double currentTotalDistance = getDistance(mapValue);
                 double distance = calculateHaversineDistanceFromDegrees(lat1Degrees, lon1Degrees, lat2Degrees, lon2Degrees, currentTotalDistance);
                 saveLastItem(mapValue, lat2Degrees, lon2Degrees, timestamp2);
@@ -177,9 +177,9 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
     @Override
     public void setNull(MapValue mapValue) {
         //set null to first item
-        saveFirstItem(mapValue, Double.NaN, Double.NaN, Numbers.LONG_NaN);
+        saveFirstItem(mapValue, Double.NaN, Double.NaN, Numbers.LONG_NULL);
         //set null to last item
-        saveLastItem(mapValue, Double.NaN, Double.NaN, Numbers.LONG_NaN);
+        saveLastItem(mapValue, Double.NaN, Double.NaN, Numbers.LONG_NULL);
         //
         saveDistance(mapValue, 0.0);
     }

@@ -37,7 +37,7 @@ public class SqrtFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSqrtDoubleNull() throws Exception {
-        assertSqrt("select sqrt(NaN)", "NaN\n");
+        assertSqrt("select sqrt(NaN)", "null\n");
     }
 
     private void assertSqrt(String sql, String expected) throws Exception {

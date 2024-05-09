@@ -59,7 +59,7 @@ public class CastCharToIntFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             final byte v = (byte) (arg.getChar(rec) - '0');
-            return v > -1 && v < 10 ? v : Numbers.INT_NaN;
+            return v > -1 && v < 10 ? v : Numbers.INT_NULL;
         }
     }
 }

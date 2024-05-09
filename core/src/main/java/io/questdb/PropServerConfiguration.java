@@ -64,6 +64,8 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
 
+import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.str;
+
 public class PropServerConfiguration implements ServerConfiguration {
 
     public static final long COMMIT_INTERVAL_DEFAULT = 2000;
@@ -71,6 +73,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     public static final String DB_DIRECTORY = "db";
     public static final String SNAPSHOT_DIRECTORY = "snapshot";
     public static final String TMP_DIRECTORY = "tmp";
+    private static final String RELEASE_TYPE = "release.type";
+    private static final String RELEASE_VERSION = "release.version";
     private static final LowerCaseCharSequenceIntHashMap WRITE_FO_OPTS = new LowerCaseCharSequenceIntHashMap();
     protected final byte httpHealthCheckAuthType;
     private final ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> allPairs = new ObjObjHashMap<>();
@@ -124,6 +128,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final FactoryProviderFactory fpf;
     private final boolean httpAllowDeflateBeforeSend;
     private final PropHttpContextConfiguration httpContextConfiguration = new PropHttpContextConfiguration();
+    private final int httpForceRecvFragmentationChunkSize;
+    private final int httpForceSendFragmentationChunkSize;
     private final boolean httpFrozenClock;
     private final IODispatcherConfiguration httpIODispatcherConfiguration = new PropHttpIODispatcherConfiguration();
     private final PropHttpMinIODispatcherConfiguration httpMinIODispatcherConfiguration = new PropHttpMinIODispatcherConfiguration();
@@ -388,8 +394,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long cairoSqlCopyMaxIndexChunkSize;
     private FactoryProvider factoryProvider;
     private short floatDefaultColumnType;
-    private int forceRecvFragmentationChunkSize;
-    private int forceSendFragmentationChunkSize;
     private int httpMinBindIPv4Address;
     private int httpMinBindPort;
     private boolean httpMinNetConnectionHint;
@@ -456,6 +460,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int pgConnectionPoolInitialCapacity;
     private boolean pgDaemonPool;
     private DateLocale pgDefaultLocale;
+    private int pgForceRecvFragmentationChunkSize;
+    private int pgForceSendFragmentationChunkSize;
     private boolean pgHaltOnError;
     private int pgInsertCacheBlockCount;
     private boolean pgInsertCacheEnabled;
@@ -821,8 +827,16 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.netTestConnectionBufferSize = getInt(properties, env, PropertyKey.CIRCUIT_BREAKER_BUFFER_SIZE, 64);
             this.netTestConnectionBufferSize = getInt(properties, env, PropertyKey.NET_TEST_CONNECTION_BUFFER_SIZE, netTestConnectionBufferSize);
 
+            final int forceSendFragmentationChunkSize = getInt(properties, env, PropertyKey.DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE, Integer.MAX_VALUE);
+            final int forceRecvFragmentationChunkSize = getInt(properties, env, PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE, Integer.MAX_VALUE);
+            this.httpForceSendFragmentationChunkSize = getInt(properties, env, PropertyKey.DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE, forceSendFragmentationChunkSize);
+            this.httpForceRecvFragmentationChunkSize = getInt(properties, env, PropertyKey.DEBUG_HTTP_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE, forceRecvFragmentationChunkSize);
+
             this.pgEnabled = getBoolean(properties, env, PropertyKey.PG_ENABLED, true);
             if (pgEnabled) {
+                this.pgForceSendFragmentationChunkSize = getInt(properties, env, PropertyKey.DEBUG_PG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE, forceSendFragmentationChunkSize);
+                this.pgForceRecvFragmentationChunkSize = getInt(properties, env, PropertyKey.DEBUG_PG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE, forceRecvFragmentationChunkSize);
+
                 // deprecated
                 pgNetConnectionLimit = getInt(properties, env, PropertyKey.PG_NET_ACTIVE_CONNECTION_LIMIT, 64);
                 pgNetConnectionLimit = getInt(properties, env, PropertyKey.PG_NET_CONNECTION_LIMIT, pgNetConnectionLimit);
@@ -882,9 +896,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgNamedStatementCacheCapacity = getInt(properties, env, PropertyKey.PG_NAMED_STATEMENT_CACHE_CAPACITY, 32);
                 this.pgNamesStatementPoolCapacity = getInt(properties, env, PropertyKey.PG_NAMED_STATEMENT_POOL_CAPACITY, 32);
                 this.pgPendingWritersCacheCapacity = getInt(properties, env, PropertyKey.PG_PENDING_WRITERS_CACHE_CAPACITY, 16);
-
-                this.forceSendFragmentationChunkSize = getInt(properties, env, PropertyKey.DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE, Integer.MAX_VALUE);
-                this.forceRecvFragmentationChunkSize = getInt(properties, env, PropertyKey.DEBUG_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE, Integer.MAX_VALUE);
             }
 
             this.walApplyWorkerCount = getInt(properties, env, PropertyKey.WAL_APPLY_WORKER_COUNT, cpuWalApplyWorkers);
@@ -1885,7 +1896,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                 return value.incrementAndGet();
             }
         };
-
 
         @Override
         public boolean attachPartitionCopy() {
@@ -2937,6 +2947,12 @@ public class PropServerConfiguration implements ServerConfiguration {
         public boolean mangleTableDirNames() {
             return false;
         }
+
+        @Override
+        public void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
+            settings.put(RELEASE_TYPE, str(getReleaseType()));
+            settings.put(RELEASE_VERSION, str(getBuildInformation().getSwVersion()));
+        }
     }
 
     private class PropHttpContextConfiguration implements HttpContextConfiguration {
@@ -2973,12 +2989,12 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public int getForceRecvFragmentationChunkSize() {
-            return forceRecvFragmentationChunkSize;
+            return httpForceRecvFragmentationChunkSize;
         }
 
         @Override
         public int getForceSendFragmentationChunkSize() {
-            return forceSendFragmentationChunkSize;
+            return httpForceSendFragmentationChunkSize;
         }
 
         @Override
@@ -3978,12 +3994,12 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public int getForceRecvFragmentationChunkSize() {
-            return forceRecvFragmentationChunkSize;
+            return pgForceRecvFragmentationChunkSize;
         }
 
         @Override
         public int getForceSendFragmentationChunkSize() {
-            return forceSendFragmentationChunkSize;
+            return pgForceSendFragmentationChunkSize;
         }
 
         @Override

@@ -62,8 +62,8 @@ public class AddIntFunctionFactory implements FunctionFactory {
             final int left = this.left.getInt(rec);
             final int right = this.right.getInt(rec);
 
-            if (left == Numbers.INT_NaN || right == Numbers.INT_NaN) {
-                return Numbers.INT_NaN;
+            if (left == Numbers.INT_NULL || right == Numbers.INT_NULL) {
+                return Numbers.INT_NULL;
             }
 
             return left + right;
@@ -84,8 +84,8 @@ public class AddIntFunctionFactory implements FunctionFactory {
             boolean leftIsConstant = left.isConstant();
             boolean rightIsConstant = right.isConstant();
             return leftIsConstant && rightIsConstant
-                    || (leftIsConstant && left.getInt(null) == Numbers.INT_NaN)
-                    || (rightIsConstant && right.getInt(null) == Numbers.INT_NaN);
+                    || (leftIsConstant && left.getInt(null) == Numbers.INT_NULL)
+                    || (rightIsConstant && right.getInt(null) == Numbers.INT_NULL);
         }
 
         @Override

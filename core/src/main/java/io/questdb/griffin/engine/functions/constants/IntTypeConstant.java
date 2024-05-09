@@ -38,6 +38,6 @@ public class IntTypeConstant extends IntFunction implements TypeConstant {
 
     @Override
     public int getInt(Record rec) {
-        return Numbers.INT_NaN;
+        return Numbers.INT_NULL;
     }
 }

@@ -41,7 +41,7 @@ import static io.questdb.cutlass.pgwire.PGOids.PG_NAMESPACE_OID;
 
 public class CastStrToRegClassFunctionFactory implements FunctionFactory {
     private static final CharSequenceObjHashMap<Function> funcMap = new CharSequenceObjHashMap<>();
-    private static final CharSequenceIntHashMap valueMap = new CharSequenceIntHashMap(4, 0.6, Numbers.INT_NaN);
+    private static final CharSequenceIntHashMap valueMap = new CharSequenceIntHashMap(4, 0.6, Numbers.INT_NULL);
 
     @Override
     public String getSignature() {
@@ -85,7 +85,7 @@ public class CastStrToRegClassFunctionFactory implements FunctionFactory {
             if (val != null) {
                 return valueMap.get(val);
             }
-            return Numbers.INT_NaN;
+            return Numbers.INT_NULL;
         }
 
         @Override

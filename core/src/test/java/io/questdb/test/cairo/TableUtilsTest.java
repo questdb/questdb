@@ -219,8 +219,8 @@ public class TableUtilsTest extends AbstractTest {
 
     @Test
     public void testNullValue() {
-        long mem1 = Unsafe.getUnsafe().allocateMemory(32);
-        long mem2 = Unsafe.getUnsafe().allocateMemory(32);
+        long mem1 = Unsafe.malloc(32, MemoryTag.NATIVE_DEFAULT);
+        long mem2 = Unsafe.malloc(32, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int columnType = 0; columnType < ColumnType.NULL; columnType++) {
 
@@ -244,8 +244,8 @@ public class TableUtilsTest extends AbstractTest {
                 }
             }
         } finally {
-            Unsafe.getUnsafe().freeMemory(mem1);
-            Unsafe.getUnsafe().freeMemory(mem2);
+            Unsafe.free(mem1, 32, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(mem2, 32, MemoryTag.NATIVE_DEFAULT);
         }
     }
 

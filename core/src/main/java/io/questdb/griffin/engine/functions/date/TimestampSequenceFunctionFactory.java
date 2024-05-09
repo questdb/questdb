@@ -55,7 +55,7 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
     ) {
         if (args.getQuick(0).isConstant()) {
             final long start = args.getQuick(0).getTimestamp(null);
-            if (start == Numbers.LONG_NaN) {
+            if (start == Numbers.LONG_NULL) {
                 return TimestampConstant.NULL;
             }
             return new TimestampSequenceFunction(start, args.getQuick(1));

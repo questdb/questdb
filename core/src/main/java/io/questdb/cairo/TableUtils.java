@@ -723,7 +723,7 @@ public final class TableUtils {
             case ColumnType.UUID:
                 // Long128 and UUID are null when all 2 longs are NaNs
                 // Long256 is null when all 4 longs are NaNs
-                return Numbers.LONG_NaN;
+                return Numbers.LONG_NULL;
             case ColumnType.GEOBYTE:
             case ColumnType.GEOLONG:
             case ColumnType.GEOSHORT:
@@ -1526,7 +1526,7 @@ public final class TableUtils {
                 Vect.setMemoryShort(addr, GeoHashes.SHORT_NULL, count);
                 break;
             case ColumnType.INT:
-                Vect.setMemoryInt(addr, Numbers.INT_NaN, count);
+                Vect.setMemoryInt(addr, Numbers.INT_NULL, count);
                 break;
             case ColumnType.IPv4:
                 Vect.setMemoryInt(addr, Numbers.IPv4_NULL, count);
@@ -1543,7 +1543,7 @@ public final class TableUtils {
             case ColumnType.LONG:
             case ColumnType.DATE:
             case ColumnType.TIMESTAMP:
-                Vect.setMemoryLong(addr, Numbers.LONG_NaN, count);
+                Vect.setMemoryLong(addr, Numbers.LONG_NULL, count);
                 break;
             case ColumnType.GEOLONG:
                 Vect.setMemoryLong(addr, GeoHashes.NULL, count);
@@ -1553,13 +1553,13 @@ public final class TableUtils {
                 break;
             case ColumnType.LONG256:
                 // Long256 is null when all 4 longs are NaNs
-                Vect.setMemoryLong(addr, Numbers.LONG_NaN, count * 4);
+                Vect.setMemoryLong(addr, Numbers.LONG_NULL, count * 4);
                 break;
             case ColumnType.LONG128:
                 // fall through
             case ColumnType.UUID:
                 // Long128 and UUID are null when all 2 longs are NaNs
-                Vect.setMemoryLong(addr, Numbers.LONG_NaN, count * 2);
+                Vect.setMemoryLong(addr, Numbers.LONG_NULL, count * 2);
                 break;
             default:
                 break;

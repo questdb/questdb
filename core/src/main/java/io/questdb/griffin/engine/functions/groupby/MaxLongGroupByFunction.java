@@ -110,7 +110,7 @@ public class MaxLongGroupByFunction extends LongFunction implements GroupByFunct
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putLong(valueIndex, Numbers.LONG_NaN);
+        mapValue.putLong(valueIndex, Numbers.LONG_NULL);
     }
 
     @Override

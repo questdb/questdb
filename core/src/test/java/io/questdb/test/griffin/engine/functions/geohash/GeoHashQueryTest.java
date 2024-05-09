@@ -405,10 +405,10 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                     "from long_sequence(2)) timestamp(ts)");
 
             assertSql("geo4\tgeo1\tx\tts\tgeo41\tgeo11\tx1\tts1\n" +
-                    "ques\tq\t1\t1970-01-01T00:00:00.000000Z\t\t\tNaN\t\n" +
+                    "ques\tq\t1\t1970-01-01T00:00:00.000000Z\t\t\tnull\t\n" +
                     "1234\t3\t2\t1970-01-01T00:00:01.000000Z\t1234\tq\t1\t1970-01-01T00:00:00.000000Z\n" +
-                    "3456\t3\t3\t1970-01-01T00:00:02.000000Z\t\t\tNaN\t\n" +
-                    "3456\t1\t4\t1970-01-01T00:00:03.000000Z\t\t\tNaN\t\n" +
+                    "3456\t3\t3\t1970-01-01T00:00:02.000000Z\t\t\tnull\t\n" +
+                    "3456\t1\t4\t1970-01-01T00:00:03.000000Z\t\t\tnull\t\n" +
                     "ques\t1\t5\t1970-01-01T00:00:04.000000Z\tques\t3\t2\t1970-01-01T00:00:01.000000Z\n" +
                     "1234\t3\t6\t1970-01-01T00:00:05.000000Z\t1234\tq\t1\t1970-01-01T00:00:00.000000Z\n" +
                     "1234\t1\t7\t1970-01-01T00:00:06.000000Z\t1234\tq\t1\t1970-01-01T00:00:00.000000Z\n" +

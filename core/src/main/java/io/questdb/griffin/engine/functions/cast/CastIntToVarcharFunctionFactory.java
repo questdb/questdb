@@ -71,7 +71,7 @@ public class CastIntToVarcharFunctionFactory implements FunctionFactory {
         @Override
         public void getVarchar(Record rec, Utf8Sink utf8Sink) {
             final int value = arg.getInt(rec);
-            if (value == Numbers.INT_NaN) {
+            if (value == Numbers.INT_NULL) {
                 return;
             }
             utf8Sink.put(value);
@@ -80,7 +80,7 @@ public class CastIntToVarcharFunctionFactory implements FunctionFactory {
         @Override
         public Utf8Sequence getVarcharA(Record rec) {
             final int value = arg.getInt(rec);
-            if (value != Numbers.INT_NaN) {
+            if (value != Numbers.INT_NULL) {
                 sinkA.clear();
                 sinkA.put(value);
                 return sinkA;
@@ -91,7 +91,7 @@ public class CastIntToVarcharFunctionFactory implements FunctionFactory {
         @Override
         public Utf8Sequence getVarcharB(Record rec) {
             final int value = arg.getInt(rec);
-            if (value != Numbers.INT_NaN) {
+            if (value != Numbers.INT_NULL) {
                 sinkB.clear();
                 sinkB.put(value);
                 return sinkB;

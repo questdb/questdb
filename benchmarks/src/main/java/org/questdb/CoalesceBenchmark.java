@@ -63,7 +63,7 @@ public class CoalesceBenchmark {
         constFunctions.add(new LongConstant(10L));
         records = new Record[N];
         for (int i = 0; i < N; i++) {
-            final long value = i % 2 == 0 ? Numbers.LONG_NaN : i;
+            final long value = i % 2 == 0 ? Numbers.LONG_NULL : i;
             records[i] = new Record() {
                 @Override
                 public long getLong(int col) {

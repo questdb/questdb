@@ -93,11 +93,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "  ASOF JOIN t3 ON id\n" +
                     ");";
             final String expected = "id\tts\tid1\tts1\tid2\tts2\n" +
-                    "1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\tNaN\t\n" +
-                    "2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\tNaN\t\n" +
-                    "3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.000003Z\tNaN\t\n" +
-                    "4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.000004Z\tNaN\t\n" +
-                    "5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.000005Z\tNaN\t\n";
+                    "1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\tnull\t\n" +
+                    "2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\tnull\t\n" +
+                    "3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.000003Z\tnull\t\n" +
+                    "4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.000004Z\tnull\t\n" +
+                    "5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.000005Z\tnull\t\n";
             printSqlResult(expected, query, "ts", false, true);
         });
     }
@@ -110,7 +110,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         ") timestamp(time)");
 
         assertSql("time\tx\tx1\tcolumn\n" +
-                "1970-01-01T00:00:01.000000Z\t1\tNaN\tNaN\n" +
+                "1970-01-01T00:00:01.000000Z\t1\tnull\tnull\n" +
                 "1970-01-01T00:00:02.000000Z\t2\t1\t1\n" +
                 "1970-01-01T00:00:03.000000Z\t3\t2\t1\n" +
                 "1970-01-01T00:00:04.000000Z\t4\t3\t1\n" +
@@ -234,7 +234,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                 "30\t29\n";
         assertQuery(
                 "hi\tlo\n",
-                "(select a.seq hi, b.seq lo from test a lt join test b) where lo != NaN",
+                "(select a.seq hi, b.seq lo from test a lt join test b) where lo != null",
                 "create table test(seq long, ts timestamp) timestamp(ts)",
                 null,
                 "insert into test select x, cast(x+10 as timestamp) from (select x, rnd_double() rnd from long_sequence(30)) where rnd<0.9999)",
@@ -308,11 +308,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
             final String query = "SELECT * FROM t1 \n" +
                     "ASOF JOIN t2 ON id;";
             final String expected = "id\tts\tid1\tts1\n" +
-                    "1\t1970-01-01T00:00:00.000001Z\tNaN\t\n" +
-                    "2\t1970-01-01T00:00:00.000002Z\tNaN\t\n" +
-                    "3\t1970-01-01T00:00:00.000003Z\tNaN\t\n" +
-                    "4\t1970-01-01T00:00:00.000004Z\tNaN\t\n" +
-                    "5\t1970-01-01T00:00:00.000005Z\tNaN\t\n";
+                    "1\t1970-01-01T00:00:00.000001Z\tnull\t\n" +
+                    "2\t1970-01-01T00:00:00.000002Z\tnull\t\n" +
+                    "3\t1970-01-01T00:00:00.000003Z\tnull\t\n" +
+                    "4\t1970-01-01T00:00:00.000004Z\tnull\t\n" +
+                    "5\t1970-01-01T00:00:00.000005Z\tnull\t\n";
             printSqlResult(expected, query, "ts", false, true);
         });
     }
@@ -423,9 +423,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
             printSqlResult(ex, "tabZ", "ts", true, true);
             // test
             ex = "tag\thi\tlo\n" +
-                    "A\t1\tNaN\n" +
-                    "A\t2\tNaN\n" +
-                    "A\t3\tNaN\n" +
+                    "A\t1\tnull\n" +
+                    "A\t2\tnull\n" +
+                    "A\t3\tnull\n" +
                     "B\t1\t2\n" +
                     "B\t2\t3\n" +
                     "B\t3\t3\n";
@@ -448,7 +448,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             insert("insert into tank values('2021-07-26T02:36:03.098000Z',8)");
 
             String expected = "ts\tSequenceNumber\tSequenceNumber1\tcolumn\n" +
-                    "2021-07-26T02:36:02.566000Z\t1\tNaN\tNaN\n" +
+                    "2021-07-26T02:36:02.566000Z\t1\tnull\tnull\n" +
                     "2021-07-26T02:36:03.094000Z\t2\t1\t1\n" +
                     "2021-07-26T02:36:03.097000Z\t3\t2\t1\n" +
                     "2021-07-26T02:36:03.097000Z\t4\t2\t2\n" +
@@ -489,7 +489,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x lt join y on y.sym2 = x.sym";
 
             final String expected = "i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
-                    "1\tmsft\t22.463\tNaN\t2018-01-01T00:12:00.000000Z\t\n" +
+                    "1\tmsft\t22.463\tnull\t2018-01-01T00:12:00.000000Z\t\n" +
                     "2\tgoogl\t29.92\t0.423\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:16:00.000000Z\n" +
                     "3\tmsft\t65.086\t0.456\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:32:00.000000Z\n" +
                     "4\tibm\t98.563\t0.405\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:34:00.000000Z\n" +
@@ -547,7 +547,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
             assertQueryFullFat(
                     "i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
-                            "1\tmsft\t22.463\tNaN\t2018-01-01T00:12:00.000000Z\t\n" +
+                            "1\tmsft\t22.463\tnull\t2018-01-01T00:12:00.000000Z\t\n" +
                             "2\tgoogl\t29.92\t0.423\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:16:00.000000Z\n" +
                             "3\tmsft\t65.086\t0.456\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:32:00.000000Z\n" +
                             "4\tibm\t98.563\t0.405\t2018-01-01T00:48:00.000000Z\t2018-01-01T00:34:00.000000Z\n" +
@@ -579,9 +579,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testLtJoinKeyed() throws Exception {
         final String expected = "tag\thi\tlo\tts\tts1\n" +
-                "AA\t315515118\tNaN\t1970-01-03T00:00:00.000000Z\t\n" +
-                "BB\t-727724771\tNaN\t1970-01-03T00:06:00.000000Z\t\n" +
-                "CC\t-948263339\tNaN\t1970-01-03T00:12:00.000000Z\t\n" +
+                "AA\t315515118\tnull\t1970-01-03T00:00:00.000000Z\t\n" +
+                "BB\t-727724771\tnull\t1970-01-03T00:06:00.000000Z\t\n" +
+                "CC\t-948263339\tnull\t1970-01-03T00:12:00.000000Z\t\n" +
                 "CC\t592859671\t-948263339\t1970-01-03T00:18:00.000000Z\t1970-01-03T00:12:00.000000Z\n" +
                 "AA\t-847531048\t315515118\t1970-01-03T00:24:00.000000Z\t1970-01-03T00:00:00.000000Z\n" +
                 "BB\t-2041844972\t-727724771\t1970-01-03T00:30:00.000000Z\t1970-01-03T00:06:00.000000Z\n" +
@@ -637,7 +637,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             "WHERE (b.timebid != a.timeask);";
 
             String expected = "timebid\ttimeask\tb\ta\n" +
-                    "1970-01-01T00:00:00.000000Z\t\t101\tNaN\n" +
+                    "1970-01-01T00:00:00.000000Z\t\t101\tnull\n" +
                     "1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000000Z\t102\t100\n" +
                     "1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000004Z\t103\t102\n";
 
@@ -649,9 +649,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testLtJoinNoTimestamp() throws Exception {
         final String expected = "tag\thi\tlo\n" +
-                "AA\t315515118\tNaN\n" +
-                "BB\t-727724771\tNaN\n" +
-                "CC\t-948263339\tNaN\n" +
+                "AA\t315515118\tnull\n" +
+                "BB\t-727724771\tnull\n" +
+                "CC\t-948263339\tnull\n" +
                 "CC\t592859671\t-948263339\n" +
                 "AA\t-847531048\t315515118\n" +
                 "BB\t-2041844972\t-727724771\n" +
@@ -718,10 +718,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
                 String query = "SELECT * FROM bids LT JOIN asks";
                 String expected = "stock\texchange\tts\ti\trating\tstock1\texchange1\tts1\ti1\trating1\n" +
-                        "AAPL\tNASDAQ\t2000-01-01T00:00:00.000000Z\t1\tGOOD\t\t\t\tNaN\t\n" +
-                        "AAPL\tLSE\t2000-01-01T00:00:00.000000Z\t4\tSCAM\t\t\t\tNaN\t\n" +
-                        "MSFT\tNASDAQ\t2000-01-01T00:00:00.000000Z\t7\tGOOD\t\t\t\tNaN\t\n" +
-                        "MSFT\tLSE\t2000-01-01T00:00:00.000000Z\t10\tUNKNOWN\t\t\t\tNaN\t\n" +
+                        "AAPL\tNASDAQ\t2000-01-01T00:00:00.000000Z\t1\tGOOD\t\t\t\tnull\t\n" +
+                        "AAPL\tLSE\t2000-01-01T00:00:00.000000Z\t4\tSCAM\t\t\t\tnull\t\n" +
+                        "MSFT\tNASDAQ\t2000-01-01T00:00:00.000000Z\t7\tGOOD\t\t\t\tnull\t\n" +
+                        "MSFT\tLSE\t2000-01-01T00:00:00.000000Z\t10\tUNKNOWN\t\t\t\tnull\t\n" +
                         "AAPL\tNASDAQ\t2001-01-01T00:00:00.000000Z\t2\tGOOD\tMSFT\tLSE\t2000-01-01T00:00:00.000000Z\t10\tGOOD\n" +
                         "AAPL\tLSE\t2001-01-01T00:00:00.000000Z\t5\tEXCELLENT\tMSFT\tLSE\t2000-01-01T00:00:00.000000Z\t10\tGOOD\n" +
                         "MSFT\tNASDAQ\t2001-01-01T00:00:00.000000Z\t8\tGOOD\tMSFT\tLSE\t2000-01-01T00:00:00.000000Z\t10\tGOOD\n" +
@@ -774,10 +774,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
                 String query = "SELECT * FROM bids LT JOIN asks ON (stock, exchange)";
                 String expected = "stock\texchange\tts\ti\trating\tstock1\texchange1\tts1\ti1\trating1\n" +
-                        "AAPL\tNASDAQ\t2000-01-01T00:00:00.000000Z\t1\tGOOD\t\t\t\tNaN\t\n" +
-                        "AAPL\tLSE\t2000-01-01T00:00:00.000000Z\t4\tSCAM\t\t\t\tNaN\t\n" +
-                        "MSFT\tNASDAQ\t2000-01-01T00:00:00.000000Z\t7\tGOOD\t\t\t\tNaN\t\n" +
-                        "MSFT\tLSE\t2000-01-01T00:00:00.000000Z\t10\tUNKNOWN\t\t\t\tNaN\t\n" +
+                        "AAPL\tNASDAQ\t2000-01-01T00:00:00.000000Z\t1\tGOOD\t\t\t\tnull\t\n" +
+                        "AAPL\tLSE\t2000-01-01T00:00:00.000000Z\t4\tSCAM\t\t\t\tnull\t\n" +
+                        "MSFT\tNASDAQ\t2000-01-01T00:00:00.000000Z\t7\tGOOD\t\t\t\tnull\t\n" +
+                        "MSFT\tLSE\t2000-01-01T00:00:00.000000Z\t10\tUNKNOWN\t\t\t\tnull\t\n" +
                         "AAPL\tNASDAQ\t2001-01-01T00:00:00.000000Z\t2\tGOOD\tAAPL\tNASDAQ\t2000-01-01T00:00:00.000000Z\t1\tGOOD\n" +
                         "AAPL\tLSE\t2001-01-01T00:00:00.000000Z\t5\tEXCELLENT\tAAPL\tLSE\t2000-01-01T00:00:00.000000Z\t4\tEXCELLENT\n" +
                         "MSFT\tNASDAQ\t2001-01-01T00:00:00.000000Z\t8\tGOOD\tMSFT\tNASDAQ\t2000-01-01T00:00:00.000000Z\t7\tEXCELLENT\n" +
@@ -799,11 +799,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
             final String query = "SELECT * FROM t1 \n" +
                     "LT JOIN t2 ON id;";
             final String expected = "id\tts\tid1\tts1\n" +
-                    "1\t1970-01-01T00:00:00.000001Z\tNaN\t\n" +
-                    "2\t1970-01-01T00:00:00.000002Z\tNaN\t\n" +
-                    "3\t1970-01-01T00:00:00.000003Z\tNaN\t\n" +
-                    "4\t1970-01-01T00:00:00.000004Z\tNaN\t\n" +
-                    "5\t1970-01-01T00:00:00.000005Z\tNaN\t\n";
+                    "1\t1970-01-01T00:00:00.000001Z\tnull\t\n" +
+                    "2\t1970-01-01T00:00:00.000002Z\tnull\t\n" +
+                    "3\t1970-01-01T00:00:00.000003Z\tnull\t\n" +
+                    "4\t1970-01-01T00:00:00.000004Z\tnull\t\n" +
+                    "5\t1970-01-01T00:00:00.000005Z\tnull\t\n";
             printSqlResult(expected, query, "ts", false, true);
         });
     }
@@ -889,7 +889,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             String query = "select * from x LT JOIN y on (s)";
             String expected = "s\txi\txts\ts1\tyi\tyts\n" +
                     "a\t0\t2000-01-01T00:00:00.000000Z\ta\t3\t1993-01-01T00:00:00.000000Z\n" +
-                    "b\t1\t2001-01-01T00:00:00.000000Z\t\tNaN\t\n" +
+                    "b\t1\t2001-01-01T00:00:00.000000Z\t\tnull\t\n" +
                     "c\t2\t2001-01-01T00:00:00.000000Z\tc\t0\t1990-01-01T00:00:00.000000Z\n";
 
             assertQuery(expected, query, "xts", false, true);
@@ -918,10 +918,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
             printSqlResult(ex, "tabY", "ts", true, true);
             // test
             ex = "tag\thi\tlo\n" +
-                    "A\t1\tNaN\n" +
+                    "A\t1\tnull\n" +
                     "A\t2\t1\n" +
                     "A\t3\t2\n" +
-                    "B\t1\tNaN\n" +
+                    "B\t1\tnull\n" +
                     "B\t2\t1\n" +
                     "B\t3\t2\n";
             String query = "select a.tag, a.x hi, b.x lo from tabY a lt join tabY b on (tag) ";
@@ -951,10 +951,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
             printSqlResult(ex, "tabY", "ts", true, true);
             // test
             ex = "tag\thi\tlo\n" +
-                    "A\t1\tNaN\n" +
+                    "A\t1\tnull\n" +
                     "A\t2\t1\n" +
                     "A\t3\t2\n" +
-                    "B\t1\tNaN\n" +
+                    "B\t1\tnull\n" +
                     "B\t2\t1\n" +
                     "B\t3\t2\n";
             String query = "select a.tag, a.x hi, b.x lo from tabY a lt join tabY b on (tag) ";

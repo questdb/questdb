@@ -72,7 +72,7 @@ public class CastTimestampToVarcharFunctionFactory implements FunctionFactory {
         @Override
         public void getVarchar(Record rec, Utf8Sink utf8Sink) {
             final long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NaN) {
+            if (value == Numbers.LONG_NULL) {
                 return;
             }
             TimestampFormatUtils.appendDateTimeUSec(utf8Sink, value);
@@ -81,7 +81,7 @@ public class CastTimestampToVarcharFunctionFactory implements FunctionFactory {
         @Override
         public Utf8Sequence getVarcharA(Record rec) {
             final long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NaN) {
+            if (value == Numbers.LONG_NULL) {
                 return null;
             }
             sinkA.clear();
@@ -92,7 +92,7 @@ public class CastTimestampToVarcharFunctionFactory implements FunctionFactory {
         @Override
         public Utf8Sequence getVarcharB(Record rec) {
             final long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NaN) {
+            if (value == Numbers.LONG_NULL) {
                 return null;
             }
             sinkB.clear();

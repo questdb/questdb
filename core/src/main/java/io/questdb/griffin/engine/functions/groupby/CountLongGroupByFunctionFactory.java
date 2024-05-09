@@ -56,7 +56,7 @@ public class CountLongGroupByFunctionFactory implements FunctionFactory {
         final Function arg = args.getQuick(0);
         if (arg.isConstant()) {
             long val = arg.getLong(null);
-            if (val == Numbers.LONG_NaN) {
+            if (val == Numbers.LONG_NULL) {
                 throw SqlException.$(argPositions.getQuick(0), "NULL is not allowed");
             }
             return new CountLongConstGroupByFunction();

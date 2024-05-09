@@ -31,7 +31,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Uuid;
 
 public class UuidConstant extends UuidFunction implements ConstantFunction {
-    public final static UuidConstant NULL = new UuidConstant(Numbers.LONG_NaN, Numbers.LONG_NaN);
+    public final static UuidConstant NULL = new UuidConstant(Numbers.LONG_NULL, Numbers.LONG_NULL);
     private final long hi;
     private final long lo;
 
@@ -52,6 +52,11 @@ public class UuidConstant extends UuidFunction implements ConstantFunction {
     @Override
     public long getLong128Lo(Record rec) {
         return lo;
+    }
+
+    @Override
+    public boolean isNullConstant() {
+        return hi == Numbers.LONG_NULL && lo == Numbers.LONG_NULL;
     }
 
     public void toPlan(PlanSink sink) {

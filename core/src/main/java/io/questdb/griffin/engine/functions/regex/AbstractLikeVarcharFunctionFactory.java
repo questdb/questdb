@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.functions.regex;
 
-
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -35,6 +34,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.griffin.engine.functions.str.StartsWithVarcharFunctionFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
@@ -227,11 +227,6 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
         }
 
         @Override
-        public boolean isReadThreadSafe() {
-            return true;
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(value);
             sink.val(" like ");
@@ -270,11 +265,6 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
         }
 
         @Override
-        public boolean isReadThreadSafe() {
-            return true;
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(value);
             sink.val(" like ");
@@ -305,11 +295,6 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
         }
 
         @Override
-        public boolean isReadThreadSafe() {
-            return true;
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(value);
             sink.val(" like ");
@@ -336,11 +321,6 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
         public boolean getBool(Record rec) {
             Utf8Sequence us = value.getVarcharA(rec);
             return us != null && Utf8s.containsLowerCaseAscii(us, pattern);
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return true;
         }
 
         @Override
@@ -374,11 +354,6 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
         }
 
         @Override
-        public boolean isReadThreadSafe() {
-            return true;
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(value);
             sink.val(" ilike ");
@@ -408,11 +383,6 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
         }
 
         @Override
-        public boolean isReadThreadSafe() {
-            return true;
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(value);
             sink.val(" ilike ");
@@ -421,36 +391,16 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
         }
     }
 
-    private static class ConstStartsWithVarcharFunction extends BooleanFunction implements UnaryFunction {
-        private final Utf8String pattern;
-        private final Function value;
-
-        public ConstStartsWithVarcharFunction(Function value, @Transient CharSequence pattern) {
-            this.value = value;
-            this.pattern = new Utf8String(pattern);
-        }
-
-        @Override
-        public Function getArg() {
-            return value;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            Utf8Sequence us = value.getVarcharA(rec);
-            return us != null && Utf8s.startsWith(us, pattern);
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return true;
+    private static class ConstStartsWithVarcharFunction extends StartsWithVarcharFunctionFactory.ConstFunc {
+        ConstStartsWithVarcharFunction(Function value, CharSequence startsWith) {
+            super(value, startsWith);
         }
 
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(value);
             sink.val(" like ");
-            sink.val(pattern);
+            sink.val(startsWith);
             sink.val('%');
         }
     }

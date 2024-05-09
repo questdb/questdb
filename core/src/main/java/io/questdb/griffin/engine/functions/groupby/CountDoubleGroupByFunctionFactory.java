@@ -30,6 +30,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CountDoubleGroupByFunctionFactory implements FunctionFactory {
@@ -55,7 +56,7 @@ public class CountDoubleGroupByFunctionFactory implements FunctionFactory {
         final Function arg = args.getQuick(0);
         if (arg.isConstant()) {
             double val = arg.getDouble(null);
-            if (!Double.isNaN(val)) {
+            if (Numbers.isFinite(val)) {
                 return new CountLongConstGroupByFunction();
             }
             throw SqlException.$(argPositions.getQuick(0), "NULL is not allowed");

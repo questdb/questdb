@@ -102,17 +102,24 @@ public class Utf8StringSink implements MutableUtf8Sink {
 
     @Override
     public Utf8StringSink put(byte b) {
+        assert b < 0 : "b is ascii";
         ascii = false;
         return putByte0(b);
     }
 
     @Override
-    public Utf8Sink putAscii(char c) {
+    public Utf8StringSink putAny(byte b) {
+        ascii &= b >= 0;
+        return putByte0(b);
+    }
+
+    @Override
+    public Utf8StringSink putAscii(char c) {
         return putByte0((byte) c);
     }
 
     @Override
-    public Utf8StringSink putUtf8(long lo, long hi) {
+    public Utf8StringSink putNonAscii(long lo, long hi) {
         ascii = false;
         checkCapacity(Bytes.checkedLoHiSize(lo, hi, pos));
         for (long p = lo; p < hi; p++) {

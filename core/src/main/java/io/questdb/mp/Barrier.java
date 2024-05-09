@@ -24,9 +24,7 @@
 
 package io.questdb.mp;
 
-import io.questdb.std.Mutable;
-
-public interface Barrier extends Mutable {
+public interface Barrier  {
     long availableIndex(long lo);
 
     long current();
@@ -53,10 +51,4 @@ public interface Barrier extends Mutable {
     void setCurrent(long value);
 
     Barrier then(Barrier barrier);
-
-    /**
-     * Resets the sequence to begin processing queue as if the queue was empty. Keeps barriers
-     * intact the maintain originally setup workflow.
-     */
-    void clear();
 }

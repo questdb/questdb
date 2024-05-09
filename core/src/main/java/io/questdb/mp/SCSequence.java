@@ -99,4 +99,22 @@ public class SCSequence extends AbstractSSequence {
         cache = barrier.availableIndex(next);
         return next > cache ? -1 : next;
     }
+
+    public void clear() {
+        while (true) {
+            long n = next();
+            if (n == -1) {
+                break;
+            }
+            if (n != -2) {
+                done(n);
+            }
+        }
+    }
+
+    public void reset() {
+        cache = -1;
+        value = -1;
+        barrier = OpenBarrier.INSTANCE;
+    }
 }

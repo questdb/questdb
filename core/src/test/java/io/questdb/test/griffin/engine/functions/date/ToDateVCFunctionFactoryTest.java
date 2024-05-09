@@ -34,12 +34,12 @@ import org.junit.Test;
 public class ToDateVCFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testNonCompliantDate() throws SqlException {
-        call("2015 03/12 abc", "yyyy dd/MM").andAssertDate(Numbers.LONG_NaN);
+        call("2015 03/12 abc", "yyyy dd/MM").andAssertDate(Numbers.LONG_NULL);
     }
 
     @Test
     public void testNullDate() throws SqlException {
-        call(null, "yyyy dd/MM").andAssertDate(Numbers.LONG_NaN);
+        call(null, "yyyy dd/MM").andAssertDate(Numbers.LONG_NULL);
     }
 
     @Test

@@ -52,7 +52,7 @@ public class MinDoubleVecGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testAllNullThenOne() throws Exception {
         assertQuery("min\n" +
-                        "NaN\n", "select min(f) from tab", "create table tab as (select cast(null as double) f from long_sequence(33))", null, "insert into tab select 22.009 from long_sequence(1)", "min\n" +
+                "null\n", "select min(f) from tab", "create table tab as (select cast(null as double) f from long_sequence(33))", null, "insert into tab select 22.009 from long_sequence(1)", "min\n" +
                         "22.009\n", false, true, false);
     }
 

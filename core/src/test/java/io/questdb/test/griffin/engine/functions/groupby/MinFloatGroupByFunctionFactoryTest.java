@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -53,7 +54,7 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
                 Record record = cursor.getRecord();
                 Assert.assertEquals(1, cursor.size());
                 Assert.assertTrue(cursor.hasNext());
-                Assert.assertTrue(Float.isNaN(record.getFloat(0)));
+                Assert.assertTrue(Numbers.isNull(record.getFloat(0)));
             }
         }
     }
@@ -164,8 +165,8 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "UQDY\t1.9459\t1970-01-03T00:00:00.000000Z\n" +
                         "UKLG\t3.9211\t1970-01-03T00:00:00.000000Z\n" +
                         "IMYF\t1.5957\t1970-01-03T00:00:00.000000Z\n" +
-                        "OPHN\tNaN\t1970-01-03T00:00:00.000000Z\n" +
-                        "MXSL\tNaN\t1970-01-03T00:00:00.000000Z\n" +
+                        "OPHN\tnull\t1970-01-03T00:00:00.000000Z\n" +
+                        "MXSL\tnull\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t0.3495\t1970-01-03T03:00:00.000000Z\n" +
                         "\t0.0268\t1970-01-03T03:00:00.000000Z\n" +
                         "CPSW\t0.1053\t1970-01-03T03:00:00.000000Z\n" +
@@ -175,8 +176,8 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "UQDY\t1.8404\t1970-01-03T03:00:00.000000Z\n" +
                         "UKLG\t3.5400\t1970-01-03T03:00:00.000000Z\n" +
                         "IMYF\t1.4828\t1970-01-03T03:00:00.000000Z\n" +
-                        "OPHN\tNaN\t1970-01-03T03:00:00.000000Z\n" +
-                        "MXSL\tNaN\t1970-01-03T03:00:00.000000Z\n" +
+                        "OPHN\tnull\t1970-01-03T03:00:00.000000Z\n" +
+                        "MXSL\tnull\t1970-01-03T03:00:00.000000Z\n" +
                         "VTJW\t0.0658\t1970-01-03T06:00:00.000000Z\n" +
                         "\t0.0502\t1970-01-03T06:00:00.000000Z\n" +
                         "CPSW\t0.7365\t1970-01-03T06:00:00.000000Z\n" +
@@ -186,8 +187,8 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "UQDY\t1.7350\t1970-01-03T06:00:00.000000Z\n" +
                         "UKLG\t3.1589\t1970-01-03T06:00:00.000000Z\n" +
                         "IMYF\t1.3699\t1970-01-03T06:00:00.000000Z\n" +
-                        "OPHN\tNaN\t1970-01-03T06:00:00.000000Z\n" +
-                        "MXSL\tNaN\t1970-01-03T06:00:00.000000Z\n" +
+                        "OPHN\tnull\t1970-01-03T06:00:00.000000Z\n" +
+                        "MXSL\tnull\t1970-01-03T06:00:00.000000Z\n" +
                         "RXGZ\t0.4440\t1970-01-03T09:00:00.000000Z\n" +
                         "\t0.0962\t1970-01-03T09:00:00.000000Z\n" +
                         "CPSW\t0.1195\t1970-01-03T09:00:00.000000Z\n" +
@@ -197,8 +198,8 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "UQDY\t1.6295\t1970-01-03T09:00:00.000000Z\n" +
                         "UKLG\t2.7779\t1970-01-03T09:00:00.000000Z\n" +
                         "IMYF\t1.2570\t1970-01-03T09:00:00.000000Z\n" +
-                        "OPHN\tNaN\t1970-01-03T09:00:00.000000Z\n" +
-                        "MXSL\tNaN\t1970-01-03T09:00:00.000000Z\n" +
+                        "OPHN\tnull\t1970-01-03T09:00:00.000000Z\n" +
+                        "MXSL\tnull\t1970-01-03T09:00:00.000000Z\n" +
                         "HYRX\t-0.1664\t1970-01-03T12:00:00.000000Z\n" +
                         "PEHN\t0.0479\t1970-01-03T12:00:00.000000Z\n" +
                         "\t0.1284\t1970-01-03T12:00:00.000000Z\n" +
@@ -208,8 +209,8 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "UQDY\t1.5240\t1970-01-03T12:00:00.000000Z\n" +
                         "UKLG\t2.3968\t1970-01-03T12:00:00.000000Z\n" +
                         "IMYF\t1.1441\t1970-01-03T12:00:00.000000Z\n" +
-                        "OPHN\tNaN\t1970-01-03T12:00:00.000000Z\n" +
-                        "MXSL\tNaN\t1970-01-03T12:00:00.000000Z\n" +
+                        "OPHN\tnull\t1970-01-03T12:00:00.000000Z\n" +
+                        "MXSL\tnull\t1970-01-03T12:00:00.000000Z\n" +
                         "HYRX\t-0.3728\t1970-01-03T15:00:00.000000Z\n" +
                         "PEHN\t-0.1578\t1970-01-03T15:00:00.000000Z\n" +
                         "\t0.1607\t1970-01-03T15:00:00.000000Z\n" +
@@ -219,8 +220,8 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "UQDY\t1.4185\t1970-01-03T15:00:00.000000Z\n" +
                         "UKLG\t2.0158\t1970-01-03T15:00:00.000000Z\n" +
                         "IMYF\t1.0312\t1970-01-03T15:00:00.000000Z\n" +
-                        "OPHN\tNaN\t1970-01-03T15:00:00.000000Z\n" +
-                        "MXSL\tNaN\t1970-01-03T15:00:00.000000Z\n" +
+                        "OPHN\tnull\t1970-01-03T15:00:00.000000Z\n" +
+                        "MXSL\tnull\t1970-01-03T15:00:00.000000Z\n" +
                         "HYRX\t-0.5792\t1970-01-03T18:00:00.000000Z\n" +
                         "PEHN\t-0.3635\t1970-01-03T18:00:00.000000Z\n" +
                         "\t0.1929\t1970-01-03T18:00:00.000000Z\n" +
@@ -230,8 +231,8 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "UQDY\t1.3131\t1970-01-03T18:00:00.000000Z\n" +
                         "UKLG\t1.6347\t1970-01-03T18:00:00.000000Z\n" +
                         "IMYF\t0.9184\t1970-01-03T18:00:00.000000Z\n" +
-                        "OPHN\tNaN\t1970-01-03T18:00:00.000000Z\n" +
-                        "MXSL\tNaN\t1970-01-03T18:00:00.000000Z\n" +
+                        "OPHN\tnull\t1970-01-03T18:00:00.000000Z\n" +
+                        "MXSL\tnull\t1970-01-03T18:00:00.000000Z\n" +
                         "HYRX\t-0.7856\t1970-01-03T21:00:00.000000Z\n" +
                         "PEHN\t-0.5692\t1970-01-03T21:00:00.000000Z\n" +
                         "\t0.2252\t1970-01-03T21:00:00.000000Z\n" +
@@ -241,8 +242,8 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "UQDY\t1.2076\t1970-01-03T21:00:00.000000Z\n" +
                         "UKLG\t1.2537\t1970-01-03T21:00:00.000000Z\n" +
                         "IMYF\t0.8055\t1970-01-03T21:00:00.000000Z\n" +
-                        "OPHN\tNaN\t1970-01-03T21:00:00.000000Z\n" +
-                        "MXSL\tNaN\t1970-01-03T21:00:00.000000Z\n" +
+                        "OPHN\tnull\t1970-01-03T21:00:00.000000Z\n" +
+                        "MXSL\tnull\t1970-01-03T21:00:00.000000Z\n" +
                         "HYRX\t-0.9920\t1970-01-04T00:00:00.000000Z\n" +
                         "PEHN\t-0.7748\t1970-01-04T00:00:00.000000Z\n" +
                         "\t0.2574\t1970-01-04T00:00:00.000000Z\n" +
@@ -252,8 +253,8 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "UQDY\t1.1021\t1970-01-04T00:00:00.000000Z\n" +
                         "UKLG\t0.8726\t1970-01-04T00:00:00.000000Z\n" +
                         "IMYF\t0.6926\t1970-01-04T00:00:00.000000Z\n" +
-                        "OPHN\tNaN\t1970-01-04T00:00:00.000000Z\n" +
-                        "MXSL\tNaN\t1970-01-04T00:00:00.000000Z\n" +
+                        "OPHN\tnull\t1970-01-04T00:00:00.000000Z\n" +
+                        "MXSL\tnull\t1970-01-04T00:00:00.000000Z\n" +
                         "UQDY\t0.9966\t1970-01-04T03:00:00.000000Z\n" +
                         "\t0.2896\t1970-01-04T03:00:00.000000Z\n" +
                         "UKLG\t0.4915\t1970-01-04T03:00:00.000000Z\n" +
@@ -263,8 +264,8 @@ public class MinFloatGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "VTJW\t-1.9200\t1970-01-04T03:00:00.000000Z\n" +
                         "CPSW\t-3.5825\t1970-01-04T03:00:00.000000Z\n" +
                         "RXGZ\t-1.0564\t1970-01-04T03:00:00.000000Z\n" +
-                        "OPHN\tNaN\t1970-01-04T03:00:00.000000Z\n" +
-                        "MXSL\tNaN\t1970-01-04T03:00:00.000000Z\n" +
+                        "OPHN\tnull\t1970-01-04T03:00:00.000000Z\n" +
+                        "MXSL\tnull\t1970-01-04T03:00:00.000000Z\n" +
                         "\t0.0140\t1970-01-04T06:00:00.000000Z\n" +
                         "IMYF\t0.4668\t1970-01-04T06:00:00.000000Z\n" +
                         "OPHN\t0.0181\t1970-01-04T06:00:00.000000Z\n" +

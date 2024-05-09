@@ -34,17 +34,17 @@ import org.jetbrains.annotations.NotNull;
 public class DirectUtf8String implements DirectUtf8Sequence, Mutable {
     public static final Factory FACTORY = new Factory();
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
-    private final boolean stable;
     private boolean ascii;
     private long hi;
     private long lo;
+    private boolean stable;
 
     public DirectUtf8String() {
         this(false);
     }
 
-    public DirectUtf8String(boolean stable) {
-        this.stable = stable;
+    public DirectUtf8String(boolean stableDefault) {
+        this.stable = stableDefault;
     }
 
     @Override
@@ -81,6 +81,14 @@ public class DirectUtf8String implements DirectUtf8Sequence, Mutable {
         this.lo = lo;
         this.hi = hi;
         this.ascii = ascii;
+        return this;
+    }
+
+    public DirectUtf8String of(long lo, long hi, boolean ascii, boolean stable) {
+        this.lo = lo;
+        this.hi = hi;
+        this.ascii = ascii;
+        this.stable = stable;
         return this;
     }
 

@@ -267,11 +267,6 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         }
 
         @Override
-        public boolean isReadThreadSafe() {
-            return true;
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(value);
             sink.val(" like ");
@@ -299,11 +294,6 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         public boolean getBool(Record rec) {
             CharSequence cs = value.getStrA(rec);
             return Chars.endsWith(cs, pattern);
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return true;
         }
 
         @Override
@@ -339,11 +329,6 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         }
 
         @Override
-        public boolean isReadThreadSafe() {
-            return true;
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(value);
             sink.val(" ilike ");
@@ -374,11 +359,6 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         }
 
         @Override
-        public boolean isReadThreadSafe() {
-            return true;
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(value);
             sink.val(" ilike ");
@@ -405,11 +385,6 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         public boolean getBool(Record rec) {
             CharSequence cs = value.getStrA(rec);
             return Chars.startsWithLowerCase(cs, pattern);
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return true;
         }
 
         @Override
@@ -476,11 +451,6 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         public boolean getBool(Record rec) {
             CharSequence cs = value.getStrA(rec);
             return Chars.startsWith(cs, pattern);
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return true;
         }
 
         @Override

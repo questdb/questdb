@@ -786,7 +786,7 @@ public class GroupByTest extends AbstractCairoTest {
     public void testGroupByAllIndexedColumns() throws Exception {
         assertQuery(
                 "time\ts1\tfirst\tfirst1\tfirst2\n" +
-                        "2023-05-16T00:00:00.000000Z\ta\tfoo\tNaN\t0.08486964232560668\n" +
+                        "2023-05-16T00:00:00.000000Z\ta\tfoo\tnull\t0.08486964232560668\n" +
                         "2023-05-16T00:02:00.000000Z\tb\tfoo\t0.8899286912289663\t0.6254021542412018\n" +
                         "2023-05-16T00:05:00.000000Z\tc\tfoo\t0.1985581797355932\t0.33608255572515877\n",
                 "SELECT first(ts) as time, s1, first(s2), first(d1), first(d2) " +
@@ -1016,6 +1016,102 @@ public class GroupByTest extends AbstractCairoTest {
                 "CREATE TABLE x AS (SELECT x::timestamp AS ts, x::short AS event, x::short AS origin FROM long_sequence(2)) TIMESTAMP(ts);",
                 null,
                 true,
+                true
+        );
+    }
+
+    @Test
+    public void testGroupBySingleVarcharKeyFromSampleByWithFill() throws Exception {
+        ddl("create table t (vch varchar, l long, ts timestamp) timestamp(ts) partition by day;");
+        insert("insert into t values \n" +
+                "('USD', 1, '2021-11-17T17:00:00.000000Z'),\n" +
+                "('USD', 2, '2021-11-17T17:35:02.000000Z'),\n" +
+                "('EUR', 3, '2021-11-17T17:45:02.000000Z'),\n" +
+                "('USD', 1, '2021-11-17T19:04:00.000000Z'),\n" +
+                "('USD', 2, '2021-11-17T19:35:02.000000Z'),\n" +
+                "('USD', 3, '2021-11-17T19:45:02.000000Z');");
+
+        String query = "with samp as (\n" +
+                "  select ts, vch, min(l), max(l)\n" +
+                "  from t\n" +
+                "  sample by 1h fill(prev)\n" +
+                ")\n" +
+                "select vch, sum(min)\n" +
+                "from samp;";
+
+        assertQuery(
+                "vch\tsum\n" +
+                        "EUR\t9\n" +
+                        "USD\t3\n",
+                query,
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testGroupBySingleVarcharKeyFromUnionAllAndFunction() throws Exception {
+        // grouping by a single varchar key uses a fast-path which assume most of the time keys are just stable
+        // pointers into mmaped memory. This test verifies that the fast-path is not broken when some grouping
+        // keys are indeed stable and some are not. to_uppercase() produces a varchar which is not stable.
+
+        ddl("create table tab1 as (select (x % 5)::varchar as vch, x, now() as ts from long_sequence(20)) \n" +
+                "timestamp(ts) PARTITION by day");
+
+        String query = "with \n" +
+                "  w1 as (\n" +
+                "    select * from tab1\n" +
+                "    order by vch asc\n" +
+                "  ), \n" +
+                "  w2 as (\n" +
+                "    select * from tab1\n" +
+                "    order by vch desc\n" +
+                "  ),\n" +
+                "  u as (select * from w1\n" +
+                "    UNION all w2\n" +
+                "  ),\n" +
+                "  uo as (\n" +
+                "    select * from u order by vch\n" +
+                "  ),\n" +
+                "  grouped as (\n" +
+                "    select vch, count(vch)\n" +
+                "    from uo\n" +
+                "    order by vch\n" +
+                "  ),\n" +
+                "  nested as (\n" +
+                "    select vch, sum(count) from grouped\n" +
+                "    group by vch\n" +
+                "    order by vch\n" +
+                "  )\n" +
+                "select tab1.vch, tab1.x, nested.vch as nested_vch, sum\n" +
+                "from tab1\n" +
+                "join nested on nested.vch = tab1.vch;";
+        assertQuery(
+                "vch\tx\tnested_vch\tsum\n" +
+                        "1\t1\t1\t8\n" +
+                        "2\t2\t2\t8\n" +
+                        "3\t3\t3\t8\n" +
+                        "4\t4\t4\t8\n" +
+                        "0\t5\t0\t8\n" +
+                        "1\t6\t1\t8\n" +
+                        "2\t7\t2\t8\n" +
+                        "3\t8\t3\t8\n" +
+                        "4\t9\t4\t8\n" +
+                        "0\t10\t0\t8\n" +
+                        "1\t11\t1\t8\n" +
+                        "2\t12\t2\t8\n" +
+                        "3\t13\t3\t8\n" +
+                        "4\t14\t4\t8\n" +
+                        "0\t15\t0\t8\n" +
+                        "1\t16\t1\t8\n" +
+                        "2\t17\t2\t8\n" +
+                        "3\t18\t3\t8\n" +
+                        "4\t19\t4\t8\n" +
+                        "0\t20\t0\t8\n",
+                query,
+                null,
+                false,
                 true
         );
     }
@@ -1470,8 +1566,8 @@ public class GroupByTest extends AbstractCairoTest {
                     "from long_sequence(1000000)");
 
             String expected = "ts\ti\tavg\tsum\tfirst_value\n" +
-                    "1970-01-01T00:00:01.099967Z\tNaN\t495.40261282660333\t1668516.0\t481.0\n" +
-                    "1970-01-01T00:00:01.099995Z\t1\t495.08707124010556\t1688742.0\tNaN\n" +
+                    "1970-01-01T00:00:01.099967Z\tnull\t495.40261282660333\t1668516.0\t481.0\n" +
+                    "1970-01-01T00:00:01.099995Z\t1\t495.08707124010556\t1688742.0\tnull\n" +
                     "1970-01-01T00:00:01.099973Z\t2\t506.5011448196909\t1769715.0\t697.0\n" +
                     "1970-01-01T00:00:01.099908Z\t3\t505.95267958950967\t1774882.0\t16.0\n" +
                     "1970-01-01T00:00:01.099977Z\t4\t501.16155593412833\t1765091.0\t994.0\n" +
@@ -1484,7 +1580,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "1970-01-01T00:00:01.099976Z\t11\t501.4019192774485\t1776467.0\t720.0\n" +
                     "1970-01-01T00:00:01.099984Z\t12\t489.8953058321479\t1721982.0\t949.0\n" +
                     "1970-01-01T00:00:01.099952Z\t13\t500.65723270440253\t1751299.0\t518.0\n" +
-                    "1970-01-01T00:00:01.099996Z\t14\t506.8769141866513\t1754301.0\tNaN\n" +
+                    "1970-01-01T00:00:01.099996Z\t14\t506.8769141866513\t1754301.0\tnull\n" +
                     "1970-01-01T00:00:01.100000Z\t15\t497.0794058840331\t1740275.0\t824.0\n" +
                     "1970-01-01T00:00:01.099979Z\t16\t499.3338209479228\t1706723.0\t38.0\n" +
                     "1970-01-01T00:00:01.099951Z\t17\t492.7804469273743\t1764154.0\t698.0\n" +

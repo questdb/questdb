@@ -1218,7 +1218,7 @@ public class CopyTask {
                     long n = ff.read(fd, fileBufAddr, bytesToRead, offset);
                     if (n > 0) {
                         // at this phase there is no way for lines to be split across buffers
-                        lexer.parseExactLines(fileBufAddr, fileBufAddr + n);
+                        lexer.parse(fileBufAddr, fileBufAddr + n);
                     } else {
                         throw TextException
                                 .$("could not read from file [path='").put(tmpPath)
@@ -1396,7 +1396,7 @@ public class CopyTask {
         private void parseLinesAndWrite(AbstractTextLexer lexer, long fileBufAddr, LongList offsets, int j) {
             final long lo = fileBufAddr + offsets.getQuick(j * 2);
             final long hi = lo + offsets.getQuick(j * 2 + 1);
-            lexer.parseExactLines(lo, hi);
+            lexer.parse(lo, hi);
         }
 
         private void unmap(FilesFacade ff, DirectLongList mergeIndexes) {

@@ -33,7 +33,10 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
-import io.questdb.std.*;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.Utf8SequenceHashSet;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 
@@ -88,11 +91,6 @@ public class AllNotEqVarcharFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             final Utf8Sequence str = arg.getVarcharA(rec);
             return str != null && set.excludes(str);
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return false;
         }
 
         @Override

@@ -67,6 +67,10 @@ public final class Chars {
         return dst;
     }
 
+    public static void base64Decode(CharSequence encoded, @NotNull Utf8Sink target) {
+        base64Decode(encoded, target, base64Inverted);
+    }
+
     /**
      * Decodes base64u encoded string into a byte buffer.
      * <p>
@@ -80,10 +84,6 @@ public final class Chars {
      * @throws java.nio.BufferOverflowException if target buffer is too small
      */
     public static void base64Decode(CharSequence encoded, @NotNull ByteBuffer target) {
-        base64Decode(encoded, target, base64Inverted);
-    }
-
-    public static void base64Decode(CharSequence encoded, @NotNull Utf8Sink target) {
         base64Decode(encoded, target, base64Inverted);
     }
 
@@ -395,6 +395,54 @@ public final class Chars {
         return l != null && equals(l, r, rLo, rHi);
     }
 
+    public static boolean equalsNullable(@Nullable CharSequence l, @Nullable CharSequence r) {
+        if (l == null && r == null) {
+            return true;
+        }
+
+        if (l == null || r == null) {
+            return false;
+        }
+
+        int ll;
+        if ((ll = l.length()) != r.length()) {
+            return false;
+        }
+
+        return equalsChars(l, r, ll);
+    }
+
+    /**
+     * Strictly greater than (&gt;) comparison of two UTF16 sequences in lexicographical
+     * order. For example, for:
+     * l = aaaaa
+     * r = aaaaaaa
+     * the l &gt; r will produce "false", however for:
+     * l = bbbb
+     * r = aaaaaaa
+     * the l &gt; r will produce "true", because b &gt; a.
+     *
+     * @param l left sequence, can be null
+     * @param r right sequence, can be null
+     * @return if either l or r is "null", the return value false, otherwise sequences are compared lexicographically.
+     */
+    public static boolean greaterThan(@Nullable CharSequence l, @Nullable CharSequence r) {
+        if (l == null || r == null) {
+            return false;
+        }
+        final int ll = l.length();
+        final int rl = r.length();
+        final int min = Math.min(ll, rl);
+
+        for (int i = 0; i < min; i++) {
+            final int k = l.charAt(i) - r.charAt(i);
+            if (k != 0) {
+                return k > 0;
+            }
+        }
+        return ll > rl;
+    }
+
     public static int hashCode(@NotNull CharSequence value, int lo, int hi) {
         if (hi == lo) {
             return 0;
@@ -639,21 +687,6 @@ public final class Chars {
         return true;
     }
 
-    // todo: add tests (used in Ent)
-    public static boolean isDoubleQuote(char c) {
-        return c == '"';
-    }
-
-    // todo: add tests (used in Ent)
-    public static boolean isDoubleQuoted(CharSequence s) {
-        if (s == null || s.length() < 2) {
-            return false;
-        }
-
-        char open = s.charAt(0);
-        return isDoubleQuote(open) && open == s.charAt(s.length() - 1);
-    }
-
     public static boolean isOnlyDecimals(CharSequence s) {
         int len = s.length();
         for (int i = len - 1; i > -1; i--) {
@@ -687,6 +720,42 @@ public final class Chars {
 
     public static int lastIndexOf(CharSequence sequence, int sequenceLo, int sequenceHi, CharSequence term) {
         return indexOf(sequence, sequenceLo, sequenceHi, term, -1);
+    }
+
+    /**
+     * Strictly greater than (&lt;) comparison of two UTF16 sequences in lexicographical
+     * order. For example, for:
+     * l = aaaaa
+     * r = aaaaaaa
+     * the l &gt; r will produce "false", however for:
+     * l = bbbb
+     * r = aaaaaaa
+     * the l &lt; r will produce "true", because b &lt; a.
+     *
+     * @param l left sequence, can be null
+     * @param r right sequence, can be null
+     * @return if either l or r is "null", the return value false, otherwise sequences are compared lexicographically.
+     */
+    public static boolean lessThan(@Nullable CharSequence l, @Nullable CharSequence r) {
+        if (l == null || r == null) {
+            return false;
+        }
+        final int ll = l.length();
+        final int rl = r.length();
+        final int min = Math.min(ll, rl);
+
+        for (int i = 0; i < min; i++) {
+            final int k = l.charAt(i) - r.charAt(i);
+            if (k != 0) {
+                return k < 0;
+            }
+        }
+        return ll < rl;
+    }
+
+    public static boolean lessThan(@Nullable CharSequence l, @Nullable CharSequence r, boolean negated) {
+        final boolean eq = Chars.equalsNullable(l, r);
+        return negated ? (eq || Chars.greaterThan(l, r)) : (!eq && Chars.lessThan(l, r));
     }
 
     public static int lowerCaseAsciiHashCode(CharSequence value, int lo, int hi) {
@@ -824,13 +893,8 @@ public final class Chars {
         if (cs == null || starts == null) {
             return false;
         }
-
         int l = starts.length();
-        if (l == 0) {
-            return true;
-        }
-
-        return cs.length() >= l && equalsChars(cs, starts, l);
+        return l == 0 || cs.length() >= l && equalsChars(cs, starts, l);
     }
 
     public static boolean startsWith(CharSequence _this, int thisLo, int thisHi, CharSequence that) {
@@ -1033,9 +1097,9 @@ public final class Chars {
             int wrk = b0 | b1 | b2 | b4;
             // we use absolute positions to write to the byte buffer in the hot loop
             // benchmarking shows that it is faster than using relative positions
-            target.put((byte) (wrk >>> 16));
-            target.put((byte) ((wrk >>> 8) & 0xFF));
-            target.put((byte) (wrk & 0xFF));
+            target.putAny((byte) (wrk >>> 16));
+            target.putAny((byte) ((wrk >>> 8) & 0xFF));
+            target.putAny((byte) (wrk & 0xFF));
         }
         // now decode remainder
         int wrk;
@@ -1050,14 +1114,14 @@ public final class Chars {
             case 2:
                 wrk = base64InvertedLookup(invertedAlphabet, encoded.charAt(sourcePos)) << 18;
                 wrk |= base64InvertedLookup(invertedAlphabet, encoded.charAt(sourcePos + 1)) << 12;
-                target.put((byte) (wrk >>> 16));
+                target.putAny((byte) (wrk >>> 16));
                 break;
             case 3:
                 wrk = base64InvertedLookup(invertedAlphabet, encoded.charAt(sourcePos)) << 18;
                 wrk |= base64InvertedLookup(invertedAlphabet, encoded.charAt(sourcePos + 1)) << 12;
                 wrk |= base64InvertedLookup(invertedAlphabet, encoded.charAt(sourcePos + 2)) << 6;
-                target.put((byte) (wrk >>> 16));
-                target.put((byte) ((wrk >>> 8) & 0xFF));
+                target.putAny((byte) (wrk >>> 16));
+                target.putAny((byte) ((wrk >>> 8) & 0xFF));
         }
     }
 

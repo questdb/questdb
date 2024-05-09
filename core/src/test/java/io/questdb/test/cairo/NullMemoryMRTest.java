@@ -65,7 +65,7 @@ public class NullMemoryMRTest {
 
     @Test
     public void getDouble() {
-        Assert.assertTrue(Double.isNaN(NullMemoryMR.INSTANCE.getDouble(1234)));
+        Assert.assertTrue(Numbers.isNull(NullMemoryMR.INSTANCE.getDouble(1234)));
     }
 
     @Test
@@ -75,17 +75,17 @@ public class NullMemoryMRTest {
 
     @Test
     public void getFloat() {
-        Assert.assertTrue(Float.isNaN(NullMemoryMR.INSTANCE.getFloat(123)));
+        Assert.assertTrue(Numbers.isNull(NullMemoryMR.INSTANCE.getFloat(123)));
     }
 
     @Test
     public void getInt() {
-        Assert.assertEquals(Numbers.INT_NaN, NullMemoryMR.INSTANCE.getInt(1234));
+        Assert.assertEquals(Numbers.INT_NULL, NullMemoryMR.INSTANCE.getInt(1234));
     }
 
     @Test
     public void getLong() {
-        Assert.assertEquals(Numbers.LONG_NaN, NullMemoryMR.INSTANCE.getLong(1234));
+        Assert.assertEquals(Numbers.LONG_NULL, NullMemoryMR.INSTANCE.getLong(1234));
     }
 
     @Test

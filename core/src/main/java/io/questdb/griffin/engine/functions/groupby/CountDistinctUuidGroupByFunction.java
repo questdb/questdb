@@ -64,8 +64,8 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
             mapValue.putLong(valueIndex, 1L);
             // Remap zero since it's used as the no entry key.
             if (lo == 0 && hi == 0) {
-                lo = Numbers.LONG_NaN;
-                hi = Numbers.LONG_NaN;
+                lo = Numbers.LONG_NULL;
+                hi = Numbers.LONG_NULL;
             }
             setA.of(0).add(lo, hi);
             mapValue.putLong(valueIndex + 1, setA.ptr());
@@ -83,8 +83,8 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
             long ptr = mapValue.getLong(valueIndex + 1);
             // Remap zero since it's used as the no entry key.
             if (lo == 0 && hi == 0) {
-                lo = Numbers.LONG_NaN;
-                hi = Numbers.LONG_NaN;
+                lo = Numbers.LONG_NULL;
+                hi = Numbers.LONG_NULL;
             }
             final long index = setA.of(ptr).keyIndex(lo, hi);
             if (index >= 0) {
@@ -140,13 +140,13 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcCount = srcValue.getLong(valueIndex);
-        if (srcCount == 0 || srcCount == Numbers.LONG_NaN) {
+        if (srcCount == 0 || srcCount == Numbers.LONG_NULL) {
             return;
         }
         long srcPtr = srcValue.getLong(valueIndex + 1);
 
         long destCount = destValue.getLong(valueIndex);
-        if (destCount == 0 || destCount == Numbers.LONG_NaN) {
+        if (destCount == 0 || destCount == Numbers.LONG_NULL) {
             destValue.putLong(valueIndex, srcCount);
             destValue.putLong(valueIndex + 1, srcPtr);
             return;
@@ -188,7 +188,7 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putLong(valueIndex, Numbers.LONG_NaN);
+        mapValue.putLong(valueIndex, Numbers.LONG_NULL);
         mapValue.putLong(valueIndex + 1, 0);
     }
 

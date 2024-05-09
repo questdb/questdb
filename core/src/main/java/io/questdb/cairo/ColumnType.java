@@ -354,7 +354,7 @@ public final class ColumnType {
     }
 
     private static boolean isIPv4Cast(int fromType, int toType) {
-        return (fromType == STRING && toType == IPv4);
+        return (fromType == STRING || fromType == VARCHAR) && toType == IPv4;
     }
 
     private static boolean isImplicitParsingCast(int fromType, int toType) {

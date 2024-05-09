@@ -198,7 +198,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                     if (col == sequencerTxnColumn) {
                         return sequencerTxn;
                     }
-                    return Numbers.LONG_NaN;
+                    return Numbers.LONG_NULL;
                 }
 
                 @Override
