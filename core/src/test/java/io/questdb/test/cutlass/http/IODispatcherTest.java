@@ -3655,7 +3655,7 @@ public class IODispatcherTest extends AbstractTest {
                         "\\{\"query\":\"select \\* from test_data_unavailable\\(1, 10\\)\",\"error\":\"timeout, query aborted \\[fd=\\d+\\]\",\"position\":0\\}",
                         "select * from test_data_unavailable(1, 10)",
                         null, null, null, null,
-                        "400"
+                        "408"
                 ));
     }
 
