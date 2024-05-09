@@ -1208,7 +1208,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpAuthDB = null;
             }
 
-            this.useLegacyStringDefault = getBoolean(properties, env, PropertyKey.USE_LEGACY_STRING_DEFAULT, false);
+            this.useLegacyStringDefault = getBoolean(properties, env, PropertyKey.CAIRO_LEGACY_STRING_COLUMN_TYPE_DEFAULT, false);
             if (lineTcpEnabled || (lineHttpEnabled && httpServerEnabled)) {
                 LineTimestampAdapter timestampAdapter = getLineTimestampAdaptor(properties, env, PropertyKey.LINE_TCP_TIMESTAMP);
                 this.lineTcpTimestampAdapter = new LineTcpTimestampAdapter(timestampAdapter);
