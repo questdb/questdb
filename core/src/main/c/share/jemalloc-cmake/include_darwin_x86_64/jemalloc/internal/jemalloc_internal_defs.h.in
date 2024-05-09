@@ -6,8 +6,8 @@
  * public APIs to be prefixed.  This makes it possible, with some care, to use
  * multiple allocators simultaneously.
  */
-#define JEMALLOC_PREFIX "je_"
-#define JEMALLOC_CPREFIX "JE_"
+/* #define JEMALLOC_PREFIX "je_" */
+/* #define JEMALLOC_CPREFIX "JE_" */
 
 /*
  * Define overrides for non-standard allocator-related functions if they are
