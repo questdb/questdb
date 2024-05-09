@@ -964,7 +964,6 @@ public final class TableUtils {
     }
 
     public static int lock(FilesFacade ff, Path path, boolean verbose) {
-
         // workaround for https://github.com/docker/for-mac/issues/7004
         if (Files.VIRTIO_FS_DETECTED) {
             if (!ff.touch(path)) {

@@ -813,37 +813,42 @@ public class WalTableFailureTest extends AbstractCairoTest {
             });
             applyThread.start();
 
-            ddl("create table tab (b boolean, ts timestamp, sym symbol) timestamp(ts) partition by DAY WAL");
-            TableToken tt = engine.verifyTableName("tab");
+            try {
+                ddl("create table tab (b boolean, ts timestamp, sym symbol) timestamp(ts) partition by DAY WAL");
+                TableToken tt = engine.verifyTableName("tab");
 
-            insert("insert into tab select true, (1)::timestamp, null from long_sequence(1)");
-            insert("insert into tab select true, (2)::timestamp, null from long_sequence(1)");
-            insert("insert into tab select true, (3)::timestamp, null from long_sequence(1)");
-            insert("insert into tab select true, (4)::timestamp, null from long_sequence(1)");
-            update("update tab set b=false");
+                insert("insert into tab select true, (1)::timestamp, null from long_sequence(1)");
+                insert("insert into tab select true, (2)::timestamp, null from long_sequence(1)");
+                insert("insert into tab select true, (3)::timestamp, null from long_sequence(1)");
+                insert("insert into tab select true, (4)::timestamp, null from long_sequence(1)");
+                update("update tab set b=false");
 
-            assertEventually(() -> Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tt)));
+                assertEventually(() -> Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tt)));
 
-            ddl("alter table tab resume wal");
-            insert("insert into tab select true, (5)::timestamp, null from long_sequence(1)");
-            insert("insert into tab select true, (6)::timestamp, null from long_sequence(1)");
+                ddl("alter table tab resume wal");
+                insert("insert into tab select true, (5)::timestamp, null from long_sequence(1)");
+                insert("insert into tab select true, (6)::timestamp, null from long_sequence(1)");
 
-            assertEventually(() -> {
-                try {
-                    assertSql("b\tts\tsym\n" +
-                            "false\t1970-01-01T00:00:00.000001Z\t\n" +
-                            "false\t1970-01-01T00:00:00.000002Z\t\n" +
-                            "false\t1970-01-01T00:00:00.000003Z\t\n" +
-                            "false\t1970-01-01T00:00:00.000004Z\t\n" +
-                            "true\t1970-01-01T00:00:00.000005Z\t\n" +
-                            "true\t1970-01-01T00:00:00.000006Z\t\n", "tab");
-                } catch (SqlException e) {
-                    throw new RuntimeException(e);
-                }
-            });
-
-            done.set(true);
-            applyThread.join();
+                assertEventually(() -> {
+                    try {
+                        assertSql(
+                                "b\tts\tsym\n" +
+                                        "false\t1970-01-01T00:00:00.000001Z\t\n" +
+                                        "false\t1970-01-01T00:00:00.000002Z\t\n" +
+                                        "false\t1970-01-01T00:00:00.000003Z\t\n" +
+                                        "false\t1970-01-01T00:00:00.000004Z\t\n" +
+                                        "true\t1970-01-01T00:00:00.000005Z\t\n" +
+                                        "true\t1970-01-01T00:00:00.000006Z\t\n",
+                                "tab"
+                        );
+                    } catch (SqlException e) {
+                        throw new RuntimeException(e);
+                    }
+                });
+            } finally {
+                done.set(true);
+                applyThread.join();
+            }
 
             if (exception.get() != null) {
                 throw new RuntimeException(exception.get());

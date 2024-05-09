@@ -56,12 +56,12 @@ public class TableSequencerImpl implements TableSequencer {
     private final int rootLen;
     private final ReadWriteLock schemaLock = new SimpleReadWriteLock();
     private final SeqTxnTracker seqTxnTracker;
+    private final TableTransactionLog tableTransactionLog;
     private final WalDirectoryPolicy walDirectoryPolicy;
     private final IDGenerator walIdGenerator;
     private volatile boolean closed = false;
     private boolean distressed = false;
     private TableToken tableToken;
-    private final TableTransactionLog tableTransactionLog;
 
     TableSequencerImpl(CairoEngine engine, TableToken tableToken, SeqTxnTracker txnTracker) {
         this.engine = engine;
@@ -405,6 +405,13 @@ public class TableSequencerImpl implements TableSequencer {
             metadata.create(tableStruct, tableToken, path, rootLen, tableId);
             tableTransactionLog.create(path, timestamp);
             engine.getWalListener().tableCreated(tableToken, timestamp);
+        } catch (Throwable th) {
+            LOG.critical().$("could not create sequencer [name=").utf8(tableToken.getDirName())
+                    .$(", path=").$(path)
+                    .$(", error=").$(th.getMessage())
+                    .I$();
+            closeLocked();
+            throw th;
         } finally {
             schemaLock.writeLock().unlock();
         }

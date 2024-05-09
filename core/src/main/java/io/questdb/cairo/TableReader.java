@@ -99,11 +99,12 @@ public class TableReader implements Closeable, SymbolTableSource {
         this.ff = configuration.getFilesFacade();
         this.tableToken = tableToken;
         this.messageBus = messageBus;
-        this.path = new Path();
-        this.path.of(configuration.getRoot()).concat(this.tableToken.getDirName());
-        this.rootLen = path.size();
-        path.trimTo(rootLen);
         try {
+            this.path = new Path();
+            this.path.of(configuration.getRoot()).concat(this.tableToken.getDirName());
+            this.rootLen = path.size();
+            path.trimTo(rootLen);
+
             metadata = openMetaFile();
             partitionBy = metadata.getPartitionBy();
             columnVersionReader = new ColumnVersionReader().ofRO(ff, path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$());
@@ -777,8 +778,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private void freeTempMem() {
         if (tempMem8b != 0L) {
-            Unsafe.free(tempMem8b, Long.BYTES, MemoryTag.NATIVE_TABLE_READER);
-            tempMem8b = 0L;
+            tempMem8b = Unsafe.free(tempMem8b, Long.BYTES, MemoryTag.NATIVE_TABLE_READER);
         }
     }
 
@@ -805,8 +805,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         LOG.debug().$("inserted partition [index=").$(partitionIndex).$(", table=").$(tableToken).$(", timestamp=").$ts(timestamp).I$();
     }
 
-    @NotNull
     // this method is not thread safe
+    @NotNull
     private SymbolMapReaderImpl newSymbolMapReader(int symbolColumnIndex, int columnIndex) {
         // symbol column index is the index of symbol column in dense array of symbol columns, e.g.
         // if table has only one symbol columns, the symbolColumnIndex is 0 regardless of column position
