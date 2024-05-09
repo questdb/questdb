@@ -741,8 +741,11 @@ public class ExpressionParser {
                     case '9':
                     case '\'':
                     case 'e':
+                        if (thisChar == 'e' && !SqlKeywords.isEscapeKeyword(tok)) {
+                            processDefaultBranch = true;
+                            break;
+                        }
                     case 'E':
-
                         if (SqlKeywords.isEscapeKeyword(tok)) {
                             ExpressionNode firstNode = opStack.pop();
                             ExpressionNode functionNode = opStack.pop();
