@@ -654,6 +654,8 @@ public final class WhereClauseParser implements Mutable {
             // NOT IN can be translated in any case as series of subtractions
             if (!model.hasIntervalFilters() || isNegated) {
                 int n = in.args.size() - 1;
+                Function timestampFunc = null;
+                boolean moreThanOneTimestampFunc = false;
                 for (int i = 0; i < n; i++) {
                     ExpressionNode inListItem = in.args.getQuick(i);
                     if (inListItem.type != ExpressionNode.CONSTANT) {
@@ -662,8 +664,12 @@ public final class WhereClauseParser implements Mutable {
                         }
                         Function f = functionParser.parseFunction(inListItem, metadata, executionContext);
                         if (!f.isConstant() || !checkFunctionCanBeTimestampInterval(executionContext, f)) {
-                            // todo: support runtime constants too
                             return false;
+                        }
+                        if (timestampFunc != null) {
+                            moreThanOneTimestampFunc = true;
+                        } else {
+                            timestampFunc = f;
                         }
                     }
                 }
@@ -674,8 +680,7 @@ public final class WhereClauseParser implements Mutable {
                     if (inListItem.type == ExpressionNode.CONSTANT) {
                         ts = parseTokenAsTimestamp(inListItem);
                     } else {
-                        // todo: we are parsing function twice, we should parse it once and store the resulting function?
-                        Function fun = functionParser.parseFunction(inListItem, metadata, executionContext);
+                        Function fun = moreThanOneTimestampFunc ? functionParser.parseFunction(inListItem, metadata, executionContext) : timestampFunc;
                         ts = getTimestampFromConstFunction(fun, inListItem.position);
                     }
                     if (!isNegated) {
