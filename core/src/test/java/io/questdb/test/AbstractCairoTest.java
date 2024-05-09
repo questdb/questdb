@@ -1694,9 +1694,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
         assertSql(expected, sql, null);
     }
 
-    protected void assertSql(CharSequence expected, CharSequence sql, Runnable runnable) throws SqlException {
+    protected void assertSql(CharSequence expected, CharSequence sql, @Nullable TestUtils.BindVariableMangler manger) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            TestUtils.assertSql(compiler, sqlExecutionContext, sql, sink, expected, runnable);
+            TestUtils.assertSql(compiler, sqlExecutionContext, sql, sink, expected, manger);
         }
     }
 

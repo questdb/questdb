@@ -24,39 +24,30 @@
 
 package io.questdb.test.griffin.engine.functions;
 
-import io.questdb.cairo.CursorPrinter;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.str.MutableUtf16Sink;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class InTimestampTimestampTest extends AbstractCairoTest {
     @Test
     public void testBindStr() throws SqlException {
-        ddl("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts)");
+        ddl("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(100))");
 
-        assertSql("", "test where ts in $1");
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            try (RecordCursorFactory factory = compiler.compile("test where ts in $1", sqlExecutionContext).getRecordCursorFactory()) {
-                bindVariableService.setInt(1, 10);
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    RecordMetadata metadata = factory.getMetadata();
-                    ((MutableUtf16Sink) sink).clear();
-                    CursorPrinter.println(metadata, sink);
-
-                    final Record record = cursor.getRecord();
-                    while (cursor.hasNext()) {
-                        TestUtils.println(record, metadata, sink);
-                    }
+        // when more than one argument supplied, the function will match exact values from the list
+        assertSql(
+                "a\tts\n" +
+                        "-1148479920\t1970-01-01T00:00:00.000000Z\n" +
+                        "315515118\t1970-01-01T00:00:00.001000Z\n" +
+                        "-948263339\t1970-01-01T00:00:00.005000Z\n",
+                "test where ts in ($1,$2,$3)",
+                () -> {
+                    bindVariableService.setInt(0, 0);
+                    bindVariableService.setInt(1, 1000);
+                    bindVariableService.setStr(2, "1970-01-01T00:00:00.005000Z");
                 }
-            }
-            TestUtils.assertEquals("", sink);
-        }
+        );
+
+        // for single
+        assertSql("", "test where ts in $1", () -> bindVariableService.setInt(1, 10));
     }
 }

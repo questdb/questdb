@@ -654,9 +654,9 @@ public final class TestUtils {
             CharSequence sql,
             MutableUtf16Sink sink,
             CharSequence expected,
-            @Nullable Runnable runnable
+            @Nullable BindVariableMangler mangler
     ) throws SqlException {
-        printSql(compiler, sqlExecutionContext, sql, sink, runnable);
+        printSql(compiler, sqlExecutionContext, sql, sink, mangler);
         assertEquals(expected, sink);
     }
 
@@ -1264,9 +1264,15 @@ public final class TestUtils {
         printSql(engine, sqlExecutionContext, sql, sink, null);
     }
 
-    public static void printSql(CairoEngine engine, SqlExecutionContext sqlExecutionContext, CharSequence sql, MutableUtf16Sink sink, @Nullable Runnable runnable) throws SqlException {
+    public static void printSql(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sql,
+            MutableUtf16Sink sink,
+            @Nullable BindVariableMangler mangler
+    ) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            printSql(compiler, sqlExecutionContext, sql, sink, runnable);
+            printSql(compiler, sqlExecutionContext, sql, sink, mangler);
         }
     }
 
@@ -1274,11 +1280,17 @@ public final class TestUtils {
         printSql(compiler, sqlExecutionContext, sql, sink, null);
     }
 
-    public static void printSql(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence sql, MutableUtf16Sink sink, @Nullable Runnable afterCompile) throws SqlException {
+    public static void printSql(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sql,
+            MutableUtf16Sink sink,
+            @Nullable BindVariableMangler manger
+    ) throws SqlException {
         try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
             // allow caller to set bind variables
-            if (afterCompile != null) {
-                afterCompile.run();
+            if (manger != null) {
+                manger.mangle();
             }
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 RecordMetadata metadata = factory.getMetadata();
@@ -1686,5 +1698,9 @@ public final class TestUtils {
     @FunctionalInterface
     public interface LeakProneCode {
         void run() throws Exception;
+    }
+
+    public interface BindVariableMangler {
+        void mangle() throws SqlException;
     }
 }
