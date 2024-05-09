@@ -339,6 +339,16 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBadDateVarchar() {
+        try {
+            modelOf("timestamp = '2015-02-23T10:00:55.0001110z;30m'::varchar");
+            Assert.fail();
+        } catch (SqlException e) {
+            Assert.assertEquals("[46] Not a date, use IN keyword with intervals", e.getMessage());
+        }
+    }
+
+    @Test
     public void testBadEndDate() {
         try {
             modelOf("timestamp in ('2014-01-02T12:30:00.000Z', '2014-01Z')");
@@ -640,6 +650,11 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testComplexInterval1Varchar() throws Exception {
+        runWhereTest("timestamp in '2015-02-23T10:00;2d'::varchar", "[{lo=2015-02-23T10:00:00.000000Z, hi=2015-02-25T10:00:59.999999Z}]");
+    }
+
+    @Test
     public void testComplexInterval2() throws Exception {
         runWhereTest("timestamp in '2015-02-23T10:00:55.000Z;7d'", "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-03-02T10:00:55.000000Z}]");
     }
@@ -672,6 +687,11 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testComplexInterval5() throws Exception {
         runWhereTest("timestamp in '2015-02-23T10:00:55.000Z;30m' and timestamp != '2015-02-23T10:10:00.000Z'", "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-02-23T10:09:59.999999Z},{lo=2015-02-23T10:10:00.000001Z, hi=2015-02-23T10:30:55.000000Z}]");
+    }
+
+    @Test
+    public void testComplexInterval5Varchar() throws Exception {
+        runWhereTest("timestamp in '2015-02-23T10:00:55.000Z;30m'::varchar and timestamp != '2015-02-23T10:10:00.000Z'::varchar", "[{lo=2015-02-23T10:00:55.000000Z, hi=2015-02-23T10:09:59.999999Z},{lo=2015-02-23T10:10:00.000001Z, hi=2015-02-23T10:30:55.000000Z}]");
     }
 
     @Test
@@ -2291,6 +2311,82 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntervalVarchar() throws Exception {
+        andShuffleExpressionsTest(
+                new String[]{
+                        "timestamp >= '2022-03-23T08:00:00.000000Z'::varchar",
+                        "timestamp < '2022-03-25T10:00:00.000000Z'::varchar",
+                        "timestamp > '2022-03-26T19:20:52.792Z'::varchar"
+                },
+                "[]"
+        );
+
+        andShuffleExpressionsTest(
+                new String[]{
+                        "timestamp >= '2022-03-23T08:00:00.000000Z'::varchar",
+                        "timestamp < '2022-03-25T10:00:00.000000Z'::varchar",
+                        "timestamp > dateadd('d', -10, now())"
+                },
+                "[]"
+        );
+
+        andShuffleExpressionsTest(
+                new String[]{
+                        "timestamp >= '2022-03-23T08:00:00.000000Z'::varchar",
+                        "timestamp < '2022-03-25T10:00:00.000000Z'::varchar",
+                        "timestamp > dateadd('d', -10, '2022-04-05T19:20:52.792Z'::varchar)"
+                },
+                "[]"
+        );
+
+        andShuffleExpressionsTest(
+                new String[]{
+                        "timestamp BETWEEN '2022-03-23T08:00:00.000000Z'::varchar AND now()",
+                        "timestamp BETWEEN now() AND '2022-03-23T08:00:00.000000Z'::varchar",
+                        "timestamp IN ('2022-03-23'::varchar)",
+                        "timestamp > dateadd('d', 1,'2022-03-23T08:00:00.000000Z'::varchar)"
+                },
+                "[]"
+        );
+
+        andShuffleExpressionsTest(
+                new String[]{
+                        "timestamp BETWEEN '2022-03-23T08:00:00.000000Z'::varchar AND '2022-03-25T10:00:00.000000Z'::varchar",
+                        "timestamp BETWEEN '2022-03-23T08:00:00.000000Z'::varchar AND now()",
+                        "timestamp NOT IN ('2022-03-25'::varchar)",
+                        "timestamp != now() - 15",
+                        "timestamp > '2021-01'::varchar",
+                        "timestamp < '2022-04'::varchar",
+                        "timestamp > '2022-05'::varchar"
+                },
+                "[]"
+        );
+
+        andShuffleExpressionsTest(
+                new String[]{
+                        "timestamp BETWEEN '2022-03-23T08:00:00.000000Z'::varchar AND '2022-03-25T10:00:00.000000Z'::varchar",
+                        "timestamp NOT IN ('2022-03-25'::varchar)",
+                        "timestamp != now() - 15",
+                        "timestamp > '2021-01'::varchar",
+                        "timestamp < '2022-04'::varchar"
+                },
+                "[1648022400000000,1648202400000000]"
+        );
+
+        andShuffleExpressionsTest(
+                new String[]{
+                        "timestamp BETWEEN '2022-03-23T08:00:00.000000Z'::varchar AND '2022-03-25T10:00:00.000000Z'::varchar",
+                        "timestamp NOT IN ('2022-03-25'::varchar)",
+                        "timestamp != now() - 15",
+                        "timestamp > '2021-01'::varchar",
+                        "timestamp < '2022-04'::varchar",
+                        "timestamp NOT BETWEEN '2022-03-23T08:00:00.000000Z'::varchar AND '2022-03-25T10:00:00.000000Z'::varchar"
+                },
+                "[1648022400000000,1648202400000000]"
+        );
+    }
+
+    @Test
     public void testIntrinsicPickup() throws Exception {
         assertFilter(modelOf("timestamp = '2014-06-20T13:25:00.000Z;10m;2d;4' and sym in ('A', 'B') or ex = 'D'"), "'D' ex = 'B' 'A' sym in '2014-06-20T13:25:00.000Z;10m;2d;4' timestamp = and or");
         assertFilter(modelOf("timestamp = '2014-06-20T13:25:00.000Z;10m;2d;4' or ex = 'D' and sym in ('A', 'B')"), "'D' ex = '2014-06-20T13:25:00.000Z;10m;2d;4' timestamp = or");
@@ -2422,6 +2518,14 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testListOfValuesPositiveOverlapVarchar() throws Exception {
+        IntrinsicModel m = modelOf("timestamp in ('2014-01-01T12:30:00.000Z'::varchar, '2014-01-02T12:30:00.000Z'::varchar) and sym in ('a', 'z') and sym in ('z')");
+        assertFilter(m, null);
+        Assert.assertEquals(IntrinsicModel.UNDEFINED, m.intrinsicValue);
+        Assert.assertEquals("[z]", keyValueFuncsToString(m.keyValueFuncs));
+    }
+
+    @Test
     public void testLiteralInInterval() throws Exception {
         IntrinsicModel m = modelOf("timestamp in ('2014-01-01T12:30:00.000Z', c)");
         Assert.assertFalse(m.hasIntervalFilters());
@@ -2463,6 +2567,12 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     @Test
     public void testManualIntervalInverted() throws Exception {
         IntrinsicModel m = modelOf("'2014-01-02T12:30:00.000Z' > timestamp and '2014-01-01T15:30:00.000Z' <= timestamp ");
+        TestUtils.assertEquals("[{lo=2014-01-01T15:30:00.000000Z, hi=2014-01-02T12:29:59.999999Z}]", intervalToString(m));
+    }
+
+    @Test
+    public void testManualIntervalVarchar() throws Exception {
+        IntrinsicModel m = modelOf("timestamp >= '2014-01-01T15:30:00.000Z'::varchar and timestamp < '2014-01-02T12:30:00.000Z'::varchar");
         TestUtils.assertEquals("[{lo=2014-01-01T15:30:00.000000Z, hi=2014-01-02T12:29:59.999999Z}]", intervalToString(m));
     }
 
@@ -2654,9 +2764,23 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNotInVarchar() throws Exception {
+        IntrinsicModel m = modelOf("bid > 100 and timestamp not in '2014-01-01'::varchar");
+        TestUtils.assertEquals("[{lo=, hi=2013-12-31T23:59:59.999999Z},{lo=2014-01-02T00:00:00.000000Z, hi=294247-01-10T04:00:54.775807Z}]", intervalToString(m));
+    }
+
+    @Test
     public void testNowWithNotIn() throws Exception {
         currentMicros = 24L * 3600 * 1000 * 1000;
         runWhereIntervalTest0("timestamp not between '2020-01-01T00:00:00.000000Z' and '2020-01-31T23:59:59.999999Z' and now() <= timestamp",
+                "[{lo=1970-01-02T00:00:00.000000Z, hi=2019-12-31T23:59:59.999999Z}," +
+                        "{lo=2020-02-01T00:00:00.000000Z, hi=294247-01-10T04:00:54.775807Z}]");
+    }
+
+    @Test
+    public void testNowWithNotInVarchar() throws Exception {
+        currentMicros = 24L * 3600 * 1000 * 1000;
+        runWhereIntervalTest0("timestamp not between '2020-01-01T00:00:00.000000Z'::varchar and '2020-01-31T23:59:59.999999Z'::varchar and now() <= timestamp",
                 "[{lo=1970-01-02T00:00:00.000000Z, hi=2019-12-31T23:59:59.999999Z}," +
                         "{lo=2020-02-01T00:00:00.000000Z, hi=294247-01-10T04:00:54.775807Z}]");
     }
@@ -2720,6 +2844,16 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         m = modelOf("sym in ('a', 'b') and timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z' and bid > 100 and ask < 110", "ex");
         assertFilter(m, "110 ask < 100 bid > 'b' 'a' sym in and and");
         Assert.assertNull(m.keyColumn);
+        TestUtils.assertEquals("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", intervalToString(m));
+    }
+
+    @Test
+    public void testPreferredColumnVarchar() throws Exception {
+        IntrinsicModel m;
+        m = modelOf("sym in ('a', 'b') and ex in ('c') and timestamp between '2014-01-01T12:30:00.000Z'::varchar and '2014-01-02T12:30:00.000Z'::varchar and bid > 100 and ask < 110", "ex");
+        assertFilter(m, "110 ask < 100 bid > 'b' 'a' sym in and and");
+        TestUtils.assertEquals("ex", m.keyColumn);
+        Assert.assertEquals("[c]", keyValueFuncsToString(m.keyValueFuncs));
         TestUtils.assertEquals("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]", intervalToString(m));
     }
 
