@@ -740,7 +740,24 @@ public class ExpressionParser {
                     case '8':
                     case '9':
                     case '\'':
+                    case 'e':
                     case 'E':
+
+                        if (SqlKeywords.isEscapeKeyword(tok)) {
+                            ExpressionNode firstNode = opStack.pop();
+                            ExpressionNode functionNode = opStack.pop();
+                            functionNode.paramCount = 3;
+                            CharSequence escapeSequence = SqlUtil.fetchNext(lexer);
+                            ExpressionNode escapeNode = SqlUtil.nextConstant(
+                                    expressionNodePool,
+                                    GenericLexer.immutableOf(escapeSequence),
+                                    lastPos
+                            );
+                            opStack.push(functionNode);
+                            opStack.push(escapeNode);
+                            opStack.push(firstNode);
+                            break;
+                        }
 
                         if (prevBranch != BRANCH_DOT_DEREFERENCE) {
                             // check if this is E'str'
