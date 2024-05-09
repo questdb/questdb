@@ -3278,7 +3278,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             String expression = sink.toString();
             try (RuntimeIntrinsicIntervalModel intervalModel = modelOf(expression).buildIntervalModel()) {
                 Assert.assertEquals(
-                        "shuffled expression '" + expression + "' have unexpected result",
+                        "shuffled expression '" + expression + "' has unexpected result",
                         expected,
                         intervalModel.calculateIntervals(sqlExecutionContext).toString()
                 );
