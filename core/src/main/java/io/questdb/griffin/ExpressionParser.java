@@ -853,7 +853,7 @@ public class ExpressionParser {
                                     }
                                 }
 
-                                // there is one case for valid dangling expression - when we create alias for column (like 'value' 'x' equivalent to 'value' as 'x')
+                                // there is one case for valid dangling expression - when we create an alias for column (`'value' 'x'` equivalent to `'value' as 'x'`)
                                 // this helper works for easy cases leaving unparsed last token and give a chance for caller to analyze aliasing
                                 // although for complex cases it will not work (like 'a' || 'b' 'x' will not be parsed as 'a' || 'b' as 'x' without explicit braces)
                                 if (opStack.size() > 1) {
