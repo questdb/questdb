@@ -82,7 +82,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     /*
         Tests bug in 'NOT' parsing (see https://github.com/questdb/questdb/pull/4441)
         Previously, "NOT" part in "NOT [SET OPERATION]" construct was parsed slightly differently from the regular "NOT" operator meaning that the compiled output varied depending on whether 'NOT' was capitalized.
-        This test check that regardless of the capitalization query model uses internal representation of token and not directly take it from the input query (note that expected model representation always have "not" in lowercase)
+        This test checks that regardless of the capitalization the query model uses an internal representation of the token and doesn't take it directly from the input query (note that expected model representation always has "not" in lowercase)
      */
     @Test
     public void testNotInTimestamp() throws Exception {
