@@ -87,6 +87,11 @@ public class IODispatcherTest extends AbstractTest {
             "{\"ddl\":\"OK\"}\r\n" +
             "00\r\n" +
             "\r\n";
+    public static final String INSERT_QUERY_RESPONSE = "0c\r\n" +
+            "{\"dml\":\"OK\"}\r\n" +
+            "00\r\n" +
+            "\r\n";
+
     private static final RescheduleContext EmptyRescheduleContext = (retry) -> {
     };
     private static final Log LOG = LogFactory.getLog(IODispatcherTest.class);
@@ -156,7 +161,7 @@ public class IODispatcherTest extends AbstractTest {
     public void testBadImplicitStrToLongCast() throws Exception {
         getSimpleTester().run(engine -> {
             testHttpClient.assertGet("{\"ddl\":\"OK\"}", "create table tab (value int, when long, ts timestamp) timestamp(ts) partition by day bypass wal;");
-            testHttpClient.assertGet("{\"ddl\":\"OK\"}", "insert into tab values(1, now(), now());"); // it should not be DDL:OK. change me when https://github.com/questdb/questdb/issues/3858 is fixed
+            testHttpClient.assertGet("{\"dml\":\"OK\"}", "insert into tab values(1, now(), now());");
             testHttpClient.assertGet(
                     "{\"query\":\"select * from tab where when = '2023-10-17';\",\"error\":\"inconvertible value: `2023-10-17` [STRING -> LONG]\",\"position\":0}",
                     "select * from tab where when = '2023-10-17';"
@@ -1168,7 +1173,7 @@ public class IODispatcherTest extends AbstractTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            JSON_DDL_RESPONSE,
+                            INSERT_QUERY_RESPONSE,
                     1,
                     0,
                     false
@@ -3238,7 +3243,7 @@ public class IODispatcherTest extends AbstractTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            JSON_DDL_RESPONSE,
+                            INSERT_QUERY_RESPONSE,
                     1,
                     0,
                     false
@@ -3329,7 +3334,7 @@ public class IODispatcherTest extends AbstractTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            JSON_DDL_RESPONSE,
+                            INSERT_QUERY_RESPONSE,
                     1,
                     0,
                     false
@@ -3422,7 +3427,7 @@ public class IODispatcherTest extends AbstractTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            JSON_DDL_RESPONSE,
+                            INSERT_QUERY_RESPONSE,
                     1,
                     0,
                     false
@@ -4651,7 +4656,7 @@ public class IODispatcherTest extends AbstractTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            JSON_DDL_RESPONSE,
+                            INSERT_QUERY_RESPONSE,
                     1,
                     0,
                     false
@@ -7897,7 +7902,7 @@ public class IODispatcherTest extends AbstractTest {
                             try (TestHttpClient testHttpClient = new TestHttpClient()) {
                                 started.countDown();
                                 try {
-                                    testHttpClient.assertGetRegexp(url, ".*(\"ddl\":\"OK\").*", command, null, null, null);
+                                    testHttpClient.assertGetRegexp(url, ".*(\"dml\":\"OK\").*", command, null, null, null);
                                 } catch (Throwable e) {
                                     queryError.set(e);
                                 }
@@ -8063,7 +8068,7 @@ public class IODispatcherTest extends AbstractTest {
                         try (TestHttpClient testHttpClient = new TestHttpClient()) {
                             started.countDown();
                             try {
-                                testHttpClient.assertGetRegexp("/query", ".*(\"ddl\":\"OK\").*", command, null, null, null);
+                                testHttpClient.assertGetRegexp("/query", ".*(\"dml\":\"OK\").*", command, null, null, null);
                             } catch (Throwable e) {
                                 queryError.set(e);
                             }
