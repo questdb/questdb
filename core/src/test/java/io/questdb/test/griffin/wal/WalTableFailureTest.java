@@ -903,25 +903,27 @@ public class WalTableFailureTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWalMultipleColumnConvertions() throws Exception {
-        ddl("create table abc (x0 symbol, x string, y string, y1 symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
-        insert("insert into abc values('aa', 'a', 'b', 'bb', '2022-02-24T01')");
-        drainWalQueue();
+    public void testWalMultipleColumnConversions() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table abc (x0 symbol, x string, y string, y1 symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            insert("insert into abc values('aa', 'a', 'b', 'bb', '2022-02-24T01')");
+            drainWalQueue();
 
-        ddl("alter table abc add column new_col SYMBOL INDEX");
-        ddl("update abc set new_col = x");
-        ddl("alter table abc drop column x");
-        ddl("alter table abc rename column new_col to x");
+            ddl("alter table abc add column new_col SYMBOL INDEX");
+            ddl("update abc set new_col = x");
+            ddl("alter table abc drop column x");
+            ddl("alter table abc rename column new_col to x");
 
-        ddl("alter table abc add column new_col SYMBOL INDEX");
-        ddl("update abc set new_col = y");
-        ddl("alter table abc drop column y");
-        ddl("alter table abc rename column new_col to y");
+            ddl("alter table abc add column new_col SYMBOL INDEX");
+            ddl("update abc set new_col = y");
+            ddl("alter table abc drop column y");
+            ddl("alter table abc rename column new_col to y");
 
-        drainWalQueue();
+            drainWalQueue();
 
-        assertSql("x0\ty1\tts\tx\ty\n" +
-                "aa\tbb\t2022-02-24T01:00:00.000000Z\ta\tb\n", "abc");
+            assertSql("x0\ty1\tts\tx\ty\n" +
+                    "aa\tbb\t2022-02-24T01:00:00.000000Z\ta\tb\n", "abc");
+        });
     }
 
     @Test
@@ -943,7 +945,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
     public void testWalTableAttachFailedDoesNotSuspendTable() throws Exception {
         String tableName = testName.getMethodName();
         String query = "alter table " + tableName + " attach partition list '2022-02-25'";
-        runCheckTableNonSuspended(tableName, query);
+        assertMemoryLeak(() -> runCheckTableNonSuspended(tableName, query));
     }
 
     @Test
@@ -990,40 +992,42 @@ public class WalTableFailureTest extends AbstractCairoTest {
     public void testWalTableDropNonExistingIndexDoesNotSuspendTable() throws Exception {
         String tableName = testName.getMethodName();
         String query = "alter table " + tableName + " ALTER COLUMN sym DROP INDEX";
-        runCheckTableNonSuspended(tableName, query);
+        assertMemoryLeak(() -> runCheckTableNonSuspended(tableName, query));
     }
 
     @Test
     public void testWalTableDropPartitionFailedDoesNotSuspendTable() throws Exception {
         String tableName = testName.getMethodName();
         String query = "alter table " + tableName + " drop partition list '2022-02-25'";
-        runCheckTableNonSuspended(tableName, query);
+        assertMemoryLeak(() -> runCheckTableNonSuspended(tableName, query));
     }
 
     @Test
     public void testWalTableDropPartitionFailedDoesNotSuspendTable3() throws Exception {
         String tableName = testName.getMethodName();
         String query = "alter table " + tableName + " drop partition list '2022'";
-        try {
-            runCheckTableNonSuspended(tableName, query);
-            Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "'yyyy-MM-dd' expected, found [ts=2022]");
-        }
+        assertMemoryLeak(() -> {
+            try {
+                runCheckTableNonSuspended(tableName, query);
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "'yyyy-MM-dd' expected, found [ts=2022]");
+            }
+        });
     }
 
     @Test
     public void testWalTableEmptyUpdateDoesNotSuspendTable() throws Exception {
         String tableName = testName.getMethodName();
         String query = "update " + tableName + " set x = 1 where x < 0";
-        runCheckTableNonSuspended(tableName, query);
+        assertMemoryLeak(() -> runCheckTableNonSuspended(tableName, query));
     }
 
     @Test
     public void testWalTableIndexCachedFailedDoesNotSuspendTable() throws Exception {
         String tableName = testName.getMethodName();
         String query = "alter table " + tableName + " alter column sym NOCACHE";
-        runCheckTableNonSuspended(tableName, query);
+        assertMemoryLeak(() -> runCheckTableNonSuspended(tableName, query));
     }
 
     @Test
@@ -1439,22 +1443,20 @@ public class WalTableFailureTest extends AbstractCairoTest {
     }
 
     private void runCheckTableNonSuspended(String tableName, String query) throws Exception {
-        assertMemoryLeak(() -> {
-            createStandardWalTable(tableName);
+        createStandardWalTable(tableName);
 
-            // Drop partition which does not exist
-            compile(query);
+        // Drop partition which does not exist
+        compile(query);
 
-            // Table should not be suspended
-            insert("insert into " + tableName +
-                    " values (101, 'dfd', '2022-02-25T01', 'asd')");
+        // Table should not be suspended
+        insert("insert into " + tableName +
+                " values (101, 'dfd', '2022-02-25T01', 'asd')");
 
-            drainWalQueue();
+        drainWalQueue();
 
-            assertSql("x\tsym\tts\tsym2\n" +
-                    "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
-                    "101\tdfd\t2022-02-25T01:00:00.000000Z\tasd\n", tableName);
-        });
+        assertSql("x\tsym\tts\tsym2\n" +
+                "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
+                "101\tdfd\t2022-02-25T01:00:00.000000Z\tasd\n", tableName);
     }
 
     private void runCheckTableSuspended(String tableName, String query, FilesFacade ff) throws Exception {
