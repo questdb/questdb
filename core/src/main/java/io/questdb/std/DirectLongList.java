@@ -197,8 +197,8 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
             }
             final long oldCapacity = this.capacity;
             final long oldSize = this.pos - this.address;
-            this.capacity = capacity;
             long address = Unsafe.realloc(this.address, oldCapacity, capacity, memoryTag);
+            this.capacity = capacity;
             this.address = address;
             this.limit = address + capacity;
             this.pos = Math.min(this.limit, address + oldSize);
