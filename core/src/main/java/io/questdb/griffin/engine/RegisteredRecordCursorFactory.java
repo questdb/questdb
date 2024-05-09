@@ -103,7 +103,6 @@ public class RegisteredRecordCursorFactory extends AbstractRecordCursorFactory {
             this.executionContext = executionContext;
             return cursor;
         }
-
         return cursor;
     }
 

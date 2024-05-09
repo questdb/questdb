@@ -77,7 +77,13 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        return cursor.of(base.getCursor(executionContext), executionContext);
+        final RecordCursor baseCursor = base.getCursor(executionContext);
+        try {
+            return cursor.of(baseCursor, executionContext);
+        } catch (Throwable th) {
+            baseCursor.close();
+            throw th;
+        }
     }
 
     @Override

@@ -60,34 +60,34 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testChunkedSequencerWalTransactionQueries() throws Exception {
-        int chunkSize = TestUtils.generateRandom(LOG).nextInt(100) + 1;
-        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, chunkSize);
-        chunkSize = node1.getConfiguration().getDefaultSeqPartTxnCount();
+        assertMemoryLeak(() -> {
+            int chunkSize = TestUtils.generateRandom(LOG).nextInt(100) + 1;
+            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, chunkSize);
+            chunkSize = node1.getConfiguration().getDefaultSeqPartTxnCount();
 
-        ddl("create table chunk_seq (\n" +
-                "  x long,\n" +
-                "  ts timestamp\n" +
-                ") timestamp(ts) PARTITION by day WAL");
-        insert("insert batch 2 into chunk_seq \n" +
-                "  select x, timestamp_sequence('2024-01-01', 312312) from long_sequence(1000)");
+            ddl("create table chunk_seq (\n" +
+                    "  x long,\n" +
+                    "  ts timestamp\n" +
+                    ") timestamp(ts) PARTITION by day WAL");
+            insert("insert batch 2 into chunk_seq \n" +
+                    "  select x, timestamp_sequence('2024-01-01', 312312) from long_sequence(1000)");
 
+            runWalPurgeJob();
 
-        runWalPurgeJob();
+            int expectedTxnCount = 500;
+            assertSql("count\n" +
+                    expectedTxnCount + "\n", "select count(*) from wal_transactions('chunk_seq')");
 
-        int expectedTxnCount = 500;
-        assertSql("count\n" +
-                expectedTxnCount + "\n", "select count(*) from wal_transactions('chunk_seq')");
+            drainWalQueue();
 
-        drainWalQueue();
+            assertSql("count\n" +
+                    expectedTxnCount + "\n", "select count(*) from wal_transactions('chunk_seq')");
 
-        assertSql("count\n" +
-                expectedTxnCount + "\n", "select count(*) from wal_transactions('chunk_seq')");
+            runWalPurgeJob();
 
-
-        runWalPurgeJob();
-
-        assertSql("count\n" +
-                (expectedTxnCount - (expectedTxnCount - 1) / chunkSize * chunkSize) + "\n", "select count(*) from wal_transactions('chunk_seq')");
+            assertSql("count\n" +
+                    (expectedTxnCount - (expectedTxnCount - 1) / chunkSize * chunkSize) + "\n", "select count(*) from wal_transactions('chunk_seq')");
+        });
     }
 
     @Test

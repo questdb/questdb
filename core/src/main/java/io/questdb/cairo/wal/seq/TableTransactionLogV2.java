@@ -305,6 +305,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     }
 
     private static class TransactionLogCursorImpl implements TransactionLogCursor {
+        private final Path rootPath;
         private long address;
         private FilesFacade ff;
         private int headerFd;
@@ -312,7 +313,6 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         private long partId = -1;
         private long partMapSize;
         private int partTransactionCount;
-        private Path rootPath;
         private long txn = -2;
         private long txnCount = -1;
         private long txnLo;
@@ -361,6 +361,11 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         @Override
         public long getMaxTxn() {
             return txnCount - 1;
+        }
+
+        @Override
+        public int getPartitionSize() {
+            return partTransactionCount;
         }
 
         @Override
@@ -451,17 +456,11 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
                         break;
                     }
                 }
-
             } finally {
                 rootPath.trimTo(rootLen);
             }
             openPart(minTxn);
             txn = txnLo = minTxn;
-        }
-
-        @Override
-        public int getPartitionSize() {
-            return partTransactionCount;
         }
 
         @Override
