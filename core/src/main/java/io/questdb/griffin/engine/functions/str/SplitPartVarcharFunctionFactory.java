@@ -136,6 +136,10 @@ public class SplitPartVarcharFunctionFactory implements FunctionFactory {
 
         @Nullable
         private <S extends Utf8Sink> S getVarchar0(Record rec, S sink, boolean clearSink) {
+            if (clearSink && sink instanceof Mutable) {
+                ((Mutable) sink).clear();
+            }
+            
             Utf8Sequence utf8Str = varcharFunc.getVarcharA(rec);
             Utf8Sequence delimiter = delimiterFunc.getVarcharA(rec);
             int index = getIndex(rec);

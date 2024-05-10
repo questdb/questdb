@@ -130,6 +130,10 @@ public class SplitPartFunctionFactory implements FunctionFactory {
 
         @Nullable
         private <S extends Utf16Sink> S getStr0(Record rec, S sink, boolean clearSink) {
+            if (clearSink && sink instanceof Mutable) {
+                ((Mutable) sink).clear();
+            }
+
             CharSequence str = strFunc.getStrA(rec);
             CharSequence delimiter = delimiterFunc.getStrA(rec);
             int index = getIndex(rec);

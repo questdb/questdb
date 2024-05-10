@@ -36,8 +36,8 @@ import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.*;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.Nullable;
 
 public class SplitPartCharFunctionFactory implements FunctionFactory {
@@ -148,6 +148,10 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
 
         @Nullable
         private <S extends Utf16Sink> S getStr0(Record rec, S sink, boolean clearSink) {
+            if (clearSink && sink instanceof Mutable) {
+                ((Mutable) sink).clear();
+            }
+            
             CharSequence str = strFunc.getStrA(rec);
             char delimiter = getDelimiter(rec);
             int index = getIndex(rec);
@@ -193,9 +197,6 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
                 }
             }
 
-            if (clearSink && sink instanceof Mutable) {
-                ((Mutable) sink).clear();
-            }
             sink.put(str, start, end);
             return sink;
         }
