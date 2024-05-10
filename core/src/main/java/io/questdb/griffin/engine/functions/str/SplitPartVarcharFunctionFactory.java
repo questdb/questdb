@@ -139,7 +139,7 @@ public class SplitPartVarcharFunctionFactory implements FunctionFactory {
             if (clearSink && sink instanceof Mutable) {
                 ((Mutable) sink).clear();
             }
-            
+
             Utf8Sequence utf8Str = varcharFunc.getVarcharA(rec);
             Utf8Sequence delimiter = delimiterFunc.getVarcharA(rec);
             int index = getIndex(rec);
@@ -188,10 +188,6 @@ public class SplitPartVarcharFunctionFactory implements FunctionFactory {
                 } else {
                     start += delimiter.size();
                 }
-            }
-
-            if (clearSink && sink instanceof Mutable) {
-                ((Mutable) sink).clear();
             }
             sink.put(utf8Str, start, end);
             return sink;

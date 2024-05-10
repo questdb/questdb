@@ -178,10 +178,7 @@ public class SplitPartFunctionFactory implements FunctionFactory {
                     start += delimiter.length();
                 }
             }
-
-            if (clearSink && sink instanceof Mutable) {
-                ((Mutable) sink).clear();
-            }
+            
             sink.put(str, start, end);
             return sink;
         }
