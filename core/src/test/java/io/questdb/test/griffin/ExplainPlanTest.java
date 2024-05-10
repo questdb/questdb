@@ -51,6 +51,8 @@ import io.questdb.griffin.engine.functions.date.*;
 import io.questdb.griffin.engine.functions.eq.*;
 import io.questdb.griffin.engine.functions.lt.LtIPv4StrFunctionFactory;
 import io.questdb.griffin.engine.functions.lt.LtStrIPv4FunctionFactory;
+import io.questdb.griffin.engine.functions.regex.AbstractLikeStrFunctionFactory;
+import io.questdb.griffin.engine.functions.regex.AbstractLikeVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndIPv4CCFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory;
@@ -2303,6 +2305,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 args.add(new StrConstant("d"));
                             } else if (factory instanceof DateTruncFunctionFactory && p == 0) {
                                 args.add(new StrConstant("year"));
+                            } else if (factory instanceof AbstractLikeStrFunctionFactory && p == 2) {
+                                args.add(new StrConstant("Z"));
+                            } else if (factory instanceof AbstractLikeVarcharFunctionFactory && p == 2) {
+                                args.add(new StrConstant("Z"));
                             } else if (factory instanceof ToUTCTimestampFunctionFactory && p == 1) {
                                 args.add(new StrConstant("CEST"));
                             } else if (factory instanceof TimestampAddFunctionFactory && p == 0) {
