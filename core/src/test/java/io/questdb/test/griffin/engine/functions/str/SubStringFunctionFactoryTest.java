@@ -96,7 +96,7 @@ public class SubStringFunctionFactoryTest extends AbstractFunctionFactoryTest {
         }
 
         try {
-            assertQuery(
+            assertQueryNoLeakCheck(
                     null,
                     "select substring('foo',1,-6)",
                     null,

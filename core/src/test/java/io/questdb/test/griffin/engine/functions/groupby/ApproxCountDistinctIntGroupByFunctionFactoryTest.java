@@ -116,21 +116,23 @@ public class ApproxCountDistinctIntGroupByFunctionFactoryTest extends AbstractCa
 
     @Test
     public void testExpression() throws Exception {
-        final String expected = "a\tapprox_count_distinct\n" +
-                "a\t5\n" +
-                "b\t4\n" +
-                "c\t4\n";
-        assertQuery(
-                expected,
-                "select a, approx_count_distinct(s * 42) from x order by a",
-                "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_int(1, 8, 0) s from long_sequence(20)))",
-                null,
-                true,
-                true
-        );
-        // multiplication shouldn't affect the number of distinct values,
-        // so the result should stay the same
-        assertSql(expected, "select a, approx_count_distinct(s) from x order by a");
+        assertMemoryLeak(() -> {
+            final String expected = "a\tapprox_count_distinct\n" +
+                    "a\t5\n" +
+                    "b\t4\n" +
+                    "c\t4\n";
+            assertQueryNoLeakCheck(
+                    expected,
+                    "select a, approx_count_distinct(s * 42) from x order by a",
+                    "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_int(1, 8, 0) s from long_sequence(20)))",
+                    null,
+                    true,
+                    true
+            );
+            // multiplication shouldn't affect the number of distinct values,
+            // so the result should stay the same
+            assertSql(expected, "select a, approx_count_distinct(s) from x order by a");
+        });
     }
 
     @Test
@@ -243,40 +245,44 @@ public class ApproxCountDistinctIntGroupByFunctionFactoryTest extends AbstractCa
 
     @Test
     public void testGroupNotKeyedWithNullsDenseHLL() throws Exception {
-        compile("create table x as (" +
-                "select * from (select rnd_int(1, 1000000, 0) s, timestamp_sequence(10, 100000) ts from long_sequence(1000000)) timestamp(ts)" +
-                ") timestamp(ts) PARTITION BY YEAR");
-        String expectedExact = "count_distinct\n" +
-                "631884\n";
-        String expectedEstimated = "approx_count_distinct\n" +
-                "630138\n";
+        assertMemoryLeak(() -> {
+            compile("create table x as (" +
+                    "select * from (select rnd_int(1, 1000000, 0) s, timestamp_sequence(10, 100000) ts from long_sequence(1000000)) timestamp(ts)" +
+                    ") timestamp(ts) PARTITION BY YEAR");
+            String expectedExact = "count_distinct\n" +
+                    "631884\n";
+            String expectedEstimated = "approx_count_distinct\n" +
+                    "630138\n";
 
-        assertQuery(expectedExact, "select count_distinct(s) from x", null, false, true);
-        assertQuery(expectedEstimated, "select approx_count_distinct(s) from x", null, false, true);
+            assertQueryNoLeakCheck(expectedExact, "select count_distinct(s) from x", null, false, true);
+            assertQueryNoLeakCheck(expectedEstimated, "select approx_count_distinct(s) from x", null, false, true);
 
-        insert("insert into x values(cast(null as INT), '2021-05-21')");
-        insert("insert into x values(cast(null as INT), '1970-01-01')");
-        assertSql(expectedExact, "select count_distinct(s) from x");
-        assertSql(expectedEstimated, "select approx_count_distinct(s) from x");
+            insert("insert into x values(cast(null as INT), '2021-05-21')");
+            insert("insert into x values(cast(null as INT), '1970-01-01')");
+            assertSql(expectedExact, "select count_distinct(s) from x");
+            assertSql(expectedEstimated, "select approx_count_distinct(s) from x");
+        });
     }
 
     @Test
     public void testGroupNotKeyedWithNullsSparseHLL() throws Exception {
-        compile("create table x as (" +
-                "select * from (select rnd_int(1, 6, 0) s, timestamp_sequence(10, 100000) ts from long_sequence(100)) timestamp(ts)" +
-                ") timestamp(ts) PARTITION BY YEAR");
-        String expectedExact = "count_distinct\n" +
-                "6\n";
-        String expectedEstimated = "approx_count_distinct\n" +
-                "6\n";
+        assertMemoryLeak(() -> {
+            compile("create table x as (" +
+                    "select * from (select rnd_int(1, 6, 0) s, timestamp_sequence(10, 100000) ts from long_sequence(100)) timestamp(ts)" +
+                    ") timestamp(ts) PARTITION BY YEAR");
+            String expectedExact = "count_distinct\n" +
+                    "6\n";
+            String expectedEstimated = "approx_count_distinct\n" +
+                    "6\n";
 
-        assertQuery(expectedExact, "select count_distinct(s) from x", null, false, true);
-        assertQuery(expectedEstimated, "select approx_count_distinct(s) from x", null, false, true);
+            assertQueryNoLeakCheck(expectedExact, "select count_distinct(s) from x", null, false, true);
+            assertQueryNoLeakCheck(expectedEstimated, "select approx_count_distinct(s) from x", null, false, true);
 
-        insert("insert into x values(cast(null as INT), '2021-05-21')");
-        insert("insert into x values(cast(null as INT), '1970-01-01')");
-        assertSql(expectedExact, "select count_distinct(s) from x");
-        assertSql(expectedEstimated, "select approx_count_distinct(s) from x");
+            insert("insert into x values(cast(null as INT), '2021-05-21')");
+            insert("insert into x values(cast(null as INT), '1970-01-01')");
+            assertSql(expectedExact, "select count_distinct(s) from x");
+            assertSql(expectedEstimated, "select approx_count_distinct(s) from x");
+        });
     }
 
     @Test

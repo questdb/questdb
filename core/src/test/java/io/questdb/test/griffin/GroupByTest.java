@@ -2477,10 +2477,14 @@ public class GroupByTest extends AbstractCairoTest {
         );
     }
 
-    private void assertError(String query, String errorMessage) {
+    private void assertError(String query, String errorMessage) throws Exception {
         try {
-            assertQuery(null, query,
-                    null, true, true
+            assertQuery(
+                    null,
+                    query,
+                    null,
+                    true,
+                    true
             );
             Assert.fail();
         } catch (SqlException sqle) {

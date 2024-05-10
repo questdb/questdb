@@ -6528,7 +6528,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 true
         );
 
-        assertQuery(
+        assertQueryNoLeakCheck(
                 "b\tsum\tk\n",
                 "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(none) align to calendar order by k,b",
                 "k",
@@ -6554,7 +6554,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 true
         );
 
-        assertQuery(
+        assertQueryNoLeakCheck(
                 "b\tsum\tk\n",
                 "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(null) align to calendar order by k,b",
                 "k",
@@ -6580,7 +6580,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 true
         );
 
-        assertQuery(
+        assertQueryNoLeakCheck(
                 "b\tsum\tk\n",
                 "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(prev) align to calendar order by k,b",
                 "k",
@@ -6606,7 +6606,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 true
         );
 
-        assertQuery(
+        assertQueryNoLeakCheck(
                 "b\tsum\tk\n",
                 "select b, sum(a), k from x where b = 'ZZZ' sample by 3h fill(10.0) align to calendar order by k,b",
                 "k",
@@ -7403,7 +7403,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     public void testTimestampPropagation() throws Exception {
         ddl("create table readings (sensorId int)");
         ddl("create table sensors (ID int, make symbol, city symbol)");
-        assertQuery(
+        assertQueryNoLeakCheck(
                 "sensorId\tsensId\tmake\tcity\n",
                 "SELECT * FROM readings JOIN(SELECT ID sensId, make, city FROM sensors) ON readings.sensorId = sensId",
                 null,

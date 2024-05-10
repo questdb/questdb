@@ -2676,7 +2676,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         );
     }
 
-    private void importAllIntoNew(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException, TextImportException {
+    private void importAllIntoNew(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws Exception {
         try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
             importer.of("alltypes", "test-alltypes.csv", 1, PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
             importer.process(AllowAllSecurityContext.INSTANCE);
@@ -2836,7 +2836,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         );
     }
 
-    private void testStatusLogCleanup(int daysToKeep) throws SqlException {
+    private void testStatusLogCleanup(int daysToKeep) throws Exception {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             String backlogTableName = configuration.getSystemTableNamePrefix() + "text_import_log";
             compiler.compile("create table \"" + backlogTableName + "\" as " +

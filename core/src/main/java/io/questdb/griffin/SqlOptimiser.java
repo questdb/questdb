@@ -65,13 +65,13 @@ public class SqlOptimiser implements Mutable {
     private static final int SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES = 0x2;
     private static final int SAMPLE_BY_REWRITE_WRAP_REMOVE_TIMESTAMP = 0x1;
     private static final IntHashSet flexColumnModelTypes = new IntHashSet();
-    //list of join types that don't support all optimisations (e.g. pushing table-specific predicates to both left and right table)
-    private final static IntHashSet joinBarriers;
+    // list of join types that don't support all optimisations (e.g. pushing table-specific predicates to both left and right table)
+    private static final IntHashSet joinBarriers;
     private static final CharSequenceIntHashMap joinOps = new CharSequenceIntHashMap();
     private static final boolean[] joinsRequiringTimestamp = {false, false, false, false, true, true, true};
     private static final IntHashSet limitTypes = new IntHashSet();
     private static final CharSequenceIntHashMap notOps = new CharSequenceIntHashMap();
-    private final static CharSequenceHashSet nullConstants = new CharSequenceHashSet();
+    private static final CharSequenceHashSet nullConstants = new CharSequenceHashSet();
     protected final ObjList<CharSequence> literalCollectorANames = new ObjList<>();
     private final CharacterStore characterStore;
     private final IntList clausesToSteal = new IntList();
@@ -1185,7 +1185,6 @@ public class SqlOptimiser implements Mutable {
 
     private void copyColumnsFromMetadata(QueryModel model, RecordMetadata m, boolean nonLiteral) throws SqlException {
         // column names are not allowed to have a dot
-
         for (int i = 0, k = m.getColumnCount(); i < k; i++) {
             CharSequence columnName = createColumnAlias(m.getColumnName(i), model, nonLiteral);
             QueryColumn column = queryColumnPool.next().of(

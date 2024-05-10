@@ -43,7 +43,7 @@ public class AvgShortVectorAggregateFunction extends DoubleFunction implements V
     private final KeyValueFunc keyValueFunc;
     private final DoubleAdder sum = new DoubleAdder();
     private final int workerCount;
-    private long counts;
+    private long countsAddr;
     private int valueOffset;
 
     public AvgShortVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
@@ -55,16 +55,16 @@ public class AvgShortVectorAggregateFunction extends DoubleFunction implements V
             distinctFunc = Rosti::keyedIntDistinct;
             keyValueFunc = Rosti::keyedIntSumShortLong;
         }
-        counts = Unsafe.malloc((long) workerCount * Misc.CACHE_LINE_SIZE, MemoryTag.NATIVE_FUNC_RSS);
+        countsAddr = Unsafe.malloc((long) workerCount * Misc.CACHE_LINE_SIZE, MemoryTag.NATIVE_FUNC_RSS);
         this.workerCount = workerCount;
     }
 
     @Override
     public void aggregate(long address, long addressSize, int columnSizeHint, int workerId) {
         if (address != 0) {
-            final double value = Vect.avgShortAcc(address, addressSize / Short.BYTES, counts + (long) workerId * Misc.CACHE_LINE_SIZE);
+            final double value = Vect.avgShortAcc(address, addressSize / Short.BYTES, countsAddr + (long) workerId * Misc.CACHE_LINE_SIZE);
             if (value == value) {
-                final long count = Unsafe.getUnsafe().getLong(counts + (long) workerId * Misc.CACHE_LINE_SIZE);
+                final long count = Unsafe.getUnsafe().getLong(countsAddr + (long) workerId * Misc.CACHE_LINE_SIZE);
                 // we have to include "weight" of this avg value in the formula,
                 // which calculates final result
                 sum.add(value * count);
@@ -90,9 +90,9 @@ public class AvgShortVectorAggregateFunction extends DoubleFunction implements V
 
     @Override
     public void close() {
-        if (counts != 0) {
-            Unsafe.free(counts, (long) workerCount * Misc.CACHE_LINE_SIZE, MemoryTag.NATIVE_FUNC_RSS);
-            counts = 0;
+        if (countsAddr != 0) {
+            Unsafe.free(countsAddr, (long) workerCount * Misc.CACHE_LINE_SIZE, MemoryTag.NATIVE_FUNC_RSS);
+            countsAddr = 0;
         }
         super.close();
     }

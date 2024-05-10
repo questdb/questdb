@@ -792,8 +792,10 @@ public class LikeFunctionFactoryTest extends AbstractCairoTest {
         });
     }
 
-    private void assertLike(String expected, String query, boolean expectSize) throws SqlException {
-        assertQuery(expected, query, null, true, expectSize);
-        assertQuery(expected, query.replace("like", "ilike"), null, true, expectSize);
+    private void assertLike(String expected, String query, boolean expectSize) throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery(expected, query, null, true, expectSize);
+            assertQuery(expected, query.replace("like", "ilike"), null, true, expectSize);
+        });
     }
 }

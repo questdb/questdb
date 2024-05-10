@@ -122,7 +122,7 @@ public class HashJoinTest extends AbstractCairoTest {
             insert("insert into tabb values (1, 'a', 'pl')");
             insert("insert into tabb values (1, 'b', 'b')");
 
-            assertQuery("i\tlocale_name\ti1\tstate\tcity\n" +
+            assertQueryNoLeakCheck("i\tlocale_name\ti1\tstate\tcity\n" +
                     "1\tpl\t1\ta\tpl\n", "select * from taba left join tabb on taba.i = tabb.i and (locale_name = state OR locale_name=city)", null);
         });
     }

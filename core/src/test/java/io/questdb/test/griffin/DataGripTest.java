@@ -118,7 +118,7 @@ public class DataGripTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testShowDateStyles() throws SqlException {
+    public void testShowDateStyles() throws Exception {
         assertQuery(
                 "DateStyle\n" +
                         "ISO,YMD\n",
@@ -126,7 +126,6 @@ public class DataGripTest extends AbstractCairoTest {
                 null,
                 false,
                 true
-
         );
     }
 

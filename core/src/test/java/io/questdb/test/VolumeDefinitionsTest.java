@@ -41,8 +41,8 @@ import java.util.function.Consumer;
 
 public class VolumeDefinitionsTest {
 
-    private final static Rnd rnd = new Rnd();
-    private final static StringSink sink = new StringSink();
+    private static final Rnd rnd = new Rnd();
+    private static final StringSink sink = new StringSink();
     @ClassRule
     public static TemporaryFolder temp = new TemporaryFolder();
     private Path path;

@@ -1237,7 +1237,7 @@ public class InsertTest extends AbstractCairoTest {
         }
     }
 
-    private void assertQueryCheckWal(String expected) throws SqlException {
+    private void assertQueryCheckWal(String expected) throws Exception {
         if (walEnabled) {
             drainWalQueue();
         }

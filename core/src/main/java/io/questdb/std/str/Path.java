@@ -47,7 +47,7 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
     public static final Closeable THREAD_LOCAL_CLEANER = Path::clearThreadLocals;
     private static final byte NULL = (byte) 0;
     private static final int OVERHEAD = 4;
-    private final static ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
+    private static final ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
     private final int memoryTag;
     private boolean ascii;
@@ -69,7 +69,6 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
         this.memoryTag = memoryTag;
         headPtr = tailPtr = Unsafe.malloc(capacity + 1, memoryTag);
         ascii = true;
-        System.out.println(">>> headPtr=" + Long.toHexString(headPtr));
     }
 
     public static void clearThreadLocals() {
@@ -131,7 +130,6 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
     @Override
     public void close() {
         if (headPtr != 0L) {
-            System.out.println("<<< headPtr=" + Long.toHexString(headPtr) + ", capacity=" + capacity);
             Unsafe.free(headPtr, capacity + 1, memoryTag);
             headPtr = tailPtr = 0L;
         }

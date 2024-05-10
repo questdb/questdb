@@ -1422,7 +1422,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "                Frame forward scan on: a\n"
             );
 
-            assertQuery("i\tts\ti1\tts1\n" +
+            assertQueryNoLeakCheck("i\tts\ti1\tts1\n" +
                             "10000\t1970-01-01T00:00:00.010000Z\t1\t1970-01-01T00:00:00.000001Z\n" +
                             "10000\t1970-01-01T00:00:00.010000Z\t2\t1970-01-01T00:00:00.000002Z\n" +
                             "10000\t1970-01-01T00:00:00.010000Z\t3\t1970-01-01T00:00:00.000003Z\n" +

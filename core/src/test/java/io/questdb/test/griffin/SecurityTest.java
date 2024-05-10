@@ -401,7 +401,7 @@ public class SecurityTest extends AbstractCairoTest {
                 TestUtils.assertContains(ex.getMessage(), "permission denied");
             }
             try {
-                assertQuery("count\n1\n", "select count() from balances", null);
+                assertQueryNoLeakCheck("count\n1\n", "select count() from balances", null);
                 Assert.fail();
             } catch (SqlException ex) {
                 Assert.assertTrue(ex.toString().contains("table does not exist"));

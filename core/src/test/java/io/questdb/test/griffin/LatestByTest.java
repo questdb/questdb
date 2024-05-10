@@ -1361,26 +1361,28 @@ public class LatestByTest extends AbstractCairoTest {
         return sink.toString();
     }
 
-    private void testLatestByPartitionBy(String partitionByType, String valueA, String valueB) throws SqlException {
-        compile("create table forecasts " +
-                "( when " + partitionByType + ", " +
-                "version timestamp, " +
-                "temperature double) timestamp(version) partition by day");
-        insert("insert into forecasts values " +
-                "  (" + valueA + ", '2020-05-02', 40), " +
-                "  (" + valueA + ", '2020-05-03', 41), " +
-                "  (" + valueA + ", '2020-05-04', 42), " +
-                "  (" + valueB + ", '2020-05-01', 140), " +
-                "  (" + valueB + ", '2020-05-03', 141), " +
-                "  (" + valueB + ", '2020-05-05', 142)"
-        );
+    private void testLatestByPartitionBy(String partitionByType, String valueA, String valueB) throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table forecasts " +
+                    "( when " + partitionByType + ", " +
+                    "version timestamp, " +
+                    "temperature double) timestamp(version) partition by day");
+            insert("insert into forecasts values " +
+                    "  (" + valueA + ", '2020-05-02', 40), " +
+                    "  (" + valueA + ", '2020-05-03', 41), " +
+                    "  (" + valueA + ", '2020-05-04', 42), " +
+                    "  (" + valueB + ", '2020-05-01', 140), " +
+                    "  (" + valueB + ", '2020-05-03', 141), " +
+                    "  (" + valueB + ", '2020-05-05', 142)"
+            );
 
-        String query = "select when, version, temperature from forecasts latest on version partition by when";
-        String expected = "when\tversion\ttemperature\n" +
-                valueA.replaceAll("['#]", "") + "\t2020-05-04T00:00:00.000000Z\t42.0\n" +
-                valueB.replaceAll("['#]", "") + "\t2020-05-05T00:00:00.000000Z\t142.0\n";
+            String query = "select when, version, temperature from forecasts latest on version partition by when";
+            String expected = "when\tversion\ttemperature\n" +
+                    valueA.replaceAll("['#]", "") + "\t2020-05-04T00:00:00.000000Z\t42.0\n" +
+                    valueB.replaceAll("['#]", "") + "\t2020-05-05T00:00:00.000000Z\t142.0\n";
 
-        assertQuery(expected, query, "version", true, true);
+            assertQueryNoLeakCheck(expected, query, "version", true, true);
+        });
     }
 
     private void testLatestByWithJoin(boolean indexed) throws Exception {

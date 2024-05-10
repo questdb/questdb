@@ -3276,14 +3276,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
         }
     }
 
-    private void assertQueryAndPlan(String query, String plan, String expectedResult, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws SqlException {
-        assertPlan(query, plan);
+    private void assertQueryAndPlan(String query, String plan, String expectedResult, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
+        assertMemoryLeak(() -> {
+            assertPlan(query, plan);
 
-        assertQuery(expectedResult,
-                query,
-                expectedTimestamp,
-                supportsRandomAccess,
-                expectSize);
+            assertQueryNoLeakCheck(
+                    expectedResult,
+                    query,
+                    expectedTimestamp,
+                    supportsRandomAccess,
+                    expectSize
+            );
+        });
     }
 
     private void assertWindowException(String query, int position, CharSequence errorMessage) throws Exception {

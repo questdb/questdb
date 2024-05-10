@@ -1064,7 +1064,8 @@ public final class TestUtils {
     }
 
     public static void createTestPath(CharSequence root) {
-        try (Path path = new Path().of(root).$()) {
+        try (Path path = new Path()) {
+            path.of(root).$();
             if (Files.exists(path)) {
                 return;
             }
@@ -1525,10 +1526,14 @@ public final class TestUtils {
     }
 
     public static void removeTestPath(CharSequence root) {
-        final Path path = Path.getThreadLocal(root);
-        FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
-        path.slash$();
-        Assert.assertTrue("Test dir cleanup error: " + ff.errno(), !ff.exists(path) || ff.rmdir(path.slash$()));
+        try {
+            final Path path = Path.getThreadLocal(root);
+            FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            path.slash$();
+            Assert.assertTrue("Test dir cleanup error: " + ff.errno(), !ff.exists(path) || ff.rmdir(path.slash$()));
+        } finally {
+            Path.clearThreadLocals();
+        }
     }
 
     public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {

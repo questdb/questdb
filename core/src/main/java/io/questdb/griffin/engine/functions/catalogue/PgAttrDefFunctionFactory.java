@@ -208,15 +208,20 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
     }
 
     private static class AttrDefCatalogueCursorFactory extends AbstractRecordCursorFactory {
-
         private final AttrDefCatalogueCursor cursor;
-        private final Path path = new Path();
+        private final Path path;
         private final long tempMem;
 
         public AttrDefCatalogueCursorFactory(CairoConfiguration configuration, RecordMetadata metadata) {
             super(metadata);
-            this.tempMem = Unsafe.malloc(Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
-            this.cursor = new AttrDefCatalogueCursor(configuration, path, tempMem);
+            try {
+                this.path = new Path();
+                this.tempMem = Unsafe.malloc(Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
+                this.cursor = new AttrDefCatalogueCursor(configuration, path, tempMem);
+            } catch (Throwable th) {
+                close();
+                throw th;
+            }
         }
 
         @Override

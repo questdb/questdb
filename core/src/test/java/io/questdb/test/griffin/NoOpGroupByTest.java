@@ -244,7 +244,7 @@ public class NoOpGroupByTest extends AbstractCairoTest {
             compile("create table x (id int, ref int, ref3 int)");
             compile("create table y(id int, ref int, val double)");
             engine.releaseAllWriters();
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "z\tsum\n",
                     "select 'x' z, sum(val) from x join y on (id) group by 'x'",
                     null,
@@ -285,7 +285,7 @@ public class NoOpGroupByTest extends AbstractCairoTest {
         ddl("create table y(id int, ref int, val double)");
         engine.releaseAllWriters();
         String query = "select 'x' z, sum(val) from x join y on (id) group by 'y'";
-        assertQuery("z\tsum\n", query, null, true);
+        assertQueryNoLeakCheck("z\tsum\n", query, null, true);
     }
 
     @Test

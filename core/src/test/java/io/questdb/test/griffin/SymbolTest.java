@@ -29,33 +29,6 @@ import org.junit.Test;
 public class SymbolTest extends AbstractCairoTest {
 
     @Test
-    public void testSelectSymbolUsingBindVariable() throws Exception {
-        assertMemoryLeak(() -> {
-            compile("create table logs ( id symbol capacity 2)");
-            compile("insert into logs select x::string from long_sequence(10)");
-
-            for (int i = 1; i < 11; i++) {
-                assertQuery("id\n" + i + "\n", "select * from logs where id = '" + i + "'", null, true);
-            }
-        });
-    }
-
-    @Test
-    public void testSelectSymbolUsingLiteral() throws Exception {
-        assertMemoryLeak(() -> {
-            compile("create table logs ( id symbol capacity 2)");
-            compile("insert into logs select x::string from long_sequence(10)");
-
-            for (int i = 1; i < 11; i++) {
-                bindVariableService.clear();
-                bindVariableService.setStr("id", String.valueOf(i));
-
-                assertQuery("id\n" + i + "\n", "select * from logs where id = :id", null, true);
-            }
-        });
-    }
-
-    @Test
     public void testNullSymbolOrderByRegression() throws Exception {
         assertMemoryLeak(() -> {
             compile("CREATE TABLE x (" +
@@ -72,9 +45,36 @@ public class SymbolTest extends AbstractCairoTest {
                             "PH\nOWLP\nOWLP\nLU\nKWZ\nJSHR\nIBBT\nHYHB\nHWVD\nGLHM\nGLHM\nGLHM\nFZ\nFZ\nFMQN\nFLOP\n" +
                             "FF\nFDT\nEHBH\nEDYY\nEDYY\nEDRQ\nCPSW\n\n\n\n\n\n\n\n\n\n\n\n\n",
                     "select sym from x" +
-                    " where timestamp in '2024-03-05T12:13'" +
-                    " order by sym desc",
+                            " where timestamp in '2024-03-05T12:13'" +
+                            " order by sym desc",
                     null, true, true, false);
+        });
+    }
+
+    @Test
+    public void testSelectSymbolUsingBindVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table logs ( id symbol capacity 2)");
+            compile("insert into logs select x::string from long_sequence(10)");
+
+            for (int i = 1; i < 11; i++) {
+                assertQueryNoLeakCheck("id\n" + i + "\n", "select * from logs where id = '" + i + "'", null, true);
+            }
+        });
+    }
+
+    @Test
+    public void testSelectSymbolUsingLiteral() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table logs ( id symbol capacity 2)");
+            compile("insert into logs select x::string from long_sequence(10)");
+
+            for (int i = 1; i < 11; i++) {
+                bindVariableService.clear();
+                bindVariableService.setStr("id", String.valueOf(i));
+
+                assertQueryNoLeakCheck("id\n" + i + "\n", "select * from logs where id = :id", null, true);
+            }
         });
     }
 }

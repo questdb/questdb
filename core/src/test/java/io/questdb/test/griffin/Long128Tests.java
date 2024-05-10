@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -317,7 +316,7 @@ public class Long128Tests extends AbstractCairoTest {
     }
 
     @Test
-    public void testReadLong128Column() throws SqlException {
+    public void testReadLong128Column() throws Exception {
         assertQuery(
                 "ts\tts1\ti\n" +
                         "00000000-0000-0001-0005-d8b84367a000\t2022-02-24T00:00:00.000000Z\t1\n" +

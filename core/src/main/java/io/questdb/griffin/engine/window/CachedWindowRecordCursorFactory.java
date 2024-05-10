@@ -260,7 +260,6 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
     }
 
     class CachedWindowRecordCursor implements RecordCursor {
-
         private final IntList columnIndexes; // Used for symbol table lookups.
         private final ObjList<LongTreeChain> orderedSources;
         private final RecordChain recordChain;

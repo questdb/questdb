@@ -24,7 +24,6 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.SqlJitMode;
-import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -789,7 +788,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
         }
     }
 
-    private void assertLimitQueries(String result, String query, String expectedTimestamp) throws SqlException {
+    private void assertLimitQueries(String result, String query, String expectedTimestamp) throws Exception {
         int firstLineStart = result.indexOf('\n') + 1;
         String header = result.substring(0, firstLineStart);
 
@@ -811,9 +810,13 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
 
                 String expected = header + result.substring(loIdx, hiIdx);
 
-                assertQuery(expected,
+                assertQuery(
+                        expected,
                         query + " " + lo + ", " + hi,
-                        expectedTimestamp, true, true);
+                        expectedTimestamp,
+                        true,
+                        true
+                );
             }
         }
     }

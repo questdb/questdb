@@ -73,7 +73,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static final PlanSink planSink = new TextPlanSink();
     protected static final StringSink sink = new StringSink();
     protected static final Utf8StringSink utf8Sink = new Utf8StringSink();
-    private final static double EPSILON = 0.000001;
+    private static final double EPSILON = 0.000001;
     private static final long[] SNAPSHOT = new long[MemoryTag.SIZE];
     private static final LongList rows = new LongList();
     public static StaticOverrides staticOverrides = new StaticOverrides();
@@ -1062,6 +1062,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
         assertQuery(expected, query, ddl, null, null, null, true, true, false);
     }
 
+    protected static void assertQueryNoLeakCheck(CharSequence expected, CharSequence query, CharSequence ddl, @Nullable CharSequence expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
+        assertQueryNoLeakCheck(expected, query, ddl, expectedTimestamp, null, null, supportsRandomAccess, expectSize, false);
+    }
+
     protected static void assertQueryNoLeakCheck(CharSequence expected, CharSequence query, CharSequence ddl, @Nullable CharSequence expectedTimestamp, boolean supportsRandomAccess) throws Exception {
         assertQueryNoLeakCheck(expected, query, ddl, expectedTimestamp, null, null, supportsRandomAccess, false, false);
     }
@@ -1534,16 +1538,17 @@ public abstract class AbstractCairoTest extends AbstractTest {
         assertVariableColumns(factory, executionContext);
     }
 
-    //asserts plan without having to prefix query with 'explain ', specify the fixed output header, etc.
+    // asserts plan without having to prefix query with 'explain ', specify the fixed output header, etc.
     protected void assertPlan(CharSequence query, CharSequence expectedPlan) throws SqlException {
         StringSink sink = new StringSink();
         sink.put("EXPLAIN ").put(query);
-
-        try (ExplainPlanFactory planFactory = getPlanFactory(sink); RecordCursor cursor = planFactory.getCursor(sqlExecutionContext)) {
+        try (
+                ExplainPlanFactory planFactory = getPlanFactory(sink);
+                RecordCursor cursor = planFactory.getCursor(sqlExecutionContext)
+        ) {
             if (!JitUtil.isJitSupported()) {
                 expectedPlan = Chars.toString(expectedPlan).replace("Async JIT", "Async");
             }
-
             TestUtils.assertCursor(expectedPlan, cursor, planFactory.getMetadata(), false, sink);
         }
     }
@@ -1551,13 +1556,13 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected void assertPlan(SqlCompiler compiler, CharSequence query, CharSequence expectedPlan, SqlExecutionContext sqlExecutionContext) throws SqlException {
         StringSink sink = new StringSink();
         sink.put("EXPLAIN ").put(query);
-
-        try (ExplainPlanFactory planFactory = getPlanFactory(compiler, sink, sqlExecutionContext); RecordCursor cursor = planFactory.getCursor(sqlExecutionContext)) {
-
+        try (
+                ExplainPlanFactory planFactory = getPlanFactory(compiler, sink, sqlExecutionContext);
+                RecordCursor cursor = planFactory.getCursor(sqlExecutionContext)
+        ) {
             if (!JitUtil.isJitSupported()) {
                 expectedPlan = Chars.toString(expectedPlan).replace("Async JIT", "Async");
             }
-
             TestUtils.assertCursor(expectedPlan, cursor, planFactory.getMetadata(), false, sink);
         }
     }
@@ -1589,18 +1594,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         assertQuery(expected, query, null, null, true, expectSize);
     }
 
-    protected void assertQuery(String expected, String query, String expectedTimestamp) throws SqlException {
-        assertQuery(expected, query, expectedTimestamp, false);
-    }
-
-    protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            assertQuery(compiler, expected, query, expectedTimestamp, supportsRandomAccess, sqlExecutionContext);
-        }
-    }
-
-    protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws SqlException {
-        assertQueryFullFat(expected, query, expectedTimestamp, supportsRandomAccess, expectSize, false);
+    protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
+        assertMemoryLeak(() -> assertQueryFullFat(expected, query, expectedTimestamp, supportsRandomAccess, expectSize, false));
     }
 
     protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize, boolean sizeCanBeVariable) throws SqlException {
@@ -1622,6 +1617,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected void assertQuery(SqlCompiler compiler, String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, SqlExecutionContext sqlExecutionContext, boolean expectSize) throws SqlException {
         assertQuery(compiler, expected, query, expectedTimestamp, sqlExecutionContext, supportsRandomAccess, expectSize);
+    }
+
+    protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess) throws Exception {
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(expected, query, expectedTimestamp, supportsRandomAccess));
     }
 
     protected void assertQueryAndCache(String expected, String query, String expectedTimestamp, boolean expectSize) throws SqlException {
@@ -1651,6 +1650,20 @@ public abstract class AbstractCairoTest extends AbstractTest {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             compiler.setFullFatJoins(fullFatJoin);
             assertQuery(compiler, expected, query, expectedTimestamp, sqlExecutionContext, supportsRandomAccess, expectSize);
+        }
+    }
+
+    protected void assertQueryNoLeakCheck(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
+        assertQueryFullFat(expected, query, expectedTimestamp, supportsRandomAccess, expectSize, false);
+    }
+
+    protected void assertQueryNoLeakCheck(String expected, String query, String expectedTimestamp) throws SqlException {
+        assertQueryNoLeakCheck(expected, query, expectedTimestamp, false);
+    }
+
+    protected void assertQueryNoLeakCheck(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            assertQuery(compiler, expected, query, expectedTimestamp, supportsRandomAccess, sqlExecutionContext);
         }
     }
 

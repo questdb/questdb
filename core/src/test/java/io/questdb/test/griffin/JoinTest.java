@@ -2748,7 +2748,7 @@ public class JoinTest extends AbstractCairoTest {
             );
 
             // filter is applied to final join result
-            assertQuery(
+            assertQueryNoLeakCheck(
                     expected,
                     "select * from x left join y on (kk)",
                     null
@@ -2793,7 +2793,7 @@ public class JoinTest extends AbstractCairoTest {
             );
 
             // filter is applied to final join result
-            assertQuery(
+            assertQueryNoLeakCheck(
                     expected,
                     "select * from x left join y on (kk) order by x.a desc, y.a",
                     null,
@@ -2842,7 +2842,7 @@ public class JoinTest extends AbstractCairoTest {
             ddl("insert into x select * from (select cast(x+10 as int) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x + 10 ts from long_sequence(4)) timestamp(ts)");
             ddl("insert into y select x, cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
 
-            assertQuery(expected +
+            assertQueryNoLeakCheck(expected +
                             "11\t467\tnull\t2018-03-01T00:00:00.000011Z\n" +
                             "12\t347\t7\t2018-03-01T00:00:00.000012Z\n" +
                             "12\t347\t0\t2018-03-01T00:00:00.000012Z\n" +
@@ -3038,6 +3038,17 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeftHashJoinOnFunctionCondition15() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int, s1 string)");
+            compile("create table t2 (j int, s2 string)");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i and (s1 ~ '[abde]')",
+                    "i\ts1\tj\ts2\n");
+        });
+    }
+
+    @Test
     public void testLeftHashJoinOnFunctionCondition16() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t1 (i int, s1 string)");
@@ -3050,29 +3061,6 @@ public class JoinTest extends AbstractCairoTest {
                             "1\ta\t1\ta\n" +
                             "1\ta\t1\td\n" +
                             "2\tb\tnull\t\n");
-        });
-    }
-
-    @Test
-    public void testLeftHashJoinOnFunctionConditionVarchar14() throws Exception {
-        assertMemoryLeak(() -> {
-            compile("create table t1 (i int, s1 varchar)");
-            compile("create table t2 (j int, s2 varchar)");
-            insert("insert into t2 values (1,'a'), (1,'e'), (2, 'b'), (2, 'd'), (3,'c');");
-
-            assertHashJoinSql("select * from t1 left join t2 on j = i and (s1 ~ '[abde]')",
-                    "i\ts1\tj\ts2\n");
-        });
-    }
-
-    @Test
-    public void testLeftHashJoinOnFunctionCondition15() throws Exception {
-        assertMemoryLeak(() -> {
-            compile("create table t1 (i int, s1 string)");
-            compile("create table t2 (j int, s2 string)");
-
-            assertHashJoinSql("select * from t1 left join t2 on j = i and (s1 ~ '[abde]')",
-                    "i\ts1\tj\ts2\n");
         });
     }
 
@@ -3268,6 +3256,18 @@ public class JoinTest extends AbstractCairoTest {
                             "3\tc\tnull\t\n" +
                             "4\td\tnull\t\n" +
                             "5\te\tnull\t\n");
+        });
+    }
+
+    @Test
+    public void testLeftHashJoinOnFunctionConditionVarchar14() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int, s1 varchar)");
+            compile("create table t2 (j int, s2 varchar)");
+            insert("insert into t2 values (1,'a'), (1,'e'), (2, 'b'), (2, 'd'), (3,'c');");
+
+            assertHashJoinSql("select * from t1 left join t2 on j = i and (s1 ~ '[abde]')",
+                    "i\ts1\tj\ts2\n");
         });
     }
 
@@ -3993,7 +3993,7 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQuery("i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
+            assertQueryNoLeakCheck("i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
                             "null\t\tnull\t0.032\t\t2018-01-01T00:02:00.000000Z\n" +
                             "null\t\tnull\t0.043000000000000003\t\t2018-01-01T00:04:00.000000Z\n" +
                             "null\t\tnull\t0.986\t\t2018-01-01T00:06:00.000000Z\n" +
@@ -4289,7 +4289,7 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQuery("i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
+            assertQueryNoLeakCheck("i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
                             "null\t\tnull\t0.032\t\t2018-01-01T00:02:00.000000Z\n" +
                             "null\t\tnull\t0.113\t\t2018-01-01T00:04:00.000000Z\n" +
                             "null\t\tnull\t0.11\t\t2018-01-01T00:06:00.000000Z\n" +
@@ -4452,6 +4452,73 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStringSymbolVarcharJoins() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table t1 (i int, s string, b symbol)");
+            insert("insert into t1 values (1, 'a', 'a'), (2, 'b', 'b'), (3, 'c', 'c'), (4, 'd', 'd'), (5, 'e', 'e');");
+            compile("create table t2 (j int, v varchar)");
+            insert("insert into t2 values (5, 'e'), (3, 'c'), (2, 'b'), (4, 'd'), (1, 'a');");
+
+            final String expected = "i\ts\tb\tj\tv\n" +
+                    "1\ta\ta\t1\ta\n" +
+                    "2\tb\tb\t2\tb\n" +
+                    "3\tc\tc\t3\tc\n" +
+                    "4\td\td\t4\td\n" +
+                    "5\te\te\t5\te\n";
+
+            assertSql(expected, "select i, s, b, j, v from t1 inner join t2 on s = v");
+            assertSql(expected, "select i, s, b, j, v from t1 inner join t2 on b = v");
+            assertSql(expected, "select i, s, b, j, v from t1 left join t2 on s = v");
+            assertSql(expected, "select i, s, b, j, v from t1 left join t2 on b = v");
+
+            final String expected2 = "i\ts\tb\tj\tv\n" +
+                    "1\ta\ta\t5\te\n" +
+                    "1\ta\ta\t3\tc\n" +
+                    "1\ta\ta\t2\tb\n" +
+                    "1\ta\ta\t4\td\n" +
+                    "1\ta\ta\t1\ta\n" +
+                    "2\tb\tb\t5\te\n" +
+                    "2\tb\tb\t3\tc\n" +
+                    "2\tb\tb\t2\tb\n" +
+                    "2\tb\tb\t4\td\n" +
+                    "2\tb\tb\t1\ta\n" +
+                    "3\tc\tc\t5\te\n" +
+                    "3\tc\tc\t3\tc\n" +
+                    "3\tc\tc\t2\tb\n" +
+                    "3\tc\tc\t4\td\n" +
+                    "3\tc\tc\t1\ta\n" +
+                    "4\td\td\t5\te\n" +
+                    "4\td\td\t3\tc\n" +
+                    "4\td\td\t2\tb\n" +
+                    "4\td\td\t4\td\n" +
+                    "4\td\td\t1\ta\n" +
+                    "5\te\te\t5\te\n" +
+                    "5\te\te\t3\tc\n" +
+                    "5\te\te\t2\tb\n" +
+                    "5\te\te\t4\td\n" +
+                    "5\te\te\t1\ta\n";
+
+            assertSql(expected2, "select i, s, b, j, v from t1 cross join t2");
+        });
+    }
+
+    @Test
+    public void testSymbolVarcharJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table xy2 as (select rnd_varchar(1,3,1) a from long_sequence(10000))");
+            compile("create table xy3 as (select a::symbol a, rnd_int() b from xy2);");
+            assertSql(
+                    "a\tb\ta1\n" +
+                            "&\t2061726721\t&\n" +
+                            "&\t2061726721\t&\n" +
+                            "&\t2061726721\t&\n" +
+                            "&\t2061726721\t&\n" +
+                            "&\t2061726721\t&\n",
+                    "xy3 join xy2 on (a) limit 5");
+        });
+    }
+
+    @Test
     public void testTypeMismatch() throws Exception {
         testTypeMismatch0(false);
     }
@@ -4544,73 +4611,6 @@ public class JoinTest extends AbstractCairoTest {
         testJoinForCursorLeaks("with crj as (select x, ts from xx latest by x) select x from xx union select x from crj", false);
     }
 
-    @Test
-    public void testSymbolVarcharJoin() throws Exception {
-        assertMemoryLeak(() -> {
-            compile("create table xy2 as (select rnd_varchar(1,3,1) a from long_sequence(10000))");
-            compile("create table xy3 as (select a::symbol a, rnd_int() b from xy2);");
-            assertSql(
-                    "a\tb\ta1\n" +
-                            "&\t2061726721\t&\n" +
-                            "&\t2061726721\t&\n" +
-                            "&\t2061726721\t&\n" +
-                            "&\t2061726721\t&\n" +
-                            "&\t2061726721\t&\n",
-                    "xy3 join xy2 on (a) limit 5");
-        });
-    }
-
-    @Test
-    public void testStringSymbolVarcharJoins() throws Exception {
-        assertMemoryLeak(() -> {
-            compile("create table t1 (i int, s string, b symbol)");
-            insert("insert into t1 values (1, 'a', 'a'), (2, 'b', 'b'), (3, 'c', 'c'), (4, 'd', 'd'), (5, 'e', 'e');");
-            compile("create table t2 (j int, v varchar)");
-            insert("insert into t2 values (5, 'e'), (3, 'c'), (2, 'b'), (4, 'd'), (1, 'a');");
-
-            final String expected = "i\ts\tb\tj\tv\n" +
-                    "1\ta\ta\t1\ta\n" +
-                    "2\tb\tb\t2\tb\n" +
-                    "3\tc\tc\t3\tc\n" +
-                    "4\td\td\t4\td\n" +
-                    "5\te\te\t5\te\n";
-
-            assertSql(expected, "select i, s, b, j, v from t1 inner join t2 on s = v");
-            assertSql(expected, "select i, s, b, j, v from t1 inner join t2 on b = v");
-            assertSql(expected, "select i, s, b, j, v from t1 left join t2 on s = v");
-            assertSql(expected, "select i, s, b, j, v from t1 left join t2 on b = v");
-
-            final String expected2 = "i\ts\tb\tj\tv\n" +
-                    "1\ta\ta\t5\te\n" +
-                    "1\ta\ta\t3\tc\n" +
-                    "1\ta\ta\t2\tb\n" +
-                    "1\ta\ta\t4\td\n" +
-                    "1\ta\ta\t1\ta\n" +
-                    "2\tb\tb\t5\te\n" +
-                    "2\tb\tb\t3\tc\n" +
-                    "2\tb\tb\t2\tb\n" +
-                    "2\tb\tb\t4\td\n" +
-                    "2\tb\tb\t1\ta\n" +
-                    "3\tc\tc\t5\te\n" +
-                    "3\tc\tc\t3\tc\n" +
-                    "3\tc\tc\t2\tb\n" +
-                    "3\tc\tc\t4\td\n" +
-                    "3\tc\tc\t1\ta\n" +
-                    "4\td\td\t5\te\n" +
-                    "4\td\td\t3\tc\n" +
-                    "4\td\td\t2\tb\n" +
-                    "4\td\td\t4\td\n" +
-                    "4\td\td\t1\ta\n" +
-                    "5\te\te\t5\te\n" +
-                    "5\te\te\t3\tc\n" +
-                    "5\te\te\t2\tb\n" +
-                    "5\te\te\t4\td\n" +
-                    "5\te\te\t1\ta\n";
-
-            assertSql(expected2, "select i, s, b, j, v from t1 cross join t2");
-        });
-    }
-
     private void assertFailure(String query, String expectedMessage, int position) {
         try {
             ddl(query, sqlExecutionContext);
@@ -4627,7 +4627,7 @@ public class JoinTest extends AbstractCairoTest {
         TestUtils.assertEquals("full fat join", expected, sink);
     }
 
-    private void assertRepeatedJoinQuery(String query, String left, boolean expectSize) throws SqlException {
+    private void assertRepeatedJoinQuery(String query, String left, boolean expectSize) throws Exception {
         assertQuery("id\n1\n", query.replace("#JOIN_TYPE#", left), null, false, expectSize);
     }
 
@@ -5240,7 +5240,7 @@ public class JoinTest extends AbstractCairoTest {
         method.run(true);
     }
 
-    private void testJoinColumnPropagationIntoJoinModel0(String joinType, boolean expectSize) throws SqlException {
+    private void testJoinColumnPropagationIntoJoinModel0(String joinType, boolean expectSize) throws Exception {
         String query = ("SELECT amount, price1\n" +
                 "FROM\n" +
                 "(\n" +

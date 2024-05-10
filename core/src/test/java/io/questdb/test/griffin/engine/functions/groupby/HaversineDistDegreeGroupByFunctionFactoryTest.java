@@ -195,157 +195,169 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
 
     // "select s, haversine_dist_deg(lat, lon, k) from tab order by s"
     @Test
-    public void testAggregationBySymbol() throws SqlException {
-        ddl("create table tab (s symbol, lat double, lon double, k timestamp) timestamp(k) partition by NONE");
+    public void testAggregationBySymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (s symbol, lat double, lon double, k timestamp) timestamp(k) partition by NONE");
 
-        try (TableWriter w = getWriter("tab")) {
-            double latDegree = -5;
-            double lonDegree = -6;
-            long ts = 0;
-            for (int i = 0; i < 10; i++) {
-                TableWriter.Row r = w.newRow();
-                r.putSym(0, "AAA");
-                r.putDouble(1, latDegree);
-                r.putDouble(2, lonDegree);
-                r.putTimestamp(3, ts);
-                r.append();
-                latDegree += 1;
-                lonDegree += 1;
-                ts += 360000000L;
+            try (TableWriter w = getWriter("tab")) {
+                double latDegree = -5;
+                double lonDegree = -6;
+                long ts = 0;
+                for (int i = 0; i < 10; i++) {
+                    TableWriter.Row r = w.newRow();
+                    r.putSym(0, "AAA");
+                    r.putDouble(1, latDegree);
+                    r.putDouble(2, lonDegree);
+                    r.putTimestamp(3, ts);
+                    r.append();
+                    latDegree += 1;
+                    lonDegree += 1;
+                    ts += 360000000L;
+                }
+                w.commit();
+                latDegree = -20;
+                lonDegree = 10;
+                for (int i = 0; i < 10; i++) {
+                    TableWriter.Row r = w.newRow();
+                    r.putSym(0, "BBB");
+                    r.putDouble(1, latDegree);
+                    r.putDouble(2, lonDegree);
+                    r.putTimestamp(3, ts);
+                    r.append();
+                    latDegree += 0.1;
+                    lonDegree += 0.1;
+                    ts += 360000000L;
+                }
+                w.commit();
             }
-            w.commit();
-            latDegree = -20;
-            lonDegree = 10;
-            for (int i = 0; i < 10; i++) {
-                TableWriter.Row r = w.newRow();
-                r.putSym(0, "BBB");
-                r.putDouble(1, latDegree);
-                r.putDouble(2, lonDegree);
-                r.putTimestamp(3, ts);
-                r.append();
-                latDegree += 0.1;
-                lonDegree += 0.1;
-                ts += 360000000L;
-            }
-            w.commit();
-        }
 
-        try (RecordCursorFactory factory = select("select s, haversine_dist_deg(lat, lon, k) from tab order by s")) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                Record record = cursor.getRecord();
-                Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals("AAA", record.getSymA(0));
-                Assert.assertEquals(1414.545985354098, record.getDouble(1), DELTA);
-                Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals("BBB", record.getSymA(0));
-                Assert.assertEquals(137.51028123371657, record.getDouble(1), DELTA);
+            try (RecordCursorFactory factory = select("select s, haversine_dist_deg(lat, lon, k) from tab order by s")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Record record = cursor.getRecord();
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals("AAA", record.getSymA(0));
+                    Assert.assertEquals(1414.545985354098, record.getDouble(1), DELTA);
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals("BBB", record.getSymA(0));
+                    Assert.assertEquals(137.51028123371657, record.getDouble(1), DELTA);
+                }
             }
-        }
+        });
     }
 
     @Test
     public void testAggregationBySymbolWithSampling() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab (s symbol, lat double, lon double, p double,  k timestamp) timestamp(k) partition by NONE");
 
-        ddl("create table tab (s symbol, lat double, lon double, p double,  k timestamp) timestamp(k) partition by NONE");
+            try (TableWriter w = getWriter("tab")) {
+                long MICROS_IN_MIN = 60_000_000L;
+                //row 1
+                TableWriter.Row r = w.newRow(30 * MICROS_IN_MIN);
+                r.putSym(0, "AAA");
+                r.putDouble(1, -5);
+                r.putDouble(2, 10);
+                r.putDouble(3, 1000);
+                r.append();
+                //row 2
+                r = w.newRow(90 * MICROS_IN_MIN);
+                r.putSym(0, "AAA");
+                r.putDouble(1, -4);
+                r.putDouble(2, 11);
+                r.putDouble(3, 1000);
+                r.append();
+                //row 3
+                r = w.newRow(100 * MICROS_IN_MIN);
+                r.putSym(0, "AAA");
+                r.putDouble(1, -3);
+                r.putDouble(2, 12);
+                r.putDouble(3, 1000);
+                r.append();
+                //row 4
+                r = w.newRow(210 * MICROS_IN_MIN);
+                r.putSym(0, "AAA");
+                r.putDouble(1, -2);
+                r.putDouble(2, 13);
+                r.putDouble(3, 1000);
+                r.append();
+                //row 5
+                r = w.newRow(270 * MICROS_IN_MIN);
+                r.putSym(0, "AAA");
+                r.putDouble(1, -1);
+                r.putDouble(2, 14);
+                r.putDouble(3, 1000);
+                r.append();
+                w.commit();
+            }
 
-        try (TableWriter w = getWriter("tab")) {
-            long MICROS_IN_MIN = 60_000_000L;
-            //row 1
-            TableWriter.Row r = w.newRow(30 * MICROS_IN_MIN);
-            r.putSym(0, "AAA");
-            r.putDouble(1, -5);
-            r.putDouble(2, 10);
-            r.putDouble(3, 1000);
-            r.append();
-            //row 2
-            r = w.newRow(90 * MICROS_IN_MIN);
-            r.putSym(0, "AAA");
-            r.putDouble(1, -4);
-            r.putDouble(2, 11);
-            r.putDouble(3, 1000);
-            r.append();
-            //row 3
-            r = w.newRow(100 * MICROS_IN_MIN);
-            r.putSym(0, "AAA");
-            r.putDouble(1, -3);
-            r.putDouble(2, 12);
-            r.putDouble(3, 1000);
-            r.append();
-            //row 4
-            r = w.newRow(210 * MICROS_IN_MIN);
-            r.putSym(0, "AAA");
-            r.putDouble(1, -2);
-            r.putDouble(2, 13);
-            r.putDouble(3, 1000);
-            r.append();
-            //row 5
-            r = w.newRow(270 * MICROS_IN_MIN);
-            r.putSym(0, "AAA");
-            r.putDouble(1, -1);
-            r.putDouble(2, 14);
-            r.putDouble(3, 1000);
-            r.append();
-            w.commit();
-        }
+            assertSql(
+                    "k\ts\thaversine_dist_deg\tsum\n" +
+                            "1970-01-01T00:30:00.000000Z\tAAA\t157.01233135733582\t1000.0\n" +
+                            "1970-01-01T01:30:00.000000Z\tAAA\t228.55327569899347\t2000.0\n" +
+                            "1970-01-01T02:30:00.000000Z\tAAA\t85.73439427824682\t1500.0\n" +
+                            "1970-01-01T03:30:00.000000Z\tAAA\t157.22760372823447\t1000.0\n" +
+                            "1970-01-01T04:30:00.000000Z\tAAA\t0.0\t1000.0\n", "select k, s, haversine_dist_deg(lat, lon, k), sum(p) from tab sample by 1h fill(linear) align to first observation"
+            );
 
-        assertSql(
-                "k\ts\thaversine_dist_deg\tsum\n" +
-                        "1970-01-01T00:30:00.000000Z\tAAA\t157.01233135733582\t1000.0\n" +
-                        "1970-01-01T01:30:00.000000Z\tAAA\t228.55327569899347\t2000.0\n" +
-                        "1970-01-01T02:30:00.000000Z\tAAA\t85.73439427824682\t1500.0\n" +
-                        "1970-01-01T03:30:00.000000Z\tAAA\t157.22760372823447\t1000.0\n" +
-                        "1970-01-01T04:30:00.000000Z\tAAA\t0.0\t1000.0\n", "select k, s, haversine_dist_deg(lat, lon, k), sum(p) from tab sample by 1h fill(linear) align to first observation"
-        );
-
-        assertSql(
-                "k\ts\thaversine_dist_deg\tsum\n" +
-                        "1970-01-01T00:00:00.000000Z\tAAA\t78.50616567866791\t1000.0\n" +
-                        "1970-01-01T01:00:00.000000Z\tAAA\t264.19224423853797\t2000.0\n" +
-                        "1970-01-01T02:00:00.000000Z\tAAA\t85.73439427824682\t1500.0\n" +
-                        "1970-01-01T03:00:00.000000Z\tAAA\t121.48099900324064\t1000.0\n" +
-                        "1970-01-01T04:00:00.000000Z\tAAA\t78.61380186411724\t1000.0\n", "select k, s, haversine_dist_deg(lat, lon, k), sum(p) from tab sample by 1h fill(linear) align to calendar"
-        );
+            assertSql(
+                    "k\ts\thaversine_dist_deg\tsum\n" +
+                            "1970-01-01T00:00:00.000000Z\tAAA\t78.50616567866791\t1000.0\n" +
+                            "1970-01-01T01:00:00.000000Z\tAAA\t264.19224423853797\t2000.0\n" +
+                            "1970-01-01T02:00:00.000000Z\tAAA\t85.73439427824682\t1500.0\n" +
+                            "1970-01-01T03:00:00.000000Z\tAAA\t121.48099900324064\t1000.0\n" +
+                            "1970-01-01T04:00:00.000000Z\tAAA\t78.61380186411724\t1000.0\n", "select k, s, haversine_dist_deg(lat, lon, k), sum(p) from tab sample by 1h fill(linear) align to calendar"
+            );
+        });
     }
 
     //select s, haversine_dist_deg(lat, lon, k), k from tab sample by 3h fill(linear)
     @Test
     public void testAggregationWithSampleFill1() throws Exception {
-
         assertQuery("s\tlat\tlon\tk\n" +
-                "VTJW\t-5.0\t-6.0\t1970-01-03T00:31:40.000000Z\n" +
-                "VTJW\t-4.0\t-5.0\t1970-01-03T01:03:20.000000Z\n" +
-                "VTJW\t-3.0\t-4.0\t1970-01-03T01:35:00.000000Z\n" +
-                "VTJW\t-2.0\t-3.0\t1970-01-03T02:06:40.000000Z\n" +
-                "VTJW\t-1.0\t-2.0\t1970-01-03T02:38:20.000000Z\n" +
-                "VTJW\t0.0\t-1.0\t1970-01-03T03:10:00.000000Z\n", "tab", "create table tab as " +
-                "(" +
-                "select" +
-                " rnd_symbol(1,4,4,0) s," +
-                " (-6.0 + (1*x)) lat," +
-                " (-7.0 + (1*x)) lon," +
-                " timestamp_sequence(174700000000, 1900000000) k" +
-                " from" +
-                " long_sequence(6)" +
-                ") timestamp(k) partition by NONE", "k", "insert into tab select * from (" +
-                "select" +
-                " rnd_symbol(2,4,4,0) s," +
-                " (-40.0 + (1*x)) lat," +
-                " (5.0 + (1*x)) lon," +
-                " timestamp_sequence(227200000000, 1900000000) k" +
-                " from" +
-                " long_sequence(3)" +
-                ") timestamp(k)", "s\tlat\tlon\tk\n" +
-                "VTJW\t-5.0\t-6.0\t1970-01-03T00:31:40.000000Z\n" +
-                "VTJW\t-4.0\t-5.0\t1970-01-03T01:03:20.000000Z\n" +
-                "VTJW\t-3.0\t-4.0\t1970-01-03T01:35:00.000000Z\n" +
-                "VTJW\t-2.0\t-3.0\t1970-01-03T02:06:40.000000Z\n" +
-                "VTJW\t-1.0\t-2.0\t1970-01-03T02:38:20.000000Z\n" +
-                "VTJW\t0.0\t-1.0\t1970-01-03T03:10:00.000000Z\n" +
-                "RXGZ\t-39.0\t6.0\t1970-01-03T15:06:40.000000Z\n" +
-                "RXGZ\t-38.0\t7.0\t1970-01-03T15:38:20.000000Z\n" +
-                "RXGZ\t-37.0\t8.0\t1970-01-03T16:10:00.000000Z\n", true, true, false);
+                        "VTJW\t-5.0\t-6.0\t1970-01-03T00:31:40.000000Z\n" +
+                        "VTJW\t-4.0\t-5.0\t1970-01-03T01:03:20.000000Z\n" +
+                        "VTJW\t-3.0\t-4.0\t1970-01-03T01:35:00.000000Z\n" +
+                        "VTJW\t-2.0\t-3.0\t1970-01-03T02:06:40.000000Z\n" +
+                        "VTJW\t-1.0\t-2.0\t1970-01-03T02:38:20.000000Z\n" +
+                        "VTJW\t0.0\t-1.0\t1970-01-03T03:10:00.000000Z\n",
+                "tab",
+                "create table tab as " +
+                        "(" +
+                        "select" +
+                        " rnd_symbol(1,4,4,0) s," +
+                        " (-6.0 + (1*x)) lat," +
+                        " (-7.0 + (1*x)) lon," +
+                        " timestamp_sequence(174700000000, 1900000000) k" +
+                        " from" +
+                        " long_sequence(6)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                "insert into tab select * from (" +
+                        "select" +
+                        " rnd_symbol(2,4,4,0) s," +
+                        " (-40.0 + (1*x)) lat," +
+                        " (5.0 + (1*x)) lon," +
+                        " timestamp_sequence(227200000000, 1900000000) k" +
+                        " from" +
+                        " long_sequence(3)" +
+                        ") timestamp(k)",
+                "s\tlat\tlon\tk\n" +
+                        "VTJW\t-5.0\t-6.0\t1970-01-03T00:31:40.000000Z\n" +
+                        "VTJW\t-4.0\t-5.0\t1970-01-03T01:03:20.000000Z\n" +
+                        "VTJW\t-3.0\t-4.0\t1970-01-03T01:35:00.000000Z\n" +
+                        "VTJW\t-2.0\t-3.0\t1970-01-03T02:06:40.000000Z\n" +
+                        "VTJW\t-1.0\t-2.0\t1970-01-03T02:38:20.000000Z\n" +
+                        "VTJW\t0.0\t-1.0\t1970-01-03T03:10:00.000000Z\n" +
+                        "RXGZ\t-39.0\t6.0\t1970-01-03T15:06:40.000000Z\n" +
+                        "RXGZ\t-38.0\t7.0\t1970-01-03T15:38:20.000000Z\n" +
+                        "RXGZ\t-37.0\t8.0\t1970-01-03T16:10:00.000000Z\n",
+                true,
+                true,
+                false
+        );
 
-        assertQuery("s\thaversine_dist_deg\tk\n" +
+        assertQuery(
+                "s\thaversine_dist_deg\tk\n" +
                         "VTJW\t297.5825998454617\t1970-01-03T00:31:40.000000Z\n" +
                         "RXGZ\t267.5343540067626\t1970-01-03T00:31:40.000000Z\n" +
                         "VTJW\t297.84445706403625\t1970-01-03T01:31:40.000000Z\n" +
@@ -381,9 +393,11 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
                 "select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear) align to first observation",
                 null,
                 "k",
-                true, true);
+                true, true
+        );
 
-        assertQuery("s\thaversine_dist_deg\tk\n" +
+        assertQuery(
+                "s\thaversine_dist_deg\tk\n" +
                         "VTJW\t140.48471753024785\t1970-01-03T00:00:00.000000Z\n" +
                         "RXGZ\t268.93561321686246\t1970-01-03T00:00:00.000000Z\n" +
                         "VTJW\t297.7248158372856\t1970-01-03T01:00:00.000000Z\n" +
@@ -421,13 +435,15 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
                 "select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear) align to calendar",
                 null,
                 "k",
-                true, true);
+                true, true
+        );
 
     }
 
     @Test
     public void testAggregationWithSampleFill2_DataStartsOnTheClock() throws Exception {
-        assertQuery("s\tlat\tlon\tk\n" +
+        assertQuery(
+                "s\tlat\tlon\tk\n" +
                         "AAA\t-5.0\t-6.0\t1970-01-01T00:00:00.000000Z\n" +
                         "AAA\t-4.0\t-5.0\t1970-01-01T00:10:00.000000Z\n" +
                         "AAA\t-3.0\t-4.0\t1970-01-01T00:20:00.000000Z\n" +
@@ -448,7 +464,8 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
                         "AAA\t12.0\t11.0\t1970-01-01T02:50:00.000000Z\n" +
                         "AAA\t13.0\t12.0\t1970-01-01T03:00:00.000000Z\n" +
                         "AAA\t14.0\t13.0\t1970-01-01T03:10:00.000000Z\n"
-                , "tab", "create table tab as " +
+                , "tab",
+                "create table tab as " +
                         "(" +
                         "select" +
                         " rnd_symbol('AAA') s," +
@@ -457,27 +474,41 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
                         " timestamp_sequence(0, 600000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE", "k", true, true);
+                        ") timestamp(k) partition by NONE",
+                "k",
+                true,
+                true
+        );
 
-        assertQuery("s\thaversine_dist_deg\tk\n" +
+        assertQuery(
+                "s\thaversine_dist_deg\tk\n" +
                         "AAA\t943.0307116486234\t1970-01-01T00:00:00.000000Z\n" +
                         "AAA\t942.1704436827788\t1970-01-01T01:00:00.000000Z\n" +
                         "AAA\t936.1854124136329\t1970-01-01T02:00:00.000000Z\n" +
-                        "AAA\t155.09709548701773\t1970-01-01T03:00:00.000000Z\n"
-                , "select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear) align to first observation", null, "k", true, true);
+                        "AAA\t155.09709548701773\t1970-01-01T03:00:00.000000Z\n",
+                "select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear) align to first observation",
+                null,
+                "k",
+                true,
+                true
+        );
 
-        assertQuery("s\thaversine_dist_deg\tk\n" +
+        assertQuery(
+                "s\thaversine_dist_deg\tk\n" +
                         "AAA\t943.0307116486234\t1970-01-01T00:00:00.000000Z\n" +
                         "AAA\t942.1704436827788\t1970-01-01T01:00:00.000000Z\n" +
                         "AAA\t936.1854124136329\t1970-01-01T02:00:00.000000Z\n" +
-                        "AAA\t155.09709548701773\t1970-01-01T03:00:00.000000Z\n"
-                , "select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear) align to calendar" , null, "k", true, true);
-
+                        "AAA\t155.09709548701773\t1970-01-01T03:00:00.000000Z\n",
+                "select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear) align to calendar",
+                null,
+                "k",
+                true,
+                true
+        );
     }
 
     @Test
     public void testAggregationWithSampleFill3() throws Exception {
-
         assertQuery("s	lat	lon	k\n" +
                         "AAA\t-5.0\t-6.0\t1970-01-01T00:00:01.000000Z\n" +
                         "AAA\t-4.0\t-5.0\t1970-01-01T00:08:21.000000Z\n" +

@@ -49,7 +49,6 @@ import org.junit.Assert;
 import java.util.Arrays;
 
 public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTest {
-
     public static final double DELTA = 0.000000000000001;
 
     private static int toByteRefs = 0;

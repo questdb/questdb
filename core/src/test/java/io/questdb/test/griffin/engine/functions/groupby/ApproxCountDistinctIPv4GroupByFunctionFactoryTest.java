@@ -96,21 +96,23 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
 
     @Test
     public void testExpression() throws Exception {
-        final String expected = "a\tapprox_count_distinct\n" +
-                "a\t6\n" +
-                "b\t6\n" +
-                "c\t8\n";
-        assertQuery(
-                expected,
-                "select a, approx_count_distinct(s + 42) from x order by a",
-                "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_ipv4('1.1.1.1/16', 0) s from long_sequence(20)))",
-                null,
-                true,
-                true
-        );
-        // addition shouldn't affect the number of distinct values,
-        // so the result should stay the same
-        assertSql(expected, "select a, approx_count_distinct(s) from x order by a");
+        assertMemoryLeak(() -> {
+            final String expected = "a\tapprox_count_distinct\n" +
+                    "a\t6\n" +
+                    "b\t6\n" +
+                    "c\t8\n";
+            assertQueryNoLeakCheck(
+                    expected,
+                    "select a, approx_count_distinct(s + 42) from x order by a",
+                    "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_ipv4('1.1.1.1/16', 0) s from long_sequence(20)))",
+                    null,
+                    true,
+                    true
+            );
+            // addition shouldn't affect the number of distinct values,
+            // so the result should stay the same
+            assertSql(expected, "select a, approx_count_distinct(s) from x order by a");
+        });
     }
 
     @Test
@@ -223,66 +225,70 @@ public class ApproxCountDistinctIPv4GroupByFunctionFactoryTest extends AbstractC
 
     @Test
     public void testGroupNotKeyedWithNullsDenseHLL() throws Exception {
-        compile("create table x as (" +
-                "select * from (select rnd_ipv4('1.1.1.1/8', 0) s, timestamp_sequence(10, 100000) ts from long_sequence(1000000)) timestamp(ts)" +
-                ") timestamp(ts) PARTITION BY YEAR");
+        assertMemoryLeak(() -> {
+            compile("create table x as (" +
+                    "select * from (select rnd_ipv4('1.1.1.1/8', 0) s, timestamp_sequence(10, 100000) ts from long_sequence(1000000)) timestamp(ts)" +
+                    ") timestamp(ts) PARTITION BY YEAR");
 
-        String expectedExact = "count_distinct\n" +
-                "970716\n";
-        String expectedEstimated = "approx_count_distinct\n" +
-                "975818\n";
+            String expectedExact = "count_distinct\n" +
+                    "970716\n";
+            String expectedEstimated = "approx_count_distinct\n" +
+                    "975818\n";
 
-        assertQuery(
-                expectedExact,
-                "select count_distinct(s) from x",
-                null,
-                false,
-                true
-        );
-        assertQuery(
-                expectedEstimated,
-                "select approx_count_distinct(s) from x",
-                null,
-                false,
-                true
-        );
+            assertQueryNoLeakCheck(
+                    expectedExact,
+                    "select count_distinct(s) from x",
+                    null,
+                    false,
+                    true
+            );
+            assertQueryNoLeakCheck(
+                    expectedEstimated,
+                    "select approx_count_distinct(s) from x",
+                    null,
+                    false,
+                    true
+            );
 
-        insert("insert into x values(cast(null as IPV4), '2021-05-21')");
-        insert("insert into x values(cast(null as IPV4), '1970-01-01')");
-        assertSql(expectedExact, "select count_distinct(s) from x");
-        assertSql(expectedEstimated, "select approx_count_distinct(s) from x");
+            insert("insert into x values(cast(null as IPV4), '2021-05-21')");
+            insert("insert into x values(cast(null as IPV4), '1970-01-01')");
+            assertSql(expectedExact, "select count_distinct(s) from x");
+            assertSql(expectedEstimated, "select approx_count_distinct(s) from x");
+        });
     }
 
     @Test
     public void testGroupNotKeyedWithNullsSparseHLL() throws Exception {
-        compile("create table x as (" +
-                "select * from (select rnd_ipv4('1.1.1.1/8', 0) s, timestamp_sequence(10, 100000) ts from long_sequence(100)) timestamp(ts)" +
-                ") timestamp(ts) PARTITION BY YEAR");
+        assertMemoryLeak(() -> {
+            compile("create table x as (" +
+                    "select * from (select rnd_ipv4('1.1.1.1/8', 0) s, timestamp_sequence(10, 100000) ts from long_sequence(100)) timestamp(ts)" +
+                    ") timestamp(ts) PARTITION BY YEAR");
 
-        String expectedExact = "count_distinct\n" +
-                "100\n";
-        String expectedEstimated = "approx_count_distinct\n" +
-                "100\n";
+            String expectedExact = "count_distinct\n" +
+                    "100\n";
+            String expectedEstimated = "approx_count_distinct\n" +
+                    "100\n";
 
-        assertQuery(
-                expectedExact,
-                "select count_distinct(s) from x",
-                null,
-                false,
-                true
-        );
-        assertQuery(
-                expectedEstimated,
-                "select approx_count_distinct(s) from x",
-                null,
-                false,
-                true
-        );
+            assertQueryNoLeakCheck(
+                    expectedExact,
+                    "select count_distinct(s) from x",
+                    null,
+                    false,
+                    true
+            );
+            assertQueryNoLeakCheck(
+                    expectedEstimated,
+                    "select approx_count_distinct(s) from x",
+                    null,
+                    false,
+                    true
+            );
 
-        insert("insert into x values(cast(null as IPV4), '2021-05-21')");
-        insert("insert into x values(cast(null as IPV4), '1970-01-01')");
-        assertSql(expectedExact, "select count_distinct(s) from x");
-        assertSql(expectedEstimated, "select approx_count_distinct(s) from x");
+            insert("insert into x values(cast(null as IPV4), '2021-05-21')");
+            insert("insert into x values(cast(null as IPV4), '1970-01-01')");
+            assertSql(expectedExact, "select count_distinct(s) from x");
+            assertSql(expectedEstimated, "select approx_count_distinct(s) from x");
+        });
     }
 
     @Test

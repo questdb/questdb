@@ -3366,7 +3366,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "                Frame forward scan on: tab\n"
             );
 
-            assertQuery("ts\ts\tfirst\n" +
+            assertQueryNoLeakCheck("ts\ts\tfirst\n" +
                             "2022-12-01T01:11:00.000000Z\tB\t3\n" +
                             "2022-12-01T01:41:00.000000Z\tB\t4\n",
                     "select * from (select ts, s, first(v) from tab sample by 30m fill(prev) align to first observation) where s = 'B' ",
@@ -3392,7 +3392,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "            Frame forward scan on: tab\n"
             );
 
-            assertQuery("ts\tfirst\n" +
+            assertQueryNoLeakCheck("ts\tfirst\n" +
                             "2022-12-01T01:40:00.000000Z\t4\n",
                     "select * from (select ts, first(v) from tab sample by 30m fill(prev) align to first observation) where ts > '2022-12-01T01:10:00.000000Z' ",
                     "ts", false
@@ -4808,7 +4808,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "              intervals: [(\"2022-12-01T00:00:00.000001Z\",\"MAX\")]\n"
             );
 
-            assertQuery("ts\ts\tfirst\n" +
+            assertQueryNoLeakCheck("ts\ts\tfirst\n" +
                             "2022-12-01T01:33:00.000000Z\tB\t3\n" +
                             "2022-12-01T02:03:00.000000Z\tB\t6\n",
                     query, "ts", false
@@ -11803,7 +11803,7 @@ public class SampleByTest extends AbstractCairoTest {
             ddl("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
             ddl("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "time\tsum\tsum1\tsum2\n" +
                             "1970-01-01T00:00:00.000000Z\t33.423793766512645\t28.964416248629917\t32.11038924761886\n" +
                             "1970-01-01T01:00:00.000000Z\t20.686394200400652\t18.863001213785466\t21.027598662521456\n",
@@ -11835,7 +11835,7 @@ public class SampleByTest extends AbstractCairoTest {
             ddl("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
             ddl("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "sum\tsum1\tsum2\ttime\n" +
                             "33.423793766512645\t28.964416248629917\t32.11038924761886\t1970-01-01T00:00:00.000000Z\n" +
                             "20.686394200400652\t18.863001213785466\t21.027598662521456\t1970-01-01T01:00:00.000000Z\n",
@@ -11867,7 +11867,7 @@ public class SampleByTest extends AbstractCairoTest {
             ddl("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
             ddl("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "sum\ttime\tsum1\tsum2\n" +
                             "33.423793766512645\t1970-01-01T00:00:00.000000Z\t28.964416248629917\t32.11038924761886\n" +
                             "20.686394200400652\t1970-01-01T01:00:00.000000Z\t18.863001213785466\t21.027598662521456\n",
@@ -11899,7 +11899,7 @@ public class SampleByTest extends AbstractCairoTest {
             ddl("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
             ddl("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "ts\tsum\tsum1\tsum2\n" +
                             "1970-01-01T00:00:00.000000Z\t33.423793766512645\t28.964416248629917\t32.11038924761886\n" +
                             "1970-01-01T01:00:00.000000Z\t20.686394200400652\t18.863001213785466\t21.027598662521456\n",
@@ -11931,7 +11931,7 @@ public class SampleByTest extends AbstractCairoTest {
             ddl("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
             ddl("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "sum\tsum1\tsum2\tts\n" +
                             "33.423793766512645\t28.964416248629917\t32.11038924761886\t1970-01-01T00:00:00.000000Z\n" +
                             "20.686394200400652\t18.863001213785466\t21.027598662521456\t1970-01-01T01:00:00.000000Z\n",
@@ -11963,7 +11963,7 @@ public class SampleByTest extends AbstractCairoTest {
             ddl("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
             ddl("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "sum\tsum1\tsum2\ttime\n" +
                             "33.423793766512645\t28.964416248629917\t32.11038924761886\t1970-01-01T00:00:00.000000Z\n" +
                             "20.686394200400652\t18.863001213785466\t21.027598662521456\t1970-01-01T01:00:00.000000Z\n",
@@ -12036,7 +12036,7 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampIsNotRequiredAfterSubqueryWithExplicitTs() throws SqlException {
-        assertQuery("ts\tvalue\n" +
+        assertQueryNoLeakCheck("ts\tvalue\n" +
                         "2023-02-19T00:00:00.000000Z\t0\n" +
                         "2023-02-20T00:00:00.000000Z\t0\n" +
                         "2023-02-21T00:00:00.000000Z\t0\n" +
@@ -12069,7 +12069,7 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampIsNotRequiredAfterSubqueryWithExplicitTs2() throws SqlException {
-        assertQuery("ts\tvalue\n" +
+        assertQueryNoLeakCheck("ts\tvalue\n" +
                         "2023-02-19T00:00:00.000000Z\t0\n" +
                         "2023-02-20T00:00:00.000000Z\t0\n" +
                         "2023-02-21T00:00:00.000000Z\t0\n" +
@@ -12104,7 +12104,7 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampIsNotRequiredAfterSubqueryWithExplicitTsNotInSelectList() throws SqlException {
-        assertQuery("value\n" +
+        assertQueryNoLeakCheck("value\n" +
                         "0\n" +
                         "0\n" +
                         "0\n" +

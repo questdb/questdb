@@ -2115,12 +2115,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 break;
                         }
                     }
-                } catch (Throwable e) {
+                } catch (Throwable th) {
                     master = Misc.free(master);
                     if (releaseSlave) {
                         Misc.free(slave);
                     }
-                    throw e;
+                    throw th;
                 } finally {
                     executionContext.popTimestampRequiredFlag();
                 }
@@ -3986,425 +3986,424 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         ObjList<Function> functions = new ObjList<>();
 
-        // if all window function don't require sorting or more than one pass then use streaming factory
-        boolean isFastPath = true;
+        try {
+            // if all window function don't require sorting or more than one pass then use streaming factory
+            boolean isFastPath = true;
 
-        for (int i = 0; i < columnCount; i++) {
-            final QueryColumn qc = columns.getQuick(i);
-            if (qc.isWindowColumn()) {
-                final WindowColumn ac = (WindowColumn) qc;
-                final ExpressionNode ast = qc.getAst();
-                if (ast.paramCount > 1) {
-                    Misc.free(base);
-                    throw SqlException.$(ast.position, "too many arguments");
-                }
+            for (int i = 0; i < columnCount; i++) {
+                final QueryColumn qc = columns.getQuick(i);
+                if (qc.isWindowColumn()) {
+                    final WindowColumn ac = (WindowColumn) qc;
+                    final ExpressionNode ast = qc.getAst();
+                    if (ast.paramCount > 1) {
+                        throw SqlException.$(ast.position, "too many arguments");
+                    }
 
-                ObjList<Function> partitionBy = null;
-                int psz = ac.getPartitionBy().size();
-                if (psz > 0) {
-                    partitionBy = new ObjList<>(psz);
-                    for (int j = 0; j < psz; j++) {
-                        partitionBy.add(
-                                functionParser.parseFunction(ac.getPartitionBy().getQuick(j), baseMetadata, executionContext)
+                    ObjList<Function> partitionBy = null;
+                    int psz = ac.getPartitionBy().size();
+                    if (psz > 0) {
+                        partitionBy = new ObjList<>(psz);
+                        for (int j = 0; j < psz; j++) {
+                            partitionBy.add(
+                                    functionParser.parseFunction(ac.getPartitionBy().getQuick(j), baseMetadata, executionContext)
+                            );
+                        }
+                    }
+
+                    final VirtualRecord partitionByRecord;
+                    final RecordSink partitionBySink;
+
+                    if (partitionBy != null) {
+                        partitionByRecord = new VirtualRecord(partitionBy);
+                        keyTypes.clear();
+                        final int partitionByCount = partitionBy.size();
+
+                        for (int j = 0; j < partitionByCount; j++) {
+                            keyTypes.add(partitionBy.getQuick(j).getType());
+                        }
+                        entityColumnFilter.of(partitionByCount);
+                        partitionBySink = RecordSinkFactory.getInstance(
+                                asm,
+                                keyTypes,
+                                entityColumnFilter,
+                                false
+                        );
+                    } else {
+                        partitionByRecord = null;
+                        partitionBySink = null;
+                    }
+
+                    final int osz = ac.getOrderBy().size();
+
+                    // analyze order by clause on the current model and optimise out
+                    // order by on window function if it matches the one on the model
+                    final LowerCaseCharSequenceIntHashMap orderHash = model.getOrderHash();
+                    boolean dismissOrder = false;
+                    int timestampIdx = base.getMetadata().getTimestampIndex();
+                    int orderByPos = osz > 0 ? ac.getOrderBy().getQuick(0).position : -1;
+
+                    if (base.followedOrderByAdvice() && osz > 0 && orderHash.size() > 0) {
+                        dismissOrder = true;
+                        for (int j = 0; j < osz; j++) {
+                            ExpressionNode node = ac.getOrderBy().getQuick(j);
+                            int direction = ac.getOrderByDirection().getQuick(j);
+                            if (!Chars.equalsIgnoreCase(node.token, orderHash.keys().get(j)) ||
+                                    orderHash.get(node.token) != direction) {
+                                dismissOrder = false;
+                                break;
+                            }
+                        }
+                    }
+                    if (!dismissOrder
+                            && osz == 1
+                            && timestampIdx != -1
+                            && orderHash.size() < 2) {
+                        ExpressionNode orderByNode = ac.getOrderBy().getQuick(0);
+                        int orderByDirection = ac.getOrderByDirection().getQuick(0);
+
+                        if (baseMetadata.getColumnIndexQuiet(orderByNode.token) == timestampIdx &&
+                                ((orderByDirection == ORDER_ASC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD) ||
+                                        (orderByDirection == ORDER_DESC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD))) {
+                            dismissOrder = true;
+                        }
+                    }
+
+                    executionContext.configureWindowContext(
+                            partitionByRecord,
+                            partitionBySink,
+                            keyTypes,
+                            osz > 0,
+                            dismissOrder ? base.getScanDirection() : RecordCursorFactory.SCAN_DIRECTION_OTHER,
+                            orderByPos,
+                            base.recordCursorSupportsRandomAccess(),
+                            ac.getFramingMode(),
+                            ac.getRowsLo(),
+                            ac.getRowsLoKindPos(),
+                            ac.getRowsHi(),
+                            ac.getRowsHiKindPos(),
+                            ac.getExclusionKind(),
+                            ac.getExclusionKindPos(),
+                            baseMetadata.getTimestampIndex()
+                    );
+                    final Function f;
+                    try {
+                        f = functionParser.parseFunction(ast, baseMetadata, executionContext);
+                        if (!(f instanceof WindowFunction)) {
+                            Misc.free(f);
+                            throw SqlException.$(ast.position, "non-window function called in window context");
+                        }
+
+                        WindowFunction af = (WindowFunction) f;
+                        functions.extendAndSet(i, f);
+
+                        // sorting and/or  multiple passes are required, so fall back to old implementation
+                        if ((osz > 0 && !dismissOrder) || af.getPassCount() != WindowFunction.ZERO_PASS) {
+                            isFastPath = false;
+                            break;
+                        }
+                    } finally {
+                        executionContext.clearWindowContext();
+                    }
+
+                    WindowFunction windowFunction = (WindowFunction) f;
+                    windowFunction.setColumnIndex(i);
+
+                    factoryMetadata.add(new TableColumnMetadata(
+                            Chars.toString(qc.getAlias()),
+                            windowFunction.getType(),
+                            false,
+                            0,
+                            false,
+                            null
+                    ));
+                } else { // column
+                    final int columnIndex = baseMetadata.getColumnIndexQuiet(qc.getAst().token);
+                    final TableColumnMetadata m = baseMetadata.getColumnMetadata(columnIndex);
+
+                    Function function = functionParser.parseFunction(
+                            qc.getAst(),
+                            baseMetadata,
+                            executionContext
+                    );
+                    functions.extendAndSet(i, function);
+
+                    if (baseMetadata.getTimestampIndex() != -1 &&
+                            baseMetadata.getTimestampIndex() == columnIndex) {
+                        factoryMetadata.setTimestampIndex(i);
+                    }
+
+                    if (Chars.equalsIgnoreCase(qc.getAst().token, qc.getAlias())) {
+                        factoryMetadata.add(i, m);
+                    } else { // keep alias
+                        factoryMetadata.add(i, new TableColumnMetadata(
+                                        Chars.toString(qc.getAlias()),
+                                        m.getType(),
+                                        m.isIndexed(),
+                                        m.getIndexValueBlockCapacity(),
+                                        m.isSymbolTableStatic(),
+                                        baseMetadata
+                                )
                         );
                     }
                 }
-
-                final VirtualRecord partitionByRecord;
-                final RecordSink partitionBySink;
-
-                if (partitionBy != null) {
-                    partitionByRecord = new VirtualRecord(partitionBy);
-                    keyTypes.clear();
-                    final int partitionByCount = partitionBy.size();
-
-                    for (int j = 0; j < partitionByCount; j++) {
-                        keyTypes.add(partitionBy.getQuick(j).getType());
-                    }
-                    entityColumnFilter.of(partitionByCount);
-                    partitionBySink = RecordSinkFactory.getInstance(
-                            asm,
-                            keyTypes,
-                            entityColumnFilter,
-                            false
-                    );
-                } else {
-                    partitionByRecord = null;
-                    partitionBySink = null;
-                }
-
-                final int osz = ac.getOrderBy().size();
-
-                // analyze order by clause on the current model and optimise out
-                // order by on window function if it matches the one on the model
-                final LowerCaseCharSequenceIntHashMap orderHash = model.getOrderHash();
-                boolean dismissOrder = false;
-                int timestampIdx = base.getMetadata().getTimestampIndex();
-                int orderByPos = osz > 0 ? ac.getOrderBy().getQuick(0).position : -1;
-
-                if (base.followedOrderByAdvice() && osz > 0 && orderHash.size() > 0) {
-                    dismissOrder = true;
-                    for (int j = 0; j < osz; j++) {
-                        ExpressionNode node = ac.getOrderBy().getQuick(j);
-                        int direction = ac.getOrderByDirection().getQuick(j);
-                        if (!Chars.equalsIgnoreCase(node.token, orderHash.keys().get(j)) ||
-                                orderHash.get(node.token) != direction) {
-                            dismissOrder = false;
-                            break;
-                        }
-                    }
-                }
-                if (!dismissOrder
-                        && osz == 1
-                        && timestampIdx != -1
-                        && orderHash.size() < 2) {
-                    ExpressionNode orderByNode = ac.getOrderBy().getQuick(0);
-                    int orderByDirection = ac.getOrderByDirection().getQuick(0);
-
-                    if (baseMetadata.getColumnIndexQuiet(orderByNode.token) == timestampIdx &&
-                            ((orderByDirection == ORDER_ASC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD) ||
-                                    (orderByDirection == ORDER_DESC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD))) {
-                        dismissOrder = true;
-                    }
-                }
-
-                executionContext.configureWindowContext(
-                        partitionByRecord,
-                        partitionBySink,
-                        keyTypes,
-                        osz > 0,
-                        dismissOrder ? base.getScanDirection() : RecordCursorFactory.SCAN_DIRECTION_OTHER,
-                        orderByPos,
-                        base.recordCursorSupportsRandomAccess(),
-                        ac.getFramingMode(),
-                        ac.getRowsLo(),
-                        ac.getRowsLoKindPos(),
-                        ac.getRowsHi(),
-                        ac.getRowsHiKindPos(),
-                        ac.getExclusionKind(),
-                        ac.getExclusionKindPos(),
-                        baseMetadata.getTimestampIndex()
-                );
-                final Function f;
-                try {
-                    f = functionParser.parseFunction(ast, baseMetadata, executionContext);
-                    if (!(f instanceof WindowFunction)) {
-                        Misc.free(base);
-                        Misc.free(f);
-                        throw SqlException.$(ast.position, "non-window function called in window context");
-                    }
-
-                    WindowFunction af = (WindowFunction) f;
-                    functions.extendAndSet(i, f);
-
-                    // sorting and/or  multiple passes are required, so fall back to old implementation
-                    if ((osz > 0 && !dismissOrder) || af.getPassCount() != WindowFunction.ZERO_PASS) {
-                        isFastPath = false;
-                        break;
-                    }
-                } finally {
-                    executionContext.clearWindowContext();
-                }
-
-                WindowFunction windowFunction = (WindowFunction) f;
-                windowFunction.setColumnIndex(i);
-
-                factoryMetadata.add(new TableColumnMetadata(
-                        Chars.toString(qc.getAlias()),
-                        windowFunction.getType(),
-                        false,
-                        0,
-                        false,
-                        null
-                ));
-            } else { // column
-                final int columnIndex = baseMetadata.getColumnIndexQuiet(qc.getAst().token);
-                final TableColumnMetadata m = baseMetadata.getColumnMetadata(columnIndex);
-
-                Function function = functionParser.parseFunction(
-                        qc.getAst(),
-                        baseMetadata,
-                        executionContext
-                );
-                functions.extendAndSet(i, function);
-
-                if (baseMetadata.getTimestampIndex() != -1 &&
-                        baseMetadata.getTimestampIndex() == columnIndex) {
-                    factoryMetadata.setTimestampIndex(i);
-                }
-
-                if (Chars.equalsIgnoreCase(qc.getAst().token, qc.getAlias())) {
-                    factoryMetadata.add(i, m);
-                } else { // keep alias
-                    factoryMetadata.add(i, new TableColumnMetadata(
-                                    Chars.toString(qc.getAlias()),
-                                    m.getType(),
-                                    m.isIndexed(),
-                                    m.getIndexValueBlockCapacity(),
-                                    m.isSymbolTableStatic(),
-                                    baseMetadata
-                            )
-                    );
-                }
-
             }
-        }
 
-        if (isFastPath) {
-            return new WindowRecordCursorFactory(base, factoryMetadata, functions);
-        } else {
-            factoryMetadata.clear();
-            Misc.freeObjList(functions);
-            functions.clear();
-        }
-
-        listColumnFilterA.clear();
-        listColumnFilterB.clear();
-
-        // we need two passes over columns because partitionBy and orderBy clauses of
-        // the window function must reference the metadata of "this" factory.
-
-        // pass #1 assembles metadata of non-window columns
-
-        // set of column indexes in the base metadata that has already been added to the main
-        // metadata instance
-        intHashSet.clear();
-        final IntList columnIndexes = new IntList();
-        for (int i = 0; i < columnCount; i++) {
-            final QueryColumn qc = columns.getQuick(i);
-            if (!qc.isWindowColumn()) {
-                final int columnIndex = baseMetadata.getColumnIndexQuiet(qc.getAst().token);
-                final TableColumnMetadata m = baseMetadata.getColumnMetadata(columnIndex);
-                chainMetadata.add(i, m);
-                if (Chars.equalsIgnoreCase(qc.getAst().token, qc.getAlias())) {
-                    factoryMetadata.add(i, m);
-                } else { // keep alias
-                    factoryMetadata.add(i, new TableColumnMetadata(
-                                    Chars.toString(qc.getAlias()),
-                                    m.getType(),
-                                    m.isIndexed(),
-                                    m.getIndexValueBlockCapacity(),
-                                    m.isSymbolTableStatic(),
-                                    baseMetadata
-                            )
-                    );
-                }
-                chainTypes.add(i, m.getType());
-                listColumnFilterA.extendAndSet(i, i + 1);
-                listColumnFilterB.extendAndSet(i, columnIndex);
-                intHashSet.add(columnIndex);
-                columnIndexes.extendAndSet(i, columnIndex);
-
-                if (baseMetadata.getTimestampIndex() != -1 &&
-                        baseMetadata.getTimestampIndex() == columnIndex) {
-                    factoryMetadata.setTimestampIndex(i);
-                }
+            if (isFastPath) {
+                return new WindowRecordCursorFactory(base, factoryMetadata, functions);
+            } else {
+                factoryMetadata.clear();
+                Misc.freeObjList(functions);
+                functions.clear();
             }
-        }
 
-        // pass #2 - add remaining base metadata column that are not in intHashSet already
-        // we need to pay attention to stepping over window column slots
-        // Chain metadata is assembled in such way that all columns the factory
-        // needs to provide are at the beginning of the metadata so the record the factory cursor
-        // returns can be chain record, because the chain record is always longer than record needed out of the
-        // cursor and relevant columns are 0..n limited by factory metadata
+            listColumnFilterA.clear();
+            listColumnFilterB.clear();
 
-        int addAt = columnCount;
-        for (int i = 0, n = baseMetadata.getColumnCount(); i < n; i++) {
-            if (intHashSet.excludes(i)) {
-                final TableColumnMetadata m = baseMetadata.getColumnMetadata(i);
-                chainMetadata.add(addAt, m);
-                chainTypes.add(addAt, m.getType());
-                listColumnFilterA.extendAndSet(addAt, addAt + 1);
-                listColumnFilterB.extendAndSet(addAt, i);
-                columnIndexes.extendAndSet(addAt, i);
-                addAt++;
-            }
-        }
+            // we need two passes over columns because partitionBy and orderBy clauses of
+            // the window function must reference the metadata of "this" factory.
 
-        // pass #3 assembles window column metadata into a list
-        // not main metadata to avoid partitionBy functions accidentally looking up
-        // window columns recursively
+            // pass #1 assembles metadata of non-window columns
 
-        deferredWindowMetadata.clear();
-        for (int i = 0; i < columnCount; i++) {
-            final QueryColumn qc = columns.getQuick(i);
-            if (qc.isWindowColumn()) {
-                final WindowColumn ac = (WindowColumn) qc;
-                final ExpressionNode ast = qc.getAst();
-                if (ast.paramCount > 1) {
-                    Misc.free(base);
-                    throw SqlException.$(ast.position, "too many arguments");
-                }
-
-                ObjList<Function> partitionBy = null;
-                int psz = ac.getPartitionBy().size();
-                if (psz > 0) {
-                    partitionBy = new ObjList<>(psz);
-                    for (int j = 0; j < psz; j++) {
-                        partitionBy.add(
-                                functionParser.parseFunction(ac.getPartitionBy().getQuick(j), chainMetadata, executionContext)
+            // set of column indexes in the base metadata that has already been added to the main
+            // metadata instance
+            intHashSet.clear();
+            final IntList columnIndexes = new IntList();
+            for (int i = 0; i < columnCount; i++) {
+                final QueryColumn qc = columns.getQuick(i);
+                if (!qc.isWindowColumn()) {
+                    final int columnIndex = baseMetadata.getColumnIndexQuiet(qc.getAst().token);
+                    final TableColumnMetadata m = baseMetadata.getColumnMetadata(columnIndex);
+                    chainMetadata.add(i, m);
+                    if (Chars.equalsIgnoreCase(qc.getAst().token, qc.getAlias())) {
+                        factoryMetadata.add(i, m);
+                    } else { // keep alias
+                        factoryMetadata.add(i, new TableColumnMetadata(
+                                        Chars.toString(qc.getAlias()),
+                                        m.getType(),
+                                        m.isIndexed(),
+                                        m.getIndexValueBlockCapacity(),
+                                        m.isSymbolTableStatic(),
+                                        baseMetadata
+                                )
                         );
                     }
-                }
+                    chainTypes.add(i, m.getType());
+                    listColumnFilterA.extendAndSet(i, i + 1);
+                    listColumnFilterB.extendAndSet(i, columnIndex);
+                    intHashSet.add(columnIndex);
+                    columnIndexes.extendAndSet(i, columnIndex);
 
-                final VirtualRecord partitionByRecord;
-                final RecordSink partitionBySink;
-
-                if (partitionBy != null) {
-                    partitionByRecord = new VirtualRecord(partitionBy);
-                    keyTypes.clear();
-                    final int partitionByCount = partitionBy.size();
-
-                    for (int j = 0; j < partitionByCount; j++) {
-                        keyTypes.add(partitionBy.getQuick(j).getType());
+                    if (baseMetadata.getTimestampIndex() != -1 && baseMetadata.getTimestampIndex() == columnIndex) {
+                        factoryMetadata.setTimestampIndex(i);
                     }
-                    entityColumnFilter.of(partitionByCount);
-                    // create sink
-                    partitionBySink = RecordSinkFactory.getInstance(
-                            asm,
-                            keyTypes,
-                            entityColumnFilter,
-                            false
-                    );
-                } else {
-                    partitionByRecord = null;
-                    partitionBySink = null;
                 }
+            }
 
-                final int osz = ac.getOrderBy().size();
+            // pass #2 - add remaining base metadata column that are not in intHashSet already
+            // we need to pay attention to stepping over window column slots
+            // Chain metadata is assembled in such way that all columns the factory
+            // needs to provide are at the beginning of the metadata so the record the factory cursor
+            // returns can be chain record, because the chain record is always longer than record needed out of the
+            // cursor and relevant columns are 0..n limited by factory metadata
 
-                // analyze order by clause on the current model and optimise out
-                // order by on window function if it matches the one on the model
-                final LowerCaseCharSequenceIntHashMap orderHash = model.getOrderHash();
-                boolean dismissOrder = false;
-                int timestampIdx = base.getMetadata().getTimestampIndex();
-                int orderByPos = osz > 0 ? ac.getOrderBy().getQuick(0).position : -1;
+            int addAt = columnCount;
+            for (int i = 0, n = baseMetadata.getColumnCount(); i < n; i++) {
+                if (intHashSet.excludes(i)) {
+                    final TableColumnMetadata m = baseMetadata.getColumnMetadata(i);
+                    chainMetadata.add(addAt, m);
+                    chainTypes.add(addAt, m.getType());
+                    listColumnFilterA.extendAndSet(addAt, addAt + 1);
+                    listColumnFilterB.extendAndSet(addAt, i);
+                    columnIndexes.extendAndSet(addAt, i);
+                    addAt++;
+                }
+            }
 
-                if (base.followedOrderByAdvice() && osz > 0 && orderHash.size() > 0) {
-                    dismissOrder = true;
-                    for (int j = 0; j < osz; j++) {
-                        ExpressionNode node = ac.getOrderBy().getQuick(j);
-                        int direction = ac.getOrderByDirection().getQuick(j);
-                        if (!Chars.equalsIgnoreCase(node.token, orderHash.keys().get(j)) ||
-                                orderHash.get(node.token) != direction) {
-                            dismissOrder = false;
-                            break;
+            // pass #3 assembles window column metadata into a list
+            // not main metadata to avoid partitionBy functions accidentally looking up
+            // window columns recursively
+
+            deferredWindowMetadata.clear();
+            for (int i = 0; i < columnCount; i++) {
+                final QueryColumn qc = columns.getQuick(i);
+                if (qc.isWindowColumn()) {
+                    final WindowColumn ac = (WindowColumn) qc;
+                    final ExpressionNode ast = qc.getAst();
+                    if (ast.paramCount > 1) {
+                        throw SqlException.$(ast.position, "too many arguments");
+                    }
+
+                    ObjList<Function> partitionBy = null;
+                    int psz = ac.getPartitionBy().size();
+                    if (psz > 0) {
+                        partitionBy = new ObjList<>(psz);
+                        for (int j = 0; j < psz; j++) {
+                            partitionBy.add(
+                                    functionParser.parseFunction(ac.getPartitionBy().getQuick(j), chainMetadata, executionContext)
+                            );
                         }
                     }
-                }
-                if (osz == 1 && timestampIdx != -1 && orderHash.size() < 2) {
-                    ExpressionNode orderByNode = ac.getOrderBy().getQuick(0);
-                    int orderByDirection = ac.getOrderByDirection().getQuick(0);
 
-                    if (baseMetadata.getColumnIndexQuiet(orderByNode.token) == timestampIdx &&
-                            ((orderByDirection == ORDER_ASC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD) ||
-                                    (orderByDirection == ORDER_DESC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD))) {
+                    final VirtualRecord partitionByRecord;
+                    final RecordSink partitionBySink;
+
+                    if (partitionBy != null) {
+                        partitionByRecord = new VirtualRecord(partitionBy);
+                        keyTypes.clear();
+                        final int partitionByCount = partitionBy.size();
+
+                        for (int j = 0; j < partitionByCount; j++) {
+                            keyTypes.add(partitionBy.getQuick(j).getType());
+                        }
+                        entityColumnFilter.of(partitionByCount);
+                        // create sink
+                        partitionBySink = RecordSinkFactory.getInstance(
+                                asm,
+                                keyTypes,
+                                entityColumnFilter,
+                                false
+                        );
+                    } else {
+                        partitionByRecord = null;
+                        partitionBySink = null;
+                    }
+
+                    final int osz = ac.getOrderBy().size();
+
+                    // analyze order by clause on the current model and optimise out
+                    // order by on window function if it matches the one on the model
+                    final LowerCaseCharSequenceIntHashMap orderHash = model.getOrderHash();
+                    boolean dismissOrder = false;
+                    int timestampIdx = base.getMetadata().getTimestampIndex();
+                    int orderByPos = osz > 0 ? ac.getOrderBy().getQuick(0).position : -1;
+
+                    if (base.followedOrderByAdvice() && osz > 0 && orderHash.size() > 0) {
                         dismissOrder = true;
+                        for (int j = 0; j < osz; j++) {
+                            ExpressionNode node = ac.getOrderBy().getQuick(j);
+                            int direction = ac.getOrderByDirection().getQuick(j);
+                            if (!Chars.equalsIgnoreCase(node.token, orderHash.keys().get(j)) ||
+                                    orderHash.get(node.token) != direction) {
+                                dismissOrder = false;
+                                break;
+                            }
+                        }
                     }
+                    if (osz == 1 && timestampIdx != -1 && orderHash.size() < 2) {
+                        ExpressionNode orderByNode = ac.getOrderBy().getQuick(0);
+                        int orderByDirection = ac.getOrderByDirection().getQuick(0);
+
+                        if (baseMetadata.getColumnIndexQuiet(orderByNode.token) == timestampIdx &&
+                                ((orderByDirection == ORDER_ASC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD) ||
+                                        (orderByDirection == ORDER_DESC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD))) {
+                            dismissOrder = true;
+                        }
+                    }
+
+                    executionContext.configureWindowContext(
+                            partitionByRecord,
+                            partitionBySink,
+                            keyTypes,
+                            osz > 0,
+                            dismissOrder ? base.getScanDirection() : RecordCursorFactory.SCAN_DIRECTION_OTHER,
+                            orderByPos,
+                            base.recordCursorSupportsRandomAccess(),
+                            ac.getFramingMode(),
+                            ac.getRowsLo(),
+                            ac.getRowsLoKindPos(),
+                            ac.getRowsHi(),
+                            ac.getRowsHiKindPos(),
+                            ac.getExclusionKind(),
+                            ac.getExclusionKindPos(),
+                            chainMetadata.getTimestampIndex()
+                    );
+                    final Function f;
+                    try {
+                        // function needs to resolve args against chain metadata
+                        f = functionParser.parseFunction(ast, chainMetadata, executionContext);
+                        if (!(f instanceof WindowFunction)) {
+                            throw SqlException.$(ast.position, "non-window function called in window context");
+                        }
+                    } finally {
+                        executionContext.clearWindowContext();
+                    }
+
+                    WindowFunction windowFunction = (WindowFunction) f;
+
+                    if (osz > 0 && !dismissOrder) {
+                        IntList order = toOrderIndices(chainMetadata, ac.getOrderBy(), ac.getOrderByDirection());
+                        // init comparator if we need
+                        windowFunction.initRecordComparator(recordComparatorCompiler, chainTypes, order);
+                        ObjList<WindowFunction> funcs = groupedWindow.get(order);
+                        if (funcs == null) {
+                            groupedWindow.put(order, funcs = new ObjList<>());
+                        }
+                        funcs.add(windowFunction);
+                    } else {
+                        if (naturalOrderFunctions == null) {
+                            naturalOrderFunctions = new ObjList<>();
+                        }
+                        naturalOrderFunctions.add(windowFunction);
+                    }
+
+                    windowFunction.setColumnIndex(i);
+
+                    deferredWindowMetadata.extendAndSet(i, new TableColumnMetadata(
+                            Chars.toString(qc.getAlias()),
+                            windowFunction.getType(),
+                            false,
+                            0,
+                            false,
+                            null
+                    ));
+
+                    listColumnFilterA.extendAndSet(i, -i - 1);
                 }
-
-                executionContext.configureWindowContext(
-                        partitionByRecord,
-                        partitionBySink,
-                        keyTypes,
-                        osz > 0,
-                        dismissOrder ? base.getScanDirection() : RecordCursorFactory.SCAN_DIRECTION_OTHER,
-                        orderByPos,
-                        base.recordCursorSupportsRandomAccess(),
-                        ac.getFramingMode(),
-                        ac.getRowsLo(),
-                        ac.getRowsLoKindPos(),
-                        ac.getRowsHi(),
-                        ac.getRowsHiKindPos(),
-                        ac.getExclusionKind(),
-                        ac.getExclusionKindPos(),
-                        chainMetadata.getTimestampIndex()
-                );
-                final Function f;
-                try {
-                    // function needs to resolve args against chain metadata
-                    f = functionParser.parseFunction(ast, chainMetadata, executionContext);
-                    if (!(f instanceof WindowFunction)) {
-                        Misc.free(base);
-                        throw SqlException.$(ast.position, "non-window function called in window context");
-                    }
-                } finally {
-                    executionContext.clearWindowContext();
-                }
-
-                WindowFunction windowFunction = (WindowFunction) f;
-
-                if (osz > 0 && !dismissOrder) {
-                    IntList order = toOrderIndices(chainMetadata, ac.getOrderBy(), ac.getOrderByDirection());
-                    // init comparator if we need
-                    windowFunction.initRecordComparator(recordComparatorCompiler, chainTypes, order);
-                    ObjList<WindowFunction> funcs = groupedWindow.get(order);
-                    if (funcs == null) {
-                        groupedWindow.put(order, funcs = new ObjList<>());
-                    }
-                    funcs.add(windowFunction);
-                } else {
-                    if (naturalOrderFunctions == null) {
-                        naturalOrderFunctions = new ObjList<>();
-                    }
-                    naturalOrderFunctions.add(windowFunction);
-                }
-
-                windowFunction.setColumnIndex(i);
-
-                deferredWindowMetadata.extendAndSet(i, new TableColumnMetadata(
-                        Chars.toString(qc.getAlias()),
-                        windowFunction.getType(),
-                        false,
-                        0,
-                        false,
-                        null
-                ));
-
-                listColumnFilterA.extendAndSet(i, -i - 1);
             }
-        }
 
-        // after all columns are processed we can re-insert deferred metadata
-        for (int i = 0, n = deferredWindowMetadata.size(); i < n; i++) {
-            TableColumnMetadata m = deferredWindowMetadata.getQuick(i);
-            if (m != null) {
-                chainTypes.add(i, m.getType());
-                factoryMetadata.add(i, m);
+            // after all columns are processed we can re-insert deferred metadata
+            for (int i = 0, n = deferredWindowMetadata.size(); i < n; i++) {
+                TableColumnMetadata m = deferredWindowMetadata.getQuick(i);
+                if (m != null) {
+                    chainTypes.add(i, m.getType());
+                    factoryMetadata.add(i, m);
+                }
             }
+
+            final ObjList<RecordComparator> windowComparators = new ObjList<>(groupedWindow.size());
+            final ObjList<ObjList<WindowFunction>> functionGroups = new ObjList<>(groupedWindow.size());
+            final ObjList<IntList> keys = new ObjList<>();
+            for (ObjObjHashMap.Entry<IntList, ObjList<WindowFunction>> e : groupedWindow) {
+                windowComparators.add(recordComparatorCompiler.compile(chainTypes, e.key));
+                functionGroups.add(e.value);
+                keys.add(e.key);
+            }
+
+            final RecordSink recordSink = RecordSinkFactory.getInstance(
+                    asm,
+                    chainTypes,
+                    listColumnFilterA,
+                    false,
+                    listColumnFilterB
+            );
+
+            return new CachedWindowRecordCursorFactory(
+                    configuration,
+                    base,
+                    recordSink,
+                    factoryMetadata,
+                    chainTypes,
+                    windowComparators,
+                    functionGroups,
+                    naturalOrderFunctions,
+                    columnIndexes,
+                    keys,
+                    chainMetadata
+            );
+        } catch (Throwable th) {
+            Misc.free(base);
+            throw th;
         }
-
-        final ObjList<RecordComparator> windowComparators = new ObjList<>(groupedWindow.size());
-        final ObjList<ObjList<WindowFunction>> functionGroups = new ObjList<>(groupedWindow.size());
-        final ObjList<IntList> keys = new ObjList<>();
-        for (ObjObjHashMap.Entry<IntList, ObjList<WindowFunction>> e : groupedWindow) {
-            windowComparators.add(recordComparatorCompiler.compile(chainTypes, e.key));
-            functionGroups.add(e.value);
-            keys.add(e.key);
-        }
-
-        final RecordSink recordSink = RecordSinkFactory.getInstance(
-                asm,
-                chainTypes,
-                listColumnFilterA,
-                false,
-                listColumnFilterB
-        );
-
-        return new CachedWindowRecordCursorFactory(
-                configuration,
-                base,
-                recordSink,
-                factoryMetadata,
-                chainTypes,
-                windowComparators,
-                functionGroups,
-                naturalOrderFunctions,
-                columnIndexes,
-                keys,
-                chainMetadata
-        );
     }
 
     /**
