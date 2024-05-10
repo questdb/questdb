@@ -51,6 +51,8 @@ import io.questdb.test.cairo.CairoTestConfiguration;
 import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.BindVariableTestSetter;
+import io.questdb.test.tools.BindVariableTestTuple;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -1339,7 +1341,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static void printSql(CharSequence sql, boolean fullFatJoins) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             compiler.setFullFatJoins(fullFatJoins);
-            TestUtils.printSql(compiler, sqlExecutionContext, sql, sink, null);
+            TestUtils.printSql(compiler, sqlExecutionContext, sql, sink);
         }
     }
 
@@ -1691,12 +1693,37 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected void assertSql(CharSequence expected, CharSequence sql) throws SqlException {
-        assertSql(expected, sql, null);
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            TestUtils.assertSql(compiler, sqlExecutionContext, sql, sink, expected);
+        }
     }
 
-    protected void assertSql(CharSequence expected, CharSequence sql, @Nullable TestUtils.BindVariableMangler manger) throws SqlException {
+    protected void assertSql(CharSequence sql, ObjList<BindVariableTestTuple> tuples) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            TestUtils.assertSql(compiler, sqlExecutionContext, sql, sink, expected, manger);
+            int iterCount = tuples.size();
+            try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                for (int i = 0; i < iterCount; i++) {
+
+                    final BindVariableTestTuple tuple = tuples.getQuick(i);
+                    final BindVariableTestSetter setter = tuple.getSetter();
+                    final BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
+                    bindVariableService.clear();
+
+                    setter.assignBindVariables(sqlExecutionContext.getBindVariableService());
+
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        RecordMetadata metadata = factory.getMetadata();
+                        ((MutableUtf16Sink) sink).clear();
+                        CursorPrinter.println(metadata, sink);
+
+                        final Record record = cursor.getRecord();
+                        while (cursor.hasNext()) {
+                            TestUtils.println(record, metadata, sink);
+                        }
+                    }
+                    TestUtils.assertEquals(tuple.getDescription(), tuple.getExpected(), sink);
+                }
+            }
         }
     }
 

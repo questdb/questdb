@@ -653,21 +653,10 @@ public final class TestUtils {
             SqlExecutionContext sqlExecutionContext,
             CharSequence sql,
             MutableUtf16Sink sink,
-            CharSequence expected,
-            @Nullable BindVariableMangler mangler
-    ) throws SqlException {
-        printSql(compiler, sqlExecutionContext, sql, sink, mangler);
-        assertEquals(expected, sink);
-    }
-
-    public static void assertSql(
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            CharSequence sql,
-            MutableUtf16Sink sink,
             CharSequence expected
     ) throws SqlException {
-        assertSql(compiler, sqlExecutionContext, sql, sink, expected, null);
+        printSql(compiler, sqlExecutionContext, sql, sink);
+        assertEquals(expected, sink);
     }
 
     public static void assertSqlCursors(CairoEngine engine, SqlExecutionContext sqlExecutionContext, CharSequence expected, CharSequence actual, Log log) throws SqlException {
@@ -1256,42 +1245,39 @@ public final class TestUtils {
         return newOffPoolWriter(configuration, tableToken, metrics, new MessageBusImpl(configuration));
     }
 
-    public static TableWriter newOffPoolWriter(CairoConfiguration configuration, TableToken tableToken, Metrics metrics, MessageBus messageBus) {
-        return new TableWriter(configuration, tableToken, null, messageBus, true, DefaultLifecycleManager.INSTANCE, configuration.getRoot(), DefaultDdlListener.INSTANCE, () -> false, metrics);
+    public static TableWriter newOffPoolWriter(
+            CairoConfiguration configuration,
+            TableToken tableToken,
+            Metrics metrics,
+            MessageBus messageBus
+    ) {
+        return new TableWriter(
+                configuration,
+                tableToken,
+                null,
+                messageBus,
+                true,
+                DefaultLifecycleManager.INSTANCE,
+                configuration.getRoot(),
+                DefaultDdlListener.INSTANCE,
+                () -> false,
+                metrics
+        );
     }
 
     public static void printSql(CairoEngine engine, SqlExecutionContext sqlExecutionContext, CharSequence sql, MutableUtf16Sink sink) throws SqlException {
-        printSql(engine, sqlExecutionContext, sql, sink, null);
-    }
-
-    public static void printSql(
-            CairoEngine engine,
-            SqlExecutionContext sqlExecutionContext,
-            CharSequence sql,
-            MutableUtf16Sink sink,
-            @Nullable BindVariableMangler mangler
-    ) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            printSql(compiler, sqlExecutionContext, sql, sink, mangler);
+            printSql(compiler, sqlExecutionContext, sql, sink);
         }
-    }
-
-    public static void printSql(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence sql, MutableUtf16Sink sink) throws SqlException {
-        printSql(compiler, sqlExecutionContext, sql, sink, null);
     }
 
     public static void printSql(
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             CharSequence sql,
-            MutableUtf16Sink sink,
-            @Nullable BindVariableMangler manger
+            MutableUtf16Sink sink
     ) throws SqlException {
         try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-            // allow caller to set bind variables
-            if (manger != null) {
-                manger.mangle();
-            }
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 RecordMetadata metadata = factory.getMetadata();
                 sink.clear();
@@ -1698,9 +1684,5 @@ public final class TestUtils {
     @FunctionalInterface
     public interface LeakProneCode {
         void run() throws Exception;
-    }
-
-    public interface BindVariableMangler {
-        void mangle() throws SqlException;
     }
 }

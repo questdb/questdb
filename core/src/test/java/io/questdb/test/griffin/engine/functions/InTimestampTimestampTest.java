@@ -25,29 +25,51 @@
 package io.questdb.test.griffin.engine.functions;
 
 import io.questdb.griffin.SqlException;
+import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.BindVariableTestTuple;
 import org.junit.Test;
 
 public class InTimestampTimestampTest extends AbstractCairoTest {
     @Test
-    public void testBindStr() throws SqlException {
+    public void testBindVarTypeChange() throws SqlException {
         ddl("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(100))");
 
         // when more than one argument supplied, the function will match exact values from the list
-        assertSql(
+        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
+        tuples.add(new BindVariableTestTuple(
+                "simple",
                 "a\tts\n" +
                         "-1148479920\t1970-01-01T00:00:00.000000Z\n" +
                         "315515118\t1970-01-01T00:00:00.001000Z\n" +
                         "-948263339\t1970-01-01T00:00:00.005000Z\n",
-                "test where ts in ($1,$2,$3)",
-                () -> {
+                bindVariableService -> {
                     bindVariableService.setInt(0, 0);
                     bindVariableService.setInt(1, 1000);
                     bindVariableService.setStr(2, "1970-01-01T00:00:00.005000Z");
                 }
-        );
+        ));
 
-        // for single
-        assertSql("", "test where ts in $1", () -> bindVariableService.setInt(1, 10));
+        tuples.add(new BindVariableTestTuple(
+                "type change",
+                "a\tts\n" +
+                        "1326447242\t1970-01-01T00:00:00.006000Z\n" +
+                        "592859671\t1970-01-01T00:00:00.007000Z\n" +
+                        "-1191262516\t1970-01-01T00:00:00.010000Z\n",
+                bindVariableService -> {
+                    bindVariableService.setLong(0, 6000);
+                    bindVariableService.setStr(1, "1970-01-01T00:00:00.007000Z");
+                    bindVariableService.setInt(2, 10_000);
+                }
+        ));
+
+        assertSql("test where ts in ($1,$2,$3)", tuples);
+
+        assertSql("test where ts in $1", tuples);
+//
+//        assertSql("test where ts in '2004'", tuples);
+//
+//        assertSql("test where ts in (1000, 2000, '1970-01-01T00:00:00.007000Z')", tuples);
+
     }
 }
