@@ -34,7 +34,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.DirectUtf16Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -46,6 +46,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
     private final boolean indexed;
     private final RecordCursorFactory recordCursorFactory;
     private final IntHashSet symbolKeys;
+    private DirectUtf16Sink sink = new DirectUtf16Sink(8);
 
     public LatestBySubQueryRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -108,11 +109,11 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         super._close();
         recordCursorFactory.close();
         Misc.free(filter);
+        sink = Misc.free(sink);
     }
 
     private class DataFrameRecordCursorWrapper implements DataFrameRecordCursor {
         private final DataFrameRecordCursor delegate;
-        private final StringSink sink = new StringSink();
         private RecordCursor baseCursor;
 
         private DataFrameRecordCursorWrapper(DataFrameRecordCursor delegate) {

@@ -39,7 +39,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.std.*;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.DirectUtf16Sink;
 
 public class InSymbolCursorFunctionFactory implements FunctionFactory {
     @Override
@@ -104,11 +104,11 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
 
         private final Function cursorArg;
         private final Record.CharSequenceFunction func;
-        private final StringSink sink = new StringSink();
         private final Function valueArg;
         private final CharSequenceHashSet valueSetA = new CharSequenceHashSet();
         private final CharSequenceHashSet valueSetB = new CharSequenceHashSet();
         private RecordCursor cursor;
+        private DirectUtf16Sink sink = new DirectUtf16Sink(8);
         private CharSequenceHashSet valueSet;
 
         public StrInCursorFunction(Function valueArg, Function cursorArg, Record.CharSequenceFunction func) {
@@ -122,6 +122,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         public void close() {
             cursor = Misc.free(cursor);
             BinaryFunction.super.close();
+            sink = Misc.free(sink);
         }
 
         @Override
@@ -223,10 +224,10 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
     private static class SymbolInCursorFunction extends BooleanFunction implements BinaryFunction {
         private final Function cursorArg;
         private final Record.CharSequenceFunction func;
-        private final StringSink sink = new StringSink();
         private final IntHashSet symbolKeys = new IntHashSet();
         private final SymbolFunction valueArg;
         private RecordCursor cursor;
+        private DirectUtf16Sink sink = new DirectUtf16Sink(8);
 
         public SymbolInCursorFunction(SymbolFunction valueArg, Function cursorArg, Record.CharSequenceFunction func) {
             this.valueArg = valueArg;
@@ -238,6 +239,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         public void close() {
             cursor = Misc.free(cursor);
             BinaryFunction.super.close();
+            sink = Misc.free(sink);
         }
 
         @Override
