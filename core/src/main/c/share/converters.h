@@ -81,98 +81,111 @@ enum class ConversionError {
     UNSUPPORTED_CAST = 1,
 };
 
-/**
- * Ensures that the Java type aligns with the C++ type.
- * @tparam C
- * @tparam T
- * @return
- */
-template<ColumnType C, typename T>
-constexpr bool is_matching_type() {
-    if constexpr (C == ColumnType::BOOLEAN && std::is_same<T, bool>()) {
-        return true;
-    }
-    if constexpr (C == ColumnType::BYTE && std::is_same<T, int8_t>()) {
-        return true;
-    }
-    if constexpr (C == ColumnType::SHORT && std::is_same<T, int16_t>()) {
-        return true;
-    }
-    if constexpr (C == ColumnType::INT && std::is_same<T, int32_t>()) {
-        return true;
-    }
-    if constexpr (C == ColumnType::LONG && std::is_same<T, int64_t>()) {
-        return true;
-    }
-    if constexpr (C == ColumnType::FLOAT && std::is_same<T, float>()) {
-        return true;
-    }
-    if constexpr (C == ColumnType::DOUBLE && std::is_same<T, double>()) {
-        return true;
-    }
-    if constexpr (C == ColumnType::TIMESTAMP && std::is_same<T, int64_t>()) {
-        return true;
-    }
-    if constexpr (C == ColumnType::DATE && std::is_same<T, int64_t>()) {
-        return true;
-    }
-    return false;
-}
+template <ColumnType C> struct EnumTypeMap
+{
+    using type = uint8_t;
+    static constexpr type null_value = 0;
+    static constexpr bool has_null = false;
+};
 
-constexpr static int32_t FLOAT_NULL_SENTINEL = 0x7fc00000;
-constexpr static int64_t DOUBLE_NULL_SENTINEL = 0x7ff8000000000000L;
+template<>
+struct EnumTypeMap<ColumnType::BOOLEAN> {
+    using type = bool;
+    static constexpr type null_value = false;
+    static constexpr bool has_null = false;
+};
 
+template<>
+struct EnumTypeMap<ColumnType::BYTE> {
+    using type = int8_t;
+    static constexpr type null_value = 0;
+    static constexpr bool has_null = false;
+};
 
-template<ColumnType C, typename T>
-constexpr T get_null_sentinel() {
-    if (C == ColumnType::INT) {
-        return static_cast<T>(0x80000000);
-    } else if (C == ColumnType::LONG || C == ColumnType::TIMESTAMP || C == ColumnType::DATE) {
-        return static_cast<T>(0x8000000000000000LL);
-    } else if (C == ColumnType::FLOAT) {
-        return *((float *) (&FLOAT_NULL_SENTINEL)); // INTENTIONAL
-    } else if (C == ColumnType::DOUBLE) {
-        return *((double *) (&DOUBLE_NULL_SENTINEL)); // INTENTIONAL
-    } else if (C == ColumnType::BOOLEAN) {
-        return static_cast<T>(false);
-    } else {
-        return static_cast<T>(0);
-    }
-}
+template<>
+struct EnumTypeMap<ColumnType::SHORT> {
+    using type = int16_t;
+    static constexpr type null_value = 0;
+    static constexpr bool has_null = false;
+};
 
-template<ColumnType C>
-constexpr bool is_nullable() {
-    if constexpr (C == ColumnType::INT || C == ColumnType::LONG || C == ColumnType::TIMESTAMP || C == ColumnType::DATE || C == ColumnType::FLOAT || C == ColumnType::DOUBLE) {
-        return true;
-    } else {
-        return false;
-    }
-}
+template<>
+struct EnumTypeMap<ColumnType::INT> {
+    using type = int32_t;
+    static constexpr type null_value =  static_cast<int32_t>(0x80000000);
+    static constexpr bool has_null = true;
+};
+
+template<>
+struct EnumTypeMap<ColumnType::LONG> {
+    using type = int64_t;
+    static constexpr type null_value = static_cast<int64_t>(0x8000000000000000LL);
+    static constexpr bool has_null = true;
+};
+
+template<>
+struct EnumTypeMap<ColumnType::FLOAT> {
+    using type = float;
+    static constexpr type null_value = std::numeric_limits<float>::quiet_NaN();
+    static constexpr bool has_null = true;
+};
+
+template<>
+struct EnumTypeMap<ColumnType::DOUBLE> {
+    using type = double;
+    static constexpr type null_value = std::numeric_limits<double>::quiet_NaN();
+    static constexpr bool has_null = true;
+};
+
+template<>
+struct EnumTypeMap<ColumnType::TIMESTAMP> {
+    using type = int64_t;
+    static constexpr type null_value =  static_cast<int64_t>(0x8000000000000000LL);
+    static constexpr bool has_null = true;
+};
+
+template<>
+struct EnumTypeMap<ColumnType::DATE> {
+    using type = int64_t;
+    static constexpr type null_value =  static_cast<int64_t>(0x8000000000000000LL);
+    static constexpr bool has_null = true;
+};
 
 /**
  * Convert between fixed numeric types.
  * Expected to align with SQL CAST behaviour.
- * @tparam T1 the source type
- * @tparam T2 the destination type
+ * @tparam src the source type
+ * @tparam dst the destination type
  * @param srcMem the source type mmap column
  * @param dstMem the destination type mmap column
- * @param srcSentinel the source null sentinel
- * @param dstSentinel the destination null sentinel
  * @param rowCount the number of rows
  * @return
  */
-template<typename T1, typename T2, bool srcNullable, bool dstNullable>
-auto convert_fixed_to_fixed_numeric(T1 *srcMem, T2 *dstMem, T1 srcSentinel,
-                                    T2 dstSentinel, size_t rowCount) -> ConversionError {
-    // if dst is nullable, then we have a sentinel
-    // else the sentinel must be 0
-    // i.e INT(NULL) -> BYTE(0)
-    assert(dstNullable == true || (dstNullable == false && dstSentinel == 0));
+template<ColumnType src, ColumnType dst>
+jlong convert_from_type_to_type(void *srcBuff, void *dstBuff, size_t rowCount) {
+    using T1 = typename EnumTypeMap<src>::type;
+    using T2 = typename EnumTypeMap<dst>::type;
+
+    constexpr T1 srcSentinel = EnumTypeMap<src>::null_value;
+    constexpr T2 dstSentinel = EnumTypeMap<dst>::null_value;
+
+    constexpr bool srcNullable = EnumTypeMap<src>::has_null;
+    constexpr bool dstNullable = EnumTypeMap<dst>::has_null;
+
+    static_assert(dstNullable == true || (dstNullable == false && dstSentinel == static_cast<T2>(0)));
+
+    T1* srcMem = reinterpret_cast<T1 *>(srcBuff);
+    T2* dstMem = reinterpret_cast<T2 *>(dstBuff);
 
     for (size_t i = 0; i < rowCount; i++) {
         if constexpr (srcNullable) {
             if constexpr (std::is_same<T1, float>() || std::is_same<T1, double>()) {
-                if (std::isnan(srcMem[i])) {
+                // Float point conversions have undefined behaviour
+                // when converting floating point types (float, double)
+                // to integers.
+                // The conversion can result to different results for every run, e.g. can be different
+                // even on the same platform. To avoid it, check the ranges
+                if (std::isnan(srcMem[i]) || srcMem[i] > std::numeric_limits<T2>::max() || srcMem[i] < std::numeric_limits<T2>::min()) {
                     dstMem[i] = dstSentinel;
                     continue;
                 }
@@ -187,10 +200,8 @@ auto convert_fixed_to_fixed_numeric(T1 *srcMem, T2 *dstMem, T1 srcSentinel,
         dstMem[i] = static_cast<T2>(srcMem[i]);
     }
 
-
-    return ConversionError::NONE;
+    return static_cast<jlong>(ConversionError::NONE);
 }
-
 
 #endif //CONVERTERS_H
 

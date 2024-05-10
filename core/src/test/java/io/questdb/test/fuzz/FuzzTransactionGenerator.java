@@ -119,7 +119,7 @@ public class FuzzTransactionGenerator {
                 // generate column add
                 meta = generateAddColumn(transactionList, metaVersion++, waitBarrierVersion++, rnd, meta);
             } else if (transactionType < probabilityOfAddingNewColumn + probabilityOfRemovingColumn + probabilityOfRenamingColumn + probabilityOfTruncate + probabilityOfColumnTypeChange && FuzzChangeColumnTypeOperation.canChangeColumnType(meta)) {
-                // generate column add
+                // generate column change type
                 meta = FuzzChangeColumnTypeOperation.generateColumnTypeChange(transactionList, metaVersion++, waitBarrierVersion++, rnd, meta);
             } else {
                 // generate row set

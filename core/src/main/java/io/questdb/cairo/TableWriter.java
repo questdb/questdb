@@ -5382,10 +5382,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                             txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp)
                                     )
                             )
-                            .$(", part1OldSize=").$(
-                                    txWriter.getPartitionRowCountByTimestamp(partitionTimestamp)
-                            )
-                            .$(", part1NewSize=").$(srcDataOldPartitionSize)
+                            .$(", part1OldSize=").$(srcDataOldPartitionSize)
+                            .$(", part1NewSize=").$(srcDataNewPartitionSize)
                             .$(", part2=").$(formatPartitionForTimestamp(newPartitionTimestamp, txWriter.txn))
                             .$(", part2Size=").$(o3SplitPartitionSize)
                             .I$();

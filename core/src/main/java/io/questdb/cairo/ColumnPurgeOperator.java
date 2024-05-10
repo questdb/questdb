@@ -190,11 +190,6 @@ public class ColumnPurgeOperator implements Closeable {
     }
 
     private boolean purge0(ColumnPurgeTask task, final ScoreboardUseMode scoreboardMode) {
-        LOG.info().$("purging [table=").utf8(task.getTableName().getTableName())
-                .$(", column=").utf8(task.getColumnName())
-                .$(", tableId=").$(task.getTableId())
-                .I$();
-
         setTablePath(task.getTableName());
 
         final LongList updatedColumnInfo = task.getUpdatedColumnInfo();

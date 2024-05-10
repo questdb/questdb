@@ -38,17 +38,18 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
     private static final short[] numericConvertableColumnTypes = {
             ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG,
             ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.TIMESTAMP, ColumnType.BOOLEAN,
+            ColumnType.DATE,
             ColumnType.STRING, ColumnType.VARCHAR
     };
-    private static final short[] specialFixedColumnTypes = {
-            ColumnType.STRING, ColumnType.VARCHAR
-    };
+
     private static final short[] varSizeConvertableColumnTypes = {
             ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG,
             ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.TIMESTAMP, ColumnType.BOOLEAN,
-            ColumnType.DATE, ColumnType.UUID, ColumnType.IPv4,
+            ColumnType.DATE,
+            ColumnType.UUID, ColumnType.IPv4,
             ColumnType.STRING, ColumnType.SYMBOL, ColumnType.VARCHAR
     };
+
     private final boolean cacheSymbolMap;
     private final String columName;
     private final boolean indexFlag;
@@ -85,6 +86,7 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
             case ColumnType.SYMBOL:
             case ColumnType.VARCHAR:
             case ColumnType.BYTE:
+            case ColumnType.BOOLEAN:
             case ColumnType.SHORT:
             case ColumnType.INT:
             case ColumnType.LONG:
@@ -92,8 +94,6 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
             case ColumnType.DOUBLE:
             case ColumnType.DATE:
             case ColumnType.TIMESTAMP:
-            case ColumnType.IPv4:
-            case ColumnType.UUID:
                 return true;
         }
         return false;
@@ -103,25 +103,21 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
         switch (columnType) {
             case ColumnType.STRING:
             case ColumnType.SYMBOL:
-            case ColumnType.VARCHAR: {
+            case ColumnType.VARCHAR:
                 return generateNextType(columnType, varSizeConvertableColumnTypes, rnd);
-            }
+            case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
             case ColumnType.SHORT:
             case ColumnType.INT:
             case ColumnType.LONG:
             case ColumnType.FLOAT:
-            case ColumnType.DOUBLE:
-            case ColumnType.TIMESTAMP: {
-                return generateNextType(columnType, numericConvertableColumnTypes, rnd);
-            }
             case ColumnType.DATE:
-            case ColumnType.IPv4:
-            case ColumnType.UUID: {
-                return generateNextType(columnType, specialFixedColumnTypes, rnd);
-            }
+            case ColumnType.TIMESTAMP:
+            case ColumnType.DOUBLE:
+                return generateNextType(columnType, numericConvertableColumnTypes, rnd);
+            default:
+                throw new UnsupportedOperationException("Unsupported column type to generate type change: " + columnType);
         }
-        return columnType;
     }
 
     public static RecordMetadata generateColumnTypeChange(ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion, Rnd rnd, RecordMetadata tableMetadata) {
@@ -194,7 +190,7 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
         int nextColType = columnType;
         // disallow noop conversion
         // disallow conversions from non-nullable to nullable
-        while (nextColType == columnType || (isNullable(columnType) && !isNullable(nextColType))) {
+        while (nextColType == columnType || (isNullable(columnType) != isNullable(nextColType))) {
             nextColType = numericConvertableColumnTypes[rnd.nextInt(numericConvertableColumnTypes.length)];
         }
         return nextColType;

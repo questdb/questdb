@@ -523,9 +523,26 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFixedSizeColumnLongToInt() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+            drainWalQueue();
+
+            ddl("create table y ( converted long, casted int, original long );", sqlExecutionContext);
+            insert("insert into y (converted, casted, original) values (9999999999999, 9999999999999::int, 9999999999999)", sqlExecutionContext);
+            drainWalQueue();
+            ddl("alter table y alter column converted type int", sqlExecutionContext);
+            drainWalQueue();
+
+            assertQuery("converted\tcasted\toriginal\n" +
+                    "1316134911\t1316134911\t9999999999999\n", "select * from y", null, true, true);
+
+        });
+    }
+
+    @Test
     public void testFixedSizeColumnNullableBehaviour() throws Exception {
         assumeNonWal();
-
         assertMemoryLeak(() -> {
             drainWalQueue();
             final String[] types = {"BYTE", "SHORT", "INT", "LONG", "FLOAT", "DOUBLE", "TIMESTAMP", "BOOLEAN", "DATE"};
@@ -577,78 +594,6 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFixedSizeColumnLongToInt() throws Exception {
-        assertMemoryLeak(() -> {
-            createX();
-            drainWalQueue();
-
-            ddl("create table y ( converted long, casted int, original long );", sqlExecutionContext);
-            insert("insert into y (converted, casted, original) values (9999999999999, 9999999999999::int, 9999999999999)", sqlExecutionContext);
-            drainWalQueue();
-            ddl("alter table y alter column converted type int", sqlExecutionContext);
-            drainWalQueue();
-
-            assertQuery("converted\tcasted\toriginal\n" +
-                    "1316134911\t1316134911\t9999999999999\n", "select * from y", null, true, true);
-
-        });
-    }
-
-    private void testFixedToFixedConversions(String[] types, char[] col_names) throws Exception {
-        assumeNonWal();
-        assertMemoryLeak(() -> {
-            createX();
-            drainWalQueue();
-
-            for (int i = 0, n = types.length; i < n; i++) {
-                for (int j = 0, m = types.length; j < m; j++) {
-                    // skip unsupported noop conversion
-                    if (i == j) {
-                        continue;
-                    }
-
-                    String srcType = types[i];
-                    char srcColName = col_names[i];
-                    String dstType = types[j];
-
-                    LOG.info().$("checking `" + srcType + "` to `" + dstType + "` conversion").$();
-
-                    ddl("create table y ( converted " + srcType + ", casted " + dstType + ", original " + srcType + ")", sqlExecutionContext);
-                    insert("insert into y select " + srcColName + " as converted, cast(" + srcColName + " as " + dstType + ") as casted, " + srcColName + " as original from x", sqlExecutionContext);
-                    ddl("alter table y alter column converted type " + dstType, sqlExecutionContext);
-
-                    try {
-                        assertSql(
-                                "count\n0\n",
-                                "select count(*) from y where converted <> casted"
-                        );
-                    } catch (AssertionError e) {
-                        LOG.error().$("failed, error: ").$(e).$();
-                        // if the column wasn't converted
-                        if (e.getMessage().contains("column")) {
-                            throw e;
-                        } else {
-                            // dump the difference in data
-                            assertSql("\nFailed equivalent conversion from `" + srcType + "` to `" + dstType + "`.\n", "select converted, casted, original from y");
-                        }
-                    }
-                    assertSql(
-                            "column\ttype\n" +
-                                    "converted\t" + dstType + "\n" +
-                                    "casted\t" + dstType + "\n" +
-                                    "original\t" + srcType + "\n",
-                            "select \"column\", type from table_columns('y')"
-                    );
-                    drop("drop table y", sqlExecutionContext);
-                    drainWalQueue();
-
-                }
-
-            }
-        });
-    }
-
-    @Test
     public void testFixedToStrConversions() throws Exception {
         assertMemoryLeak(() -> {
             assumeNonWal();
@@ -670,6 +615,23 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             assumeNonWal();
             testConvertFixedToVar("varchar");
         });
+    }
+
+    @Test
+    public void testIntOverflowConversions() throws SqlException {
+        //assumeWal();
+        ddl("create table x (a long, timestamp timestamp) timestamp (timestamp) PARTITION BY HOUR" + (walEnabled ? " WAL" : " BYPASS WAL"));
+        insert("insert into x(a, timestamp) values(-7178801693176412875L, '2024-02-04T00:00:00.000Z')", sqlExecutionContext);
+        drainWalQueue();
+
+        ddl("alter table x alter column a type double", sqlExecutionContext);
+        drainWalQueue();
+        assertSql("a\n-7.1788016931764132E18\n", "select a from x");
+
+        ddl("alter table x alter column a type int", sqlExecutionContext);
+        drainWalQueue();
+        assertSql("cast\ta\n" +
+                "null\tnull\n", "select cast(-7.1788016931764132E18 as int), a from x");
     }
 
     @Test
@@ -920,6 +882,60 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                         (partitioned ? "PARTITION BY DAY " : "PARTITION BY NONE ") +
                         (walEnabled ? "WAL" : (partitioned ? "BYPASS WAL" : ""))
         );
+    }
+
+    private void testFixedToFixedConversions(String[] types, char[] col_names) throws Exception {
+        assumeNonWal();
+        assertMemoryLeak(() -> {
+            createX();
+            drainWalQueue();
+
+            for (int i = 0, n = types.length; i < n; i++) {
+                for (int j = 0, m = types.length; j < m; j++) {
+                    // skip unsupported noop conversion
+                    if (i == j) {
+                        continue;
+                    }
+
+                    String srcType = types[i];
+                    char srcColName = col_names[i];
+                    String dstType = types[j];
+
+                    LOG.info().$("checking `" + srcType + "` to `" + dstType + "` conversion").$();
+
+                    ddl("create table y ( converted " + srcType + ", casted " + dstType + ", original " + srcType + ")", sqlExecutionContext);
+                    insert("insert into y select " + srcColName + " as converted, cast(" + srcColName + " as " + dstType + ") as casted, " + srcColName + " as original from x", sqlExecutionContext);
+                    ddl("alter table y alter column converted type " + dstType, sqlExecutionContext);
+
+                    try {
+                        assertSql(
+                                "count\n0\n",
+                                "select count(*) from y where converted <> casted"
+                        );
+                    } catch (AssertionError e) {
+                        LOG.error().$("failed, error: ").$(e).$();
+                        // if the column wasn't converted
+                        if (e.getMessage().contains("column")) {
+                            throw e;
+                        } else {
+                            // dump the difference in data
+                            assertSql("\nFailed equivalent conversion from `" + srcType + "` to `" + dstType + "`.\n", "select converted, casted, original from y");
+                        }
+                    }
+                    assertSql(
+                            "column\ttype\n" +
+                                    "converted\t" + dstType + "\n" +
+                                    "casted\t" + dstType + "\n" +
+                                    "original\t" + srcType + "\n",
+                            "select \"column\", type from table_columns('y')"
+                    );
+                    drop("drop table y", sqlExecutionContext);
+                    drainWalQueue();
+
+                }
+
+            }
+        });
     }
 
     private void testWalRollUncommittedConversion(int columnType, String columnCreateSql, String convertToTypeSql) throws SqlException, NumericException {
