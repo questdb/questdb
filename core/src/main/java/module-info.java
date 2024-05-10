@@ -917,6 +917,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.str.SubStringFunctionFactory,
             io.questdb.griffin.engine.functions.str.SubStringVarcharFunctionFactory,
             io.questdb.griffin.engine.functions.str.QuoteIdentFunctionFactory,
+            io.questdb.griffin.engine.functions.str.QuoteIdentVarcharFunctionFactory,
 
             // trim
             io.questdb.griffin.engine.functions.str.TrimFunctionFactory,
@@ -932,6 +933,7 @@ open module io.questdb {
             // split_part
             io.questdb.griffin.engine.functions.str.SplitPartFunctionFactory,
             io.questdb.griffin.engine.functions.str.SplitPartCharFunctionFactory,
+            io.questdb.griffin.engine.functions.str.SplitPartVarcharFunctionFactory,
 
             // window functions
             io.questdb.griffin.engine.functions.window.RowNumberFunctionFactory,
