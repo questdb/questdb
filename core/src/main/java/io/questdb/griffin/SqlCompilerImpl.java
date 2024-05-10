@@ -58,7 +58,7 @@ import static io.questdb.griffin.SqlKeywords.*;
 
 public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallback {
     static final ObjList<String> sqlControlSymbols = new ObjList<>(8);
-    //null object used to skip null checks in batch method
+    // null object used to skip null checks in batch method
     private static final BatchCallback EMPTY_CALLBACK = new BatchCallback() {
         @Override
         public void postCompile(SqlCompiler compiler, CompiledQuery cq, CharSequence queryText) {
@@ -79,7 +79,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     protected final LowerCaseAsciiCharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new LowerCaseAsciiCharSequenceObjHashMap<>();
     protected final GenericLexer lexer;
     protected final SqlOptimiser optimiser;
-    protected final Path path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
+    protected final Path path;
     protected final QueryRegistry queryRegistry;
     private final BytecodeAssembler asm = new BytecodeAssembler();
     private final DatabaseBackupAgent backupAgent;
@@ -99,7 +99,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final QueryLogger queryLogger;
     private final ObjectPool<QueryModel> queryModelPool;
-    private final Path renamePath = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
+    private final Path renamePath;
     private final ObjectPool<ExpressionNode> sqlNodePool;
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private final ObjList<TableWriterAPI> tableWriters = new ObjList<>();
@@ -120,61 +120,68 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private boolean isSingleQueryMode = true;
 
     public SqlCompilerImpl(CairoEngine engine) {
-        this.engine = engine;
-        queryLogger = engine.getConfiguration().getQueryLogger();
-        this.maxRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
-        this.queryBuilder = new QueryBuilder(this);
-        this.configuration = engine.getConfiguration();
-        this.ff = configuration.getFilesFacade();
-        this.messageBus = engine.getMessageBus();
-        this.sqlNodePool = new ObjectPool<>(ExpressionNode.FACTORY, configuration.getSqlExpressionPoolCapacity());
-        this.queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, configuration.getSqlColumnPoolCapacity());
-        this.queryModelPool = new ObjectPool<>(QueryModel.FACTORY, configuration.getSqlModelPoolCapacity());
-        this.compiledQuery = new CompiledQueryImpl(engine);
-        this.characterStore = new CharacterStore(
-                configuration.getSqlCharacterStoreCapacity(),
-                configuration.getSqlCharacterStoreSequencePoolCapacity()
-        );
+        try {
+            this.path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
+            this.renamePath = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
+            this.engine = engine;
+            queryLogger = engine.getConfiguration().getQueryLogger();
+            this.maxRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
+            this.queryBuilder = new QueryBuilder(this);
+            this.configuration = engine.getConfiguration();
+            this.ff = configuration.getFilesFacade();
+            this.messageBus = engine.getMessageBus();
+            this.sqlNodePool = new ObjectPool<>(ExpressionNode.FACTORY, configuration.getSqlExpressionPoolCapacity());
+            this.queryColumnPool = new ObjectPool<>(QueryColumn.FACTORY, configuration.getSqlColumnPoolCapacity());
+            this.queryModelPool = new ObjectPool<>(QueryModel.FACTORY, configuration.getSqlModelPoolCapacity());
+            this.compiledQuery = new CompiledQueryImpl(engine);
+            this.characterStore = new CharacterStore(
+                    configuration.getSqlCharacterStoreCapacity(),
+                    configuration.getSqlCharacterStoreSequencePoolCapacity()
+            );
 
-        this.lexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
-        this.functionParser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
-        this.codeGenerator = new SqlCodeGenerator(engine, configuration, functionParser, sqlNodePool);
-        this.vacuumColumnVersions = new VacuumColumnVersions(engine);
+            this.lexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
+            this.functionParser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
+            this.codeGenerator = new SqlCodeGenerator(engine, configuration, functionParser, sqlNodePool);
+            this.vacuumColumnVersions = new VacuumColumnVersions(engine);
 
-        // we have cyclical dependency here
-        functionParser.setSqlCodeGenerator(codeGenerator);
+            // we have cyclical dependency here
+            functionParser.setSqlCodeGenerator(codeGenerator);
 
-        this.backupAgent = new DatabaseBackupAgent();
+            this.backupAgent = new DatabaseBackupAgent();
 
-        registerKeywordBasedExecutors();
+            registerKeywordBasedExecutors();
 
-        configureLexer(lexer);
+            configureLexer(lexer);
 
-        final PostOrderTreeTraversalAlgo postOrderTreeTraversalAlgo = new PostOrderTreeTraversalAlgo();
+            final PostOrderTreeTraversalAlgo postOrderTreeTraversalAlgo = new PostOrderTreeTraversalAlgo();
 
-        optimiser = newSqlOptimiser(
-                configuration,
-                characterStore,
-                sqlNodePool,
-                queryColumnPool,
-                queryModelPool,
-                postOrderTreeTraversalAlgo,
-                functionParser,
-                path
-        );
+            optimiser = newSqlOptimiser(
+                    configuration,
+                    characterStore,
+                    sqlNodePool,
+                    queryColumnPool,
+                    queryModelPool,
+                    postOrderTreeTraversalAlgo,
+                    functionParser,
+                    path
+            );
 
-        parser = new SqlParser(
-                configuration,
-                optimiser,
-                characterStore,
-                sqlNodePool,
-                queryColumnPool,
-                queryModelPool,
-                postOrderTreeTraversalAlgo
-        );
+            parser = new SqlParser(
+                    configuration,
+                    optimiser,
+                    characterStore,
+                    sqlNodePool,
+                    queryColumnPool,
+                    queryModelPool,
+                    postOrderTreeTraversalAlgo
+            );
 
-        alterOperationBuilder = new AlterOperationBuilder();
-        queryRegistry = engine.getQueryRegistry();
+            alterOperationBuilder = new AlterOperationBuilder();
+            queryRegistry = engine.getQueryRegistry();
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     // public for testing
@@ -3153,16 +3160,27 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private class DatabaseBackupAgent implements Closeable {
-        private final Path auxPath = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
-        private final Path dstPath = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
+        private final Path auxPath;
+        private final Path dstPath;
         private final StringSink sink = new StringSink();
-        private final Path srcPath = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
+        private final Path srcPath;
         private final Utf8SequenceObjHashMap<RecordToRowCopier> tableBackupRowCopiedCache = new Utf8SequenceObjHashMap<>();
         private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
         private final ObjHashSet<TableToken> tableTokens = new ObjHashSet<>();
         private transient String cachedBackupTmpRoot;
         private transient int dstCurrDirLen;
         private transient int dstPathRoot;
+
+        public DatabaseBackupAgent() {
+            try {
+                auxPath = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
+                dstPath = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
+                srcPath = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
+            } catch (Throwable th) {
+                close();
+                throw th;
+            }
+        }
 
         public void clear() {
             auxPath.trimTo(0);

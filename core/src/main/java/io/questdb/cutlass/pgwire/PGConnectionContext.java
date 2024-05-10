@@ -131,7 +131,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final WeakMutableObjectPool<Portal> namedPortalPool;
     private final CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap;
     private final WeakMutableObjectPool<NamedStatementWrapper> namedStatementWrapperPool;
-    private final Path path = new Path();
+    private final Path path;
     private final ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters;
     private final QueryLogger queryLogger;
     private final int recvBufferSize;
@@ -222,65 +222,72 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 LOG,
                 engine.getMetrics().pgWire().connectionCountGauge()
         );
-        this.engine = engine;
-        queryLogger = engine.getConfiguration().getQueryLogger();
-        this.utf8Sink = new DirectUtf16Sink(engine.getConfiguration().getTextConfiguration().getUtf8SinkSize());
-        this.maxRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
-        this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
-        this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
-        this.sendBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
-        this.forceSendFragmentationChunkSize = configuration.getForceSendFragmentationChunkSize();
-        this.forceRecvFragmentationChunkSize = configuration.getForceRecvFragmentationChunkSize();
-        this.characterStore = new CharacterStore(
-                configuration.getCharacterStoreCapacity(),
-                configuration.getCharacterStorePoolCapacity()
-        );
-        this.maxBlobSizeOnQuery = configuration.getMaxBlobSizeOnQuery();
-        this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
-        this.circuitBreaker = circuitBreaker;
-        this.sqlExecutionContext = sqlExecutionContext;
-        this.sqlExecutionContext.with(DenyAllSecurityContext.INSTANCE, bindVariableService, this.rnd = configuration.getRandom());
-        this.namedStatementWrapperPool = new WeakMutableObjectPool<>(NamedStatementWrapper::new, configuration.getNamesStatementPoolCapacity()); // 32
-        this.namedPortalPool = new WeakMutableObjectPool<>(Portal::new, configuration.getNamesStatementPoolCapacity()); // 32
-        this.namedStatementMap = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
-        this.pendingWriters = new ObjObjHashMap<>(configuration.getPendingWritersCacheSize());
-        this.namedPortalMap = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
-        this.binarySequenceParamsPool = new ObjectPool<>(DirectBinarySequence::new, configuration.getBinParamCountCapacity());
 
-        this.metrics = engine.getMetrics();
-        final boolean enableSelectCache = configuration.isSelectCacheEnabled();
-        final int selectBlockCount = enableSelectCache ? configuration.getSelectCacheBlockCount() : 1;
-        final int selectRowCount = enableSelectCache ? configuration.getSelectCacheRowCount() : 1;
-        this.typesAndSelectCache = new AssociativeCache<>(
-                selectBlockCount,
-                selectRowCount,
-                metrics.pgWire().cachedSelectsGauge(),
-                metrics.pgWire().selectCacheHitCounter(),
-                metrics.pgWire().selectCacheMissCounter()
-        );
-        this.typesAndSelectPool = new WeakSelfReturningObjectPool<>(TypesAndSelect::new, selectBlockCount * selectRowCount);
+        try {
+            this.path = new Path();
+            this.engine = engine;
+            queryLogger = engine.getConfiguration().getQueryLogger();
+            this.utf8Sink = new DirectUtf16Sink(engine.getConfiguration().getTextConfiguration().getUtf8SinkSize());
+            this.maxRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
+            this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
+            this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
+            this.sendBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
+            this.forceSendFragmentationChunkSize = configuration.getForceSendFragmentationChunkSize();
+            this.forceRecvFragmentationChunkSize = configuration.getForceRecvFragmentationChunkSize();
+            this.characterStore = new CharacterStore(
+                    configuration.getCharacterStoreCapacity(),
+                    configuration.getCharacterStorePoolCapacity()
+            );
+            this.maxBlobSizeOnQuery = configuration.getMaxBlobSizeOnQuery();
+            this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
+            this.circuitBreaker = circuitBreaker;
+            this.sqlExecutionContext = sqlExecutionContext;
+            this.sqlExecutionContext.with(DenyAllSecurityContext.INSTANCE, bindVariableService, this.rnd = configuration.getRandom());
+            this.namedStatementWrapperPool = new WeakMutableObjectPool<>(NamedStatementWrapper::new, configuration.getNamesStatementPoolCapacity()); // 32
+            this.namedPortalPool = new WeakMutableObjectPool<>(Portal::new, configuration.getNamesStatementPoolCapacity()); // 32
+            this.namedStatementMap = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
+            this.pendingWriters = new ObjObjHashMap<>(configuration.getPendingWritersCacheSize());
+            this.namedPortalMap = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
+            this.binarySequenceParamsPool = new ObjectPool<>(DirectBinarySequence::new, configuration.getBinParamCountCapacity());
 
-        final boolean enabledUpdateCache = configuration.isUpdateCacheEnabled();
-        final int updateBlockCount = enabledUpdateCache ? configuration.getUpdateCacheBlockCount() : 1;
-        final int updateRowCount = enabledUpdateCache ? configuration.getUpdateCacheRowCount() : 1;
-        this.typesAndUpdateCache = new AssociativeCache<>(
-                updateBlockCount,
-                updateRowCount,
-                metrics.pgWire().cachedUpdatesGauge()
-        );
-        this.typesAndUpdatePool = new WeakSelfReturningObjectPool<>(parent -> new TypesAndUpdate(parent, engine), updateBlockCount * updateRowCount);
+            this.metrics = engine.getMetrics();
+            final boolean enableSelectCache = configuration.isSelectCacheEnabled();
+            final int selectBlockCount = enableSelectCache ? configuration.getSelectCacheBlockCount() : 1;
+            final int selectRowCount = enableSelectCache ? configuration.getSelectCacheRowCount() : 1;
+            this.typesAndSelectCache = new AssociativeCache<>(
+                    selectBlockCount,
+                    selectRowCount,
+                    metrics.pgWire().cachedSelectsGauge(),
+                    metrics.pgWire().selectCacheHitCounter(),
+                    metrics.pgWire().selectCacheMissCounter()
+            );
+            this.typesAndSelectPool = new WeakSelfReturningObjectPool<>(TypesAndSelect::new, selectBlockCount * selectRowCount);
 
-        final boolean enableInsertCache = configuration.isInsertCacheEnabled();
-        final int insertBlockCount = enableInsertCache ? configuration.getInsertCacheBlockCount() : 1;
-        final int insertRowCount = enableInsertCache ? configuration.getInsertCacheRowCount() : 1;
-        this.typesAndInsertCache = new AssociativeCache<>(insertBlockCount, insertRowCount);
-        this.typesAndInsertPool = new WeakSelfReturningObjectPool<>(TypesAndInsert::new, insertBlockCount * insertRowCount);
+            final boolean enabledUpdateCache = configuration.isUpdateCacheEnabled();
+            final int updateBlockCount = enabledUpdateCache ? configuration.getUpdateCacheBlockCount() : 1;
+            final int updateRowCount = enabledUpdateCache ? configuration.getUpdateCacheRowCount() : 1;
+            this.typesAndUpdateCache = new AssociativeCache<>(
+                    updateBlockCount,
+                    updateRowCount,
+                    metrics.pgWire().cachedUpdatesGauge()
+            );
+            this.typesAndUpdatePool = new WeakSelfReturningObjectPool<>(parent -> new TypesAndUpdate(parent, engine), updateBlockCount * updateRowCount);
 
-        this.batchCallback = new PGConnectionBatchCallback();
-        this.queryTag = TAG_OK;
-        this.queryContainsSecret = false;
-        FactoryProvider factoryProvider = configuration.getFactoryProvider();
-        this.securityContextFactory = factoryProvider.getSecurityContextFactory();
+            final boolean enableInsertCache = configuration.isInsertCacheEnabled();
+            final int insertBlockCount = enableInsertCache ? configuration.getInsertCacheBlockCount() : 1;
+            final int insertRowCount = enableInsertCache ? configuration.getInsertCacheRowCount() : 1;
+            this.typesAndInsertCache = new AssociativeCache<>(insertBlockCount, insertRowCount);
+            this.typesAndInsertPool = new WeakSelfReturningObjectPool<>(TypesAndInsert::new, insertBlockCount * insertRowCount);
+
+            this.batchCallback = new PGConnectionBatchCallback();
+            this.queryTag = TAG_OK;
+            this.queryContainsSecret = false;
+            FactoryProvider factoryProvider = configuration.getFactoryProvider();
+            this.securityContextFactory = factoryProvider.getSecurityContextFactory();
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     public static int getInt(long address, long msgLimit, CharSequence errorMessage) throws BadProtocolException {

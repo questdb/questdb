@@ -69,6 +69,7 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
         this.memoryTag = memoryTag;
         headPtr = tailPtr = Unsafe.malloc(capacity + 1, memoryTag);
         ascii = true;
+        System.out.println(">>> headPtr=" + Long.toHexString(headPtr));
     }
 
     public static void clearThreadLocals() {
@@ -130,6 +131,7 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
     @Override
     public void close() {
         if (headPtr != 0L) {
+            System.out.println("<<< headPtr=" + Long.toHexString(headPtr) + ", capacity=" + capacity);
             Unsafe.free(headPtr, capacity + 1, memoryTag);
             headPtr = tailPtr = 0L;
         }

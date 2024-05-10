@@ -54,7 +54,7 @@ public class TextLoader implements Closeable, Mutable {
     private static final Log LOG = LogFactory.getLog(TextLoader.class);
     private final JsonLexer jsonLexer;
     private final ObjList<ParserMethod> parseMethods = new ObjList<>();
-    private final Path path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
+    private final Path path;
     private final int textAnalysisMaxLines;
     private final TextConfiguration textConfiguration;
     private final TextDelimiterScanner textDelimiterScanner;
@@ -74,20 +74,26 @@ public class TextLoader implements Closeable, Mutable {
     private CharSequence timestampColumn;
 
     public TextLoader(CairoEngine engine) {
-        this.tlw = new TextLexerWrapper(engine.getConfiguration().getTextConfiguration());
-        this.textWriter = new CairoTextWriter(engine);
-        this.textConfiguration = engine.getConfiguration().getTextConfiguration();
-        this.utf8Sink = new DirectUtf16Sink(textConfiguration.getUtf8SinkSize());
-        this.typeManager = new TypeManager(textConfiguration, utf8Sink);
-        jsonLexer = new JsonLexer(textConfiguration.getJsonCacheSize(), textConfiguration.getJsonCacheLimit());
+        try {
+            this.path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
+            this.tlw = new TextLexerWrapper(engine.getConfiguration().getTextConfiguration());
+            this.textWriter = new CairoTextWriter(engine);
+            this.textConfiguration = engine.getConfiguration().getTextConfiguration();
+            this.utf8Sink = new DirectUtf16Sink(textConfiguration.getUtf8SinkSize());
+            this.typeManager = new TypeManager(textConfiguration, utf8Sink);
+            jsonLexer = new JsonLexer(textConfiguration.getJsonCacheSize(), textConfiguration.getJsonCacheLimit());
 
-        textMetadataDetector = new TextMetadataDetector(typeManager, textConfiguration);
-        textMetadataParser = new TextMetadataParser(textConfiguration, typeManager);
-        textAnalysisMaxLines = textConfiguration.getTextAnalysisMaxLines();
-        textDelimiterScanner = new TextDelimiterScanner(textConfiguration);
-        parseMethods.extendAndSet(LOAD_JSON_METADATA, this::parseJsonMetadata);
-        parseMethods.extendAndSet(ANALYZE_STRUCTURE, this::parseStructure);
-        parseMethods.extendAndSet(LOAD_DATA, this::parseData);
+            textMetadataDetector = new TextMetadataDetector(typeManager, textConfiguration);
+            textMetadataParser = new TextMetadataParser(textConfiguration, typeManager);
+            textAnalysisMaxLines = textConfiguration.getTextAnalysisMaxLines();
+            textDelimiterScanner = new TextDelimiterScanner(textConfiguration);
+            parseMethods.extendAndSet(LOAD_JSON_METADATA, this::parseJsonMetadata);
+            parseMethods.extendAndSet(ANALYZE_STRUCTURE, this::parseStructure);
+            parseMethods.extendAndSet(LOAD_DATA, this::parseData);
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override
@@ -172,6 +178,10 @@ public class TextLoader implements Closeable, Mutable {
         return textWriter.getColumnErrorCounts();
     }
 
+    public boolean getCreate() {
+        return textWriter.getCreate();
+    }
+
     public long getErrorLineCount() {
         return lexer != null ? lexer.getErrorCount() : 0;
     }
@@ -194,10 +204,6 @@ public class TextLoader implements Closeable, Mutable {
 
     public int getPartitionBy() {
         return textWriter.getPartitionBy();
-    }
-
-    public boolean getCreate() {
-        return textWriter.getCreate();
     }
 
     public CharSequence getTableName() {
@@ -251,6 +257,10 @@ public class TextLoader implements Closeable, Mutable {
         lexer.restart(header);
     }
 
+    public void setCreate(boolean create) {
+        textWriter.setCreate(create);
+    }
+
     public void setDelimiter(byte delimiter) {
         this.lexer = tlw.getLexer(delimiter);
         this.lexer.setTableName(tableName);
@@ -259,10 +269,6 @@ public class TextLoader implements Closeable, Mutable {
 
     public void setForceHeaders(boolean forceHeaders) {
         this.forceHeaders = forceHeaders;
-    }
-
-    public void setCreate(boolean create) {
-        textWriter.setCreate(create);
     }
 
     public void setMaxUncommittedRows(int maxUncommittedRows) {

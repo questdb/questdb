@@ -50,13 +50,19 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     private boolean walEnabled;
 
     public TableReaderMetadata(CairoConfiguration configuration, TableToken tableToken) {
-        this.configuration = configuration;
-        this.ff = configuration.getFilesFacade();
-        this.tableToken = tableToken;
-        this.path = new Path().of(configuration.getRoot()).concat(tableToken.getDirName()).$();
-        this.plen = path.size();
-        this.isSoftLink = Files.isSoftLink(path);
-        this.metaMem = Vm.getMRInstance();
+        try {
+            this.configuration = configuration;
+            this.ff = configuration.getFilesFacade();
+            this.tableToken = tableToken;
+            this.path = new Path();
+            this.path.of(configuration.getRoot()).concat(tableToken.getDirName()).$();
+            this.plen = path.size();
+            this.isSoftLink = Files.isSoftLink(path);
+            this.metaMem = Vm.getMRInstance();
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     // constructor used to read random metadata files

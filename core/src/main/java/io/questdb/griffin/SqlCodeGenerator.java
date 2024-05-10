@@ -180,21 +180,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             FunctionParser functionParser,
             ObjectPool<ExpressionNode> expressionNodePool
     ) {
-        this.engine = engine;
-        this.configuration = configuration;
-        this.functionParser = functionParser;
-        this.recordComparatorCompiler = new RecordComparatorCompiler(asm);
-        this.enableJitDebug = configuration.isSqlJitDebugEnabled();
-        this.jitIRMem = Vm.getCARWInstance(
-                configuration.getSqlJitIRMemoryPageSize(),
-                configuration.getSqlJitIRMemoryMaxPages(),
-                MemoryTag.NATIVE_SQL_COMPILER
-        );
-        // Pre-touch JIT IR memory to avoid false positive memory leak detections.
-        jitIRMem.putByte((byte) 0);
-        jitIRMem.truncate();
-        this.expressionNodePool = expressionNodePool;
-        this.reduceTaskFactory = () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_SQL_COMPILER);
+        try {
+            this.engine = engine;
+            this.configuration = configuration;
+            this.functionParser = functionParser;
+            this.recordComparatorCompiler = new RecordComparatorCompiler(asm);
+            this.enableJitDebug = configuration.isSqlJitDebugEnabled();
+            this.jitIRMem = Vm.getCARWInstance(
+                    configuration.getSqlJitIRMemoryPageSize(),
+                    configuration.getSqlJitIRMemoryMaxPages(),
+                    MemoryTag.NATIVE_SQL_COMPILER
+            );
+            // Pre-touch JIT IR memory to avoid false positive memory leak detections.
+            jitIRMem.putByte((byte) 0);
+            jitIRMem.truncate();
+            this.expressionNodePool = expressionNodePool;
+            this.reduceTaskFactory = () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_SQL_COMPILER);
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     public static int getUnionCastType(int typeA, int typeB) {

@@ -41,7 +41,7 @@ public class ColumnPurgeOperator implements Closeable {
     private final LongList completedRowIds = new LongList();
     private final FilesFacade ff;
     private final MicrosecondClock microClock;
-    private final Path path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
+    private final Path path;
     private final int pathRootLen;
     private final TableWriter purgeLogWriter;
     private final String updateCompleteColumnName;
@@ -54,29 +54,41 @@ public class ColumnPurgeOperator implements Closeable {
     private TxnScoreboard txnScoreboard;
 
     public ColumnPurgeOperator(CairoConfiguration configuration, TableWriter purgeLogWriter, String updateCompleteColumnName) {
-        this.ff = configuration.getFilesFacade();
-        this.purgeLogWriter = purgeLogWriter;
-        this.updateCompleteColumnName = updateCompleteColumnName;
-        this.updateCompleteColumnWriterIndex = purgeLogWriter.getMetadata().getColumnIndex(updateCompleteColumnName);
-        path.of(configuration.getRoot());
-        pathRootLen = path.size();
-        txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount());
-        txReader = new TxReader(ff);
-        microClock = configuration.getMicrosecondClock();
-        longBytes = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_SQL_COMPILER);
+        try {
+            this.ff = configuration.getFilesFacade();
+            this.path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
+            path.of(configuration.getRoot());
+            pathRootLen = path.size();
+            this.purgeLogWriter = purgeLogWriter;
+            this.updateCompleteColumnName = updateCompleteColumnName;
+            this.updateCompleteColumnWriterIndex = purgeLogWriter.getMetadata().getColumnIndex(updateCompleteColumnName);
+            txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount());
+            txReader = new TxReader(ff);
+            microClock = configuration.getMicrosecondClock();
+            longBytes = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_SQL_COMPILER);
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     public ColumnPurgeOperator(CairoConfiguration configuration) {
-        this.ff = configuration.getFilesFacade();
-        this.purgeLogWriter = null;
-        this.updateCompleteColumnName = null;
-        this.updateCompleteColumnWriterIndex = -1;
-        path.of(configuration.getRoot());
-        pathRootLen = path.size();
-        txnScoreboard = null;
-        txReader = null;
-        microClock = configuration.getMicrosecondClock();
-        longBytes = 0;
+        try {
+            this.ff = configuration.getFilesFacade();
+            this.path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
+            path.of(configuration.getRoot());
+            pathRootLen = path.size();
+            this.purgeLogWriter = null;
+            this.updateCompleteColumnName = null;
+            this.updateCompleteColumnWriterIndex = -1;
+            txnScoreboard = null;
+            txReader = null;
+            microClock = configuration.getMicrosecondClock();
+            longBytes = 0;
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override
