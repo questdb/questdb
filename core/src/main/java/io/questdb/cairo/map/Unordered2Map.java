@@ -116,11 +116,6 @@ public class Unordered2Map implements Map, Reopenable {
         this.entrySize = Bytes.align2b(KEY_SIZE + valueSize);
 
         final long sizeBytes = entrySize * TABLE_SIZE;
-        memStart = Unsafe.malloc(sizeBytes, memoryTag);
-        Vect.memset(memStart, sizeBytes, 0);
-        memLimit = memStart + sizeBytes;
-        keyMemStart = Unsafe.malloc(KEY_SIZE, memoryTag);
-        Unsafe.getUnsafe().putShort(keyMemStart, (short) 0);
 
         value = new Unordered2MapValue(valueSize, valueOffsets);
         value2 = new Unordered2MapValue(valueSize, valueOffsets);
@@ -129,6 +124,17 @@ public class Unordered2Map implements Map, Reopenable {
         record = new Unordered2MapRecord(valueSize, valueOffsets, value, keyTypes, valueTypes);
         cursor = new Unordered2MapCursor(record, this);
         key = new Key();
+
+        try {
+            memStart = Unsafe.malloc(sizeBytes, memoryTag);
+            keyMemStart = Unsafe.malloc(KEY_SIZE, memoryTag);
+        } catch (Exception e) {
+            close();
+            throw e;
+        }
+        Unsafe.getUnsafe().putShort(keyMemStart, (short) 0);
+        Vect.memset(memStart, sizeBytes, 0);
+        memLimit = memStart + sizeBytes;
     }
 
     @Override

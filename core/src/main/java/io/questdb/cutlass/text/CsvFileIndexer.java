@@ -128,22 +128,27 @@ public class CsvFileIndexer implements Closeable, Mutable {
     private boolean useFieldRollBuf = false;
 
     public CsvFileIndexer(CairoConfiguration configuration) {
-        this.configuration = configuration;
-        final TextConfiguration textConfiguration = configuration.getTextConfiguration();
-        this.utf8Sink = new DirectUtf16Sink(textConfiguration.getUtf8SinkSize());
-        this.typeManager = new TypeManager(textConfiguration, utf8Sink);
-        this.ff = configuration.getFilesFacade();
-        this.dirMode = configuration.getMkDirMode();
-        this.inputRoot = configuration.getSqlCopyInputRoot();
-        this.maxIndexChunkSize = configuration.getSqlCopyMaxIndexChunkSize();
-        this.fieldRollBufLen = MAX_TIMESTAMP_LENGTH;
-        this.fieldRollBufPtr = Unsafe.malloc(fieldRollBufLen, MemoryTag.NATIVE_IMPORT);
-        this.fieldRollBufCur = fieldRollBufPtr;
-        this.timestampField = new DirectUtf8String();
-        this.failOnTsError = false;
-        this.path = new Path();
-        this.sortBufferPtr = -1;
-        this.sortBufferLength = 0;
+        try {
+            this.configuration = configuration;
+            final TextConfiguration textConfiguration = configuration.getTextConfiguration();
+            this.utf8Sink = new DirectUtf16Sink(textConfiguration.getUtf8SinkSize());
+            this.typeManager = new TypeManager(textConfiguration, utf8Sink);
+            this.ff = configuration.getFilesFacade();
+            this.dirMode = configuration.getMkDirMode();
+            this.inputRoot = configuration.getSqlCopyInputRoot();
+            this.maxIndexChunkSize = configuration.getSqlCopyMaxIndexChunkSize();
+            this.fieldRollBufLen = MAX_TIMESTAMP_LENGTH;
+            this.fieldRollBufPtr = Unsafe.malloc(fieldRollBufLen, MemoryTag.NATIVE_IMPORT);
+            this.fieldRollBufCur = fieldRollBufPtr;
+            this.timestampField = new DirectUtf8String();
+            this.failOnTsError = false;
+            this.path = new Path();
+            this.sortBufferPtr = -1;
+            this.sortBufferLength = 0;
+        } catch (Throwable t) {
+            close();
+            throw t;
+        }
     }
 
     @Override

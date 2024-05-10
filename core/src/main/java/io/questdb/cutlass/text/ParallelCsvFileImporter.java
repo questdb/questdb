@@ -159,40 +159,45 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
         this.cairoEngine = cairoEngine;
         this.workerCount = workerCount;
-
         this.queue = queue;
         this.pubSeq = bus.getTextImportPubSeq();
         this.collectSeq = bus.getTextImportColSeq();
-        this.localImportJob = new CopyJob(bus);
-        this.configuration = cairoEngine.getConfiguration();
 
-        this.ff = configuration.getFilesFacade();
-        this.inputRoot = configuration.getSqlCopyInputRoot();
-        this.inputWorkRoot = configuration.getSqlCopyInputWorkRoot();
+        try {
+            this.localImportJob = new CopyJob(bus);
+            this.configuration = cairoEngine.getConfiguration();
 
-        TextConfiguration textConfiguration = configuration.getTextConfiguration();
-        this.utf8Sink = new DirectUtf16Sink(textConfiguration.getUtf8SinkSize());
-        this.typeManager = new TypeManager(textConfiguration, utf8Sink);
-        this.textDelimiterScanner = new TextDelimiterScanner(textConfiguration);
-        this.textMetadataDetector = new TextMetadataDetector(typeManager, textConfiguration);
+            this.ff = configuration.getFilesFacade();
+            this.inputRoot = configuration.getSqlCopyInputRoot();
+            this.inputWorkRoot = configuration.getSqlCopyInputWorkRoot();
 
-        this.targetTableStructure = new TableStructureAdapter(configuration);
-        this.targetTableStatus = -1;
-        this.targetTableCreated = false;
+            TextConfiguration textConfiguration = configuration.getTextConfiguration();
+            this.utf8Sink = new DirectUtf16Sink(textConfiguration.getUtf8SinkSize());
+            this.typeManager = new TypeManager(textConfiguration, utf8Sink);
+            this.textDelimiterScanner = new TextDelimiterScanner(textConfiguration);
+            this.textMetadataDetector = new TextMetadataDetector(typeManager, textConfiguration);
 
-        this.atomicity = Atomicity.SKIP_COL;
-        this.createdWorkDir = false;
-        this.otherToTimestampAdapterPool = new ObjectPool<>(OtherToTimestampAdapter::new, 4);
-        this.inputFilePath = new Path();
-        this.tmpPath = new Path();
+            this.targetTableStructure = new TableStructureAdapter(configuration);
+            this.targetTableStatus = -1;
+            this.targetTableCreated = false;
 
-        this.chunkStats = new LongList();
-        this.indexChunkStats = new LongList();
-        this.partitionKeysAndSizes = new LongList();
-        this.partitionNameSink = new StringSink();
-        this.partitions = new ObjList<>();
-        this.taskDistribution = new IntList();
-        this.symbolCapacities = new IntList();
+            this.atomicity = Atomicity.SKIP_COL;
+            this.createdWorkDir = false;
+            this.otherToTimestampAdapterPool = new ObjectPool<>(OtherToTimestampAdapter::new, 4);
+            this.inputFilePath = new Path();
+            this.tmpPath = new Path();
+
+            this.chunkStats = new LongList();
+            this.indexChunkStats = new LongList();
+            this.partitionKeysAndSizes = new LongList();
+            this.partitionNameSink = new StringSink();
+            this.partitions = new ObjList<>();
+            this.taskDistribution = new IntList();
+            this.symbolCapacities = new IntList();
+        } catch (Throwable t) {
+            close();
+            throw t;
+        }
     }
 
     // Load balances existing partitions between given number of workers using partition sizes.
@@ -286,17 +291,17 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         writer = Misc.free(writer);
         metadata = null;
         importId = -1;
-        chunkStats.clear();
-        indexChunkStats.clear();
-        partitionKeysAndSizes.clear();
-        partitionNameSink.clear();
-        taskDistribution.clear();
-        utf8Sink.clear();
-        typeManager.clear();
-        symbolCapacities.clear();
-        textMetadataDetector.clear();
-        otherToTimestampAdapterPool.clear();
-        partitions.clear();
+        if (chunkStats != null) chunkStats.clear();
+        if (indexChunkStats != null) indexChunkStats.clear();
+        if (partitionKeysAndSizes != null) partitionKeysAndSizes.clear();
+        if (partitionNameSink != null) partitionNameSink.clear();
+        if (taskDistribution != null) taskDistribution.clear();
+        if (utf8Sink != null) utf8Sink.clear();
+        if (typeManager != null) typeManager.clear();
+        if (symbolCapacities != null) symbolCapacities.clear();
+        if (textMetadataDetector != null) textMetadataDetector.clear();
+        if (otherToTimestampAdapterPool != null) otherToTimestampAdapterPool.clear();
+        if (partitions != null) partitions.clear();
         linesIndexed = 0;
         rowsHandled = 0;
         rowsImported = 0;
@@ -324,12 +329,12 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     @Override
     public void close() {
         clear();
-        this.inputFilePath.close();
-        this.tmpPath.close();
-        this.utf8Sink.close();
-        this.textMetadataDetector.close();
-        this.textDelimiterScanner.close();
-        this.localImportJob.close();
+        close(this.inputFilePath);
+        close(this.tmpPath);
+        close(this.utf8Sink);
+        close(this.textMetadataDetector);
+        close(this.textDelimiterScanner);
+        close(this.localImportJob);
     }
 
     public void of(
@@ -661,6 +666,16 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     public void updatePhaseStatus(byte phase, byte status, @Nullable final CharSequence msg) {
         if (this.statusReporter != null) {
             this.statusReporter.report(phase, status, msg, Numbers.LONG_NULL, Numbers.LONG_NULL, phaseErrors);
+        }
+    }
+
+    private static void close(Closeable c) {
+        if (c != null) {
+            try {
+                c.close();
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
         }
     }
 
