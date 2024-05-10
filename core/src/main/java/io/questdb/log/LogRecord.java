@@ -69,6 +69,8 @@ public interface LogRecord extends Utf8Sink {
 
     LogRecord $hexPadded(long value);
 
+    LogRecord $uuid(long lo, long hi);
+
     LogRecord $ip(long ip);
 
     LogRecord $size(long memoryBytes);

@@ -33,6 +33,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_BYTES;
+import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_MASK;
 
 /**
  * UTF-8 specific variant of the {@link Chars} utility.
@@ -168,8 +169,7 @@ public final class Utf8s {
      */
     public static boolean equals(@NotNull DirectUtf8Sequence l, @NotNull Utf8String r) {
         final int lSize = l.size();
-        return lSize == r.size() && l.zeroPaddedSixPrefix() == r.zeroPaddedSixPrefix()
-                && dataEquals(l, r, VARCHAR_INLINED_PREFIX_BYTES, lSize);
+        return lSize == r.size() && dataEquals(l, r, 0, lSize);
     }
 
     public static boolean equals(@NotNull Utf8Sequence l, long lSixPrefix, @NotNull Utf8Sequence r, long rSixPrefix) {
@@ -433,6 +433,69 @@ public final class Utf8s {
                 }
                 if (j == end) {
                     return i;
+                }
+            }
+        }
+
+        return -1;
+    }
+
+    public static int indexOf(@NotNull Utf8Sequence seq, int seqLo, int seqHi, @NotNull Utf8Sequence term, int occurrence) {
+        if (occurrence == 0) {
+            return -1;
+        }
+
+        int termSize = term.size();
+        if (termSize == 0) {
+            return 0;
+        }
+
+        byte first = term.byteAt(0);
+        int max = seqHi - termSize;
+
+        int count = 0;
+        if (occurrence > 0) {
+            for (int i = seqLo; i <= max; i++) {
+                if (seq.byteAt(i) != first) {
+                    do {
+                        ++i;
+                    } while (i <= max && seq.byteAt(i) != first);
+                }
+
+                if (i <= max) {
+                    int j = i + 1;
+                    int end = j + termSize - 1;
+                    for (int k = 1; j < end && seq.byteAt(j) == term.byteAt(k); ++k) {
+                        ++j;
+                    }
+                    if (j == end) {
+                        count++;
+                        if (count == occurrence) {
+                            return i;
+                        }
+                    }
+                }
+            }
+        } else {    // if occurrence is negative, search in reverse
+            for (int i = seqHi - termSize; i >= seqLo; i--) {
+                if (seq.byteAt(i) != first) {
+                    do {
+                        --i;
+                    } while (i >= seqLo && seq.byteAt(i) != first);
+                }
+
+                if (i >= seqLo) {
+                    int j = i + 1;
+                    int end = j + termSize - 1;
+                    for (int k = 1; j < end && seq.byteAt(j) == term.byteAt(k); ++k) {
+                        ++j;
+                    }
+                    if (j == end) {
+                        count--;
+                        if (count == occurrence) {
+                            return i;
+                        }
+                    }
                 }
             }
         }
@@ -909,17 +972,31 @@ public final class Utf8s {
     /**
      * A specialised function to decode a single UTF-8 character.
      * Used when it doesn't make sense to allocate a temporary sink.
+     * Returns 0 in the case of a surrogate pair.
      *
      * @param seq input sequence
      * @return an integer-encoded tuple (decoded number of bytes, character in UTF-16 encoding, stored as short type)
      */
     public static int utf8CharDecode(Utf8Sequence seq) {
-        int size = seq.size();
+        return utf8CharDecode(seq, 0);
+    }
+
+    /**
+     * A specialised function to decode a single UTF-8 character.
+     * Used when it doesn't make sense to allocate a temporary sink.
+     * Returns 0 in the case of a surrogate pair.
+     *
+     * @param seq    input sequence
+     * @param offset offset into the sequence
+     * @return an integer-encoded tuple (decoded number of bytes, character in UTF-16 encoding, stored as short type)
+     */
+    public static int utf8CharDecode(Utf8Sequence seq, int offset) {
+        int size = seq.size() - offset;
         if (size > 0) {
-            byte b1 = seq.byteAt(0);
+            byte b1 = seq.byteAt(offset);
             if (b1 < 0) {
                 if (b1 >> 5 == -2 && (b1 & 30) != 0 && size > 1) {
-                    byte b2 = seq.byteAt(1);
+                    byte b2 = seq.byteAt(offset + 1);
                     if (isNotContinuation(b2)) {
                         return 0;
                     }
@@ -927,8 +1004,8 @@ public final class Utf8s {
                 }
 
                 if (b1 >> 4 == -2 && size > 2) {
-                    byte b2 = seq.byteAt(1);
-                    byte b3 = seq.byteAt(2);
+                    byte b2 = seq.byteAt(offset + 1);
+                    byte b3 = seq.byteAt(offset + 2);
                     if (isMalformed3(b1, b2, b3)) {
                         return 0;
                     }
@@ -1182,6 +1259,29 @@ public final class Utf8s {
             return validateUtf8Decode3Bytes(lo, hi, b);
         }
         return validateUtf8Decode4Bytes(lo, hi, b);
+    }
+
+    /**
+     * Returns up to 6 initial bytes of the given UTF-8 sequence (less if it's shorter)
+     * packed into a zero-padded long value, in little-endian order. This prefix is
+     * stored inline in the auxiliary vector of a VARCHAR column, so asking for it is a
+     * matter of optimized data access. This is not a general access method, it
+     * shouldn't be called unless looking to optimize the access of the VARCHAR column.
+     *
+     * @param seq UTF8 sequence
+     * @return up to 6 initial bytes
+     */
+    public static long zeroPaddedSixPrefix(@NotNull Utf8Sequence seq) {
+        final int size = seq.size();
+        if (size >= Long.BYTES) {
+            return seq.longAt(0) & VARCHAR_INLINED_PREFIX_MASK;
+        }
+        final long limit = Math.min(size, VARCHAR_INLINED_PREFIX_BYTES);
+        long result = 0;
+        for (int i = 0; i < limit; i++) {
+            result |= (seq.byteAt(i) & 0xffL) << (8 * i);
+        }
+        return result;
     }
 
     private static boolean dataEquals(@NotNull Utf8Sequence l, @NotNull Utf8Sequence r, int start, int limit) {

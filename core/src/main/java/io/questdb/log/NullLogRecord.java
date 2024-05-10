@@ -105,6 +105,11 @@ final class NullLogRecord implements LogRecord {
     }
 
     @Override
+    public LogRecord $uuid(long lo, long hi) {
+        return this;
+    }
+
+    @Override
     public LogRecord $(@Nullable Sinkable x) {
         return this;
     }

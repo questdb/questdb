@@ -738,7 +738,7 @@ LONG_LONG_DISPATCHER(maxLong)
 
 extern "C" {
 
-JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_getSupportedInstructionSet(JNIEnv *env, jclass cl) {
+JNIEXPORT jint JNICALL Java_io_questdb_std_Vect_getSupportedInstructionSet(JNIEnv *env, jclass cl) {
     return instrset_detect();
 }
 
