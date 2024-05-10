@@ -189,6 +189,7 @@ public class SplitPartVarcharFunctionFactory implements FunctionFactory {
                     start += delimiter.size();
                 }
             }
+
             sink.put(utf8Str, start, end);
             return sink;
         }
