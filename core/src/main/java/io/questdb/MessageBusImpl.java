@@ -154,20 +154,17 @@ public class MessageBusImpl implements MessageBus {
 
             int reduceQueueCapacity = configuration.getPageFrameReduceQueueCapacity();
             for (int i = 0; i < pageFrameReduceShardCount; i++) {
-                final RingQueue<PageFrameReduceTask> queue = new RingQueue<>(
+                pageFrameReduceQueue[i] = new RingQueue<>(
                         () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
                         reduceQueueCapacity
                 );
-
                 final MPSequence reducePubSeq = new MPSequence(reduceQueueCapacity);
-                final MCSequence reduceSubSeq = new MCSequence(reduceQueueCapacity);
-                final FanOut collectFanOut = new FanOut();
-                reducePubSeq.then(reduceSubSeq).then(collectFanOut).then(reducePubSeq);
-
-                pageFrameReduceQueue[i] = queue;
                 pageFrameReducePubSeq[i] = reducePubSeq;
+                final MCSequence reduceSubSeq = new MCSequence(reduceQueueCapacity);
                 pageFrameReduceSubSeq[i] = reduceSubSeq;
+                final FanOut collectFanOut = new FanOut();
                 pageFrameCollectFanOut[i] = collectFanOut;
+                reducePubSeq.then(reduceSubSeq).then(collectFanOut).then(reducePubSeq);
             }
 
             this.textImportQueue = new RingQueue<>(CopyTask::new, configuration.getSqlCopyQueueCapacity());
