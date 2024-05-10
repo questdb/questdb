@@ -266,6 +266,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         ) {
             super(functions);
             try {
+                isOpen = true;
                 // this is the map itself, which we must not forget to free when factory closes
                 recordKeyMap = MapFactory.createOrderedMap(configuration, keyTypes);
                 // data map will contain rounded timestamp value as last key column
@@ -273,7 +274,6 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 dataMap = MapFactory.createOrderedMap(configuration, keyTypes, valueTypes);
                 allocator = GroupByAllocatorFactory.createThreadUnsafeAllocator(configuration);
                 GroupByUtils.setAllocator(groupByFunctions, allocator);
-                isOpen = true;
 
                 this.timezoneNameFunc = timezoneNameFunc;
                 this.timezoneNameFuncPos = timezoneNameFuncPos;
