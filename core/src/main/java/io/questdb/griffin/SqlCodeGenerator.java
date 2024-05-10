@@ -3977,7 +3977,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final ObjList<QueryColumn> columns = model.getColumns();
         final int columnCount = columns.size();
         groupedWindow.clear();
-        ObjList<WindowFunction> naturalOrderFunctions = null;
 
         valueTypes.clear();
         ArrayColumnTypes chainTypes = valueTypes;
@@ -3985,7 +3984,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         GenericRecordMetadata factoryMetadata = new GenericRecordMetadata();
 
         ObjList<Function> functions = new ObjList<>();
-
+        ObjList<WindowFunction> naturalOrderFunctions = null;
+        ObjList<Function> partitionByFunctions = null;
         try {
             // if all window function don't require sorting or more than one pass then use streaming factory
             boolean isFastPath = true;
@@ -3999,27 +3999,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         throw SqlException.$(ast.position, "too many arguments");
                     }
 
-                    ObjList<Function> partitionBy = null;
                     int psz = ac.getPartitionBy().size();
                     if (psz > 0) {
-                        partitionBy = new ObjList<>(psz);
+                        partitionByFunctions = new ObjList<>(psz);
                         for (int j = 0; j < psz; j++) {
-                            partitionBy.add(
-                                    functionParser.parseFunction(ac.getPartitionBy().getQuick(j), baseMetadata, executionContext)
-                            );
+                            partitionByFunctions.add(functionParser.parseFunction(ac.getPartitionBy().getQuick(j), baseMetadata, executionContext));
                         }
                     }
 
                     final VirtualRecord partitionByRecord;
                     final RecordSink partitionBySink;
 
-                    if (partitionBy != null) {
-                        partitionByRecord = new VirtualRecord(partitionBy);
+                    if (partitionByFunctions != null) {
+                        partitionByRecord = new VirtualRecord(partitionByFunctions);
                         keyTypes.clear();
-                        final int partitionByCount = partitionBy.size();
+                        final int partitionByCount = partitionByFunctions.size();
 
                         for (int j = 0; j < partitionByCount; j++) {
-                            keyTypes.add(partitionBy.getQuick(j).getType());
+                            keyTypes.add(partitionByFunctions.getQuick(j).getType());
                         }
                         entityColumnFilter.of(partitionByCount);
                         partitionBySink = RecordSinkFactory.getInstance(
@@ -4054,10 +4051,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             }
                         }
                     }
-                    if (!dismissOrder
-                            && osz == 1
-                            && timestampIdx != -1
-                            && orderHash.size() < 2) {
+                    if (!dismissOrder && osz == 1 && timestampIdx != -1 && orderHash.size() < 2) {
                         ExpressionNode orderByNode = ac.getOrderBy().getQuick(0);
                         int orderByDirection = ac.getOrderByDirection().getQuick(0);
 
@@ -4127,8 +4121,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     );
                     functions.extendAndSet(i, function);
 
-                    if (baseMetadata.getTimestampIndex() != -1 &&
-                            baseMetadata.getTimestampIndex() == columnIndex) {
+                    if (baseMetadata.getTimestampIndex() != -1 && baseMetadata.getTimestampIndex() == columnIndex) {
                         factoryMetadata.setTimestampIndex(i);
                     }
 
@@ -4152,8 +4145,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return new WindowRecordCursorFactory(base, factoryMetadata, functions);
             } else {
                 factoryMetadata.clear();
-                Misc.freeObjList(functions);
-                functions.clear();
+                Misc.freeObjListAndClear(functions);
+                Misc.freeObjList(partitionByFunctions);
+                partitionByFunctions = null;
             }
 
             listColumnFilterA.clear();
@@ -4233,27 +4227,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         throw SqlException.$(ast.position, "too many arguments");
                     }
 
-                    ObjList<Function> partitionBy = null;
                     int psz = ac.getPartitionBy().size();
                     if (psz > 0) {
-                        partitionBy = new ObjList<>(psz);
+                        partitionByFunctions = new ObjList<>(psz);
                         for (int j = 0; j < psz; j++) {
-                            partitionBy.add(
-                                    functionParser.parseFunction(ac.getPartitionBy().getQuick(j), chainMetadata, executionContext)
-                            );
+                            partitionByFunctions.add(functionParser.parseFunction(ac.getPartitionBy().getQuick(j), chainMetadata, executionContext));
                         }
                     }
 
                     final VirtualRecord partitionByRecord;
                     final RecordSink partitionBySink;
 
-                    if (partitionBy != null) {
-                        partitionByRecord = new VirtualRecord(partitionBy);
+                    if (partitionByFunctions != null) {
+                        partitionByRecord = new VirtualRecord(partitionByFunctions);
                         keyTypes.clear();
-                        final int partitionByCount = partitionBy.size();
+                        final int partitionByCount = partitionByFunctions.size();
 
                         for (int j = 0; j < partitionByCount; j++) {
-                            keyTypes.add(partitionBy.getQuick(j).getType());
+                            keyTypes.add(partitionByFunctions.getQuick(j).getType());
                         }
                         entityColumnFilter.of(partitionByCount);
                         // create sink
@@ -4282,8 +4273,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         for (int j = 0; j < osz; j++) {
                             ExpressionNode node = ac.getOrderBy().getQuick(j);
                             int direction = ac.getOrderByDirection().getQuick(j);
-                            if (!Chars.equalsIgnoreCase(node.token, orderHash.keys().get(j)) ||
-                                    orderHash.get(node.token) != direction) {
+                            if (!Chars.equalsIgnoreCase(node.token, orderHash.keys().get(j))
+                                    || orderHash.get(node.token) != direction) {
                                 dismissOrder = false;
                                 break;
                             }
@@ -4293,9 +4284,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         ExpressionNode orderByNode = ac.getOrderBy().getQuick(0);
                         int orderByDirection = ac.getOrderByDirection().getQuick(0);
 
-                        if (baseMetadata.getColumnIndexQuiet(orderByNode.token) == timestampIdx &&
-                                ((orderByDirection == ORDER_ASC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD) ||
-                                        (orderByDirection == ORDER_DESC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD))) {
+                        if (baseMetadata.getColumnIndexQuiet(orderByNode.token) == timestampIdx
+                                && ((orderByDirection == ORDER_ASC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD)
+                                || (orderByDirection == ORDER_DESC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD))) {
                             dismissOrder = true;
                         }
                     }
@@ -4402,6 +4393,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             );
         } catch (Throwable th) {
             Misc.free(base);
+            Misc.freeObjList(functions);
+            Misc.freeObjList(naturalOrderFunctions);
+            Misc.freeObjList(partitionByFunctions);
             throw th;
         }
     }

@@ -43,7 +43,6 @@ import java.util.Arrays;
 import java.util.List;
 
 public class WindowFunctionTest extends AbstractCairoTest {
-
     private static final List<String> FRAME_FUNCTIONS;
     private final static List<String> FRAME_TYPES = Arrays.asList("rows  ", "groups", "range ");
     private static final List<String> WINDOW_ONLY_FUNCTIONS;
@@ -1398,7 +1397,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             insert("insert into x values ('aaa', 1);");
             insert("insert into x values ('aaa', 2);");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "sym\tavg\tsum\tfirst_value\n" +
                             "aaa\t1.5\t3.0\t1.0\n" +
                             "aaa\t1.5\t3.0\t1.0\n",
@@ -1408,7 +1407,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "first_value(i) OVER(PARTITION BY sym LIKE '%aaa%'), " +
                             "FROM x",
                     null,
-                    true,//cached window factory
+                    true, // cached window factory
                     false
             );
         });
@@ -1421,7 +1420,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             insert("insert into x values ('aaa', 1, '2023-11-09T00:00:00.000000');");
             insert("insert into x values ('aaa', 2, '2023-11-09T01:00:00.000000');");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "ts\tsym\tavg\tsum\tfirst_value\n" +
                             "2023-11-09T00:00:00.000000Z\taaa\t1.0\t1.0\t1.0\n" +
                             "2023-11-09T01:00:00.000000Z\taaa\t1.5\t3.0\t1.0\n",
