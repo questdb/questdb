@@ -31,6 +31,7 @@
 #include <sys/time.h>
 #include <time.h>
 #include "../share/os.h"
+#include "jemalloc-cmake/include/jemalloc/jemalloc.h"
 
 #ifdef __APPLE__
 

@@ -60,6 +60,7 @@ public class SendAndReceiveRequestBuilder {
     private int compareLength = -1;
     private boolean expectReceiveDisconnect;
     private boolean expectSendDisconnect;
+    private boolean expectTimeout;
     private int maxWaitTimeoutMs = Runtime.getRuntime().availableProcessors() > 5 ? 5000 : 300_000;
     private NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
     private long pauseBetweenSendAndReceive;
@@ -148,7 +149,7 @@ public class SendAndReceiveRequestBuilder {
         boolean disconnected = false;
         boolean timeoutExpired = false;
         IntList receivedByteList = new IntList(expectedToReceive);
-        while (received < expectedToReceive || expectReceiveDisconnect) {
+        while (received < expectedToReceive || expectReceiveDisconnect || expectTimeout) {
             int n = nf.recvRaw(fd, ptr + received, len - received);
             if (n > 0) {
                 for (int i = 0; i < n; i++) {
@@ -185,7 +186,7 @@ public class SendAndReceiveRequestBuilder {
                 expected = expected.substring(0, Math.min(compareLength, expected.length()) - 1);
                 actual = !actual.isEmpty() ? actual.substring(0, Math.min(compareLength, actual.length()) - 1) : actual;
             }
-            if (!expectSendDisconnect) {
+            if (!expectSendDisconnect && !expectTimeout) {
                 // expectSendDisconnect means that test expect disconnect during send or straight after
                 TestUtils.assertEquals(disconnected ? "Server disconnected" : null, expected, actual);
             }
@@ -202,8 +203,13 @@ public class SendAndReceiveRequestBuilder {
             Assert.assertTrue("server disconnect was expected", disconnected);
         }
 
-        if (timeoutExpired) {
+        if (timeoutExpired && !expectTimeout) {
             LOG.error().$("timeout expired").$();
+            Assert.fail();
+        }
+
+        if (expectTimeout && !timeoutExpired) {
+            LOG.error().$("timeout was expected").$();
             Assert.fail();
         }
     }
@@ -302,6 +308,12 @@ public class SendAndReceiveRequestBuilder {
         }
     }
 
+    public void executeUntilTimeoutExpires(String request, int maxWaitTimeoutMs) {
+        withMaxWaitTimeout(maxWaitTimeoutMs)
+                .withExpectTimeout(true)
+                .execute(request, "");
+    }
+
     public void executeWithStandardHeaders(String request, String response) {
         execute(request + requestHeaders(), ResponseHeaders + response);
     }
@@ -327,6 +339,11 @@ public class SendAndReceiveRequestBuilder {
 
     public SendAndReceiveRequestBuilder withExpectSendDisconnect(boolean expectDisconnect) {
         this.expectSendDisconnect = expectDisconnect;
+        return this;
+    }
+
+    public SendAndReceiveRequestBuilder withExpectTimeout(boolean expectTimeout) {
+        this.expectTimeout = expectTimeout;
         return this;
     }
 

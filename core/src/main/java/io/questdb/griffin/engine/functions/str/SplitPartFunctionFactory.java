@@ -35,8 +35,8 @@ import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.*;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.Nullable;
 
 public class SplitPartFunctionFactory implements FunctionFactory {
@@ -62,7 +62,7 @@ public class SplitPartFunctionFactory implements FunctionFactory {
                 return new SplitPartConstIndexFunction(strFunc, delimiterFunc, indexFunc, indexPosition, index);
             }
         } else if (!indexFunc.isRuntimeConstant()) {
-            throw SqlException.$(indexPosition, "index must be a constant or runtime-constant");
+            throw SqlException.$(indexPosition, "index must be either a constant expression or a placeholder");
         }
         return new SplitPartFunction(strFunc, delimiterFunc, indexFunc, indexPosition);
     }

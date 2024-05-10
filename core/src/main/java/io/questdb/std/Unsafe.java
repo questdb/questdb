@@ -67,22 +67,6 @@ public final class Unsafe {
     private Unsafe() {
     }
 
-    public static long malloc(long size, int memoryTag) {
-        try {
-            assert memoryTag >= MemoryTag.NATIVE_DEFAULT;
-            checkAllocLimit(size, memoryTag);
-            long ptr = getUnsafe().allocateMemory(size);
-            recordMemAlloc(size, memoryTag);
-            MALLOC_COUNT.incrementAndGet();
-            return ptr;
-        } catch (OutOfMemoryError oom) {
-            System.err.printf(
-                    "Unsafe.malloc() OutOfMemoryError, mem_used=%d, size=%d, memoryTag=%d\n",
-                    RSS_MEM_USED.get(), size, memoryTag);
-            throw oom;
-        }
-    }
-
     //#if jdk.version!=8
     public static void addExports(Module from, Module to, String packageName) {
         try {
@@ -173,7 +157,7 @@ public final class Unsafe {
 
     public static long free(long ptr, long size, int memoryTag) {
         if (ptr != 0) {
-            getUnsafe().freeMemory(ptr);
+            Unsafe.getUnsafe().freeMemory(ptr);
             FREE_COUNT.incrementAndGet();
             recordMemAlloc(-size, memoryTag);
         }
@@ -204,10 +188,6 @@ public final class Unsafe {
         return MEM_USED.get();
     }
 
-    public static long getRssMemUsed() {
-        return RSS_MEM_USED.get();
-    }
-
     public static long getMemUsedByTag(int memoryTag) {
         assert memoryTag >= 0 && memoryTag < MemoryTag.SIZE;
         return COUNTERS[memoryTag].sum();
@@ -215,6 +195,10 @@ public final class Unsafe {
 
     public static long getReallocCount() {
         return REALLOC_COUNT.get();
+    }
+
+    public static long getRssMemUsed() {
+        return RSS_MEM_USED.get();
     }
 
     public static sun.misc.Unsafe getUnsafe() {
@@ -246,11 +230,27 @@ public final class Unsafe {
     }
     //#endif
 
+    public static long malloc(long size, int memoryTag) {
+        try {
+            assert memoryTag >= MemoryTag.NATIVE_DEFAULT;
+            checkAllocLimit(size, memoryTag);
+            long ptr = Unsafe.getUnsafe().allocateMemory(size);
+            recordMemAlloc(size, memoryTag);
+            MALLOC_COUNT.incrementAndGet();
+            return ptr;
+        } catch (OutOfMemoryError oom) {
+            System.err.printf(
+                    "Unsafe.malloc() OutOfMemoryError, mem_used=%d, size=%d, memoryTag=%d\n",
+                    RSS_MEM_USED.get(), size, memoryTag);
+            throw oom;
+        }
+    }
+
     public static long realloc(long address, long oldSize, long newSize, int memoryTag) {
         try {
             assert memoryTag >= MemoryTag.NATIVE_DEFAULT;
             checkAllocLimit(-oldSize + newSize, memoryTag);
-            long ptr = getUnsafe().reallocateMemory(address, newSize);
+            long ptr = Unsafe.getUnsafe().reallocateMemory(address, newSize);
             recordMemAlloc(-oldSize + newSize, memoryTag);
             REALLOC_COUNT.incrementAndGet();
             return ptr;
@@ -262,23 +262,6 @@ public final class Unsafe {
         }
     }
 
-    public static void setWriterMemLimit(long limit) {
-        WRITER_MEM_LIMIT = limit;
-    }
-
-    private static void checkAllocLimit(long size, int memoryTag) {
-        if (WRITER_MEM_LIMIT > 0 && memoryTag == NATIVE_O3 && COUNTERS[memoryTag].sum() + size > WRITER_MEM_LIMIT) {
-            long usage = COUNTERS[memoryTag].sum();
-            if (usage + size > WRITER_MEM_LIMIT) {
-                throw CairoException.critical(0).put("table writing memory limit reached [usage=")
-                        .put(usage)
-                        .put(", limit=").put(WRITER_MEM_LIMIT)
-                        .put(", allocation=").put(size)
-                        .put(']');
-            }
-        }
-    }
-
     public static void recordMemAlloc(long size, int memoryTag) {
         long mem = MEM_USED.addAndGet(size);
         assert mem >= 0;
@@ -287,6 +270,10 @@ public final class Unsafe {
         if (memoryTag >= MemoryTag.NATIVE_DEFAULT) {
             RSS_MEM_USED.addAndGet(size);
         }
+    }
+
+    public static void setWriterMemLimit(long limit) {
+        WRITER_MEM_LIMIT = limit;
     }
 
     //#if jdk.version!=8
@@ -305,6 +292,19 @@ public final class Unsafe {
         return 16L;
     }
     //#endif
+
+    private static void checkAllocLimit(long size, int memoryTag) {
+        if (WRITER_MEM_LIMIT > 0 && memoryTag == NATIVE_O3 && COUNTERS[memoryTag].sum() + size > WRITER_MEM_LIMIT) {
+            long usage = COUNTERS[memoryTag].sum();
+            if (usage + size > WRITER_MEM_LIMIT) {
+                throw CairoException.critical(0).put("table writing memory limit reached [usage=")
+                        .put(usage)
+                        .put(", limit=").put(WRITER_MEM_LIMIT)
+                        .put(", allocation=").put(size)
+                        .put(']');
+            }
+        }
+    }
 
     //#if jdk.version!=8
     private static boolean getOrdinaryObjectPointersCompressionStatus(boolean is32BitJVM) {

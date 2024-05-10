@@ -470,8 +470,8 @@ public class Unordered8Map implements Map, Reopenable {
 
         @Override
         public void copyFrom(MapKey srcKey) {
-            Key srcFastKey = (Key) srcKey;
-            copyFromRawKey(srcFastKey.startAddress());
+            Key src8Key = (Key) srcKey;
+            copyFromRawKey(src8Key.startAddress());
         }
 
         @Override
