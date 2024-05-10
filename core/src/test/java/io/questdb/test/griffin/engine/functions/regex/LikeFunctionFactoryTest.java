@@ -32,7 +32,6 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 public class LikeFunctionFactoryTest extends AbstractCairoTest {
@@ -212,63 +211,83 @@ public class LikeFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLikeEscapeAtEndRegConstFunc() {
+    public void testLikeEscapeAtEndRegConstFunc() throws Exception {
         String createTable = "CREATE TABLE myTable (name string)";
         String insertRow = "INSERT INTO myTable (name) VALUES ('.\\docs\\');";
 
         String query = "SELECT * FROM myTable WHERE name LIKE '%docs\\';";
         String expected1 = "name\n";
         String expected2 = "";
-        Exception e = assertThrows(SqlException.class, () -> assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true));
-
-        String expectedMessage = "[5] found [tok='%docs\\', len=6] LIKE pattern must not end with escape character";
-        String actualMessage = e.getMessage();
-        assertTrue(actualMessage.contains(expectedMessage));
+        assertMemoryLeak(() -> {
+            try {
+                assertQueryNoLeakCheck(expected1, query, createTable, null, insertRow, expected2, true, true, true);
+                Assert.fail();
+            } catch (SqlException e) {
+                String expectedMessage = "[5] found [tok='%docs\\', len=6] LIKE pattern must not end with escape character";
+                String actualMessage = e.getMessage();
+                assertTrue(actualMessage.contains(expectedMessage));
+            }
+        });
     }
 
     @Test
-    public void testLikeEscapeAtEndRegConstFuncVarchar() {
+    public void testLikeEscapeAtEndRegConstFuncVarchar() throws Exception {
         String createTable = "CREATE TABLE myTable (name varchar)";
         String insertRow = "INSERT INTO myTable (name) VALUES ('.\\docs\\');";
 
         String query = "SELECT * FROM myTable WHERE name LIKE '%docs\\';";
         String expected1 = "name\n";
         String expected2 = "";
-        Exception e = assertThrows(SqlException.class, () -> assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true));
-
-        String expectedMessage = "[5] found [tok='%docs\\', len=6] LIKE pattern must not end with escape character";
-        String actualMessage = e.getMessage();
-        assertTrue(actualMessage.contains(expectedMessage));
+        assertMemoryLeak(() -> {
+            try {
+                assertQueryNoLeakCheck(expected1, query, createTable, null, insertRow, expected2, true, true, true);
+                Assert.fail();
+            } catch (SqlException e) {
+                String expectedMessage = "[5] found [tok='%docs\\', len=6] LIKE pattern must not end with escape character";
+                String actualMessage = e.getMessage();
+                assertTrue(actualMessage.contains(expectedMessage));
+            }
+        });
     }
 
     @Test
-    public void testLikeEscapeAtEndRegExpFunc() {
+    public void testLikeEscapeAtEndRegExpFunc() throws Exception {
         String createTable = "CREATE TABLE myTable (name string)";
         String insertRow = "INSERT INTO myTable  (name) VALUES ('.\\docs\\');";
 
         String query = "SELECT * FROM myTable WHERE name LIKE '_%docs\\';";
         String expected1 = "name\n";
         String expected2 = "";
-        Exception e = assertThrows(SqlException.class, () -> assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true));
-
-        String expectedMessage = "[6] found [tok='_%docs\\', len=7] LIKE pattern must not end with escape character";
-        String actualMessage = e.getMessage();
-        assertTrue(actualMessage.contains(expectedMessage));
+        assertMemoryLeak(() -> {
+            try {
+                assertQueryNoLeakCheck(expected1, query, createTable, null, insertRow, expected2, true, true, true);
+                Assert.fail();
+            } catch (SqlException e) {
+                String expectedMessage = "[6] found [tok='_%docs\\', len=7] LIKE pattern must not end with escape character";
+                String actualMessage = e.getMessage();
+                assertTrue(actualMessage.contains(expectedMessage));
+            }
+        });
     }
 
     @Test
-    public void testLikeEscapeAtEndRegExpFuncVarchar() {
+    public void testLikeEscapeAtEndRegExpFuncVarchar() throws Exception {
         String createTable = "CREATE TABLE myTable (name varchar)";
         String insertRow = "INSERT INTO myTable  (name) VALUES ('.\\docs\\');";
 
         String query = "SELECT * FROM myTable WHERE name LIKE '_%docs\\';";
         String expected1 = "name\n";
         String expected2 = "";
-        Exception e = assertThrows(SqlException.class, () -> assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true));
-
-        String expectedMessage = "[6] found [tok='_%docs\\', len=7] LIKE pattern must not end with escape character";
-        String actualMessage = e.getMessage();
-        assertTrue(actualMessage.contains(expectedMessage));
+        assertMemoryLeak(() -> {
+            try {
+                assertQueryNoLeakCheck(expected1, query, createTable, null, insertRow, expected2, true, true, true);
+                Assert.fail();
+            } catch (SqlException e) {
+                String expectedMessage = "[6] found [tok='_%docs\\', len=7] LIKE pattern must not end with escape character";
+                String actualMessage = e.getMessage();
+                assertTrue(actualMessage.contains(expectedMessage));
+            }
+        });
     }
 
     @Test

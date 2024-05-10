@@ -1048,15 +1048,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
             boolean expectSize,
             boolean sizeCanBeVariable
     ) throws Exception {
-        assertMemoryLeak(() -> {
-            if (ddl != null) {
-                compile(ddl);
-                if (configuration.getWalEnabledDefault()) {
-                    drainWalQueue();
-                }
-            }
-            printSqlResult(() -> expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, expectSize, sizeCanBeVariable, null);
-        });
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(expected, query, ddl, expectedTimestamp, ddl2, expected2, supportsRandomAccess, expectSize, sizeCanBeVariable));
     }
 
     /**
@@ -1068,6 +1060,26 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static void assertQueryExpectSize(CharSequence expected, CharSequence query, CharSequence ddl) throws Exception {
         assertQuery(expected, query, ddl, null, null, null, true, true, false);
+    }
+
+    protected static void assertQueryNoLeakCheck(
+            CharSequence expected,
+            CharSequence query,
+            CharSequence ddl,
+            @Nullable CharSequence expectedTimestamp,
+            @Nullable CharSequence ddl2,
+            @Nullable CharSequence expected2,
+            boolean supportsRandomAccess,
+            boolean expectSize,
+            boolean sizeCanBeVariable
+    ) throws Exception {
+        if (ddl != null) {
+            compile(ddl);
+            if (configuration.getWalEnabledDefault()) {
+                drainWalQueue();
+            }
+        }
+        printSqlResult(() -> expected, query, expectedTimestamp, ddl2, expected2, supportsRandomAccess, expectSize, sizeCanBeVariable, null);
     }
 
     protected static void assertSqlCursors(CharSequence expectedSql, CharSequence actualSql) throws SqlException {
