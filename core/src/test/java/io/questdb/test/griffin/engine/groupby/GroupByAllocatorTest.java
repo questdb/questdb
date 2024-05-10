@@ -361,7 +361,7 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
         });
     }
 
-    @Test(expected = CairoException.class)
+    @Test
     public void testThrowsOnTooLargeMallocRequest() throws Exception {
         final long maxRequest = 64;
         final CairoConfiguration config = new DefaultCairoConfiguration(root) {
@@ -373,11 +373,13 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (GroupByAllocator allocator = createAllocator(config)) {
                 allocator.malloc(maxRequest + 1);
+                Assert.fail();
+            } catch (CairoException ignore) {
             }
         });
     }
 
-    @Test(expected = CairoException.class)
+    @Test
     public void testThrowsOnTooLargeReallocRequest() throws Exception {
         final long maxRequest = 64;
         final CairoConfiguration config = new DefaultCairoConfiguration(root) {
@@ -390,6 +392,8 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
             try (GroupByAllocator allocator = createAllocator(config)) {
                 long ptr = allocator.malloc(maxRequest - 1);
                 allocator.realloc(ptr, maxRequest - 1, maxRequest + 1);
+                Assert.fail();
+            } catch (CairoException ignore) {
             }
         });
     }

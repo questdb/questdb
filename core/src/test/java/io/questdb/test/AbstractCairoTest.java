@@ -1623,6 +1623,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
         assertMemoryLeak(() -> assertQueryNoLeakCheck(expected, query, expectedTimestamp, supportsRandomAccess));
     }
 
+    protected void assertQuery(String expected, String query, String expectedTimestamp) throws Exception {
+        assertMemoryLeak(() -> assertQueryNoLeakCheck(expected, query, expectedTimestamp, false));
+    }
+
     protected void assertQueryAndCache(String expected, String query, String expectedTimestamp, boolean expectSize) throws SqlException {
         assertQueryAndCache(expected, query, expectedTimestamp, false, expectSize);
     }

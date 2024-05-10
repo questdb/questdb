@@ -55,10 +55,15 @@ public class PageFrameReduceTask implements Closeable {
     private byte type;
 
     public PageFrameReduceTask(CairoConfiguration configuration, int memoryTag) {
-        this.filteredRows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), memoryTag);
-        this.columns = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
-        this.varSizeAux = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
-        this.pageFrameQueueCapacity = configuration.getPageFrameReduceQueueCapacity();
+        try {
+            this.filteredRows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), memoryTag);
+            this.columns = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
+            this.varSizeAux = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
+            this.pageFrameQueueCapacity = configuration.getPageFrameReduceQueueCapacity();
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override

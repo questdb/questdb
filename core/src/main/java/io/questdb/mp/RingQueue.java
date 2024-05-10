@@ -37,21 +37,24 @@ public class RingQueue<T> implements Closeable {
 
     @SuppressWarnings("unchecked")
     public RingQueue(ObjectFactory<T> factory, int cycle) {
-
         // zero queue is allowed for testing
         assert cycle == 0 || Numbers.isPow2(cycle);
+        try {
+            this.mask = cycle - 1;
+            this.buf = (T[]) new Object[cycle];
 
-        this.mask = cycle - 1;
-        this.buf = (T[]) new Object[cycle];
+            for (int i = 0; i < cycle; i++) {
+                buf[i] = factory.newInstance();
+            }
 
-        for (int i = 0; i < cycle; i++) {
-            buf[i] = factory.newInstance();
+            // heap based queue
+            this.memory = 0;
+            this.memorySize = 0;
+            this.memoryTag = 0;
+        } catch (Throwable th) {
+            close();
+            throw th;
         }
-
-        // heap based queue
-        this.memory = 0;
-        this.memorySize = 0;
-        this.memoryTag = 0;
     }
 
     @SuppressWarnings("unchecked")
