@@ -73,7 +73,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         }
 
         // use first column to create list of values (over multiple records)
-        // supported column types are STRING and SYMBOL
+        // supported column types are VARCHAR, STRING and SYMBOL
         final Record.CharSequenceFunction func;
         switch (zeroColumnType) {
             case ColumnType.STRING:
