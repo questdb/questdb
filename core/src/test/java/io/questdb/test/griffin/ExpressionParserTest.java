@@ -698,7 +698,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
         x("1 - 1 in not", "-1 not in (1)");
         x("'1' '2' || '12' in not", "'1' || '2' not in ('12')");
         x("'1' '2' || '12' in not", "not '1' || '2' in ('12')");
-//        uncomment these assertions when precedence will be fixed
+//        uncomment these assertions when precedence will be fixed after the PR https://github.com/questdb/questdb/pull/4443
 //        x("true true false and or", "true or true and false");
 //        x("1 2 | 3 in", "1 | 2 IN 3");
 //        x("1 1 in not true =", "1 not in (1) = true");
