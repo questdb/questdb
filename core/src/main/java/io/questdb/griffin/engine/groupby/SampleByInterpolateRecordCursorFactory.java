@@ -217,8 +217,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
 
     private void freeYData() {
         if (yData != 0) {
-            Unsafe.free(yData, yDataSize, MemoryTag.NATIVE_FUNC_RSS);
-            yData = 0;
+            yData = Unsafe.free(yData, yDataSize, MemoryTag.NATIVE_FUNC_RSS);
         }
     }
 

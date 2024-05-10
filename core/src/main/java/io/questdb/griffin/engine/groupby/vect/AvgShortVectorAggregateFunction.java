@@ -91,8 +91,7 @@ public class AvgShortVectorAggregateFunction extends DoubleFunction implements V
     @Override
     public void close() {
         if (countsAddr != 0) {
-            Unsafe.free(countsAddr, (long) workerCount * Misc.CACHE_LINE_SIZE, MemoryTag.NATIVE_FUNC_RSS);
-            countsAddr = 0;
+            countsAddr = Unsafe.free(countsAddr, (long) workerCount * Misc.CACHE_LINE_SIZE, MemoryTag.NATIVE_FUNC_RSS);
         }
         super.close();
     }

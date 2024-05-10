@@ -1934,8 +1934,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
             ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
             insert("insert into tab select x::timestamp, x/4, x%5 from long_sequence(7)");
 
-            //row_number()
-            assertQuery(
+            // row_number()
+            assertQueryNoLeakCheck(
                     "row_number\n" +
                             "3\n" +
                             "2\n" +
@@ -1948,11 +1948,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab " +
                             "order by ts asc",
                     null,
-                    true,//cached window factory
+                    true, // cached window factory
                     false
             );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "row_number\n" +
                             "1\n" +
                             "2\n" +
@@ -1969,7 +1969,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     true
             );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "row_number\n" +
                             "1\n" +
                             "2\n" +
@@ -1986,7 +1986,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     true
             );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "row_number\n" +
                             "4\n" +
                             "3\n" +
@@ -1999,11 +1999,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab " +
                             "order by ts desc",
                     null,
-                    true,//cached window factory
+                    true, // cached window factory
                     false
             );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "row_number\n" +
                             "3\n" +
                             "2\n" +
@@ -2016,7 +2016,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab " +
                             "order by ts desc",
                     null,
-                    true,//cached window factory
+                    true, // cached window factory
                     false
             );
 
@@ -2038,7 +2038,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "            Frame forward scan on: tab\n"
             );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "row_number\tavg\tsum\tfirst_value\trank\n" +
                             "1\t2.0\t6.0\t3.0\t1\n" +
                             "2\t2.5\t5.0\t3.0\t2\n" +
@@ -2055,11 +2055,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab " +
                             "order by ts asc",
                     null,
-                    true,//cached window factory
+                    true, // cached window factory
                     false
             );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "row_number\tavg\tsum\tfirst_value\trank\n" +
                             "4\t2.0\t2.0\t2.0\t3\n" +
                             "3\t1.5\t3.0\t2.0\t2\n" +

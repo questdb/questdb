@@ -529,8 +529,8 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
     }
 
     private void assertTimeout(String ddl, String dml, String query, SqlCompiler compiler, SqlExecutionContext context) throws Exception {
-        try {
-            assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
+            try {
                 if (dml != null || query != null) {
                     unsetTimeout();
                 }
@@ -555,17 +555,17 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
                     }
                     assertFactoryMemoryUsage();
                 }
-            });
 
-            Assert.fail("Cairo timeout exception expected!");
-        } catch (SqlException se) {
-            resetTimeout();
-            TestUtils.assertContains(se.getFlyweightMessage(), "timeout, query aborted");
-        } catch (CairoException ce) {
-            resetTimeout();
-            TestUtils.assertContains(ce.getFlyweightMessage(), "timeout, query aborted");
-            Assert.assertTrue("Exception should be interrupted! " + ce, ce.isInterruption());
-        }
+                Assert.fail("Cairo timeout exception expected!");
+            } catch (SqlException se) {
+                resetTimeout();
+                TestUtils.assertContains(se.getFlyweightMessage(), "timeout, query aborted");
+            } catch (CairoException ce) {
+                resetTimeout();
+                TestUtils.assertContains(ce.getFlyweightMessage(), "timeout, query aborted");
+                Assert.assertTrue("Exception should be interrupted! " + ce, ce.isInterruption());
+            }
+        });
     }
 
     private void executeWithPool(
