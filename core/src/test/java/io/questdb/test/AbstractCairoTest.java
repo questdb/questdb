@@ -1062,6 +1062,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
         assertQuery(expected, query, ddl, null, null, null, true, true, false);
     }
 
+    protected static void assertQueryNoLeakCheck(CharSequence expected, CharSequence query, CharSequence ddl, @Nullable CharSequence expectedTimestamp, boolean supportsRandomAccess) throws Exception {
+        assertQueryNoLeakCheck(expected, query, ddl, expectedTimestamp, null, null, supportsRandomAccess, false, false);
+    }
+
     protected static void assertQueryNoLeakCheck(
             CharSequence expected,
             CharSequence query,

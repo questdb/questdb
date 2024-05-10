@@ -76,7 +76,7 @@ public class RingQueue<T> implements Closeable {
         for (int i = 0, n = buf.length; i < n; i++) {
             Misc.freeIfCloseable(buf[i]);
         }
-        if (memorySize > 0) {
+        if (memory != 0) {
             Unsafe.free(memory, memorySize, memoryTag);
             this.memorySize = 0;
         }

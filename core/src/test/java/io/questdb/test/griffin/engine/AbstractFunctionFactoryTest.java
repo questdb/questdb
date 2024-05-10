@@ -544,7 +544,6 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         public Invocation andInit(SqlExecutionContext context) throws SqlException {
             function1.init(null, context);
             function2.init(null, context);
-
             return this;
         }
 
