@@ -281,7 +281,7 @@ public class AggregateTest extends AbstractCairoTest {
                             "              intervals: [(\"2023-02-01T00:00:00.000001Z\",\"2023-02-01T23:59:59.999999Z\")]\n"
             );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "account_uuid\trequest_count\n" +
                             "s0\t0\n" +
                             "s1\t100\n" +
@@ -328,7 +328,7 @@ public class AggregateTest extends AbstractCairoTest {
                 );
             }
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "account_uuid\trequest_count\n" +
                             "s0\t0\n" +
                             "s1\t100\n" +
@@ -386,7 +386,7 @@ public class AggregateTest extends AbstractCairoTest {
             }
             assertPlan(query, plan);
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "org_uuid\taccount_uuid\ttotal_price\n" +
                             "o0\ts0\t0.0\n" +
                             "o1\ts1\t100.0\n" +

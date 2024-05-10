@@ -188,7 +188,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
             }
 
             refreshTablesInBaseEngine();
-            assertQuery("bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\n" +
+            assertQueryNoLeakCheck("bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\n" +
                             "false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1000\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\n" +
                             "false\t0\t8654\tS\t2\t2\t1970-01-03T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1000\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\n" +
                             "false\t104\t0\tT\t3\t3\t1970-01-04T00:00:00.000Z\t1970-01-04T00:00:00.000000Z\t3.1000\t3.2\ts3\tsy3\t0x30cb58d11566e857a87063d9dba8961195ddd1458f633b7f285307c11a7072d1\tu33d\n" +
@@ -229,7 +229,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
             }
 
             refreshTablesInBaseEngine();
-            assertQuery("bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\n" +
+            assertQueryNoLeakCheck("bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\n" +
                             "false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1000\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\n" +
                             "false\t0\t8654\tS\t2\t2\t1970-01-03T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1000\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\n" +
                             "false\t104\t0\tT\t3\t3\t1970-01-04T00:00:00.000Z\t1970-01-04T00:00:00.000000Z\t3.1000\t3.2\ts3\tsy3\t0x30cb58d11566e857a87063d9dba8961195ddd1458f633b7f285307c11a7072d1\tu33d\n" +
@@ -256,7 +256,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                 importer.process(AllowAllSecurityContext.INSTANCE);
 
                 refreshTablesInBaseEngine();
-                assertQuery("count\n1000\n", "select count(*) from t",
+                assertQueryNoLeakCheck("count\n1000\n", "select count(*) from t",
                         null, false, false, true
                 );
 
@@ -296,7 +296,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                 importer.process(AllowAllSecurityContext.INSTANCE);
             }
             refreshTablesInBaseEngine();
-            assertQuery("Line\tTs\tD\tDescRipTION\n" +
+            assertQueryNoLeakCheck("Line\tTs\tD\tDescRipTION\n" +
                             "line1\t1970-01-02T00:00:00.000000Z\t0.490933692472\tdesc 1\n" +
                             "line2\t1970-01-03T00:00:00.000000Z\t0.105484410855\tdesc 2\n",
                     "select * from tab24", "ts", true, false, true
@@ -315,7 +315,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                 importer.process(AllowAllSecurityContext.INSTANCE);
             }
             refreshTablesInBaseEngine();
-            assertQuery("line\tts\td\tdescription\n" +
+            assertQueryNoLeakCheck("line\tts\td\tdescription\n" +
                             "line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991\n" +
                             "line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992\n" +
                             "line993\t1972-09-20T00:00:00.000000Z\t0.0974353165713\tdesc 993\n" +
@@ -343,7 +343,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                 importer.process(AllowAllSecurityContext.INSTANCE);
             }
             refreshTablesInBaseEngine();
-            assertQuery("line\tts\td\tdescription\n" +
+            assertQueryNoLeakCheck("line\tts\td\tdescription\n" +
                             "line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991\n" +
                             "line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992\n" +
                             "line993\t1972-09-20T00:00:00.000000Z\t0.0974353165713\tdesc 993\n" +
@@ -373,7 +373,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                 importer.process(AllowAllSecurityContext.INSTANCE);
             }
             refreshTablesInBaseEngine();
-            assertQuery("line\tts\td\tdescription\n" +
+            assertQueryNoLeakCheck("line\tts\td\tdescription\n" +
                             "line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991\n" +
                             "line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992\n" +
                             "line993\t1972-09-20T00:00:00.000000Z\t0.0974353165713\tdesc 993\n" +
@@ -418,7 +418,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                     "select count(*) cnt from " + tableName,
                     null, false, true
             );
-            assertQuery("line\tts\td\tdescription\n" +
+            assertQueryNoLeakCheck("line\tts\td\tdescription\n" +
                             "line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991\n" +
                             "line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992\n" +
                             "line993\t1972-09-20T00:00:00.000000Z\t0.0974353165713\tdesc 993\n" +
@@ -456,7 +456,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                 importer.process(AllowAllSecurityContext.INSTANCE);
             }
             refreshTablesInBaseEngine();
-            assertQuery("readingTypeId\tvalue\treadingDate\n" +
+            assertQueryNoLeakCheck("readingTypeId\tvalue\treadingDate\n" +
                             "electricity.gbp.saving\t3600.0000\t2020-01-01T00:00:00.000001Z\n" +
                             "electricity.gbp.saving\t3600.0000\t2020-01-01T00:00:00.000002Z\n" +
                             "electricity.power.hour\t0.1010\t2020-01-01T00:00:00.000003Z\n",
@@ -478,7 +478,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                 importer.process(AllowAllSecurityContext.INSTANCE);
             }
             refreshTablesInBaseEngine();
-            assertQuery("other\ttxt\tline\tts\td\n" +
+            assertQueryNoLeakCheck("other\ttxt\tline\tts\td\n" +
                             "\tsome text\r\nspanning two lines\tline1\t2022-05-10T11:52:00.000000Z\t111.11\n" +
                             "\tsome text\r\nspanning \r\nmany \r\nmany \r\nmany \r\nlines\tline2\t2022-05-11T11:52:00.000000Z\t222.22\n" +
                             "\tsingle line text without quotes\tline3\t2022-05-11T11:52:00.001000Z\t333.33\n",
@@ -996,7 +996,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                 importer.process(AllowAllSecurityContext.INSTANCE);
             }
             refreshTablesInBaseEngine();
-            assertQuery("ts\tdescription\n" +
+            assertQueryNoLeakCheck("ts\tdescription\n" +
                             "2022-05-11T11:52:00.000000Z\tb\n",
                     "select * from tab",
                     "ts", true, false, true
@@ -1016,7 +1016,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                 importer.process(AllowAllSecurityContext.INSTANCE);
             }
             refreshTablesInBaseEngine();
-            assertQuery("count\n3\n",
+            assertQueryNoLeakCheck("count\n3\n",
                     "select count() from tab62", null, false, false, true
             );
         });
@@ -1034,7 +1034,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                 importer.process(AllowAllSecurityContext.INSTANCE);
             }
             refreshTablesInBaseEngine();
-            assertQuery("count\n3\n",
+            assertQueryNoLeakCheck("count\n3\n",
                     "select count() from tab44", null, false, false, true
             );
         });
@@ -1051,7 +1051,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
             }
 
             refreshTablesInBaseEngine();
-            assertQuery("count\n1000\n",
+            assertQueryNoLeakCheck("count\n1000\n",
                     "select count(*) from tab51", null, false, false, true
             );
         });
@@ -1164,7 +1164,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
             }
 
             refreshTablesInBaseEngine();
-            assertQuery("count\ticount\tlcount\n1000\t1000\t1000\n",
+            assertQueryNoLeakCheck("count\ticount\tlcount\n1000\t1000\t1000\n",
                     "select count(*), sum( case when i is null then 1 else 0 end) icount, sum( case when l is null then 1 else 0 end) lcount from tab58", null, false, false, true
             );
         });
@@ -1191,7 +1191,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                 importer.process(AllowAllSecurityContext.INSTANCE);
 
                 refreshTablesInBaseEngine();
-                assertQuery("count\n1000\n",
+                assertQueryNoLeakCheck("count\n1000\n",
                         "select count(*) from tab50", null, false, false, true
                 );
             }
@@ -1226,7 +1226,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                 importer.process(AllowAllSecurityContext.INSTANCE);
 
                 refreshTablesInBaseEngine();
-                assertQuery("ts\tf3\tf3_\tf3__\tf4\n" +
+                assertQueryNoLeakCheck("ts\tf3\tf3_\tf3__\tf4\n" +
                         "1972-09-28T00:00:00.000000Z\ta1\tb1\ta1\te1\n" +
                         "1972-09-28T00:00:00.000000Z\ta2\tb2\ta2\te2\n", "select * from tab61", "ts", true, false, true);
             }
@@ -1261,7 +1261,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                 importer.process(AllowAllSecurityContext.INSTANCE);
             }
             refreshTablesInBaseEngine();
-            assertQuery("count\n3\n", "select count(*) from tab57", null, false, false, true);
+            assertQueryNoLeakCheck("count\n3\n", "select count(*) from tab57", null, false, false, true);
         });
     }
 
@@ -1287,7 +1287,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                 importer.process(AllowAllSecurityContext.INSTANCE);
             }
             refreshTablesInBaseEngine();
-            assertQuery("count\n3\n", "select count(*) from tab55", null, false, false, true);
+            assertQueryNoLeakCheck("count\n3\n", "select count(*) from tab55", null, false, false, true);
         });
     }
 
@@ -1361,7 +1361,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
             }
 
             // run a query that uses the index
-            assertQuery("bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\n" +
+            assertQueryNoLeakCheck("bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\n" +
                             "false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1000\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\n" +
                             "true\t61\t-17553\tD\t10\t10\t1970-01-11T00:00:00.000Z\t1970-01-11T00:00:00.000000Z\t10.1000\t10.2\ts10\tsy10\t0x83e9d33db60120e69ba3fb676e3280ed6a6e16373be3139063343d28d3738449\tu33d\n",
                     "select * from alltypes where sym in ('sy1','sy10')", "tstmp", true, false, true
@@ -1582,7 +1582,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                 importer.process(AllowAllSecurityContext.INSTANCE);
             }
             refreshTablesInBaseEngine();
-            assertQuery("line\tts\td\tdescription\n" +
+            assertQueryNoLeakCheck("line\tts\td\tdescription\n" +
                             "line10\t1972-09-18T00:00:00.000000Z\t0.928671996857\tdesc 10\n" +
                             "line9\t1972-09-19T00:00:00.000000Z\t0.123847438134\tdesc 9\n" +
                             "line8\t1972-09-20T00:00:00.000000Z\t0.450854040396\tdesc 8\n" +
@@ -1653,7 +1653,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
             }
 
             refreshTablesInBaseEngine();
-            assertQuery("cnt\n13\n",
+            assertQueryNoLeakCheck("cnt\n13\n",
                     "select count(*) cnt from alltypes", null, false, false, true
             );
         });
@@ -1673,7 +1673,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
             }
 
             refreshTablesInBaseEngine();
-            assertQuery("cnt\n0\n", "select count(*) cnt from tab23", null, false, false, true);
+            assertQueryNoLeakCheck("cnt\n0\n", "select count(*) cnt from tab23", null, false, false, true);
         });
     }
 
@@ -1703,7 +1703,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
             }
 
             refreshTablesInBaseEngine();
-            assertQuery("bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\n" +
+            assertQueryNoLeakCheck("bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\n" +
                             "false\t106\t22716\tG\t1\t1\t1970-01-01T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1000\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\n" +
                             "false\t29\t8654\tS\t2\t2\t1970-01-02T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1000\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\n" + //boolean parses anything other than true as false
                             "false\t105\t-11072\tC\t4\t4\t1970-01-04T00:00:00.000Z\t1970-01-05T00:00:00.000000Z\t4.1000\t4.2\ts4\tsy4\t0x64ad74a1e1e5e5897c61daeff695e8be6ab8ea52090049faa3306e2d2440176e\tu33d\n" + //short overflow
@@ -2427,7 +2427,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
             }
 
             refreshTablesInBaseEngine();
-            assertQuery("cnt\n0\n", "select count(*) cnt from tab21", null, false, false, true);
+            assertQueryNoLeakCheck("cnt\n0\n", "select count(*) cnt from tab21", null, false, false, true);
         });
     }
 
@@ -2461,7 +2461,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
             }
 
             refreshTablesInBaseEngine();
-            assertQuery("cnt\n0\n", "select count(*) cnt from tab20", null, false, false, true);
+            assertQueryNoLeakCheck("cnt\n0\n", "select count(*) cnt from tab20", null, false, false, true);
         });
     }
 
@@ -2661,7 +2661,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         }
 
         refreshTablesInBaseEngine();
-        assertQuery("bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\tuid\n" +
+        assertQueryNoLeakCheck("bo\tby\tsh\tch\tin_\tlo\tdat\ttstmp\tft\tdb\tstr\tsym\tl256\tge\tuid\n" +
                         "false\t106\t22716\tG\t1\t1\t1970-01-02T00:00:00.000Z\t1970-01-02T00:00:00.000000Z\t1.1000\t1.2\ts1\tsy1\t0x0adaa43b7700522b82f4e8d8d7b8c41a985127d17ca3926940533c477c927a33\tu33d\t11111111-1111-1111-1111-111111111111\n" +
                         "false\t29\t8654\tS\t2\t2\t1970-01-03T00:00:00.000Z\t1970-01-03T00:00:00.000000Z\t2.1000\t2.2\ts2\tsy2\t0x593c9b7507c60ec943cd1e308a29ac9e645f3f4104fa76983c50b65784d51e37\tu33d\t11111111-1111-1111-2222-111111111111\n" +
                         "false\t104\t11600\tT\t3\t3\t1970-01-04T00:00:00.000Z\t1970-01-04T00:00:00.000000Z\t3.1000\t3.2\ts3\tsy3\t0x30cb58d11566e857a87063d9dba8961195ddd1458f633b7f285307c11a7072d1\tu33d\t11111111-1111-1111-3333-111111111111\n" +
@@ -2785,7 +2785,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                     "select count(*) cnt from " + tableName,
                     null, false, true
             );
-            assertQuery("line\tts\td\tdescription\n" +
+            assertQueryNoLeakCheck("line\tts\td\tdescription\n" +
                             "line991\t1972-09-18T00:00:00.000000Z\t0.744582123075\tdesc 991\n" +
                             "line992\t1972-09-19T00:00:00.000000Z\t0.107142280151\tdesc 992\n" +
                             "line993\t1972-09-20T00:00:00.000000Z\t0.0974353165713\tdesc 993\n" +

@@ -903,7 +903,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     createGeoHashTable(4);
-                    assertQuery(
+                    assertQueryNoLeakCheck(
                             "time\tuuid\thash\n" +
                                     "2021-05-10T23:59:59.439000Z\tbbb\tewef\n",
                             "select * from pos where hash = 'ewef'",
@@ -920,7 +920,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     createGeoHashTable(4);
-                    assertQuery(
+                    assertQueryNoLeakCheck(
                             "time\tuuid\thash\n" +
                                     "2021-05-10T23:59:59.439000Z\tbbb\tewef\n",
                             "select * from pos where 'ewef' = hash",
@@ -2611,7 +2611,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     createGeoHashTable(1);
-                    assertQuery(
+                    assertQueryNoLeakCheck(
                             "time\tuuid\thash\n" +
                                     "2021-05-10T23:59:59.150000Z\tXXX\tf\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz\n" +
@@ -2630,7 +2630,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     createGeoHashTable(2);
-                    assertQuery(
+                    assertQueryNoLeakCheck(
                             "time\tuuid\thash\n" +
                                     "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
@@ -2649,7 +2649,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     createGeoHashTable(2);
-                    assertQuery(
+                    assertQueryNoLeakCheck(
                             "time\tuuid\thash\n" +
                                     "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
@@ -2668,7 +2668,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     createGeoHashTable(4);
-                    assertQuery(
+                    assertQueryNoLeakCheck(
                             "time\tuuid\thash\n" +
                                     "2021-05-10T23:59:59.150000Z\tXXX\tf91t\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz31w\n" +
@@ -2687,7 +2687,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     createGeoHashTable(8);
-                    assertQuery(
+                    assertQueryNoLeakCheck(
                             "time\tuuid\thash\n" +
                                     "2021-05-10T23:59:59.150000Z\tXXX\tf91t48s7\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz31wzd5w\n" +
@@ -2707,7 +2707,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 () -> {
                     createGeoHashTable(2);
                     try {
-                        assertQuery(
+                        assertQueryNoLeakCheck(
                                 "",
                                 "select * from pos where hash within(#f9, #z3, #vepe7h) latest on time partition by uuid",
                                 "time",
@@ -2737,7 +2737,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                                     "), index(s) timestamp (ts) partition by DAY"
                     );
                     try {
-                        assertQuery(
+                        assertQueryNoLeakCheck(
                                 "time\tuuid\thash\n",
                                 "select * from x where geo8 within(make_geohash(lon, lat, 40), #z3, #vegg) latest on ts partition by s",
                                 "ts",
@@ -2757,7 +2757,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 () -> {
                     createGeoHashTable(2);
                     try {
-                        assertQuery(
+                        assertQueryNoLeakCheck(
                                 "time\tuuid\thash\n" +
                                         "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
                                         "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
@@ -2780,7 +2780,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 () -> {
                     createGeoHashTable(2);
                     try {
-                        assertQuery(
+                        assertQueryNoLeakCheck(
                                 "time\tuuid\thash\n" +
                                         "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
                                         "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
@@ -2802,7 +2802,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     createRndGeoHashTable();
-                    assertQuery(
+                    assertQueryNoLeakCheck(
                             "geo1\tts\n" +
                                     "x\t1970-01-17T21:43:20.000000Z\n" +
                                     "x\t1970-01-18T02:38:20.000000Z\n" +
@@ -2826,7 +2826,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     createRndGeoHashTable();
-                    assertQuery(
+                    assertQueryNoLeakCheck(
                             "geo2\tts\n" +
                                     "z7g\t1970-01-17T18:45:00.000000Z\n" +
                                     "xzu\t1970-01-17T21:06:40.000000Z\n" +
@@ -2853,7 +2853,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     createRndGeoHashTable();
-                    assertQuery(
+                    assertQueryNoLeakCheck(
                             "geo4\tts\n" +
                                     "zd4gu\t1970-01-17T20:06:40.000000Z\n" +
                                     "xwnjg\t1970-01-18T01:36:40.000000Z\n" +
@@ -2880,7 +2880,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     createRndGeoHashBitsTable();
-                    assertQuery(
+                    assertQueryNoLeakCheck(
                             "bits7\tts\n" +
                                     "1111111\t1970-01-16T21:43:20.000000Z\n" +
                                     "1111111\t1970-01-18T00:50:00.000000Z\n" +
@@ -2903,7 +2903,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     createRndGeoHashTable();
-                    assertQuery(
+                    assertQueryNoLeakCheck(
                             "geo4\tts\n" +
                                     "yv6gp\t1970-01-18T02:48:20.000000Z\n" +
                                     "z4wbx\t1970-01-18T05:51:40.000000Z\n" +
@@ -2924,7 +2924,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     createRndGeoHashBitsTable();
-                    assertQuery(
+                    assertQueryNoLeakCheck(
                             "i\ts\tts\tbits3\tbits7\tbits9\n" +
                                     "9384\tYFFD\t1970-01-17T15:31:40.000000Z\t101\t1110000\t101111011\n" +
                                     "9397\tMXUK\t1970-01-17T15:53:20.000000Z\t100\t1110001\t110001111\n",
@@ -2943,7 +2943,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 () -> {
                     createRndGeoHashBitsTable();
                     try {
-                        assertQuery(
+                        assertQueryNoLeakCheck(
                                 "",
                                 "select * from x where bits3 within(##111111) latest on ts partition by s",
                                 "ts",
@@ -2963,7 +2963,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     createGeoHashTable(2);
-                    assertQuery(
+                    assertQueryNoLeakCheck(
                             "time\tuuid\thash\n" +
                                     "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
@@ -2982,7 +2982,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     createGeoHashTable(1);
-                    assertQuery(
+                    assertQueryNoLeakCheck(
                             "time\tuuid\thash\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz\n" +
                                     "2021-05-11T00:00:00.111000Z\tddd\tb\n",
@@ -3000,7 +3000,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     createGeoHashTable(2);
-                    assertQuery(
+                    assertQueryNoLeakCheck(
                             "time\tuuid\thash\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
                                     "2021-05-11T00:00:00.111000Z\tddd\tbc\n",
@@ -3018,7 +3018,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     createGeoHashTable(4);
-                    assertQuery(
+                    assertQueryNoLeakCheck(
                             "time\tuuid\thash\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz31w\n" +
                                     "2021-05-11T00:00:00.111000Z\tddd\tbcnk\n",
@@ -3036,7 +3036,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     createGeoHashTable(8);
-                    assertQuery(
+                    assertQueryNoLeakCheck(
                             "time\tuuid\thash\n" +
                                     "2021-05-11T00:00:00.083000Z\tYYY\tz31wzd5w\n",
                             "select * from pos where time in '2021-05-11' and hash within (#z31, #bbx) latest on time partition by uuid",
@@ -3054,7 +3054,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 () -> {
                     createGeoHashTable(2);
                     try {
-                        assertQuery(
+                        assertQueryNoLeakCheck(
                                 "",
                                 "select * from pos where 'hash' within(#f9) latest on time partition by uuid",
                                 "time",
@@ -3074,7 +3074,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 () -> {
                     createGeoHashTable(2);
                     try {
-                        assertQuery(
+                        assertQueryNoLeakCheck(
                                 "",
                                 "select * from pos where uuid within(#f9) latest on time partition by uuid",
                                 "time",
@@ -3094,7 +3094,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 () -> {
                     createGeoHashTable(2);
                     try {
-                        assertQuery(
+                        assertQueryNoLeakCheck(
                                 "",
                                 "select * from pos where hash within() latest on time partition by uuid",
                                 "time",
@@ -3114,7 +3114,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 () -> {
                     createGeoHashTable(2);
                     try {
-                        assertQuery(
+                        assertQueryNoLeakCheck(
                                 "",
                                 "select * from pos where hash within(#f9, #z3, null) latest on time partition by uuid",
                                 "time",
@@ -3134,7 +3134,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 () -> {
                     createGeoHashTable(2);
                     try {
-                        assertQuery(
+                        assertQueryNoLeakCheck(
                                 "",
                                 "select * from pos where hash within(#f9) or hash within(#z3) latest on time partition by uuid",
                                 "time",
@@ -3154,7 +3154,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 () -> {
                     createGeoHashTable(2);
                     try {
-                        assertQuery(
+                        assertQueryNoLeakCheck(
                                 "",
                                 "select * from pos where hash within(cast('f91t' as geohash(4c)), #z3, null) latest on time partition by uuid",
                                 "time",

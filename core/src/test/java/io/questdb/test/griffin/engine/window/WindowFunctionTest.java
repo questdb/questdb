@@ -138,7 +138,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             //trigger removal of rows below lo boundary AND resize of buffer
             insert("insert into tab select (100000+x)::timestamp, x/4, x from long_sequence(90000)");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "ts\ti\tj\tavg\tsum\tfirst_value\n" +
                             "1970-01-01T00:00:00.189996Z\t22499\t89996\t49996.0\t3.999729996E9\t9996.0\n" +
                             "1970-01-01T00:00:00.189997Z\t22499\t89997\t49997.0\t3.999809997E9\t9997.0\n" +
@@ -162,7 +162,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // trigger buffer resize
             insert("insert into tab select (100000+x)::timestamp, x/4, x from long_sequence(90000)");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "ts\ti\tj\tavg\tsum\tfirst_value\n" +
                             "1970-01-01T00:00:00.189996Z\t22499\t89996\t49996.0\t3.999729996E9\t9996.0\n" +
                             "1970-01-01T00:00:00.189997Z\t22499\t89997\t49997.0\t3.999809997E9\t9997.0\n" +
@@ -202,7 +202,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "where rn between 1 and 80001 "
             );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     expected,
                     "select * from (" +
                             "select * from " +
@@ -240,7 +240,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "where rn between 1 and 80001 "
             );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     expected,
                     "select * from (" +
                             "select * from (select ts, " +
@@ -284,7 +284,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "order by data.i"
             );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     expected,
                     "select * from " +
                             "(select * from (select ts, i, j, " +
@@ -347,7 +347,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "order by data.i "
             );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     expected,
                     "select last(ts) as ts, " +
                             "i, " +
@@ -396,7 +396,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "order by i"
             );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     expected,
                     "select * from (" +
                             "select * from (select ts, i, j, " +

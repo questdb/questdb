@@ -429,7 +429,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     public static void snapshotMemoryUsage() {
         memoryUsage = getMemUsedByFactories();
-
         for (int i = 0; i < MemoryTag.SIZE; i++) {
             SNAPSHOT[i] = Unsafe.getMemUsedByTag(i);
         }
@@ -1599,13 +1598,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         assertMemoryLeak(() -> assertQueryFullFat(expected, query, expectedTimestamp, supportsRandomAccess, expectSize, false));
     }
 
-    protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize, boolean sizeCanBeVariable) throws SqlException {
-        snapshotMemoryUsage();
-        try (final RecordCursorFactory factory = select(query)) {
-            assertFactoryCursor(expected, expectedTimestamp, factory, supportsRandomAccess, sqlExecutionContext, expectSize, sizeCanBeVariable);
-        }
-    }
-
     protected void assertQuery(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, SqlExecutionContext sqlExecutionContext) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             assertQuery(compiler, expected, query, expectedTimestamp, sqlExecutionContext, supportsRandomAccess, false);
@@ -1655,6 +1647,13 @@ public abstract class AbstractCairoTest extends AbstractTest {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             compiler.setFullFatJoins(fullFatJoin);
             assertQuery(compiler, expected, query, expectedTimestamp, sqlExecutionContext, supportsRandomAccess, expectSize);
+        }
+    }
+
+    protected void assertQueryNoLeakCheck(String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize, boolean sizeCanBeVariable) throws SqlException {
+        snapshotMemoryUsage();
+        try (final RecordCursorFactory factory = select(query)) {
+            assertFactoryCursor(expected, expectedTimestamp, factory, supportsRandomAccess, sqlExecutionContext, expectSize, sizeCanBeVariable);
         }
     }
 

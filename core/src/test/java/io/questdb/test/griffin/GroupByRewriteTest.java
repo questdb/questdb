@@ -39,7 +39,7 @@ public class GroupByRewriteTest extends AbstractCairoTest {
             compile("CREATE TABLE tabb ( bx int, bid int );");
             insert("INSERT INTO tabb values (3,1), (4,2)");
 
-            assertQuery("sum\tsum1\tsum2\tsum3\n" +
+            assertQueryNoLeakCheck("sum\tsum1\tsum2\tsum3\n" +
                             "3\t7\t23\t27\n",
                     "SELECT sum(ax), sum(bx), sum(ax+10), sum(bx+10) " +
                             "FROM taba " +
@@ -87,7 +87,7 @@ public class GroupByRewriteTest extends AbstractCairoTest {
             assertMemoryLeak(() -> {
                 compile("CREATE TABLE telemetry (created timestamp)");
 
-                assertQuery("sum\tsum1\tsum2\tsum3\n" +
+                assertQueryNoLeakCheck("sum\tsum1\tsum2\tsum3\n" +
                                 "3\t7\t23\t27\n",
                         "SELECT telemetry.created FROM telemetry ORDER BY SUM(1, 1 IN (telemetry.created), 1);", null, false, false, true);
             });

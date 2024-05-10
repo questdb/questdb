@@ -51,7 +51,7 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: y\n");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "a\tb\n" +
                             "0\t3\n" +
                             "0\t2\n" +

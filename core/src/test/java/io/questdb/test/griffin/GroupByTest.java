@@ -1642,7 +1642,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "  limit -100 )" +
                     "order by i";
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     expected,
                     query2,
                     null,

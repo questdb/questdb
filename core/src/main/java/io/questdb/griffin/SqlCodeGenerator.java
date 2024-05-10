@@ -4416,10 +4416,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordCursorFactory factoryA,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        final RecordCursorFactory factoryB = generateQuery0(model.getUnionModel(), executionContext, true);
+        RecordCursorFactory factoryB = null;
         ObjList<Function> castFunctionsA = null;
         ObjList<Function> castFunctionsB = null;
         try {
+            factoryB = generateQuery0(model.getUnionModel(), executionContext, true);
+
             final RecordMetadata metadataA = factoryA.getMetadata();
             final RecordMetadata metadataB = factoryB.getMetadata();
             final int positionA = model.getModelPosition();

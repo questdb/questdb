@@ -1447,7 +1447,7 @@ public class JoinTest extends AbstractCairoTest {
                     "  from long_sequence(5)) " +
                     "timestamp(timestamp)");
 
-            assertQuery("pickup_datetime\tfare_amount\ttempF\twindDir\n" +
+            assertQueryNoLeakCheck("pickup_datetime\tfare_amount\ttempF\twindDir\n" +
                             "1970-01-01T00:00:00.000001Z\t0.6607777894187332\t0.6508594025855301\t-1436881714\n" +
                             "1970-01-01T00:00:00.000002Z\t0.2246301342497259\t0.7905675319675964\t1545253512\n" +
                             "1970-01-01T00:00:00.000003Z\t0.08486964232560668\t0.22452340856088226\t-409854405\n" +
@@ -1847,10 +1847,10 @@ public class JoinTest extends AbstractCairoTest {
                     "FROM t as T1 JOIN t as T2 on T1.created = T2.created JOIN t as T3 ON T2.created = T3.created\n" +
                     "WHERE T3.created < now()";
 
-            assertQuery("count\n0\n", query1, null, false, true);
-            assertQuery("count\n1\n", query2, null, false, true);
+            assertQueryNoLeakCheck("count\n0\n", query1, null, false, true);
+            assertQueryNoLeakCheck("count\n1\n", query2, null, false, true);
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "count\n",
                     query1 + " INTERSECT " + query2,
                     null,
@@ -3760,7 +3760,8 @@ public class JoinTest extends AbstractCairoTest {
                             "timestamp(timestamp)"
             );
 
-            assertQuery("id\n",
+            assertQueryNoLeakCheck(
+                    "id\n",
                     "with\n" +
                             "eventlist as (select * from contact_events latest on timestamp partition by _id order by timestamp)\n" +
                             ",contactlist as (select * from contacts latest on timestamp partition by _id order by timestamp)\n" +
@@ -3770,7 +3771,11 @@ public class JoinTest extends AbstractCairoTest {
                             "from\n" +
                             "c\n" +
                             "join contactlist on c.contactid = contactlist._id\n",
-                    null, false, false, true);
+                    null,
+                    false,
+                    false,
+                    true
+            );
         });
     }
 
@@ -5658,7 +5663,7 @@ public class JoinTest extends AbstractCairoTest {
             insert("insert into x select cast(x+10 as int) c, abs(rnd_int() % 650) a from long_sequence(4)");
             insert("insert into y select x, cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     expected +
                             "12\t347\t7\n" +
                             "12\t347\t0\n" +

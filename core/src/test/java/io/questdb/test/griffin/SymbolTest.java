@@ -40,7 +40,7 @@ public class SymbolTest extends AbstractCairoTest {
                     " '2024-03-05T12:13'::timestamp timestamp" +
                     " from long_sequence(51)");
             engine.releaseAllWriters();
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "sym\nZVDZ\nYR\nYPH\nXWC\nXG\nVLTO\nUWD\nUQSR\nULOF\nTMH\nSXU\nSXU\nSXU\nSDOT\nRFB\nPH\n" +
                             "PH\nOWLP\nOWLP\nLU\nKWZ\nJSHR\nIBBT\nHYHB\nHWVD\nGLHM\nGLHM\nGLHM\nFZ\nFZ\nFMQN\nFLOP\n" +
                             "FF\nFDT\nEHBH\nEDYY\nEDYY\nEDRQ\nCPSW\n\n\n\n\n\n\n\n\n\n\n\n\n",
