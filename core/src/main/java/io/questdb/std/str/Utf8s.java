@@ -440,6 +440,69 @@ public final class Utf8s {
         return -1;
     }
 
+    public static int indexOf(@NotNull Utf8Sequence seq, int seqLo, int seqHi, @NotNull Utf8Sequence term, int occurrence) {
+        if (occurrence == 0) {
+            return -1;
+        }
+
+        int termSize = term.size();
+        if (termSize == 0) {
+            return 0;
+        }
+
+        byte first = term.byteAt(0);
+        int max = seqHi - termSize;
+
+        int count = 0;
+        if (occurrence > 0) {
+            for (int i = seqLo; i <= max; i++) {
+                if (seq.byteAt(i) != first) {
+                    do {
+                        ++i;
+                    } while (i <= max && seq.byteAt(i) != first);
+                }
+
+                if (i <= max) {
+                    int j = i + 1;
+                    int end = j + termSize - 1;
+                    for (int k = 1; j < end && seq.byteAt(j) == term.byteAt(k); ++k) {
+                        ++j;
+                    }
+                    if (j == end) {
+                        count++;
+                        if (count == occurrence) {
+                            return i;
+                        }
+                    }
+                }
+            }
+        } else {    // if occurrence is negative, search in reverse
+            for (int i = seqHi - termSize; i >= seqLo; i--) {
+                if (seq.byteAt(i) != first) {
+                    do {
+                        --i;
+                    } while (i >= seqLo && seq.byteAt(i) != first);
+                }
+
+                if (i >= seqLo) {
+                    int j = i + 1;
+                    int end = j + termSize - 1;
+                    for (int k = 1; j < end && seq.byteAt(j) == term.byteAt(k); ++k) {
+                        ++j;
+                    }
+                    if (j == end) {
+                        count--;
+                        if (count == occurrence) {
+                            return i;
+                        }
+                    }
+                }
+            }
+        }
+
+        return -1;
+    }
+
     public static int indexOfAscii(@NotNull Utf8Sequence seq, char asciiChar) {
         return indexOfAscii(seq, 0, asciiChar);
     }
@@ -909,17 +972,31 @@ public final class Utf8s {
     /**
      * A specialised function to decode a single UTF-8 character.
      * Used when it doesn't make sense to allocate a temporary sink.
+     * Returns 0 in the case of a surrogate pair.
      *
      * @param seq input sequence
      * @return an integer-encoded tuple (decoded number of bytes, character in UTF-16 encoding, stored as short type)
      */
     public static int utf8CharDecode(Utf8Sequence seq) {
-        int size = seq.size();
+        return utf8CharDecode(seq, 0);
+    }
+
+    /**
+     * A specialised function to decode a single UTF-8 character.
+     * Used when it doesn't make sense to allocate a temporary sink.
+     * Returns 0 in the case of a surrogate pair.
+     *
+     * @param seq    input sequence
+     * @param offset offset into the sequence
+     * @return an integer-encoded tuple (decoded number of bytes, character in UTF-16 encoding, stored as short type)
+     */
+    public static int utf8CharDecode(Utf8Sequence seq, int offset) {
+        int size = seq.size() - offset;
         if (size > 0) {
-            byte b1 = seq.byteAt(0);
+            byte b1 = seq.byteAt(offset);
             if (b1 < 0) {
                 if (b1 >> 5 == -2 && (b1 & 30) != 0 && size > 1) {
-                    byte b2 = seq.byteAt(1);
+                    byte b2 = seq.byteAt(offset + 1);
                     if (isNotContinuation(b2)) {
                         return 0;
                     }
@@ -927,8 +1004,8 @@ public final class Utf8s {
                 }
 
                 if (b1 >> 4 == -2 && size > 2) {
-                    byte b2 = seq.byteAt(1);
-                    byte b3 = seq.byteAt(2);
+                    byte b2 = seq.byteAt(offset + 1);
+                    byte b3 = seq.byteAt(offset + 2);
                     if (isMalformed3(b1, b2, b3)) {
                         return 0;
                     }
