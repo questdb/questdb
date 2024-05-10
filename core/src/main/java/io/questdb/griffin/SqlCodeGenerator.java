@@ -5645,7 +5645,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     .put(ColumnType.nameOf(columnType));
         }
 
-        return ColumnType.isString(columnType) ? Record.GET_STR : Record.GET_SYM;
+        return ColumnType.isString(columnType) || ColumnType.isVarchar(columnType) ? Record.GET_STR : Record.GET_SYM;
     }
 
     // used in tests
