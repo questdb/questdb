@@ -2093,8 +2093,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     filter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
                                 }
 
-                                if (joinType == JOIN_OUTER &&
-                                        filter != null && filter.isConstant() && !filter.getBool(null)) {
+                                if (joinType == JOIN_OUTER
+                                        && filter != null && filter.isConstant() && !filter.getBool(null)) {
                                     Misc.free(slave);
                                     slave = new EmptyTableRecordCursorFactory(slaveMetadata);
                                 }

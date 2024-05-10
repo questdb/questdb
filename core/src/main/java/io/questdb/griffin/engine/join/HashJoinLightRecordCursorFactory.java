@@ -56,9 +56,19 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             JoinContext joinContext
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
-        this.masterSink = masterSink;
-        this.slaveKeySink = slaveKeySink;
-        this.cursor = new HashJoinRecordCursor(columnSplit, configuration, joinColumnTypes, valueTypes);
+        try {
+            this.masterSink = masterSink;
+            this.slaveKeySink = slaveKeySink;
+            this.cursor = new HashJoinRecordCursor(columnSplit, configuration, joinColumnTypes, valueTypes);
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
+    }
+
+    @Override
+    public boolean followedOrderByAdvice() {
+        return masterFactory.followedOrderByAdvice();
     }
 
     @Override
@@ -74,11 +84,6 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             Misc.free(masterCursor);
             throw e;
         }
-    }
-
-    @Override
-    public boolean followedOrderByAdvice() {
-        return masterFactory.followedOrderByAdvice();
     }
 
     @Override
@@ -126,10 +131,15 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
 
         public HashJoinRecordCursor(int columnSplit, CairoConfiguration configuration, ColumnTypes joinColumnTypes, ColumnTypes valueTypes) {
             super(columnSplit);
-            record = new JoinRecord(columnSplit);
-            joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes);
-            slaveChain = new LongChain(configuration.getSqlHashJoinLightValuePageSize(), configuration.getSqlHashJoinLightValueMaxPages());
-            isOpen = true;
+            try {
+                isOpen = true;
+                record = new JoinRecord(columnSplit);
+                joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes);
+                slaveChain = new LongChain(configuration.getSqlHashJoinLightValuePageSize(), configuration.getSqlHashJoinLightValueMaxPages());
+            } catch (Throwable th) {
+                close();
+                throw th;
+            }
         }
 
         @Override

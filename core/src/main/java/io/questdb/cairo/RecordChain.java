@@ -56,25 +56,30 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
             long pageSize,
             int maxPages
     ) {
-        this.mem = Vm.getARWInstance(pageSize, maxPages, MemoryTag.NATIVE_RECORD_CHAIN);
-        this.recordSink = recordSink;
-        int count = columnTypes.getColumnCount();
-        long varOffset = 0L;
-        long fixOffset = 0L;
+        try {
+            this.mem = Vm.getARWInstance(pageSize, maxPages, MemoryTag.NATIVE_RECORD_CHAIN);
+            this.recordSink = recordSink;
+            int count = columnTypes.getColumnCount();
+            long varOffset = 0L;
+            long fixOffset = 0L;
 
-        this.columnOffsets = new long[count];
-        for (int i = 0; i < count; i++) {
-            int type = columnTypes.getColumnType(i);
-            if (ColumnType.isVarSize(type)) {
-                columnOffsets[i] = varOffset;
-                varOffset += 8;
-            } else {
-                columnOffsets[i] = fixOffset;
-                fixOffset += ColumnType.sizeOf(type);
+            this.columnOffsets = new long[count];
+            for (int i = 0; i < count; i++) {
+                int type = columnTypes.getColumnType(i);
+                if (ColumnType.isVarSize(type)) {
+                    columnOffsets[i] = varOffset;
+                    varOffset += 8;
+                } else {
+                    columnOffsets[i] = fixOffset;
+                    fixOffset += ColumnType.sizeOf(type);
+                }
             }
+            this.varOffset = varOffset;
+            this.fixOffset = fixOffset;
+        } catch (Throwable th) {
+            close();
+            throw th;
         }
-        this.varOffset = varOffset;
-        this.fixOffset = fixOffset;
     }
 
     public long addressOf(long offset) {

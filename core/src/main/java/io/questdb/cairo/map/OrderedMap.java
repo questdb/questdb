@@ -161,7 +161,8 @@ public class OrderedMap implements Map, Reopenable {
             this.listMemoryTag = listMemoryTag;
             initialHeapSize = heapSize;
             this.loadFactor = loadFactor;
-            heapStart = kPos = Unsafe.malloc(this.heapSize = heapSize, heapMemoryTag);
+            heapStart = kPos = Unsafe.malloc(heapSize, heapMemoryTag);
+            this.heapSize = heapSize;
             heapLimit = heapStart + heapSize;
             this.keyCapacity = (int) (keyCapacity / loadFactor);
             this.keyCapacity = this.initialKeyCapacity = Math.max(Numbers.ceilPow2(this.keyCapacity), MIN_KEY_CAPACITY);

@@ -57,11 +57,25 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             JoinContext joinContext
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
-        Map joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes);
-        RecordChain slaveChain = new RecordChain(slaveFactory.getMetadata(), slaveChainSink, configuration.getSqlHashJoinValuePageSize(), configuration.getSqlHashJoinValueMaxPages());
-        this.masterSink = masterSink;
-        this.slaveKeySink = slaveKeySink;
-        cursor = new HashJoinRecordCursor(columnSplit, joinKeyMap, slaveChain);
+        Map joinKeyMap = null;
+        RecordChain slaveChain = null;
+        try {
+            joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes);
+            slaveChain = new RecordChain(slaveFactory.getMetadata(), slaveChainSink, configuration.getSqlHashJoinValuePageSize(), configuration.getSqlHashJoinValueMaxPages());
+            this.masterSink = masterSink;
+            this.slaveKeySink = slaveKeySink;
+            cursor = new HashJoinRecordCursor(columnSplit, joinKeyMap, slaveChain);
+        } catch (Throwable th) {
+            Misc.free(joinKeyMap);
+            Misc.free(slaveChain);
+            close();
+            throw th;
+        }
+    }
+
+    @Override
+    public boolean followedOrderByAdvice() {
+        return masterFactory.followedOrderByAdvice();
     }
 
     @Override
@@ -77,11 +91,6 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             Misc.free(masterCursor);
             throw e;
         }
-    }
-
-    @Override
-    public boolean followedOrderByAdvice() {
-        return masterFactory.followedOrderByAdvice();
     }
 
     @Override
