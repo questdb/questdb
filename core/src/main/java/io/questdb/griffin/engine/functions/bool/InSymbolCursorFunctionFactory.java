@@ -39,6 +39,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.std.*;
+import io.questdb.std.str.StringSink;
 
 public class InSymbolCursorFunctionFactory implements FunctionFactory {
     @Override
@@ -69,14 +70,24 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
                 return new SymbolInNullCursorFunction(symbolFunction);
             }
             return new StrInNullCursorFunction(symbolFunction);
-        } else if (!ColumnType.isSymbolOrString(zeroColumnType)) {
-            throw SqlException.position(position).put("supported column types are STRING and SYMBOL, found: ").put(ColumnType.nameOf(zeroColumnType));
         }
 
         // use first column to create list of values (over multiple records)
         // supported column types are STRING and SYMBOL
-
-        final Record.CharSequenceFunction func = ColumnType.isString(zeroColumnType) ? Record.GET_STR : Record.GET_SYM;
+        final Record.CharSequenceFunction func;
+        switch (zeroColumnType) {
+            case ColumnType.STRING:
+                func = Record.GET_STR;
+                break;
+            case ColumnType.SYMBOL:
+                func = Record.GET_SYM;
+                break;
+            case ColumnType.VARCHAR:
+                func = Record.GET_VARCHAR;
+                break;
+            default:
+                throw SqlException.position(position).put("supported column types are VARCHAR, SYMBOL and STRING, found: ").put(ColumnType.nameOf(zeroColumnType));
+        }
 
         if (valueFunction.isNullConstant()) {
             return new StrInCursorFunction(NullConstant.NULL, cursorFunction, func);
@@ -93,6 +104,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
 
         private final Function cursorArg;
         private final Record.CharSequenceFunction func;
+        private final StringSink sink = new StringSink();
         private final Function valueArg;
         private final CharSequenceHashSet valueSetA = new CharSequenceHashSet();
         private final CharSequenceHashSet valueSetB = new CharSequenceHashSet();
@@ -172,7 +184,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         private void buildValueSet() {
             final Record record = cursor.getRecord();
             while (cursor.hasNext()) {
-                CharSequence value = func.get(record, 0);
+                CharSequence value = func.get(record, 0, sink);
                 if (value == null) {
                     valueSet.addNull();
                 } else {
@@ -211,6 +223,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
     private static class SymbolInCursorFunction extends BooleanFunction implements BinaryFunction {
         private final Function cursorArg;
         private final Record.CharSequenceFunction func;
+        private final StringSink sink = new StringSink();
         private final IntHashSet symbolKeys = new IntHashSet();
         private final SymbolFunction valueArg;
         private RecordCursor cursor;
@@ -282,7 +295,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
 
             final Record record = cursor.getRecord();
             while (cursor.hasNext()) {
-                int key = symbolTable.keyOf(func.get(record, 0));
+                int key = symbolTable.keyOf(func.get(record, 0, sink));
                 if (key != SymbolTable.VALUE_NOT_FOUND) {
                     symbolKeys.add(key + 1);
                 }

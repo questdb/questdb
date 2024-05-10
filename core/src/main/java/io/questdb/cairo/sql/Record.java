@@ -27,10 +27,7 @@ package io.questdb.cairo.sql;
 import io.questdb.cairo.TableUtils;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
-import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.*;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -42,9 +39,23 @@ import org.jetbrains.annotations.Nullable;
  */
 public interface Record {
 
-    CharSequenceFunction GET_STR = Record::getStrA;
+    CharSequenceFunction GET_STR = (record, col, sink) -> record.getStrA(col);
 
-    CharSequenceFunction GET_SYM = Record::getSymA;
+    CharSequenceFunction GET_SYM = (record, col, sink) -> record.getSymA(col);
+
+    CharSequenceFunction GET_VARCHAR = (record, col, sink) -> {
+        Utf8Sequence vch = record.getVarcharA(col);
+        if (vch == null) {
+            return null;
+        }
+        if (vch.isAscii()) {
+            return vch.asAsciiCharSequence();
+        }
+        sink.clear();
+        sink.put(vch);
+        return sink;
+    };
+
 
     /**
      * Gets the value of a binary column by index
@@ -460,8 +471,9 @@ public interface Record {
         /**
          * @param record to retrieve CharSequence from
          * @param col    numeric index of the column
+         * @param sink   sink the function can use if a conversion is required
          * @return record as a char sequence
          */
-        CharSequence get(Record record, int col);
+        CharSequence get(Record record, int col, StringSink sink);
     }
 }

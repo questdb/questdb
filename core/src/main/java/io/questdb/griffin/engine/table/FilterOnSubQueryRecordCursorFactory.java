@@ -34,6 +34,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -49,6 +50,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
     private final Function filter;
     private final Record.CharSequenceFunction func;
     private final RecordCursorFactory recordCursorFactory;
+    private final StringSink sink = new StringSink();
 
     public FilterOnSubQueryRecordCursorFactory(
             @NotNull RecordMetadata metadata,
@@ -221,7 +223,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
             final StaticSymbolTable symbolTable = delegate.getDataFrameCursor().getSymbolTable(columnIndex);
             final Record record = baseCursor.getRecord();
             while (baseCursor.hasNext()) {
-                final CharSequence symbol = func.get(record, 0);
+                final CharSequence symbol = func.get(record, 0, sink);
                 int symbolKey = symbolTable.keyOf(symbol);
                 if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
                     final int targetIndex = targetFactories.keyIndex(symbolKey);
