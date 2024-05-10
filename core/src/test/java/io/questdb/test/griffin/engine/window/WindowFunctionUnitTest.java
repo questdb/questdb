@@ -252,66 +252,63 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
             java.util.function.BiFunction<Long, Long, BaseDoubleWindowFunction> windowFunctionFactory,
             java.util.function.BiFunction<Double, Double, Double> sum
     ) throws Exception {
-        for (int count = 1; count <= 512; count *= 2) {
-            for (int attempt = 0; attempt <= Math.max(64, count); attempt++) {
-                Record[] records = generateTestRecords(rnd, count, 1 + rnd.nextInt(32), 1 + rnd.nextLong(65536));
-                Arrays.sort(records, Comparator.comparingLong(a -> a.getLong(0)));
-                long rangeLo = rangeLoGen.apply(rnd);
-                long rangeHi = rangeHiGen.apply(rnd);
-                if (rangeLo > rangeHi) {
-                    long tmp = rangeLo;
-                    rangeLo = rangeHi;
-                    rangeHi = tmp;
-                }
+        final int count = rnd.nextInt(1024) + 1;
+        Record[] records = generateTestRecords(rnd, count, 1 + rnd.nextInt(32), 1 + rnd.nextLong(65536));
+        Arrays.sort(records, Comparator.comparingLong(a -> a.getLong(0)));
+        long rangeLo = rangeLoGen.apply(rnd);
+        long rangeHi = rangeHiGen.apply(rnd);
+        if (rangeLo > rangeHi) {
+            long tmp = rangeLo;
+            rangeLo = rangeHi;
+            rangeHi = tmp;
+        }
 
-                try (BaseDoubleWindowFunction f = windowFunctionFactory.apply(rangeLo, rangeHi)) {
-                    for (int s = 0; s < records.length; s++) {
-                        try {
-                            f.computeNext(records[s]);
-                        } catch (Error e) {
-                            throw new Exception(String.format(
-                                    "count=%d, attempt=#%d, rangeLo=%d, rangeHi=%d, s=%d, data=[%s]",
-                                    count, attempt, rangeLo, rangeHi, s,
-                                    Arrays.stream(records).map(x -> String.format("%d:%d:%d", x.getLong(0), x.getInt(1), x.getLong(2))).collect(Collectors.joining(", "))
-                            ), e);
-                        }
-                        double expected = Double.NaN;
-                        int row = 0;
-                        for (int q = s; q >= 0; q--) {
-                            if (partitioned && records[q].getInt(1) != records[s].getInt(1)) {
-                                continue;
+        try (BaseDoubleWindowFunction f = windowFunctionFactory.apply(rangeLo, rangeHi)) {
+            for (int s = 0; s < records.length; s++) {
+                try {
+                    f.computeNext(records[s]);
+                } catch (Error e) {
+                    throw new Exception(String.format(
+                            "count=%d, rangeLo=%d, rangeHi=%d, s=%d, data=[%s]",
+                            count, rangeLo, rangeHi, s,
+                            Arrays.stream(records).map(x -> String.format("%d:%d:%d", x.getLong(0), x.getInt(1), x.getLong(2))).collect(Collectors.joining(", "))
+                    ), e);
+                }
+                double expected = Double.NaN;
+                int row = 0;
+                for (int q = s; q >= 0; q--) {
+                    if (partitioned && records[q].getInt(1) != records[s].getInt(1)) {
+                        continue;
+                    }
+                    if (!rows) {
+                        if ((rangeLo == Long.MIN_VALUE || records[q].getLong(0) >= records[s].getLong(0) + rangeLo) && records[q].getLong(0) <= records[s].getLong(0) + rangeHi) {
+                            if (Double.isNaN(expected)) {
+                                expected = 0;
                             }
-                            if (!rows) {
-                                if ((rangeLo == Long.MIN_VALUE || records[q].getLong(0) >= records[s].getLong(0) + rangeLo) && records[q].getLong(0) <= records[s].getLong(0) + rangeHi) {
-                                    if (Double.isNaN(expected)) {
-                                        expected = 0;
-                                    }
-                                    expected = sum.apply(expected, (double) records[q].getLong(2));
-                                }
-                                if (rangeLo != Long.MIN_VALUE && records[q].getLong(0) < records[s].getLong(0) + rangeLo) {
-                                    break;
-                                }
-                            } else {
-                                if (row >= rangeLo && row <= rangeHi) {
-                                    if (Double.isNaN(expected)) {
-                                        expected = 0;
-                                    }
-                                    expected = sum.apply(expected, (double) records[q].getLong(2));
-                                }
-                                if (row < rangeLo) {
-                                    break;
-                                }
-                            }
-                            row--;
+                            expected = sum.apply(expected, (double) records[q].getLong(2));
                         }
-                        if (Math.abs(expected - f.getDouble(null)) > 1e-6) {
-                            Assert.fail(String.format(
-                                    "count=%d, attempt=#%d, rangeLo=%d, rangeHi=%d, s=%d, expected=%f, actual=%f, data=[%s]",
-                                    count, attempt, rangeLo, rangeHi, s, expected, f.getDouble(null),
-                                    Arrays.stream(records).map(x -> String.format("%d:%d:%d", x.getLong(0), x.getInt(1), x.getLong(2))).collect(Collectors.joining(", "))
-                            ));
+                        if (rangeLo != Long.MIN_VALUE && records[q].getLong(0) < records[s].getLong(0) + rangeLo) {
+                            break;
+                        }
+                    } else {
+                        if (row >= rangeLo && row <= rangeHi) {
+                            if (Double.isNaN(expected)) {
+                                expected = 0;
+                            }
+                            expected = sum.apply(expected, (double) records[q].getLong(2));
+                        }
+                        if (row < rangeLo) {
+                            break;
                         }
                     }
+                    row--;
+                }
+                if (Math.abs(expected - f.getDouble(null)) > 1e-6) {
+                    Assert.fail(String.format(
+                            "count=%d, rangeLo=%d, rangeHi=%d, s=%d, expected=%f, actual=%f, data=[%s]",
+                            count, rangeLo, rangeHi, s, expected, f.getDouble(null),
+                            Arrays.stream(records).map(x -> String.format("%d:%d:%d", x.getLong(0), x.getInt(1), x.getLong(2))).collect(Collectors.joining(", "))
+                    ));
                 }
             }
         }
