@@ -329,12 +329,12 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     @Override
     public void close() {
         clear();
-        close(this.inputFilePath);
-        close(this.tmpPath);
-        close(this.utf8Sink);
-        close(this.textMetadataDetector);
-        close(this.textDelimiterScanner);
-        close(this.localImportJob);
+        Misc.free(this.inputFilePath);
+        Misc.free(this.tmpPath);
+        Misc.free(this.utf8Sink);
+        Misc.free(this.textMetadataDetector);
+        Misc.free(this.textDelimiterScanner);
+        Misc.free(this.localImportJob);
     }
 
     public void of(
@@ -666,16 +666,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     public void updatePhaseStatus(byte phase, byte status, @Nullable final CharSequence msg) {
         if (this.statusReporter != null) {
             this.statusReporter.report(phase, status, msg, Numbers.LONG_NULL, Numbers.LONG_NULL, phaseErrors);
-        }
-    }
-
-    private static void close(Closeable c) {
-        if (c != null) {
-            try {
-                c.close();
-            } catch (IOException e) {
-                throw new RuntimeException(e);
-            }
         }
     }
 
