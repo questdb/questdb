@@ -172,12 +172,17 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
             }
             final long oldCapacity = this.capacity;
             final long oldSize = this.pos - this.address;
-            long address = Unsafe.realloc(this.address, oldCapacity, capacity, memoryTag);
-            this.capacity = capacity;
-            this.address = address;
-            this.limit = address + capacity;
-            this.pos = Math.min(this.limit, address + oldSize);
-            LOG.debug().$("resized [old=").$(oldCapacity).$(", new=").$(this.capacity).$(']').$();
+            try {
+                long address = Unsafe.realloc(this.address, oldCapacity, capacity, memoryTag);
+                this.capacity = capacity;
+                this.address = address;
+                this.limit = address + capacity;
+                this.pos = Math.min(this.limit, address + oldSize);
+                LOG.debug().$("resized [old=").$(oldCapacity).$(", new=").$(this.capacity).$(']').$();
+            } catch (Throwable t) {
+                close();
+                throw t;
+            }
         }
     }
 
