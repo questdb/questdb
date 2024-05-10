@@ -291,17 +291,17 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         writer = Misc.free(writer);
         metadata = null;
         importId = -1;
-        if (chunkStats != null) chunkStats.clear();
-        if (indexChunkStats != null) indexChunkStats.clear();
-        if (partitionKeysAndSizes != null) partitionKeysAndSizes.clear();
-        if (partitionNameSink != null) partitionNameSink.clear();
-        if (taskDistribution != null) taskDistribution.clear();
-        if (utf8Sink != null) utf8Sink.clear();
-        if (typeManager != null) typeManager.clear();
-        if (symbolCapacities != null) symbolCapacities.clear();
-        if (textMetadataDetector != null) textMetadataDetector.clear();
-        if (otherToTimestampAdapterPool != null) otherToTimestampAdapterPool.clear();
-        if (partitions != null) partitions.clear();
+        Misc.clear(chunkStats);
+        Misc.clear(indexChunkStats);
+        Misc.clear(partitionKeysAndSizes);
+        Misc.clear(partitionNameSink);
+        Misc.clear(taskDistribution);
+        Misc.clear(utf8Sink);
+        Misc.clear(typeManager);
+        Misc.clear(symbolCapacities);
+        Misc.clear(textMetadataDetector);
+        Misc.clear(otherToTimestampAdapterPool);
+        Misc.clear(partitions);
         linesIndexed = 0;
         rowsHandled = 0;
         rowsImported = 0;
@@ -329,12 +329,12 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     @Override
     public void close() {
         clear();
-        close(this.inputFilePath);
-        close(this.tmpPath);
-        close(this.utf8Sink);
-        close(this.textMetadataDetector);
-        close(this.textDelimiterScanner);
-        close(this.localImportJob);
+        Misc.free(this.inputFilePath);
+        Misc.free(this.tmpPath);
+        Misc.free(this.utf8Sink);
+        Misc.free(this.textMetadataDetector);
+        Misc.free(this.textDelimiterScanner);
+        Misc.free(this.localImportJob);
     }
 
     public void of(
@@ -666,16 +666,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     public void updatePhaseStatus(byte phase, byte status, @Nullable final CharSequence msg) {
         if (this.statusReporter != null) {
             this.statusReporter.report(phase, status, msg, Numbers.LONG_NULL, Numbers.LONG_NULL, phaseErrors);
-        }
-    }
-
-    private static void close(Closeable c) {
-        if (c != null) {
-            try {
-                c.close();
-            } catch (IOException e) {
-                throw new RuntimeException(e);
-            }
         }
     }
 

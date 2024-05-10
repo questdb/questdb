@@ -295,9 +295,9 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 Misc.clearObjList(groupByFunctions);
                 super.close();
             }
-            timezoneNameFunc.clear();
-            offsetFunc.clear();
+            Misc.clear(timezoneNameFunc);
             Misc.free(timezoneNameFunc);
+            Misc.clear(offsetFunc);
             Misc.free(offsetFunc);
         }
 
