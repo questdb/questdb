@@ -1882,10 +1882,10 @@ public class JoinTest extends AbstractCairoTest {
             final String query2 = "SELECT count(1)\n" +
                     "FROM t as T1 JOIN t as T2 ON T1.event = T2.event";
 
-            assertQuery("count\n2\n", query1, null, false, true);
-            assertQuery("count\n4\n", query2, null, false, true);
+            assertQueryNoLeakCheck("count\n2\n", query1, null, false, true);
+            assertQueryNoLeakCheck("count\n4\n", query2, null, false, true);
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "count\n" +
                             "2\n" +
                             "4\n",
@@ -1946,7 +1946,7 @@ public class JoinTest extends AbstractCairoTest {
             ddl("create table y as (select cast((x-1)/4 + 1 as int) c, abs(rnd_int() % 100) b from long_sequence(20))");
             ddl("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(40))");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     expected,
                     "select z.c, x.a, b, d, d-b from x join y on(c) join z on (c)",
                     null,
@@ -2024,7 +2024,7 @@ public class JoinTest extends AbstractCairoTest {
             );
 
             // filter is applied to final join result
-            assertQuery(expected, "select * from x join y on (kk)", null, false, true);
+            assertQueryNoLeakCheck(expected, "select * from x join y on (kk)", null, false, true);
         });
     }
 

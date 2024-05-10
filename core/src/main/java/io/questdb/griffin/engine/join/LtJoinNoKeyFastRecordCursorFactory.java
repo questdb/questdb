@@ -54,6 +54,11 @@ public class LtJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursor
     }
 
     @Override
+    public boolean followedOrderByAdvice() {
+        return masterFactory.followedOrderByAdvice();
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
         TimeFrameRecordCursor slaveCursor = null;
@@ -66,11 +71,6 @@ public class LtJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursor
             Misc.free(masterCursor);
             throw e;
         }
-    }
-
-    @Override
-    public boolean followedOrderByAdvice() {
-        return masterFactory.followedOrderByAdvice();
     }
 
     @Override
@@ -93,8 +93,8 @@ public class LtJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCursor
     @Override
     protected void _close() {
         ((JoinRecordMetadata) getMetadata()).close();
-        masterFactory.close();
-        slaveFactory.close();
+        Misc.free(masterFactory);
+        Misc.free(slaveFactory);
     }
 
     private static class LtJoinFastRecordCursor extends AbstractAsOfJoinFastRecordCursor {

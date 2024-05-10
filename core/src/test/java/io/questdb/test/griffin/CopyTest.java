@@ -312,59 +312,62 @@ public class CopyTest extends AbstractCairoTest {
 
     @Test
     public void testParallelCopyCancelChecksImportId() throws Exception {
-        try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, sqlExecutionContext.getWorkerCount())) {
+        assertMemoryLeak(() -> {
+            try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, sqlExecutionContext.getWorkerCount())) {
+                String importId = runAndFetchCopyID("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
+                        "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;", sqlExecutionContext);
 
-            String importId = runAndFetchCopyID("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
-                    "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;", sqlExecutionContext);
+                try {
+                    // selects nothing because ID is invalid
+                    assertSql(
+                            "id\tstatus\n" +
+                                    "ffffffffffffffff\tunknown\n", "copy 'ffffffffffffffff' cancel"
+                    );
 
-            try {
-                // selects nothing because ID is invalid
-                assertSql(
-                        "id\tstatus\n" +
-                                "ffffffffffffffff\tunknown\n", "copy 'ffffffffffffffff' cancel"
-                );
+                    // this one should succeed
+                    assertSql(
+                            "id\tstatus\n" +
+                                    importId + "\tcancelled\n", "copy '" + importId + "' cancel"
+                    );
+                } finally {
+                    copyRequestJob.drain(0);
+                }
 
-                // this one should succeed
-                assertSql(
-                        "id\tstatus\n" +
-                                importId + "\tcancelled\n", "copy '" + importId + "' cancel"
-                );
-            } finally {
-                copyRequestJob.drain(0);
+                String query = "select status from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1";
+                assertSql("status\ncancelled\n", query);
             }
-
-            String query = "select status from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1";
-            assertSql("status\ncancelled\n", query);
-        }
+        });
     }
 
     @Test
     public void testParallelCopyCancelRejectsSecondReq() throws Exception {
-        try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, sqlExecutionContext.getWorkerCount())) {
-            String copyID = runAndFetchCopyID("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
-                    "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;", sqlExecutionContext);
+        assertMemoryLeak(() -> {
+            try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, sqlExecutionContext.getWorkerCount())) {
+                String copyID = runAndFetchCopyID("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
+                        "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;", sqlExecutionContext);
 
-            try {
-                // this import should be rejected
                 try {
-                    runAndFetchCopyID("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
-                            "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;", sqlExecutionContext);
-                    Assert.fail();
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "Another import request is in progress");
-                }
+                    // this import should be rejected
+                    try {
+                        runAndFetchCopyID("copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
+                                "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;", sqlExecutionContext);
+                        Assert.fail();
+                    } catch (SqlException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "Another import request is in progress");
+                    }
 
-                // cancel request should succeed
-                assertSql(
-                        "id\tstatus\n" +
-                                copyID + "\tcancelled\n", "copy '" + copyID + "' cancel"
-                );
-            } finally {
-                copyRequestJob.drain(0);
+                    // cancel request should succeed
+                    assertSql(
+                            "id\tstatus\n" +
+                                    copyID + "\tcancelled\n", "copy '" + copyID + "' cancel"
+                    );
+                } finally {
+                    copyRequestJob.drain(0);
+                }
+                String query = "select status from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1";
+                assertSql("status\ncancelled\n", query);
             }
-            String query = "select status from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1";
-            assertSql("status\ncancelled\n", query);
-        }
+        });
     }
 
     @Test
@@ -738,32 +741,34 @@ public class CopyTest extends AbstractCairoTest {
 
     @Test
     public void testSerialCopyCancelChecksImportId() throws Exception {
-        try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, sqlExecutionContext.getWorkerCount())) {
-            // decrease smaller buffer otherwise the whole file imported in one go without ever checking the circuit breaker
-            setProperty(PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 1024);
-            String copyID = runAndFetchCopyID("copy x from 'test-import.csv' with header true delimiter ',' " +
-                    "on error ABORT;", sqlExecutionContext);
+        assertMemoryLeak(() -> {
+            try (CopyRequestJob copyRequestJob = new CopyRequestJob(engine, sqlExecutionContext.getWorkerCount())) {
+                // decrease smaller buffer otherwise the whole file imported in one go without ever checking the circuit breaker
+                setProperty(PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 1024);
+                String copyID = runAndFetchCopyID("copy x from 'test-import.csv' with header true delimiter ',' " +
+                        "on error ABORT;", sqlExecutionContext);
 
-            try {
-                // this one should be rejected
-                assertSql(
-                        "id\tstatus\n" +
-                                "ffffffffffffffff\tunknown\n", "copy 'ffffffffffffffff' cancel"
+                try {
+                    // this one should be rejected
+                    assertSql(
+                            "id\tstatus\n" +
+                                    "ffffffffffffffff\tunknown\n", "copy 'ffffffffffffffff' cancel"
 
-                );
+                    );
 
-                // this one should succeed
-                assertSql(
-                        "id\tstatus\n" +
-                                copyID + "\tcancelled\n", "copy '" + copyID + "' cancel"
-                );
-            } finally {
-                copyRequestJob.drain(0);
+                    // this one should succeed
+                    assertSql(
+                            "id\tstatus\n" +
+                                    copyID + "\tcancelled\n", "copy '" + copyID + "' cancel"
+                    );
+                } finally {
+                    copyRequestJob.drain(0);
+                }
+
+                String query = "select status from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1";
+                assertSql("status\ncancelled\n", query);
             }
-
-            String query = "select status from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1";
-            assertSql("status\ncancelled\n", query);
-        }
+        });
     }
 
     @Test

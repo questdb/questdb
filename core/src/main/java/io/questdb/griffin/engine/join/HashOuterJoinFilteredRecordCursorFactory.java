@@ -64,18 +64,37 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             JoinContext joinContext
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
-        RecordChain slaveChain = new RecordChain(slaveFactory.getMetadata(), slaveChainSink, configuration.getSqlHashJoinValuePageSize(), configuration.getSqlHashJoinValueMaxPages());
-        this.masterSink = masterSink;
-        this.slaveKeySink = slaveKeySink;
+        RecordChain slaveChain = null;
+        Map joinKeyMap = null;
+        try {
+            slaveChain = new RecordChain(
+                    slaveFactory.getMetadata(),
+                    slaveChainSink,
+                    configuration.getSqlHashJoinValuePageSize(),
+                    configuration.getSqlHashJoinValueMaxPages()
+            );
+            this.masterSink = masterSink;
+            this.slaveKeySink = slaveKeySink;
 
-        Map joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes);
-        cursor = new HashOuterJoinRecordCursor(
-                columnSplit,
-                joinKeyMap,
-                slaveChain,
-                NullRecordFactory.getInstance(slaveFactory.getMetadata())
-        );
-        this.filter = filter;
+            joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes);
+            cursor = new HashOuterJoinRecordCursor(
+                    columnSplit,
+                    joinKeyMap,
+                    slaveChain,
+                    NullRecordFactory.getInstance(slaveFactory.getMetadata())
+            );
+            this.filter = filter;
+        } catch (Throwable th) {
+            Misc.free(slaveChain);
+            Misc.free(joinKeyMap);
+            close();
+            throw th;
+        }
+    }
+
+    @Override
+    public boolean followedOrderByAdvice() {
+        return masterFactory.followedOrderByAdvice();
     }
 
     @Override
@@ -91,11 +110,6 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             Misc.free(masterCursor);
             throw e;
         }
-    }
-
-    @Override
-    public boolean followedOrderByAdvice() {
-        return masterFactory.followedOrderByAdvice();
     }
 
     @Override
@@ -120,10 +134,10 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
     @Override
     protected void _close() {
         ((JoinRecordMetadata) getMetadata()).close();
-        masterFactory.close();
-        slaveFactory.close();
-        cursor.close();
-        filter.close();
+        Misc.free(masterFactory);
+        Misc.free(slaveFactory);
+        Misc.free(cursor);
+        Misc.free(filter);
     }
 
     private class HashOuterJoinRecordCursor extends AbstractJoinCursor {
