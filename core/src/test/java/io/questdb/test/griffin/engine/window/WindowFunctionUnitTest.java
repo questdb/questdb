@@ -49,89 +49,6 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
     short[] columnTypes = new short[]{ColumnType.TIMESTAMP, ColumnType.INT, ColumnType.LONG};
 
     @Test
-    public void testSumOverPartitionRangeWithBothBounds() {
-        SumDoubleWindowFunctionFactory.SumOverPartitionRangeFrameFunction f = new SumDoubleWindowFunctionFactory.SumOverPartitionRangeFrameFunction(
-                TestDefaults.createOrderedMap(new SingleColumnType(columnTypes[1]), AvgDoubleWindowFunctionFactory.AVG_OVER_PARTITION_RANGE_COLUMN_TYPES),
-                TestDefaults.createVirtualRecord(TestDefaults.createIntFunction(x -> x.getInt(1))),
-                TestDefaults.createRecordSink((r, w) -> w.putInt(r.getInt(0))),
-                -2,
-                -2,
-                TestDefaults.createLongFunction(x -> x.getLong(2)),
-                TestDefaults.createMemoryCARW(),
-                1024,
-                0
-        );
-        f.computeNext(TestDefaults.createRecord(columnTypes, (long) 1, 2, (long) 1));
-        Assert.assertEquals(Double.NaN, f.getDouble(null), 0);
-
-        f.computeNext(TestDefaults.createRecord(columnTypes, (long) 2, 2, (long) 2));
-        Assert.assertEquals(Double.NaN, f.getDouble(null), 0);
-
-        f.computeNext(TestDefaults.createRecord(columnTypes, (long) 4, 2, (long) 4));
-        Assert.assertEquals(2, f.getDouble(null), 0);
-    }
-
-    @Test
-    public void testSumWithPartitionRangeUnbounded() {
-        SumDoubleWindowFunctionFactory.SumOverPartitionRangeFrameFunction f = new SumDoubleWindowFunctionFactory.SumOverPartitionRangeFrameFunction(
-                TestDefaults.createOrderedMap(new SingleColumnType(columnTypes[1]), AvgDoubleWindowFunctionFactory.AVG_OVER_PARTITION_RANGE_COLUMN_TYPES),
-                TestDefaults.createVirtualRecord(TestDefaults.createIntFunction(x -> x.getInt(1))),
-                TestDefaults.createRecordSink((r, w) -> w.putInt(r.getInt(0))),
-                Long.MIN_VALUE,
-                0,
-                TestDefaults.createLongFunction(x -> x.getLong(2)),
-                TestDefaults.createMemoryCARW(),
-                1024,
-                0
-        );
-        long a = -1930193130;
-        long b = -1137976524;
-        f.computeNext(TestDefaults.createRecord(columnTypes, (long) 46, 19, a));
-        f.computeNext(TestDefaults.createRecord(columnTypes, (long) 119, 19, b));
-        Assert.assertEquals(f.getDouble(null), (double) (a + b), 1e-6);
-    }
-
-    @Test
-    public void testSumWithPartitionBufferResize() {
-        SumDoubleWindowFunctionFactory.SumOverPartitionRangeFrameFunction f = new SumDoubleWindowFunctionFactory.SumOverPartitionRangeFrameFunction(
-                TestDefaults.createOrderedMap(new SingleColumnType(columnTypes[1]), AvgDoubleWindowFunctionFactory.AVG_OVER_PARTITION_RANGE_COLUMN_TYPES),
-                TestDefaults.createVirtualRecord(TestDefaults.createIntFunction(x -> x.getInt(1))),
-                TestDefaults.createRecordSink((r, w) -> w.putInt(r.getInt(0))),
-                Long.MIN_VALUE,
-                -13402,
-                TestDefaults.createLongFunction(x -> x.getLong(2)),
-                TestDefaults.createMemoryCARW(),
-                2,
-                0
-        );
-        f.computeNext(TestDefaults.createRecord(columnTypes, (long) 1472, 6, (long) 1));
-        f.computeNext(TestDefaults.createRecord(columnTypes, (long) 15169, 6, (long) 2));
-        f.computeNext(TestDefaults.createRecord(columnTypes, (long) 18579, 6, (long) 3));
-        f.computeNext(TestDefaults.createRecord(columnTypes, (long) 24096, 6, (long) 4));
-        f.computeNext(TestDefaults.createRecord(columnTypes, (long) 29170, 6, (long) 5));
-        Assert.assertEquals(1 + 2, f.getDouble(null), 0);
-    }
-
-    @Test
-    public void testSumRangeUnbounded() {
-        SumDoubleWindowFunctionFactory.SumOverRangeFrameFunction f = new SumDoubleWindowFunctionFactory.SumOverRangeFrameFunction(
-                Long.MIN_VALUE,
-                0,
-                TestDefaults.createLongFunction(x -> x.getLong(2)),
-                1024,
-                TestDefaults.createMemoryCARW(),
-                0
-        );
-        long a = -1930193130;
-        long b = -1137976524;
-        long c = -1137976524;
-        f.computeNext(TestDefaults.createRecord(columnTypes, (long) 46, 19, a));
-        f.computeNext(TestDefaults.createRecord(columnTypes, (long) 119, 19, b));
-        f.computeNext(TestDefaults.createRecord(columnTypes, (long) 200, 19, c));
-        Assert.assertEquals(f.getDouble(null), (double) (a + b + c), 1e-6);
-    }
-
-    @Test
     public void testAggOverPartitionRangeFuzz() throws Exception {
         fuzzTestBase(
                 TestUtils.generateRandom(LOG),
@@ -201,6 +118,26 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAggRangeFuzz() throws Exception {
+        fuzzTestBase(
+                TestUtils.generateRandom(LOG),
+                false,
+                false,
+                rnd -> rnd.nextInt(8) == 0 ? Long.MIN_VALUE : -rnd.nextLong(65536),
+                rnd -> -rnd.nextLong(65536),
+                (rangeLo, rangeHi) -> new SumDoubleWindowFunctionFactory.SumOverRangeFrameFunction(
+                        rangeLo,
+                        rangeHi,
+                        TestDefaults.createLongFunction(x -> x.getLong(2)),
+                        64,
+                        TestDefaults.createMemoryCARW(),
+                        0
+                ),
+                Double::sum
+        );
+    }
+
+    @Test
     public void testFirstOverRowsFuzz() throws Exception {
         fuzzTestBase(
                 TestUtils.generateRandom(LOG),
@@ -224,26 +161,89 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAggRangeFuzz() throws Exception {
-        fuzzTestBase(
-                TestUtils.generateRandom(LOG),
-                false,
-                false,
-                rnd -> rnd.nextInt(8) == 0 ? Long.MIN_VALUE : -rnd.nextLong(65536),
-                rnd -> -rnd.nextLong(65536),
-                (rangeLo, rangeHi) -> new SumDoubleWindowFunctionFactory.SumOverRangeFrameFunction(
-                        rangeLo,
-                        rangeHi,
-                        TestDefaults.createLongFunction(x -> x.getLong(2)),
-                        64,
-                        TestDefaults.createMemoryCARW(),
-                        0
-                ),
-                Double::sum
+    public void testSumOverPartitionRangeWithBothBounds() {
+        SumDoubleWindowFunctionFactory.SumOverPartitionRangeFrameFunction f = new SumDoubleWindowFunctionFactory.SumOverPartitionRangeFrameFunction(
+                TestDefaults.createOrderedMap(new SingleColumnType(columnTypes[1]), AvgDoubleWindowFunctionFactory.AVG_OVER_PARTITION_RANGE_COLUMN_TYPES),
+                TestDefaults.createVirtualRecord(TestDefaults.createIntFunction(x -> x.getInt(1))),
+                TestDefaults.createRecordSink((r, w) -> w.putInt(r.getInt(0))),
+                -2,
+                -2,
+                TestDefaults.createLongFunction(x -> x.getLong(2)),
+                TestDefaults.createMemoryCARW(),
+                1024,
+                0
         );
+        f.computeNext(TestDefaults.createRecord(columnTypes, (long) 1, 2, (long) 1));
+        Assert.assertEquals(Double.NaN, f.getDouble(null), 0);
+
+        f.computeNext(TestDefaults.createRecord(columnTypes, (long) 2, 2, (long) 2));
+        Assert.assertEquals(Double.NaN, f.getDouble(null), 0);
+
+        f.computeNext(TestDefaults.createRecord(columnTypes, (long) 4, 2, (long) 4));
+        Assert.assertEquals(2, f.getDouble(null), 0);
     }
 
-    public void fuzzTestBase(
+    @Test
+    public void testSumRangeUnbounded() {
+        SumDoubleWindowFunctionFactory.SumOverRangeFrameFunction f = new SumDoubleWindowFunctionFactory.SumOverRangeFrameFunction(
+                Long.MIN_VALUE,
+                0,
+                TestDefaults.createLongFunction(x -> x.getLong(2)),
+                1024,
+                TestDefaults.createMemoryCARW(),
+                0
+        );
+        long a = -1930193130;
+        long b = -1137976524;
+        long c = -1137976524;
+        f.computeNext(TestDefaults.createRecord(columnTypes, (long) 46, 19, a));
+        f.computeNext(TestDefaults.createRecord(columnTypes, (long) 119, 19, b));
+        f.computeNext(TestDefaults.createRecord(columnTypes, (long) 200, 19, c));
+        Assert.assertEquals(f.getDouble(null), (double) (a + b + c), 1e-6);
+    }
+
+    @Test
+    public void testSumWithPartitionBufferResize() {
+        SumDoubleWindowFunctionFactory.SumOverPartitionRangeFrameFunction f = new SumDoubleWindowFunctionFactory.SumOverPartitionRangeFrameFunction(
+                TestDefaults.createOrderedMap(new SingleColumnType(columnTypes[1]), AvgDoubleWindowFunctionFactory.AVG_OVER_PARTITION_RANGE_COLUMN_TYPES),
+                TestDefaults.createVirtualRecord(TestDefaults.createIntFunction(x -> x.getInt(1))),
+                TestDefaults.createRecordSink((r, w) -> w.putInt(r.getInt(0))),
+                Long.MIN_VALUE,
+                -13402,
+                TestDefaults.createLongFunction(x -> x.getLong(2)),
+                TestDefaults.createMemoryCARW(),
+                2,
+                0
+        );
+        f.computeNext(TestDefaults.createRecord(columnTypes, (long) 1472, 6, (long) 1));
+        f.computeNext(TestDefaults.createRecord(columnTypes, (long) 15169, 6, (long) 2));
+        f.computeNext(TestDefaults.createRecord(columnTypes, (long) 18579, 6, (long) 3));
+        f.computeNext(TestDefaults.createRecord(columnTypes, (long) 24096, 6, (long) 4));
+        f.computeNext(TestDefaults.createRecord(columnTypes, (long) 29170, 6, (long) 5));
+        Assert.assertEquals(1 + 2, f.getDouble(null), 0);
+    }
+
+    @Test
+    public void testSumWithPartitionRangeUnbounded() {
+        SumDoubleWindowFunctionFactory.SumOverPartitionRangeFrameFunction f = new SumDoubleWindowFunctionFactory.SumOverPartitionRangeFrameFunction(
+                TestDefaults.createOrderedMap(new SingleColumnType(columnTypes[1]), AvgDoubleWindowFunctionFactory.AVG_OVER_PARTITION_RANGE_COLUMN_TYPES),
+                TestDefaults.createVirtualRecord(TestDefaults.createIntFunction(x -> x.getInt(1))),
+                TestDefaults.createRecordSink((r, w) -> w.putInt(r.getInt(0))),
+                Long.MIN_VALUE,
+                0,
+                TestDefaults.createLongFunction(x -> x.getLong(2)),
+                TestDefaults.createMemoryCARW(),
+                1024,
+                0
+        );
+        long a = -1930193130;
+        long b = -1137976524;
+        f.computeNext(TestDefaults.createRecord(columnTypes, (long) 46, 19, a));
+        f.computeNext(TestDefaults.createRecord(columnTypes, (long) 119, 19, b));
+        Assert.assertEquals(f.getDouble(null), (double) (a + b), 1e-6);
+    }
+
+    private void fuzzTestBase(
             Rnd rnd,
             boolean partitioned,
             boolean rows,
