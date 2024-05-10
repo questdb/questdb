@@ -113,6 +113,9 @@ constexpr bool is_matching_type() {
     if constexpr (C == ColumnType::TIMESTAMP && std::is_same<T, int64_t>()) {
         return true;
     }
+    if constexpr (C == ColumnType::DATE && std::is_same<T, int64_t>()) {
+        return true;
+    }
     return false;
 }
 
@@ -121,23 +124,17 @@ constexpr static int64_t DOUBLE_NULL_SENTINEL = 0x7ff8000000000000L;
 
 
 template<ColumnType C, typename T>
-constexpr
-T get_null_sentinel() {
-    if constexpr (C == ColumnType::INT) {
+constexpr T get_null_sentinel() {
+    if (C == ColumnType::INT) {
         return static_cast<T>(0x80000000);
-    } else if (C == ColumnType::LONG) {
-        return static_cast<T>(0x8000000000000000L);
-    } else if (C == ColumnType::TIMESTAMP) {
-        return static_cast<T>(0x8000000000000000L);
+    } else if (C == ColumnType::LONG || C == ColumnType::TIMESTAMP || C == ColumnType::DATE) {
+        return static_cast<T>(0x8000000000000000LL);
     } else if (C == ColumnType::FLOAT) {
-        // ReSharper disable once CppCStyleCast
         return *((float *) (&FLOAT_NULL_SENTINEL)); // INTENTIONAL
     } else if (C == ColumnType::DOUBLE) {
-        // ReSharper disable once CppCStyleCast
         return *((double *) (&DOUBLE_NULL_SENTINEL)); // INTENTIONAL
     } else if (C == ColumnType::BOOLEAN) {
-        // ReSharper disable once CppCStyleCast
-        return static_cast<T>(false); // INTENTIONAL
+        return static_cast<T>(false);
     } else {
         return static_cast<T>(0);
     }
@@ -145,15 +142,7 @@ T get_null_sentinel() {
 
 template<ColumnType C>
 constexpr bool is_nullable() {
-    if constexpr (C == ColumnType::INT) {
-        return true;
-    } else if (C == ColumnType::LONG) {
-        return true;
-    } else if (C == ColumnType::TIMESTAMP) {
-        return true;
-    } else if (C == ColumnType::FLOAT) {
-        return true;
-    } else if (C == ColumnType::DOUBLE) {
+    if constexpr (C == ColumnType::INT || C == ColumnType::LONG || C == ColumnType::TIMESTAMP || C == ColumnType::DATE || C == ColumnType::FLOAT || C == ColumnType::DOUBLE) {
         return true;
     } else {
         return false;
@@ -198,33 +187,6 @@ auto convert_fixed_to_fixed_numeric(T1 *srcMem, T2 *dstMem, T1 srcSentinel,
         dstMem[i] = static_cast<T2>(srcMem[i]);
     }
 
-
-    return ConversionError::NONE;
-}
-
-/**
- * Convert between fixed numeric types.
- * Doesn't handle converting null sentinels.
- * @tparam T1 the source type
- * @tparam T2 the destination type
- * @param srcMem the source type mmap column
- * @param dstMem the destination type mmap column
- * @param rowCount the number of rows
- * @return
- */
-template<typename T1, typename T2>
-auto convert_fixed_to_fixed_numeric_fast(T1 *srcMem, T2 *dstMem, size_t rowCount) -> ConversionError {
-    if constexpr(std::is_same<T1, T2>())
-    {
-        for (size_t i = 0; i < rowCount; i++) {
-            dstMem[i] = srcMem[i];
-        }
-    } else
-    {
-        for (size_t i = 0; i < rowCount; i++) {
-            dstMem[i] = static_cast<T2>(srcMem[i]);
-        }
-    }
 
     return ConversionError::NONE;
 }

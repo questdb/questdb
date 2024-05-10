@@ -3683,7 +3683,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         sqlControlSymbols.add("[");
         sqlControlSymbols.add("]");
 
-        short[] numericTypes = {ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.TIMESTAMP, ColumnType.BOOLEAN, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL};
+        short[] numericTypes = {ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.TIMESTAMP, ColumnType.BOOLEAN, ColumnType.DATE, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL};
         addSupportedConversion(ColumnType.BYTE, numericTypes);
         addSupportedConversion(ColumnType.SHORT, numericTypes);
         addSupportedConversion(ColumnType.INT, numericTypes);
@@ -3692,12 +3692,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         addSupportedConversion(ColumnType.DOUBLE, numericTypes);
         addSupportedConversion(ColumnType.TIMESTAMP, numericTypes);
         addSupportedConversion(ColumnType.BOOLEAN, numericTypes);
+        addSupportedConversion(ColumnType.DATE, numericTypes);
 
 
         // Other exotics <-> strings
         addSupportedConversion(ColumnType.IPv4, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL);
         addSupportedConversion(ColumnType.UUID, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL);
-        addSupportedConversion(ColumnType.DATE, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL);
         addSupportedConversion(ColumnType.CHAR, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL);
 
         // Strings <-> Strings

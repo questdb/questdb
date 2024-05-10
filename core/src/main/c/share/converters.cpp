@@ -22,9 +22,9 @@
  *
  ******************************************************************************/
 #include <jni.h>
-#include <cstdint>
 
 #include "converters.h"
+#include "simd.h"
 
 // Used to clean up noise in the switch statement
 #define macro_dispatch_fixed_to_fixed(a, b, a_ty, b_ty) \
@@ -35,6 +35,23 @@ case pack_column_types(a, b): \
           get_null_sentinel<a, a_ty>(), get_null_sentinel<b, b_ty>(), static_cast<size_t>(rowCount)); \
 break;
 
+void convert_us_to_ns(int64_t *dest, const int64_t *src, const int64_t count) {
+    for(int64_t i = 0; i < count; i++) {
+        const bool isnull = (src[i] == get_null_sentinel<ColumnType::TIMESTAMP, int64_t>());
+        dest[i] = (!isnull) * src[i] / 1000;
+        dest[i] += (isnull) * get_null_sentinel<ColumnType::TIMESTAMP, int64_t>();
+    }
+}
+
+void convert_ns_to_us(int64_t *dest, const int64_t *src, const int64_t count) {
+    for(int64_t i = 0; i < count; i++) {
+        const bool isnull = (src[i] == get_null_sentinel<ColumnType::TIMESTAMP, int64_t>());
+        dest[i] = (!isnull) * src[i] * 1000;
+        dest[i] += (isnull) * get_null_sentinel<ColumnType::TIMESTAMP, int64_t>();
+    }
+}
+
+// extern "C"
 extern "C" {
 JNIEXPORT jlong
 JNICALL
@@ -51,13 +68,6 @@ Java_io_questdb_griffin_ConvertersNative_fixedToFixed
     const auto srcColumnType = static_cast<ColumnType>(srcType);
     const auto dstColumnType = static_cast<ColumnType>(dstType);
 
-    // fast path for no-op conversion
-    if ((srcColumnType == ColumnType::LONG && dstColumnType == ColumnType::TIMESTAMP)
-        || (srcColumnType == ColumnType::TIMESTAMP && dstColumnType == ColumnType::LONG)) {
-        return static_cast<jlong>(convert_fixed_to_fixed_numeric_fast(reinterpret_cast<int64_t *>(srcMem),
-                                                                      reinterpret_cast<int64_t *>(dstMem), rowCount));
-    }
-
     ConversionError status;
 
     switch (pack_column_types(srcColumnType, dstColumnType)) {
@@ -69,6 +79,7 @@ Java_io_questdb_griffin_ConvertersNative_fixedToFixed
         macro_dispatch_fixed_to_fixed(ColumnType::BOOLEAN, ColumnType::FLOAT, bool, float)
         macro_dispatch_fixed_to_fixed(ColumnType::BOOLEAN, ColumnType::DOUBLE, bool, double)
         macro_dispatch_fixed_to_fixed(ColumnType::BOOLEAN, ColumnType::TIMESTAMP, bool, int64_t)
+        macro_dispatch_fixed_to_fixed(ColumnType::BOOLEAN, ColumnType::DATE, bool, int64_t)
         // BYTE
         macro_dispatch_fixed_to_fixed(ColumnType::BYTE, ColumnType::SHORT, int8_t, int16_t)
         macro_dispatch_fixed_to_fixed(ColumnType::BYTE, ColumnType::INT, int8_t, int32_t)
@@ -77,6 +88,7 @@ Java_io_questdb_griffin_ConvertersNative_fixedToFixed
         macro_dispatch_fixed_to_fixed(ColumnType::BYTE, ColumnType::DOUBLE, int8_t, double)
         macro_dispatch_fixed_to_fixed(ColumnType::BYTE, ColumnType::TIMESTAMP, int8_t, int64_t)
         macro_dispatch_fixed_to_fixed(ColumnType::BYTE, ColumnType::BOOLEAN, int8_t, bool)
+        macro_dispatch_fixed_to_fixed(ColumnType::BYTE, ColumnType::DATE, int8_t, int64_t)
         // SHORT
         macro_dispatch_fixed_to_fixed(ColumnType::SHORT, ColumnType::BYTE, int16_t, int8_t)
         macro_dispatch_fixed_to_fixed(ColumnType::SHORT, ColumnType::INT, int16_t, int32_t)
@@ -85,6 +97,7 @@ Java_io_questdb_griffin_ConvertersNative_fixedToFixed
         macro_dispatch_fixed_to_fixed(ColumnType::SHORT, ColumnType::DOUBLE, int16_t, double)
         macro_dispatch_fixed_to_fixed(ColumnType::SHORT, ColumnType::TIMESTAMP, int16_t, int64_t)
         macro_dispatch_fixed_to_fixed(ColumnType::SHORT, ColumnType::BOOLEAN, int16_t, bool)
+        macro_dispatch_fixed_to_fixed(ColumnType::SHORT, ColumnType::DATE, int16_t, int64_t)
         // INT
         macro_dispatch_fixed_to_fixed(ColumnType::INT, ColumnType::BYTE, int32_t, int8_t)
         macro_dispatch_fixed_to_fixed(ColumnType::INT, ColumnType::SHORT, int32_t, int16_t)
@@ -93,6 +106,7 @@ Java_io_questdb_griffin_ConvertersNative_fixedToFixed
         macro_dispatch_fixed_to_fixed(ColumnType::INT, ColumnType::DOUBLE, int32_t, double)
         macro_dispatch_fixed_to_fixed(ColumnType::INT, ColumnType::TIMESTAMP, int32_t, int64_t)
         macro_dispatch_fixed_to_fixed(ColumnType::INT, ColumnType::BOOLEAN, int32_t, bool)
+        macro_dispatch_fixed_to_fixed(ColumnType::INT, ColumnType::DATE, int32_t, int64_t)
         // LONG
         macro_dispatch_fixed_to_fixed(ColumnType::LONG, ColumnType::BYTE, int64_t, int8_t)
         macro_dispatch_fixed_to_fixed(ColumnType::LONG, ColumnType::SHORT, int64_t, int16_t)
@@ -108,6 +122,7 @@ Java_io_questdb_griffin_ConvertersNative_fixedToFixed
         macro_dispatch_fixed_to_fixed(ColumnType::FLOAT, ColumnType::DOUBLE, float, double)
         macro_dispatch_fixed_to_fixed(ColumnType::FLOAT, ColumnType::TIMESTAMP, float, int64_t)
         macro_dispatch_fixed_to_fixed(ColumnType::FLOAT, ColumnType::BOOLEAN, float, bool)
+        macro_dispatch_fixed_to_fixed(ColumnType::FLOAT, ColumnType::DATE, float, int64_t)
         // DOUBLE
         macro_dispatch_fixed_to_fixed(ColumnType::DOUBLE, ColumnType::BYTE, double, int8_t)
         macro_dispatch_fixed_to_fixed(ColumnType::DOUBLE, ColumnType::SHORT, double, int16_t)
@@ -116,6 +131,7 @@ Java_io_questdb_griffin_ConvertersNative_fixedToFixed
         macro_dispatch_fixed_to_fixed(ColumnType::DOUBLE, ColumnType::FLOAT, double, float)
         macro_dispatch_fixed_to_fixed(ColumnType::DOUBLE, ColumnType::TIMESTAMP, double, int64_t)
         macro_dispatch_fixed_to_fixed(ColumnType::DOUBLE, ColumnType::BOOLEAN, double, bool)
+        macro_dispatch_fixed_to_fixed(ColumnType::DOUBLE, ColumnType::DATE, double, int64_t)
         // TIMESTAMP
         macro_dispatch_fixed_to_fixed(ColumnType::TIMESTAMP, ColumnType::BYTE, int64_t, int8_t)
         macro_dispatch_fixed_to_fixed(ColumnType::TIMESTAMP, ColumnType::SHORT, int64_t, int16_t)
@@ -123,10 +139,30 @@ Java_io_questdb_griffin_ConvertersNative_fixedToFixed
         macro_dispatch_fixed_to_fixed(ColumnType::TIMESTAMP, ColumnType::FLOAT, int64_t, float)
         macro_dispatch_fixed_to_fixed(ColumnType::TIMESTAMP, ColumnType::DOUBLE, int64_t, double)
         macro_dispatch_fixed_to_fixed(ColumnType::TIMESTAMP, ColumnType::BOOLEAN, int64_t, bool)
+        // DATE
+        macro_dispatch_fixed_to_fixed(ColumnType::DATE, ColumnType::BYTE, int64_t, int8_t)
+        macro_dispatch_fixed_to_fixed(ColumnType::DATE, ColumnType::SHORT, int64_t, int16_t)
+        macro_dispatch_fixed_to_fixed(ColumnType::DATE, ColumnType::INT, int64_t, int32_t)
+        macro_dispatch_fixed_to_fixed(ColumnType::DATE, ColumnType::FLOAT, int64_t, float)
+        macro_dispatch_fixed_to_fixed(ColumnType::DATE, ColumnType::DOUBLE, int64_t, double)
+        macro_dispatch_fixed_to_fixed(ColumnType::DATE, ColumnType::BOOLEAN, int64_t, bool)
+
+        case pack_column_types(ColumnType::TIMESTAMP, ColumnType::LONG):
+        case pack_column_types(ColumnType::LONG, ColumnType::TIMESTAMP):
+        case pack_column_types(ColumnType::LONG, ColumnType::DATE):
+        case pack_column_types(ColumnType::DATE, ColumnType::LONG):
+            __MEMCPY(reinterpret_cast<int64_t *>(dstMem), reinterpret_cast<int64_t *>(srcMem), rowCount * sizeof(int64_t));
+            break;
+        case pack_column_types(ColumnType::TIMESTAMP, ColumnType::DATE):
+            convert_us_to_ns(reinterpret_cast<int64_t *>(dstMem), reinterpret_cast<int64_t *>(srcMem), rowCount);
+            break;
+        case pack_column_types(ColumnType::DATE, ColumnType::TIMESTAMP):
+            convert_ns_to_us(reinterpret_cast<int64_t *>(dstMem), reinterpret_cast<int64_t *>(srcMem), rowCount);
+            break;
         default:
             status = ConversionError::UNSUPPORTED_CAST;
     }
 
     return static_cast<jlong>(status);
 }
-} // extern "C"
+}
