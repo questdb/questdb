@@ -234,7 +234,7 @@ public final class Unsafe {
 
     public static long malloc(long size, int memoryTag) {
         try {
-            assert memoryTag >= MemoryTag.NATIVE_DEFAULT;
+            assert memoryTag >= MemoryTag.NATIVE_PATH;
             checkAllocLimit(size, memoryTag);
             long ptr = Unsafe.getUnsafe().allocateMemory(size);
             recordMemAlloc(size, memoryTag);
@@ -250,7 +250,7 @@ public final class Unsafe {
 
     public static long realloc(long address, long oldSize, long newSize, int memoryTag) {
         try {
-            assert memoryTag >= MemoryTag.NATIVE_DEFAULT;
+            assert memoryTag >= MemoryTag.NATIVE_PATH;
             checkAllocLimit(-oldSize + newSize, memoryTag);
             long ptr = Unsafe.getUnsafe().reallocateMemory(address, newSize);
             recordMemAlloc(-oldSize + newSize, memoryTag);
