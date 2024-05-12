@@ -41,9 +41,21 @@ public interface MessageBus extends Closeable {
 
     SCSequence getColumnPurgeSubSeq();
 
+    MPSequence getColumnTaskPubSeq();
+
+    RingQueue<ColumnTask> getColumnTaskQueue();
+
+    MCSequence getColumnTaskSubSeq();
+
     CairoConfiguration getConfiguration();
 
     MPSequence getCopyRequestPubSeq();
+
+    MPSequence getGroupByAggregatePubSeq();
+
+    RingQueue<GroupByAggregateTask> getGroupByAggregateQueue();
+
+    MCSequence getGroupByAggregateSubSeq();
 
     MPSequence getGroupByMergeShardPubSeq();
 
@@ -62,12 +74,6 @@ public interface MessageBus extends Closeable {
     RingQueue<LatestByTask> getLatestByQueue();
 
     MCSequence getLatestBySubSeq();
-
-    MPSequence getColumnTaskPubSeq();
-
-    RingQueue<ColumnTask> getColumnTaskQueue();
-
-    MCSequence getColumnTaskSubSeq();
 
     MPSequence getO3CopyPubSeq();
 

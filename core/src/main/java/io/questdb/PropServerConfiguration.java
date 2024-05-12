@@ -88,6 +88,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean cairoAttachPartitionCopy;
     private final String cairoAttachPartitionSuffix;
     private final CairoConfiguration cairoConfiguration = new PropCairoConfiguration();
+    private final int cairoGroupByAggregateQueueCapacity;
     private final int cairoGroupByMergeShardQueueCapacity;
     private final int cairoGroupByShardingThreshold;
     private final int cairoMaxCrashFiles;
@@ -1249,7 +1250,8 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             final int defaultReduceQueueCapacity = Math.min(2 * sharedWorkerCount, 64);
             this.cairoPageFrameReduceQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
-            this.cairoGroupByMergeShardQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_MERGE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
+            this.cairoGroupByAggregateQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_AGGREGATE_QUEUE_CAPACITY, sharedWorkerCount));
+            this.cairoGroupByMergeShardQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_MERGE_QUEUE_CAPACITY, sharedWorkerCount));
             this.cairoGroupByShardingThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 100_000);
             this.cairoPageFrameReduceRowIdListCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_ROWID_LIST_CAPACITY, 256));
             this.cairoPageFrameReduceColumnListCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_COLUMN_LIST_CAPACITY, 16));
@@ -2128,6 +2130,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getFloatToStrCastScale() {
             return sqlFloatToStrCastScale;
+        }
+
+        @Override
+        public int getGroupByAggregateQueueCapacity() {
+            return cairoGroupByAggregateQueueCapacity;
         }
 
         @Override

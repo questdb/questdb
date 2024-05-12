@@ -315,6 +315,10 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         }
     }
 
+    public boolean isMergeLockRequired() {
+        return perWorkerFunctionUpdaters != null;
+    }
+
     public boolean isSharded() {
         return sharded;
     }

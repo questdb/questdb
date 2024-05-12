@@ -1380,6 +1380,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(1024, configuration.getPageFrameReduceQueueCapacity());
         Assert.assertEquals(8, configuration.getPageFrameReduceRowIdListCapacity());
         Assert.assertEquals(4, configuration.getPageFrameReduceColumnListCapacity());
+        Assert.assertEquals(1024, configuration.getGroupByAggregateQueueCapacity());
         Assert.assertEquals(2048, configuration.getGroupByMergeShardQueueCapacity());
         Assert.assertEquals(100, configuration.getGroupByShardingThreshold());
         Assert.assertEquals(4096, configuration.getGroupByAllocatorDefaultChunkSize());

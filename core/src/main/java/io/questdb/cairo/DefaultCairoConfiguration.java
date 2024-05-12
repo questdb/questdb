@@ -289,6 +289,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getGroupByAggregateQueueCapacity() {
+        return 32;
+    }
+
+    @Override
     public long getGroupByAllocatorDefaultChunkSize() {
         return 16 * 1024;
     }

@@ -43,6 +43,9 @@ public class MessageBusImpl implements MessageBus {
     private final RingQueue<ColumnTask> columnTaskQueue;
     private final MCSequence columnTaskSubSeq;
     private final CairoConfiguration configuration;
+    private final MPSequence groupByAggregatePubSeq;
+    private final RingQueue<GroupByAggregateTask> groupByAggregateQueue;
+    private final MCSequence groupByAggregateSubSeq;
     private final MPSequence groupByMergeShardPubSeq;
     private final RingQueue<GroupByMergeShardTask> groupByMergeShardQueue;
     private final MCSequence groupByMergeShardSubSeq;
@@ -186,6 +189,10 @@ public class MessageBusImpl implements MessageBus {
         this.walTxnNotificationSubSequence = new MCSequence(walTxnNotificationQueue.getCycle());
         walTxnNotificationPubSequence.then(walTxnNotificationSubSequence).then(walTxnNotificationPubSequence);
 
+        this.groupByAggregateQueue = new RingQueue<>(GroupByAggregateTask::new, configuration.getGroupByAggregateQueueCapacity());
+        this.groupByAggregatePubSeq = new MPSequence(groupByAggregateQueue.getCycle());
+        this.groupByAggregateSubSeq = new MCSequence(groupByAggregateQueue.getCycle());
+        groupByAggregatePubSeq.then(groupByAggregateSubSeq).then(groupByAggregateSubSeq);
         this.groupByMergeShardQueue = new RingQueue<>(GroupByMergeShardTask::new, configuration.getGroupByMergeShardQueueCapacity());
         this.groupByMergeShardPubSeq = new MPSequence(groupByMergeShardQueue.getCycle());
         this.groupByMergeShardSubSeq = new MCSequence(groupByMergeShardQueue.getCycle());
@@ -259,6 +266,21 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public MPSequence getCopyRequestPubSeq() {
         return textImportRequestPubSeq;
+    }
+
+    @Override
+    public MPSequence getGroupByAggregatePubSeq() {
+        return groupByAggregatePubSeq;
+    }
+
+    @Override
+    public RingQueue<GroupByAggregateTask> getGroupByAggregateQueue() {
+        return groupByAggregateQueue;
+    }
+
+    @Override
+    public MCSequence getGroupByAggregateSubSeq() {
+        return groupByAggregateSubSeq;
     }
 
     @Override
