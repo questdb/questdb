@@ -31,23 +31,29 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
-import io.questdb.griffin.engine.functions.constants.StrConstant;
-import io.questdb.std.*;
-import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf16Sink;
+import io.questdb.griffin.engine.functions.VarcharFunction;
+import io.questdb.griffin.engine.functions.constants.VarcharConstant;
+import io.questdb.std.IntList;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
 
-public class SplitPartFunctionFactory implements FunctionFactory {
+
+public class SplitPartVarcharFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "split_part(SSI)";
+        return "split_part(ØØI)";
     }
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        final Function strFunc = args.getQuick(0);
+        final Function varcharFunc = args.getQuick(0);
         final Function delimiterFunc = args.getQuick(1);
         final Function indexFunc = args.getQuick(2);
         final int indexPosition = argPositions.getQuick(2);
@@ -55,28 +61,28 @@ public class SplitPartFunctionFactory implements FunctionFactory {
         if (indexFunc.isConstant()) {
             int index = indexFunc.getInt(null);
             if (index == Numbers.INT_NULL) {
-                return StrConstant.NULL;
+                return VarcharConstant.NULL;
             } else if (index == 0) {
                 throw SqlException.$(indexPosition, "field position must not be zero");
             } else {
-                return new SplitPartConstIndexFunction(strFunc, delimiterFunc, indexFunc, indexPosition, index);
+                return new SplitPartVarcharConstIndexFunction(varcharFunc, delimiterFunc, indexFunc, indexPosition, index);
             }
         } else if (!indexFunc.isRuntimeConstant()) {
             throw SqlException.$(indexPosition, "index must be either a constant expression or a placeholder");
         }
-        return new SplitPartFunction(strFunc, delimiterFunc, indexFunc, indexPosition);
+        return new SplitPartVarcharFunction(varcharFunc, delimiterFunc, indexFunc, indexPosition);
     }
 
-    private static abstract class AbstractSplitPartFunction extends StrFunction implements TernaryFunction {
+    private static abstract class AbstractSplitPartVarcharFunction extends VarcharFunction implements TernaryFunction {
         protected final Function delimiterFunc;
         protected final Function indexFunc;
-        protected final Function strFunc;
+        protected final Function varcharFunc;
         private final int indexPosition;
-        private final StringSink sink = new StringSink();
-        private final StringSink sinkB = new StringSink();
+        private final Utf8StringSink sinkA = new Utf8StringSink();
+        private final Utf8StringSink sinkB = new Utf8StringSink();
 
-        public AbstractSplitPartFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition) {
-            this.strFunc = strFunc;
+        public AbstractSplitPartVarcharFunction(Function varcharFunc, Function delimiterFunc, Function indexFunc, int indexPosition) {
+            this.varcharFunc = varcharFunc;
             this.delimiterFunc = delimiterFunc;
             this.indexFunc = indexFunc;
             this.indexPosition = indexPosition;
@@ -89,7 +95,7 @@ public class SplitPartFunctionFactory implements FunctionFactory {
 
         @Override
         public final Function getLeft() {
-            return strFunc;
+            return varcharFunc;
         }
 
         @Override
@@ -103,18 +109,18 @@ public class SplitPartFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink utf16Sink) {
-            getStr0(rec, utf16Sink, false);
+        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+            getVarchar0(rec, utf8Sink, false);
         }
 
         @Override
-        public CharSequence getStrA(Record rec) {
-            return getStr0(rec, sink, true);
+        public Utf8Sequence getVarcharA(Record rec) {
+            return getVarchar0(rec, sinkA, true);
         }
 
         @Override
-        public CharSequence getStrB(Record rec) {
-            return getStr0(rec, sinkB, true);
+        public Utf8Sequence getVarcharB(Record rec) {
+            return getVarchar0(rec, sinkB, true);
         }
 
         @Override
@@ -129,16 +135,19 @@ public class SplitPartFunctionFactory implements FunctionFactory {
         }
 
         @Nullable
-        private <S extends Utf16Sink> S getStr0(Record rec, S sink, boolean clearSink) {
-            CharSequence str = strFunc.getStrA(rec);
-            CharSequence delimiter = delimiterFunc.getStrA(rec);
+        private <S extends Utf8Sink> S getVarchar0(Record rec, S sink, boolean clearSink) {
+            Utf8Sequence utf8Str = varcharFunc.getVarcharA(rec);
+            Utf8Sequence delimiter = delimiterFunc.getVarcharA(rec);
             int index = getIndex(rec);
-            if (str == null || delimiter == null || index == Numbers.INT_NULL) {
+            if (utf8Str == null || delimiter == null || index == Numbers.INT_NULL) {
                 return null;
             }
             if (index == 0) {
                 return sink;
             }
+
+            int size = utf8Str.size();
+            int len = Utf8s.length(utf8Str);
 
             int start;
             int end;
@@ -146,50 +155,52 @@ public class SplitPartFunctionFactory implements FunctionFactory {
                 if (index == 1) {
                     start = 0;
                 } else {
-                    start = Chars.indexOf(str, 0, str.length(), delimiter, index - 1);
+                    start = Utf8s.indexOf(utf8Str, 0, size, delimiter, index - 1);
                     if (start == -1) {
                         return sink;
                     }
-                    start += delimiter.length();
+                    start += delimiter.size();
                 }
 
-                end = Chars.indexOf(str, start, str.length(), delimiter);
+                end = Utf8s.indexOf(utf8Str, start, size, delimiter);
+
                 if (end == -1) {
-                    end = str.length();
+                    end = len;
                 }
             } else {    // if index is negative, returns index-from-last field
                 if (index == -1) {
-                    end = str.length();
+                    end = size;
                 } else {
-                    end = Chars.indexOf(str, 0, str.length(), delimiter, index + 1);
+                    end = Utf8s.indexOf(utf8Str, 0, size, delimiter, index + 1);
                     if (end == -1) {
                         return sink;
                     }
                 }
 
-                start = Chars.indexOf(str, 0, end, delimiter, -1);
+                start = Utf8s.indexOf(utf8Str, 0, end, delimiter, -1);
+
                 if (start == -1) {
                     start = 0;
                 } else {
-                    start += delimiter.length();
+                    start += delimiter.size();
                 }
             }
 
             if (clearSink && sink instanceof Mutable) {
                 ((Mutable) sink).clear();
             }
-            sink.put(str, start, end);
+            sink.put(utf8Str, start, end);
             return sink;
         }
 
         abstract int getIndex(Record rec);
     }
 
-    private static class SplitPartConstIndexFunction extends AbstractSplitPartFunction {
+    private static class SplitPartVarcharConstIndexFunction extends AbstractSplitPartVarcharFunction {
         private final int index;
 
-        public SplitPartConstIndexFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition,
-                                           int index) {
+        public SplitPartVarcharConstIndexFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition,
+                                                  int index) {
             super(strFunc, delimiterFunc, indexFunc, indexPosition);
             this.index = index;
         }
@@ -200,9 +211,9 @@ public class SplitPartFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class SplitPartFunction extends AbstractSplitPartFunction implements TernaryFunction {
-        public SplitPartFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition) {
-            super(strFunc, delimiterFunc, indexFunc, indexPosition);
+    private static class SplitPartVarcharFunction extends AbstractSplitPartVarcharFunction implements TernaryFunction {
+        public SplitPartVarcharFunction(Function varcharFunc, Function delimiterFunc, Function indexFunc, int indexPosition) {
+            super(varcharFunc, delimiterFunc, indexFunc, indexPosition);
         }
 
         @Override
