@@ -5016,10 +5016,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         for (int i = 1, n = intrinsicModel.keyExcludedNodes.size(); i < n; i++) {
                             ExpressionNode expression = intrinsicModel.keyExcludedNodes.getQuick(i);
 
-                            ExpressionNode newRoot = expressionNodePool.next();
-                            newRoot.token = "and";
-                            newRoot.type = OPERATION;
-                            newRoot.precedence = 0;
+                            OperatorExpression andOp = OperatorExpression.opMap.get("and");
+                            ExpressionNode newRoot = expressionNodePool.next().of(OPERATION, andOp.token, andOp.precedence, 0);
                             newRoot.paramCount = 2;
                             newRoot.lhs = expression;
                             newRoot.rhs = root;
@@ -5030,10 +5028,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         if (intrinsicModel.filter == null) {
                             intrinsicModel.filter = root;
                         } else {
-                            ExpressionNode filter = expressionNodePool.next();
-                            filter.token = "and";
-                            filter.type = OPERATION;
-                            filter.precedence = 0;
+                            OperatorExpression andOp = OperatorExpression.opMap.get("and");
+                            ExpressionNode filter = expressionNodePool.next().of(OPERATION, andOp.token, andOp.precedence, 0);
                             filter.paramCount = 2;
                             filter.lhs = intrinsicModel.filter;
                             filter.rhs = root;

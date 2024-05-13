@@ -33,6 +33,10 @@
             <source>../LICENSE.txt</source>
             <outputDirectory>${runtime.name}/legal</outputDirectory>
         </file>
+        <file>
+            <source>src/main/bin/${jemalloc.so}</source>
+            <outputDirectory>${runtime.name}/bin</outputDirectory>
+        </file>
     </files>
     <fileSets>
         <fileSet>

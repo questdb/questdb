@@ -42,7 +42,7 @@ public class SplitPartFunctionFactoryTest extends AbstractFunctionFactoryTest {
                 call("abc~@~def~@~ghi", "~@~", 2);
                 Assert.fail("Should fail for dynamic index param");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "index must be a constant or runtime-constant");
+                TestUtils.assertContains(e.getFlyweightMessage(), "index must be either a constant expression or a placeholder");
             }
         });
     }
