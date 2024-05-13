@@ -131,6 +131,7 @@ public class InStrFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             arg.init(symbolTableSource, executionContext);
+            // todo: the type of the deferred function may be unknown, because this can be a bind variable
             if (deferredValues != null) {
                 deferredSet.clear();
                 for (int i = 0, n = deferredValues.size(); i < n; i++) {
