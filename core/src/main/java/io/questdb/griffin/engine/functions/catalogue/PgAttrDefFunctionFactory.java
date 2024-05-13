@@ -210,7 +210,7 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
     private static class AttrDefCatalogueCursorFactory extends AbstractRecordCursorFactory {
         private final AttrDefCatalogueCursor cursor;
         private final Path path;
-        private final long tempMem;
+        private long tempMem;
 
         public AttrDefCatalogueCursorFactory(CairoConfiguration configuration, RecordMetadata metadata) {
             super(metadata);
@@ -243,7 +243,7 @@ public class PgAttrDefFunctionFactory implements FunctionFactory {
         @Override
         protected void _close() {
             Misc.free(path);
-            Unsafe.free(tempMem, Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
+            tempMem = Unsafe.free(tempMem, Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
         }
     }
 

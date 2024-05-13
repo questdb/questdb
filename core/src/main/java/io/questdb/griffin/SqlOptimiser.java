@@ -2046,7 +2046,6 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void eraseColumnPrefixInWhereClauses(QueryModel model) throws SqlException {
-
         ObjList<QueryModel> joinModels = model.getJoinModels();
         for (int i = 0, n = joinModels.size(); i < n; i++) {
             QueryModel m = joinModels.getQuick(i);
@@ -3173,11 +3172,11 @@ public class SqlOptimiser implements Mutable {
                     tableFactory = sqlParserCallback.generateShowSqlFactory(model);
                     break;
             }
-            model.setTableFactory(tableFactory);
+            model.setTableNameFunction(tableFactory);
         } else {
             assert model.getTableNameFunction() == null;
             tableFactory = TableUtils.createCursorFunction(functionParser, model, executionContext).getRecordCursorFactory();
-            model.setTableFactory(tableFactory);
+            model.setTableNameFunction(tableFactory);
             tableFactoriesInFlight.add(tableFactory);
         }
         copyColumnsFromMetadata(model, tableFactory.getMetadata(), true);
@@ -5717,10 +5716,10 @@ public class SqlOptimiser implements Mutable {
             validateWindowFunctions(rewrittenModel, sqlExecutionContext, 0);
             authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
             return rewrittenModel;
-        } catch (Throwable e) {
+        } catch (Throwable th) {
             // at this point models may have functions than need to be freed
             Misc.freeObjListAndClear(tableFactoriesInFlight);
-            throw e;
+            throw th;
         }
     }
 

@@ -117,7 +117,7 @@ public class PgClassFunctionFactory implements FunctionFactory {
     private static class PgClassCursorFactory extends AbstractRecordCursorFactory {
         private final PgClassRecordCursor cursor;
         private final Path path;
-        private final long tempMem;
+        private long tempMem;
 
         public PgClassCursorFactory(RecordMetadata metadata) {
             super(metadata);
@@ -151,7 +151,7 @@ public class PgClassFunctionFactory implements FunctionFactory {
         @Override
         protected void _close() {
             Misc.free(path);
-            Unsafe.free(tempMem, Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
+            tempMem = Unsafe.free(tempMem, Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
         }
     }
 

@@ -1329,8 +1329,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         final CharSequence tableName = authorizeInsertForCopy(securityContext, model);
 
-        if (model.getTimestampColumnName() == null &&
-                ((model.getPartitionBy() != -1 && model.getPartitionBy() != PartitionBy.NONE))) {
+        if (model.getTimestampColumnName() == null
+                && ((model.getPartitionBy() != -1 && model.getPartitionBy() != PartitionBy.NONE))) {
             throw SqlException.$(-1, "invalid option used for import without a designated timestamp (format or partition by)");
         }
         if (model.getDelimiter() < 0) {
@@ -1357,7 +1357,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         String cancelCopyIDStr = Chars.toString(GenericLexer.unquote(model.getTarget().token));
         try {
             cancelCopyID = Numbers.parseHexLong(cancelCopyIDStr);
-
         } catch (NumericException e) {
             throw SqlException.$(0, "copy cancel ID format is invalid: '").put(cancelCopyIDStr).put('\'');
         }
@@ -1482,15 +1481,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         int queryStart = lexer.lastTokenPosition();
         long queryId = -1;
 
+        ExecutionModel executionModel = null;
         try {
-            final ExecutionModel executionModel = compileExecutionModel(executionContext);
+            executionModel = compileExecutionModel(executionContext);
             if (query == null) { // we need query text for query registry
                 query = lexer.getContent().subSequence(queryStart, lexer.getPosition());
             }
             switch (executionModel.getModelType()) {
                 case ExecutionModel.QUERY:
-                    LOG.info().$("plan [q=`").$((QueryModel) executionModel).$("`, fd=").$(executionContext.getRequestFd()).$(']').$();
-                    RecordCursorFactory factory = generateWithRetries((QueryModel) executionModel, executionContext);
+                    QueryModel queryModel = (QueryModel) executionModel;
+                    LOG.info().$("plan [q=`").$(queryModel).$("`, fd=").$(executionContext.getRequestFd()).$(']').$();
+                    RecordCursorFactory factory = generateWithRetries(queryModel, executionContext);
                     compiledQuery.of(factory);
                     break;
                 case ExecutionModel.CREATE_TABLE:
@@ -1545,10 +1546,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             ) {
                 queryRegistry.unregister(queryId, executionContext);
             }
-        } catch (Throwable t) {
+        } catch (Throwable th) {
+            freeTableNameFunctions(executionModel.getQueryModel());
             // unregister query on error
             queryRegistry.unregister(queryId, executionContext);
-            throw t;
+            throw th;
         }
     }
 
@@ -2082,6 +2084,24 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         }
         return affectedPartitions;
+    }
+
+    private void freeTableNameFunctions(QueryModel queryModel) {
+        if (queryModel == null) {
+            return;
+        }
+
+        do {
+            final ObjList<QueryModel> joinModels = queryModel.getJoinModels();
+            if (joinModels.size() > 1) {
+                for (int i = 1, n = joinModels.size(); i < n; i++) {
+                    freeTableNameFunctions(joinModels.getQuick(i));
+                }
+            }
+
+            Misc.free(queryModel.getTableNameFunction());
+            queryModel.setTableNameFunction(null);
+        } while ((queryModel = queryModel.getNestedModel()) != null);
     }
 
     private RecordCursorFactory generateExplain(ExplainModel model, SqlExecutionContext executionContext) throws SqlException {

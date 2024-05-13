@@ -1792,7 +1792,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // We're transferring ownership of the tableFactory's factory to another factory
             // setting tableFactory to NULL will prevent double-ownership.
             // We should not release tableFactory itself, they typically just a lightweight factory wrapper.
-            model.setTableFactory(null);
+            model.setTableNameFunction(null);
             return tableFactory;
         } else {
             // when tableFactory is null we have to recompile it from scratch, including creating new factory

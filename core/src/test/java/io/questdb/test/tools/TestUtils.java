@@ -1526,13 +1526,11 @@ public final class TestUtils {
     }
 
     public static void removeTestPath(CharSequence root) {
-        try {
-            final Path path = Path.getThreadLocal(root);
+        try (Path path = new Path()) {
+            path.of(root);
             FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             path.slash$();
             Assert.assertTrue("Test dir cleanup error: " + ff.errno(), !ff.exists(path) || ff.rmdir(path.slash$()));
-        } finally {
-            Path.clearThreadLocals();
         }
     }
 
