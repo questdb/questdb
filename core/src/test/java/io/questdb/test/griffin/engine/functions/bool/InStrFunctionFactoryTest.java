@@ -60,7 +60,7 @@ public class InStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testWithNulls() throws SqlException {
-        call("xy", "xy", null).andAssert(true);
+        call(null, "xy", null).andAssert(true);
     }
 
     @Test
