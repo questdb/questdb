@@ -2320,56 +2320,56 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testCompareVarcharAndStrPlan() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select 'd' < rnd_varchar('d', 'cd', null) from long_sequence(5)",
                     "VirtualRecord\n" +
                             "  functions: ['d'<rnd_varchar([d,cd,null])]\n" +
                             "    long_sequence count: 5\n"
             );
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select 'd' <= rnd_varchar('d', 'cd', null) from long_sequence(5)",
                     "VirtualRecord\n" +
                             "  functions: [rnd_varchar([d,cd,null])>='d']\n" +
                             "    long_sequence count: 5\n"
             );
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select 'd' > rnd_varchar('d', 'cd', null) from long_sequence(5)",
                     "VirtualRecord\n" +
                             "  functions: [rnd_varchar([d,cd,null])<'d']\n" +
                             "    long_sequence count: 5\n"
             );
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select 'd' >= rnd_varchar('d', 'cd', null) from long_sequence(5)",
                     "VirtualRecord\n" +
                             "  functions: ['d'>=rnd_varchar([d,cd,null])]\n" +
                             "    long_sequence count: 5\n"
             );
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select rnd_varchar('d', 'cd', null) > 'd'::varchar from long_sequence(5)",
                     "VirtualRecord\n" +
                             "  functions: ['d'<rnd_varchar([d,cd,null])]\n" +
                             "    long_sequence count: 5\n"
             );
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select rnd_varchar('d', 'cd', null) >= 'd'::varchar  from long_sequence(5)",
                     "VirtualRecord\n" +
                             "  functions: [rnd_varchar([d,cd,null])>='d']\n" +
                             "    long_sequence count: 5\n"
             );
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select rnd_varchar('d', 'cd', null) > rnd_varchar('d', 'cd', null) from long_sequence(5)",
                     "VirtualRecord\n" +
                             "  functions: [rnd_varchar([d,cd,null])<rnd_varchar([d,cd,null])]\n" +
                             "    long_sequence count: 5\n"
             );
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select rnd_varchar('d', 'cd', null) >= rnd_varchar('d', 'cd', null)  from long_sequence(5)",
                     "VirtualRecord\n" +
                             "  functions: [rnd_varchar([d,cd,null])>=rnd_varchar([d,cd,null])]\n" +
@@ -5005,7 +5005,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "LEFT OUTER JOIN tab as T3 ON T2.created=T3.created " +
                     "WHERE T2.created IN (NOW(),NOW()) ";
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "GroupBy vectorized: false\n" +
                             "  values: [count(*)]\n" +
@@ -5048,7 +5048,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "LEFT OUTER JOIN tab as T2 ON T1.created<T2.created " +
                     "WHERE T2.created is null or T2.created::long > 0";
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query1,
                     "SelectedRecord\n" +
                             "    Filter filter: (T2.created=null or 0<T2.created::long)\n" +
@@ -5173,7 +5173,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "LEFT JOIN (select * from tab limit 4) as T4 ON T3.created<T4.created " +
                     "WHERE T4.created is null";
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query3,
                     "SelectedRecord\n" +
                             "    Filter filter: T4.created=null\n" +

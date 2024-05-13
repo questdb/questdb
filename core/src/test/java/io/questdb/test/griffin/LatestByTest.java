@@ -142,7 +142,7 @@ public class LatestByTest extends AbstractCairoTest {
                     "LATEST ON ts \n" +
                     "PARTITION BY device_id";
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "LatestByAllIndexed\n" +
                             "    Index backward scan on: device_id parallel: true\n" +

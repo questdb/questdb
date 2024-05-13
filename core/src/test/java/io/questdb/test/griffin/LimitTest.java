@@ -450,7 +450,7 @@ public class LimitTest extends AbstractCairoTest {
                     "ORDER BY ts DESC " +
                     "LIMIT 10";
 
-            assertPlan(query, "Limit lo: 10\n" +
+            assertPlanNoLeakCheck(query, "Limit lo: 10\n" +
                     "    DataFrame\n" +
                     "        Row backward scan\n" +
                     "        Interval backward scan on: intervaltest\n" +

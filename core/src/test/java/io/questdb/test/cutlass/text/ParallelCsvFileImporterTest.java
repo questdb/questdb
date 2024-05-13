@@ -2751,7 +2751,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         );
         importer.process(AllowAllSecurityContext.INSTANCE);
         importer.clear();
-        assertQuery(
+        assertQueryNoLeakCheck(
                 compiler,
                 "cnt\n" + expectedCount + "\n",
                 "select count(*) cnt from " + tableName,

@@ -6644,7 +6644,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 true
         );
 
-        assertPlan("select min(x), sym timestamp from test1 sample by 15s align to first observation order by min",
+        assertPlanNoLeakCheck("select min(x), sym timestamp from test1 sample by 15s align to first observation order by min",
                 "Sort\n" +
                         "  keys: [min]\n" +
                         "    SampleBy\n" +
@@ -6655,7 +6655,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "                Row forward scan\n" +
                         "                Frame forward scan on: test1\n");
 
-        assertPlan("select min(x), sym timestamp from test1 sample by 15s align to calendar order by min",
+        assertPlanNoLeakCheck("select min(x), sym timestamp from test1 sample by 15s align to calendar order by min",
                 "SelectedRecord\n" +
                         "    Sort light\n" +
                         "      keys: [min]\n" +

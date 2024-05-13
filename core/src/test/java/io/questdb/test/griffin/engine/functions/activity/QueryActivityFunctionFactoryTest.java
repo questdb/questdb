@@ -75,7 +75,7 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
                 started.countDown();
                 try {
                     try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                        assertQuery(compiler,
+                        assertQueryNoLeakCheck(compiler,
                                 "t\n1\n",
                                 query,
                                 null, regularUserContext1, true, false);
@@ -153,7 +153,7 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
                 started.countDown();
                 try {
                     try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                        assertQuery(compiler,
+                        assertQueryNoLeakCheck(compiler,
                                 "t\n1\n",
                                 query,
                                 null, adminUserContext1, true, false);
@@ -187,7 +187,7 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
                 }
 
                 // regular user can't see admin's command
-                assertQuery(compiler,
+                assertQueryNoLeakCheck(compiler,
                         "query_id\tquery\n",
                         activityQuery,
                         null, regularUserContext1, false, false);

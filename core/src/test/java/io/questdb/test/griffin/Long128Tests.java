@@ -51,7 +51,7 @@ public class Long128Tests extends AbstractCairoTest {
                     ")"
             );
 
-            assertQueryFullFat(
+            assertQueryFullFatNoLeakCheck(
                     "ts\tts1\tts11\ti\n" +
                             "00000000-0000-0006-0000-000000000003\t00000000-0000-0006-0000-000000000003\t2022-02-24T00:00:00.000000Z\t1\n" +
                             "00000000-0000-000c-0000-000000000006\t00000000-0000-000c-0000-000000000006\t2022-02-24T00:00:01.000000Z\t2\n" +

@@ -40,7 +40,7 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
                     " from y b " +
                     "order by b.b";
 
-            assertPlan(query,
+            assertPlanNoLeakCheck(query,
                     "SelectedRecord\n" +
                             "    Sort light\n" +
                             "      keys: [b1]\n" +

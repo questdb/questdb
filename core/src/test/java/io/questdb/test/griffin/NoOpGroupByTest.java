@@ -84,7 +84,7 @@ public class NoOpGroupByTest extends AbstractCairoTest {
                 "from x " +
                 "where sym1 in ('AA', 'BB' ) " +
                 "group by sym1, sym2";
-        assertPlan(
+        assertPlanNoLeakCheck(
                 query,
                 "VirtualRecord\n" +
                         "  functions: [sym1,avgBid]\n" +

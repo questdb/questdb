@@ -267,7 +267,7 @@ public class AggregateTest extends AbstractCairoTest {
                     "    and ts < '2023-02-02' " +
                     "order by 1 asc";
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "Sort light\n" +
                             "  keys: [account_uuid]\n" +
@@ -314,7 +314,7 @@ public class AggregateTest extends AbstractCairoTest {
                     "order by 1 asc";
 
             if (enableParallelGroupBy) {
-                assertPlan(
+                assertPlanNoLeakCheck(
                         query,
                         "Sort light\n" +
                                 "  keys: [account_uuid]\n" +
@@ -384,7 +384,7 @@ public class AggregateTest extends AbstractCairoTest {
                         "            Interval forward scan on: records\n" +
                         "              intervals: [(\"2023-02-01T00:00:00.000001Z\",\"2023-02-01T23:59:59.999999Z\")]\n";
             }
-            assertPlan(query, plan);
+            assertPlanNoLeakCheck(query, plan);
 
             assertQueryNoLeakCheck(
                     "org_uuid\taccount_uuid\ttotal_price\n" +
@@ -1292,7 +1292,7 @@ public class AggregateTest extends AbstractCairoTest {
             compiler.compile("create table tab as (select rnd_double() d, cast(x as int) i, x l from long_sequence(1000))", sqlExecutionContext);
             long memBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_ROSTI);
             try {
-                assertQuery(
+                assertQueryNoLeakCheck(
                         compiler,
                         "",
                         "select i, sum(d) from tab group by i",

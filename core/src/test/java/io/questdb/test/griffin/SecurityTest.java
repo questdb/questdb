@@ -311,7 +311,7 @@ public class SecurityTest extends AbstractCairoTest {
                     " from long_sequence(10000)) timestamp(ts1)");
             memoryRestrictedEngine.reloadTableNames();
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     memoryRestrictedCompiler,
                     "sum\n" +
                             "165.6121723103405\n",
@@ -324,7 +324,7 @@ public class SecurityTest extends AbstractCairoTest {
             Assert.assertTrue(nCheckInterruptedCalls.get() > 0);
             try {
                 setMaxCircuitBreakerChecks(2);
-                assertQuery(
+                assertQueryNoLeakCheck(
                         memoryRestrictedCompiler,
                         "sym1\nWCP\nICC\nUOJ\nFJG\nOZZ\nGHV\nWEK\nVDZ\nETJ\nUED\n",
                         "select sum(d1) from tb1 where d1 < 0.2",
@@ -354,7 +354,7 @@ public class SecurityTest extends AbstractCairoTest {
                     " rnd_double(2) d2," +
                     " timestamp_sequence(10000000000, 1000000000) ts2" +
                     " from long_sequence(100)) timestamp(ts2)");
-            assertQuery(
+            assertQueryNoLeakCheck(
                     memoryRestrictedCompiler,
                     "sym1\nWCP\nICC\nUOJ\nFJG\nOZZ\nGHV\nWEK\nVDZ\nETJ\nUED\n",
                     "select sym1 from tb1 where d1 < 0.2 union select sym1 from tb2 where d2 < 0.1",
@@ -365,7 +365,7 @@ public class SecurityTest extends AbstractCairoTest {
             Assert.assertTrue(nCheckInterruptedCalls.get() > 0);
             try {
                 setMaxCircuitBreakerChecks(2);
-                assertQuery(
+                assertQueryNoLeakCheck(
                         memoryRestrictedCompiler,
                         "sym1\nWCP\nICC\nUOJ\nFJG\nOZZ\nGHV\nWEK\nVDZ\nETJ\nUED\n",
                         "select sym1 from tb1 where d1 < 0.2 union select sym1 from tb2 where d2 < 0.1",
@@ -468,7 +468,7 @@ public class SecurityTest extends AbstractCairoTest {
                     " rnd_double(2) d," +
                     " timestamp_sequence(0, 1000000000) ts" +
                     " from long_sequence(1000)) timestamp(ts)");
-            assertQuery(
+            assertQueryNoLeakCheck(
                     memoryRestrictedCompiler,
                     "sym2\td\n" +
                             "GZ\t0.0011075361080621349\n" +
@@ -487,7 +487,7 @@ public class SecurityTest extends AbstractCairoTest {
                     readOnlyExecutionContext
             );
             try {
-                assertQuery(
+                assertQueryNoLeakCheck(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
                         "select sym2, d from tb1 order by sym2",
@@ -512,7 +512,7 @@ public class SecurityTest extends AbstractCairoTest {
                     " rnd_double(2) d," +
                     " timestamp_sequence(0, 1000000000) ts" +
                     " from long_sequence(40)) timestamp(ts)");
-            assertQuery(
+            assertQueryNoLeakCheck(
                     memoryRestrictedCompiler,
                     "sym1\tsym2\n" +
                             "OOZZ\tHNZH\n" +
@@ -525,7 +525,7 @@ public class SecurityTest extends AbstractCairoTest {
                     readOnlyExecutionContext
             );
             try {
-                assertQuery(
+                assertQueryNoLeakCheck(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
                         "select distinct sym1, sym2 from tb1",
@@ -560,7 +560,7 @@ public class SecurityTest extends AbstractCairoTest {
                             " from long_sequence(1000)) timestamp(ts2)"
             );
 
-            assertQueryFullFat(
+            assertQueryFullFatNoLeakCheck(
                     "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
                     "select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                     null,
@@ -570,7 +570,7 @@ public class SecurityTest extends AbstractCairoTest {
             );
             memoryRestrictedCompiler.setFullFatJoins(true);
             try {
-                assertQuery(
+                assertQueryNoLeakCheck(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
                         "select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
@@ -606,7 +606,7 @@ public class SecurityTest extends AbstractCairoTest {
                             " from long_sequence(1000)) timestamp(ts2)"
             );
 
-            assertQueryFullFat(
+            assertQueryFullFatNoLeakCheck(
                     "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
                     "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
                     null,
@@ -617,7 +617,7 @@ public class SecurityTest extends AbstractCairoTest {
 
             memoryRestrictedCompiler.setFullFatJoins(true);
             try {
-                assertQuery(
+                assertQueryNoLeakCheck(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
                         "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
@@ -657,7 +657,7 @@ public class SecurityTest extends AbstractCairoTest {
             );
 
             try {
-                assertQuery(
+                assertQueryNoLeakCheck(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
                         "select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
@@ -683,7 +683,7 @@ public class SecurityTest extends AbstractCairoTest {
                     " timestamp_sequence(0, 1000000000) ts" +
                     " from long_sequence(100)) timestamp(ts)");
             try {
-                assertQuery(
+                assertQueryNoLeakCheck(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
                         "select ts, d from tb1 LATEST ON ts PARTITION BY d",
@@ -732,7 +732,7 @@ public class SecurityTest extends AbstractCairoTest {
             );
 
             try {
-                assertQuery(
+                assertQueryNoLeakCheck(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
                         "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3",
@@ -757,7 +757,7 @@ public class SecurityTest extends AbstractCairoTest {
                     " timestamp_sequence(0, 1000000000) ts" +
                     " from long_sequence(10)) timestamp(ts)");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     memoryRestrictedCompiler,
                     "sym\td\nVTJW\t0.1985581797355932\nVTJW\t0.21583224269349388\n",
                     "select sym, d from tb1 where d < 0.3 ORDER BY d",
@@ -767,7 +767,7 @@ public class SecurityTest extends AbstractCairoTest {
             );
 
             try {
-                assertQuery(
+                assertQueryNoLeakCheck(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
                         "select sym, d from tb1 where d < 0.5 ORDER BY d",
@@ -794,7 +794,7 @@ public class SecurityTest extends AbstractCairoTest {
                     " from long_sequence(10000)) timestamp(ts)");
 
             try {
-                assertQuery(
+                assertQueryNoLeakCheck(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
                         "select ts, sum(d) from tb1 SAMPLE BY 5d FILL(linear) ALIGN TO FIRST OBSERVATION",
@@ -808,7 +808,7 @@ public class SecurityTest extends AbstractCairoTest {
             }
 
             try {
-                assertQuery(
+                assertQueryNoLeakCheck(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
                         "select ts, sum(d) from tb1 SAMPLE BY 5d FILL(linear) ALIGN TO CALENDAR",
@@ -835,7 +835,7 @@ public class SecurityTest extends AbstractCairoTest {
                     " from long_sequence(10000)) timestamp(ts)");
 
             try {
-                assertQuery(
+                assertQueryNoLeakCheck(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
                         "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(none) ALIGN TO FIRST OBSERVATION",
@@ -849,7 +849,7 @@ public class SecurityTest extends AbstractCairoTest {
             }
 
             try {
-                assertQuery(
+                assertQueryNoLeakCheck(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
                         "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(none) ALIGN TO CALENDAR",
@@ -876,7 +876,7 @@ public class SecurityTest extends AbstractCairoTest {
                     " from long_sequence(10000)) timestamp(ts)");
 
             try {
-                assertQuery(
+                assertQueryNoLeakCheck(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
                         "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(null) ALIGN TO FIRST OBSERVATION",
@@ -890,7 +890,7 @@ public class SecurityTest extends AbstractCairoTest {
             }
 
             try {
-                assertQuery(
+                assertQueryNoLeakCheck(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
                         "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(null) ALIGN TO CALENDAR",
@@ -917,7 +917,7 @@ public class SecurityTest extends AbstractCairoTest {
                     " from long_sequence(10000)) timestamp(ts)");
 
             try {
-                assertQuery(
+                assertQueryNoLeakCheck(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
                         "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(prev) ALIGN TO FIRST OBSERVATION",
@@ -931,7 +931,7 @@ public class SecurityTest extends AbstractCairoTest {
             }
 
             try {
-                assertQuery(
+                assertQueryNoLeakCheck(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
                         "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(prev) ALIGN TO CALENDAR",
@@ -958,7 +958,7 @@ public class SecurityTest extends AbstractCairoTest {
                     " from long_sequence(1000)) timestamp(ts)");
 
             try {
-                assertQuery(
+                assertQueryNoLeakCheck(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
                         "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(2.0) ALIGN TO FIRST OBSERVATION",
@@ -972,7 +972,7 @@ public class SecurityTest extends AbstractCairoTest {
             }
 
             try {
-                assertQuery(
+                assertQueryNoLeakCheck(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
                         "select sym1, sum(d) from tb1 SAMPLE BY 5d FILL(2.0) ALIGN TO CALENDAR",
@@ -1002,7 +1002,7 @@ public class SecurityTest extends AbstractCairoTest {
                     " timestamp_sequence(10000000000, 1000000000) ts2" +
                     " from long_sequence(100)) timestamp(ts2)");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     memoryRestrictedCompiler,
                     "sym1\nWCP\nICC\nUOJ\nFJG\nOZZ\nGHV\nWEK\nVDZ\nETJ\nUED\n",
                     "select sym1 from tb1 where d1 < 0.2 union select sym1 from tb2 where d2 < 0.1",
@@ -1011,7 +1011,7 @@ public class SecurityTest extends AbstractCairoTest {
                     readOnlyExecutionContext
             );
             try {
-                assertQuery(
+                assertQueryNoLeakCheck(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
                         "select sym1 from tb1 where d1 < 0.2 union select sym1 from tb2",
@@ -1041,7 +1041,7 @@ public class SecurityTest extends AbstractCairoTest {
                     " timestamp_sequence(0, 1000000000) ts2" +
                     " from long_sequence(10)) timestamp(ts2)");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     memoryRestrictedCompiler,
                     "sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n",
                     "select sym1, sym2 from tb1 asof join tb2 where d1 < 0.3 ORDER BY d1",
@@ -1050,7 +1050,7 @@ public class SecurityTest extends AbstractCairoTest {
                     readOnlyExecutionContext
             );
             try {
-                assertQuery(
+                assertQueryNoLeakCheck(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
                         "select sym1, sym2 from tb1 asof join tb2 where d1 < 0.9 ORDER BY d1",
@@ -1096,7 +1096,7 @@ public class SecurityTest extends AbstractCairoTest {
                     " from long_sequence(2000)) timestamp(ts)");
 
             memoryRestrictedEngine.reloadTableNames();
-            assertQuery(
+            assertQueryNoLeakCheck(
                     memoryRestrictedCompiler,
                     "sym2\tcount\nGZ\t1040\nRX\t960\n",
                     "select sym2, count() from tb1 order by sym2",
@@ -1106,7 +1106,7 @@ public class SecurityTest extends AbstractCairoTest {
                     true
             );
             try {
-                assertQuery(
+                assertQueryNoLeakCheck(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
                         "select sym1, count() from tb1 order by sym1",
@@ -1154,7 +1154,7 @@ public class SecurityTest extends AbstractCairoTest {
             );
             memoryRestrictedCompiler.setFullFatJoins(fullFat);
             try {
-                assertQuery(
+                assertQueryNoLeakCheck(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
                         "select sym1, sym2 from tb1 left join tb2 on tb2.ts2=tb1.ts1 and tb2.ts2::long > 0  where d1 < 0.3",
@@ -1196,7 +1196,7 @@ public class SecurityTest extends AbstractCairoTest {
     }
 
     @Override
-    protected void assertQuery(
+    protected void assertQueryNoLeakCheck(
             SqlCompiler compiler,
             String expected,
             String query,
@@ -1205,7 +1205,7 @@ public class SecurityTest extends AbstractCairoTest {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         memoryRestrictedEngine.reloadTableNames();
-        assertQuery(
+        assertQueryNoLeakCheck(
                 compiler,
                 expected,
                 query,

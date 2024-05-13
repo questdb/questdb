@@ -533,7 +533,7 @@ public class OrderByDescRowSkippingTest extends AbstractCairoTest {
     public void testPartitionPerRowSelectFirstNwithDifferentCaseInSelectAndOrderByWithAlias() throws Exception {
         preparePartitionPerRowTableWithLongNames();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            assertQuery(
+            assertQueryNoLeakCheck(
                     compiler,
                     "record_Type\tcre_on\n" + DATA,
                     "select record_Type, CREATED_ON as cre_on from trips order by created_on desc limit 5",

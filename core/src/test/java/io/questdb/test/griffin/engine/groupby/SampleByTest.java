@@ -3128,7 +3128,7 @@ public class SampleByTest extends AbstractCairoTest {
     public void testSampleByAllowsPredicatePushDownWhenTsIsNotIncludedInColumnList() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select * from (" +
                             "select ts2 as tstmp, sym, first(val), avg(val), last(val), max(val) " +
                             "from x " +
@@ -3351,7 +3351,7 @@ public class SampleByTest extends AbstractCairoTest {
                     true
             );
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select * from (select ts, s, first(v) from tab sample by 30m fill(prev) align to first observation) where s = 'B'",
                     "SelectedRecord\n" +
                             "    Filter filter: s='B'\n" +
@@ -3382,7 +3382,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "select dateadd('m', 10*x::int, '2022-12-01T01:00:00.000000Z') ts, x v\n" +
                     "from long_sequence(6) ) timestamp(ts)");
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select * from (select ts, first(v) from tab sample by 30m fill(prev) align to first observation) where ts > '2022-12-01T01:10:00.000000Z'",
                     "Filter filter: 1669857000000000<ts\n" +
                             "    SampleByFillPrev\n" +
@@ -3461,7 +3461,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "  geo6 GEOHASH(6c)" +
                     ") timestamp (time) PARTITION BY DAY;");
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select time, last(lat) lat, last(lon) lon " +
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
@@ -3491,7 +3491,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "  geo6 GEOHASH(6c)" +
                     ") timestamp (time) PARTITION BY DAY;");
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select   id, time, ts, last(lat) lat, last(lon) lon " +
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
@@ -3521,7 +3521,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "  type SYMBOL " +
                     ") timestamp (time) PARTITION BY DAY;");
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select time, type, last(lat) lat, last(lon) lon " +
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
@@ -3536,7 +3536,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "            Frame forward scan on: pos\n"
             );
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select   id, time, type, last(lat) lat, last(lon) lon " +
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
@@ -3565,7 +3565,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "  geo6 GEOHASH(6c)" +
                     ") timestamp (time) PARTITION BY DAY;");
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select   id, time, geo6, last(lat) lat, last(lon) lon " +
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
@@ -3580,7 +3580,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "            Frame forward scan on: pos\n"
             );
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select   id, time, lat, last(lat) lastlat, last(lon) lon " +
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
@@ -4309,7 +4309,7 @@ public class SampleByTest extends AbstractCairoTest {
     public void testSampleByRewriteJoinNoTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select * from " +
                             "(select sym, first(val), avg(val), last(val), max(val) " +
                             "from x " +
@@ -4350,7 +4350,7 @@ public class SampleByTest extends AbstractCairoTest {
     public void testSampleByRewriteJoinTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select * from " +
                             "(select ts1, sym, first(val), avg(val), last(val), max(val) " +
                             "from x " +
@@ -4425,7 +4425,7 @@ public class SampleByTest extends AbstractCairoTest {
     public void testSampleByRewriteMultipleTimestamps1() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select ts1 a, ts1 b, sym, first(val), avg(val), last(val), max(val) " +
                             "from x " +
                             "sample by 1m align to calendar ",
@@ -4447,7 +4447,7 @@ public class SampleByTest extends AbstractCairoTest {
     public void testSampleByRewriteMultipleTimestamps1NotKeyed() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select ts1 a, ts1 b, first(val), avg(val), last(val), max(val) " +
                             "from x " +
                             "sample by 1m align to calendar ",
@@ -4469,7 +4469,7 @@ public class SampleByTest extends AbstractCairoTest {
     public void testSampleByRewriteMultipleTimestamps2() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select ts1 a, ts1 b, sym, first(val), avg(val), ts1 e, last(val), max(val), ts1 c, ts1 d " +
                             "from x " +
                             "sample by 1m align to calendar ",
@@ -4491,7 +4491,7 @@ public class SampleByTest extends AbstractCairoTest {
     public void testSampleByRewriteUTCOffset() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select ts1, sym, min(val), avg(val), max(val) " +
                             "from x " +
                             "sample by 1m align to calendar time zone 'UTC'",
@@ -4512,7 +4512,7 @@ public class SampleByTest extends AbstractCairoTest {
     public void testSampleByRewriteUnionNoTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select sym, first(val), avg(val), last(val), max(val) " +
                             "from x " +
                             "sample by 1m align to calendar " +
@@ -4549,7 +4549,7 @@ public class SampleByTest extends AbstractCairoTest {
     public void testSampleByRewriteUnionTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select ts1 as tstmp, sym, first(val), avg(val), last(val), max(val) " +
                             "from x " +
                             "sample by 1m align to calendar " +
@@ -4582,7 +4582,7 @@ public class SampleByTest extends AbstractCairoTest {
     public void testSampleByRewriteWith() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "with y as (select ts1 a, ts1 b, sym, first(val), avg(val), ts1 e, last(val), max(val), ts1 c, ts1 d " +
                             "from x " +
                             "sample by 1m align to calendar) select * from y ",
@@ -4796,7 +4796,7 @@ public class SampleByTest extends AbstractCairoTest {
 
             String query = "select ts, s, first(v) from tab where s = 'B' and ts > '2022-12-01T00:00:00.000000Z' sample by 30m fill(prev) align to first observation";
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "SampleBy\n" +
                             "  fill: prev\n" +
@@ -12554,7 +12554,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "sample by 1m " + fillOpt + " " + alignTo + " ) " +
                     "where tstmp >= '2022-12-01T00:00:00.000000Z' and  sym = 'B' and length(sym)*tstmp::long > 0  ";
             String actualPlan = plan.replace("#TABLE#", "x");
-            assertPlan(query, actualPlan);
+            assertPlanNoLeakCheck(query, actualPlan);
         });
     }
 
@@ -12568,7 +12568,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "sample by 1m " + fillOpt + " " + alignTo + " ) " +
                     "where tstmp >= '2022-12-01T00:00:00.000000Z' and  sym = 'B' and length(sym)*tstmp::long > 0  ";
             String actualPlan = plan.replace("#TABLE#", "y");
-            assertPlan(query, actualPlan);
+            assertPlanNoLeakCheck(query, actualPlan);
         });
     }
 }

@@ -359,7 +359,7 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryFullFat(
+            assertQueryFullFatNoLeakCheck(
                     "i\tc\tc1\tamt\tprice\ttimestamp\ttimestamp1\n" +
                             "1\tXYZ\t\t50.938\tnull\t2018-01-01T00:12:00.000000Z\t\n" +
                             "2\tABC\tABC\t42.281\t0.537\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z\n" +
@@ -4733,7 +4733,7 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryFullFat(
+            assertQueryFullFatNoLeakCheck(
                     "i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
                             "1\tmsft\t22.463\tnull\t2018-01-01T00:12:00.000000Z\t\n" +
                             "2\tgoogl\t29.92\t0.885\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z\n" +
@@ -4866,7 +4866,7 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryFullFat(
+            assertQueryFullFatNoLeakCheck(
                     "i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
                             "1\tmsft\t50.938\t0.523\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:12:00.000000Z\n" +
                             "2\tgoogl\t42.281\t0.215\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:18:00.000000Z\n" +
@@ -5002,7 +5002,7 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryFullFat(
+            assertQueryFullFatNoLeakCheck(
                     "i\tc\tc1\tamt\tprice\ttimestamp\ttimestamp1\n" +
                             "1\tXYZ\tXYZ\t50.938\t0.294\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:10:00.000000Z\n" +
                             "2\tABC\tABC\t42.281\t0.167\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:22:00.000000Z\n" +
@@ -5138,7 +5138,7 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryFullFat(
+            assertQueryFullFatNoLeakCheck(
                     "i\tc\tc1\tamt\tprice\ttimestamp\ttimestamp1\n" +
                             "1\tXYZ\tXYZ\t50.938\t0.294\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:10:00.000000Z\n" +
                             "2\tABC\tABC\t42.281\t0.167\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:22:00.000000Z\n" +
@@ -5211,7 +5211,7 @@ public class JoinTest extends AbstractCairoTest {
             ddl("insert into x select * from (select cast(x + 10 as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + (x + 10) * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)");
             ddl("insert into y select * from (select cast(x + 30 as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + (x + 30) * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)");
 
-            assertQueryFullFat("i\tsym\tsym2\tamt\tprice\ttimestamp\ttimestamp1\n" +
+            assertQueryFullFatNoLeakCheck("i\tsym\tsym2\tamt\tprice\ttimestamp\ttimestamp1\n" +
                             "1\tmsft\t\t22.463\tnull\t2018-01-01T00:12:00.000000Z\t\n" +
                             "2\tgoogl\tgoogl\t29.92\t0.885\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z\n" +
                             "3\tmsft\tmsft\t65.086\t0.5660000000000001\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:36:00.000000Z\n" +
@@ -5276,7 +5276,7 @@ public class JoinTest extends AbstractCairoTest {
             ddl("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
 
             // master records should be filtered out because slave records missing
-            assertQueryFullFat(
+            assertQueryFullFatNoLeakCheck(
                     expected,
                     "select x.c, x.a, b, a+b from x join y on y.m = x.c and 1 > 10",
                     null,
@@ -5305,7 +5305,7 @@ public class JoinTest extends AbstractCairoTest {
             ddl("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
 
             // master records should be filtered out because slave records missing
-            assertQueryFullFat(
+            assertQueryFullFatNoLeakCheck(
                     expected,
                     "select x.c, x.a, b from x join y on y.m = x.c and 1 < 10",
                     null,
@@ -5391,7 +5391,7 @@ public class JoinTest extends AbstractCairoTest {
             ddl("create table y as (select cast((x-1)/4 + 1 as int) c, abs(rnd_int() % 100) b from long_sequence(20))");
             ddl("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(40))");
 
-            assertQueryFullFat(
+            assertQueryFullFatNoLeakCheck(
                     expected,
                     "select z.c, x.a, b, d, d-b from x join y on(c) join z on (c)",
                     null,
@@ -5469,7 +5469,7 @@ public class JoinTest extends AbstractCairoTest {
             );
 
             // filter is applied to final join result
-            assertQueryFullFat(
+            assertQueryFullFatNoLeakCheck(
                     expected,
                     "select * from x join y on (kk)",
                     null,
@@ -5527,7 +5527,7 @@ public class JoinTest extends AbstractCairoTest {
             ddl("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(5))");
             ddl("create table y as (select cast((x-1)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(20))");
             ddl("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(40))");
-            assertQueryFullFat(
+            assertQueryFullFatNoLeakCheck(
                     expected,
                     "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c)",
                     null,
@@ -5575,7 +5575,7 @@ public class JoinTest extends AbstractCairoTest {
             ddl("insert into y select cast((x+19)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(16)");
             ddl("insert into z select cast((x+15)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(2)");
 
-            assertQueryFullFat(
+            assertQueryFullFatNoLeakCheck(
                     expected +
                             "7\t253\t14\t228\t214\n" +
                             "7\t253\t14\t723\t709\n" +
@@ -5625,7 +5625,7 @@ public class JoinTest extends AbstractCairoTest {
             ddl("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(40))");
 
             // filter is applied to final join result
-            assertQueryFullFat(
+            assertQueryFullFatNoLeakCheck(
                     expected,
                     "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c) where d-b > 100",
                     null,
@@ -5783,7 +5783,7 @@ public class JoinTest extends AbstractCairoTest {
             insert("insert into y select rnd_symbol('P','L','K') m, abs(rnd_int() % 100) b from long_sequence(6)");
             insert("insert into z select rnd_symbol('K','P','L') c, abs(rnd_int() % 1000) d from long_sequence(6)");
 
-            assertQueryFullFat(
+            assertQueryFullFatNoLeakCheck(
                     expected +
                             "L\tL\tL\t148\t38\t121\t83\n" +
                             "L\tL\tL\t148\t52\t121\t69\n",
@@ -5832,7 +5832,7 @@ public class JoinTest extends AbstractCairoTest {
             insert("insert into y select cast((x+19)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(16)");
             insert("insert into z select cast((x+15)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(2)");
 
-            assertQueryFullFat(
+            assertQueryFullFatNoLeakCheck(
                     expected +
                             "7\t253\t35\t228\t288\n" +
                             "7\t253\t35\t723\t288\n" +
@@ -5914,7 +5914,7 @@ public class JoinTest extends AbstractCairoTest {
             );
 
             // filter is applied to final join result
-            assertQueryFullFat(
+            assertQueryFullFatNoLeakCheck(
                     expected,
                     "select * from x left join y on (kk)",
                     null,
@@ -5953,7 +5953,7 @@ public class JoinTest extends AbstractCairoTest {
             insert("insert into x select * from (select cast(x+10 as int) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x + 10 ts from long_sequence(4)) timestamp(ts)");
             insert("insert into y select x, cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
 
-            assertQueryFullFat(
+            assertQueryFullFatNoLeakCheck(
                     expected +
                             "11\t467\tnull\n" +
                             "12\t347\t7\n" +

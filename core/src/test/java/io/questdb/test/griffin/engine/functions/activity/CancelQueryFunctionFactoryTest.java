@@ -96,7 +96,7 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
                         context.with(new AtomicBooleanCircuitBreaker());
 
                         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                            assertQuery(compiler,
+                            assertQueryNoLeakCheck(compiler,
                                     "t\n1\n",
                                     query,
                                     null, context, true, false);
@@ -165,7 +165,7 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
                 started.countDown();
                 try {
                     try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                        assertQuery(compiler,
+                        assertQueryNoLeakCheck(compiler,
                                 "t\n1\n",
                                 query,
                                 null, adminUserContext1, true, false);

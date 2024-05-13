@@ -41,7 +41,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "    select 1, 'a' )");
 
             String query1 = "select l, s from t group by l,s";
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query1,
                     "Async Group By workers: 1\n" +
                             "  keys: [l,s]\n" +
@@ -54,7 +54,7 @@ public class GroupByTest extends AbstractCairoTest {
 
             String query2 = "select l as l1, s as s1 from t group by l,s";
             // virtual model must be used here to change aliases
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query2,
                     "VirtualRecord\n" +
                             "  functions: [l,s]\n" +
@@ -221,7 +221,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "from t " +
                     "group by x+1 ";
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "VirtualRecord\n" +
                             "  functions: [column,count]\n" +
@@ -255,7 +255,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "from t " +
                     "group by case when x < 0 then -1 when x = 0 then 0 else 1 end ";
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "Async Group By workers: 1\n" +
                             "  keys: [case]\n" +
@@ -287,7 +287,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "from t " +
                     "group by x+1";
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "VirtualRecord\n" +
                             "  functions: [case([column<0,-1,column=0,0,1]),count]\n" +
@@ -321,7 +321,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "from t " +
                     "group by x ";
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "VirtualRecord\n" +
                             "  functions: [x,avg,avg+min,x+10,avg1,avg1+10]\n" +
@@ -356,7 +356,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "from t " +
                     "group by x ";
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "VirtualRecord\n" +
                             "  functions: [x,avg,:bv::string]\n" +
@@ -385,7 +385,7 @@ public class GroupByTest extends AbstractCairoTest {
             compile("create table t (x long, y long);");
             insert("insert into t values (1, 11), (1, 12);");
             String query = "select x*10, x+avg(y), min(y) from t group by x ";
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "VirtualRecord\n" +
                             "  functions: [x*10,x+avg,min]\n" +
@@ -414,7 +414,7 @@ public class GroupByTest extends AbstractCairoTest {
             compile("create table t (x long, y long);");
             insert("insert into t values (1, 11), (1, 12);");
             String query = "select x*10, x+avg(y), min(y) from t";
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "VirtualRecord\n" +
                             "  functions: [column,x+avg,min]\n" +
@@ -464,7 +464,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "group by ordr.date_report " +
                     "order by ordr.date_report";
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "Sort light\n" +
                             "  keys: [date_report]\n" +
@@ -497,7 +497,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "from dat ordr " +
                     "group by date_report " + // no alias used here
                     "order by ordr.date_report";
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "Sort light\n" +
                             "  keys: [date_report]\n" +
@@ -531,7 +531,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "group by ordr.date_report " +
                     "order by ordr.date_report";
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "Sort light\n" +
                             "  keys: [date_report]\n" +
@@ -565,7 +565,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "group by date_report, ordr.date_report " +
                     "order by ordr.date_report";
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "Sort light\n" +
                             "  keys: [date_report1]\n" +
@@ -603,7 +603,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "group by dateadd('d', -1, date_report), ordr.date_report " +
                     "order by ordr.date_report";
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "Sort light\n" +
                             "  keys: [date_report]\n" +
@@ -641,7 +641,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "group by ordr.date_report\n" +
                     "order by ordr.date_report";
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "Sort light\n" +
                             "  keys: [date_report]\n" +
@@ -686,7 +686,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "group by details.date_report " +
                     "order by details.date_report";
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "Sort light\n" +
                             "  keys: [date_report]\n" +
@@ -948,7 +948,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "    select 1, 'a' )");
 
             String query = "select l, s, l+1 from t group by l+1,s, l, l+2";
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "VirtualRecord\n" +
                             "  functions: [l,s,column]\n" +
@@ -1154,7 +1154,7 @@ public class GroupByTest extends AbstractCairoTest {
             );
 
             String query = "select s, max, max(l) from t group by s, max order by s, max";
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "Sort light\n" +
                             "  keys: [s, max]\n" +
@@ -1215,7 +1215,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "group by t1.x, t2.x " +
                     "order by t1.x, t2.x";
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "SelectedRecord\n" +
                             "    Sort light\n" +
@@ -1260,7 +1260,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "join t2 on t1.y = t2.y  " +
                     "group by t1.x, t2.x, case when t1.x > 1 then 30*t1.x else 20*t2.x end";
 
-            assertPlan(query, "VirtualRecord\n" +
+            assertPlanNoLeakCheck(query, "VirtualRecord\n" +
                     "  functions: [x,max,case]\n" +
                     "    GroupBy vectorized: false\n" +
                     "      keys: [x,case,x1]\n" +
@@ -1302,7 +1302,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "group by t1.x, t2.x, dateadd('d', t1.x, '2023-03-01T00:00:00') " +
                     "order by 1";
 
-            assertPlan(query, "Sort light\n" +
+            assertPlanNoLeakCheck(query, "Sort light\n" +
                     "  keys: [x]\n" +
                     "    VirtualRecord\n" +
                     "      functions: [x,max,dateadd::long+x1]\n" +
@@ -1346,7 +1346,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "group by t1.x, t2.x, dateadd('d', t1.x, '2023-03-01T00:00:00') " +
                     "order by 1, 2, 3";
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "Sort light\n" +
                             "  keys: [x, max, dateadd]\n" +
@@ -1406,7 +1406,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "    select 1, 'a' )");
 
             String query = "select l,s,rnd_int(0,1,0)/10 from t group by l,s";
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "VirtualRecord\n" +
                             "  functions: [l,s,rnd_int(0,1,0)/10]\n" +
@@ -1440,7 +1440,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "('b', 'c', 14, '2021-11-17T17:35:02.000000Z');"
             );
             String query = "select s2, sum(l) from t where s2 in ('c') latest on ts partition by s1";
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "GroupBy vectorized: false\n" +
                             "  keys: [s2]\n" +
@@ -1472,7 +1472,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "('b', 'c', 14, '2021-11-17T17:35:02.000000Z');"
             );
             String query = "select s2, sum(l) from t where s2 in ('c', 'd') latest on ts partition by s1 order by s2";
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "Sort light\n" +
                             "  keys: [s2]\n" +
@@ -1507,7 +1507,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "('b', 'c', 14, '2021-11-17T17:35:02.000000Z');"
             );
             String query = "select concat('_', s2, '_'), sum(l) from t where s2 in ('d') latest on ts partition by s1";
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "GroupBy vectorized: false\n" +
                             "  keys: [concat]\n" +
@@ -1540,7 +1540,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "from x\n" +
                             "where a = 1\n" +
                             "group by a,b,z\n";
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "Async JIT Group By workers: 1\n" +
                             "  keys: [a,b,z]\n" +
@@ -1605,7 +1605,7 @@ public class GroupByTest extends AbstractCairoTest {
                     query1
             );
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query1,
                     "Sort light\n" +
                             "  keys: [i]\n" +
@@ -1655,7 +1655,7 @@ public class GroupByTest extends AbstractCairoTest {
                     false
             );
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query2,
                     "Sort light\n" +
                             "  keys: [i]\n" +
@@ -1684,7 +1684,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "from x\n" +
                             "where a = 1\n" +
                             "group by a,b,z\n";
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "Async JIT Group By workers: 1\n" +
                             "  keys: [a,b,z]\n" +
@@ -1715,7 +1715,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "from x\n" +
                             "where a = 1\n" +
                             "group by a,B,z\n";
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "Async JIT Group By workers: 1\n" +
                             "  keys: [a,B,z]\n" +
@@ -1746,7 +1746,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "from x\n" +
                             "where a = 1\n" +
                             "group by a,b,c\n";
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "VirtualRecord\n" +
                             "  functions: [a,b,c,views]\n" +
@@ -1777,7 +1777,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "from x\n" +
                             "where a = 1\n" +
                             "group by a,b,c\n";
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "Async JIT Group By workers: 1\n" +
                             "  keys: [a,b,c]\n" +
@@ -1914,7 +1914,7 @@ public class GroupByTest extends AbstractCairoTest {
                     true
             );
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "Sort light\n" +
                             "  keys: [y_utc_15m]\n" +
@@ -1944,7 +1944,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "where a = 1\n" +
                             "group by a,b,z\n" +
                             "order by a,b,z\n";
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "SelectedRecord\n" +
                             "    Sort light\n" +
@@ -1991,7 +1991,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "GROUP BY TraficSourceID, SearchEngineID, AdvEngineID, Src, Dst\n" +
                             "ORDER BY PageViews DESC\n" +
                             "LIMIT 1000, 1010;";
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query1,
                     "Sort light lo: 1000 hi: 1010\n" +
                             "  keys: [PageViews desc]\n" +
@@ -2012,7 +2012,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "GROUP BY TraficSourceID, SearchEngineID, AdvEngineID, Src, URL\n" +
                             "ORDER BY PageViews DESC\n" +
                             "LIMIT 1000, 1010;";
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query2,
                     "Sort light lo: 1000 hi: 1010\n" +
                             "  keys: [PageViews desc]\n" +
@@ -2032,7 +2032,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "GROUP BY TraficSourceID, SearchEngineID, AdvEngineID, Src, URL, cat\n" +
                     "ORDER BY PageViews DESC\n" +
                     "LIMIT 1000, 1010;";
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query3,
                     "Sort light lo: 1000 hi: 1010\n" +
                             "  keys: [PageViews desc]\n" +
@@ -2065,7 +2065,7 @@ public class GroupByTest extends AbstractCairoTest {
                     null,
                     true,
                     true);
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "Sort light\n" +
                             "  keys: [k1, key2]\n" +
@@ -2094,7 +2094,7 @@ public class GroupByTest extends AbstractCairoTest {
                     null,
                     true,
                     true);
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "Sort light\n" +
                             "  keys: [column, key, key1 desc]\n" +
@@ -2123,7 +2123,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "group by t1.x, t2.x, dateadd('d', t1.x, '2023-03-01T00:00:00') " +
                     "order by 1, 2, 3";
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "Sort light\n" +
                             "  keys: [x, max, dateadd]\n" +
@@ -2286,7 +2286,7 @@ public class GroupByTest extends AbstractCairoTest {
                 "GROUP BY tab.created " +
                 "ORDER BY tab.created";
 
-        assertPlan(
+        assertPlanNoLeakCheck(
                 query,
                 "Sort light\n" +
                         "  keys: [ref0]\n" +
@@ -2326,7 +2326,7 @@ public class GroupByTest extends AbstractCairoTest {
                 "GROUP BY tab.created " +
                 "ORDER BY dateadd('h', 1, tab.created)";
 
-        assertPlan(
+        assertPlanNoLeakCheck(
                 query,
                 "Sort light\n" +
                         "  keys: [ref0]\n" +
@@ -2367,7 +2367,7 @@ public class GroupByTest extends AbstractCairoTest {
                 "GROUP BY tab.created " +
                 "ORDER BY tab.created";
 
-        assertPlan(
+        assertPlanNoLeakCheck(
                 query,
                 "Sort light\n" +
                         "  keys: [created]\n" +
@@ -2406,7 +2406,7 @@ public class GroupByTest extends AbstractCairoTest {
                     " from long_sequence(20)");
 
             String query = "select sym, hour(ts), avg(bid) avgBid from x group by hour(ts), sym order by hour(ts), sym";
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "Sort light\n" +
                             "  keys: [hour, sym]\n" +
@@ -2466,7 +2466,7 @@ public class GroupByTest extends AbstractCairoTest {
                 true
         );
 
-        assertPlan(
+        assertPlanNoLeakCheck(
                 query,
                 "Sort light\n" +
                         "  keys: [category]\n" +

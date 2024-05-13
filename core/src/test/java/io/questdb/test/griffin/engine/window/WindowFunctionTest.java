@@ -2020,7 +2020,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     false
             );
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select row_number() over (partition by i order by ts asc), " +
                             "   avg(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
                             "   sum(j) over (partition by i order by ts desc rows between unbounded preceding and current row)," +
@@ -3018,7 +3018,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             ddl("create table tab (ts timestamp, i long, j long, sym symbol index) timestamp(ts)");
 
             for (String func : FRAME_FUNCTIONS) {
-                assertPlan(
+                assertPlanNoLeakCheck(
                         "select ts, i, j, #FUNCT_NAME(1) over (partition by i order by ts desc rows between 1 preceding and current row) from tab".replace("#FUNCT_NAME", func),
                         "CachedWindow\n" +
                                 "  orderedFunctions: [[ts desc] => [#FUNCT_NAME(1) over (partition by [i] rows between 1 preceding and current row)]]\n".replace("#FUNCT_NAME", func.trim()) +
@@ -3027,7 +3027,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                 "        Frame forward scan on: tab\n"
                 );
 
-                assertPlan(
+                assertPlanNoLeakCheck(
                         "select ts, i, j, #FUNCT_NAME(1) over (partition by i order by ts asc rows between 1 preceding and current row)  from tab order by ts desc".replace("#FUNCT_NAME", func),
                         "CachedWindow\n" +
                                 "  orderedFunctions: [[ts] => [#FUNCT_NAME(1) over (partition by [i] rows between 1 preceding and current row)]]\n".replace("#FUNCT_NAME", func.trim()) +
@@ -3037,7 +3037,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 );
 
                 //TODO: inspect
-                assertPlan(
+                assertPlanNoLeakCheck(
                         "select ts, i, j, #FUNCT_NAME(1) over (partition by i order by ts asc rows between 1 preceding and current row) from tab where sym in ( 'A', 'B') ".replace("#FUNCT_NAME", func),
                         "first_value".equals(func) ?
                                 "Window\n" +
@@ -3062,7 +3062,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
                 );
 
-                assertPlan(
+                assertPlanNoLeakCheck(
                         "select ts, i, j, #FUNCT_NAME(1) over (partition by i order by ts desc rows between 1 preceding and current row)  from tab where sym = 'A'".replace("#FUNCT_NAME", func),
                         "CachedWindow\n" +
                                 "  orderedFunctions: [[ts desc] => [#FUNCT_NAME(1) over (partition by [i] rows between 1 preceding and current row)]]\n".replace("#FUNCT_NAME", func.trim()) +
@@ -3081,7 +3081,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             ddl("create table tab (ts timestamp, i long, j long, sym symbol index) timestamp(ts)");
 
             for (String func : FRAME_FUNCTIONS) {
-                assertPlan(
+                assertPlanNoLeakCheck(
                         "select ts, i, j, #FUNCT_NAME(1) over (partition by i order by ts rows between 1 preceding and current row) from tab".replace("#FUNCT_NAME", func),
                         "Window\n" +
                                 "  functions: [#FUNCT_NAME(1) over (partition by [i] rows between 1 preceding and current row)]\n".replace("#FUNCT_NAME", func.trim()) +
@@ -3090,7 +3090,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                 "        Frame forward scan on: tab\n"
                 );
 
-                assertPlan(
+                assertPlanNoLeakCheck(
                         "select ts, i, j, #FUNCT_NAME(1) over (partition by i order by ts rows between 1 preceding and current row)  from tab order by ts asc".replace("#FUNCT_NAME", func),
                         "Window\n" +
                                 "  functions: [#FUNCT_NAME(1) over (partition by [i] rows between 1 preceding and current row)]\n".replace("#FUNCT_NAME", func.trim()) +
@@ -3099,7 +3099,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                 "        Frame forward scan on: tab\n"
                 );
 
-                assertPlan(
+                assertPlanNoLeakCheck(
                         "select ts, i, j, #FUNCT_NAME(1) over (partition by i order by ts desc rows between 1 preceding and current row)  from tab order by ts desc".replace("#FUNCT_NAME", func),
                         "Window\n" +
                                 "  functions: [#FUNCT_NAME(1) over (partition by [i] rows between 1 preceding and current row)]\n".replace("#FUNCT_NAME", func.trim()) +
@@ -3108,7 +3108,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                 "        Frame backward scan on: tab\n"
                 );
 
-                assertPlan(
+                assertPlanNoLeakCheck(
                         "select ts, i, j, #FUNCT_NAME(1) over (partition by i order by ts asc rows between 1 preceding and current row)  from tab where sym = 'A'".replace("#FUNCT_NAME", func),
                         "Window\n" +
                                 "  functions: [#FUNCT_NAME(1) over (partition by [i] rows between 1 preceding and current row)]\n".replace("#FUNCT_NAME", func.trim()) +
@@ -3118,7 +3118,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                 "        Frame forward scan on: tab\n"
                 );
 
-                assertPlan(
+                assertPlanNoLeakCheck(
                         "select ts, i, j, #FUNCT_NAME(1) over (partition by i order by ts asc rows between 1 preceding and current row) ".replace("#FUNCT_NAME", func) +
                                 "from tab where sym in ( 'A', 'B') order by ts asc",
                         "Window\n" +
@@ -3277,7 +3277,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     private void assertQueryAndPlan(String query, String plan, String expectedResult, String expectedTimestamp, boolean supportsRandomAccess, boolean expectSize) throws Exception {
         assertMemoryLeak(() -> {
-            assertPlan(query, plan);
+            assertPlanNoLeakCheck(query, plan);
 
             assertQueryNoLeakCheck(
                     expectedResult,
