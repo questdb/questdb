@@ -58,8 +58,7 @@ import java.util.List;
 import static io.questdb.test.tools.TestUtils.getSystemTablesCount;
 
 public class SqlParserTest extends AbstractSqlParserTest {
-
-    private final static List<String> frameTypes = Arrays.asList("rows  ", "groups", "range ");
+    private static final List<String> frameTypes = Arrays.asList("rows  ", "groups", "range ");
 
     @Test
     public void test2Between() throws Exception {
@@ -67,50 +66,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-choose t from (select [t, tt] from x where t between ('2020-01-01','2021-01-02') and tt between ('2021-01-02','2021-01-31'))",
                 "select t from x where t between '2020-01-01' and '2021-01-02' and tt between '2021-01-02' and '2021-01-31'",
                 modelOf("x").col("t", ColumnType.TIMESTAMP).col("tt", ColumnType.TIMESTAMP)
-        );
-    }
-
-    @Test
-    public void testCaseToSwitchRewriteNoElse() throws Exception {
-        assertQuery(
-                "select-virtual switch(a,10,'2',20,'3',null) k from (select [a] from x)",
-                "select case when a = 10 then '2' when a = 20 then '3' end k from x",
-                modelOf("x").col("a", ColumnType.INT)
-        );
-    }
-
-    /*
-        Tests bug in 'NOT' parsing (see https://github.com/questdb/questdb/pull/4441)
-        Previously, "NOT" part in "NOT [SET OPERATION]" construct was parsed slightly differently from the regular "NOT" operator meaning that the compiled output varied depending on whether 'NOT' was capitalized.
-        This test checks that regardless of the capitalization the query model uses an internal representation of the token and doesn't take it directly from the input query (note that expected model representation always has "not" in lowercase)
-     */
-    @Test
-    public void testNotInTimestamp() throws Exception {
-        assertQuery(
-                "select-choose timestamp from (select [timestamp] from trades where not(timestamp in '2015-01-02'))",
-                "SELECT * FROM trades WHERE timestamp NOT IN '2015-01-02'",
-                modelOf("trades").col("timestamp", ColumnType.TIMESTAMP)
-        );
-        assertQuery(
-                "select-choose timestamp from (select [timestamp] from trades where not(timestamp in '2015-01-02'))",
-                "select * from trades where timestamp not in '2015-01-02'",
-                modelOf("trades").col("timestamp", ColumnType.TIMESTAMP)
-        );
-    }
-
-    @Test
-    public void testBetweenWithNegativeBounds() throws Exception {
-        assertQuery(
-                "select-virtual -(5) between (-(10),-(1)) column from (long_sequence(1))",
-                "SELECT -5 BETWEEN -10 AND -1"
-        );
-        assertQuery(
-                "select-virtual -(5) between (-(10),-(1)) column from (long_sequence(1))",
-                "SELECT -5 BETWEEN -10 AND (-1)"
-        );
-        assertQuery(
-                "select-virtual -(5) between (-(10),-(1)) column from (long_sequence(1))",
-                "SELECT -5 BETWEEN (-10) AND -1"
         );
     }
 
@@ -1292,6 +1247,22 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testBetweenWithNegativeBounds() throws Exception {
+        assertQuery(
+                "select-virtual -(5) between (-(10),-(1)) column from (long_sequence(1))",
+                "SELECT -5 BETWEEN -10 AND -1"
+        );
+        assertQuery(
+                "select-virtual -(5) between (-(10),-(1)) column from (long_sequence(1))",
+                "SELECT -5 BETWEEN -10 AND (-1)"
+        );
+        assertQuery(
+                "select-virtual -(5) between (-(10),-(1)) column from (long_sequence(1))",
+                "SELECT -5 BETWEEN (-10) AND -1"
+        );
+    }
+
+    @Test
     public void testBlockCommentAtMiddle() throws Exception {
         assertQuery(
                 "select-choose x, a from (select-choose [x, a] x, a from (select [x, a] from x where a > 1 and x > 1)) 'b a'",
@@ -1394,6 +1365,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "select-virtual switch(a,1,'A',2,'B','C') + 1 column, b from (select [a, b] from tab)",
                 "select case when a = 1 then 'A' when 2 = a then 'B' else 'C' end+1, b from tab",
                 modelOf("tab").col("a", ColumnType.INT).col("b", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testCaseToSwitchRewriteNoElse() throws Exception {
+        assertQuery(
+                "select-virtual switch(a,10,'2',20,'3',null) k from (select [a] from x)",
+                "select case when a = 10 then '2' when a = 20 then '3' end k from x",
+                modelOf("x").col("a", ColumnType.INT)
         );
     }
 
@@ -3089,15 +3069,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testInvalidGeohash() throws Exception {
-        assertSyntaxError(
-                "SELECT CAST(#d as geohash([))",
-                26,
-                "invalid GEOHASH size"
-        );
-    }
-
-    @Test
     public void testCreateTableWithGeoHash2() throws Exception {
         assertCreateTable(
                 "create atomic table x (gh GEOHASH(51b), t TIMESTAMP) timestamp(t) partition by DAY",
@@ -3402,6 +3373,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 61,
                 "Duplicate column [name=cc]"
         );
+    }
+
+    @Test
+    public void testDanglingValues() throws Exception {
+        assertSyntaxError("SELECT TRUE TRUE", 12, "dangling expression");
+        assertSyntaxError("SELECT AND TRUE TRUE", 16, "dangling expression");
+        assertSyntaxError("SELECT NaN NULL", 11, "dangling expression");
+        assertSyntaxError("SELECT (1+1) TRUE", 13, "dangling expression");
+        assertSyntaxError("SELECT TRUE (1+1)", 12, "dangling expression");
     }
 
     @Test
@@ -4786,6 +4766,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testInvalidGeohash() throws Exception {
+        assertSyntaxError(
+                "SELECT CAST(#d as geohash([))",
+                26,
+                "invalid GEOHASH size"
+        );
+    }
+
+    @Test
     public void testInvalidGroupBy1() throws Exception {
         assertSyntaxError("select x, y from tab sample by x,", 32, "one letter sample by period unit expected");
     }
@@ -5277,27 +5266,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "dangling expression",
                 modelOf("a").col("x", ColumnType.INT),
                 modelOf("b").col("x", ColumnType.INT)
-        );
-    }
-
-    @Test
-    public void testDanglingValues() throws Exception {
-        assertSyntaxError("SELECT TRUE TRUE", 12, "dangling expression");
-        assertSyntaxError("SELECT AND TRUE TRUE", 16, "dangling expression");
-        assertSyntaxError("SELECT NaN NULL", 11, "dangling expression");
-        assertSyntaxError("SELECT (1+1) TRUE", 13, "dangling expression");
-        assertSyntaxError("SELECT TRUE (1+1)", 12, "dangling expression");
-    }
-
-    @Test
-    public void testSetOperationNegation() throws Exception {
-        assertQuery(
-                "select-virtual not(-(1) + 2 * 3 between (2,3)) column from (long_sequence(1))",
-                "SELECT -1+2*3 not between 2 AND 3"
-        );
-        assertQuery(
-                "select-virtual not(-(1) + 2 * 3 in (2,3,4)) column from (long_sequence(1))",
-                "SELECT -1+2*3 not in (2, 3, 4)"
         );
     }
 
@@ -5993,23 +5961,25 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testLexerReset() {
-        for (int i = 0; i < 10; i++) {
-            try {
-                select(
-                        "select \n" +
-                                "-- ltod(Date)\n" +
-                                "count() \n" +
-                                "-- from acc\n" +
-                                "from acc(Date) sample by 1d\n" +
-                                "-- where x = 10\n"
-                ).close();
-                Assert.fail();
-            } catch (SqlException e) {
-                // we now allow column reference from SQL although column access will fail
-                TestUtils.assertEquals("unknown function name: acc(LONG)", e.getFlyweightMessage());
+    public void testLexerReset() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < 10; i++) {
+                try {
+                    select(
+                            "select \n" +
+                                    "-- ltod(Date)\n" +
+                                    "count() \n" +
+                                    "-- from acc\n" +
+                                    "from acc(Date) sample by 1d\n" +
+                                    "-- where x = 10\n"
+                    ).close();
+                    Assert.fail();
+                } catch (SqlException e) {
+                    // we now allow column reference from SQL although column access will fail
+                    TestUtils.assertEquals("unknown function name: acc(LONG)", e.getFlyweightMessage());
+                }
             }
-        }
+        });
     }
 
     @Test
@@ -6106,13 +6076,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testMissingWhere() {
-        try {
-            select("select id, x + 10, x from tab id ~ 'HBRO'").close();
-            Assert.fail("Exception expected");
-        } catch (SqlException e) {
-            Assert.assertEquals(33, e.getPosition());
-        }
+    public void testMissingWhere() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                select("select id, x + 10, x from tab id ~ 'HBRO'").close();
+                Assert.fail("Exception expected");
+            } catch (SqlException e) {
+                Assert.assertEquals(33, e.getPosition());
+            }
+        });
     }
 
     @Test
@@ -6382,6 +6354,25 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         ")",
                 71,
                 "literal expected"
+        );
+    }
+
+    /*
+        Tests bug in 'NOT' parsing (see https://github.com/questdb/questdb/pull/4441)
+        Previously, "NOT" part in "NOT [SET OPERATION]" construct was parsed slightly differently from the regular "NOT" operator meaning that the compiled output varied depending on whether 'NOT' was capitalized.
+        This test checks that regardless of the capitalization the query model uses an internal representation of the token and doesn't take it directly from the input query (note that expected model representation always has "not" in lowercase)
+     */
+    @Test
+    public void testNotInTimestamp() throws Exception {
+        assertQuery(
+                "select-choose timestamp from (select [timestamp] from trades where not(timestamp in '2015-01-02'))",
+                "SELECT * FROM trades WHERE timestamp NOT IN '2015-01-02'",
+                modelOf("trades").col("timestamp", ColumnType.TIMESTAMP)
+        );
+        assertQuery(
+                "select-choose timestamp from (select [timestamp] from trades where not(timestamp in '2015-01-02'))",
+                "select * from trades where timestamp not in '2015-01-02'",
+                modelOf("trades").col("timestamp", ColumnType.TIMESTAMP)
         );
     }
 
@@ -9052,6 +9043,18 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSetOperationNegation() throws Exception {
+        assertQuery(
+                "select-virtual not(-(1) + 2 * 3 between (2,3)) column from (long_sequence(1))",
+                "SELECT -1+2*3 not between 2 AND 3"
+        );
+        assertQuery(
+                "select-virtual not(-(1) + 2 * 3 in (2,3,4)) column from (long_sequence(1))",
+                "SELECT -1+2*3 not in (2, 3, 4)"
+        );
+    }
+
+    @Test
     public void testSimpleCaseExpression() throws SqlException {
         assertQuery(
                 "select-virtual switch(a,1,'A',2,'B','C') + 1 column, b from (select [a, b] from tab)",
@@ -9527,21 +9530,23 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testTooManyColumnsInOrderBy() {
-        StringBuilder b = new StringBuilder();
-        b.append("x order by ");
-        for (int i = 0; i < SqlParser.MAX_ORDER_BY_COLUMNS; i++) {
-            if (i > 0) {
-                b.append(',');
+    public void testTooManyColumnsInOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            StringBuilder b = new StringBuilder();
+            b.append("x order by ");
+            for (int i = 0; i < SqlParser.MAX_ORDER_BY_COLUMNS; i++) {
+                if (i > 0) {
+                    b.append(',');
+                }
+                b.append('f').append(i);
             }
-            b.append('f').append(i);
-        }
-        try {
-            select(b).close();
-            Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertEquals("Too many columns", e.getFlyweightMessage());
-        }
+            try {
+                select(b).close();
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertEquals("Too many columns", e.getFlyweightMessage());
+            }
+        });
     }
 
     @Test

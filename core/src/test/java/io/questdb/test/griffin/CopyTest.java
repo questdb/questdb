@@ -181,18 +181,20 @@ public class CopyTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDefaultCopyOptions() throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            CopyModel model = (CopyModel) compiler.testCompileModel("copy y from 'somefile.csv';", sqlExecutionContext);
+    public void testDefaultCopyOptions() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                CopyModel model = (CopyModel) compiler.testCompileModel("copy y from 'somefile.csv';", sqlExecutionContext);
 
-            assertEquals("y", model.getTarget().token.toString());
-            assertEquals("'somefile.csv'", model.getFileName().token.toString());
-            assertFalse(model.isHeader());
-            assertEquals(-1, model.getPartitionBy());
-            assertNull(model.getTimestampColumnName());
-            assertNull(model.getTimestampFormat());
-            assertEquals(-1, model.getDelimiter());
-        }
+                assertEquals("y", model.getTarget().token.toString());
+                assertEquals("'somefile.csv'", model.getFileName().token.toString());
+                assertFalse(model.isHeader());
+                assertEquals(-1, model.getPartitionBy());
+                assertNull(model.getTimestampColumnName());
+                assertNull(model.getTimestampFormat());
+                assertEquals(-1, model.getDelimiter());
+            }
+        });
     }
 
     @Test
@@ -555,13 +557,15 @@ public class CopyTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParallelCopyRequiresWithBeforeOptions() {
-        try {
-            ddl("copy x from 'somefile.csv' partition by HOUR;");
-            Assert.fail();
-        } catch (SqlException e) {
-            assertEquals("[27] 'with' expected", e.getMessage());
-        }
+    public void testParallelCopyRequiresWithBeforeOptions() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                ddl("copy x from 'somefile.csv' partition by HOUR;");
+                Assert.fail();
+            } catch (SqlException e) {
+                assertEquals("[27] 'with' expected", e.getMessage());
+            }
+        });
     }
 
     @Test
