@@ -871,8 +871,6 @@ public class TableReader implements Closeable, SymbolTableSource {
                     LOG.info()
                             .$("open partition ").$(path)
                             .$(" [rowCount=").$(partitionSize)
-                            .$(", partitionNameTxn=").$(partitionNameTxn)
-                            .$(", transientRowCount=").$(txFile.getTransientRowCount())
                             .$(", partitionIndex=").$(partitionIndex)
                             .$(", partitionCount=").$(partitionCount)
                             .I$();
