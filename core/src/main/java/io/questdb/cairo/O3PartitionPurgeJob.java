@@ -55,18 +55,23 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
 
     public O3PartitionPurgeJob(MessageBus messageBus, DatabaseSnapshotAgent snapshotAgent, int workerCount) {
         super(messageBus.getO3PurgeDiscoveryQueue(), messageBus.getO3PurgeDiscoverySubSeq());
-        this.snapshotAgent = snapshotAgent;
-        this.configuration = messageBus.getConfiguration();
-        this.fileNameSinks = new Utf8StringSink[workerCount];
-        this.partitionList = new ObjList<>(workerCount);
-        this.txnScoreboards = new ObjList<>(workerCount);
-        this.txnReaders = new ObjList<>(workerCount);
+        try {
+            this.snapshotAgent = snapshotAgent;
+            this.configuration = messageBus.getConfiguration();
+            this.fileNameSinks = new Utf8StringSink[workerCount];
+            this.partitionList = new ObjList<>(workerCount);
+            this.txnScoreboards = new ObjList<>(workerCount);
+            this.txnReaders = new ObjList<>(workerCount);
 
-        for (int i = 0; i < workerCount; i++) {
-            fileNameSinks[i] = new Utf8StringSink();
-            partitionList.add(new DirectLongList(configuration.getPartitionPurgeListCapacity() * 2L, MemoryTag.NATIVE_O3));
-            txnScoreboards.add(new TxnScoreboard(configuration.getFilesFacade(), configuration.getTxnScoreboardEntryCount()));
-            txnReaders.add(new TxReader(configuration.getFilesFacade()));
+            for (int i = 0; i < workerCount; i++) {
+                fileNameSinks[i] = new Utf8StringSink();
+                partitionList.add(new DirectLongList(configuration.getPartitionPurgeListCapacity() * 2L, MemoryTag.NATIVE_O3));
+                txnScoreboards.add(new TxnScoreboard(configuration.getFilesFacade(), configuration.getTxnScoreboardEntryCount()));
+                txnReaders.add(new TxReader(configuration.getFilesFacade()));
+            }
+        } catch (Throwable th) {
+            close();
+            throw th;
         }
     }
 
