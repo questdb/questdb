@@ -737,7 +737,6 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
     @Test
     public void testDropLastPartitionWithReaders() throws Exception {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
-
                     final String tableName = testName.getMethodName();
                     createTableX(tableName,
                             TableHeader +

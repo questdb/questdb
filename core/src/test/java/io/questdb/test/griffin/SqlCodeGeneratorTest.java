@@ -336,32 +336,32 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testBug484() throws Exception {
         TestMatchFunctionFactory.clear();
-
-        assertQuery(
-                "sym\n" +
-                        "cc\n" +
-                        "cc\n" +
-                        "cc\n" +
-                        "cc\n" +
-                        "cc\n" +
-                        "cc\n" +
-                        "cc\n" +
-                        "cc\n" +
-                        "cc\n" +
-                        "cc\n" +
-                        "cc\n" +
-                        "cc\n" +
-                        "cc\n" +
-                        "cc\n" +
-                        "cc\n",
-                "select * from x2 where sym in (select distinct sym from x2 where sym in (select distinct sym from x2 where sym = 'cc')) and test_match()",
-                "create table x2 as (select rnd_symbol('aa','bb','cc') sym from long_sequence(50))",
-                null
-        );
-
-        // also good numbers, extra top calls are due to symbol column API check
-        // tables without symbol columns will skip this check
-        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
+        assertMemoryLeak(() -> {
+            assertQuery(
+                    "sym\n" +
+                            "cc\n" +
+                            "cc\n" +
+                            "cc\n" +
+                            "cc\n" +
+                            "cc\n" +
+                            "cc\n" +
+                            "cc\n" +
+                            "cc\n" +
+                            "cc\n" +
+                            "cc\n" +
+                            "cc\n" +
+                            "cc\n" +
+                            "cc\n" +
+                            "cc\n" +
+                            "cc\n",
+                    "select * from x2 where sym in (select distinct sym from x2 where sym in (select distinct sym from x2 where sym = 'cc')) and test_match()",
+                    "create table x2 as (select rnd_symbol('aa','bb','cc') sym from long_sequence(50))",
+                    null
+            );
+            // also good numbers, extra top calls are due to symbol column API check
+            // tables without symbol columns will skip this check
+            Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
+        });
     }
 
     @Test
