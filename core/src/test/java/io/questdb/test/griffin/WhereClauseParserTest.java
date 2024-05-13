@@ -2375,7 +2375,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                         "timestamp > '2021-01'::varchar",
                         "timestamp < '2022-04'::varchar"
                 },
-                "[1648022400000000,1648202400000000]"
+                "[1648022400000000,1648166399999999]"
         );
 
         andShuffleExpressionsTest(
@@ -2387,7 +2387,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                         "timestamp < '2022-04'::varchar",
                         "timestamp NOT BETWEEN '2022-03-23T08:00:00.000000Z'::varchar AND '2022-03-25T10:00:00.000000Z'::varchar"
                 },
-                "[1648022400000000,1648202400000000]"
+                "[]"
         );
     }
 
