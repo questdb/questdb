@@ -59,6 +59,11 @@ public class InStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
+    public void testWithNulls() throws SqlException {
+        call("xy", "xy", null).andAssert(true);
+    }
+
+    @Test
     public void testZeroArgs() {
         try {
             call("xx").andAssert(false);
