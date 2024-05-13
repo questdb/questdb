@@ -1511,10 +1511,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     TableToken tableToken = executionContext.getTableToken(updateQueryModel.getTableName());
                     try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken)) {
                         final UpdateOperation updateOperation = generateUpdate(updateQueryModel, executionContext, metadata);
-                        //updateOperation.setUpdateSql(query);
                         compiledQuery.ofUpdate(updateOperation);
                     }
-                    //update is delayed until operation execution (for non-wal tables) or pushed to wal job completely
+                    // update is delayed until operation execution (for non-wal tables) or pushed to wal job completely
                     break;
                 case ExecutionModel.EXPLAIN:
                     queryId = queryRegistry.register(query, executionContext);

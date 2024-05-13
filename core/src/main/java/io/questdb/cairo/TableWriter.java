@@ -4275,8 +4275,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             Misc.free(o3TimestampMemCpy);
             Misc.free(ownMessageBus);
             if (tempMem16b != 0) {
-                Unsafe.free(tempMem16b, 16, MemoryTag.NATIVE_TABLE_WRITER);
-                tempMem16b = 0;
+                tempMem16b = Unsafe.free(tempMem16b, 16, MemoryTag.NATIVE_TABLE_WRITER);
             }
             LOG.info().$("closed '").utf8(tableToken.getTableName()).$('\'').$();
         }

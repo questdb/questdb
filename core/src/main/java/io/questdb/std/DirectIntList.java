@@ -82,8 +82,7 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
     @Override
     public void close() {
         if (address != 0) {
-            Unsafe.free(address, capacity, memoryTag);
-            address = 0;
+            address = Unsafe.free(address, capacity, memoryTag);
             limit = 0;
             pos = 0;
             capacity = 0;
