@@ -2907,88 +2907,102 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testCreateAsSelectInVolumeFail() throws Exception {
-        try {
-            assertQuery("geohash\n", "select geohash from geohash", "create table geohash (geohash geohash(1c)) in volume 'niza'", null, "insert into geohash " +
-                    "select cast(rnd_str('q','u','e') as char) from long_sequence(10)", "geohash\n" +
-                    "q\n" +
-                    "q\n" +
-                    "u\n" +
-                    "e\n" +
-                    "e\n" +
-                    "e\n" +
-                    "e\n" +
-                    "u\n" +
-                    "q\n" +
-                    "u\n", true, true, false);
-            Assert.fail();
-        } catch (SqlException e) {
-            if (Os.isWindows()) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "'in volume' is not supported on Windows");
-            } else {
-                TestUtils.assertContains(e.getFlyweightMessage(), "volume alias is not allowed [alias=niza]");
+        assertMemoryLeak(() -> {
+            try {
+                assertQuery(
+                        "geohash\n",
+                        "select geohash from geohash",
+                        "create table geohash (geohash geohash(1c)) in volume 'niza'",
+                        null,
+                        "insert into geohash " +
+                                "select cast(rnd_str('q','u','e') as char) from long_sequence(10)",
+                        "geohash\n" +
+                                "q\n" +
+                                "q\n" +
+                                "u\n" +
+                                "e\n" +
+                                "e\n" +
+                                "e\n" +
+                                "e\n" +
+                                "u\n" +
+                                "q\n" +
+                                "u\n",
+                        true,
+                        true,
+                        false
+                );
+                Assert.fail();
+            } catch (SqlException e) {
+                if (Os.isWindows()) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "'in volume' is not supported on Windows");
+                } else {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "volume alias is not allowed [alias=niza]");
+                }
             }
-        }
+        });
     }
 
     @Test
     public void testCreateAsSelectInVolumeNotAllowedAsItExistsAndCannotSoftLinkAndRemoveDir() throws Exception {
         Assume.assumeFalse(Os.isWindows()); // soft links not supported in windows
-        File volume = temp.newFolder("other_path");
-        String volumeAlias = "pera";
-        String volumePath = volume.getAbsolutePath();
-        String tableName = "geohash";
-        String dirName = TableUtils.getTableDir(configuration.mangleTableDirNames(), tableName, 1, false);
-        String target = volumePath + Files.SEPARATOR + dirName;
-        AbstractCairoTest.ff = new TestFilesFacadeImpl() {
-            @Override
-            public boolean isDirOrSoftLinkDir(LPSZ path) {
-                if (Utf8s.equalsAscii(target, path)) {
+        assertMemoryLeak(() -> {
+            File volume = temp.newFolder("other_path");
+            String volumeAlias = "pera";
+            String volumePath = volume.getAbsolutePath();
+            String tableName = "geohash";
+            String dirName = TableUtils.getTableDir(configuration.mangleTableDirNames(), tableName, 1, false);
+            String target = volumePath + Files.SEPARATOR + dirName;
+            AbstractCairoTest.ff = new TestFilesFacadeImpl() {
+                @Override
+                public boolean isDirOrSoftLinkDir(LPSZ path) {
+                    if (Utf8s.equalsAscii(target, path)) {
+                        return false;
+                    }
+                    return super.exists(path);
+                }
+
+                @Override
+                public boolean rmdir(Path name, boolean lazy) {
+                    Assert.assertEquals(target + Files.SEPARATOR, name.toString());
                     return false;
                 }
-                return super.exists(path);
-            }
 
-            @Override
-            public boolean rmdir(Path name, boolean lazy) {
-                Assert.assertEquals(target + Files.SEPARATOR, name.toString());
-                return false;
+                @Override
+                public int softLink(LPSZ src, LPSZ softLink) {
+                    Assert.assertEquals(target, src.toString());
+                    Assert.assertEquals(root + Files.SEPARATOR + dirName, softLink.toString());
+                    return -1;
+                }
+            };
+            try {
+                configuration.getVolumeDefinitions().of(volumeAlias + "->" + volumePath, path, root);
+                assertQuery("geohash\n", "select geohash from " + tableName, "create table " + tableName + " (geohash geohash(1c)) in volume '" + volumeAlias + "'", null, "insert into " + tableName +
+                        " select cast(rnd_str('q','u','e') as char) from long_sequence(10)", "geohash\n" +
+                        "q\n" +
+                        "q\n" +
+                        "u\n" +
+                        "e\n" +
+                        "e\n" +
+                        "e\n" +
+                        "e\n" +
+                        "u\n" +
+                        "q\n" +
+                        "u\n", true, true, false);
+                Assert.fail();
+            } catch (SqlException e) {
+                if (Os.isWindows()) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "'in volume' is not supported on Windows");
+                } else {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "Could not create table, could not create soft link [src=" + target + ", tableDir=" + dirName + ']');
+                }
+            } finally {
+                File table = new File(target);
+                Assert.assertTrue(table.exists());
+                Assert.assertTrue(table.isDirectory());
+                Assert.assertTrue(FilesFacadeImpl.INSTANCE.rmdir(path.of(target).slash$()));
+                Assert.assertTrue(volume.delete());
             }
-
-            @Override
-            public int softLink(LPSZ src, LPSZ softLink) {
-                Assert.assertEquals(target, src.toString());
-                Assert.assertEquals(root + Files.SEPARATOR + dirName, softLink.toString());
-                return -1;
-            }
-        };
-        try {
-            configuration.getVolumeDefinitions().of(volumeAlias + "->" + volumePath, path, root);
-            assertQuery("geohash\n", "select geohash from " + tableName, "create table " + tableName + " (geohash geohash(1c)) in volume '" + volumeAlias + "'", null, "insert into " + tableName +
-                    " select cast(rnd_str('q','u','e') as char) from long_sequence(10)", "geohash\n" +
-                    "q\n" +
-                    "q\n" +
-                    "u\n" +
-                    "e\n" +
-                    "e\n" +
-                    "e\n" +
-                    "e\n" +
-                    "u\n" +
-                    "q\n" +
-                    "u\n", true, true, false);
-            Assert.fail();
-        } catch (SqlException e) {
-            if (Os.isWindows()) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "'in volume' is not supported on Windows");
-            } else {
-                TestUtils.assertContains(e.getFlyweightMessage(), "Could not create table, could not create soft link [src=" + target + ", tableDir=" + dirName + ']');
-            }
-        } finally {
-            File table = new File(target);
-            Assert.assertTrue(table.exists());
-            Assert.assertTrue(table.isDirectory());
-            Assert.assertTrue(FilesFacadeImpl.INSTANCE.rmdir(path.of(target).slash$()));
-            Assert.assertTrue(volume.delete());
-        }
+        });
     }
 
     @Test
@@ -2996,31 +3010,33 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         File volume = temp.newFolder("other_folder");
         String volumeAlias = "manzana";
         String volumePath = volume.getAbsolutePath();
-        try {
-            configuration.getVolumeDefinitions().of(volumeAlias + "->" + volumePath, path, root);
-            Assert.assertTrue(volume.delete());
-            assertQuery("geohash\n", "select geohash from geohash", "create table geohash (geohash geohash(1c)) in volume '" + volumeAlias + "'", null, "insert into geohash " +
-                    "select cast(rnd_str('q','u','e') as char) from long_sequence(10)", "geohash\n" +
-                    "q\n" +
-                    "q\n" +
-                    "u\n" +
-                    "e\n" +
-                    "e\n" +
-                    "e\n" +
-                    "e\n" +
-                    "u\n" +
-                    "q\n" +
-                    "u\n", true, true, false);
-            Assert.fail();
-        } catch (SqlException | CairoException e) {
-            if (Os.isWindows()) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "'in volume' is not supported on Windows");
-            } else {
-                TestUtils.assertContains(e.getFlyweightMessage(), "not a valid path for volume [alias=" + volumeAlias + ", path=" + volumePath + ']');
+        assertMemoryLeak(() -> {
+            try {
+                configuration.getVolumeDefinitions().of(volumeAlias + "->" + volumePath, path, root);
+                Assert.assertTrue(volume.delete());
+                assertQuery("geohash\n", "select geohash from geohash", "create table geohash (geohash geohash(1c)) in volume '" + volumeAlias + "'", null, "insert into geohash " +
+                        "select cast(rnd_str('q','u','e') as char) from long_sequence(10)", "geohash\n" +
+                        "q\n" +
+                        "q\n" +
+                        "u\n" +
+                        "e\n" +
+                        "e\n" +
+                        "e\n" +
+                        "e\n" +
+                        "u\n" +
+                        "q\n" +
+                        "u\n", true, true, false);
+                Assert.fail();
+            } catch (SqlException | CairoException e) {
+                if (Os.isWindows()) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "'in volume' is not supported on Windows");
+                } else {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "not a valid path for volume [alias=" + volumeAlias + ", path=" + volumePath + ']');
+                }
+            } finally {
+                Assert.assertFalse(volume.delete());
             }
-        } finally {
-            Assert.assertFalse(volume.delete());
-        }
+        });
     }
 
     @Test
@@ -3923,20 +3939,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testInsertAsSelectColumnListAndNoTimestamp() throws Exception {
-        try {
-            testInsertAsSelect(
-                    "",
-                    "create table x (a INT, n TIMESTAMP, o BYTE, p BINARY) timestamp(n) partition by DAY",
-                    "insert into x (a) " +
-                            "select * from (select" +
-                            " rnd_int()" +
-                            " from long_sequence(5))",
-                    "select * from x"
-            );
-            Assert.fail();
-        } catch (SqlException ex) {
-            TestUtils.assertContains(ex.getFlyweightMessage(), "select clause must provide timestamp column");
-        }
+        assertMemoryLeak(() -> {
+            try {
+                testInsertAsSelect(
+                        "",
+                        "create table x (a INT, n TIMESTAMP, o BYTE, p BINARY) timestamp(n) partition by DAY",
+                        "insert into x (a) " +
+                                "select * from (select" +
+                                " rnd_int()" +
+                                " from long_sequence(5))",
+                        "select * from x"
+                );
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "select clause must provide timestamp column");
+            }
+        });
     }
 
     @Test
@@ -4018,21 +4036,23 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testInsertAsSelectColumnListAndTimestampOfWrongType() throws Exception {
-        try {
-            testInsertAsSelect(
-                    "",
-                    "create table x (a INT, n TIMESTAMP, o BYTE, p BINARY) timestamp(n)",
-                    "insert into x (a, n) " +
-                            "select * from (select" +
-                            " rnd_int(), " +
-                            "rnd_int() " +
-                            " from long_sequence(5))",
-                    "select * from x"
-            );
-            Assert.fail();
-        } catch (SqlException ex) {
-            TestUtils.assertContains(ex.getFlyweightMessage(), "expected timestamp column but type is INT");
-        }
+        assertMemoryLeak(() -> {
+            try {
+                testInsertAsSelect(
+                        "",
+                        "create table x (a INT, n TIMESTAMP, o BYTE, p BINARY) timestamp(n)",
+                        "insert into x (a, n) " +
+                                "select * from (select" +
+                                " rnd_int(), " +
+                                "rnd_int() " +
+                                " from long_sequence(5))",
+                        "select * from x"
+                );
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "expected timestamp column but type is INT");
+            }
+        });
     }
 
     @Test
@@ -5622,8 +5642,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSelectConcurrentDDL() throws Exception {
-
+    public void testSelectConcurrentDdl() throws Exception {
         // On Windows CI this test can fail with Metadata read timeout with small timeout.
         Overrides overrides = node1.getConfigurationOverrides();
         overrides.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 30000);
