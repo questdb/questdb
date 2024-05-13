@@ -1095,7 +1095,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         final int functionType = ColumnType.tagOf(function.getType());
         switch (functionType) {
             case ColumnType.BOOLEAN:
-                ((BooleanBindVariable) function).value = SqlKeywords.isTrueKeyword(value);
+                ((BooleanBindVariable) function).value = value != null && SqlKeywords.isTrueKeyword(value);
                 break;
             case ColumnType.BYTE:
                 ((ByteBindVariable) function).value = SqlUtil.implicitCastStrAsByte(value);

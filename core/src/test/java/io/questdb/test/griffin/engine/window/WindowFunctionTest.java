@@ -3046,9 +3046,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                         "    FilterOnValues\n" +
                                         "        Table-order scan\n" +
                                         "            Index forward scan on: sym deferred: true\n" +
-                                        "              filter: sym='A'\n" +
-                                        "            Index forward scan on: sym deferred: true\n" +
                                         "              filter: sym='B'\n" +
+                                        "            Index forward scan on: sym deferred: true\n" +
+                                        "              filter: sym='A'\n" +
                                         "        Frame forward scan on: tab\n"
                                 :
                                 "CachedWindow\n" +
@@ -3056,9 +3056,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                         "    FilterOnValues symbolOrder: desc\n" +
                                         "        Cursor-order scan\n" +
                                         "            Index forward scan on: sym deferred: true\n" +
-                                        "              filter: sym='A'\n" +
-                                        "            Index forward scan on: sym deferred: true\n" +
                                         "              filter: sym='B'\n" +
+                                        "            Index forward scan on: sym deferred: true\n" +
+                                        "              filter: sym='A'\n" +
                                         "        Frame forward scan on: tab\n"
 
                 );

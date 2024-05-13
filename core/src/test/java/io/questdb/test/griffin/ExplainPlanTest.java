@@ -2023,9 +2023,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "    FilterOnValues symbolOrder: desc\n" +
                 "        Cursor-order scan\n" +
                 "            Index forward scan on: referencePriceType\n" +
-                "              filter: referencePriceType=1 and not (referencePriceType in [TYPE1])\n" +
-                "            Index forward scan on: referencePriceType\n" +
                 "              filter: referencePriceType=3 and not (referencePriceType in [TYPE1])\n" +
+                "            Index forward scan on: referencePriceType\n" +
+                "              filter: referencePriceType=1 and not (referencePriceType in [TYPE1])\n" +
                 "        Frame forward scan on: reference_prices\n";
 
         assertPlan(query1, expectedPlan);
@@ -7346,9 +7346,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "    FilterOnValues symbolOrder: desc\n" +
                     "        Cursor-order scan\n" +
                     "            Index forward scan on: s deferred: true\n" +
-                    "              filter: s=:s1::string\n" +
-                    "            Index forward scan on: s deferred: true\n" +
                     "              filter: s=:s2::string\n" +
+                    "            Index forward scan on: s deferred: true\n" +
+                    "              filter: s=:s1::string\n" +
                     "        Interval forward scan on: a\n" +
                     "          intervals: [(\"1970-01-01T00:00:00.000000Z\",\"1970-01-01T23:59:59.999999Z\")]\n";
 
@@ -7377,10 +7377,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    FilterOnValues symbolOrder: desc\n" +
                         "        Cursor-order scan\n" + //actual order is S2, S1
                         "            Index forward scan on: s deferred: true\n" +
-                        "              symbolFilter: s='S1'\n" +
+                        "              symbolFilter: s='S2'\n" +
                         "              filter: length(s)=2\n" +
                         "            Index forward scan on: s deferred: true\n" +
-                        "              symbolFilter: s='S2'\n" +
+                        "              symbolFilter: s='S1'\n" +
                         "              filter: length(s)=2\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -7549,6 +7549,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "FilterOnExcludedValues symbolOrder: asc\n" +
                             "  symbolFilter: s not in ['a']\n" +
                             "    Cursor-order scan\n" +
+                            "        Index forward scan on: s\n" +
+                            "          filter: s=0\n" +
+                            "        Index forward scan on: s\n" +
+                            "          filter: s=3\n" +
+                            "        Index forward scan on: s\n" +
+                            "          filter: s=2\n" +
                             "    Frame forward scan on: a\n"
             );
 
@@ -7563,6 +7569,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "FilterOnExcludedValues symbolOrder: desc\n" +
                             "  symbolFilter: s not in ['a']\n" +
                             "    Cursor-order scan\n" +
+                            "        Index forward scan on: s\n" +
+                            "          filter: s=2\n" +
+                            "        Index forward scan on: s\n" +
+                            "          filter: s=3\n" +
+                            "        Index forward scan on: s\n" +
+                            "          filter: s=0\n" +
                             "    Frame forward scan on: a\n"
             );
 
@@ -7577,6 +7589,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "FilterOnExcludedValues symbolOrder: desc\n" +
                             "  symbolFilter: s not in [null]\n" +
                             "    Cursor-order scan\n" +
+                            "        Index forward scan on: s\n" +
+                            "          filter: s=2\n" +
+                            "        Index forward scan on: s\n" +
+                            "          filter: s=3\n" +
+                            "        Index forward scan on: s\n" +
+                            "          filter: s=1\n" +
                             "    Frame forward scan on: a\n"
             );
 
@@ -7610,9 +7628,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    FilterOnValues\n" +
                         "        Table-order scan\n" +
                         "            Index forward scan on: s deferred: true\n" +
-                        "              filter: s='S1'\n" +
-                        "            Index forward scan on: s deferred: true\n" +
                         "              filter: s='S2'\n" +
+                        "            Index forward scan on: s deferred: true\n" +
+                        "              filter: s='S1'\n" +
                         "        Frame forward scan on: a\n"
         );
     }
@@ -7635,9 +7653,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    FilterOnValues\n" +
                             "        Table-order scan\n" +
                             "            Index forward scan on: s\n" +
-                            "              filter: s=1 and length(s)=2\n" +
-                            "            Index forward scan on: s\n" +
                             "              filter: s=2 and length(s)=2\n" +
+                            "            Index forward scan on: s\n" +
+                            "              filter: s=1 and length(s)=2\n" +
                             "        Frame forward scan on: a\n"
             );
         });
@@ -7770,6 +7788,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    FilterOnExcludedValues\n" +
                             "      symbolFilter: s1 not in ['S1','S2']\n" +
                             "        Table-order scan\n" +
+                            "            Index forward scan on: s1\n" +
+                            "              filter: s1=1\n" +
+                            "            Index forward scan on: s1\n" +
+                            "              filter: s1=2\n" +
+                            "            Index forward scan on: s1\n" +
+                            "              filter: s1=3\n" +
                             "        Frame forward scan on: a\n"
             );
 
@@ -10414,9 +10438,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    FilterOnValues symbolOrder: desc\n" +
                             "        Cursor-order scan\n" +
                             "            Index forward scan on: s deferred: true\n" +
-                            "              filter: s=:s1::string\n" +
-                            "            Index forward scan on: s deferred: true\n" +
                             "              filter: s=:s2::string\n" +
+                            "            Index forward scan on: s deferred: true\n" +
+                            "              filter: s=:s1::string\n" +
                             "        Frame forward scan on: a\n"
             );
 
@@ -10467,9 +10491,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    FilterOnValues symbolOrder: desc\n" +
                             "        Cursor-order scan\n" +
                             "            Index forward scan on: s deferred: true\n" +
-                            "              filter: s=:s1::string\n" +
-                            "            Index forward scan on: s deferred: true\n" +
                             "              filter: s=:s2::string\n" +
+                            "            Index forward scan on: s deferred: true\n" +
+                            "              filter: s=:s1::string\n" +
                             "        Interval forward scan on: a\n" +
                             "          intervals: [(\"1970-01-01T00:00:00.000000Z\",\"1970-01-01T23:59:59.999999Z\")]\n"
             );
@@ -10519,9 +10543,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    FilterOnValues\n" +
                             "        Table-order scan\n" +
                             "            Index forward scan on: s deferred: true\n" +
-                            "              filter: s=:s2::string\n" +
-                            "            Index forward scan on: s deferred: true\n" +
                             "              filter: s=:s1::string\n" +
+                            "            Index forward scan on: s deferred: true\n" +
+                            "              filter: s=:s2::string\n" +
                             "        Frame forward scan on: a\n"
             );
             assertQuery("s\tts\n" +

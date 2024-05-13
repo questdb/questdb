@@ -35,6 +35,8 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.*;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8StringSink;
@@ -2361,6 +2363,9 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                 },
                 "[]"
         );
+
+        System.out.println(Timestamps.toString(1648202400000000L));
+        System.out.println(Timestamps.toString(1648166399999999L));
 
         andShuffleExpressionsTest(
                 new String[]{
