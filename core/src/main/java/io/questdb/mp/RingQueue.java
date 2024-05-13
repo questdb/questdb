@@ -31,8 +31,8 @@ import java.io.Closeable;
 public class RingQueue<T> implements Closeable {
     private final T[] buf;
     private final int mask;
-    private final long memory;
     private final int memoryTag;
+    private long memory;
     private long memorySize;
 
     @SuppressWarnings("unchecked")
@@ -77,10 +77,10 @@ public class RingQueue<T> implements Closeable {
     @Override
     public void close() {
         for (int i = 0, n = buf.length; i < n; i++) {
-            Misc.freeIfCloseable(buf[i]);
+            buf[i] = Misc.freeIfCloseable(buf[i]);
         }
         if (memory != 0) {
-            Unsafe.free(memory, memorySize, memoryTag);
+            memory = Unsafe.free(memory, memorySize, memoryTag);
             this.memorySize = 0;
         }
     }
