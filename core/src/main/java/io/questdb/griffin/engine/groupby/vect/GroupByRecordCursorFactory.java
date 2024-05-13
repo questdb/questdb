@@ -231,6 +231,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         for (int i = 0, n = pRosti.length; i < n; i++) {
             if (pRosti[i] != 0) {
                 raf.free(pRosti[i]);
+                pRosti[i] = 0;
             }
         }
     }

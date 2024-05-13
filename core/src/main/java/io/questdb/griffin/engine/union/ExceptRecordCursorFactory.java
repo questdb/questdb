@@ -62,10 +62,11 @@ public class ExceptRecordCursorFactory extends AbstractSetRecordCursorFactory {
                 assert castFunctionsA != null && castFunctionsB != null;
                 cursor = new ExceptCastRecordCursor(mapA, mapB, recordSink, castFunctionsA, castFunctionsB);
             }
-        } catch (Throwable t) {
+        } catch (Throwable th) {
             Misc.free(mapA);
             Misc.free(mapB);
-            throw t;
+            close();
+            throw th;
         }
     }
 

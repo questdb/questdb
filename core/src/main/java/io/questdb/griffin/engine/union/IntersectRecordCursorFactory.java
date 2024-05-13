@@ -65,6 +65,7 @@ public class IntersectRecordCursorFactory extends AbstractSetRecordCursorFactory
         } catch (Throwable t) {
             Misc.free(mapA);
             Misc.free(mapB);
+            close();
             throw t;
         }
     }
