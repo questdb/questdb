@@ -1660,7 +1660,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return rowCount;
     }
 
-    //returns number of copied rows
+    // returns number of copied rows
     private long copyOrderedBatchedStrTimestamp(
             TableWriterAPI writer,
             RecordCursor cursor,
