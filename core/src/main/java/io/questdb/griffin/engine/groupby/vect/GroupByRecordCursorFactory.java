@@ -102,6 +102,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 if (ptr == 0) {
                     for (int k = i - 1; k > -1; k--) {
                         raf.free(pRosti[k]);
+                        pRosti[k] = 0;
                     }
                     throw new OutOfMemoryError();
                 }
