@@ -79,6 +79,25 @@ public class SqlParserTest extends AbstractSqlParserTest {
         );
     }
 
+    /*
+        Tests bug in 'NOT' parsing (see https://github.com/questdb/questdb/pull/4441)
+        Previously, "NOT" part in "NOT [SET OPERATION]" construct was parsed slightly differently from the regular "NOT" operator meaning that the compiled output varied depending on whether 'NOT' was capitalized.
+        This test checks that regardless of the capitalization the query model uses an internal representation of the token and doesn't take it directly from the input query (note that expected model representation always has "not" in lowercase)
+     */
+    @Test
+    public void testNotInTimestamp() throws Exception {
+        assertQuery(
+                "select-choose timestamp from (select [timestamp] from trades where not(timestamp in '2015-01-02'))",
+                "SELECT * FROM trades WHERE timestamp NOT IN '2015-01-02'",
+                modelOf("trades").col("timestamp", ColumnType.TIMESTAMP)
+        );
+        assertQuery(
+                "select-choose timestamp from (select [timestamp] from trades where not(timestamp in '2015-01-02'))",
+                "select * from trades where timestamp not in '2015-01-02'",
+                modelOf("trades").col("timestamp", ColumnType.TIMESTAMP)
+        );
+    }
+
     @Test
     public void testBetweenWithNegativeBounds() throws Exception {
         assertQuery(
@@ -3070,6 +3089,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testInvalidGeohash() throws Exception {
+        assertSyntaxError(
+                "SELECT CAST(#d as geohash([))",
+                26,
+                "invalid GEOHASH size"
+        );
+    }
+
+    @Test
     public void testCreateTableWithGeoHash2() throws Exception {
         assertCreateTable(
                 "create atomic table x (gh GEOHASH(51b), t TIMESTAMP) timestamp(t) partition by DAY",
@@ -5249,6 +5277,27 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "dangling expression",
                 modelOf("a").col("x", ColumnType.INT),
                 modelOf("b").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testDanglingValues() throws Exception {
+        assertSyntaxError("SELECT TRUE TRUE", 12, "dangling expression");
+        assertSyntaxError("SELECT AND TRUE TRUE", 16, "dangling expression");
+        assertSyntaxError("SELECT NaN NULL", 11, "dangling expression");
+        assertSyntaxError("SELECT (1+1) TRUE", 13, "dangling expression");
+        assertSyntaxError("SELECT TRUE (1+1)", 12, "dangling expression");
+    }
+
+    @Test
+    public void testSetOperationNegation() throws Exception {
+        assertQuery(
+                "select-virtual not(-(1) + 2 * 3 between (2,3)) column from (long_sequence(1))",
+                "SELECT -1+2*3 not between 2 AND 3"
+        );
+        assertQuery(
+                "select-virtual not(-(1) + 2 * 3 in (2,3,4)) column from (long_sequence(1))",
+                "SELECT -1+2*3 not in (2, 3, 4)"
         );
     }
 
