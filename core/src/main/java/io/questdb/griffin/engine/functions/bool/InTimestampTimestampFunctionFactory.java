@@ -34,11 +34,15 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
+
+import static io.questdb.griffin.model.IntervalUtils.isInIntervals;
+import static io.questdb.griffin.model.IntervalUtils.parseAndApplyIntervalEx;
 
 public class InTimestampTimestampFunctionFactory implements FunctionFactory {
     public static long tryParseTimestamp(CharSequence seq, int position) throws SqlException {
@@ -94,7 +98,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         }
 
         if (allRuntimeConst) {
-            if (args.size() == 2) {
+            if (args.size() == 2 && args.get(1).getType() == ColumnType.UNDEFINED) {
                 // this is an odd case, we have something like this
                 //
                 // where ts in ?
@@ -102,7 +106,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                 // Type of the runtime constant may not be known upfront.
                 // When user passes string as the value we perform the interval lookup,
                 // otherwise it is discrete value
-                assert false;
+                return new InTimestampRuntimeConstIntervalFunction(args.getQuick(0), args.getQuick(1), argPositions.getQuick(1));
 
             }
             return new InTimestampManyRuntimeConstantsFunction(new ObjList<>(args));
@@ -282,4 +286,67 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             sink.val(args, 1);
         }
     }
+
+    public static class InTimestampRuntimeConstIntervalFunction extends NegatableBooleanFunction implements BinaryFunction {
+        private final LongList intervals = new LongList();
+        private final Function left;
+        private final Function intervalFunc;
+        private final int intervalFuncPos;
+
+        public InTimestampRuntimeConstIntervalFunction(Function left, Function intervalFunc, int intervalFuncPos) {
+            this.left = left;
+            this.intervalFunc = intervalFunc;
+            this.intervalFuncPos = intervalFuncPos;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            final long ts = left.getTimestamp(rec);
+            return ts == Numbers.LONG_NULL ? negated : negated != isInIntervals(intervals, ts);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            BinaryFunction.super.init(symbolTableSource, executionContext);
+            intervals.clear();
+            // This is a specific function, which accepts "in interval" as bind variable.
+            // For this reason only STRING and VARCHAR bind variables are supported. Other types,
+            // such as INT, LONG etc will require two or move values to represent the interval
+            switch (intervalFunc.getType()) {
+                case ColumnType.STRING:
+                case ColumnType.VARCHAR:
+                    parseAndApplyIntervalEx(intervalFunc.getStrA(null), intervals, 0);
+                    break;
+                default:
+                    throw SqlException
+                            .$(intervalFuncPos, "unsupported bind variable type [").put(ColumnType.nameOf(intervalFunc.getType()))
+                            .put("] expected one of [STRING or VARCHAR]");
+            }
+        }
+
+        @Override
+        public Function getLeft() {
+            return left;
+        }
+
+        @Override
+        public Function getRight() {
+            return intervalFunc;
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(left);
+            if (negated) {
+                sink.val(" not");
+            }
+            sink.val(" in ").val(intervalFunc);
+        }
+    }
+
 }

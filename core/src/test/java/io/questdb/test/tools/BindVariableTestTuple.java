@@ -24,18 +24,23 @@
 
 package io.questdb.test.tools;
 
-import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.griffin.SqlException;
-
 public class BindVariableTestTuple {
     private final String description;
     private final String expected;
     private final BindVariableTestSetter setter;
+    private final int errorPosition;
+    public static final int MUST_SUCCEED = -1;
 
     public BindVariableTestTuple(String description, String expected, BindVariableTestSetter setter) {
+        // failure is not expected when error position is -1
+        this(description, expected, setter, MUST_SUCCEED);
+    }
+
+    public BindVariableTestTuple(String description, String expected, BindVariableTestSetter setter, int errorPosition) {
         this.description = description;
         this.expected = expected;
         this.setter = setter;
+        this.errorPosition = errorPosition;
     }
 
     public BindVariableTestSetter getSetter() {
@@ -44,6 +49,10 @@ public class BindVariableTestTuple {
 
     public CharSequence getExpected() {
         return expected;
+    }
+
+    public int getErrorPosition() {
+        return errorPosition;
     }
 
     public String getDescription() {

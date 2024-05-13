@@ -144,8 +144,10 @@ public class BindVariableServiceImpl implements BindVariableService {
                 setStr(index);
                 return ColumnType.STRING;
             case ColumnType.VAR_ARG:
-                setStr(index);
-                return ColumnType.STRING;
+                // we cannot define bind variable as vararg, it is
+                // a code for method signature and is not a "type"
+                assert false;
+                return ColumnType.UNDEFINED;
             case ColumnType.LONG256:
                 setLong256(index);
                 return type;

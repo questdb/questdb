@@ -31,6 +31,7 @@ import io.questdb.test.tools.BindVariableTestTuple;
 import org.junit.Test;
 
 public class InTimestampTimestampTest extends AbstractCairoTest {
+
     @Test
     public void testBindVarTypeChange() throws SqlException {
         ddl("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(100))");
@@ -62,14 +63,44 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
                     bindVariableService.setInt(2, 10_000);
                 }
         ));
+    }
 
-        assertSql("test where ts in ($1,$2,$3)", tuples);
+    @Test
+    public void testConstInterval() throws SqlException {
+        ddl("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(10000))");
 
-        assertSql("test where ts in $1", tuples);
-//
-//        assertSql("test where ts in '2004'", tuples);
-//
-//        assertSql("test where ts in (1000, 2000, '1970-01-01T00:00:00.007000Z')", tuples);
+        // baseline
+        assertSql(
+                "timestamp_floor\tcount\n" +
+                        "1970-01-01T00:00:02.000000Z\t1000\n",
+                "select timestamp_floor('1s', ts), count() from test where ts in '1970-01-01T00:00:02'"
+        );
 
+        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
+        tuples.add(new BindVariableTestTuple(
+                "2s",
+                "timestamp_floor\tcount\n" +
+                        "1970-01-01T00:00:02.000000Z\t1000\n",
+                bindVariableService -> bindVariableService.setStr(0, "1970-01-01T00:00:02")
+        ));
+
+        tuples.add(new BindVariableTestTuple(
+                "int interval",
+                "unsupported bind variable type [INT] expected one of [STRING or VARCHAR]",
+                bindVariableService -> bindVariableService.setInt(0, 10),
+                64
+        ));
+
+        tuples.add(new BindVariableTestTuple(
+                "2s",
+                "timestamp_floor\tcount\n" +
+                        "1970-01-01T00:00:03.000000Z\t1000\n",
+                bindVariableService -> bindVariableService.setStr(0, "1970-01-01T00:00:03")
+        ));
+
+        assertSql(
+                "select timestamp_floor('1s', ts), count() from test where ts in $1",
+                tuples
+        );
     }
 }

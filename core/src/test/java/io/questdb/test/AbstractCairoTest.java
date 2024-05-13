@@ -1706,12 +1706,16 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
                     final BindVariableTestTuple tuple = tuples.getQuick(i);
                     final BindVariableTestSetter setter = tuple.getSetter();
+                    final int errorPosition = tuple.getErrorPosition();
                     final BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
                     bindVariableService.clear();
 
                     setter.assignBindVariables(sqlExecutionContext.getBindVariableService());
 
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        if (errorPosition != BindVariableTestTuple.MUST_SUCCEED) {
+                            Assert.fail(tuple.getDescription());
+                        }
                         RecordMetadata metadata = factory.getMetadata();
                         ((MutableUtf16Sink) sink).clear();
                         CursorPrinter.println(metadata, sink);
@@ -1720,8 +1724,17 @@ public abstract class AbstractCairoTest extends AbstractTest {
                         while (cursor.hasNext()) {
                             TestUtils.println(record, metadata, sink);
                         }
+                    } catch (SqlException e) {
+                        if (errorPosition != BindVariableTestTuple.MUST_SUCCEED) {
+                            TestUtils.assertContains(tuple.getExpected(), e.getFlyweightMessage());
+                            Assert.assertEquals(errorPosition, e.getPosition());
+                        } else {
+                            throw e;
+                        }
                     }
-                    TestUtils.assertEquals(tuple.getDescription(), tuple.getExpected(), sink);
+                    if (errorPosition == BindVariableTestTuple.MUST_SUCCEED) {
+                        TestUtils.assertEquals(tuple.getDescription(), tuple.getExpected(), sink);
+                    }
                 }
             }
         }
