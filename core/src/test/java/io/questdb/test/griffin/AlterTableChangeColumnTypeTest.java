@@ -301,6 +301,27 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     "select v from z",
                     "select v from x"
             );
+
+            ddl("alter table x add column sym_top symbol", sqlExecutionContext);
+            ddl("alter table z add column sym_top symbol", sqlExecutionContext);
+            insert("insert into x(sym_top, timestamp) select rnd_symbol('a', 'b', 'c', null), timestamp_sequence(now(), 1) from long_sequence(123)", sqlExecutionContext);
+            drainWalQueue();
+            insert("insert into z(sym_top) select sym_top from x limit -123", sqlExecutionContext);
+            drainWalQueue();
+
+            assertSqlCursorsConvertedStrings(
+                    "select sym_top from z",
+                    "select sym_top from x"
+            );
+
+            ddl("alter table x alter column sym_top type varchar", sqlExecutionContext);
+            ddl("alter table z alter column sym_top type varchar", sqlExecutionContext);
+            drainWalQueue();
+
+            assertSqlCursorsConvertedStrings(
+                    "select sym_top from z",
+                    "select sym_top from x"
+            );
         });
     }
 

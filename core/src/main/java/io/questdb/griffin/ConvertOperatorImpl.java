@@ -45,8 +45,7 @@ import java.io.IOException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.ColumnType.isVarSize;
-import static io.questdb.cairo.TableUtils.dFile;
-import static io.questdb.cairo.TableUtils.iFile;
+import static io.questdb.cairo.TableUtils.*;
 
 public class ConvertOperatorImpl implements Closeable {
     private static final Log LOG = LogFactory.getLog(ConvertOperatorImpl.class);
@@ -217,12 +216,11 @@ public class ConvertOperatorImpl implements Closeable {
                             partitionUpdated++;
                         }
                         if (columnTop != tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1)) {
-                            if (tableWriter.getPartitionBy() != PartitionBy.NONE) {
-                                if (columnTop != -1) {
-                                    columnVersionWriter.upsertColumnTop(partitionTimestamp, columnIndex, columnTop);
-                                } else {
-                                    columnVersionWriter.removeColumnTop(partitionTimestamp, columnIndex);
-                                }
+                            long partTs = tableWriter.getPartitionBy() != PartitionBy.NONE ? partitionTimestamp : TxReader.DEFAULT_PARTITION_TIMESTAMP;
+                            if (columnTop != -1) {
+                                columnVersionWriter.upsertColumnTop(partTs, columnIndex, columnTop);
+                            } else {
+                                columnVersionWriter.removeColumnTop(partTs, columnIndex);
                             }
                         }
                     } catch (Throwable th) {
