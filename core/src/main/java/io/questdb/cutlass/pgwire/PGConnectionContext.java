@@ -556,18 +556,23 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     @Override
     public PGConnectionContext of(int fd, @NotNull IODispatcher<PGConnectionContext> dispatcher) {
-        super.of(fd, dispatcher);
-        sqlExecutionContext.with(fd);
-        if (recvBuffer == 0) {
-            this.recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
+        try {
+            super.of(fd, dispatcher);
+            sqlExecutionContext.with(fd);
+            if (recvBuffer == 0) {
+                this.recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
+            }
+            if (sendBuffer == 0) {
+                this.sendBuffer = Unsafe.malloc(sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
+                this.sendBufferPtr = sendBuffer;
+                this.sendBufferLimit = sendBuffer + sendBufferSize;
+            }
+            authenticator.init(socket, recvBuffer, recvBuffer + recvBufferSize, sendBuffer, sendBufferLimit);
+            return this;
+        } catch (Throwable t) {
+            close();
+            throw t;
         }
-        if (sendBuffer == 0) {
-            this.sendBuffer = Unsafe.malloc(sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
-            this.sendBufferPtr = sendBuffer;
-            this.sendBufferLimit = sendBuffer + sendBufferSize;
-        }
-        authenticator.init(socket, recvBuffer, recvBuffer + recvBufferSize, sendBuffer, sendBufferLimit);
-        return this;
     }
 
     public void setAuthenticator(Authenticator authenticator) {
