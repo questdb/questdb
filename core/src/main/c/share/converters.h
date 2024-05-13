@@ -27,6 +27,7 @@
 #include <cassert>
 #include <type_traits>
 #include <cmath>
+#include "jni.h"
 
 /**
  * ColumnType enum, matching the Java definitions.
@@ -83,7 +84,7 @@ enum class ConversionError {
 
 template <ColumnType C> struct EnumTypeMap
 {
-    using type = uint8_t;
+    using type = int8_t;
     static constexpr type null_value = 0;
     static constexpr bool has_null = false;
 };
