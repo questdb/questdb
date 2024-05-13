@@ -48,6 +48,7 @@ public class Worker extends Thread {
     private final AtomicReference<Lifecycle> lifecycle = new AtomicReference<>(Lifecycle.BORN);
     private final Log log;
     private final Metrics metrics;
+    private final long napThreshold;
     private final OnHaltAction onHaltAction;
     private final String poolName;
     private final Job.RunStatus runStatus = () -> lifecycle.get() == Lifecycle.HALTED;
@@ -65,6 +66,7 @@ public class Worker extends Thread {
             @Nullable OnHaltAction onHaltAction,
             boolean haltOnError,
             long yieldThreshold,
+            long napThreshold,
             long sleepThreshold,
             long sleepMs,
             Metrics metrics,
@@ -81,6 +83,7 @@ public class Worker extends Thread {
         this.haltOnError = haltOnError;
         this.criticalErrorLine = "0000-00-00T00:00:00.000000Z C Unhandled exception in worker " + getName();
         this.yieldThreshold = yieldThreshold;
+        this.napThreshold = napThreshold;
         this.sleepThreshold = sleepThreshold;
         this.sleepMs = sleepMs;
         this.metrics = metrics;
@@ -174,6 +177,8 @@ public class Worker extends Thread {
                     }
                     if (ticker > sleepThreshold) {
                         Os.sleep(sleepMs);
+                    } else if (ticker > napThreshold) {
+                        Os.sleep(1);
                     } else if (ticker > yieldThreshold) {
                         Os.pause();
                     }
