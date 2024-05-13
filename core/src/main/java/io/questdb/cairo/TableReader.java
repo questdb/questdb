@@ -138,7 +138,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 openPartitionInfo.setQuick(baseOffset, txFile.getPartitionTimestampByIndex(i));
                 openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_SIZE, -1L); // -1L means it is not open
                 openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_NAME_TXN, txFile.getPartitionNameTxn(i));
-                openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, txFile.getPartitionColumnVersion(i));
+                openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getVersion());
             }
             columnTops = new LongList(capacity / 2);
             columnTops.setPos(capacity / 2);
@@ -415,27 +415,26 @@ public class TableReader implements Closeable, SymbolTableSource {
                 // Refresh partition
                 final long newPartitionSize = txFile.getPartitionSize(txPartitionIndex);
                 final long txPartitionNameTxn = txFile.getPartitionNameTxn(partitionIndex);
-                final long txPartitionColumnVersion = txFile.getPartitionColumnVersion(partitionIndex);
                 final long openPartitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
                 final long openPartitionNameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);
                 final long openPartitionColumnVersion = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION);
 
                 if (!forceTruncate) {
-                    if (openPartitionNameTxn == txPartitionNameTxn && openPartitionColumnVersion == txPartitionColumnVersion) {
+                    if (openPartitionNameTxn == txPartitionNameTxn && openPartitionColumnVersion == columnVersionReader.getVersion()) {
                         if (openPartitionSize != newPartitionSize) {
                             if (openPartitionSize > -1L) {
-                                reloadPartition(partitionIndex, newPartitionSize, txPartitionNameTxn);
+                                reloadGrowPartition(partitionIndex, newPartitionSize, txPartitionNameTxn);
                                 openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, newPartitionSize);
                                 LOG.debug().$("updated partition size [partition=").$(openPartitionTimestamp).I$();
                             }
                             changed = true;
                         }
                     } else {
-                        reopenPartition(offset, partitionIndex, txPartitionNameTxn);
+                        prepareForLazyOpen(partitionIndex);
                         changed = true;
                     }
                 } else if (openPartitionSize > -1L && newPartitionSize > -1L) { // Don't force re-open if not yet opened
-                    reopenPartition(offset, partitionIndex, txPartitionNameTxn);
+                    prepareForLazyOpen(partitionIndex);
                 }
                 txPartitionIndex++;
                 partitionIndex++;
@@ -605,8 +604,8 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private void closePartitionColumnFile(int base, int columnIndex) {
         int index = getPrimaryColumnIndex(base, columnIndex);
-        Misc.free(columns.getAndSetQuick(index, NullMemoryMR.INSTANCE));
-        Misc.free(columns.getAndSetQuick(index + 1, NullMemoryMR.INSTANCE));
+        Misc.free(columns.get(index));
+        Misc.free(columns.get(index + 1));
         Misc.free(bitmapIndexes.getAndSetQuick(index, null));
         Misc.free(bitmapIndexes.getAndSetQuick(index + 1, null));
     }
@@ -881,7 +880,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), partitionSize);
                     openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, partitionSize);
                     openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, partitionNameTxn);
-                    openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, txFile.getPartitionColumnVersion(partitionIndex));
+                    openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getVersion());
                     if (!isReopen) {
                         openPartitionCount++;
                     }
@@ -948,6 +947,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         return path;
     }
 
+    private void prepareForLazyOpen(int partitionIndex) {
+        closePartition(partitionIndex);
+    }
+
     private void readTxnSlow(long deadline) {
         int count = 0;
 
@@ -1001,12 +1004,12 @@ public class TableReader implements Closeable, SymbolTableSource {
 
                         if (openPartitionNameTxn == txPartitionNameTxn) {
                             if (openPartitionSize != txPartitionSize) {
-                                reloadPartition(partitionIndex, txPartitionSize, txPartitionNameTxn);
+                                reloadGrowPartition(partitionIndex, txPartitionSize, txPartitionNameTxn);
                                 openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, txPartitionSize);
                                 LOG.debug().$("updated partition size [partition=").$(openPartitionInfo.getQuick(offset)).I$();
                             }
                         } else {
-                            openPartition0(partitionIndex);
+                            prepareForLazyOpen(partitionIndex);
                         }
                     }
                     partitionIndex++;
@@ -1198,7 +1201,7 @@ public class TableReader implements Closeable, SymbolTableSource {
      * @param partitionIndex index of partition
      * @param rowCount       number of rows in partition
      */
-    private void reloadPartition(int partitionIndex, long rowCount, long openPartitionNameTxn) {
+    private void reloadGrowPartition(int partitionIndex, long rowCount, long openPartitionNameTxn) {
         Path path = pathGenPartitioned(partitionIndex, openPartitionNameTxn);
         try {
             int symbolMapIndex = 0;
@@ -1206,7 +1209,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             for (int i = 0; i < columnCount; i++) {
                 final int index = getPrimaryColumnIndex(columnBase, i);
                 final MemoryMR mem1 = columns.getQuick(index);
-                if (mem1 instanceof NullMemoryMR) {
+                if (mem1 instanceof NullMemoryMR || !mem1.isOpen()) {
                     reloadColumnAt(
                             partitionIndex,
                             path,
@@ -1285,11 +1288,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         symbolMapReaders.setQuick(columnIndex, reader);
     }
 
-    private void reopenPartition(int offset, int partitionIndex, long txPartitionNameTxn) {
-        openPartition0(partitionIndex);
-        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, txPartitionNameTxn);
-    }
-
     private void reshuffleColumns(int columnCount, long pTransitionIndex) {
         LOG.debug().$("reshuffling columns file list [table=").utf8(tableToken.getTableName()).I$();
         final long pIndexBase = pTransitionIndex + 8;
@@ -1320,7 +1318,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                                 //    instance and the column from disk
                                 // 2. Column hasn't been altered, and we can skip to next column.
                                 MemoryMR col = columns.getQuick(getPrimaryColumnIndex(base, i));
-                                if (col instanceof NullMemoryMR) {
+                                if (col instanceof NullMemoryMR || !col.isOpen()) {
                                     reloadColumnAt(
                                             partitionIndex,
                                             path,

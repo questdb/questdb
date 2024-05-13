@@ -2294,7 +2294,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public void upsertColumnVersion(long partitionTimestamp, int columnIndex, long columnTop) {
         columnVersionWriter.upsert(partitionTimestamp, columnIndex, txWriter.txn, columnTop);
-        txWriter.updatePartitionColumnVersion(partitionTimestamp);
     }
 
     /**
@@ -7201,7 +7200,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                         txWriter.removeAttachedPartitions(sourcePartition);
                         columnVersionWriter.removePartition(sourcePartition);
-                        txWriter.updatePartitionColumnVersion(targetPartition);
                         partitionRemoveCandidates.add(sourcePartition, sourceNameTxn);
                         if (sourcePartition == minSplitPartitionTimestamp) {
                             minSplitPartitionTimestamp = getPartitionTimestampOrMax(partitionIndexLo + 1);
