@@ -262,7 +262,7 @@ public class SecurityTest extends AbstractCairoTest {
                     SqlCompiler compiler2 = engine.getSqlCompiler();
                     SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
             ) {
-                sqlExecutionContext.with(ReadOnlySecurityContext.INSTANCE, null);
+                sqlExecutionContext.with(ReadOnlySecurityContext.INSTANCE);
                 try {
                     compiler2.compile("backup table balances", sqlExecutionContext);
                     Assert.fail();

@@ -73,7 +73,6 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                 case ColumnType.STRING:
                 case ColumnType.SYMBOL:
                 case ColumnType.VARCHAR:
-                    break;
                 case ColumnType.UNDEFINED:
                     break;
                 default:

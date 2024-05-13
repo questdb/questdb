@@ -56,16 +56,16 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
 
-        readOnlyUserContext = new SqlExecutionContextImpl(engine, 1).with(new ReadOnlyUserContext(), null);
+        readOnlyUserContext = new SqlExecutionContextImpl(engine, 1).with(new ReadOnlyUserContext());
         readOnlyUserContext.with(new AtomicBooleanCircuitBreaker());
 
-        regularUserContext = new SqlExecutionContextImpl(engine, 1).with(new RegularUserContext(), null);
+        regularUserContext = new SqlExecutionContextImpl(engine, 1).with(new RegularUserContext());
         regularUserContext.with(new AtomicBooleanCircuitBreaker());
 
-        adminUserContext1 = new SqlExecutionContextImpl(engine, 1).with(new AdminContext(), null);
+        adminUserContext1 = new SqlExecutionContextImpl(engine, 1).with(new AdminContext());
         adminUserContext1.with(new AtomicBooleanCircuitBreaker());
 
-        adminUserContext2 = new SqlExecutionContextImpl(engine, 1).with(new AdminContext(), null);
+        adminUserContext2 = new SqlExecutionContextImpl(engine, 1).with(new AdminContext());
         adminUserContext2.with(new AtomicBooleanCircuitBreaker());
     }
 
@@ -92,7 +92,7 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
                 new Thread(() -> {
                     started.countDown();
                     try {
-                        SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(new ReadOnlyUserContext(), null);
+                        SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(new ReadOnlyUserContext());
                         context.with(new AtomicBooleanCircuitBreaker());
 
                         try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -134,9 +134,9 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
                         "select query, cancel_query(query_id) was_cancelled from query_activity() where query = '" + query + "'");
             } finally {
                 stopped.await();
-                if (error.get() != null) {
-                    throw error.get();
-                }
+            }
+            if (error.get() != null) {
+                throw error.get();
             }
         });
     }
@@ -210,9 +210,9 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
                 }
             } finally {
                 stopped.await();
-                if (error.get() != null) {
-                    throw error.get();
-                }
+            }
+            if (error.get() != null) {
+                throw error.get();
             }
         });
     }
@@ -276,10 +276,6 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
         @Override
         public void authorizeAdminAction() {
             throw CairoException.authorization().put("Access denied for ").put(getPrincipal()).put(" [built-in admin user required]");
-        }
-
-        @Override
-        public void authorizeCancelQuery() {
         }
 
         @Override

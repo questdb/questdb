@@ -69,6 +69,9 @@ public class InStrFunctionFactory implements FunctionFactory {
                 case ColumnType.STRING:
                 case ColumnType.VARCHAR:
                 case ColumnType.SYMBOL:
+                    // the "undefined" case hinges on the fact it is "runtime constant" and that
+                    // all undefined bind variable would end up being deferred.
+                case ColumnType.UNDEFINED:
                     if (func.isRuntimeConstant()) { // bind variables
                         if (deferredValues == null) {
                             deferredValues = new ObjList<>();
@@ -84,13 +87,6 @@ public class InStrFunctionFactory implements FunctionFactory {
                     break;
                 case ColumnType.CHAR:
                     set.add(String.valueOf(func.getChar(null)));
-                    break;
-                case ColumnType.UNDEFINED:
-                    // todo: if link function is runtime constant, this branch can be merged with with first one
-                    if (deferredValues == null) {
-                        deferredValues = new ObjList<>();
-                    }
-                    deferredValues.add(func);
                     break;
                 default:
                     throw SqlException.$(argPositions.getQuick(i), "STRING constant expected");

@@ -147,7 +147,6 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
                 try (base; RecordCursor ignored = base.getCursor(executionContext)) {
                     planSink.of(base, executionContext);
                 }
-                //close base factory and associated cursors, otherwise it may keep holding eagerly allocated memory
                 isBaseClosed = true;
             }
             rowCount = planSink.getLineCount();

@@ -909,7 +909,11 @@ public final class TestUtils {
     }
 
     public static SqlExecutionContext createSqlExecutionCtx(CairoEngine engine) {
-        return new SqlExecutionContextImpl(engine, 1).with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(), null);
+        return new SqlExecutionContextImpl(engine, 1)
+                .with(
+                        engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                        null
+                );
     }
 
     public static SqlExecutionContext createSqlExecutionCtx(CairoEngine engine, BindVariableService bindVariableService) {
@@ -919,11 +923,16 @@ public final class TestUtils {
     }
 
     public static SqlExecutionContextImpl createSqlExecutionCtx(CairoEngine engine, int workerCount) {
-        return new SqlExecutionContextImpl(engine, workerCount).with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(), null);
+        return new SqlExecutionContextImpl(engine, workerCount)
+                .with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext());
     }
 
     public static SqlExecutionContextImpl createSqlExecutionCtx(CairoEngine engine, BindVariableService bindVariableService, int workerCount) {
-        return new SqlExecutionContextImpl(engine, workerCount).with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(), bindVariableService);
+        return new SqlExecutionContextImpl(engine, workerCount)
+                .with(
+                        engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                        bindVariableService
+                );
     }
 
     public static void createTable(TableModel model, CairoConfiguration configuration, int tableVersion, int tableId, TableToken tableToken) {
@@ -990,10 +999,20 @@ public final class TestUtils {
         return true;
     }
 
-    public static void execute(@Nullable WorkerPool pool, CustomisableRunnable runnable, CairoConfiguration configuration, Metrics metrics, Log log) throws Exception {
+    public static void execute(
+            @Nullable WorkerPool pool,
+            CustomisableRunnable runnable,
+            CairoConfiguration configuration,
+            Metrics metrics,
+            Log log
+    ) throws Exception {
         final int workerCount = pool != null ? pool.getWorkerCount() : 1;
         final BindVariableServiceImpl bindVariableService = new BindVariableServiceImpl(configuration);
-        try (final CairoEngine engine = new CairoEngine(configuration, metrics); final SqlCompiler compiler = engine.getSqlCompiler(); final SqlExecutionContext sqlExecutionContext = createSqlExecutionCtx(engine, bindVariableService, workerCount)) {
+        try (
+                final CairoEngine engine = new CairoEngine(configuration, metrics);
+                final SqlCompiler compiler = engine.getSqlCompiler();
+                final SqlExecutionContext sqlExecutionContext = createSqlExecutionCtx(engine, bindVariableService, workerCount)
+        ) {
             try {
                 if (pool != null) {
                     setupWorkerPool(pool, engine);
@@ -1291,7 +1310,12 @@ public final class TestUtils {
         }
     }
 
-    public static void printSqlWithTypes(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence sql, MutableUtf16Sink sink) throws SqlException {
+    public static void printSqlWithTypes(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sql,
+            MutableUtf16Sink sink
+    ) throws SqlException {
         try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 RecordMetadata metadata = factory.getMetadata();
@@ -1427,7 +1451,14 @@ public final class TestUtils {
         Assert.assertEquals(rr.getChar(col), lr.getChar(col));
     }
 
-    private static void assertColumnValues(RecordMetadata metadataExpected, RecordMetadata metadataActual, Record lr, Record rr, long rowIndex, boolean genericStringMatch) {
+    private static void assertColumnValues(
+            RecordMetadata metadataExpected,
+            RecordMetadata metadataActual,
+            Record lr,
+            Record rr,
+            long rowIndex,
+            boolean genericStringMatch
+    ) {
         int columnType = 0;
         for (int i = 0, n = metadataExpected.getColumnCount(); i < n; i++) {
             String columnName = metadataExpected.getColumnName(i);
@@ -1520,7 +1551,12 @@ public final class TestUtils {
             Assert.fail("Expected " + toHexString(expected) + ", but was: null");
         }
 
-        if (expected.getLong0() != actual.getLong0() || expected.getLong1() != actual.getLong1() || expected.getLong2() != actual.getLong2() || expected.getLong3() != actual.getLong3()) {
+        if (
+                expected.getLong0() != actual.getLong0()
+                        || expected.getLong1() != actual.getLong1()
+                        || expected.getLong2() != actual.getLong2()
+                        || expected.getLong3() != actual.getLong3()
+        ) {
             Assert.assertEquals(toHexString(expected), toHexString(actual));
         }
     }
@@ -1643,7 +1679,10 @@ public final class TestUtils {
     }
 
     private static String toHexString(Long256 expected) {
-        return Long.toHexString(expected.getLong0()) + " " + Long.toHexString(expected.getLong1()) + " " + Long.toHexString(expected.getLong2()) + " " + Long.toHexString(expected.getLong3());
+        return Long.toHexString(expected.getLong0())
+                + " " + Long.toHexString(expected.getLong1())
+                + " " + Long.toHexString(expected.getLong2())
+                + " " + Long.toHexString(expected.getLong3());
     }
 
     static void addAllRecordsToMap(StringSink sink, RecordCursor cursor, RecordMetadata metadata, Map<String, Integer> map) {
