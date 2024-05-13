@@ -27,6 +27,7 @@
 #include <cassert>
 #include <type_traits>
 #include <cmath>
+#include <cstdint>
 #include "jni.h"
 
 /**
