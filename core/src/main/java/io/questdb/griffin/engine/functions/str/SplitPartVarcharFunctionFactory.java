@@ -35,13 +35,9 @@ import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.std.IntList;
-import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
-import io.questdb.std.str.Utf8StringSink;
-import io.questdb.std.str.Utf8s;
+import io.questdb.std.str.*;
 import org.jetbrains.annotations.Nullable;
 
 
@@ -110,17 +106,17 @@ public class SplitPartVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-            getVarchar0(rec, utf8Sink, false);
+            getVarcharWithoutClear(rec, utf8Sink);
         }
 
         @Override
         public Utf8Sequence getVarcharA(Record rec) {
-            return getVarchar0(rec, sinkA, true);
+            return getVarcharWithClear(rec, sinkA);
         }
 
         @Override
         public Utf8Sequence getVarcharB(Record rec) {
-            return getVarchar0(rec, sinkB, true);
+            return getVarcharWithClear(rec, sinkB);
         }
 
         @Override
@@ -135,10 +131,13 @@ public class SplitPartVarcharFunctionFactory implements FunctionFactory {
         }
 
         @Nullable
-        private <S extends Utf8Sink> S getVarchar0(Record rec, S sink, boolean clearSink) {
-            if (clearSink && sink instanceof Mutable) {
-                ((Mutable) sink).clear();
-            }
+        private <S extends MutableUtf8Sink> S getVarcharWithClear(Record rec, S sink) {
+            sink.clear();
+            return getVarcharWithoutClear(rec, sink);
+        }
+
+        @Nullable
+        private <S extends Utf8Sink> S getVarcharWithoutClear(Record rec, S sink) {
 
             Utf8Sequence utf8Str = varcharFunc.getVarcharA(rec);
             Utf8Sequence delimiter = delimiterFunc.getVarcharA(rec);
