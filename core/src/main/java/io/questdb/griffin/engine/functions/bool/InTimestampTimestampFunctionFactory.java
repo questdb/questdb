@@ -45,14 +45,6 @@ import static io.questdb.griffin.model.IntervalUtils.isInIntervals;
 import static io.questdb.griffin.model.IntervalUtils.parseAndApplyIntervalEx;
 
 public class InTimestampTimestampFunctionFactory implements FunctionFactory {
-    public static long tryParseTimestamp(CharSequence seq, int position) throws SqlException {
-        try {
-            return IntervalUtils.parseFloorPartialTimestamp(seq, 0, seq.length());
-        } catch (NumericException e) {
-            throw SqlException.invalidDate(seq, position);
-        }
-    }
-
     @Override
     public String getSignature() {
         return "in(NV)";
@@ -76,7 +68,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                 case ColumnType.UNDEFINED:
                     break;
                 default:
-                    throw SqlException.position(0).put("cannot compare TIMESTAMP with type ").put(ColumnType.nameOf(func.getType()));
+                    throw SqlException.position(argPositions.getQuick(i)).put("cannot compare TIMESTAMP with type ").put(ColumnType.nameOf(func.getType()));
             }
             if (!func.isConstant()) {
                 allConst = false;
@@ -88,7 +80,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         }
 
         if (allConst) {
-            return new InTimestampConstFunction(args.getQuick(0), parseToTs(args, argPositions));
+            return new InTimestampConstFunction(args.getQuick(0), parseDiscreteTimestampValues(args, argPositions));
         }
 
         if (args.size() == 2 && (ColumnType.isString(args.get(1).getType()) || ColumnType.isVarchar(args.get(1).getType()))) {
@@ -114,7 +106,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         return new InTimestampVarFunction(new ObjList<>(args));
     }
 
-    private LongList parseToTs(ObjList<Function> args, IntList argPositions) throws SqlException {
+    private static LongList parseDiscreteTimestampValues(ObjList<Function> args, IntList argPositions) throws SqlException {
         LongList res = new LongList(args.size() - 1);
         res.extendAndSet(args.size() - 2, 0);
 
@@ -145,6 +137,14 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         return res;
     }
 
+    private static long tryParseTimestamp(CharSequence seq, int position) throws SqlException {
+        try {
+            return IntervalUtils.parseFloorPartialTimestamp(seq);
+        } catch (NumericException e) {
+            throw SqlException.invalidDate(seq, position);
+        }
+    }
+
     private static class InTimestampConstFunction extends NegatableBooleanFunction implements UnaryFunction {
         private final LongList inList;
         private final Function tsFunc;
@@ -172,6 +172,129 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                 sink.val(" not");
             }
             sink.val(" in ").val(inList);
+        }
+    }
+
+    private static class InTimestampManyRuntimeConstantsFunction extends NegatableBooleanFunction implements MultiArgFunction {
+        private final ObjList<Function> args;
+        private final LongList timestampValues;
+
+        public InTimestampManyRuntimeConstantsFunction(ObjList<Function> args) {
+            this.args = args;
+            this.timestampValues = new LongList(args.size());
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            return args;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            long ts = args.getQuick(0).getTimestamp(rec);
+            for (int i = 0, n = timestampValues.size(); i < n; i++) {
+                long val = timestampValues.getQuick(i);
+                if (val == ts) {
+                    return !negated;
+                }
+            }
+            return negated;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            MultiArgFunction.super.init(symbolTableSource, executionContext);
+            timestampValues.clear();
+            for (int i = 1, n = args.size(); i < n; i++) {
+                Function func = args.getQuick(i);
+                long val = Numbers.LONG_NULL;
+                switch (ColumnType.tagOf(func.getType())) {
+                    case ColumnType.TIMESTAMP:
+                    case ColumnType.LONG:
+                    case ColumnType.INT:
+                        val = func.getTimestamp(null);
+                        break;
+                    case ColumnType.STRING:
+                    case ColumnType.SYMBOL:
+                    case ColumnType.VARCHAR:
+                        CharSequence str = func.getStrA(null);
+                        val = str != null ? IntervalUtils.tryParseTimestamp(str) : Numbers.LONG_NULL;
+                        break;
+                }
+                timestampValues.add(val);
+            }
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(args.getQuick(0));
+            if (negated) {
+                sink.val(" not");
+            }
+            sink.val(" in ");
+            sink.val(args, 1);
+        }
+    }
+
+    public static class InTimestampRuntimeConstIntervalFunction extends NegatableBooleanFunction implements BinaryFunction {
+        private final Function intervalFunc;
+        private final int intervalFuncPos;
+        private final LongList intervals = new LongList();
+        private final Function left;
+
+        public InTimestampRuntimeConstIntervalFunction(Function left, Function intervalFunc, int intervalFuncPos) {
+            this.left = left;
+            this.intervalFunc = intervalFunc;
+            this.intervalFuncPos = intervalFuncPos;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            final long ts = left.getTimestamp(rec);
+            return ts == Numbers.LONG_NULL ? negated : negated != isInIntervals(intervals, ts);
+        }
+
+        @Override
+        public Function getLeft() {
+            return left;
+        }
+
+        @Override
+        public Function getRight() {
+            return intervalFunc;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            BinaryFunction.super.init(symbolTableSource, executionContext);
+            intervals.clear();
+            // This is a specific function, which accepts "in interval" as bind variable.
+            // For this reason only STRING and VARCHAR bind variables are supported. Other types,
+            // such as INT, LONG etc will require two or move values to represent the interval
+            switch (intervalFunc.getType()) {
+                case ColumnType.STRING:
+                case ColumnType.VARCHAR:
+                    parseAndApplyIntervalEx(intervalFunc.getStrA(null), intervals, 0);
+                    break;
+                default:
+                    throw SqlException
+                            .$(intervalFuncPos, "unsupported bind variable type [").put(ColumnType.nameOf(intervalFunc.getType()))
+                            .put("] expected one of [STRING or VARCHAR]");
+            }
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(left);
+            if (negated) {
+                sink.val(" not");
+            }
+            sink.val(" in ").val(intervalFunc);
         }
     }
 
@@ -222,129 +345,6 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             }
             sink.val(" in ");
             sink.val(args, 1);
-        }
-    }
-
-    private static class InTimestampManyRuntimeConstantsFunction extends NegatableBooleanFunction implements MultiArgFunction {
-        private final ObjList<Function> args;
-        private final LongList timestampValues;
-
-        public InTimestampManyRuntimeConstantsFunction(ObjList<Function> args) {
-            this.args = args;
-            this.timestampValues = new LongList(args.size());
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            MultiArgFunction.super.init(symbolTableSource, executionContext);
-            timestampValues.clear();
-            for (int i = 1, n = args.size(); i < n; i++) {
-                Function func = args.getQuick(i);
-                long val = Numbers.LONG_NULL;
-                switch (ColumnType.tagOf(func.getType())) {
-                    case ColumnType.TIMESTAMP:
-                    case ColumnType.LONG:
-                    case ColumnType.INT:
-                        val = func.getTimestamp(null);
-                        break;
-                    case ColumnType.STRING:
-                    case ColumnType.SYMBOL:
-                    case ColumnType.VARCHAR:
-                        CharSequence str = func.getStrA(null);
-                        val = str != null ? IntervalUtils.tryParseTimestamp(str) : Numbers.LONG_NULL;
-                        break;
-                }
-                timestampValues.add(val);
-            }
-        }
-
-        @Override
-        public ObjList<Function> getArgs() {
-            return args;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            long ts = args.getQuick(0).getTimestamp(rec);
-            for (int i = 0, n = timestampValues.size(); i < n; i++) {
-                long val = timestampValues.getQuick(i);
-                if (val == ts) {
-                    return !negated;
-                }
-            }
-            return negated;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(args.getQuick(0));
-            if (negated) {
-                sink.val(" not");
-            }
-            sink.val(" in ");
-            sink.val(args, 1);
-        }
-    }
-
-    public static class InTimestampRuntimeConstIntervalFunction extends NegatableBooleanFunction implements BinaryFunction {
-        private final LongList intervals = new LongList();
-        private final Function left;
-        private final Function intervalFunc;
-        private final int intervalFuncPos;
-
-        public InTimestampRuntimeConstIntervalFunction(Function left, Function intervalFunc, int intervalFuncPos) {
-            this.left = left;
-            this.intervalFunc = intervalFunc;
-            this.intervalFuncPos = intervalFuncPos;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            final long ts = left.getTimestamp(rec);
-            return ts == Numbers.LONG_NULL ? negated : negated != isInIntervals(intervals, ts);
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            BinaryFunction.super.init(symbolTableSource, executionContext);
-            intervals.clear();
-            // This is a specific function, which accepts "in interval" as bind variable.
-            // For this reason only STRING and VARCHAR bind variables are supported. Other types,
-            // such as INT, LONG etc will require two or move values to represent the interval
-            switch (intervalFunc.getType()) {
-                case ColumnType.STRING:
-                case ColumnType.VARCHAR:
-                    parseAndApplyIntervalEx(intervalFunc.getStrA(null), intervals, 0);
-                    break;
-                default:
-                    throw SqlException
-                            .$(intervalFuncPos, "unsupported bind variable type [").put(ColumnType.nameOf(intervalFunc.getType()))
-                            .put("] expected one of [STRING or VARCHAR]");
-            }
-        }
-
-        @Override
-        public Function getLeft() {
-            return left;
-        }
-
-        @Override
-        public Function getRight() {
-            return intervalFunc;
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return false;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(left);
-            if (negated) {
-                sink.val(" not");
-            }
-            sink.val(" in ").val(intervalFunc);
         }
     }
 

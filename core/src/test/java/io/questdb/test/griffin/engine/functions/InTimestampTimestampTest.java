@@ -63,10 +63,12 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
                     bindVariableService.setInt(2, 10_000);
                 }
         ));
+
+        assertSql("test where ts in ($1,$2,$3)", tuples);
     }
 
     @Test
-    public void testConstInterval() throws SqlException {
+    public void testIntervalBindVariable() throws SqlException {
         ddl("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(10000))");
 
         // baseline
@@ -101,6 +103,41 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
         assertSql(
                 "select timestamp_floor('1s', ts), count() from test where ts in $1",
                 tuples
+        );
+    }
+
+    @Test
+    public void testListOfTimestamps() throws SqlException {
+        ddl("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(100))");
+
+        assertSql(
+                "a\tts\n" +
+                        "-1148479920\t1970-01-01T00:00:00.000000Z\n" +
+                        "-2144581835\t1970-01-01T00:00:00.070000Z\n" +
+                        "-296610933\t1970-01-01T00:00:00.077000Z\n",
+                "test where ts in ('1970-01-01T00:00:00.070000Z', 77000, '1970-01-01'::date)"
+        );
+    }
+
+    @Test
+    public void testListOfTimestampsUnsupportedType() throws Exception {
+        ddl("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(100))");
+
+        assertException(
+                "test where ts in ('1970-01-01T00:00:00.070000Z', true)",
+                49,
+                "cannot compare TIMESTAMP with type BOOLEAN"
+        );
+    }
+
+    @Test
+    public void testListOfTimestampsInvalidInput() throws Exception {
+        ddl("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(100))");
+
+        assertException(
+                "test where ts in ('1970-01-01T00:00:0.070000Z', 'abc')",
+                18,
+                "Invalid date [str=1970-01-01T00:00:0.070000Z]"
         );
     }
 }
