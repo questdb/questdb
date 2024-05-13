@@ -66,12 +66,11 @@ public class TableUpdateDetails implements Closeable {
     private long eventsProcessedSinceReshuffle = 0;
     private boolean isDropped;
     private long lastMeasurementMillis = Long.MAX_VALUE;
-    private final boolean writerIsLocal;
+    private long latestKnownMetadataVersion;
     private MetadataService metadataService;
     private int networkIOOwnerCount = 0;
     private long nextCommitTime;
     private volatile boolean writerInError;
-    private long latestKnownMetadataVersion;
     private int writerThreadId;
 
     public TableUpdateDetails(
@@ -107,7 +106,6 @@ public class TableUpdateDetails implements Closeable {
         }
         this.tableNameUtf8 = tableNameUtf8;
         this.commitOnClose = true;
-        this.writerIsLocal = false;
     }
 
     protected TableUpdateDetails(
@@ -139,7 +137,6 @@ public class TableUpdateDetails implements Closeable {
         this.nextCommitTime = millisecondClock.getTicks() + this.commitInterval;
         this.localDetailsArray = new ThreadLocalDetails[]{new ThreadLocalDetails(symbolCachePool)};
         this.tableNameUtf8 = tableNameUtf8;
-        this.writerIsLocal = true;
     }
 
     public void addReference(int workerId) {
@@ -765,7 +762,7 @@ public class TableUpdateDetails implements Closeable {
             if (latestKnownMetadata == null) {
                 // Get the latest metadata.
                 try {
-                    if (writerIsLocal) {
+                    if (isWal()) {
                         latestKnownMetadata = deepCopyOfDense(writerAPI.getMetadata());
                         latestKnownMetadataVersion = writerAPI.getMetadataVersion();
                     } else {
