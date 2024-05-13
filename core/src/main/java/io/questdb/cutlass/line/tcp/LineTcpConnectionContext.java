@@ -80,21 +80,26 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                 LOG,
                 metrics.line().connectionCountGauge()
         );
-        this.configuration = configuration;
-        nf = configuration.getNetworkFacade();
-        disconnectOnError = configuration.getDisconnectOnError();
-        this.scheduler = scheduler;
-        this.metrics = metrics;
-        this.milliClock = configuration.getMillisecondClock();
-        parser = new LineTcpParser(configuration.isStringAsTagSupported(), configuration.isSymbolAsFieldSupported());
-        this.authenticator = configuration.getFactoryProvider().getLineAuthenticatorFactory().getLineTCPAuthenticator();
-        clear();
-        this.checkIdleInterval = configuration.getMaintenanceInterval();
-        this.commitInterval = configuration.getCommitInterval();
-        long now = milliClock.getTicks();
-        this.nextCheckIdleTime = now + checkIdleInterval;
-        this.nextCommitTime = now + commitInterval;
-        this.idleTimeout = configuration.getWriterIdleTimeout();
+        try {
+            this.configuration = configuration;
+            nf = configuration.getNetworkFacade();
+            disconnectOnError = configuration.getDisconnectOnError();
+            this.scheduler = scheduler;
+            this.metrics = metrics;
+            this.milliClock = configuration.getMillisecondClock();
+            parser = new LineTcpParser(configuration.isStringAsTagSupported(), configuration.isSymbolAsFieldSupported());
+            this.authenticator = configuration.getFactoryProvider().getLineAuthenticatorFactory().getLineTCPAuthenticator();
+            clear();
+            this.checkIdleInterval = configuration.getMaintenanceInterval();
+            this.commitInterval = configuration.getCommitInterval();
+            long now = milliClock.getTicks();
+            this.nextCheckIdleTime = now + checkIdleInterval;
+            this.nextCommitTime = now + commitInterval;
+            this.idleTimeout = configuration.getWriterIdleTimeout();
+        } catch (Throwable t) {
+            close();
+            throw t;
+        }
     }
 
     public void checkIdle(long millis) {
@@ -207,25 +212,30 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
 
     @Override
     public LineTcpConnectionContext of(int fd, @NotNull IODispatcher<LineTcpConnectionContext> dispatcher) {
-        super.of(fd, dispatcher);
-        if (recvBufStart == 0) {
-            recvBufStart = Unsafe.malloc(configuration.getNetMsgBufferSize(), MemoryTag.NATIVE_ILP_RSS);
-            recvBufEnd = recvBufStart + configuration.getNetMsgBufferSize();
-            recvBufPos = recvBufStart;
-            resetParser();
+        try {
+            super.of(fd, dispatcher);
+            if (recvBufStart == 0) {
+                recvBufStart = Unsafe.malloc(configuration.getNetMsgBufferSize(), MemoryTag.NATIVE_ILP_RSS);
+                recvBufEnd = recvBufStart + configuration.getNetMsgBufferSize();
+                recvBufPos = recvBufStart;
+                resetParser();
+            }
+            authenticator.init(socket, recvBufStart, recvBufEnd, 0, 0);
+            if (authenticator.isAuthenticated() && securityContext == DenyAllSecurityContext.INSTANCE) {
+                // when security context has not been set by anything else (subclass) we assume
+                // this is an authenticated, anonymous user
+                securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
+                        null,
+                        SecurityContext.AUTH_TYPE_NONE,
+                        SecurityContextFactory.ILP
+                );
+                securityContext.authorizeLineTcp();
+            }
+            return this;
+        } catch (Throwable t) {
+            close();
+            throw t;
         }
-        authenticator.init(socket, recvBufStart, recvBufEnd, 0, 0);
-        if (authenticator.isAuthenticated() && securityContext == DenyAllSecurityContext.INSTANCE) {
-            // when security context has not been set by anything else (subclass) we assume
-            // this is an authenticated, anonymous user
-            securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
-                    null,
-                    SecurityContext.AUTH_TYPE_NONE,
-                    SecurityContextFactory.ILP
-            );
-            securityContext.authorizeLineTcp();
-        }
-        return this;
     }
 
     private boolean checkQueueFullLogHysteresis() {
