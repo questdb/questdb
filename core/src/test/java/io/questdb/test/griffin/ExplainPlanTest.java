@@ -579,12 +579,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testCastFloatToDouble() throws Exception {
-        assertPlanNoLeakCheck(
+        assertMemoryLeak(() -> assertPlanNoLeakCheck(
                 "select rnd_float()::double ",
                 "VirtualRecord\n" +
                         "  functions: [rnd_float()::double]\n" +
                         "    long_sequence count: 1\n"
-        );
+        ));
     }
 
     @Test
@@ -1255,12 +1255,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testExplainCreateTableAsSelect() throws Exception {
-        assertSql("QUERY PLAN\n" +
-                "Create table: a\n" +
-                "    VirtualRecord\n" +
-                "      functions: [x,1]\n" +
-                "        long_sequence count: 10\n", "explain create table a as (select x, 1 from long_sequence(10))"
-        );
+        assertMemoryLeak(() -> assertSql(
+                "QUERY PLAN\n" +
+                        "Create table: a\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [x,1]\n" +
+                        "        long_sequence count: 10\n",
+                "explain create table a as (select x, 1 from long_sequence(10))"
+        ));
     }
 
     @Test
@@ -1650,61 +1652,63 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testExplainWithJsonFormat4() throws Exception {
-        ddl("create table taba (a1 int, a2 long)");
-        ddl("create table tabb (b1 int, b2 long)");
-        assertQuery(
-                "QUERY PLAN\n" +
-                        "[\n" +
-                        "  {\n" +
-                        "    \"Plan\": {\n" +
-                        "        \"Node Type\": \"SelectedRecord\",\n" +
-                        "        \"Plans\": [\n" +
-                        "        {\n" +
-                        "            \"Node Type\": \"Nested Loop Left Join\",\n" +
-                        "            \"filter\": \"(taba.a1=tabb.b1 or taba.a2=tabb.b2)\",\n" +
-                        "            \"Plans\": [\n" +
-                        "            {\n" +
-                        "                \"Node Type\": \"DataFrame\",\n" +
-                        "                \"Plans\": [\n" +
-                        "                {\n" +
-                        "                    \"Node Type\": \"Row forward scan\"\n" +
-                        "                },\n" +
-                        "                {\n" +
-                        "                    \"Node Type\": \"Frame forward scan\",\n" +
-                        "                    \"on\": \"taba\"\n" +
-                        "                } ]\n" +
-                        "            },\n" +
-                        "            {\n" +
-                        "                \"Node Type\": \"DataFrame\",\n" +
-                        "                \"Plans\": [\n" +
-                        "                {\n" +
-                        "                    \"Node Type\": \"Row forward scan\"\n" +
-                        "                },\n" +
-                        "                {\n" +
-                        "                    \"Node Type\": \"Frame forward scan\",\n" +
-                        "                    \"on\": \"tabb\"\n" +
-                        "                } ]\n" +
-                        "            } ]\n" +
-                        "        } ]\n" +
-                        "    }\n" +
-                        "  }\n" +
-                        "]\n",
-                " explain (format json) select * from taba left join tabb on a1=b1  or a2=b2",
-                null,
-                null,
-                false,
-                true
-        );
+        assertMemoryLeak(() -> {
+            ddl("create table taba (a1 int, a2 long)");
+            ddl("create table tabb (b1 int, b2 long)");
+            assertQueryNoLeakCheck(
+                    "QUERY PLAN\n" +
+                            "[\n" +
+                            "  {\n" +
+                            "    \"Plan\": {\n" +
+                            "        \"Node Type\": \"SelectedRecord\",\n" +
+                            "        \"Plans\": [\n" +
+                            "        {\n" +
+                            "            \"Node Type\": \"Nested Loop Left Join\",\n" +
+                            "            \"filter\": \"(taba.a1=tabb.b1 or taba.a2=tabb.b2)\",\n" +
+                            "            \"Plans\": [\n" +
+                            "            {\n" +
+                            "                \"Node Type\": \"DataFrame\",\n" +
+                            "                \"Plans\": [\n" +
+                            "                {\n" +
+                            "                    \"Node Type\": \"Row forward scan\"\n" +
+                            "                },\n" +
+                            "                {\n" +
+                            "                    \"Node Type\": \"Frame forward scan\",\n" +
+                            "                    \"on\": \"taba\"\n" +
+                            "                } ]\n" +
+                            "            },\n" +
+                            "            {\n" +
+                            "                \"Node Type\": \"DataFrame\",\n" +
+                            "                \"Plans\": [\n" +
+                            "                {\n" +
+                            "                    \"Node Type\": \"Row forward scan\"\n" +
+                            "                },\n" +
+                            "                {\n" +
+                            "                    \"Node Type\": \"Frame forward scan\",\n" +
+                            "                    \"on\": \"tabb\"\n" +
+                            "                } ]\n" +
+                            "            } ]\n" +
+                            "        } ]\n" +
+                            "    }\n" +
+                            "  }\n" +
+                            "]\n",
+                    " explain (format json) select * from taba left join tabb on a1=b1  or a2=b2",
+                    null,
+                    null,
+                    false,
+                    true
+            );
+        });
     }
 
     @Test
-    public void testExplainWithQueryInParentheses1() throws SqlException {
-        assertPlanNoLeakCheck(
+    public void testExplainWithQueryInParentheses1() throws Exception {
+        assertMemoryLeak(() -> assertPlanNoLeakCheck(
                 "(select 1)",
                 "VirtualRecord\n" +
                         "  functions: [1]\n" +
                         "    long_sequence count: 1\n"
-        );
+        ));
     }
 
     @Test
@@ -2025,54 +2029,56 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFiltersOnIndexedSymbolColumns() throws SqlException {
-        ddl("CREATE TABLE reference_prices (\n" +
-                "  venue SYMBOL index ,\n" +
-                "  symbol SYMBOL index,\n" +
-                "  instrumentType SYMBOL index,\n" +
-                "  referencePriceType SYMBOL index,\n" +
-                "  resolutionType SYMBOL ,\n" +
-                "  ts TIMESTAMP,\n" +
-                "  referencePrice DOUBLE\n" +
-                ") timestamp (ts)");
+    public void testFiltersOnIndexedSymbolColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE reference_prices (\n" +
+                    "  venue SYMBOL index ,\n" +
+                    "  symbol SYMBOL index,\n" +
+                    "  instrumentType SYMBOL index,\n" +
+                    "  referencePriceType SYMBOL index,\n" +
+                    "  resolutionType SYMBOL ,\n" +
+                    "  ts TIMESTAMP,\n" +
+                    "  referencePrice DOUBLE\n" +
+                    ") timestamp (ts)");
 
-        insert("insert into reference_prices \n" +
-                "select rnd_symbol('VENUE1', 'VENUE2', 'VENUE3'), \n" +
-                "          'symbol', \n" +
-                "          'instrumentType', \n" +
-                "          rnd_symbol('TYPE1', 'TYPE2'), \n" +
-                "          'resolutionType', \n" +
-                "          cast(x as timestamp), \n" +
-                "          rnd_double()\n" +
-                "from long_sequence(10000)");
+            insert("insert into reference_prices \n" +
+                    "select rnd_symbol('VENUE1', 'VENUE2', 'VENUE3'), \n" +
+                    "          'symbol', \n" +
+                    "          'instrumentType', \n" +
+                    "          rnd_symbol('TYPE1', 'TYPE2'), \n" +
+                    "          'resolutionType', \n" +
+                    "          cast(x as timestamp), \n" +
+                    "          rnd_double()\n" +
+                    "from long_sequence(10000)");
 
-        String query1 = "select referencePriceType,count(*) " +
-                "from reference_prices " +
-                "where referencePriceType not in ('TYPE1') " +
-                "and venue in ('VENUE1', 'VENUE2')";
-        String expectedResult = "referencePriceType\tcount\n" +
-                "TYPE2\t3344\n";
-        String expectedPlan = "GroupBy vectorized: false\n" +
-                "  keys: [referencePriceType]\n" +
-                "  values: [count(*)]\n" +
-                "    FilterOnValues symbolOrder: desc\n" +
-                "        Cursor-order scan\n" +
-                "            Index forward scan on: referencePriceType\n" +
-                "              filter: referencePriceType=1 and not (referencePriceType in [TYPE1])\n" +
-                "            Index forward scan on: referencePriceType\n" +
-                "              filter: referencePriceType=3 and not (referencePriceType in [TYPE1])\n" +
-                "        Frame forward scan on: reference_prices\n";
+            String query1 = "select referencePriceType,count(*) " +
+                    "from reference_prices " +
+                    "where referencePriceType not in ('TYPE1') " +
+                    "and venue in ('VENUE1', 'VENUE2')";
+            String expectedResult = "referencePriceType\tcount\n" +
+                    "TYPE2\t3344\n";
+            String expectedPlan = "GroupBy vectorized: false\n" +
+                    "  keys: [referencePriceType]\n" +
+                    "  values: [count(*)]\n" +
+                    "    FilterOnValues symbolOrder: desc\n" +
+                    "        Cursor-order scan\n" +
+                    "            Index forward scan on: referencePriceType\n" +
+                    "              filter: referencePriceType=1 and not (referencePriceType in [TYPE1])\n" +
+                    "            Index forward scan on: referencePriceType\n" +
+                    "              filter: referencePriceType=3 and not (referencePriceType in [TYPE1])\n" +
+                    "        Frame forward scan on: reference_prices\n";
 
-        assertPlanNoLeakCheck(query1, expectedPlan);
-        assertSql(expectedResult, query1);
+            assertPlanNoLeakCheck(query1, expectedPlan);
+            assertSql(expectedResult, query1);
 
-        String query2 = "select referencePriceType, count(*) \n" +
-                "from reference_prices \n" +
-                "where venue in ('VENUE1', 'VENUE2') \n" +
-                "and referencePriceType not in ('TYPE1')";
+            String query2 = "select referencePriceType, count(*) \n" +
+                    "from reference_prices \n" +
+                    "where venue in ('VENUE1', 'VENUE2') \n" +
+                    "and referencePriceType not in ('TYPE1')";
 
-        assertPlanNoLeakCheck(query2, expectedPlan);
-        assertSql(expectedResult, query2);
+            assertPlanNoLeakCheck(query2, expectedPlan);
+            assertSql(expectedResult, query2);
+        });
     }
 
     @Test
@@ -2157,282 +2163,287 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testFunctions() throws Exception {
-        assertMemoryLeak(() -> { // test table for show_columns
+        assertMemoryLeak(() -> {
+            // test table for show_columns
             ddl("create table bbb (a int)");
-        });
 
-        final StringSink sink = new StringSink();
+            final StringSink sink = new StringSink();
 
-        IntObjHashMap<ObjList<Function>> constFuncs = new IntObjHashMap<>();
-        constFuncs.put(ColumnType.BOOLEAN, list(BooleanConstant.TRUE, BooleanConstant.FALSE));
-        constFuncs.put(ColumnType.BYTE, list(new ByteConstant((byte) 1)));
-        constFuncs.put(ColumnType.SHORT, list(new ShortConstant((short) 2)));
-        constFuncs.put(ColumnType.CHAR, list(new CharConstant('a')));
-        constFuncs.put(ColumnType.INT, list(new IntConstant(3)));
-        constFuncs.put(ColumnType.IPv4, list(new IPv4Constant(3)));
-        constFuncs.put(ColumnType.LONG, list(new LongConstant(4)));
-        constFuncs.put(ColumnType.DATE, list(new DateConstant(0)));
-        constFuncs.put(ColumnType.TIMESTAMP, list(new TimestampConstant(86400000000L)));
-        constFuncs.put(ColumnType.FLOAT, list(new FloatConstant(5f)));
-        constFuncs.put(ColumnType.DOUBLE, list(new DoubleConstant(1))); // has to be [0.0, 1.0] for approx_percentile
-        constFuncs.put(ColumnType.STRING, list(new StrConstant("bbb"), new StrConstant("1"), new StrConstant("1.1.1.1"), new StrConstant("1.1.1.1/24")));
-        constFuncs.put(ColumnType.VARCHAR, list(new VarcharConstant("bbb"), new VarcharConstant("1"), new VarcharConstant("1.1.1.1"), new VarcharConstant("1.1.1.1/24")));
-        constFuncs.put(ColumnType.SYMBOL, list(new SymbolConstant("symbol", 0)));
-        constFuncs.put(ColumnType.LONG256, list(new Long256Constant(0, 1, 2, 3)));
-        constFuncs.put(ColumnType.GEOBYTE, list(new GeoByteConstant((byte) 1, ColumnType.getGeoHashTypeWithBits(5))));
-        constFuncs.put(ColumnType.GEOSHORT, list(new GeoShortConstant((short) 1, ColumnType.getGeoHashTypeWithBits(10))));
-        constFuncs.put(ColumnType.GEOINT, list(new GeoIntConstant(1, ColumnType.getGeoHashTypeWithBits(20))));
-        constFuncs.put(ColumnType.GEOLONG, list(new GeoLongConstant(1, ColumnType.getGeoHashTypeWithBits(35))));
-        constFuncs.put(ColumnType.GEOHASH, list(new GeoShortConstant((short) 1, ColumnType.getGeoHashTypeWithBits(15))));
-        constFuncs.put(ColumnType.BINARY, list(new NullBinConstant()));
-        constFuncs.put(ColumnType.LONG128, list(new Long128Constant(0, 1)));
-        constFuncs.put(ColumnType.UUID, list(new UuidConstant(0, 1)));
-        constFuncs.put(ColumnType.NULL, list(NullConstant.NULL));
+            IntObjHashMap<ObjList<Function>> constFuncs = new IntObjHashMap<>();
+            constFuncs.put(ColumnType.BOOLEAN, list(BooleanConstant.TRUE, BooleanConstant.FALSE));
+            constFuncs.put(ColumnType.BYTE, list(new ByteConstant((byte) 1)));
+            constFuncs.put(ColumnType.SHORT, list(new ShortConstant((short) 2)));
+            constFuncs.put(ColumnType.CHAR, list(new CharConstant('a')));
+            constFuncs.put(ColumnType.INT, list(new IntConstant(3)));
+            constFuncs.put(ColumnType.IPv4, list(new IPv4Constant(3)));
+            constFuncs.put(ColumnType.LONG, list(new LongConstant(4)));
+            constFuncs.put(ColumnType.DATE, list(new DateConstant(0)));
+            constFuncs.put(ColumnType.TIMESTAMP, list(new TimestampConstant(86400000000L)));
+            constFuncs.put(ColumnType.FLOAT, list(new FloatConstant(5f)));
+            constFuncs.put(ColumnType.DOUBLE, list(new DoubleConstant(1))); // has to be [0.0, 1.0] for approx_percentile
+            constFuncs.put(ColumnType.STRING, list(new StrConstant("bbb"), new StrConstant("1"), new StrConstant("1.1.1.1"), new StrConstant("1.1.1.1/24")));
+            constFuncs.put(ColumnType.VARCHAR, list(new VarcharConstant("bbb"), new VarcharConstant("1"), new VarcharConstant("1.1.1.1"), new VarcharConstant("1.1.1.1/24")));
+            constFuncs.put(ColumnType.SYMBOL, list(new SymbolConstant("symbol", 0)));
+            constFuncs.put(ColumnType.LONG256, list(new Long256Constant(0, 1, 2, 3)));
+            constFuncs.put(ColumnType.GEOBYTE, list(new GeoByteConstant((byte) 1, ColumnType.getGeoHashTypeWithBits(5))));
+            constFuncs.put(ColumnType.GEOSHORT, list(new GeoShortConstant((short) 1, ColumnType.getGeoHashTypeWithBits(10))));
+            constFuncs.put(ColumnType.GEOINT, list(new GeoIntConstant(1, ColumnType.getGeoHashTypeWithBits(20))));
+            constFuncs.put(ColumnType.GEOLONG, list(new GeoLongConstant(1, ColumnType.getGeoHashTypeWithBits(35))));
+            constFuncs.put(ColumnType.GEOHASH, list(new GeoShortConstant((short) 1, ColumnType.getGeoHashTypeWithBits(15))));
+            constFuncs.put(ColumnType.BINARY, list(new NullBinConstant()));
+            constFuncs.put(ColumnType.LONG128, list(new Long128Constant(0, 1)));
+            constFuncs.put(ColumnType.UUID, list(new UuidConstant(0, 1)));
+            constFuncs.put(ColumnType.NULL, list(NullConstant.NULL));
 
-        GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("bbb", ColumnType.INT));
-        constFuncs.put(ColumnType.RECORD, list(new RecordColumn(0, metadata)));
+            GenericRecordMetadata metadata = new GenericRecordMetadata();
+            metadata.add(new TableColumnMetadata("bbb", ColumnType.INT));
+            constFuncs.put(ColumnType.RECORD, list(new RecordColumn(0, metadata)));
 
-        GenericRecordMetadata cursorMetadata = new GenericRecordMetadata();
-        cursorMetadata.add(new TableColumnMetadata("s", ColumnType.STRING));
-        constFuncs.put(ColumnType.CURSOR, list(new CursorFunction(new EmptyTableRecordCursorFactory(cursorMetadata) {
-            public boolean supportsPageFrameCursor() {
-                return true;
-            }
-        })));
-
-        IntObjHashMap<Function> colFuncs = new IntObjHashMap<>();
-        colFuncs.put(ColumnType.BOOLEAN, new BooleanColumn(1));
-        colFuncs.put(ColumnType.BYTE, new ByteColumn(1));
-        colFuncs.put(ColumnType.SHORT, new ShortColumn(2));
-        colFuncs.put(ColumnType.CHAR, new CharColumn(1));
-        colFuncs.put(ColumnType.INT, new IntColumn(1));
-        colFuncs.put(ColumnType.IPv4, new IPv4Column(1));
-        colFuncs.put(ColumnType.LONG, new LongColumn(1));
-        colFuncs.put(ColumnType.DATE, new DateColumn(1));
-        colFuncs.put(ColumnType.TIMESTAMP, new TimestampColumn(1));
-        colFuncs.put(ColumnType.FLOAT, new FloatColumn(1));
-        colFuncs.put(ColumnType.DOUBLE, new DoubleColumn(1));
-        colFuncs.put(ColumnType.STRING, new StrColumn(1));
-        colFuncs.put(ColumnType.VARCHAR, new VarcharColumn(1));
-        colFuncs.put(ColumnType.SYMBOL, new SymbolColumn(1, true));
-        colFuncs.put(ColumnType.LONG256, new Long256Column(1));
-        colFuncs.put(ColumnType.GEOBYTE, new GeoByteColumn(1, ColumnType.getGeoHashTypeWithBits(5)));
-        colFuncs.put(ColumnType.GEOSHORT, new GeoShortColumn(1, ColumnType.getGeoHashTypeWithBits(10)));
-        colFuncs.put(ColumnType.GEOINT, new GeoIntColumn(1, ColumnType.getGeoHashTypeWithBits(20)));
-        colFuncs.put(ColumnType.GEOLONG, new GeoLongColumn(1, ColumnType.getGeoHashTypeWithBits(35)));
-        colFuncs.put(ColumnType.GEOHASH, new GeoShortColumn((short) 1, ColumnType.getGeoHashTypeWithBits(15)));
-        colFuncs.put(ColumnType.BINARY, new BinColumn(1));
-        colFuncs.put(ColumnType.LONG128, new Long128Column(1));
-        colFuncs.put(ColumnType.UUID, new UuidColumn(1));
-
-        PlanSink planSink = new TextPlanSink() {
-            @Override
-            public PlanSink putColumnName(int columnIdx) {
-                val("column(").val(columnIdx).val(")");
-                return this;
-            }
-        };
-
-        PlanSink tmpPlanSink = new TextPlanSink() {
-            @Override
-            public PlanSink putColumnName(int columnIdx) {
-                val("column(").val(columnIdx).val(")");
-                return this;
-            }
-        };
-
-        ObjList<Function> args = new ObjList<>();
-        IntList argPositions = new IntList();
-
-        FunctionFactoryCache cache = engine.getFunctionFactoryCache();
-        LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> factories = cache.getFactories();
-        factories.forEach((key, value) -> {
-            FUNCTIONS:
-            for (int i = 0, n = value.size(); i < n; i++) {
-                planSink.clear();
-
-                FunctionFactoryDescriptor descriptor = value.get(i);
-                FunctionFactory factory = descriptor.getFactory();
-                int sigArgCount = descriptor.getSigArgCount();
-
-                sink.clear();
-                sink.put(factory.getSignature()).put(" types: ");
-
-                for (int p = 0; p < sigArgCount; p++) {
-                    int sigArgTypeMask = descriptor.getArgTypeMask(p);
-                    final short sigArgType = FunctionFactoryDescriptor.toType(sigArgTypeMask);
-                    boolean isArray = FunctionFactoryDescriptor.isArray(sigArgTypeMask);
-
-                    if (p > 0) {
-                        sink.put(',');
-                    }
-                    sink.put(ColumnType.nameOf(sigArgType));
-                    if (isArray) {
-                        sink.put("[]");
-                    }
+            GenericRecordMetadata cursorMetadata = new GenericRecordMetadata();
+            cursorMetadata.add(new TableColumnMetadata("s", ColumnType.STRING));
+            constFuncs.put(ColumnType.CURSOR, list(new CursorFunction(new EmptyTableRecordCursorFactory(cursorMetadata) {
+                public boolean supportsPageFrameCursor() {
+                    return true;
                 }
-                sink.put(" -> ");
+            })));
 
-                int combinations = 1;
+            IntObjHashMap<Function> colFuncs = new IntObjHashMap<>();
+            colFuncs.put(ColumnType.BOOLEAN, new BooleanColumn(1));
+            colFuncs.put(ColumnType.BYTE, new ByteColumn(1));
+            colFuncs.put(ColumnType.SHORT, new ShortColumn(2));
+            colFuncs.put(ColumnType.CHAR, new CharColumn(1));
+            colFuncs.put(ColumnType.INT, new IntColumn(1));
+            colFuncs.put(ColumnType.IPv4, new IPv4Column(1));
+            colFuncs.put(ColumnType.LONG, new LongColumn(1));
+            colFuncs.put(ColumnType.DATE, new DateColumn(1));
+            colFuncs.put(ColumnType.TIMESTAMP, new TimestampColumn(1));
+            colFuncs.put(ColumnType.FLOAT, new FloatColumn(1));
+            colFuncs.put(ColumnType.DOUBLE, new DoubleColumn(1));
+            colFuncs.put(ColumnType.STRING, new StrColumn(1));
+            colFuncs.put(ColumnType.VARCHAR, new VarcharColumn(1));
+            colFuncs.put(ColumnType.SYMBOL, new SymbolColumn(1, true));
+            colFuncs.put(ColumnType.LONG256, new Long256Column(1));
+            colFuncs.put(ColumnType.GEOBYTE, new GeoByteColumn(1, ColumnType.getGeoHashTypeWithBits(5)));
+            colFuncs.put(ColumnType.GEOSHORT, new GeoShortColumn(1, ColumnType.getGeoHashTypeWithBits(10)));
+            colFuncs.put(ColumnType.GEOINT, new GeoIntColumn(1, ColumnType.getGeoHashTypeWithBits(20)));
+            colFuncs.put(ColumnType.GEOLONG, new GeoLongColumn(1, ColumnType.getGeoHashTypeWithBits(35)));
+            colFuncs.put(ColumnType.GEOHASH, new GeoShortColumn((short) 1, ColumnType.getGeoHashTypeWithBits(15)));
+            colFuncs.put(ColumnType.BINARY, new BinColumn(1));
+            colFuncs.put(ColumnType.LONG128, new Long128Column(1));
+            colFuncs.put(ColumnType.UUID, new UuidColumn(1));
 
-                for (int p = 0; p < sigArgCount; p++) {
-                    int argTypeMask = descriptor.getArgTypeMask(p);
-                    boolean isConstant = FunctionFactoryDescriptor.isConstant(argTypeMask);
-                    short sigArgType = FunctionFactoryDescriptor.toType(argTypeMask);
-                    ObjList<Function> availableValues = constFuncs.get(sigArgType);
-                    int constValues = availableValues != null ? availableValues.size() : 1;
-                    combinations *= (constValues + (isConstant ? 0 : 1));
+            PlanSink planSink = new TextPlanSink() {
+                @Override
+                public PlanSink putColumnName(int columnIdx) {
+                    val("column(").val(columnIdx).val(")");
+                    return this;
                 }
+            };
 
-                boolean goodArgsFound = false;
-                for (int no = 0; no < combinations; no++) {
-                    args.clear();
-                    argPositions.clear();
+            PlanSink tmpPlanSink = new TextPlanSink() {
+                @Override
+                public PlanSink putColumnName(int columnIdx) {
+                    val("column(").val(columnIdx).val(")");
+                    return this;
+                }
+            };
+
+            ObjList<Function> args = new ObjList<>();
+            IntList argPositions = new IntList();
+
+            FunctionFactoryCache cache = engine.getFunctionFactoryCache();
+            LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> factories = cache.getFactories();
+            factories.forEach((key, value) -> {
+                FUNCTIONS:
+                for (int i = 0, n = value.size(); i < n; i++) {
                     planSink.clear();
 
-                    int tempNo = no;
+                    FunctionFactoryDescriptor descriptor = value.get(i);
+                    FunctionFactory factory = descriptor.getFactory();
+                    int sigArgCount = descriptor.getSigArgCount();
 
-                    try {
-                        for (int p = 0; p < sigArgCount; p++) {
-                            int sigArgTypeMask = descriptor.getArgTypeMask(p);
-                            short sigArgType = FunctionFactoryDescriptor.toType(sigArgTypeMask);
-                            boolean isConstant = FunctionFactoryDescriptor.isConstant(sigArgTypeMask);
-                            boolean isArray = FunctionFactoryDescriptor.isArray(sigArgTypeMask);
-                            boolean useConst = isConstant || (tempNo & 1) == 1 || sigArgType == ColumnType.CURSOR || sigArgType == ColumnType.RECORD;
-                            boolean isVarArg = sigArgType == ColumnType.VAR_ARG;
+                    sink.clear();
+                    sink.put(factory.getSignature()).put(" types: ");
 
-                            if (isVarArg) {
-                                if (factory instanceof LongSequenceFunctionFactory) {
-                                    sigArgType = ColumnType.LONG;
-                                } else if (factory instanceof InCharFunctionFactory) {
-                                    sigArgType = ColumnType.CHAR;
-                                } else if (factory instanceof InTimestampTimestampFunctionFactory) {
-                                    sigArgType = ColumnType.TIMESTAMP;
-                                } else if (factory instanceof InDoubleFunctionFactory) {
-                                    sigArgType = ColumnType.DOUBLE;
-                                } else if (factory instanceof LevelTwoPriceFunctionFactory) {
-                                    sigArgType = ColumnType.DOUBLE;
+                    for (int p = 0; p < sigArgCount; p++) {
+                        int sigArgTypeMask = descriptor.getArgTypeMask(p);
+                        final short sigArgType = FunctionFactoryDescriptor.toType(sigArgTypeMask);
+                        boolean isArray = FunctionFactoryDescriptor.isArray(sigArgTypeMask);
+
+                        if (p > 0) {
+                            sink.put(',');
+                        }
+                        sink.put(ColumnType.nameOf(sigArgType));
+                        if (isArray) {
+                            sink.put("[]");
+                        }
+                    }
+                    sink.put(" -> ");
+
+                    int combinations = 1;
+
+                    for (int p = 0; p < sigArgCount; p++) {
+                        int argTypeMask = descriptor.getArgTypeMask(p);
+                        boolean isConstant = FunctionFactoryDescriptor.isConstant(argTypeMask);
+                        short sigArgType = FunctionFactoryDescriptor.toType(argTypeMask);
+                        ObjList<Function> availableValues = constFuncs.get(sigArgType);
+                        int constValues = availableValues != null ? availableValues.size() : 1;
+                        combinations *= (constValues + (isConstant ? 0 : 1));
+                    }
+
+                    boolean goodArgsFound = false;
+                    for (int no = 0; no < combinations; no++) {
+                        args.clear();
+                        argPositions.clear();
+                        planSink.clear();
+
+                        int tempNo = no;
+
+                        try {
+                            for (int p = 0; p < sigArgCount; p++) {
+                                int sigArgTypeMask = descriptor.getArgTypeMask(p);
+                                short sigArgType = FunctionFactoryDescriptor.toType(sigArgTypeMask);
+                                boolean isConstant = FunctionFactoryDescriptor.isConstant(sigArgTypeMask);
+                                boolean isArray = FunctionFactoryDescriptor.isArray(sigArgTypeMask);
+                                boolean useConst = isConstant || (tempNo & 1) == 1 || sigArgType == ColumnType.CURSOR || sigArgType == ColumnType.RECORD;
+                                boolean isVarArg = sigArgType == ColumnType.VAR_ARG;
+
+                                if (isVarArg) {
+                                    if (factory instanceof LongSequenceFunctionFactory) {
+                                        sigArgType = ColumnType.LONG;
+                                    } else if (factory instanceof InCharFunctionFactory) {
+                                        sigArgType = ColumnType.CHAR;
+                                    } else if (factory instanceof InTimestampTimestampFunctionFactory) {
+                                        sigArgType = ColumnType.TIMESTAMP;
+                                    } else if (factory instanceof InDoubleFunctionFactory) {
+                                        sigArgType = ColumnType.DOUBLE;
+                                    } else if (factory instanceof LevelTwoPriceFunctionFactory) {
+                                        sigArgType = ColumnType.DOUBLE;
+                                    } else {
+                                        sigArgType = ColumnType.STRING;
+                                    }
+                                }
+
+                                if (factory instanceof SwitchFunctionFactory) {
+                                    args.add(new IntConstant(1));
+                                    args.add(new IntConstant(2));
+                                    args.add(new StrConstant("a"));
+                                    args.add(new StrConstant("b"));
+                                } else if (factory instanceof CoalesceFunctionFactory) {
+                                    args.add(new FloatColumn(1));
+                                    args.add(new FloatColumn(2));
+                                    args.add(new FloatConstant(12f));
+                                } else if (factory instanceof ExtractFromTimestampFunctionFactory && sigArgType == ColumnType.STRING) {
+                                    args.add(new StrConstant("day"));
+                                } else if (factory instanceof TimestampCeilFunctionFactory) {
+                                    args.add(new StrConstant("d"));
+                                } else if (sigArgType == ColumnType.STRING && isArray) {
+                                    args.add(new StringToStringArrayFunction(0, "{'test'}"));
+                                } else if (sigArgType == ColumnType.STRING && factory instanceof InTimestampStrFunctionFactory) {
+                                    args.add(new StrConstant("2022-12-12"));
+                                } else if (factory instanceof ToTimezoneTimestampFunctionFactory && p == 1) {
+                                    args.add(new StrConstant("CET"));
+                                } else if (factory instanceof CastStrToRegClassFunctionFactory && useConst) {
+                                    args.add(new StrConstant("pg_namespace"));
+                                } else if (factory instanceof CastStrToStrArrayFunctionFactory) {
+                                    args.add(new StrConstant("{'abc'}"));
+                                } else if (factory instanceof TestSumXDoubleGroupByFunctionFactory && p == 1) {
+                                    args.add(new StrConstant("123.456"));
+                                } else if (factory instanceof TimestampFloorFunctionFactory && p == 0) {
+                                    args.add(new StrConstant("d"));
+                                } else if (factory instanceof DateTruncFunctionFactory && p == 0) {
+                                    args.add(new StrConstant("year"));
+                                } else if (factory instanceof ToUTCTimestampFunctionFactory && p == 1) {
+                                    args.add(new StrConstant("CEST"));
+                                } else if (factory instanceof TimestampAddFunctionFactory && p == 0) {
+                                    args.add(new CharConstant('s'));
+                                } else if (factory instanceof EqIntStrCFunctionFactory && sigArgType == ColumnType.STRING) {
+                                    args.add(new StrConstant("1"));
+                                } else if (isLong256StrFactory(factory) && sigArgType == ColumnType.STRING) {
+                                    args.add(new StrConstant("0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9652"));
+                                } else if (isIPv4StrFactory(factory) && sigArgType == ColumnType.STRING) {
+                                    args.add(new StrConstant("10.8.6.5"));
+                                } else if (factory instanceof ContainsIPv4FunctionFactory && sigArgType == ColumnType.STRING) {
+                                    args.add(new StrConstant("12.6.5.10/24"));
+                                } else if (factory instanceof ContainsEqIPv4FunctionFactory && sigArgType == ColumnType.STRING) {
+                                    args.add(new StrConstant("12.6.5.10/24"));
+                                } else if (factory instanceof NegContainsEqIPv4FunctionFactory && sigArgType == ColumnType.STRING) {
+                                    args.add(new StrConstant("34.56.22.11/12"));
+                                } else if (factory instanceof NegContainsIPv4FunctionFactory && sigArgType == ColumnType.STRING) {
+                                    args.add(new StrConstant("32.12.22.11/12"));
+                                } else if (factory instanceof RndIPv4CCFunctionFactory) {
+                                    args.add(new StrConstant("4.12.22.11/12"));
+                                    args.add(new IntConstant(2));
+                                } else if (Chars.equals(key, "approx_count_distinct") && sigArgCount == 2 && p == 1 && sigArgType == ColumnType.INT) {
+                                    args.add(new IntConstant(4)); // precision has to be in the range of 4 to 18
+                                } else if (!useConst) {
+                                    args.add(colFuncs.get(sigArgType));
+                                } else if (factory instanceof WalTransactionsFunctionFactory && sigArgType == ColumnType.STRING) {
+                                    // Skip it, it requires a WAL table to exist
+                                    break FUNCTIONS;
                                 } else {
-                                    sigArgType = ColumnType.STRING;
+                                    args.add(getConst(constFuncs, sigArgType, p, no));
+                                }
+
+                                if (!isConstant) {
+                                    tempNo >>= 1;
                                 }
                             }
 
-                            if (factory instanceof SwitchFunctionFactory) {
-                                args.add(new IntConstant(1));
-                                args.add(new IntConstant(2));
-                                args.add(new StrConstant("a"));
-                                args.add(new StrConstant("b"));
-                            } else if (factory instanceof CoalesceFunctionFactory) {
-                                args.add(new FloatColumn(1));
-                                args.add(new FloatColumn(2));
-                                args.add(new FloatConstant(12f));
-                            } else if (factory instanceof ExtractFromTimestampFunctionFactory && sigArgType == ColumnType.STRING) {
-                                args.add(new StrConstant("day"));
-                            } else if (factory instanceof TimestampCeilFunctionFactory) {
-                                args.add(new StrConstant("d"));
-                            } else if (sigArgType == ColumnType.STRING && isArray) {
-                                args.add(new StringToStringArrayFunction(0, "{'test'}"));
-                            } else if (sigArgType == ColumnType.STRING && factory instanceof InTimestampStrFunctionFactory) {
-                                args.add(new StrConstant("2022-12-12"));
-                            } else if (factory instanceof ToTimezoneTimestampFunctionFactory && p == 1) {
-                                args.add(new StrConstant("CET"));
-                            } else if (factory instanceof CastStrToRegClassFunctionFactory && useConst) {
-                                args.add(new StrConstant("pg_namespace"));
-                            } else if (factory instanceof CastStrToStrArrayFunctionFactory) {
-                                args.add(new StrConstant("{'abc'}"));
-                            } else if (factory instanceof TestSumXDoubleGroupByFunctionFactory && p == 1) {
-                                args.add(new StrConstant("123.456"));
-                            } else if (factory instanceof TimestampFloorFunctionFactory && p == 0) {
-                                args.add(new StrConstant("d"));
-                            } else if (factory instanceof DateTruncFunctionFactory && p == 0) {
-                                args.add(new StrConstant("year"));
-                            } else if (factory instanceof ToUTCTimestampFunctionFactory && p == 1) {
-                                args.add(new StrConstant("CEST"));
-                            } else if (factory instanceof TimestampAddFunctionFactory && p == 0) {
-                                args.add(new CharConstant('s'));
-                            } else if (factory instanceof EqIntStrCFunctionFactory && sigArgType == ColumnType.STRING) {
-                                args.add(new StrConstant("1"));
-                            } else if (isLong256StrFactory(factory) && sigArgType == ColumnType.STRING) {
-                                args.add(new StrConstant("0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9652"));
-                            } else if (isIPv4StrFactory(factory) && sigArgType == ColumnType.STRING) {
-                                args.add(new StrConstant("10.8.6.5"));
-                            } else if (factory instanceof ContainsIPv4FunctionFactory && sigArgType == ColumnType.STRING) {
-                                args.add(new StrConstant("12.6.5.10/24"));
-                            } else if (factory instanceof ContainsEqIPv4FunctionFactory && sigArgType == ColumnType.STRING) {
-                                args.add(new StrConstant("12.6.5.10/24"));
-                            } else if (factory instanceof NegContainsEqIPv4FunctionFactory && sigArgType == ColumnType.STRING) {
-                                args.add(new StrConstant("34.56.22.11/12"));
-                            } else if (factory instanceof NegContainsIPv4FunctionFactory && sigArgType == ColumnType.STRING) {
-                                args.add(new StrConstant("32.12.22.11/12"));
-                            } else if (factory instanceof RndIPv4CCFunctionFactory) {
-                                args.add(new StrConstant("4.12.22.11/12"));
-                                args.add(new IntConstant(2));
-                            } else if (Chars.equals(key, "approx_count_distinct") && sigArgCount == 2 && p == 1 && sigArgType == ColumnType.INT) {
-                                args.add(new IntConstant(4)); // precision has to be in the range of 4 to 18
-                            } else if (!useConst) {
-                                args.add(colFuncs.get(sigArgType));
-                            } else if (factory instanceof WalTransactionsFunctionFactory && sigArgType == ColumnType.STRING) {
-                                // Skip it, it requires a WAL table to exist
-                                break FUNCTIONS;
-                            } else {
-                                args.add(getConst(constFuncs, sigArgType, p, no));
+                            argPositions.setAll(args.size(), 0);
+
+                            // l2price requires an odd number of arguments
+                            if (factory instanceof LevelTwoPriceFunctionFactory) {
+                                if (args.size() % 2 == 0) {
+                                    args.add(new DoubleConstant(1234));
+                                }
                             }
 
-                            if (!isConstant) {
-                                tempNo >>= 1;
+                            // TODO: test with partition by, order by and various frame modes
+                            if (factory.isWindow()) {
+                                sqlExecutionContext.configureWindowContext(null, null, null, false, DataFrameRecordCursorFactory.SCAN_DIRECTION_FORWARD, -1, true, WindowColumn.FRAMING_RANGE, Long.MIN_VALUE, 10, 0, 20, WindowColumn.EXCLUDE_NO_OTHERS, 0, -1);
                             }
-                        }
+                            Function function = null;
+                            try {
+                                try {
+                                    function = factory.newInstance(0, args, argPositions, engine.getConfiguration(), sqlExecutionContext);
+                                    function.toPlan(planSink);
+                                } finally {
+                                    sqlExecutionContext.clearWindowContext();
+                                }
 
-                        argPositions.setAll(args.size(), 0);
+                                goodArgsFound = true;
 
-                        // l2price requires an odd number of arguments
-                        if (factory instanceof LevelTwoPriceFunctionFactory) {
-                            if (args.size() % 2 == 0) {
-                                args.add(new DoubleConstant(1234));
+                                Assert.assertFalse("function " + factory.getSignature() + " should serialize to text properly. current text: " + planSink.getSink(), Chars.contains(planSink.getSink(), "io.questdb"));
+                                LOG.info().$(sink).$(planSink.getSink()).$();
+
+                                if (function instanceof NegatableBooleanFunction && !((NegatableBooleanFunction) function).isNegated()) {
+                                    ((NegatableBooleanFunction) function).setNegated();
+                                    tmpPlanSink.clear();
+                                    function.toPlan(tmpPlanSink);
+
+                                    if (Chars.equals(planSink.getSink(), tmpPlanSink.getSink())) {
+                                        throw new AssertionError("Same output generated regardless of negatable flag! Factory: " + factory.getSignature() + " " + function);
+                                    }
+
+                                    Assert.assertFalse(
+                                            "function " + factory.getSignature() + " should serialize to text properly",
+                                            Chars.contains(tmpPlanSink.getSink(), "io.questdb")
+                                    );
+                                }
+                            } finally {
+                                Misc.free(function);
                             }
+                        } catch (Exception t) {
+                            LOG.info().$(t).$();
                         }
+                    }
 
-                        // TODO: test with partition by, order by and various frame modes
-                        if (factory.isWindow()) {
-                            sqlExecutionContext.configureWindowContext(null, null, null, false, DataFrameRecordCursorFactory.SCAN_DIRECTION_FORWARD, -1, true, WindowColumn.FRAMING_RANGE, Long.MIN_VALUE, 10, 0, 20, WindowColumn.EXCLUDE_NO_OTHERS, 0, -1);
-                        }
-                        Function function;
-                        try {
-                            function = factory.newInstance(0, args, argPositions, engine.getConfiguration(), sqlExecutionContext);
-                            function.toPlan(planSink);
-                        } finally {
-                            sqlExecutionContext.clearWindowContext();
-                        }
-
-                        goodArgsFound = true;
-
-                        Assert.assertFalse("function " + factory.getSignature() + " should serialize to text properly. current text: " + planSink.getSink(), Chars.contains(planSink.getSink(), "io.questdb"));
-                        LOG.info().$(sink).$(planSink.getSink()).$();
-
-                        if (function instanceof NegatableBooleanFunction && !((NegatableBooleanFunction) function).isNegated()) {
-                            ((NegatableBooleanFunction) function).setNegated();
-                            tmpPlanSink.clear();
-                            function.toPlan(tmpPlanSink);
-
-                            if (Chars.equals(planSink.getSink(), tmpPlanSink.getSink())) {
-                                throw new AssertionError("Same output generated regardless of negatable flag! Factory: " + factory.getSignature() + " " + function);
-                            }
-
-                            Assert.assertFalse(
-                                    "function " + factory.getSignature() + " should serialize to text properly",
-                                    Chars.contains(tmpPlanSink.getSink(), "io.questdb")
-                            );
-                        }
-                    } catch (Exception t) {
-                        LOG.info().$(t).$();
+                    if (!goodArgsFound) {
+                        throw new RuntimeException("No good set of values found for " + factory);
                     }
                 }
-
-                if (!goodArgsFound) {
-                    throw new RuntimeException("No good set of values found for " + factory);
-                }
-            }
+            });
         });
     }
 
@@ -3783,7 +3794,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "      filter: length(s)=2\n" +
                         "    Frame backward scan on: a\n"
         );
-
     }
 
     @Test
@@ -3800,7 +3810,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    Row backward scan on: s\n" +
                         "    Frame backward scan on: a\n"
         );
-
     }
 
     @Test
@@ -4227,17 +4236,21 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLeftJoinWithEquality7() throws Exception {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            testHashAndAsOfJoin(compiler, true);
-        }
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                testHashAndAsOfJoin(compiler, true);
+            }
+        });
     }
 
     @Test
     public void testLeftJoinWithEquality8() throws Exception {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            compiler.setFullFatJoins(true);
-            testHashAndAsOfJoin(compiler, false);
-        }
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.setFullFatJoins(true);
+                testHashAndAsOfJoin(compiler, false);
+            }
+        });
     }
 
     @Test
@@ -5101,11 +5114,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 "            Frame forward scan on: t\n"
                 );
 
-                assertQuery("x\tts\tx1\tts1\n" +
-                        "1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n" +
-                        "1\t1970-01-01T00:00:00.000001Z\t2\t1970-01-01T00:00:00.000002Z\n" +
-                        "2\t1970-01-01T00:00:00.000002Z\t1\t1970-01-01T00:00:00.000001Z\n" +
-                        "2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\n", query, "ts", false, false);
+                assertQueryNoLeakCheck(
+                        "x\tts\tx1\tts1\n" +
+                                "1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n" +
+                                "1\t1970-01-01T00:00:00.000001Z\t2\t1970-01-01T00:00:00.000002Z\n" +
+                                "2\t1970-01-01T00:00:00.000002Z\t1\t1970-01-01T00:00:00.000001Z\n" +
+                                "2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\n",
+                        query,
+                        "ts",
+                        false,
+                        false
+                );
             }
         });
     }
@@ -5141,14 +5160,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testNoArgFalseConstantExpressionUsedInJoinIsOptimizedAway() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab (b boolean, ts timestamp)");
-            //true
-            assertPlanNoLeakCheck("update tab t1 set b=true from tab t2 where 1>2 and t1.b = t2.b",
+            // true
+            assertPlanNoLeakCheck(
+                    "update tab t1 set b=true from tab t2 where 1>2 and t1.b = t2.b",
                     "Update table: tab\n" +
                             "    VirtualRecord\n" +
                             "      functions: [true]\n" +
-                            "        Empty table\n");
-            //false
-            assertPlanNoLeakCheck("update tab t1 set b=true from tab t2 where 1<2 and t1.b = t2.b",
+                            "        Empty table\n"
+            );
+            // false
+            assertPlanNoLeakCheck(
+                    "update tab t1 set b=true from tab t2 where 1<2 and t1.b = t2.b",
                     "Update table: tab\n" +
                             "    VirtualRecord\n" +
                             "      functions: [true]\n" +
@@ -5160,13 +5182,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "            Hash\n" +
                             "                DataFrame\n" +
                             "                    Row forward scan\n" +
-                            "                    Frame forward scan on: tab\n");
+                            "                    Frame forward scan on: tab\n"
+            );
         });
     }
 
     @Test
     public void testNoArgNonConstantExpressionUsedInJoinClauseIsUsedAsPostJoinFilter() throws Exception {
-        assertPlan("create table tab (b boolean, ts timestamp)",
+        assertPlan(
+                "create table tab (b boolean, ts timestamp)",
                 "update tab t1 set b=true from tab t2 where not sleep(60000) and t1.b = t2.b",
                 "Update table: tab\n" +
                         "    VirtualRecord\n" +
@@ -5180,7 +5204,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "                Hash\n" +
                         "                    DataFrame\n" +
                         "                        Row forward scan\n" +
-                        "                        Frame forward scan on: tab\n");
+                        "                        Frame forward scan on: tab\n"
+        );
     }
 
     @Test
@@ -5188,8 +5213,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table tab (b boolean, ts timestamp)");
 
-            //true
-            assertPlanNoLeakCheck("update tab t1 set b=true from tab t2 where now()::long > -1 and t1.b = t2.b",
+            // true
+            assertPlanNoLeakCheck(
+                    "update tab t1 set b=true from tab t2 where now()::long > -1 and t1.b = t2.b",
                     "Update table: tab\n" +
                             "    VirtualRecord\n" +
                             "      functions: [true]\n" +
@@ -5202,10 +5228,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "                Hash\n" +
                             "                    DataFrame\n" +
                             "                        Row forward scan\n" +
-                            "                        Frame forward scan on: tab\n");
+                            "                        Frame forward scan on: tab\n"
+            );
 
-            //false
-            assertPlanNoLeakCheck("update tab t1 set b=true from tab t2 where now()::long < 0 and t1.b = t2.b",
+            // false
+            assertPlanNoLeakCheck(
+                    "update tab t1 set b=true from tab t2 where now()::long < 0 and t1.b = t2.b",
                     "Update table: tab\n" +
                             "    VirtualRecord\n" +
                             "      functions: [true]\n" +
@@ -5218,7 +5246,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "                Hash\n" +
                             "                    DataFrame\n" +
                             "                        Row forward scan\n" +
-                            "                        Frame forward scan on: tab\n");
+                            "                        Frame forward scan on: tab\n"
+            );
         });
     }
 
@@ -6511,7 +6540,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByFillValueNotKeyed() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "create table a ( i int, ts timestamp) timestamp(ts);",
                     "select first(i) from a sample by 1h fill(1) align to first observation",
                     "SampleBy\n" +
@@ -6760,12 +6789,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectConcat() throws Exception {
-        assertPlanNoLeakCheck(
+        assertMemoryLeak(() -> assertPlanNoLeakCheck(
                 "select concat('a', 'b', rnd_str('c', 'd', 'e'))",
                 "VirtualRecord\n" +
                         "  functions: [concat(['a','b',rnd_str([c,d,e])])]\n" +
                         "    long_sequence count: 1\n"
-        );
+        ));
     }
 
     @Test
@@ -7314,26 +7343,26 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectFromAllTables() throws Exception {
-        assertPlanNoLeakCheck(
+        assertMemoryLeak(() -> assertPlanNoLeakCheck(
                 "select * from all_tables()",
                 "all_tables()\n"
-        );
+        ));
     }
 
     @Test
     public void testSelectFromMemoryMetrics() throws Exception {
-        assertPlanNoLeakCheck(
+        assertMemoryLeak(() -> assertPlanNoLeakCheck(
                 "select * from memory_metrics()",
                 "memory_metrics\n"
-        );
+        ));
     }
 
     @Test
     public void testSelectFromReaderPool() throws Exception {
-        assertPlanNoLeakCheck(
+        assertMemoryLeak(() -> assertPlanNoLeakCheck(
                 "select * from reader_pool()",
                 "reader_pool\n"
-        );
+        ));
     }
 
     @Test
@@ -7356,10 +7385,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectFromTableWriterMetrics() throws Exception {
-        assertPlanNoLeakCheck(
+        assertMemoryLeak(() -> assertPlanNoLeakCheck(
                 "select * from table_writer_metrics()",
                 "table_writer_metrics\n"
-        );
+        ));
     }
 
     @Test
@@ -7416,15 +7445,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbols01a() throws Exception {
-        //if query is ordered by symbol and there's only one partition to scan, there's no need to sort
-        testSelectIndexedSymbol("");
-        testSelectIndexedSymbol("timestamp(ts)");
-        testSelectIndexedSymbolWithIntervalFilter();
+        assertMemoryLeak(() -> {
+            // if query is ordered by symbol and there's only one partition to scan, there's no need to sort
+            testSelectIndexedSymbol("");
+            testSelectIndexedSymbol("timestamp(ts)");
+            testSelectIndexedSymbolWithIntervalFilter();
+        });
     }
 
     @Test
     public void testSelectIndexedSymbols01b() throws Exception {
-        //if query is ordered by symbol and there's more than partition to scan, then sort is necessary even if we use cursor order scan
+        // if query is ordered by symbol and there's more than partition to scan, then sort is necessary even if we use cursor order scan
         assertMemoryLeak(() -> {
             ddl("create table a ( s symbol index, ts timestamp)  timestamp(ts) partition by hour");
             insert("insert into a values ('S2', 0), ('S1', 1), ('S3', 2+3600000000), ( 'S2' ,3+3600000000)");
@@ -7446,15 +7477,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "          intervals: [(\"1970-01-01T00:00:00.000000Z\",\"1970-01-01T23:59:59.999999Z\")]\n";
 
             assertPlanNoLeakCheck(queryDesc, expectedPlan.replace("#ORDER#", " desc"));
-            assertQuery("s\tts\n" +
+            assertQueryNoLeakCheck("s\tts\n" +
                     "S2\t1970-01-01T01:00:00.000003Z\n" +
                     "S2\t1970-01-01T00:00:00.000000Z\n" +
                     "S1\t1970-01-01T00:00:00.000001Z\n", queryDesc, null, true, true);
 
-            //order by asc
+            // order by asc
             String queryAsc = "select * from a where s in (:s1, :s2) and ts in '1970-01-01' order by s asc limit 5";
             assertPlanNoLeakCheck(queryAsc, expectedPlan.replace("#ORDER#", ""));
-            assertQuery("s\tts\n" +
+            assertQueryNoLeakCheck("s\tts\n" +
                     "S1\t1970-01-01T00:00:00.000001Z\n" +
                     "S2\t1970-01-01T01:00:00.000003Z\n" +
                     "S2\t1970-01-01T00:00:00.000000Z\n", queryAsc, null, true, true);
@@ -7645,7 +7676,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Frame forward scan on: a\n"
             );
 
-            assertQuery("s\n" +
+            assertQueryNoLeakCheck("s\n" +
                     "\n" +//null
                     "b\n" +
                     "w\n", query, null, true, false);
@@ -7659,7 +7690,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Frame forward scan on: a\n"
             );
 
-            assertQuery("s\n" +
+            assertQueryNoLeakCheck("s\n" +
                     "w\n" +
                     "b\n" +
                     "\n"/*null*/, query, null, true, false);
@@ -7673,7 +7704,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Frame forward scan on: a\n"
             );
 
-            assertQuery("s\n" +
+            assertQueryNoLeakCheck("s\n" +
                     "w\n" +
                     "b\n" +
                     "a\n" +
@@ -7712,8 +7743,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbols10WithOrder() throws Exception {
-        testSelectIndexedSymbols10WithOrder("");
-        testSelectIndexedSymbols10WithOrder("partition by hour");
+        assertMemoryLeak(() -> {
+            testSelectIndexedSymbols10WithOrder("");
+            testSelectIndexedSymbols10WithOrder("partition by hour");
+        });
     }
 
     @Test
@@ -7866,7 +7899,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        Frame forward scan on: a\n"
             );
 
-            assertQuery("s1\tts\n" +
+            assertQueryNoLeakCheck("s1\tts\n" +
                     "S5\t1970-01-01T00:20:00.000000Z\n" +
                     "S4\t1970-01-01T00:40:00.000000Z\n" +
                     "S3\t1970-01-01T01:00:00.000000Z\n", query, "ts", true, false);
@@ -8153,12 +8186,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectRandomBoolean() throws Exception {
-        assertPlanNoLeakCheck(
+        assertMemoryLeak(() -> assertPlanNoLeakCheck(
                 "select rnd_boolean()",
                 "VirtualRecord\n" +
                         "  functions: [rnd_boolean()]\n" +
                         "    long_sequence count: 1\n"
-        );
+        ));
     }
 
     @Test
@@ -9462,7 +9495,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         });
     }
 
-    @Test//TODO: sorting by ts, l again is not necessary
+    @Test // TODO: sorting by ts, l again is not necessary
     public void testSortDescLimitAndSortAsc2() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table a ( i int, ts timestamp, l long)");
@@ -9480,7 +9513,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         });
     }
 
-    @Test//TODO: sorting by ts, l again is not necessary
+    @Test // TODO: sorting by ts, l again is not necessary
     public void testSortDescLimitAndSortAsc3() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table a ( i int, ts timestamp, l long)");
@@ -9678,7 +9711,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             compile("insert into t select x, x::timestamp from long_sequence(10000)");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "x\tts\n" +
                             "5\t1970-01-01T00:00:00.000005Z\n" +
                             "4\t1970-01-01T00:00:00.000004Z\n" +
@@ -9921,7 +9954,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         });
     }
 
-    //TODO: remove artificial limit models used to force ordering on window models (and avoid unnecessary sorts)
+    // TODO: remove artificial limit models used to force ordering on window models (and avoid unnecessary sorts)
     @Test
     public void testWindowParentModelOrderPushdownIsBlockedWhenWindowModelSpecifiesOrderBy() throws Exception {
         assertMemoryLeak(() -> {
@@ -10114,8 +10147,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: cpu_ts\n");
-
-
         });
     }
 
@@ -10479,191 +10510,183 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     // left join maintains order metadata and can be part of asof join
     private void testHashAndAsOfJoin(SqlCompiler compiler, boolean isLight) throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table taba (a1 int, ts1 timestamp) timestamp(ts1)");
-            ddl("create table tabb (b1 int, b2 long)");
-            ddl("create table tabc (c1 int, c2 long, ts3 timestamp) timestamp(ts3)");
+        ddl("create table taba (a1 int, ts1 timestamp) timestamp(ts1)");
+        ddl("create table tabb (b1 int, b2 long)");
+        ddl("create table tabc (c1 int, c2 long, ts3 timestamp) timestamp(ts3)");
 
-            assertPlanNoLeakCheck(
-                    compiler,
-                    "select * " +
-                            "from taba " +
-                            "left join tabb on a1=b1 " +
-                            "asof join tabc on b1=c1",
-                    "SelectedRecord\n" +
-                            "    AsOf Join" + (isLight ? " Light" : "") + "\n" +
-                            "      condition: c1=b1\n" +
-                            "        Hash Outer Join" + (isLight ? " Light" : "") + "\n" +
-                            "          condition: b1=a1\n" +
-                            "            DataFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: taba\n" +
-                            "            Hash\n" +
-                            "                DataFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: tabb\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: tabc\n",
-                    sqlExecutionContext
-            );
-        });
+        assertPlanNoLeakCheck(
+                compiler,
+                "select * " +
+                        "from taba " +
+                        "left join tabb on a1=b1 " +
+                        "asof join tabc on b1=c1",
+                "SelectedRecord\n" +
+                        "    AsOf Join" + (isLight ? " Light" : "") + "\n" +
+                        "      condition: c1=b1\n" +
+                        "        Hash Outer Join" + (isLight ? " Light" : "") + "\n" +
+                        "          condition: b1=a1\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: taba\n" +
+                        "            Hash\n" +
+                        "                DataFrame\n" +
+                        "                    Row forward scan\n" +
+                        "                    Frame forward scan on: tabb\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: tabc\n",
+                sqlExecutionContext
+        );
     }
 
     private void testSelectIndexedSymbol(String timestampAndPartitionByClause) throws Exception {
-        assertMemoryLeak(() -> {
-            compile("drop table if exists a");
-            ddl("create table a ( s symbol index, ts timestamp) " + timestampAndPartitionByClause);
-            insert("insert into a values ('S2', 0), ('S1', 1), ('S3', 2+3600000000), ( 'S2' ,3+3600000000)");
+        compile("drop table if exists a");
+        ddl("create table a ( s symbol index, ts timestamp) " + timestampAndPartitionByClause);
+        insert("insert into a values ('S2', 0), ('S1', 1), ('S3', 2+3600000000), ( 'S2' ,3+3600000000)");
 
-            String query = "select * from a where s in (:s1, :s2) order by s desc limit 5";
-            bindVariableService.clear();
-            bindVariableService.setStr("s1", "S1");
-            bindVariableService.setStr("s2", "S2");
+        String query = "select * from a where s in (:s1, :s2) order by s desc limit 5";
+        bindVariableService.clear();
+        bindVariableService.setStr("s1", "S1");
+        bindVariableService.setStr("s2", "S2");
 
-            // even though plan shows cursors in S1, S2 order, FilterOnValues sorts them before query execution
-            // actual order is S2, S1
-            assertPlanNoLeakCheck(
-                    query,
-                    "Limit lo: 5\n" +
-                            "    FilterOnValues symbolOrder: desc\n" +
-                            "        Cursor-order scan\n" +
-                            "            Index forward scan on: s deferred: true\n" +
-                            "              filter: s=:s1::string\n" +
-                            "            Index forward scan on: s deferred: true\n" +
-                            "              filter: s=:s2::string\n" +
-                            "        Frame forward scan on: a\n"
-            );
+        // even though plan shows cursors in S1, S2 order, FilterOnValues sorts them before query execution
+        // actual order is S2, S1
+        assertPlanNoLeakCheck(
+                query,
+                "Limit lo: 5\n" +
+                        "    FilterOnValues symbolOrder: desc\n" +
+                        "        Cursor-order scan\n" +
+                        "            Index forward scan on: s deferred: true\n" +
+                        "              filter: s=:s1::string\n" +
+                        "            Index forward scan on: s deferred: true\n" +
+                        "              filter: s=:s2::string\n" +
+                        "        Frame forward scan on: a\n"
+        );
 
-            assertQuery("s\tts\n" +
-                    "S2\t1970-01-01T00:00:00.000000Z\n" +
-                    "S2\t1970-01-01T01:00:00.000003Z\n" +
-                    "S1\t1970-01-01T00:00:00.000001Z\n", query, null, true, false);
+        assertQueryNoLeakCheck("s\tts\n" +
+                "S2\t1970-01-01T00:00:00.000000Z\n" +
+                "S2\t1970-01-01T01:00:00.000003Z\n" +
+                "S1\t1970-01-01T00:00:00.000001Z\n", query, null, true, false);
 
-            //order by asc
-            query = "select * from a where s in (:s1, :s2) order by s asc limit 5";
+        //order by asc
+        query = "select * from a where s in (:s1, :s2) order by s asc limit 5";
 
-            assertPlanNoLeakCheck(
-                    query,
-                    "Limit lo: 5\n" +
-                            "    FilterOnValues symbolOrder: asc\n" +
-                            "        Cursor-order scan\n" +
-                            "            Index forward scan on: s deferred: true\n" +
-                            "              filter: s=:s1::string\n" +
-                            "            Index forward scan on: s deferred: true\n" +
-                            "              filter: s=:s2::string\n" +
-                            "        Frame forward scan on: a\n"
-            );
+        assertPlanNoLeakCheck(
+                query,
+                "Limit lo: 5\n" +
+                        "    FilterOnValues symbolOrder: asc\n" +
+                        "        Cursor-order scan\n" +
+                        "            Index forward scan on: s deferred: true\n" +
+                        "              filter: s=:s1::string\n" +
+                        "            Index forward scan on: s deferred: true\n" +
+                        "              filter: s=:s2::string\n" +
+                        "        Frame forward scan on: a\n"
+        );
 
-            assertQuery("s\tts\n" +
-                    "S1\t1970-01-01T00:00:00.000001Z\n" +
-                    "S2\t1970-01-01T00:00:00.000000Z\n" +
-                    "S2\t1970-01-01T01:00:00.000003Z\n", query, null, true, false);
-        });
+        assertQueryNoLeakCheck("s\tts\n" +
+                "S1\t1970-01-01T00:00:00.000001Z\n" +
+                "S2\t1970-01-01T00:00:00.000000Z\n" +
+                "S2\t1970-01-01T01:00:00.000003Z\n", query, null, true, false);
     }
 
     @SuppressWarnings("SameParameterValue")
     private void testSelectIndexedSymbolWithIntervalFilter() throws Exception {
-        assertMemoryLeak(() -> {
-            compile("drop table if exists a");
-            ddl("create table a ( s symbol index, ts timestamp) " + "timestamp(ts) partition by day");
-            insert("insert into a values ('S2', 0), ('S1', 1), ('S3', 2+3600000000), ( 'S2' ,3+3600000000)");
+        compile("drop table if exists a");
+        ddl("create table a ( s symbol index, ts timestamp) " + "timestamp(ts) partition by day");
+        insert("insert into a values ('S2', 0), ('S1', 1), ('S3', 2+3600000000), ( 'S2' ,3+3600000000)");
 
-            String query = "select * from a where s in (:s1, :s2) and ts in '1970-01-01' order by s desc limit 5";
-            bindVariableService.clear();
-            bindVariableService.setStr("s1", "S1");
-            bindVariableService.setStr("s2", "S2");
+        String query = "select * from a where s in (:s1, :s2) and ts in '1970-01-01' order by s desc limit 5";
+        bindVariableService.clear();
+        bindVariableService.setStr("s1", "S1");
+        bindVariableService.setStr("s2", "S2");
 
-            // even though plan shows cursors in S1, S2 order, FilterOnValues sorts them before query execution
-            // actual order is S2, S1
-            assertPlanNoLeakCheck(
-                    query,
-                    "Limit lo: 5\n" +
-                            "    FilterOnValues symbolOrder: desc\n" +
-                            "        Cursor-order scan\n" +
-                            "            Index forward scan on: s deferred: true\n" +
-                            "              filter: s=:s1::string\n" +
-                            "            Index forward scan on: s deferred: true\n" +
-                            "              filter: s=:s2::string\n" +
-                            "        Interval forward scan on: a\n" +
-                            "          intervals: [(\"1970-01-01T00:00:00.000000Z\",\"1970-01-01T23:59:59.999999Z\")]\n"
-            );
+        // even though plan shows cursors in S1, S2 order, FilterOnValues sorts them before query execution
+        // actual order is S2, S1
+        assertPlanNoLeakCheck(
+                query,
+                "Limit lo: 5\n" +
+                        "    FilterOnValues symbolOrder: desc\n" +
+                        "        Cursor-order scan\n" +
+                        "            Index forward scan on: s deferred: true\n" +
+                        "              filter: s=:s1::string\n" +
+                        "            Index forward scan on: s deferred: true\n" +
+                        "              filter: s=:s2::string\n" +
+                        "        Interval forward scan on: a\n" +
+                        "          intervals: [(\"1970-01-01T00:00:00.000000Z\",\"1970-01-01T23:59:59.999999Z\")]\n"
+        );
 
-            assertQuery("s\tts\n" +
-                    "S2\t1970-01-01T00:00:00.000000Z\n" +
-                    "S2\t1970-01-01T01:00:00.000003Z\n" +
-                    "S1\t1970-01-01T00:00:00.000001Z\n", query, null, true, false);
+        assertQueryNoLeakCheck("s\tts\n" +
+                "S2\t1970-01-01T00:00:00.000000Z\n" +
+                "S2\t1970-01-01T01:00:00.000003Z\n" +
+                "S1\t1970-01-01T00:00:00.000001Z\n", query, null, true, false);
 
-            //order by asc
-            query = "select * from a where s in (:s1, :s2) and ts in '1970-01-01' order by s asc limit 5";
+        //order by asc
+        query = "select * from a where s in (:s1, :s2) and ts in '1970-01-01' order by s asc limit 5";
 
-            assertPlanNoLeakCheck(
-                    query,
-                    "Limit lo: 5\n" +
-                            "    FilterOnValues symbolOrder: asc\n" +
-                            "        Cursor-order scan\n" +
-                            "            Index forward scan on: s deferred: true\n" +
-                            "              filter: s=:s1::string\n" +
-                            "            Index forward scan on: s deferred: true\n" +
-                            "              filter: s=:s2::string\n" +
-                            "        Interval forward scan on: a\n" +
-                            "          intervals: [(\"1970-01-01T00:00:00.000000Z\",\"1970-01-01T23:59:59.999999Z\")]\n"
-            );
+        assertPlanNoLeakCheck(
+                query,
+                "Limit lo: 5\n" +
+                        "    FilterOnValues symbolOrder: asc\n" +
+                        "        Cursor-order scan\n" +
+                        "            Index forward scan on: s deferred: true\n" +
+                        "              filter: s=:s1::string\n" +
+                        "            Index forward scan on: s deferred: true\n" +
+                        "              filter: s=:s2::string\n" +
+                        "        Interval forward scan on: a\n" +
+                        "          intervals: [(\"1970-01-01T00:00:00.000000Z\",\"1970-01-01T23:59:59.999999Z\")]\n"
+        );
 
-            assertQuery("s\tts\n" +
-                    "S1\t1970-01-01T00:00:00.000001Z\n" +
-                    "S2\t1970-01-01T00:00:00.000000Z\n" +
-                    "S2\t1970-01-01T01:00:00.000003Z\n", query, null, true, false);
-        });
+        assertQueryNoLeakCheck("s\tts\n" +
+                "S1\t1970-01-01T00:00:00.000001Z\n" +
+                "S2\t1970-01-01T00:00:00.000000Z\n" +
+                "S2\t1970-01-01T01:00:00.000003Z\n", query, null, true, false);
     }
 
     private void testSelectIndexedSymbols10WithOrder(String partitionByClause) throws Exception {
-        assertMemoryLeak(() -> {
-            compile("drop table if exists a");
-            ddl("create table a ( s symbol index, ts timestamp) timestamp(ts)" + partitionByClause);
-            insert("insert into a values ('S2', 1), ('S3', 2),('S1', 3+3600000000),('S2', 4+3600000000), ('S1', 5+3600000000);");
+        compile("drop table if exists a");
+        ddl("create table a ( s symbol index, ts timestamp) timestamp(ts)" + partitionByClause);
+        insert("insert into a values ('S2', 1), ('S3', 2),('S1', 3+3600000000),('S2', 4+3600000000), ('S1', 5+3600000000);");
 
-            bindVariableService.clear();
-            bindVariableService.setStr("s1", "S1");
-            bindVariableService.setStr("s2", "S2");
+        bindVariableService.clear();
+        bindVariableService.setStr("s1", "S1");
+        bindVariableService.setStr("s2", "S2");
 
-            String queryAsc = "select * from a where s in (:s2, :s1) order by ts asc limit 5";
-            assertPlanNoLeakCheck(
-                    queryAsc,
-                    "Limit lo: 5\n" +
-                            "    FilterOnValues\n" +
-                            "        Table-order scan\n" +
-                            "            Index forward scan on: s deferred: true\n" +
-                            "              filter: s=:s2::string\n" +
-                            "            Index forward scan on: s deferred: true\n" +
-                            "              filter: s=:s1::string\n" +
-                            "        Frame forward scan on: a\n"
-            );
-            assertQuery("s\tts\n" +
-                    "S2\t1970-01-01T00:00:00.000001Z\n" +
-                    "S1\t1970-01-01T01:00:00.000003Z\n" +
-                    "S2\t1970-01-01T01:00:00.000004Z\n" +
-                    "S1\t1970-01-01T01:00:00.000005Z\n", queryAsc, "ts", true, false);
+        String queryAsc = "select * from a where s in (:s2, :s1) order by ts asc limit 5";
+        assertPlanNoLeakCheck(
+                queryAsc,
+                "Limit lo: 5\n" +
+                        "    FilterOnValues\n" +
+                        "        Table-order scan\n" +
+                        "            Index forward scan on: s deferred: true\n" +
+                        "              filter: s=:s2::string\n" +
+                        "            Index forward scan on: s deferred: true\n" +
+                        "              filter: s=:s1::string\n" +
+                        "        Frame forward scan on: a\n"
+        );
+        assertQueryNoLeakCheck("s\tts\n" +
+                "S2\t1970-01-01T00:00:00.000001Z\n" +
+                "S1\t1970-01-01T01:00:00.000003Z\n" +
+                "S2\t1970-01-01T01:00:00.000004Z\n" +
+                "S1\t1970-01-01T01:00:00.000005Z\n", queryAsc, "ts", true, false);
 
-            String queryDesc = "select * from a where s in (:s2, :s1) order by ts desc limit 5";
-            assertPlanNoLeakCheck(
-                    queryDesc,
-                    "Sort light lo: 5\n" +
-                            "  keys: [ts desc]\n" +
-                            "    FilterOnValues symbolOrder: desc\n" +
-                            "        Cursor-order scan\n" +
-                            "            Index forward scan on: s deferred: true\n" +
-                            "              filter: s=:s2::string\n" +
-                            "            Index forward scan on: s deferred: true\n" +
-                            "              filter: s=:s1::string\n" +
-                            "        Frame backward scan on: a\n"
-            );
-            assertQuery("s\tts\n" +
-                    "S1\t1970-01-01T01:00:00.000005Z\n" +
-                    "S2\t1970-01-01T01:00:00.000004Z\n" +
-                    "S1\t1970-01-01T01:00:00.000003Z\n" +
-                    "S2\t1970-01-01T00:00:00.000001Z\n", queryDesc, "ts###DESC", true, true);
-        });
+        String queryDesc = "select * from a where s in (:s2, :s1) order by ts desc limit 5";
+        assertPlanNoLeakCheck(
+                queryDesc,
+                "Sort light lo: 5\n" +
+                        "  keys: [ts desc]\n" +
+                        "    FilterOnValues symbolOrder: desc\n" +
+                        "        Cursor-order scan\n" +
+                        "            Index forward scan on: s deferred: true\n" +
+                        "              filter: s=:s2::string\n" +
+                        "            Index forward scan on: s deferred: true\n" +
+                        "              filter: s=:s1::string\n" +
+                        "        Frame backward scan on: a\n"
+        );
+        assertQueryNoLeakCheck("s\tts\n" +
+                "S1\t1970-01-01T01:00:00.000005Z\n" +
+                "S2\t1970-01-01T01:00:00.000004Z\n" +
+                "S1\t1970-01-01T01:00:00.000003Z\n" +
+                "S2\t1970-01-01T00:00:00.000001Z\n", queryDesc, "ts###DESC", true, true);
     }
 }
 
