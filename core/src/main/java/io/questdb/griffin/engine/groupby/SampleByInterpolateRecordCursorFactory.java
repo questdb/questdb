@@ -159,7 +159,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
 
             this.cursor = new SampleByInterpolateRecordCursor(configuration, recordFunctions, groupByFunctions, keyTypes, valueTypes, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos);
         } catch (Throwable th) {
-            close();
+            _close();
             throw th;
         }
     }

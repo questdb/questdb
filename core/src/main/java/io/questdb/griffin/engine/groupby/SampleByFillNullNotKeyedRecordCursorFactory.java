@@ -75,9 +75,9 @@ public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleB
                     offsetFuncPos
             );
             peeker.setCursor(cursor);
-        } catch (Throwable e) {
+        } catch (Throwable th) {
             Misc.freeObjList(recordFunctions);
-            throw e;
+            throw th;
         }
     }
 

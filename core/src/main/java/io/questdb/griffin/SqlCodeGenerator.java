@@ -962,8 +962,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 masterMetadata.getColumnCount() + slaveMetadata.getColumnCount()
         );
 
-        metadata.copyColumnMetadataFrom(masterAlias, masterMetadata);
-        metadata.copyColumnMetadataFrom(slaveAlias, slaveMetadata);
+        try {
+            metadata.copyColumnMetadataFrom(masterAlias, masterMetadata);
+            metadata.copyColumnMetadataFrom(slaveAlias, slaveMetadata);
+        } catch (Throwable th) {
+            Misc.free(metadata);
+            throw th;
+        }
 
         if (timestampIndex != -1) {
             metadata.setTimestampIndex(timestampIndex);
@@ -1849,6 +1854,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private RecordCursorFactory generateJoins(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         final ObjList<QueryModel> joinModels = model.getJoinModels();
         IntList ordered = model.getOrderedJoinModels();
+        JoinRecordMetadata joinMetadata = null;
         RecordCursorFactory master = null;
         CharSequence masterAlias = null;
 
@@ -1891,7 +1897,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         final RecordMetadata masterMetadata = master.getMetadata();
                         final RecordMetadata slaveMetadata = slave.getMetadata();
                         Function filter = null;
-                        JoinRecordMetadata joinMetadata;
 
                         switch (joinType) {
                             case JOIN_CROSS_LEFT:
@@ -2116,6 +2121,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                     }
                 } catch (Throwable th) {
+                    joinMetadata = Misc.free(joinMetadata);
                     master = Misc.free(master);
                     if (releaseSlave) {
                         Misc.free(slave);
@@ -3828,13 +3834,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     @NotNull
     private VirtualRecordCursorFactory generateSelectVirtualWithSubQuery(QueryModel model, SqlExecutionContext executionContext, RecordCursorFactory factory) throws SqlException {
+        final ObjList<QueryColumn> columns = model.getColumns();
+        final int columnCount = columns.size();
+        final ObjList<Function> functions = new ObjList<>(columnCount);
+        final RecordMetadata metadata = factory.getMetadata();
+        final GenericRecordMetadata virtualMetadata = new GenericRecordMetadata();
         try {
-            final ObjList<QueryColumn> columns = model.getColumns();
-            final int columnCount = columns.size();
-            final RecordMetadata metadata = factory.getMetadata();
-            final ObjList<Function> functions = new ObjList<>(columnCount);
-            final GenericRecordMetadata virtualMetadata = new GenericRecordMetadata();
-
             // attempt to preserve timestamp on new data set
             CharSequence timestampColumn;
             final int timestampIndex = metadata.getTimestampIndex();
@@ -3963,6 +3968,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             return new VirtualRecordCursorFactory(virtualMetadata, functions, factory);
         } catch (SqlException | CairoException e) {
+            Misc.freeObjList(functions);
             factory.close();
             throw e;
         }

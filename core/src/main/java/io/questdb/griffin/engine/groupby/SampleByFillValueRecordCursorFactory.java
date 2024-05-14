@@ -155,7 +155,6 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
             @NotNull @Transient ObjList<ExpressionNode> fillValues,
             boolean linearSupported
     ) throws SqlException {
-
         final ObjList<Function> placeholderFunctions = new ObjList<>();
         int fillIndex = 0;
         final int fillValueCount = fillValues.size();

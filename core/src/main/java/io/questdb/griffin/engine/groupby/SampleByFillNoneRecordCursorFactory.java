@@ -62,25 +62,30 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
             int offsetFuncPos
     ) {
         super(base, groupByMetadata, recordFunctions);
-        // sink will be storing record columns to map key
-        final RecordSink mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, false);
-        // this is the map itself, which we must not forget to free when factory closes
-        final Map map = MapFactory.createOrderedMap(configuration, keyTypes, valueTypes);
-        final GroupByFunctionsUpdater groupByFunctionsUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
-        cursor = new SampleByFillNoneRecordCursor(
-                configuration,
-                map,
-                mapSink,
-                groupByFunctions,
-                groupByFunctionsUpdater,
-                this.recordFunctions,
-                timestampIndex,
-                timestampSampler,
-                timezoneNameFunc,
-                timezoneNameFuncPos,
-                offsetFunc,
-                offsetFuncPos
-        );
+        try {
+            // sink will be storing record columns to map key
+            final RecordSink mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, false);
+            // this is the map itself, which we must not forget to free when factory closes
+            final Map map = MapFactory.createOrderedMap(configuration, keyTypes, valueTypes);
+            final GroupByFunctionsUpdater groupByFunctionsUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
+            cursor = new SampleByFillNoneRecordCursor(
+                    configuration,
+                    map,
+                    mapSink,
+                    groupByFunctions,
+                    groupByFunctionsUpdater,
+                    this.recordFunctions,
+                    timestampIndex,
+                    timestampSampler,
+                    timezoneNameFunc,
+                    timezoneNameFuncPos,
+                    offsetFunc,
+                    offsetFuncPos
+            );
+        } catch (Throwable th) {
+            Misc.freeObjList(recordFunctions);
+            throw th;
+        }
     }
 
     @Override
