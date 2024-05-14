@@ -33,21 +33,23 @@ import org.junit.Test;
 
 import static io.questdb.test.griffin.wal.FuzzRunner.MAX_WAL_APPLY_TIME_PER_TABLE_CEIL;
 
-// These test is designed to produce unstable runs, e.g. random generator is created
-// using current execution time.
-// This improves coverage. To debug failures in CI find the line logging random seeds
-// and change line
-// Rnd rnd = generateRandom(LOG);
-// to
-// Rnd rnd = new Rnd(A, B);
-// where A, B are seeds in the failed run log.
-//
-// When the same timestamp is used in multiple transactions
-// the order of records when executed in parallel WAL writing is not guaranteed.
-// The creates failures in tests that assume that the order of records is preserved.
-// There are already measures to prevent invalid data generation, but it still can happen.
-// In order to verify that the test is not broken we check that there are no duplicate
-// timestamps for the record where the comparison fails.
+/**
+ * These tests are designed to produce unstable runs, e.g. random generator is created
+ * using current execution time.
+ * This improves coverage. To debug failures in CI find the line logging random seeds
+ * and change line
+ * {@code Rnd rnd = generateRandom(LOG);}
+ * to
+ * {@code Rnd rnd = new Rnd(A, B);}
+ * where A, B are seeds in the failed run log.
+ * <p>
+ * When the same timestamp is used in multiple transactions
+ * the order of records when executed in parallel WAL writing is not guaranteed.
+ * The creates failures in tests that assume that the order of records is preserved.
+ * There are already measures to prevent invalid data generation, but it still can happen.
+ * In order to verify that the test is not broken we check that there are no duplicate
+ * timestamps for the record where the comparison fails.
+ */
 public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Before

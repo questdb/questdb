@@ -73,13 +73,13 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private static final Log LOG = LogFactory.getLog(ParallelCsvFileImporter.class);
     private static final int NO_INDEX = -1;
     private final CairoEngine cairoEngine;
-    //holds result of first phase - boundary scanning
-    //count of quotes, even new lines, odd new lines, offset to first even newline, offset to first odd newline
+    // holds result of first phase - boundary scanning
+    // count of quotes, even new lines, odd new lines, offset to first even newline, offset to first odd newline
     private final LongList chunkStats;
     private final Sequence collectSeq;
     private final CairoConfiguration configuration;
     private final FilesFacade ff;
-    //holds input for second phase - indexing: offset and start line number for each chunk
+    // holds input for second phase - indexing: offset and start line number for each chunk
     private final LongList indexChunkStats;
     private final Path inputFilePath;
     private final CharSequence inputRoot;
@@ -93,7 +93,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private final RingQueue<CopyTask> queue;
     private final IntList symbolCapacities;
     private final TableStructureAdapter targetTableStructure;
-    //stores 3 values per task : index, lo, hi (lo, hi are indexes in partitionNames)
+    // stores 3 values per task : index, lo, hi (lo, hi are indexes in partitionNames)
     private final IntList taskDistribution;
     private final TextDelimiterScanner textDelimiterScanner;
     private final TextMetadataDetector textMetadataDetector;
@@ -109,22 +109,22 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private long errors;
     private boolean forceHeader;
     private long importId;
-    //path to import directory under, usually $inputWorkRoot/$tableName
+    // path to import directory under, usually $inputWorkRoot/$tableName
     private CharSequence importRoot;
-    //name of file to process in inputRoot dir
+    // name of file to process in inputRoot dir
     private CharSequence inputFileName;
-    //incremented in phase 2
+    // incremented in phase 2
     private long linesIndexed;
     private RecordMetadata metadata;
     private int minChunkSize = DEFAULT_MIN_CHUNK_SIZE;
     private int partitionBy;
     private byte phase = CopyTask.PHASE_SETUP;
     private long phaseErrors;
-    //row stats are incremented in phase 3
+    // row stats are incremented in phase 3
     private long rowsHandled;
     private long rowsImported;
-    private long startMs;//start time of current phase (in millis)
-    //import status variables
+    private long startMs; // start time of current phase (in millis)
+    // import status variables
     private byte status = CopyTask.STATUS_STARTED;
     private final Consumer<CopyTask> checkStatusRef = this::updateStatus;
     private final Consumer<CopyTask> collectChunkStatsRef = this::collectChunkStats;
@@ -132,17 +132,17 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private final Consumer<CopyTask> collectDataImportStatsRef = this::collectDataImportStats;
     private final Consumer<CopyTask> collectIndexStatsRef = this::collectIndexStats;
     private PhaseStatusReporter statusReporter;
-    //input params start
+    // input params start
     private CharSequence tableName;
     private TableToken tableToken;
     private boolean targetTableCreated;
     private int targetTableStatus;
     private int taskCount;
     private TimestampAdapter timestampAdapter;
-    //name of timestamp column
+    // name of timestamp column
     private CharSequence timestampColumn;
-    //input params end
-    //index of timestamp column in input file
+    // input params end
+    // index of timestamp column in input file
     private int timestampIndex;
     private TableWriter writer;
 
