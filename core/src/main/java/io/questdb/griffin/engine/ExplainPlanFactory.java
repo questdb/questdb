@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.*;
 import io.questdb.griffin.model.ExplainModel;
+import io.questdb.std.Misc;
 import io.questdb.std.str.Utf16Sink;
 
 /**
@@ -144,8 +145,10 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
             //on the other hand until we run it factories may be incomplete
             if (!isBaseClosed) {
                 // open the cursor to ensure bind variable types are initialized
-                try (base; RecordCursor ignored = base.getCursor(executionContext)) {
+                try (RecordCursor ignored = base.getCursor(executionContext)) {
                     planSink.of(base, executionContext);
+                } finally {
+                    Misc.free(base);
                 }
                 isBaseClosed = true;
             }
