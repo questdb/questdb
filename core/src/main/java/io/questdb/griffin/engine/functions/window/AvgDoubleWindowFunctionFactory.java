@@ -309,7 +309,6 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                             configuration.getSqlWindowStoreMaxPages(),
                             MemoryTag.NATIVE_CIRCULAR_BUFFER
                     );
-
                     return new AvgOverRowsFrameFunction(
                             args.get(0),
                             rowsLo,
@@ -1155,7 +1154,12 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
             frameIncludesCurrentValue = rowsHi == 0;
             this.buffer = memory;
-            initBuffer();
+            try {
+                initBuffer();
+            } catch (Throwable t) {
+                close();
+                throw t;
+            }
         }
 
         @Override
