@@ -99,9 +99,11 @@ public class PropServerConfigurationTest {
 
         Assert.assertEquals(10, configuration.getWorkerPoolConfiguration().getYieldThreshold());
         Assert.assertEquals(10000, configuration.getWorkerPoolConfiguration().getSleepThreshold());
+        Assert.assertEquals(7000, configuration.getWorkerPoolConfiguration().getNapThreshold());
         Assert.assertEquals(10, configuration.getWorkerPoolConfiguration().getSleepTimeout());
 
         Assert.assertEquals(10, configuration.getHttpMinServerConfiguration().getYieldThreshold());
+        Assert.assertEquals(100, configuration.getHttpMinServerConfiguration().getNapThreshold());
         Assert.assertEquals(100, configuration.getHttpMinServerConfiguration().getSleepThreshold());
         Assert.assertEquals(50, configuration.getHttpMinServerConfiguration().getSleepTimeout());
         Assert.assertEquals(1, configuration.getHttpMinServerConfiguration().getWorkerCount());
@@ -316,10 +318,12 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(128, configuration.getLineTcpReceiverConfiguration().getWriterQueueCapacity());
         Assert.assertEquals(0, configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getWorkerCount());
         Assert.assertEquals(10, configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getYieldThreshold());
+        Assert.assertEquals(7_000, configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getNapThreshold());
         Assert.assertEquals(10_000, configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getSleepThreshold());
         Assert.assertArrayEquals(new int[]{}, configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getWorkerAffinity());
         Assert.assertFalse(configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().haltOnError());
         Assert.assertEquals(10, configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getYieldThreshold());
+        Assert.assertEquals(7_000, configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getNapThreshold());
         Assert.assertEquals(10_000, configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getSleepThreshold());
         Assert.assertFalse(configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().haltOnError());
         Assert.assertEquals(1000, configuration.getLineTcpReceiverConfiguration().getMaintenanceInterval());
@@ -404,6 +408,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals("wal-apply", configuration.getWalApplyPoolConfiguration().getPoolName());
         Assert.assertTrue(configuration.getWalApplyPoolConfiguration().getWorkerCount() > 0);
         Assert.assertEquals(10, configuration.getWalApplyPoolConfiguration().getSleepTimeout());
+        Assert.assertEquals(7_000, configuration.getWalApplyPoolConfiguration().getNapThreshold());
         Assert.assertEquals(10_000, configuration.getWalApplyPoolConfiguration().getSleepThreshold());
         Assert.assertEquals(1000, configuration.getWalApplyPoolConfiguration().getYieldThreshold());
         Assert.assertEquals(20, configuration.getCairoConfiguration().getWalApplyLookAheadTransactionCount());
@@ -954,14 +959,17 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(50000, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getMaxQueryResponseRowLimit());
 
             Assert.assertEquals(100, configuration.getWorkerPoolConfiguration().getYieldThreshold());
+            Assert.assertEquals(90000, configuration.getWorkerPoolConfiguration().getNapThreshold());
             Assert.assertEquals(100000, configuration.getWorkerPoolConfiguration().getSleepThreshold());
             Assert.assertEquals(1000, configuration.getWorkerPoolConfiguration().getSleepTimeout());
 
             Assert.assertEquals(101, configuration.getHttpServerConfiguration().getYieldThreshold());
+            Assert.assertEquals(90001, configuration.getHttpServerConfiguration().getNapThreshold());
             Assert.assertEquals(100001, configuration.getHttpServerConfiguration().getSleepThreshold());
             Assert.assertEquals(1001, configuration.getHttpServerConfiguration().getSleepTimeout());
 
             Assert.assertEquals(102, configuration.getHttpMinServerConfiguration().getYieldThreshold());
+            Assert.assertEquals(90002, configuration.getHttpMinServerConfiguration().getNapThreshold());
             Assert.assertEquals(100002, configuration.getHttpMinServerConfiguration().getSleepThreshold());
             Assert.assertEquals(1002, configuration.getHttpMinServerConfiguration().getSleepTimeout());
             Assert.assertEquals(16, configuration.getHttpMinServerConfiguration().getDispatcherConfiguration().getTestConnectionBufferSize());
@@ -1027,11 +1035,13 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(2, configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getWorkerCount());
             Assert.assertArrayEquals(new int[]{1, 2}, configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getWorkerAffinity());
             Assert.assertEquals(20, configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getYieldThreshold());
+            Assert.assertEquals(9_002, configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getNapThreshold());
             Assert.assertEquals(10_002, configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getSleepThreshold());
             Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().haltOnError());
             Assert.assertEquals(3, configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getWorkerCount());
             Assert.assertArrayEquals(new int[]{3, 4, 5}, configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getWorkerAffinity());
             Assert.assertEquals(30, configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getYieldThreshold());
+            Assert.assertEquals(9_003, configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getNapThreshold());
             Assert.assertEquals(10_003, configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().getSleepThreshold());
             Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().getIOWorkerPoolConfiguration().haltOnError());
             Assert.assertEquals(1000, configuration.getLineTcpReceiverConfiguration().getMaintenanceInterval());
@@ -1081,6 +1091,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(3, configuration.getWalApplyPoolConfiguration().getWorkerCount());
             Assert.assertArrayEquals(new int[]{1, 2, 3}, configuration.getWalApplyPoolConfiguration().getWorkerAffinity());
             Assert.assertEquals(55, configuration.getWalApplyPoolConfiguration().getSleepTimeout());
+            Assert.assertEquals(23, configuration.getWalApplyPoolConfiguration().getNapThreshold());
             Assert.assertEquals(33, configuration.getWalApplyPoolConfiguration().getSleepThreshold());
             Assert.assertEquals(33033, configuration.getWalApplyPoolConfiguration().getYieldThreshold());
         }

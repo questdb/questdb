@@ -379,6 +379,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.min.worker.haltOnError\tQDB_HTTP_MIN_WORKER_HALTONERROR\tfalse\tdefault\tfalse\tfalse\n" +
                                     "http.min.worker.sleep.threshold\tQDB_HTTP_MIN_WORKER_SLEEP_THRESHOLD\t100\tdefault\tfalse\tfalse\n" +
                                     "http.min.worker.sleep.timeout\tQDB_HTTP_MIN_WORKER_SLEEP_TIMEOUT\t50\tdefault\tfalse\tfalse\n" +
+                                    "http.min.worker.nap.threshold\tQDB_HTTP_MIN_WORKER_NAP_THRESHOLD\t100\tdefault\tfalse\tfalse\n" +
                                     "http.min.worker.yield.threshold\tQDB_HTTP_MIN_WORKER_YIELD_THRESHOLD\t10\tdefault\tfalse\tfalse\n" +
                                     "http.multipart.header.buffer.size\tQDB_HTTP_MULTIPART_HEADER_BUFFER_SIZE\t512\tdefault\tfalse\tfalse\n" +
                                     "http.multipart.idle.spin.count\tQDB_HTTP_MULTIPART_IDLE_SPIN_COUNT\t10000\tdefault\tfalse\tfalse\n" +
@@ -425,6 +426,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.worker.haltOnError\tQDB_HTTP_WORKER_HALTONERROR\tfalse\tdefault\tfalse\tfalse\n" +
                                     "http.worker.sleep.threshold\tQDB_HTTP_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
                                     "http.worker.sleep.timeout\tQDB_HTTP_WORKER_SLEEP_TIMEOUT\t10\tdefault\tfalse\tfalse\n" +
+                                    "http.worker.nap.threshold\tQDB_HTTP_WORKER_NAP_THRESHOLD\t7000\tdefault\tfalse\tfalse\n" +
                                     "http.worker.yield.threshold\tQDB_HTTP_WORKER_YIELD_THRESHOLD\t10\tdefault\tfalse\tfalse\n" +
                                     "line.auto.create.new.columns\tQDB_LINE_AUTO_CREATE_NEW_COLUMNS\ttrue\tdefault\tfalse\tfalse\n" +
                                     "line.auto.create.new.tables\tQDB_LINE_AUTO_CREATE_NEW_TABLES\ttrue\tdefault\tfalse\tfalse\n" +
@@ -443,6 +445,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "line.tcp.io.halt.on.error\tQDB_LINE_TCP_IO_HALT_ON_ERROR\tfalse\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.io.worker.affinity\tQDB_LINE_TCP_IO_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.io.worker.sleep.threshold\tQDB_LINE_TCP_IO_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
+                                    "line.tcp.io.worker.nap.threshold\tQDB_LINE_TCP_IO_WORKER_NAP_THRESHOLD\t7000\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.io.worker.yield.threshold\tQDB_LINE_TCP_IO_WORKER_YIELD_THRESHOLD\t10\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.maintenance.job.interval\tQDB_LINE_TCP_MAINTENANCE_JOB_INTERVAL\t1000\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.max.measurement.size\tQDB_LINE_TCP_MAX_MEASUREMENT_SIZE\t32768\tdefault\tfalse\tfalse\n" +
@@ -469,6 +472,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "line.tcp.writer.worker.affinity\tQDB_LINE_TCP_WRITER_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.writer.worker.count\tQDB_LINE_TCP_WRITER_WORKER_COUNT\t1\tconf\tfalse\tfalse\n" +
                                     "line.tcp.writer.worker.sleep.threshold\tQDB_LINE_TCP_WRITER_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
+                                    "line.tcp.writer.worker.nap.threshold\tQDB_LINE_TCP_WRITER_WORKER_NAP_THRESHOLD\t7000\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.writer.worker.yield.threshold\tQDB_LINE_TCP_WRITER_WORKER_YIELD_THRESHOLD\t10\tdefault\tfalse\tfalse\n" +
                                     "line.udp.bind.to\tQDB_LINE_UDP_BIND_TO\t0.0.0.0:9009\tconf\tfalse\tfalse\n" +
                                     "line.udp.commit.mode\tQDB_LINE_UDP_COMMIT_MODE\tnosync\tdefault\tfalse\tfalse\n" +
@@ -527,6 +531,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "pg.worker.affinity\tQDB_PG_WORKER_AFFINITY\t\tdefault\tfalse\tfalse\n" +
                                     "pg.worker.count\tQDB_PG_WORKER_COUNT\t1\tconf\tfalse\tfalse\n" +
                                     "pg.worker.sleep.threshold\tQDB_PG_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
+                                    "pg.worker.nap.threshold\tQDB_PG_WORKER_NAP_THRESHOLD\t7000\tdefault\tfalse\tfalse\n" +
                                     "pg.worker.yield.threshold\tQDB_PG_WORKER_YIELD_THRESHOLD\t10\tdefault\tfalse\tfalse\n" +
                                     "query.timeout.sec\tQDB_QUERY_TIMEOUT_SEC\t60\tdefault\tfalse\tfalse\n" +
                                     "readonly\tQDB_READONLY\tfalse\tdefault\tfalse\tfalse\n" +
@@ -535,6 +540,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "shared.worker.haltOnError\tQDB_SHARED_WORKER_HALTONERROR\tfalse\tdefault\tfalse\tfalse\n" +
                                     "shared.worker.sleep.threshold\tQDB_SHARED_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
                                     "shared.worker.sleep.timeout\tQDB_SHARED_WORKER_SLEEP_TIMEOUT\t10\tdefault\tfalse\tfalse\n" +
+                                    "shared.worker.nap.threshold\tQDB_SHARED_WORKER_NAP_THRESHOLD\t7000\tdefault\tfalse\tfalse\n" +
                                     "shared.worker.yield.threshold\tQDB_SHARED_WORKER_YIELD_THRESHOLD\t10\tdefault\tfalse\tfalse\n" +
                                     "table.type.conversion.enabled\tQDB_TABLE_TYPE_CONVERSION_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "telemetry.disable.completely\tQDB_TELEMETRY_DISABLE_COMPLETELY\ttrue\tconf\tfalse\tfalse\n" +
@@ -545,6 +551,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "wal.apply.worker.haltOnError\tQDB_WAL_APPLY_WORKER_HALTONERROR\tfalse\tdefault\tfalse\tfalse\n" +
                                     "wal.apply.worker.sleep.threshold\tQDB_WAL_APPLY_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
                                     "wal.apply.worker.sleep.timeout\tQDB_WAL_APPLY_WORKER_SLEEP_TIMEOUT\t10\tdefault\tfalse\tfalse\n" +
+                                    "wal.apply.worker.nap.threshold\tQDB_WAL_APPLY_WORKER_NAP_THRESHOLD\t7000\tdefault\tfalse\tfalse\n" +
                                     "wal.apply.worker.yield.threshold\tQDB_WAL_APPLY_WORKER_YIELD_THRESHOLD\t1000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.max.recompile.attempts\tQDB_CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS\t10\tdefault\tfalse\tfalse\n" +
                                     "cairo.system.wal.writer.event.append.page.size\tQDB_CAIRO_SYSTEM_WAL_WRITER_EVENT_APPEND_PAGE_SIZE\t16384\tdefault\tfalse\tfalse\n" +

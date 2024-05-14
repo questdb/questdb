@@ -26,19 +26,20 @@ package io.questdb.test.griffin.engine.functions.str;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.functions.str.SplitPartFunctionFactory;
+import io.questdb.griffin.engine.functions.str.SplitPartVarcharFunctionFactory;
 import io.questdb.std.Numbers;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class SplitPartFunctionFactoryTest extends AbstractFunctionFactoryTest {
+
+public class SplitPartVarcharFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testDynamicIndex() {
         try {
-            call("abc~@~def~@~ghi", "~@~", 2);
+            call(utf8("abc~@~def~@~ghi"), utf8("~@~"), 2);
             Assert.fail("Should fail for dynamic index param");
         } catch (SqlException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "index must be either a constant expression or a placeholder");
@@ -47,21 +48,21 @@ public class SplitPartFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testNaNIndex() throws SqlException {
-        callCustomised(true, true, "abc~@~def~@~ghi", "~@~", Numbers.INT_NULL).andAssert(null);
-        callCustomised(true, true, "abc,def,ghi,jkl", ",", Numbers.INT_NULL).andAssert(null);
+        callCustomised(true, true, utf8("abc~@~def~@~ghi"), utf8("~@~"), Numbers.INT_NULL).andAssert(null);
+        callCustomised(true, true, utf8("abc,def,ghi,jkl"), utf8(","), Numbers.INT_NULL).andAssert(null);
     }
 
     @Test
     public void testNegativeIndex() throws SqlException {
         assertQuery(
-                "split_part\n" + "def\n",
-                "select split_part('abc~@~def~@~ghi', '~@~', -2)",
+                "split_part\n" + "ghi\n",
+                "select split_part('abc~@~def~@~ghi'::varchar, '~@~'::varchar, -1)",
                 null,
                 true,
                 true);
         assertQuery(
                 "split_part\n" + "ghi\n",
-                "select split_part('abc,def,ghi,jkl', cast(',' as string), -2)",
+                "select split_part('abc,def,ghi,jkl'::varchar, cast(',' as varchar), -2)",
                 null,
                 true,
                 true);
@@ -69,36 +70,42 @@ public class SplitPartFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testNullOrEmptyDelimiter() throws SqlException {
-        callCustomised(true, true, "abc~@~def~@~ghi", null, 2).andAssert(null);
-        callCustomised(true, true, "abc,def,ghi,jkl", "", 2).andAssert("");
+        callCustomised(true, true, utf8("abc~@~def~@~ghi"), null, 2).andAssert(null);
+        callCustomised(true, true, utf8("abc,def,ghi,jkl"), utf8(""), 2).andAssert("");
     }
 
     @Test
     public void testNullOrEmptyStr() throws SqlException {
-        callCustomised(true, true, null, "~@~", 2).andAssert(null);
-        callCustomised(true, true, "", ",", 2).andAssert("");
+        callCustomised(true, true, null, utf8("~@~"), 2).andAssert(null);
+        callCustomised(true, true, utf8(""), utf8(","), 2).andAssert("");
     }
 
     @Test
     public void testPositiveIndex() throws SqlException {
         assertQuery(
                 "split_part\n" + "def\n",
-                "select split_part('abc~@~def~@~ghi', '~@~', 2)",
+                "select split_part('abc~@~def~@~ghi::varchar', '~@~'::varchar, 2)",
                 null,
                 true,
                 true);
         assertQuery(
                 "split_part\n" + "def\n",
-                "select split_part('abc,def,ghi,jkl', cast(',' as string), 2)",
+                "select split_part('abc,def,ghi,jkl'::varchar, cast(',' as varchar), 2)",
                 null,
                 true,
                 true);
     }
 
     @Test
+    public void testRuntimeConstant() throws SqlException {
+        assertQuery("split_part\nabc\n", "select split_part('abc,QuestDB,sql'::varchar, ',', (now() % 1 + 1)::int)",
+                "", true, true);
+    }
+
+    @Test
     public void testZeroIndex() {
         try {
-            callCustomised(true, true, "abc~@~def~@~ghi", "~@~", 0);
+            callCustomised(true, true, utf8("abc~@~def~@~ghi"), utf8("~@~"), 0);
             Assert.fail("Should fail for 0 index");
         } catch (SqlException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "field position must not be zero");
@@ -107,6 +114,6 @@ public class SplitPartFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new SplitPartFunctionFactory();
+        return new SplitPartVarcharFunctionFactory();
     }
 }

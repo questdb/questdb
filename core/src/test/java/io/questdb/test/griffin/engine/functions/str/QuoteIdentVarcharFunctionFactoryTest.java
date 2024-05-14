@@ -22,59 +22,32 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.engine.functions.bool;
+package io.questdb.test.griffin.engine.functions.str;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.functions.bool.InStrFunctionFactory;
+import io.questdb.griffin.engine.functions.str.QuoteIdentVarcharFunctionFactory;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
-import org.junit.Assert;
 import org.junit.Test;
 
-public class InStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class QuoteIdentVarcharFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
-    public void testBadConstant() {
-        assertFailure(12, "STRING constant expected", "xv", "an", 10);
-    }
+    public void test() throws SqlException {
+        call(utf8("")).andAssert("");
+        call(utf8(null)).andAssert(null);
+        call(utf8("test")).andAssert("test");
+        call(utf8("TEST")).andAssert("TEST");
 
-    @Test
-    public void testNoMatch() throws SqlException {
-        call("xc", "ae", "bn").andAssert(false);
-    }
-
-    @Test
-    public void testNullConstant() throws SqlException {
-        call("xp", "aq", null).andAssert(false);
-    }
-
-    @Test
-    public void testTwoArgs() throws SqlException {
-        call("xy", "xy", "yz").andAssert(true);
-    }
-
-    @Test
-    public void testTwoArgsOneChar() throws SqlException {
-        call("xy", "xy", "yz", "l").andAssert(true);
-    }
-
-    @Test
-    public void testWithNulls() throws SqlException {
-        call(null, "xy", null).andAssert(true);
-    }
-
-    @Test
-    public void testZeroArgs() {
-        try {
-            call("xx").andAssert(false);
-            Assert.fail();
-        } catch (SqlException e) {
-            Assert.assertEquals("[3] too few arguments for 'in'", e.getMessage());
-        }
+        call(utf8("a b")).andAssert("\"a b\"");
+        call(utf8("a\tb")).andAssert("\"a\tb\"");
+        call(utf8("a^b")).andAssert("\"a^b\"");
+        call(utf8("a\"b")).andAssert("\"a\"\"b\"");
     }
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new InStrFunctionFactory();
+        return new QuoteIdentVarcharFunctionFactory();
     }
 }
