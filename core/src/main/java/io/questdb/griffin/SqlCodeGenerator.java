@@ -4399,6 +4399,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     chainMetadata
             );
         } catch (Throwable th) {
+            for (ObjObjHashMap.Entry<IntList, ObjList<WindowFunction>> e : groupedWindow) {
+                Misc.freeObjList(e.value);
+            }
             Misc.free(base);
             Misc.freeObjList(functions);
             Misc.freeObjList(naturalOrderFunctions);
