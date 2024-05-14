@@ -957,6 +957,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
             AbstractCairoTest.ff = ff2;
             try {
                 Unsafe.setRssMemLimit(8_750_000);
+                Unsafe.RSS_ALLOC_COUNT.set(0);
                 code.run();
                 forEachNode(node -> releaseInactive(node.getEngine()));
             } catch (Throwable th) {
