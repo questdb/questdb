@@ -86,15 +86,21 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
 
             ObjList<LongTreeChain> orderedSources = new ObjList<>(orderedGroupCount);
             // red&black trees, one for each comparator where comparator is not null
-            for (int i = 0; i < orderedGroupCount; i++) {
-                orderedSources.add(
-                        new LongTreeChain(
-                                configuration.getSqlWindowTreeKeyPageSize(),
-                                configuration.getSqlWindowTreeKeyMaxPages(),
-                                configuration.getSqlWindowRowIdPageSize(),
-                                configuration.getSqlWindowRowIdMaxPages()
-                        )
-                );
+            try {
+                for (int i = 0; i < orderedGroupCount; i++) {
+                    orderedSources.add(
+                            new LongTreeChain(
+                                    configuration.getSqlWindowTreeKeyPageSize(),
+                                    configuration.getSqlWindowTreeKeyMaxPages(),
+                                    configuration.getSqlWindowRowIdPageSize(),
+                                    configuration.getSqlWindowRowIdMaxPages()
+                            )
+                    );
+                }
+            } catch (Throwable t) {
+                Misc.freeObjList(orderedSources);
+                recordChain.close();
+                throw t;
             }
 
             this.cursor = new CachedWindowRecordCursor(columnIndexes, recordChain, orderedSources);
@@ -464,11 +470,16 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             recordChainOffset = -1;
             circuitBreaker = executionContext.getCircuitBreaker();
             if (!isOpen) {
-                recordChain.reopen();
-                recordChain.setSymbolTableResolver(this);
-                reopenTrees();
-                reopen(allFunctions);
                 isOpen = true;
+                try {
+                    recordChain.reopen();
+                    recordChain.setSymbolTableResolver(this);
+                    reopenTrees();
+                    reopen(allFunctions);
+                } catch (Throwable t) {
+                    close();
+                    throw t;
+                }
             }
             Function.init(allFunctions, this, executionContext);
         }

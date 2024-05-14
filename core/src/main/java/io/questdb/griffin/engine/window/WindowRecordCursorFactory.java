@@ -193,8 +193,13 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
             super.of(baseCursor);
             circuitBreaker = executionContext.getCircuitBreaker();
             if (!isOpen) {
-                reopen(functions);
                 isOpen = true;
+                try {
+                    reopen(functions);
+                } catch (Throwable t) {
+                    close();
+                    throw t;
+                }
             }
             Function.init(functions, baseCursor, executionContext);
         }

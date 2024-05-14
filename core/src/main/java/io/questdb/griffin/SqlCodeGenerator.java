@@ -4319,6 +4319,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         // function needs to resolve args against chain metadata
                         f = functionParser.parseFunction(ast, chainMetadata, executionContext);
                         if (!(f instanceof WindowFunction)) {
+                            Misc.free(f);
                             throw SqlException.$(ast.position, "non-window function called in window context");
                         }
                     } finally {
@@ -4398,6 +4399,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     chainMetadata
             );
         } catch (Throwable th) {
+            for (ObjObjHashMap.Entry<IntList, ObjList<WindowFunction>> e : groupedWindow) {
+                Misc.freeObjList(e.value);
+            }
             Misc.free(base);
             Misc.freeObjList(functions);
             Misc.freeObjList(naturalOrderFunctions);
