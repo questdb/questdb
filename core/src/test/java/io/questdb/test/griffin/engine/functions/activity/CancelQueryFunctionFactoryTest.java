@@ -49,7 +49,6 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
     private SqlExecutionContextImpl adminUserContext1;
     private SqlExecutionContextImpl adminUserContext2;
     private SqlExecutionContextImpl readOnlyUserContext;
-
     private SqlExecutionContextImpl regularUserContext;
 
     @Override
@@ -96,10 +95,15 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
                         context.with(new AtomicBooleanCircuitBreaker());
 
                         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                            assertQueryNoLeakCheck(compiler,
+                            assertQueryNoLeakCheck(
+                                    compiler,
                                     "t\n1\n",
                                     query,
-                                    null, context, true, false);
+                                    null,
+                                    context,
+                                    true,
+                                    false
+                            );
                             Assert.fail("Query should have been cancelled");
                         } catch (Exception e) {
                             if (!e.getMessage().contains("cancelled by user")) {
@@ -114,9 +118,9 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
 
             started.await();
 
-            //wait for both queries to appear in registry
+            // wait for both queries to appear in registry
             try (RecordCursorFactory factory = select("select count(*) from query_activity() where query = '" + query + "'")) {
-                while (true) {
+                while (error.get() == null) {
                     try (RecordCursor cursor = factory.getCursor(adminUserContext1)) {
                         cursor.hasNext();
                         if (cursor.getRecord().getLong(0) == 2) {
@@ -128,10 +132,12 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
             }
 
             try {
-                assertSql("query\twas_cancelled\n" +
+                assertSql(
+                        "query\twas_cancelled\n" +
                                 "select 1 t from long_sequence(1) where sleep(120000)\ttrue\n" +
                                 "select 1 t from long_sequence(1) where sleep(120000)\ttrue\n",
-                        "select query, cancel_query(query_id) was_cancelled from query_activity() where query = '" + query + "'");
+                        "select query, cancel_query(query_id) was_cancelled from query_activity() where query = '" + query + "'"
+                );
             } finally {
                 stopped.await();
                 if (error.get() != null) {
@@ -144,7 +150,6 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testQueryIdToCancelMustBeNonNegativeInteger() throws Exception {
         assertMemoryLeak(() -> {
-
             assertException("select cancel_query()", 7, "unexpected argument for function: cancel_query");
             assertException("select cancel_query(null)", 20, "non-negative integer literal expected as query id");
             assertException("select cancel_query(-1)", 20, "non-negative integer literal expected as query id");
@@ -165,10 +170,15 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
                 started.countDown();
                 try {
                     try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                        assertQueryNoLeakCheck(compiler,
+                        assertQueryNoLeakCheck(
+                                compiler,
                                 "t\n1\n",
                                 query,
-                                null, adminUserContext1, true, false);
+                                null,
+                                adminUserContext1,
+                                true,
+                                false
+                        );
                         Assert.fail("Query should have been cancelled");
                     } catch (Exception e) {
                         if (!e.getMessage().contains("cancelled by user")) {

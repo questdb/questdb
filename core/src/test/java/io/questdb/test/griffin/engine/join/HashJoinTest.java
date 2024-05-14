@@ -27,6 +27,7 @@ package io.questdb.test.griffin.engine.join;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -65,11 +66,12 @@ public class HashJoinTest extends AbstractCairoTest {
 
             // allocate readers eagerly (at least one for each join) so that final getMem() doesn't report them as diff
             TableReader[] readers = new TableReader[10];
-            for (int i = 0; i < readers.length; i++) {
-                readers[i] = getReader("weather_data_historical");
-            }
-            for (int i = 0; i < readers.length; i++) {
-                readers[i].close();
+            try {
+                for (int i = 0; i < readers.length; i++) {
+                    readers[i] = getReader("weather_data_historical");
+                }
+            } finally {
+                Misc.free(readers);
             }
 
             long tagBeforeFactory = getMemUsedByFactories();
