@@ -879,21 +879,21 @@ public abstract class AbstractCairoTest extends AbstractTest {
         assertException0(sql, sqlExecutionContext, false);
     }
 
-    protected static void assertException(CharSequence sql, SqlExecutionContext executionContext) throws Exception {
-        assertException(sql, executionContext, false);
-    }
-
-    protected static void assertException(CharSequence sql, SqlExecutionContext executionContext, boolean fullFatJoins) throws Exception {
-        assertException0(sql, executionContext, fullFatJoins);
-    }
-
     protected static void assertException(CharSequence sql, int errorPos, CharSequence contains) throws Exception {
         assertMemoryLeak(() -> assertExceptionNoLeakCheck(sql, errorPos, contains, false));
     }
 
     protected static void assertException(CharSequence sql, int errorPos, CharSequence contains, SqlExecutionContext sqlExecutionContext) throws Exception {
+        assertMemoryLeak(() -> assertExceptionNoLeakCheck(sql, errorPos, contains, sqlExecutionContext));
+    }
+
+    protected static void assertExceptionNoLeakCheck(CharSequence sql, SqlExecutionContext executionContext) throws Exception {
+        assertExceptionNoLeakCheck(sql, executionContext, false);
+    }
+
+    protected static void assertExceptionNoLeakCheck(CharSequence sql, int errorPos, CharSequence contains, SqlExecutionContext sqlExecutionContext) throws Exception {
         try {
-            assertException(sql, sqlExecutionContext);
+            assertExceptionNoLeakCheck(sql, sqlExecutionContext);
         } catch (Throwable e) {
             if (e instanceof FlyweightMessageContainer) {
                 TestUtils.assertContains(((FlyweightMessageContainer) e).getFlyweightMessage(), contains);
@@ -906,9 +906,13 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
+    protected static void assertExceptionNoLeakCheck(CharSequence sql, SqlExecutionContext executionContext, boolean fullFatJoins) throws Exception {
+        assertException0(sql, executionContext, fullFatJoins);
+    }
+
     protected static void assertExceptionNoLeakCheck(CharSequence sql, int errorPos, CharSequence contains, boolean fullFatJoins) throws Exception {
         try {
-            assertException(sql, sqlExecutionContext, fullFatJoins);
+            assertExceptionNoLeakCheck(sql, sqlExecutionContext, fullFatJoins);
         } catch (Throwable e) {
             if (e instanceof FlyweightMessageContainer) {
                 TestUtils.assertContains(((FlyweightMessageContainer) e).getFlyweightMessage(), contains);

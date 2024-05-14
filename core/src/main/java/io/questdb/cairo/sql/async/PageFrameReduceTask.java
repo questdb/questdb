@@ -206,13 +206,6 @@ public class PageFrameReduceTask implements Closeable {
 
     void collected(boolean forceCollect) {
         final long frameCount = frameSequence.getFrameCount();
-        // We have to reset capacity only on max all queue items
-        // What we are avoiding here is resetting capacity on 1000 frames given our queue size
-        // is 32 items. If our particular producer resizes queue items to 10x of the initial size
-        // we let these sizes stick until produce starts to wind down.
-        if (forceCollect || frameIndex >= frameCount - pageFrameQueueCapacity) {
-            resetCapacities();
-        }
 
         // we assume that frame indexes are published in ascending order
         // and when we see the last index, we would free up the remaining resources
@@ -221,5 +214,13 @@ public class PageFrameReduceTask implements Closeable {
         }
 
         frameSequence = null;
+
+        // We have to reset capacity only on max all queue items
+        // What we are avoiding here is resetting capacity on 1000 frames given our queue size
+        // is 32 items. If our particular producer resizes queue items to 10x of the initial size
+        // we let these sizes stick until produce starts to wind down.
+        if (forceCollect || frameIndex >= frameCount - pageFrameQueueCapacity) {
+            resetCapacities();
+        }
     }
 }

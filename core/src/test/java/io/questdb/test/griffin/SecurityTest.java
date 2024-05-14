@@ -231,7 +231,7 @@ public class SecurityTest extends AbstractCairoTest {
             );
 
             try {
-                assertException("alter table balances add column newcol int", readOnlyExecutionContext);
+                assertExceptionNoLeakCheck("alter table balances add column newcol int", readOnlyExecutionContext);
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("permission denied"));
             }
@@ -385,7 +385,7 @@ public class SecurityTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try {
                 ddl("create table testDisallowCopySerial (l long)");
-                assertException("copy testDisallowCopySerial from '/test-alltypes.csv' with header true", readOnlyExecutionContext);
+                assertExceptionNoLeakCheck("copy testDisallowCopySerial from '/test-alltypes.csv' with header true", readOnlyExecutionContext);
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.toString(), "permission denied");
             }
@@ -396,7 +396,7 @@ public class SecurityTest extends AbstractCairoTest {
     public void testCreateTableDeniedOnNoWriteAccess() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                assertException("create table balances(cust_id int, ccy symbol, balance double)", readOnlyExecutionContext);
+                assertExceptionNoLeakCheck("create table balances(cust_id int, ccy symbol, balance double)", readOnlyExecutionContext);
             } catch (Exception ex) {
                 TestUtils.assertContains(ex.getMessage(), "permission denied");
             }
@@ -415,7 +415,7 @@ public class SecurityTest extends AbstractCairoTest {
             ddl("create table balances(cust_id int, ccy symbol, balance double)");
             memoryRestrictedEngine.reloadTableNames();
             try {
-                assertException("drop table balances", readOnlyExecutionContext);
+                assertExceptionNoLeakCheck("drop table balances", readOnlyExecutionContext);
             } catch (Exception ex) {
                 TestUtils.assertContains(ex.getMessage(), "permission denied");
             }
@@ -1070,7 +1070,7 @@ public class SecurityTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table balances(cust_id int, ccy symbol, balance double)");
             try {
-                assertException("rename table balances to newname", readOnlyExecutionContext);
+                assertExceptionNoLeakCheck("rename table balances to newname", readOnlyExecutionContext);
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("permission denied"));
             }

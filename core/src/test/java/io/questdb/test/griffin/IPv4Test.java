@@ -833,7 +833,7 @@ public class IPv4Test extends AbstractCairoTest {
             String query = "select a.count, a.ip, b.ip2, b.count2 from '*!*test' a join '*!*test2' b on b.ip2 = a.count";
 
             try {
-                assertException(query, sqlExecutionContext, true);
+                assertExceptionNoLeakCheck(query, sqlExecutionContext, true);
             } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "join column type mismatch");
                 Assert.assertEquals(Chars.toString(query), 76, ex.getPosition());

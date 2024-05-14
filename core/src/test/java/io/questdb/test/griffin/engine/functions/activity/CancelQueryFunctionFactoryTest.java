@@ -112,20 +112,20 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
 
             started.await();
 
-            // wait for both queries to appear in registry
-            try (RecordCursorFactory factory = select("select count(*) from query_activity() where query = '" + query + "'")) {
-                while (error.get() == null) {
-                    try (RecordCursor cursor = factory.getCursor(adminUserContext1)) {
-                        cursor.hasNext();
-                        if (cursor.getRecord().getLong(0) == 2) {
-                            break;
-                        }
-                    }
-                    Os.sleep(1);
-                }
-            }
-
             try {
+                // wait for both queries to appear in registry
+                try (RecordCursorFactory factory = select("select count(*) from query_activity() where query = '" + query + "'")) {
+                    while (error.get() == null) {
+                        try (RecordCursor cursor = factory.getCursor(adminUserContext1)) {
+                            cursor.hasNext();
+                            if (cursor.getRecord().getLong(0) == 2) {
+                                break;
+                            }
+                        }
+                        Os.sleep(1);
+                    }
+                }
+
                 assertSql(
                         "query\twas_cancelled\n" +
                                 "select 1 t from long_sequence(1) where sleep(120000)\ttrue\n" +
@@ -133,11 +133,13 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
                         "select query, cancel_query(query_id) was_cancelled from query_activity() where query = '" + query + "'"
                 );
 
+                stopped.await();
                 if (error.get() != null) {
                     throw error.get();
                 }
-            } finally {
+            } catch (Throwable th) {
                 stopped.await();
+                throw th;
             }
         });
     }
@@ -179,43 +181,45 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
 
             started.await();
 
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                String activityQuery = "select query_id, query from query_activity() where query ='" + query + "'";
+            try {
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    String activityQuery = "select query_id, query from query_activity() where query ='" + query + "'";
 
-                long queryId = -1;
-                try (final RecordCursorFactory factory = CairoEngine.select(compiler, activityQuery, adminUserContext2)) {
-                    // admin can see admin's command
-                    while (error.get() == null) {
-                        try (RecordCursor cursor = factory.getCursor(adminUserContext2)) {
-                            if (cursor.hasNext()) {
-                                queryId = cursor.getRecord().getLong(0);
-                                break;
+                    long queryId = -1;
+                    try (final RecordCursorFactory factory = CairoEngine.select(compiler, activityQuery, adminUserContext2)) {
+                        // admin can see admin's command
+                        while (error.get() == null) {
+                            try (RecordCursor cursor = factory.getCursor(adminUserContext2)) {
+                                if (cursor.hasNext()) {
+                                    queryId = cursor.getRecord().getLong(0);
+                                    break;
+                                }
                             }
+                            Os.sleep(1);
                         }
-                        Os.sleep(1);
                     }
-                }
 
-                try {
                     // readonly user can't cancel any commands
                     assertExceptionNoLeakCheck("select cancel_query(" + queryId + ")", 7, "Write permission denied", readOnlyUserContext);
 
                     // regular user can't cancel other user's commands
                     assertExceptionNoLeakCheck("select cancel_query(" + queryId + ")", 7, "Access denied for bob [built-in admin user required]", regularUserContext);
-                } finally {
+
                     ddl("cancel query " + queryId, adminUserContext2);
                 }
 
+                stopped.await();
                 if (error.get() != null) {
                     throw error.get();
                 }
-            } finally {
+            } catch (Throwable th) {
                 stopped.await();
+                throw th;
             }
         });
     }
 
-    protected static void assertExceptionNoLeakCheck(CharSequence sql, int errorPos, CharSequence contains, SqlExecutionContext sqlExecutionContext) throws Exception {
+    private static void assertExceptionNoLeakCheck(CharSequence sql, int errorPos, CharSequence contains, SqlExecutionContext sqlExecutionContext) throws Exception {
         try {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(false);

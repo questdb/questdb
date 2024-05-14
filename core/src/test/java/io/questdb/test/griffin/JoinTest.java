@@ -5335,7 +5335,7 @@ public class JoinTest extends AbstractCairoTest {
                     " from long_sequence(100000)) timestamp (ts)");
 
             try {
-                assertException(sql, sqlExecutionContext, fullFatJoins);
+                assertExceptionNoLeakCheck(sql, sqlExecutionContext, fullFatJoins);
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "could not open read-only");
                 TestUtils.assertContains(ex.getFlyweightMessage(), "ts.d");

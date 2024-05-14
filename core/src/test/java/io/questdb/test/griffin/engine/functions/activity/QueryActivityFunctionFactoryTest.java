@@ -43,7 +43,6 @@ import org.junit.Test;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
-
     private SqlExecutionContextImpl adminUserContext1;
     private SqlExecutionContextImpl adminUserContext2;
     private SqlExecutionContextImpl regularUserContext1;
@@ -75,10 +74,7 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
                 started.countDown();
                 try {
                     try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                        assertQueryNoLeakCheck(compiler,
-                                "t\n1\n",
-                                query,
-                                null, regularUserContext1, true, false);
+                        TestUtils.assertSql(compiler, regularUserContext1, query, sink, "t\n1\n");
                         Assert.fail("Query should have been cancelled");
                     } catch (Exception e) {
                         if (!e.getMessage().contains("cancelled by user")) {
@@ -92,34 +88,39 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
 
             started.await();
 
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                String activityQuery = "select query_id, query from query_activity() where query ='" + query + "'";
+            try {
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    String activityQuery = "select query_id, query from query_activity() where query ='" + query + "'";
 
-                long queryId = -1;
-                try (final RecordCursorFactory factory = CairoEngine.select(compiler, activityQuery, adminUserContext1)) {
-                    // admin can see admin's command
-                    while (error.get() == null) {
-                        try (RecordCursor cursor = factory.getCursor(adminUserContext1)) {
-                            if (cursor.hasNext()) {
-                                queryId = cursor.getRecord().getLong(0);
-                                break;
+                    long queryId = -1;
+                    try (final RecordCursorFactory factory = CairoEngine.select(compiler, activityQuery, adminUserContext1)) {
+                        // admin can see admin's command
+                        while (error.get() == null) {
+                            try (RecordCursor cursor = factory.getCursor(adminUserContext1)) {
+                                if (cursor.hasNext()) {
+                                    queryId = cursor.getRecord().getLong(0);
+                                    break;
+                                }
                             }
                         }
                     }
+
+                    ddl("cancel query " + queryId, adminUserContext1);
                 }
 
-                ddl("cancel query " + queryId, adminUserContext1);
-            } finally {
                 stopped.await();
                 if (error.get() != null) {
                     throw error.get();
                 }
+            } catch (Throwable th) {
+                stopped.await();
+                throw th;
             }
         });
     }
 
     @Test
-    public void testAdminUserCantCancelQueriesNotInRegistry() throws Exception {
+    public void testAdminUserCanNotCancelQueriesNotInRegistry() throws Exception {
         assertMemoryLeak(() -> {
             try {
                 ddl("cancel query 123456789", adminUserContext1);
@@ -132,16 +133,18 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testListQueriesWithNoQueryRunningShowsOwnSelect() throws Exception {
-        assertMemoryLeak(() -> {
-            assertQuery("username\tquery\n" +
-                            "admin\tselect username, query from query_activity()\n",
-                    "select username, query from query_activity()",
-                    null, false, false);
-        });
+        assertQuery(
+                "username\tquery\n" +
+                        "admin\tselect username, query from query_activity()\n",
+                "select username, query from query_activity()",
+                null,
+                false,
+                false
+        );
     }
 
     @Test
-    public void testNonAdminCantSeeOtherUsersCommands() throws Exception {
+    public void testNonAdminCanNotSeeOtherUsersCommands() throws Exception {
         assertMemoryLeak(() -> {
             final String query = "select 1 t from long_sequence(1) where sleep(120000)";
 
@@ -170,35 +173,44 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
 
             started.await();
 
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                String activityQuery = "select query_id, query from query_activity() where query ='" + query + "'";
+            try {
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    String activityQuery = "select query_id, query from query_activity() where query ='" + query + "'";
 
-                long queryId = -1;
-                try (final RecordCursorFactory factory = CairoEngine.select(compiler, activityQuery, adminUserContext2)) {
-                    // admin can see admin's command
-                    while (error.get() == null) {
-                        try (RecordCursor cursor = factory.getCursor(adminUserContext2)) {
-                            if (cursor.hasNext()) {
-                                queryId = cursor.getRecord().getLong(0);
-                                break;
+                    long queryId = -1;
+                    try (final RecordCursorFactory factory = CairoEngine.select(compiler, activityQuery, adminUserContext2)) {
+                        // admin can see admin's command
+                        while (error.get() == null) {
+                            try (RecordCursor cursor = factory.getCursor(adminUserContext2)) {
+                                if (cursor.hasNext()) {
+                                    queryId = cursor.getRecord().getLong(0);
+                                    break;
+                                }
                             }
                         }
                     }
+
+                    // regular user can't see admin's command
+                    assertQueryNoLeakCheck(
+                            compiler,
+                            "query_id\tquery\n",
+                            activityQuery,
+                            null,
+                            regularUserContext1,
+                            false,
+                            false
+                    );
+
+                    ddl("cancel query " + queryId, adminUserContext2);
                 }
 
-                // regular user can't see admin's command
-                assertQueryNoLeakCheck(compiler,
-                        "query_id\tquery\n",
-                        activityQuery,
-                        null, regularUserContext1, false, false);
-
-
-                ddl("cancel query " + queryId, adminUserContext2);
-            } finally {
                 stopped.await();
                 if (error.get() != null) {
                     throw error.get();
                 }
+            } catch (Throwable th) {
+                stopped.await();
+                throw th;
             }
         });
     }
@@ -206,21 +218,19 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testQueryIdToCancelMustBeNonNegativeInteger() throws Exception {
         assertMemoryLeak(() -> {
-            assertException("cancel ", 6, "'QUERY' expected", adminUserContext1);
-            assertException("cancel SQL 1", 7, "'QUERY' expected", adminUserContext1);
-            assertException("cancel query 9223372036854775808", 13, "non-negative integer literal expected as query id", adminUserContext1);
-            assertException("cancel query -123456789", 13, "non-negative integer literal expected as query id", adminUserContext1);
-            assertException("cancel query 123456789 BLAH", 23, "unexpected token [BLAH]", adminUserContext1);
-            assertException("cancel query 12.01f", 15, "unexpected token [.]", adminUserContext1);
-            assertException("cancel query 1A", 13, "non-negative integer literal expected as query id", adminUserContext1);
+            assertExceptionNoLeakCheck("cancel ", 6, "'QUERY' expected", adminUserContext1);
+            assertExceptionNoLeakCheck("cancel SQL 1", 7, "'QUERY' expected", adminUserContext1);
+            assertExceptionNoLeakCheck("cancel query 9223372036854775808", 13, "non-negative integer literal expected as query id", adminUserContext1);
+            assertExceptionNoLeakCheck("cancel query -123456789", 13, "non-negative integer literal expected as query id", adminUserContext1);
+            assertExceptionNoLeakCheck("cancel query 123456789 BLAH", 23, "unexpected token [BLAH]", adminUserContext1);
+            assertExceptionNoLeakCheck("cancel query 12.01f", 15, "unexpected token [.]", adminUserContext1);
+            assertExceptionNoLeakCheck("cancel query 1A", 13, "non-negative integer literal expected as query id", adminUserContext1);
         });
     }
 
     @Test
-    public void testRegularUserCantCancelQueries() throws Exception {
-        assertMemoryLeak(() -> {
-            assertException("cancel query 123456789", 13, "Write permission denied", regularUserContext1);
-        });
+    public void testRegularUserCanNotCancelQueries() throws Exception {
+        assertException("cancel query 123456789", 13, "Write permission denied", regularUserContext1);
     }
 
     private static class AdminContext extends AllowAllSecurityContext {
