@@ -59,6 +59,11 @@ public class InVarcharFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
+    public void testWithNulls() throws SqlException {
+        call(null, "xy", null).andAssert(true);
+    }
+
+    @Test
     public void testZeroArgs() {
         try {
             call(utf8("xx")).andAssert(false);
