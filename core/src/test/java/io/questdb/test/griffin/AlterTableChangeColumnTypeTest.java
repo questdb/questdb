@@ -73,6 +73,87 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testChangeDoubleToFloat() throws Exception {
+        assertMemoryLeak(() -> {
+            assumeWal();
+            ddl("create table x (ts timestamp, col double) timestamp(ts) partition by day wal", sqlExecutionContext);
+            insert("insert into x values('2024-05-14T16:00:00.000000Z', 0.0)", sqlExecutionContext);
+            insert("insert into x values('2024-05-14T16:00:01.000000Z', 0.1)", sqlExecutionContext);
+            insert("insert into x values('2024-05-14T16:00:02.000000Z', 3.1)", sqlExecutionContext);
+            insert("insert into x values('2024-05-14T16:00:02.000000Z', -9223372036854775808.0)", sqlExecutionContext);
+            insert("insert into x values('2024-05-14T16:00:02.000000Z', -3.4e38)", sqlExecutionContext);
+            insert("insert into x values('2024-05-14T16:00:02.000000Z', 3.4e38)", sqlExecutionContext);
+            insert("insert into x values('2024-05-14T16:00:02.000000Z', 1.80e300)", sqlExecutionContext);
+            insert("insert into x values('2024-05-14T16:00:02.000000Z', -1.80e300)", sqlExecutionContext);
+            drainWalQueue();
+
+            ddl("alter table x alter column col type float", sqlExecutionContext);
+            drainWalQueue();
+
+            assertSql("ts\tcol\n" +
+                            "2024-05-14T16:00:00.000000Z\t0.0000\n" +
+                            "2024-05-14T16:00:01.000000Z\t0.1000\n" +
+                            "2024-05-14T16:00:02.000000Z\t3.1000\n" +
+                            "2024-05-14T16:00:02.000000Z\t-9.223372E18\n" +
+                            "2024-05-14T16:00:02.000000Z\t-3.4E38\n" +
+                            "2024-05-14T16:00:02.000000Z\t3.4E38\n" +
+                            "2024-05-14T16:00:02.000000Z\tnull\n" +
+                            "2024-05-14T16:00:02.000000Z\tnull\n",
+                    "x");
+
+            ddl("alter table x alter column col type int", sqlExecutionContext);
+            drainWalQueue();
+
+            assertSql("ts\tcol\n" +
+                    "2024-05-14T16:00:00.000000Z\t0\n" +
+                    "2024-05-14T16:00:01.000000Z\t0\n" +
+                    "2024-05-14T16:00:02.000000Z\t3\n" +
+                    "2024-05-14T16:00:02.000000Z\tnull\n" +
+                    "2024-05-14T16:00:02.000000Z\tnull\n" +
+                    "2024-05-14T16:00:02.000000Z\tnull\n" +
+                    "2024-05-14T16:00:02.000000Z\tnull\n" +
+                    "2024-05-14T16:00:02.000000Z\tnull\n", "x");
+        });
+    }
+
+    @Test
+    public void testChangeFloatToDouble() throws Exception {
+        assertMemoryLeak(() -> {
+            assumeWal();
+            ddl("create table x (ts timestamp, col float) timestamp(ts) partition by day wal", sqlExecutionContext);
+            insert("insert into x values('2024-05-14T16:00:00.000000Z', 0.0)", sqlExecutionContext);
+            insert("insert into x values('2024-05-14T16:00:01.000000Z', 0.1)", sqlExecutionContext);
+            insert("insert into x values('2024-05-14T16:00:02.000000Z', 3.1)", sqlExecutionContext);
+            insert("insert into x values('2024-05-14T16:00:02.000000Z', -9223372036854775808.0)", sqlExecutionContext);
+            insert("insert into x values('2024-05-14T16:00:02.000000Z', -3.4e38)", sqlExecutionContext);
+            insert("insert into x values('2024-05-14T16:00:02.000000Z', 3.4e38)", sqlExecutionContext);
+            drainWalQueue();
+
+            ddl("alter table x alter column col type double", sqlExecutionContext);
+            drainWalQueue();
+
+            assertSql("ts\tcol\n" +
+                    "2024-05-14T16:00:00.000000Z\t0.0\n" +
+                    "2024-05-14T16:00:01.000000Z\t0.10000000149011612\n" +
+                    "2024-05-14T16:00:02.000000Z\t3.0999999046325684\n" +
+                    "2024-05-14T16:00:02.000000Z\t-9.223372036854776E18\n" +
+                    "2024-05-14T16:00:02.000000Z\t-3.3999999521443642E38\n" +
+                    "2024-05-14T16:00:02.000000Z\t3.3999999521443642E38\n", "x");
+
+            ddl("alter table x alter column col type int", sqlExecutionContext);
+            drainWalQueue();
+
+            assertSql("ts\tcol\n" +
+                    "2024-05-14T16:00:00.000000Z\t0\n" +
+                    "2024-05-14T16:00:01.000000Z\t0\n" +
+                    "2024-05-14T16:00:02.000000Z\t3\n" +
+                    "2024-05-14T16:00:02.000000Z\tnull\n" +
+                    "2024-05-14T16:00:02.000000Z\tnull\n" +
+                    "2024-05-14T16:00:02.000000Z\tnull\n", "x");
+        });
+    }
+
+    @Test
     public void testChangeIndexedSymbolToVarchar() throws Exception {
         assertMemoryLeak(() -> {
             createX();

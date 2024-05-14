@@ -187,7 +187,7 @@ jlong convert_from_type_to_type(void *srcBuff, void *dstBuff, size_t rowCount) {
                 // to integers.
                 // The conversion can result to different results for every run, e.g. can be different
                 // even on the same platform. To avoid it, check the ranges
-                if (std::isnan(srcMem[i]) || srcMem[i] > std::numeric_limits<T2>::max() || srcMem[i] < std::numeric_limits<T2>::min()) {
+                if (std::isnan(srcMem[i]) || srcMem[i] > std::numeric_limits<T2>::max() || srcMem[i] < std::numeric_limits<T2>::lowest()) {
                     dstMem[i] = dstSentinel;
                     continue;
                 }
