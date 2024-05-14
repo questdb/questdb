@@ -22,44 +22,32 @@
  *
  ******************************************************************************/
 
-package io.questdb.mp;
+package io.questdb.test.griffin.engine.functions.str;
 
-public interface WorkerPoolConfiguration {
-    default long getNapThreshold() {
-        return 7000;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.str.QuoteIdentVarcharFunctionFactory;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
+import org.junit.Test;
+
+public class QuoteIdentVarcharFunctionFactoryTest extends AbstractFunctionFactoryTest {
+
+    @Test
+    public void test() throws SqlException {
+        call(utf8("")).andAssert("");
+        call(utf8(null)).andAssert(null);
+        call(utf8("test")).andAssert("test");
+        call(utf8("TEST")).andAssert("TEST");
+
+        call(utf8("a b")).andAssert("\"a b\"");
+        call(utf8("a\tb")).andAssert("\"a\tb\"");
+        call(utf8("a^b")).andAssert("\"a^b\"");
+        call(utf8("a\"b")).andAssert("\"a\"\"b\"");
     }
 
-    default String getPoolName() {
-        return "worker";
-    }
-
-    default long getSleepThreshold() {
-        return 10000;
-    }
-
-    default long getSleepTimeout() {
-        return 10;
-    }
-
-    default int[] getWorkerAffinity() {
-        return null;
-    }
-
-    int getWorkerCount();
-
-    default long getYieldThreshold() {
-        return 10;
-    }
-
-    default boolean haltOnError() {
-        return false;
-    }
-
-    default boolean isDaemonPool() {
-        return false;
-    }
-
-    default boolean isEnabled() {
-        return true;
+    @Override
+    protected FunctionFactory getFunctionFactory() {
+        return new QuoteIdentVarcharFunctionFactory();
     }
 }
