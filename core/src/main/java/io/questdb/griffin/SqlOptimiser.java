@@ -5401,18 +5401,22 @@ public class SqlOptimiser implements Mutable {
      * @return
      */
     private QueryModel rewriteTrivialExpressions(QueryModel model) throws SqlException {
-        CharSequenceIntHashMap candidates = new CharSequenceIntHashMap();
-        ObjList<QueryColumn> toLift = new ObjList<>();
-
         QueryModel currentModel = model;
 
         if (currentModel.getNestedModel() != null) {
             currentModel.setNestedModel(rewriteTrivialExpressions(currentModel.getNestedModel()));
         }
 
+        CharSequenceIntHashMap candidates = new CharSequenceIntHashMap();
+        ObjList<QueryColumn> toLift = new ObjList<>();
+        QueryModel newModel = queryModelPool.next();
+        QueryColumn newColumn = null;
+
+
         final ObjList<QueryColumn> columns = currentModel.getColumns();
         boolean anyCandidates = false;
 
+        // first we want to see if this is an appropriate model to make this transformation
         for (int i = 0; i < columns.size(); i++) {
             final QueryColumn col = columns.getQuick(i);
             final ExpressionNode ast = col.getAst();
@@ -5435,34 +5439,46 @@ public class SqlOptimiser implements Mutable {
             }
         }
 
-        QueryModel newModel = null;
-        QueryColumn nextColumn = null;
 
-        ObjList<CharSequence> candidateKeys = candidates.keys();
         if (anyCandidates) {
-            for (int i = 0, n = candidates.size(); i < n; i++) {
-                final CharSequence candidateKey = candidateKeys.getQuick(i);
-                final int count = candidates.get(candidateKey);
-                if (count >= 2) {
-                    if (newModel == null) {
-                        newModel = queryModelPool.next();
+            // if it is appropriate, we want to copy the columns from the current model
+            // then we want to remove any candidates from current model, and non candidates from new model
+
+
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                QueryColumn col = columns.getQuick(i);
+                ExpressionNode ast = col.getAst();
+
+                // copy to new
+                newModel.addBottomUpColumn(queryColumnPool.next().of(
+                        col.getAlias(),
+                        ast
+                ));
+
+                if (ast.type == OPERATION) {
+                    CharSequence candidate = null;
+                    if (ast.lhs.type == LITERAL) {
+                        candidate = ast.lhs.token;
                     }
-                    nextColumn = queryColumnPool.next().of(
-                            candidateKey,
-                            expressionNodePool.next().of(
-                                    ExpressionNode.LITERAL,
-                                    candidateKey,
-                                    0,
-                                    0
-                            )
-                    );
-                    newModel.addBottomUpColumn(nextColumn);
+                    if (ast.rhs.type == LITERAL) {
+                        candidate = ast.rhs.token;
+                    }
+
+                    assert candidate != null;
+
+                    if (candidates.contains(candidate) && candidates.get(candidate) >= 2) {
+                        // remove from current, keep in new
+                        final int originalColumnIndex = currentModel.getColumnAliasIndex(col.getAlias());
+                        currentModel.removeColumn(originalColumnIndex);
+                        n--;
+                        i--;
+                    }
+
                 }
             }
-            if (newModel != null) {
-                newModel.setNestedModel(model.getNestedModel());
-                currentModel.setNestedModel(newModel);
-            }
+
+            newModel.setNestedModel(currentModel);
+            return newModel;
         }
 
         return currentModel;
@@ -5788,7 +5804,7 @@ public class SqlOptimiser implements Mutable {
             resolveJoinColumns(rewrittenModel);
             optimiseBooleanNot(rewrittenModel);
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
-            //rewrittenModel = rewriteTrivialExpressions(rewrittenModel);
+            rewrittenModel = rewriteTrivialExpressions(rewrittenModel);
             optimiseJoins(rewrittenModel);
             rewriteCountDistinct(rewrittenModel);
             rewriteNegativeLimit(rewrittenModel, sqlExecutionContext);
