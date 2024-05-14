@@ -52,12 +52,17 @@ public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractDe
             @NotNull IntList columnIndexes
     ) {
         super(configuration, metadata, dataFrameCursorFactory, columnIndex, keyValueFuncs, symbolMapReader);
-        if (filter != null) {
-            cursor = new LatestByValuesIndexedFilteredRecordCursor(columnIndex, rows, symbolKeys, deferredSymbolKeys, filter, columnIndexes);
-        } else {
-            cursor = new LatestByValuesIndexedRecordCursor(columnIndex, symbolKeys, deferredSymbolKeys, rows, columnIndexes);
+        try {
+            if (filter != null) {
+                cursor = new LatestByValuesIndexedFilteredRecordCursor(columnIndex, rows, symbolKeys, deferredSymbolKeys, filter, columnIndexes);
+            } else {
+                cursor = new LatestByValuesIndexedRecordCursor(columnIndex, symbolKeys, deferredSymbolKeys, rows, columnIndexes);
+            }
+            this.filter = filter;
+        } catch (Throwable th) {
+            _close();
+            throw th;
         }
-        this.filter = filter;
     }
 
     @Override

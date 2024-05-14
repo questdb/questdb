@@ -3210,13 +3210,11 @@ public class UpdateTest extends AbstractCairoTest {
             CyclicBarrier barrier = new CyclicBarrier(2);
 
             final Thread th = new Thread(() -> {
-                try {
-                    TableWriter tableWriter = getWriter("up");
+                try (TableWriter tableWriter = getWriter("up")) {
                     barrier.await(); // table is locked
                     barrier.await(); // update is on writer async cmd queue
                     writerConsumer.accept(tableWriter);
                     tableWriter.tick();
-                    tableWriter.close();
                 } catch (Exception e) {
                     e.printStackTrace();
                     Assert.fail();

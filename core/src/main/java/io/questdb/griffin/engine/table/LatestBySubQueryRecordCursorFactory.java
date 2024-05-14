@@ -58,30 +58,35 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
             @NotNull IntList columnIndexes
     ) {
         super(metadata, dataFrameCursorFactory, configuration);
-        // this instance is shared between factory and cursor
-        // factory will be resolving symbols for cursor and if successful
-        // symbol keys will be added to this hash set
-        symbolKeys = new IntHashSet();
-        this.indexed = indexed;
-        DataFrameRecordCursor cursor;
-        if (indexed) {
-            if (filter != null) {
-                cursor = new LatestByValuesIndexedFilteredRecordCursor(columnIndex, rows, symbolKeys, null, filter, columnIndexes);
+        try {
+            // this instance is shared between factory and cursor
+            // factory will be resolving symbols for cursor and if successful
+            // symbol keys will be added to this hash set
+            symbolKeys = new IntHashSet();
+            this.indexed = indexed;
+            DataFrameRecordCursor cursor;
+            if (indexed) {
+                if (filter != null) {
+                    cursor = new LatestByValuesIndexedFilteredRecordCursor(columnIndex, rows, symbolKeys, null, filter, columnIndexes);
+                } else {
+                    cursor = new LatestByValuesIndexedRecordCursor(columnIndex, symbolKeys, null, rows, columnIndexes);
+                }
             } else {
-                cursor = new LatestByValuesIndexedRecordCursor(columnIndex, symbolKeys, null, rows, columnIndexes);
+                if (filter != null) {
+                    cursor = new LatestByValuesFilteredRecordCursor(columnIndex, rows, symbolKeys, null, filter, columnIndexes);
+                } else {
+                    cursor = new LatestByValuesRecordCursor(columnIndex, rows, symbolKeys, null, columnIndexes);
+                }
             }
-        } else {
-            if (filter != null) {
-                cursor = new LatestByValuesFilteredRecordCursor(columnIndex, rows, symbolKeys, null, filter, columnIndexes);
-            } else {
-                cursor = new LatestByValuesRecordCursor(columnIndex, rows, symbolKeys, null, columnIndexes);
-            }
+            this.cursor = new DataFrameRecordCursorWrapper(cursor);
+            this.recordCursorFactory = recordCursorFactory;
+            this.filter = filter;
+            this.columnIndex = columnIndex;
+            this.func = func;
+        } catch (Throwable th) {
+            _close();
+            throw th;
         }
-        this.cursor = new DataFrameRecordCursorWrapper(cursor);
-        this.recordCursorFactory = recordCursorFactory;
-        this.filter = filter;
-        this.columnIndex = columnIndex;
-        this.func = func;
     }
 
     @Override
@@ -105,7 +110,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
     @Override
     protected void _close() {
         super._close();
-        recordCursorFactory.close();
+        Misc.free(recordCursorFactory);
         Misc.free(filter);
     }
 

@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 
 abstract class AbstractTreeSetRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
     final DirectLongList rows;
@@ -50,7 +51,7 @@ abstract class AbstractTreeSetRecordCursorFactory extends AbstractDataFrameRecor
     @Override
     protected void _close() {
         super._close();
-        rows.close();
+        Misc.free(rows);
     }
 
     @Override

@@ -64,26 +64,31 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
         IntHashSet deferredSymbolKeys = null;
         ObjList<Function> deferredFuncs = null;
 
-        for (int i = 0; i < nKeyValues; i++) {
-            Function symbolFunc = keyValueFuncs.get(i);
-            int symbolKey = symbolFunc.isRuntimeConstant()
-                    ? SymbolTable.VALUE_NOT_FOUND
-                    : symbolMapReader.keyOf(symbolFunc.getStrA(null));
-            if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-                if (deferredFuncs == null) {
-                    deferredFuncs = new ObjList<>();
-                    deferredSymbolKeys = new IntHashSet();
+        try {
+            for (int i = 0; i < nKeyValues; i++) {
+                Function symbolFunc = keyValueFuncs.get(i);
+                int symbolKey = symbolFunc.isRuntimeConstant()
+                        ? SymbolTable.VALUE_NOT_FOUND
+                        : symbolMapReader.keyOf(symbolFunc.getStrA(null));
+                if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
+                    if (deferredFuncs == null) {
+                        deferredFuncs = new ObjList<>();
+                        deferredSymbolKeys = new IntHashSet();
+                    }
+                    deferredFuncs.add(symbolFunc);
+                } else {
+                    symbolKeys.add(TableUtils.toIndexKey(symbolKey));
                 }
-                deferredFuncs.add(symbolFunc);
-            } else {
-                symbolKeys.add(TableUtils.toIndexKey(symbolKey));
             }
-        }
 
-        this.columnIndex = columnIndex;
-        this.symbolKeys = symbolKeys;
-        this.deferredSymbolKeys = deferredSymbolKeys;
-        this.deferredSymbolFuncs = deferredFuncs;
+            this.columnIndex = columnIndex;
+            this.symbolKeys = symbolKeys;
+            this.deferredSymbolKeys = deferredSymbolKeys;
+            this.deferredSymbolFuncs = deferredFuncs;
+        } catch (Throwable th) {
+            _close();
+            throw th;
+        }
     }
 
     @Override

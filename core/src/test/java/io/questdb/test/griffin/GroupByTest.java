@@ -50,7 +50,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "        Row forward scan\n" +
                             "        Frame forward scan on: t\n"
             );
-            assertQuery("l\ts\n1\ta\n", query1, null, true, true);
+            assertQueryNoLeakCheck("l\ts\n1\ta\n", query1, null, true, true);
 
             String query2 = "select l as l1, s as s1 from t group by l,s";
             // virtual model must be used here to change aliases
@@ -65,7 +65,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "            Row forward scan\n" +
                             "            Frame forward scan on: t\n"
             );
-            assertQuery("l1\ts1\n1\ta\n", query2, null, true, true);
+            assertQueryNoLeakCheck("l1\ts1\n1\ta\n", query2, null, true, true);
         });
     }
 
@@ -234,7 +234,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "            Frame forward scan on: t\n"
             );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "column\tcount\n" +
                             "2\t2\n",
                     query,
@@ -266,7 +266,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "        Frame forward scan on: t\n"
             );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "case\tcount\n" +
                             "1\t2\n",
                     query,
@@ -300,7 +300,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "            Frame forward scan on: t\n"
             );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "case\tcount\n" +
                             "1\t2\n",
                     query,
@@ -333,7 +333,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "            Row forward scan\n" +
                             "            Frame forward scan on: t\n"
             );
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "x\tavg\tcolumn\tcolumn1\tavg1\tcolumn2\n" +
                             "1\t11.5\t22.5\t11\t1.0\t11.0\n",
                     query,
@@ -368,7 +368,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "            Row forward scan\n" +
                             "            Frame forward scan on: t\n"
             );
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "x\tavg\t:bv\n" +
                             "1\t11.5\tx\n",
                     query,
@@ -397,7 +397,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "            Row forward scan\n" +
                             "            Frame forward scan on: t\n"
             );
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "column\tcolumn1\tmin\n" +
                             "10\t12.5\t11\n",
                     query,
@@ -426,7 +426,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "            Row forward scan\n" +
                             "            Frame forward scan on: t\n"
             );
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "column\tcolumn1\tmin\n" +
                             "10\t12.5\t11\n",
                     query,
@@ -476,7 +476,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "            Row forward scan\n" +
                             "            Frame forward scan on: dat\n"
             );
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "date_report\tcount\n" +
                             "1970-01-01T00:00:00.000000Z\t3\n" +
                             "1970-01-02T00:00:00.000000Z\t4\n" +
@@ -509,7 +509,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "            Row forward scan\n" +
                             "            Frame forward scan on: dat\n"
             );
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "date_report\tcount\n" +
                             "1970-01-01T00:00:00.000000Z\t3\n" +
                             "1970-01-02T00:00:00.000000Z\t4\n" +
@@ -543,7 +543,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "            Row forward scan\n" +
                             "            Frame forward scan on: dat\n"
             );
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "date_report\tcount\n" +
                             "1970-01-01T00:00:00.000000Z\t3\n" +
                             "1970-01-02T00:00:00.000000Z\t4\n" +
@@ -580,7 +580,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "                Frame forward scan on: dat\n"
             );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "date_report\tdate_report1\tcount\n" +
                             "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t3\n" +
                             "1970-01-02T00:00:00.000000Z\t1970-01-02T00:00:00.000000Z\t4\n" +
@@ -618,7 +618,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "                Frame forward scan on: dat\n"
             );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "date_report\tminusday\tplusday\tconcat\tcount\n" +
                             "1970-01-01T00:00:00.000000Z\t1969-12-31T00:00:00.000000Z\t1970-01-02T00:00:00.000000Z\t103\t3\n" +
                             "1970-01-02T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z\t1864000000003\t4\n" +
@@ -656,7 +656,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "                Frame forward scan on: dat\n"
             );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "date_report\tdt\tplusday\tminusday\tcount\n" +
                             "1970-01-01T00:00:00.000000Z\t01.01.1970\t1970-01-02T00:00:00.000000Z\t1969-12-31T00:00:00.000000Z\t3\n" +
                             "1970-01-02T00:00:00.000000Z\t02.01.1970\t1970-01-03T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t4\n" +
@@ -707,7 +707,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "                            Frame forward scan on: det\n"
             );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "date_report\tdt\tplusday\tmin\tcount\tminminusday\n" +
                             "1970-01-11T00:00:00.000000Z\t11.01.1970\t1970-01-12T00:00:00.000000Z\t3\t3\t1969-12-31T00:00:00.000000Z\n" +
                             "1970-01-12T00:00:00.000000Z\t12.01.1970\t1970-01-13T00:00:00.000000Z\t1\t4\t1970-01-01T00:00:00.000000Z\n" +
@@ -960,13 +960,14 @@ public class GroupByTest extends AbstractCairoTest {
                             "            Frame forward scan on: t\n"
             );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "l\ts\tcolumn\n" +
                             "1\ta\t2\n",
                     query,
                     null,
                     true,
-                    true);
+                    true
+            );
         });
     }
 
@@ -1167,7 +1168,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "            Frame forward scan on: t\n"
             );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "s\tmax\tmax1\n" +
                             "a\t-2\t1\n" +
                             "a\t-1\t1\n",
@@ -1191,7 +1192,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "group by t1.x, t2.x " +
                     "order by t1.x, t2.x";
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "x\tmax\tx1\n" +
                             "1\t1\t1\n" +
                             "2\t0\t2\n",
@@ -1237,7 +1238,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "                                Frame forward scan on: t2\n"
             );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "x\tmax\tcase\n" +
                             "1\t1\t10\n" +
                             "2\t0\t200\n",
@@ -1260,25 +1261,28 @@ public class GroupByTest extends AbstractCairoTest {
                     "join t2 on t1.y = t2.y  " +
                     "group by t1.x, t2.x, case when t1.x > 1 then 30*t1.x else 20*t2.x end";
 
-            assertPlanNoLeakCheck(query, "VirtualRecord\n" +
-                    "  functions: [x,max,case]\n" +
-                    "    GroupBy vectorized: false\n" +
-                    "      keys: [x,case,x1]\n" +
-                    "      values: [max(y)]\n" +
-                    "        VirtualRecord\n" +
-                    "          functions: [x,y,case([1<x,30*x,20*x1]),x1]\n" +
-                    "            SelectedRecord\n" +
-                    "                Hash Join Light\n" +
-                    "                  condition: t2.y=t1.y\n" +
-                    "                    DataFrame\n" +
-                    "                        Row forward scan\n" +
-                    "                        Frame forward scan on: t1\n" +
-                    "                    Hash\n" +
-                    "                        DataFrame\n" +
-                    "                            Row forward scan\n" +
-                    "                            Frame forward scan on: t2\n");
+            assertPlanNoLeakCheck(
+                    query,
+                    "VirtualRecord\n" +
+                            "  functions: [x,max,case]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [x,case,x1]\n" +
+                            "      values: [max(y)]\n" +
+                            "        VirtualRecord\n" +
+                            "          functions: [x,y,case([1<x,30*x,20*x1]),x1]\n" +
+                            "            SelectedRecord\n" +
+                            "                Hash Join Light\n" +
+                            "                  condition: t2.y=t1.y\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: t1\n" +
+                            "                    Hash\n" +
+                            "                        DataFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: t2\n"
+            );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "x\tmax\tcase\n" +
                             "1\t1\t20\n" +
                             "2\t0\t60\n",
@@ -1302,27 +1306,30 @@ public class GroupByTest extends AbstractCairoTest {
                     "group by t1.x, t2.x, dateadd('d', t1.x, '2023-03-01T00:00:00') " +
                     "order by 1";
 
-            assertPlanNoLeakCheck(query, "Sort light\n" +
-                    "  keys: [x]\n" +
-                    "    VirtualRecord\n" +
-                    "      functions: [x,max,dateadd::long+x1]\n" +
-                    "        GroupBy vectorized: false\n" +
-                    "          keys: [x,x1,dateadd]\n" +
-                    "          values: [max(y)]\n" +
-                    "            VirtualRecord\n" +
-                    "              functions: [x,y,x1,dateadd('d',1677628800000000,x)]\n" +
-                    "                SelectedRecord\n" +
-                    "                    Hash Join Light\n" +
-                    "                      condition: t2.y=t1.y\n" +
-                    "                        DataFrame\n" +
-                    "                            Row forward scan\n" +
-                    "                            Frame forward scan on: t1\n" +
-                    "                        Hash\n" +
-                    "                            DataFrame\n" +
-                    "                                Row forward scan\n" +
-                    "                                Frame forward scan on: t2\n");
+            assertPlanNoLeakCheck(
+                    query,
+                    "Sort light\n" +
+                            "  keys: [x]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [x,max,dateadd::long+x1]\n" +
+                            "        GroupBy vectorized: false\n" +
+                            "          keys: [x,x1,dateadd]\n" +
+                            "          values: [max(y)]\n" +
+                            "            VirtualRecord\n" +
+                            "              functions: [x,y,x1,dateadd('d',1677628800000000,x)]\n" +
+                            "                SelectedRecord\n" +
+                            "                    Hash Join Light\n" +
+                            "                      condition: t2.y=t1.y\n" +
+                            "                        DataFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: t1\n" +
+                            "                        Hash\n" +
+                            "                            DataFrame\n" +
+                            "                                Row forward scan\n" +
+                            "                                Frame forward scan on: t2\n"
+            );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "x\tmax\tcolumn\n" +
                             "1\t1\t1677715200000001\n" +
                             "2\t0\t1677801600000002\n",
@@ -1369,7 +1376,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "                                Frame forward scan on: t2\n"
             );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "x\tmax\tdateadd\n" +
                             "1\t1\t2023-03-02T00:00:01.000000Z\n" +
                             "2\t0\t2023-03-03T00:00:00.000000Z\n",
@@ -1417,7 +1424,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "            Row forward scan\n" +
                             "            Frame forward scan on: t\n"
             );
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "l\ts\tcolumn\n" +
                             "1\ta\t0\n",
                     query,
@@ -1449,7 +1456,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "      filter: s2 in [c]\n" +
                             "        Frame backward scan on: t\n"
             );
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "s2\tsum\n" +
                             "c\t25\n",
                     query,
@@ -1483,7 +1490,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "          filter: s2 in [c,d]\n" +
                             "            Frame backward scan on: t\n"
             );
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "s2\tsum\n" +
                             "c\t14\n" +
                             "d\t12\n",
@@ -1518,7 +1525,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "          filter: s2 in [d]\n" +
                             "            Frame backward scan on: t\n"
             );
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "concat\tsum\n" +
                             "_d_\t25\n",
                     query,
@@ -1548,13 +1555,16 @@ public class GroupByTest extends AbstractCairoTest {
                             "  filter: a=1\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: x\n");
-            assertQuery("a\tb\tz\tviews\n" +
+                            "        Frame forward scan on: x\n"
+            );
+            assertQueryNoLeakCheck(
+                    "a\tb\tz\tviews\n" +
                             "1\t2\t3\t1\n",
                     query,
                     null,
                     true,
-                    true);
+                    true
+            );
         });
     }
 
@@ -1692,14 +1702,16 @@ public class GroupByTest extends AbstractCairoTest {
                             "  filter: a=1\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: x\n");
-            assertQuery(
+                            "        Frame forward scan on: x\n"
+            );
+            assertQueryNoLeakCheck(
                     "a\tb\tz\tviews\n" +
                             "1\t2\t3\t1\n",
                     query,
                     null,
                     true,
-                    true);
+                    true
+            );
         });
     }
 
@@ -1723,8 +1735,9 @@ public class GroupByTest extends AbstractCairoTest {
                             "  filter: a=1\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: x\n");
-            assertQuery(
+                            "        Frame forward scan on: x\n"
+            );
+            assertQueryNoLeakCheck(
                     "a\tB\tz\tviews\n" +
                             "1\t2\t3\t1\n",
                     query,
@@ -1756,13 +1769,16 @@ public class GroupByTest extends AbstractCairoTest {
                             "      filter: a=1\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: x\n");
-            assertQuery("a\tb\tz\tviews\n"
+                            "            Frame forward scan on: x\n"
+            );
+            assertQueryNoLeakCheck(
+                    "a\tb\tz\tviews\n"
                             + "1\t2\t3\t1\n",
                     query,
                     null,
                     true,
-                    true);
+                    true
+            );
         });
     }
 
@@ -1785,8 +1801,9 @@ public class GroupByTest extends AbstractCairoTest {
                             "  filter: a=1\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: x\n");
-            assertQuery(
+                            "        Frame forward scan on: x\n"
+            );
+            assertQueryNoLeakCheck(
                     "a\tb\tc\tviews\n" +
                             "1\t2\t3\t1\n",
                     query,
@@ -1907,7 +1924,8 @@ public class GroupByTest extends AbstractCairoTest {
                     "group by y_utc_15m " +
                     "order by y_utc_15m";
 
-            assertQuery(expected,
+            assertQueryNoLeakCheck(
+                    expected,
                     query,
                     "y_utc_15m",
                     true,
@@ -1926,7 +1944,8 @@ public class GroupByTest extends AbstractCairoTest {
                             "              filter: (seller='sf' or buyer='sf')\n" +
                             "                DataFrame\n" +
                             "                    Row forward scan\n" +
-                            "                    Frame forward scan on: trades\n");
+                            "                    Frame forward scan on: trades\n"
+            );
         });
     }
 
@@ -1938,12 +1957,11 @@ public class GroupByTest extends AbstractCairoTest {
             insert("insert into x values (1,2,'3', now()), (2,3, '3', now()), (5,6,'4', now())");
             insert("insert into x values (1, 5, '4', now()), (1, 3, '1', now())");
             drainWalQueue();
-            String query =
-                    "select a, sum(b) sum, c as z, count(*) views\n" +
-                            "from x\n" +
-                            "where a = 1\n" +
-                            "group by a,b,z\n" +
-                            "order by a,b,z\n";
+            String query = "select a, sum(b) sum, c as z, count(*) views\n" +
+                    "from x\n" +
+                    "where a = 1\n" +
+                    "group by a,b,z\n" +
+                    "order by a,b,z\n";
             assertPlanNoLeakCheck(
                     query,
                     "SelectedRecord\n" +
@@ -1957,15 +1975,18 @@ public class GroupByTest extends AbstractCairoTest {
                             "              filter: a=1\n" +
                             "                DataFrame\n" +
                             "                    Row forward scan\n" +
-                            "                    Frame forward scan on: x\n");
-            assertQuery("a\tsum\tz\tviews\n" +
+                            "                    Frame forward scan on: x\n"
+            );
+            assertQueryNoLeakCheck(
+                    "a\tsum\tz\tviews\n" +
                             "1\t2\t3\t1\n" +
                             "1\t3\t1\t1\n" +
                             "1\t5\t4\t1\n",
                     query,
                     null,
                     true,
-                    true);
+                    true
+            );
         });
     }
 
@@ -2004,7 +2025,8 @@ public class GroupByTest extends AbstractCairoTest {
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Interval forward scan on: hits\n" +
-                            "                  intervals: [(\"2013-07-01T00:00:00.000000Z\",\"2013-07-31T23:59:59.000000Z\")]\n");
+                            "                  intervals: [(\"2013-07-01T00:00:00.000000Z\",\"2013-07-31T23:59:59.000000Z\")]\n"
+            );
             String query2 =
                     "SELECT TraficSourceID, SearchEngineID, AdvEngineID, CASE WHEN (SearchEngineID = 0 AND AdvEngineID = 0) THEN Referer ELSE '' END AS Src, URL, COUNT(*) AS PageViews\n" +
                             "FROM hits\n" +
@@ -2025,7 +2047,8 @@ public class GroupByTest extends AbstractCairoTest {
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Interval forward scan on: hits\n" +
-                            "                  intervals: [(\"2013-07-01T00:00:00.000000Z\",\"2013-07-31T23:59:59.000000Z\")]\n");
+                            "                  intervals: [(\"2013-07-01T00:00:00.000000Z\",\"2013-07-31T23:59:59.000000Z\")]\n"
+            );
             String query3 = "SELECT TraficSourceID, SearchEngineID, AdvEngineID, CASE WHEN (SearchEngineID = 0 AND AdvEngineID = 0) THEN Referer ELSE '' END AS Src, URL, COUNT(*) AS PageViews, concat(lpad(cast(TraficSourceId as string), 10, '0'), lpad(cast(Referer as string), 32, '0')) as cat\n" +
                     "FROM hits\n" +
                     "WHERE CounterID = 62 AND EventTime >= '2013-07-01T00:00:00Z' AND EventTime <= '2013-07-31T23:59:59Z' AND IsRefresh = 0\n" +
@@ -2045,7 +2068,8 @@ public class GroupByTest extends AbstractCairoTest {
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Interval forward scan on: hits\n" +
-                            "                  intervals: [(\"2013-07-01T00:00:00.000000Z\",\"2013-07-31T23:59:59.000000Z\")]\n");
+                            "                  intervals: [(\"2013-07-01T00:00:00.000000Z\",\"2013-07-31T23:59:59.000000Z\")]\n"
+            );
         });
     }
 
@@ -2055,7 +2079,7 @@ public class GroupByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10));");
             String query = "select key1 as k1, key2, key2, count(*) from t group by key2, k1 order by 1, 2";
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "k1\tkey2\tkey21\tcount\n" +
                             "0\t0\t0\t2\n" +
                             "0\t2\t2\t3\n" +
@@ -2064,7 +2088,8 @@ public class GroupByTest extends AbstractCairoTest {
                     query,
                     null,
                     true,
-                    true);
+                    true
+            );
             assertPlanNoLeakCheck(
                     query,
                     "Sort light\n" +
@@ -2077,7 +2102,8 @@ public class GroupByTest extends AbstractCairoTest {
                             "          filter: null\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
-                            "                Frame forward scan on: t\n");
+                            "                Frame forward scan on: t\n"
+            );
         });
     }
 
@@ -2087,13 +2113,15 @@ public class GroupByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table t as ( select x%2 as key, x as value from long_sequence(100));");
             String query = "select key+1, key, key, count(*) from t group by key order by 1,2,3 desc";
-            assertQuery("column\tkey\tkey1\tcount\n" +
+            assertQueryNoLeakCheck(
+                    "column\tkey\tkey1\tcount\n" +
                             "1\t0\t0\t50\n" +
                             "2\t1\t1\t50\n",
                     query,
                     null,
                     true,
-                    true);
+                    true
+            );
             assertPlanNoLeakCheck(
                     query,
                     "Sort light\n" +
@@ -2106,7 +2134,8 @@ public class GroupByTest extends AbstractCairoTest {
                             "          filter: null\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
-                            "                Frame forward scan on: t\n");
+                            "                Frame forward scan on: t\n"
+            );
         });
     }
 
@@ -2146,7 +2175,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "                                Frame forward scan on: t2\n"
             );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "x\tmax\tdateadd\n" +
                             "1\t1\t2023-03-02T00:00:01.000000Z\n" +
                             "2\t0\t2023-03-03T00:00:00.000000Z\n",
@@ -2195,202 +2224,209 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByOnAliasedColumnAfterGroupBy() throws Exception {
-        ddl("create table tst ( ts timestamp ) timestamp(ts);");
-        insert("insert into tst values ('2023-05-29T15:30:00.000000Z')");
+        assertMemoryLeak(() -> {
+            ddl("create table tst ( ts timestamp ) timestamp(ts);");
+            insert("insert into tst values ('2023-05-29T15:30:00.000000Z')");
 
-        ddl("create table data ( dts timestamp, s symbol ) timestamp(dts);");
-        insert("insert into data values ('2023-05-29T15:29:59.000000Z', 'USD')");
+            ddl("create table data ( dts timestamp, s symbol ) timestamp(dts);");
+            insert("insert into data values ('2023-05-29T15:29:59.000000Z', 'USD')");
 
-        // single table
-        assertQuery(
-                "ref0\n2023-05-29T15:30:00.000000Z\n",
-                "SELECT ts AS ref0 " +
-                        "FROM tst " +
-                        "GROUP BY ts " +
-                        "ORDER BY ts",
-                "ref0",
-                true,
-                true
-        );
-
-        assertQuery(
-                "ref0\n2023-05-29T15:30:00.000000Z\n",
-                "SELECT tst.ts AS ref0 " +
-                        "FROM tst " +
-                        "GROUP BY tst.ts " +
-                        "ORDER BY tst.ts",
-                "ref0",
-                true,
-                true
-        );
-
-        assertQuery(
-                "ref0\n2023-05-29T15:30:00.000000Z\n",
-                "SELECT tst.ts AS ref0 " +
-                        "FROM tst " +
-                        "GROUP BY ts " +
-                        "ORDER BY tst.ts",
-                "ref0",
-                true,
-                true
-        );
-
-        assertQuery(
-                "ref0\n2023-05-29T15:30:00.000000Z\n",
-                "SELECT ts AS ref0 " +
-                        "FROM tst " +
-                        "GROUP BY tst.ts " +
-                        "ORDER BY ts",
-                "ref0",
-                true,
-                true
-        );
-
-        // joins
-        for (String join : Arrays.asList("LT JOIN data ", "ASOF JOIN data ", "LEFT JOIN data on (tst.ts > data.dts) ", "INNER JOIN data on (tst.ts > data.dts) ", "CROSS JOIN data ")) {
-            assertQuery(
-                    "ref0\tdts\n2023-05-29T15:30:00.000000Z\t2023-05-29T15:29:59.000000Z\n",
-                    "SELECT ts AS ref0, dts " +
+            // single table
+            assertQueryNoLeakCheck(
+                    "ref0\n2023-05-29T15:30:00.000000Z\n",
+                    "SELECT ts AS ref0 " +
                             "FROM tst " +
-                            join +
-                            "GROUP BY tst.ts, data.dts " +
+                            "GROUP BY ts " +
                             "ORDER BY ts",
                     "ref0",
                     true,
                     true
             );
 
-            assertQuery(
-                    "ref0\tdts\n2023-05-29T15:30:00.000000Z\t2023-05-29T15:29:59.000000Z\n",
-                    "SELECT ts AS ref0, dts " +
+            assertQueryNoLeakCheck(
+                    "ref0\n2023-05-29T15:30:00.000000Z\n",
+                    "SELECT tst.ts AS ref0 " +
                             "FROM tst " +
-                            join +
-                            "GROUP BY ts, data.dts " +
+                            "GROUP BY tst.ts " +
                             "ORDER BY tst.ts",
                     "ref0",
                     true,
                     true
             );
-        }
+
+            assertQueryNoLeakCheck(
+                    "ref0\n2023-05-29T15:30:00.000000Z\n",
+                    "SELECT tst.ts AS ref0 " +
+                            "FROM tst " +
+                            "GROUP BY ts " +
+                            "ORDER BY tst.ts",
+                    "ref0",
+                    true,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    "ref0\n2023-05-29T15:30:00.000000Z\n",
+                    "SELECT ts AS ref0 " +
+                            "FROM tst " +
+                            "GROUP BY tst.ts " +
+                            "ORDER BY ts",
+                    "ref0",
+                    true,
+                    true
+            );
+
+            // joins
+            for (String join : Arrays.asList("LT JOIN data ", "ASOF JOIN data ", "LEFT JOIN data on (tst.ts > data.dts) ", "INNER JOIN data on (tst.ts > data.dts) ", "CROSS JOIN data ")) {
+                assertQueryNoLeakCheck(
+                        "ref0\tdts\n2023-05-29T15:30:00.000000Z\t2023-05-29T15:29:59.000000Z\n",
+                        "SELECT ts AS ref0, dts " +
+                                "FROM tst " +
+                                join +
+                                "GROUP BY tst.ts, data.dts " +
+                                "ORDER BY ts",
+                        "ref0",
+                        true,
+                        true
+                );
+
+                assertQueryNoLeakCheck(
+                        "ref0\tdts\n2023-05-29T15:30:00.000000Z\t2023-05-29T15:29:59.000000Z\n",
+                        "SELECT ts AS ref0, dts " +
+                                "FROM tst " +
+                                join +
+                                "GROUP BY ts, data.dts " +
+                                "ORDER BY tst.ts",
+                        "ref0",
+                        true,
+                        true
+                );
+            }
+        });
     }
 
     @Test
     public void testSelectDistinctOnAliasedColumnWithOrderBy() throws Exception {
-        ddl("create table tab (created timestamp, i int) timestamp(created)");
-        insert("insert into tab select x::timestamp, x from long_sequence(3)");
-        drainWalQueue();
+        assertMemoryLeak(() -> {
+            ddl("create table tab (created timestamp, i int) timestamp(created)");
+            insert("insert into tab select x::timestamp, x from long_sequence(3)");
+            drainWalQueue();
 
-        String query = "SELECT DISTINCT tab.created AS ref0 " +
-                "FROM tab " +
-                "WHERE (tab.created) IS NOT NULL " +
-                "GROUP BY tab.created " +
-                "ORDER BY tab.created";
+            String query = "SELECT DISTINCT tab.created AS ref0 " +
+                    "FROM tab " +
+                    "WHERE (tab.created) IS NOT NULL " +
+                    "GROUP BY tab.created " +
+                    "ORDER BY tab.created";
 
-        assertPlanNoLeakCheck(
-                query,
-                "Sort light\n" +
-                        "  keys: [ref0]\n" +
-                        "    Distinct\n" +
-                        "      keys: ref0\n" +
-                        "        VirtualRecord\n" +
-                        "          functions: [created]\n" +
-                        "            Async JIT Group By workers: 1\n" +
-                        "              keys: [created]\n" +
-                        "              filter: created!=null\n" +
-                        "                DataFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: tab\n"
-        );
+            assertPlanNoLeakCheck(
+                    query,
+                    "Sort light\n" +
+                            "  keys: [ref0]\n" +
+                            "    Distinct\n" +
+                            "      keys: ref0\n" +
+                            "        VirtualRecord\n" +
+                            "          functions: [created]\n" +
+                            "            Async JIT Group By workers: 1\n" +
+                            "              keys: [created]\n" +
+                            "              filter: created!=null\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab\n"
+            );
 
-        assertQuery(
-                "ref0\n" +
-                        "1970-01-01T00:00:00.000001Z\n" +
-                        "1970-01-01T00:00:00.000002Z\n" +
-                        "1970-01-01T00:00:00.000003Z\n",
-                query,
-                "ref0",
-                true,
-                false
-        );
+            assertQueryNoLeakCheck(
+                    "ref0\n" +
+                            "1970-01-01T00:00:00.000001Z\n" +
+                            "1970-01-01T00:00:00.000002Z\n" +
+                            "1970-01-01T00:00:00.000003Z\n",
+                    query,
+                    "ref0",
+                    true,
+                    false
+            );
+        });
     }
 
     @Test
     public void testSelectDistinctOnExpressionWithOrderBy() throws Exception {
-        ddl("create table tab (created timestamp, i int) timestamp(created)");
-        insert("insert into tab select x::timestamp, x from long_sequence(3)");
-        drainWalQueue();
+        assertMemoryLeak(() -> {
+            ddl("create table tab (created timestamp, i int) timestamp(created)");
+            insert("insert into tab select x::timestamp, x from long_sequence(3)");
+            drainWalQueue();
 
-        String query = "SELECT DISTINCT dateadd('h', 1, tab.created) AS ref0 " +
-                "FROM tab " +
-                "WHERE (tab.created) IS NOT NULL " +
-                "GROUP BY tab.created " +
-                "ORDER BY dateadd('h', 1, tab.created)";
+            String query = "SELECT DISTINCT dateadd('h', 1, tab.created) AS ref0 " +
+                    "FROM tab " +
+                    "WHERE (tab.created) IS NOT NULL " +
+                    "GROUP BY tab.created " +
+                    "ORDER BY dateadd('h', 1, tab.created)";
 
-        assertPlanNoLeakCheck(
-                query,
-                "Sort light\n" +
-                        "  keys: [ref0]\n" +
-                        "    Distinct\n" +
-                        "      keys: ref0\n" +
-                        "        VirtualRecord\n" +
-                        "          functions: [dateadd('h',1,created)]\n" +
-                        "            Async JIT Group By workers: 1\n" +
-                        "              keys: [created]\n" +
-                        "              filter: created!=null\n" +
-                        "                DataFrame\n" +
-                        "                    Row forward scan\n" +
-                        "                    Frame forward scan on: tab\n"
-        );
+            assertPlanNoLeakCheck(
+                    query,
+                    "Sort light\n" +
+                            "  keys: [ref0]\n" +
+                            "    Distinct\n" +
+                            "      keys: ref0\n" +
+                            "        VirtualRecord\n" +
+                            "          functions: [dateadd('h',1,created)]\n" +
+                            "            Async JIT Group By workers: 1\n" +
+                            "              keys: [created]\n" +
+                            "              filter: created!=null\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: tab\n"
+            );
 
-        assertQuery(
-                "ref0\n" +
-                        "1970-01-01T01:00:00.000001Z\n" +
-                        "1970-01-01T01:00:00.000002Z\n" +
-                        "1970-01-01T01:00:00.000003Z\n",
-                query,
-                "ref0",
-                true,
-                false
-
-        );
+            assertQueryNoLeakCheck(
+                    "ref0\n" +
+                            "1970-01-01T01:00:00.000001Z\n" +
+                            "1970-01-01T01:00:00.000002Z\n" +
+                            "1970-01-01T01:00:00.000003Z\n",
+                    query,
+                    "ref0",
+                    true,
+                    false
+            );
+        });
     }
 
     @Test
     public void testSelectDistinctOnUnaliasedColumnWithOrderBy() throws Exception {
-        ddl("create table tab (created timestamp, i int) timestamp(created)");
-        insert("insert into tab select x::timestamp, x from long_sequence(3)");
-        drainWalQueue();
+        assertMemoryLeak(() -> {
+            ddl("create table tab (created timestamp, i int) timestamp(created)");
+            insert("insert into tab select x::timestamp, x from long_sequence(3)");
+            drainWalQueue();
 
-        String query = "SELECT DISTINCT tab.created " +
-                "FROM tab " +
-                "WHERE (tab.created) IS NOT NULL " +
-                "GROUP BY tab.created " +
-                "ORDER BY tab.created";
+            String query = "SELECT DISTINCT tab.created " +
+                    "FROM tab " +
+                    "WHERE (tab.created) IS NOT NULL " +
+                    "GROUP BY tab.created " +
+                    "ORDER BY tab.created";
 
-        assertPlanNoLeakCheck(
-                query,
-                "Sort light\n" +
-                        "  keys: [created]\n" +
-                        "    Distinct\n" +
-                        "      keys: created\n" +
-                        "        Async JIT Group By workers: 1\n" +
-                        "          keys: [created]\n" +
-                        "          filter: created!=null\n" +
-                        "            DataFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: tab\n"
-        );
+            assertPlanNoLeakCheck(
+                    query,
+                    "Sort light\n" +
+                            "  keys: [created]\n" +
+                            "    Distinct\n" +
+                            "      keys: created\n" +
+                            "        Async JIT Group By workers: 1\n" +
+                            "          keys: [created]\n" +
+                            "          filter: created!=null\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: tab\n"
+            );
 
-        assertQuery(
-                "created\n" +
-                        "1970-01-01T00:00:00.000001Z\n" +
-                        "1970-01-01T00:00:00.000002Z\n" +
-                        "1970-01-01T00:00:00.000003Z\n",
-                query,
-                "created",
-                true,
-                false
-        );
+            assertQueryNoLeakCheck(
+                    "created\n" +
+                            "1970-01-01T00:00:00.000001Z\n" +
+                            "1970-01-01T00:00:00.000002Z\n" +
+                            "1970-01-01T00:00:00.000003Z\n",
+                    query,
+                    "created",
+                    true,
+                    false
+            );
+        });
     }
 
     @Test
@@ -2421,7 +2457,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: x\n"
             );
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "sym\thour\tavgBid\n" +
                             "A\t0\t0.4922298136511458\n" +
                             "B\t0\t0.4796420804429589\n",
@@ -2446,39 +2482,41 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testSumOverSumColumn() throws Exception {
-        ddl("create table \"avg\" as (" +
-                "select rnd_symbol('A', 'B', 'C') category, " +
-                "rnd_double() sum, " +
-                "rnd_double() count, " +
-                "timestamp_sequence(0, 100000000000) timestamp " +
-                "from long_sequence(20)" +
-                ") timestamp(timestamp) partition by DAY");
+        assertMemoryLeak(() -> {
+            ddl("create table \"avg\" as (" +
+                    "select rnd_symbol('A', 'B', 'C') category, " +
+                    "rnd_double() sum, " +
+                    "rnd_double() count, " +
+                    "timestamp_sequence(0, 100000000000) timestamp " +
+                    "from long_sequence(20)" +
+                    ") timestamp(timestamp) partition by DAY");
 
-        String query = "select sum(\"sum\"), sum(\"count\"), \"category\" from \"avg\" group by \"category\" order by 3";
-        assertQuery(
-                "sum\tsum1\tcategory\n" +
-                        "1.920104572218119\t0.9826178313717698\tA\n" +
-                        "2.0117879412419453\t3.362073294894596\tB\n" +
-                        "6.020496469863701\t5.702005218155505\tC\n",
-                query,
-                null,
-                true,
-                true
-        );
+            String query = "select sum(\"sum\"), sum(\"count\"), \"category\" from \"avg\" group by \"category\" order by 3";
+            assertQueryNoLeakCheck(
+                    "sum\tsum1\tcategory\n" +
+                            "1.920104572218119\t0.9826178313717698\tA\n" +
+                            "2.0117879412419453\t3.362073294894596\tB\n" +
+                            "6.020496469863701\t5.702005218155505\tC\n",
+                    query,
+                    null,
+                    true,
+                    true
+            );
 
-        assertPlanNoLeakCheck(
-                query,
-                "Sort light\n" +
-                        "  keys: [category]\n" +
-                        "    VirtualRecord\n" +
-                        "      functions: [sum,sum1,category]\n" +
-                        "        GroupBy vectorized: true workers: 1\n" +
-                        "          keys: [category]\n" +
-                        "          values: [sum(sum),sum(count)]\n" +
-                        "            DataFrame\n" +
-                        "                Row forward scan\n" +
-                        "                Frame forward scan on: avg\n"
-        );
+            assertPlanNoLeakCheck(
+                    query,
+                    "Sort light\n" +
+                            "  keys: [category]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [sum,sum1,category]\n" +
+                            "        GroupBy vectorized: true workers: 1\n" +
+                            "          keys: [category]\n" +
+                            "          values: [sum(sum),sum(count)]\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: avg\n"
+            );
+        });
     }
 
     private void assertError(String query, String errorMessage) throws Exception {
