@@ -142,6 +142,7 @@ public class InStrFunctionFactory implements FunctionFactory {
                         case ColumnType.STRING:
                         case ColumnType.CHAR:
                         case ColumnType.VARCHAR:
+                        case ColumnType.NULL:
                             deferredSet.add(func.getStrA(null));
                             break;
                         default:

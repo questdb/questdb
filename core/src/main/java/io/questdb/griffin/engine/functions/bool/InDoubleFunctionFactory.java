@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -54,6 +55,7 @@ public class InDoubleFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         boolean allConst = true;
+        boolean allRuntimeConst = true;
         for (int i = 1, n = args.size(); i < n; i++) {
             Function func = args.getQuick(i);
             switch (ColumnType.tagOf(func.getType())) {
@@ -67,52 +69,73 @@ public class InDoubleFunctionFactory implements FunctionFactory {
                 case ColumnType.STRING:
                 case ColumnType.SYMBOL:
                 case ColumnType.VARCHAR:
+                    // allow undefined bind variables to be defined at the cursor creation time
+                case ColumnType.UNDEFINED:
                     break;
                 default:
-                    throw SqlException.position(0).put("cannot compare DOUBLE with type ").put(ColumnType.nameOf(func.getType()));
+                    throw SqlException.position(argPositions.getQuick(i)).put("cannot compare DOUBLE with type ").put(ColumnType.nameOf(func.getType()));
             }
+
             if (!func.isConstant()) {
                 allConst = false;
-                break;
+            }
+
+            if (!func.isRuntimeConstant()) {
+                allRuntimeConst = false;
             }
         }
 
         if (allConst) {
-            return new InDoubleConstFunction(args.getQuick(0), parseToDouble(args, argPositions));
+            // bind variable will not be constant
+            DoubleList values = new DoubleList(args.size() - 1);
+            parseToDouble(args, argPositions, values);
+            return new InDoubleConstFunction(args.getQuick(0), values);
+        }
+
+        if (allRuntimeConst) {
+            return new InDoubleRuntimeConstFunction(args.getQuick(0), args, argPositions);
         }
 
         // have to copy, args is mutable
         return new InDoubleVarFunction(new ObjList<>(args));
     }
 
-    private DoubleList parseToDouble(ObjList<Function> args, IntList argPositions) throws SqlException {
-        DoubleList res = new DoubleList(args.size() - 1);
-        res.extendAndSet(args.size() - 2, 0);
-
+    private static void parseToDouble(ObjList<Function> args, IntList argPositions, DoubleList outDoubleList) throws SqlException {
+        outDoubleList.extendAndSet(args.size() - 2, 0);
         for (int i = 1, n = args.size(); i < n; i++) {
-            Function func = args.getQuick(i);
-            double val = Double.NaN;
-            switch (ColumnType.tagOf(func.getType())) {
-                case ColumnType.BYTE:
-                case ColumnType.SHORT:
-                case ColumnType.INT:
-                case ColumnType.LONG:
-                case ColumnType.FLOAT:
-                case ColumnType.DOUBLE:
-                    val = func.getDouble(null);
-                    break;
-                case ColumnType.STRING:
-                case ColumnType.SYMBOL:
-                case ColumnType.VARCHAR:
-                    CharSequence tsValue = func.getStrA(null);
-                    val = (tsValue != null) ? tryParseDouble(tsValue, argPositions.getQuick(i)) : Double.NaN;
-                    break;
-            }
-            res.setQuick(i - 1, val);
+            outDoubleList.setQuick(i - 1, parseValue(argPositions, args.getQuick(i), i));
         }
+        outDoubleList.sort();
+    }
 
-        res.sort();
-        return res;
+    private static double parseValue(IntList argPositions, Function func, int i) throws SqlException {
+        double val;
+        switch (ColumnType.tagOf(func.getType())) {
+            case ColumnType.BYTE:
+            case ColumnType.SHORT:
+            case ColumnType.INT:
+            case ColumnType.LONG:
+            case ColumnType.FLOAT:
+            case ColumnType.DOUBLE:
+                val = func.getDouble(null);
+                break;
+            case ColumnType.STRING:
+            case ColumnType.SYMBOL:
+            case ColumnType.VARCHAR:
+            case ColumnType.NULL:
+                CharSequence tsValue = func.getStrA(null);
+                val = (tsValue != null) ? tryParseDouble(tsValue, argPositions.getQuick(i)) : Double.NaN;
+                break;
+            default:
+                throw SqlException.inconvertibleTypes(
+                        argPositions.getQuick(i),
+                        func.getType(),
+                        ColumnType.nameOf(func.getType()),
+                        ColumnType.DOUBLE,
+                        ColumnType.nameOf(ColumnType.DOUBLE)
+                );
+        }
+        return val;
     }
 
     private static class InDoubleConstFunction extends NegatableBooleanFunction implements UnaryFunction {
@@ -142,6 +165,53 @@ public class InDoubleFunctionFactory implements FunctionFactory {
                 sink.val(" not");
             }
             sink.val(" in ").val(inList);
+        }
+    }
+
+    private static class InDoubleRuntimeConstFunction extends NegatableBooleanFunction implements UnaryFunction {
+        private final Function keyFunction;
+        private final IntList valueFunctionPositions;
+        private final ObjList<Function> valueFunctions;
+        private final DoubleList values;
+
+        public InDoubleRuntimeConstFunction(Function keyFunction, ObjList<Function> valueFunctions, IntList valueFunctionPositions) {
+            this.keyFunction = keyFunction;
+            // value functions also contain key function at 0 index.
+            this.valueFunctions = valueFunctions;
+            this.valueFunctionPositions = valueFunctionPositions;
+            this.values = new DoubleList(valueFunctions.size());
+
+        }
+
+        @Override
+        public Function getArg() {
+            return keyFunction;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            double val = keyFunction.getDouble(rec);
+            return negated != values.binarySearch(val, BinarySearch.SCAN_UP) >= 0;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            UnaryFunction.super.init(symbolTableSource, executionContext);
+            for (int i = 1, n = valueFunctions.size(); i < n; i++) {
+                Function valueFunction = valueFunctions.getQuick(i);
+                valueFunction.init(symbolTableSource, executionContext);
+            }
+            values.clear();
+            parseToDouble(valueFunctions, valueFunctionPositions, values);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(keyFunction);
+            if (negated) {
+                sink.val(" not");
+            }
+            sink.val(" in ").val(values);
         }
     }
 

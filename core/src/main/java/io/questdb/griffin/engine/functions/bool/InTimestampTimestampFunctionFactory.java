@@ -126,11 +126,10 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                 case ColumnType.STRING:
                 case ColumnType.SYMBOL:
                 case ColumnType.VARCHAR:
+                case ColumnType.NULL:
                     CharSequence tsValue = func.getStrA(null);
                     val = (tsValue != null) ? tryParseTimestamp(tsValue, argPositions.getQuick(i)) : Numbers.LONG_NULL;
                     break;
-                case ColumnType.UNDEFINED:
-                    throw SqlException.$(argPositions.getQuick(i), "undefined bind variable");
                 default:
                     throw SqlException.inconvertibleTypes(argPositions.getQuick(i), func.getType(), ColumnType.nameOf(func.getType()), ColumnType.TIMESTAMP, ColumnType.nameOf(ColumnType.TIMESTAMP));
             }
