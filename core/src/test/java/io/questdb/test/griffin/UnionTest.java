@@ -432,23 +432,25 @@ public class UnionTest extends AbstractCairoTest {
                 "#SET# " +
                 "select * from (select 2 from t #CLAUSE2# ) ";
 
-        assertMemoryLeak(() -> ddl("create table t as (select x, 's' || x from long_sequence(1) )"));
+        assertMemoryLeak(() -> {
+            ddl("create table t as (select x, 's' || x from long_sequence(1) )");
 
-        for (String setOperation : Arrays.asList("union    ", "union all", "intersect", "except   ")) {
-            for (int i = 0; i <= 2; i++) {
-                String orderQuery = template.replace("#SET#", setOperation)
-                        .replace("#CLAUSE" + i + "#", "order by x desc")
-                        .replace("#CLAUSE" + (i + 1) % 3 + "#", "")
-                        .replace("#CLAUSE" + (i + 2) % 3 + "#", "");
-                select(orderQuery).close();
+            for (String setOperation : Arrays.asList("union    ", "union all", "intersect", "except   ")) {
+                for (int i = 0; i <= 2; i++) {
+                    String orderQuery = template.replace("#SET#", setOperation)
+                            .replace("#CLAUSE" + i + "#", "order by x desc")
+                            .replace("#CLAUSE" + (i + 1) % 3 + "#", "")
+                            .replace("#CLAUSE" + (i + 2) % 3 + "#", "");
+                    select(orderQuery).close();
 
-                String limitQuery = template.replace("#SET#", setOperation)
-                        .replace("#CLAUSE" + i + "#", "limit 1        ")
-                        .replace("#CLAUSE" + (i + 1) % 3 + "#", "")
-                        .replace("#CLAUSE" + (i + 2) % 3 + "#", "");
-                select(limitQuery).close();
+                    String limitQuery = template.replace("#SET#", setOperation)
+                            .replace("#CLAUSE" + i + "#", "limit 1        ")
+                            .replace("#CLAUSE" + (i + 1) % 3 + "#", "")
+                            .replace("#CLAUSE" + (i + 2) % 3 + "#", "");
+                    select(limitQuery).close();
+                }
             }
-        }
+        });
     }
 
     //test accept limit and order by in last component ?

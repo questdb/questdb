@@ -543,23 +543,23 @@ public class ParallelFilterTest extends AbstractCairoTest {
                     MemoryTag.NATIVE_DEFAULT
             );
 
-            ddl(
-                    "create table x ( " +
-                            "v long, " +
-                            "s symbol capacity 4 cache " +
-                            ")"
-            );
-            insert("insert into x select rnd_long() v, rnd_symbol('A','B','C') s from long_sequence(" + ROW_COUNT + ")");
-
-            context.with(
-                    context.getSecurityContext(),
-                    context.getBindVariableService(),
-                    context.getRandom(),
-                    context.getRequestFd(),
-                    circuitBreaker
-            );
-
             try {
+                ddl(
+                        "create table x ( " +
+                                "v long, " +
+                                "s symbol capacity 4 cache " +
+                                ")"
+                );
+                insert("insert into x select rnd_long() v, rnd_symbol('A','B','C') s from long_sequence(" + ROW_COUNT + ")");
+
+                context.with(
+                        context.getSecurityContext(),
+                        context.getBindVariableService(),
+                        context.getRandom(),
+                        context.getRequestFd(),
+                        circuitBreaker
+                );
+
                 assertSql(
                         "v\ts\n" +
                                 "3393210801760647293\tA\n" +

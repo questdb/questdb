@@ -647,7 +647,7 @@ public class UpdateTest extends AbstractCairoTest {
 
     @Test
     public void testUpdateAsyncModeRemoveColumnInMiddle() throws Exception {
-        //this test makes sense for non-WAL tables only, UPDATE cannot go async in TableWriter for WAL tables
+        // this test makes sense for non-WAL tables only, UPDATE cannot go async in TableWriter for WAL tables
         Assume.assumeFalse(walEnabled);
 
         testUpdateAsyncMode(
