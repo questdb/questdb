@@ -147,33 +147,28 @@ public class PageFrameReduceTask implements Closeable {
     public void populateJitData() {
         PageAddressCache pageAddressCache = getPageAddressCache();
         final long columnCount = pageAddressCache.getColumnCount();
-        try {
-            if (columns.getCapacity() < columnCount) {
-                columns.setCapacity(columnCount);
-            }
-            columns.clear();
-            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                columns.add(pageAddressCache.getPageAddress(getFrameIndex(), columnIndex));
-            }
+        if (columns.getCapacity() < columnCount) {
+            columns.setCapacity(columnCount);
+        }
+        columns.clear();
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            columns.add(pageAddressCache.getPageAddress(getFrameIndex(), columnIndex));
+        }
 
-            if (varSizeAux.getCapacity() < columnCount) {
-                varSizeAux.setCapacity(columnCount);
-            }
-            varSizeAux.clear();
-            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                varSizeAux.add(
-                        pageAddressCache.isVarSizeColumn(columnIndex)
-                                ? pageAddressCache.getAuxPageAddress(getFrameIndex(), columnIndex)
-                                : 0
-                );
-            }
-            final long rowCount = getFrameRowCount();
-            if (filteredRows.getCapacity() < rowCount) {
-                filteredRows.setCapacity(rowCount);
-            }
-        } catch (Throwable th) {
-            resetCapacities();
-            throw th;
+        if (varSizeAux.getCapacity() < columnCount) {
+            varSizeAux.setCapacity(columnCount);
+        }
+        varSizeAux.clear();
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            varSizeAux.add(
+                    pageAddressCache.isVarSizeColumn(columnIndex)
+                            ? pageAddressCache.getAuxPageAddress(getFrameIndex(), columnIndex)
+                            : 0
+            );
+        }
+        final long rowCount = getFrameRowCount();
+        if (filteredRows.getCapacity() < rowCount) {
+            filteredRows.setCapacity(rowCount);
         }
     }
 
