@@ -160,7 +160,7 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRegularUserCantCancelOtherUsersCommands() throws Exception {
+    public void testRegularUserCanNotCancelOtherUsersCommands() throws Exception {
         assertMemoryLeak(() -> {
             final String query = "select 1 t from long_sequence(1) where sleep(120000)";
 
