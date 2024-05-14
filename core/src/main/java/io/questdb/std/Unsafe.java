@@ -49,15 +49,15 @@ public final class Unsafe {
     //#endif
     public static final long LONG_OFFSET;
     public static final long LONG_SCALE;
-    static final AtomicLong MEM_USED = new AtomicLong(0);
-    static final AtomicLong RSS_MEM_USED = new AtomicLong(0);
     private static final LongAdder[] COUNTERS = new LongAdder[MemoryTag.SIZE];
     private static final AtomicLong FREE_COUNT = new AtomicLong(0);
     private static final AtomicLong MALLOC_COUNT = new AtomicLong(0);
+    private static final AtomicLong MEM_USED = new AtomicLong(0);
     //#if jdk.version!=8
     private static final long OVERRIDE;
     //#endif
     private static final AtomicLong REALLOC_COUNT = new AtomicLong(0);
+    private static final AtomicLong RSS_MEM_USED = new AtomicLong(0);
     private static final sun.misc.Unsafe UNSAFE;
     private static final AnonymousClassDefiner anonymousClassDefiner;
     //#if jdk.version!=8
