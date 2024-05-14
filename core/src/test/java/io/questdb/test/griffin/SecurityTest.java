@@ -235,7 +235,7 @@ public class SecurityTest extends AbstractCairoTest {
             } catch (Exception ex) {
                 Assert.assertTrue(ex.toString().contains("permission denied"));
             }
-            assertQueryPlain("cust_id\tccy\tbalance\n1\tEUR\t140.6\n", "select * from balances");
+            assertQueryNoLeakCheck("cust_id\tccy\tbalance\n1\tEUR\t140.6\n", "select * from balances");
         });
     }
 

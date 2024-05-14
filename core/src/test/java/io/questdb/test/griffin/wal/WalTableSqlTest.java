@@ -603,7 +603,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
                 drop("drop table " + tableName);
                 try {
-                    assertException("insert into " + tableName + " values(1, 'A', 'B', '2022-02-24T01')");
+                    assertExceptionNoLeakCheck("insert into " + tableName + " values(1, 'A', 'B', '2022-02-24T01')");
                 } catch (SqlException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "able does not exist");
                 }

@@ -315,7 +315,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("CREATE TABLE 'alcatel_traffic_tmp' (deviceName SYMBOL capacity 1000 index, time TIMESTAMP, slot SYMBOL, port SYMBOL, downStream DOUBLE, upStream DOUBLE) timestamp(time) partition by DAY");
             try {
-                assertException("select * from alcatel_traffic_tmp where deviceName in ($n1)");
+                assertExceptionNoLeakCheck("select * from alcatel_traffic_tmp where deviceName in ($n1)");
             } catch (SqlException e) {
                 Assert.assertEquals(51, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "invalid bind variable index [value=$n1]");
@@ -677,7 +677,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             ddl("create table x (col string)");
 
             try {
-                assertException("create table y as (x), cast(col as symbol capacity 100000000)");
+                assertExceptionNoLeakCheck("create table y as (x), cast(col as symbol capacity 100000000)");
             } catch (SqlException e) {
                 Assert.assertEquals(51, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "max cached symbol capacity");

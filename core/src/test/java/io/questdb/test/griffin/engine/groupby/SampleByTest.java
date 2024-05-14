@@ -12531,7 +12531,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "), index(s) timestamp(k) partition by DAY"
             );
             try {
-                assertException(query);
+                assertExceptionNoLeakCheck(query);
             } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), errorContains);
                 Assert.assertEquals(errorPosition, ex.getPosition());

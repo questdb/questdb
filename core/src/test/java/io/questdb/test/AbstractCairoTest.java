@@ -875,16 +875,16 @@ public abstract class AbstractCairoTest extends AbstractTest {
         assertFactoryMemoryUsage();
     }
 
-    protected static void assertException(CharSequence sql) throws Exception {
-        assertException0(sql, sqlExecutionContext, false);
-    }
-
     protected static void assertException(CharSequence sql, int errorPos, CharSequence contains) throws Exception {
         assertMemoryLeak(() -> assertExceptionNoLeakCheck(sql, errorPos, contains, false));
     }
 
     protected static void assertException(CharSequence sql, int errorPos, CharSequence contains, SqlExecutionContext sqlExecutionContext) throws Exception {
         assertMemoryLeak(() -> assertExceptionNoLeakCheck(sql, errorPos, contains, sqlExecutionContext));
+    }
+
+    protected static void assertExceptionNoLeakCheck(CharSequence sql) throws Exception {
+        assertException0(sql, sqlExecutionContext, false);
     }
 
     protected static void assertExceptionNoLeakCheck(CharSequence sql, SqlExecutionContext executionContext) throws Exception {
@@ -1537,16 +1537,18 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected void assertException(CharSequence sql, @NotNull CharSequence ddl, int errorPos, @NotNull CharSequence contains) throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                ddl(ddl, sqlExecutionContext);
-                assertException(sql, errorPos, contains);
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-                Assert.assertEquals(0, engine.getBusyWriterCount());
-            } finally {
-                engine.clear();
-            }
-        });
+        assertMemoryLeak(() -> assertExceptionNoLeakCheck(sql, ddl, errorPos, contains));
+    }
+
+    protected void assertExceptionNoLeakCheck(CharSequence sql, @NotNull CharSequence ddl, int errorPos, @NotNull CharSequence contains) throws Exception {
+        try {
+            ddl(ddl, sqlExecutionContext);
+            assertException(sql, errorPos, contains);
+            Assert.assertEquals(0, engine.getBusyReaderCount());
+            Assert.assertEquals(0, engine.getBusyWriterCount());
+        } finally {
+            engine.clear();
+        }
     }
 
     void assertFactoryCursor(
@@ -1699,7 +1701,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
-    protected void assertQueryPlain(String expected, String query) throws SqlException {
+    protected void assertQueryNoLeakCheck(String expected, String query) throws SqlException {
         snapshotMemoryUsage();
         try (RecordCursorFactory factory = select(query)) {
             assertFactoryCursor(

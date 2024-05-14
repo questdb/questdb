@@ -288,7 +288,7 @@ public class SnapshotTest extends AbstractCairoTest {
                 t.start();
                 latch2.await();
                 configureCircuitBreakerTimeoutOnFirstCheck();
-                assertException("snapshot prepare");
+                assertExceptionNoLeakCheck("snapshot prepare");
             } catch (CairoException ex) {
                 latch1.countDown();
                 t.join();
@@ -577,7 +577,7 @@ public class SnapshotTest extends AbstractCairoTest {
             ddl("snapshot prepare");
             Assert.assertTrue(lock.isLocked());
             try {
-                assertException("snapshot prepare");
+                assertExceptionNoLeakCheck("snapshot prepare");
             } catch (SqlException ex) {
                 Assert.assertTrue(lock.isLocked());
                 Assert.assertTrue(ex.getMessage().startsWith("[0] Waiting for SNAPSHOT COMPLETE to be called"));

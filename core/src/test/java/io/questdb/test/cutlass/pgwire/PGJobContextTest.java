@@ -6177,7 +6177,7 @@ nodejs code:
                     insert.setNull(2, Types.NULL);
                     try {
                         insert.executeUpdate();
-                        assertException("cannot insert null when the column is designated");
+                        assertExceptionNoLeakCheck("cannot insert null when the column is designated");
                     } catch (PSQLException expected) {
                         Assert.assertEquals("ERROR: timestamp before 1970-01-01 is not allowed\n" +
                                 "  Position: 1", expected.getMessage());
@@ -9406,7 +9406,7 @@ create table tab as (
                     try (PreparedStatement stmt = connection.prepareStatement("update update_after_drop set id = ?")) {
                         stmt.setLong(1, 42);
                         stmt.executeUpdate();
-                        assertException("id column was dropped, the UPDATE should have failed");
+                        assertExceptionNoLeakCheck("id column was dropped, the UPDATE should have failed");
                     } catch (PSQLException e) {
                         TestUtils.assertContains(e.getMessage(), "Invalid column: id");
                     }
@@ -11058,7 +11058,7 @@ create table tab as (
                 workerPool.start(LOG);
                 for (int i = 0; i < 10; i++) {
                     try (Connection ignored1 = getConnectionWitSslInitRequest(Mode.EXTENDED, server.getPort(), false, -2)) {
-                        assertException("Connection should not be established when server disconnects during authentication");
+                        assertExceptionNoLeakCheck("Connection should not be established when server disconnects during authentication");
                     } catch (PSQLException ignored) {
 
                     }
