@@ -60,7 +60,6 @@ public class SqlOptimiser implements Mutable {
     private static final int NOT_OP_NOT = 1;
     private static final int NOT_OP_NOT_EQ = 9;
     private static final int NOT_OP_OR = 3;
-
     private static final int SAMPLE_BY_REWRITE_NO_WRAP = 0;
     private static final int SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES = 0x2;
     private static final int SAMPLE_BY_REWRITE_WRAP_REMOVE_TIMESTAMP = 0x1;
@@ -5392,6 +5391,97 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
+     * Looks for models with trivial expressions and lifts them.
+     * For example:
+     * SELECT X, X+1, X+2 FROM foo
+     * Becomes:
+     * SELECT X, X+1, X+2 FROM (SELECT X from foo)
+     *
+     * @param model
+     * @return
+     */
+    private QueryModel rewriteTrivialExpressions(QueryModel model) throws SqlException {
+        CharSequenceIntHashMap candidates = new CharSequenceIntHashMap();
+        ObjList<QueryColumn> toLift = new ObjList<>();
+
+        QueryModel currentModel = model;
+
+        if (currentModel.getNestedModel() != null) {
+            currentModel.setNestedModel(rewriteTrivialExpressions(currentModel.getNestedModel()));
+        }
+
+        final ObjList<QueryColumn> columns = currentModel.getColumns();
+        boolean anyCandidates = false;
+
+        for (int i = 0; i < columns.size(); i++) {
+            final QueryColumn col = columns.getQuick(i);
+            final ExpressionNode ast = col.getAst();
+            if (ast.type == OPERATION && ast.paramCount == 2) {
+                // binary op
+
+                if (ast.token.length() == 1 && rewriteTrivialExpressionsValidOp(ast.token.charAt(0))) {
+                    if (ast.lhs.type == LITERAL && ast.rhs.type == CONSTANT) {
+                        candidates.putIfAbsent(ast.lhs.token, 0);
+                        candidates.increment(ast.lhs.token);
+                        toLift.add(col);
+                        anyCandidates = true;
+                    } else if (ast.lhs.type == CONSTANT && ast.rhs.type == LITERAL) {
+                        candidates.putIfAbsent(ast.rhs.token, 0);
+                        candidates.increment(ast.rhs.token);
+                        toLift.add(col);
+                        anyCandidates = true;
+                    }
+                }
+            }
+        }
+
+        QueryModel newModel = null;
+        QueryColumn nextColumn = null;
+
+        ObjList<CharSequence> candidateKeys = candidates.keys();
+        if (anyCandidates) {
+            for (int i = 0, n = candidates.size(); i < n; i++) {
+                final CharSequence candidateKey = candidateKeys.getQuick(i);
+                final int count = candidates.get(candidateKey);
+                if (count >= 2) {
+                    if (newModel == null) {
+                        newModel = queryModelPool.next();
+                    }
+                    nextColumn = queryColumnPool.next().of(
+                            candidateKey,
+                            expressionNodePool.next().of(
+                                    ExpressionNode.LITERAL,
+                                    candidateKey,
+                                    0,
+                                    0
+                            )
+                    );
+                    newModel.addBottomUpColumn(nextColumn);
+                }
+            }
+            if (newModel != null) {
+                newModel.setNestedModel(model.getNestedModel());
+                currentModel.setNestedModel(newModel);
+            }
+        }
+
+        return currentModel;
+    }
+
+    private boolean rewriteTrivialExpressionsValidOp(char token) {
+        switch (token) {
+            case '-':
+            case '+':
+            case '/':
+            case '*':
+            case '%':
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /**
      * Copies the provided order by advice into the given model.
      *
      * @param model                  The target model
@@ -5698,6 +5788,7 @@ public class SqlOptimiser implements Mutable {
             resolveJoinColumns(rewrittenModel);
             optimiseBooleanNot(rewrittenModel);
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
+            //rewrittenModel = rewriteTrivialExpressions(rewrittenModel);
             optimiseJoins(rewrittenModel);
             rewriteCountDistinct(rewrittenModel);
             rewriteNegativeLimit(rewrittenModel, sqlExecutionContext);
