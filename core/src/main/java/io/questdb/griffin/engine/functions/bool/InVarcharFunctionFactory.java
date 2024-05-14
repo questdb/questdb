@@ -34,6 +34,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
@@ -58,13 +59,13 @@ public class InVarcharFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        int n = args.size();
+        final int n = args.size();
         if (n == 1) {
             return BooleanConstant.FALSE;
         }
-        ObjList<Function> deferredValues = null;
 
-        final Utf8SequenceHashSet set = new Utf8SequenceHashSet();
+        boolean allConst = true;
+        boolean allRuntimeConst = true;
         for (int i = 1; i < n; i++) {
             Function func = args.getQuick(i);
             switch (ColumnType.tagOf(func.getType())) {
@@ -72,44 +73,69 @@ public class InVarcharFunctionFactory implements FunctionFactory {
                 case ColumnType.STRING:
                 case ColumnType.VARCHAR:
                 case ColumnType.SYMBOL:
-                    if (func.isRuntimeConstant()) { // bind variables
-                        if (deferredValues == null) {
-                            deferredValues = new ObjList<>();
-                        }
-                        deferredValues.add(func);
-                        continue;
-                    }
-                    Utf8Sequence value = func.getVarcharA(null);
-                    if (value == null) {
-                        set.addNull();
-                    }
-                    set.add(Utf8s.toUtf8String(value));
-                    break;
                 case ColumnType.CHAR:
-                    set.add(new Utf8String(String.valueOf(func.getChar(null))));
+                case ColumnType.UNDEFINED:
                     break;
                 default:
-                    throw SqlException.$(argPositions.getQuick(i), "VARCHAR constant expected");
+                    throw SqlException.position(argPositions.getQuick(i)).put("cannot compare VARCHAR with type ").put(ColumnType.nameOf(func.getType()));
+            }
+
+            if (!func.isConstant()) {
+                allConst = false;
+
+                if (!func.isRuntimeConstant()) {
+                    allRuntimeConst = false;
+                }
             }
         }
-        final Function var = args.getQuick(0);
-        if (var.isConstant() && deferredValues == null) {
-            return BooleanConstant.of(set.contains(var.getVarcharA(null)));
+
+        if (allConst) {
+            final Utf8SequenceHashSet set = new Utf8SequenceHashSet();
+            parseToVarchar(args, set);
+
+            final Function arg = args.getQuick(0);
+            if (arg.isConstant()) {
+                return BooleanConstant.of(set.contains(arg.getVarcharA(null)));
+            }
+            return new ConstFunc(arg, set);
         }
-        return new Func(var, set, deferredValues);
+        if (allRuntimeConst) {
+            return new RuntimeConstFunc(new ObjList<>(args));
+        }
+
+        // we should never get here because
+        // FunctionParser rejects the SQL if the expression is not constant or runtime constant
+        throw SqlException.position(argPositions.getQuick(1)).put("unsupported expression");
     }
 
-    private static class Func extends BooleanFunction implements UnaryFunction {
+    private static void parseToVarchar(ObjList<Function> args, Utf8SequenceHashSet set) {
+        set.clear();
+        final int n = args.size();
+        for (int i = 1; i < n; i++) {
+            Function func = args.getQuick(i);
+            switch (ColumnType.tagOf(func.getType())) {
+                case ColumnType.NULL:
+                case ColumnType.STRING:
+                case ColumnType.VARCHAR:
+                case ColumnType.SYMBOL:
+                    set.add(Utf8s.toUtf8String(func.getVarcharA(null)));
+                    break;
+                case ColumnType.CHAR:
+                    set.add(new Utf8String(func.getChar(null)));
+                    break;
+                default:
+                    // should not happen, log a warning at least?
+            }
+        }
+    }
+
+    private static class ConstFunc extends BooleanFunction implements UnaryFunction {
         private final Function arg;
-        private final Utf8SequenceHashSet deferredSet;
-        private final ObjList<Function> deferredValues;
         private final Utf8SequenceHashSet set;
 
-        public Func(Function arg, Utf8SequenceHashSet set, ObjList<Function> deferredValues) {
+        public ConstFunc(Function arg, Utf8SequenceHashSet set) {
             this.arg = arg;
             this.set = set;
-            this.deferredValues = deferredValues;
-            this.deferredSet = deferredValues != null ? new Utf8SequenceHashSet() : null;
         }
 
         @Override
@@ -119,33 +145,44 @@ public class InVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            Utf8Sequence val = arg.getVarcharA(rec);
-            return set.contains(val)
-                    || (deferredSet != null && deferredSet.contains(val));
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            arg.init(symbolTableSource, executionContext);
-            if (deferredValues != null) {
-                deferredSet.clear();
-                for (int i = 0, n = deferredValues.size(); i < n; i++) {
-                    Function func = deferredValues.getQuick(i);
-                    func.init(symbolTableSource, executionContext);
-                    deferredSet.add(func.getVarcharA(null));
-                }
-            }
+            final Utf8Sequence val = arg.getVarcharA(rec);
+            return set.contains(val);
         }
 
         @Override
         public void toPlan(PlanSink sink) {
-            if (deferredValues != null) {
-                sink.val('(');
-            }
             sink.val(arg).val(" in ").val(set);
-            if (deferredValues != null) {
-                sink.val(" or ").val(arg).val(" in ").val(deferredValues).val(')');
-            }
+        }
+    }
+
+    private static class RuntimeConstFunc extends BooleanFunction implements MultiArgFunction {
+        private final ObjList<Function> args;
+        private final Utf8SequenceHashSet set = new Utf8SequenceHashSet();
+
+        public RuntimeConstFunc(ObjList<Function> args) {
+            this.args = args;
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            return args;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            final Utf8Sequence val = args.getQuick(0).getVarcharA(rec);
+            return set.contains(val);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            MultiArgFunction.super.init(symbolTableSource, executionContext);
+            parseToVarchar(args, set);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(args.getQuick(0)).val(" in ").val(args, 1);
         }
     }
 }

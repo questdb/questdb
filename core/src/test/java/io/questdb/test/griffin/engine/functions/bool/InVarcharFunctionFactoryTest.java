@@ -35,7 +35,7 @@ public class InVarcharFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testBadConstant() {
-        assertFailure(12, "VARCHAR constant expected", utf8("xv"), utf8("an"), 10);
+        assertFailure(12, "cannot compare VARCHAR with type INT", utf8("xv"), utf8("an"), 10);
     }
 
     @Test
