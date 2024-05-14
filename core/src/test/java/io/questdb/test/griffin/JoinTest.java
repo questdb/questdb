@@ -236,7 +236,7 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertException(
+            assertExceptionNoLeakCheck(
                     "select x.i, x.c, y.c, x.amt, price, x.timestamp, y.timestamp, y.m from x asof join y on y.c = x.c",
                     73,
                     "right side column 'm' is of unsupported type",
@@ -4116,7 +4116,7 @@ public class JoinTest extends AbstractCairoTest {
                     "  qty DOUBLE\n" +
                     ") timestamp (ts) PARTITION BY MONTH");
 
-            assertException(
+            assertExceptionNoLeakCheck(
                     "SELECT *" +
                             "FROM trade t1 " +
                             "SPLICE JOIN trade t2",
@@ -5975,7 +5975,7 @@ public class JoinTest extends AbstractCairoTest {
             ddl("create table x as (select x c, abs(rnd_int() % 650) a from long_sequence(5))");
             ddl("create table y as (select cast((x-1)/4 + 1 as int) c, abs(rnd_int() % 100) b from long_sequence(20))");
             ddl("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(40))");
-            assertException(
+            assertExceptionNoLeakCheck(
                     "select z.c, x.a, b, d, d-b from x join y on(c) join z on (c)",
                     44,
                     "join column type mismatch",

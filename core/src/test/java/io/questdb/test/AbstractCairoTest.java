@@ -888,22 +888,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static void assertException(CharSequence sql, int errorPos, CharSequence contains) throws Exception {
-        assertMemoryLeak(() -> assertException(sql, errorPos, contains, false));
-    }
-
-    protected static void assertException(CharSequence sql, int errorPos, CharSequence contains, boolean fullFatJoins) throws Exception {
-        try {
-            assertException(sql, sqlExecutionContext, fullFatJoins);
-        } catch (Throwable e) {
-            if (e instanceof FlyweightMessageContainer) {
-                TestUtils.assertContains(((FlyweightMessageContainer) e).getFlyweightMessage(), contains);
-                if (errorPos > -1) {
-                    Assert.assertEquals(errorPos, ((FlyweightMessageContainer) e).getPosition());
-                }
-            } else {
-                throw e;
-            }
-        }
+        assertMemoryLeak(() -> assertExceptionNoLeakCheck(sql, errorPos, contains, false));
     }
 
     protected static void assertException(CharSequence sql, int errorPos, CharSequence contains, SqlExecutionContext sqlExecutionContext) throws Exception {
@@ -921,8 +906,27 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
+    protected static void assertExceptionNoLeakCheck(CharSequence sql, int errorPos, CharSequence contains, boolean fullFatJoins) throws Exception {
+        try {
+            assertException(sql, sqlExecutionContext, fullFatJoins);
+        } catch (Throwable e) {
+            if (e instanceof FlyweightMessageContainer) {
+                TestUtils.assertContains(((FlyweightMessageContainer) e).getFlyweightMessage(), contains);
+                if (errorPos > -1) {
+                    Assert.assertEquals(errorPos, ((FlyweightMessageContainer) e).getPosition());
+                }
+            } else {
+                throw e;
+            }
+        }
+    }
+
+    protected static void assertExceptionNoLeakCheck(CharSequence sql, int errorPos, CharSequence contains) throws Exception {
+        assertExceptionNoLeakCheck(sql, errorPos, contains, false);
+    }
+
     protected static void assertExceptionNoLeakCheck(CharSequence sql, int errorPos) throws Exception {
-        assertException(sql, errorPos, "inconvertible types: TIMESTAMP -> INT", false);
+        assertExceptionNoLeakCheck(sql, errorPos, "inconvertible types: TIMESTAMP -> INT", false);
     }
 
     protected static void assertFactoryMemoryUsage() {

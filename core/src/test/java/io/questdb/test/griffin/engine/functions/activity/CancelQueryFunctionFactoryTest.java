@@ -69,10 +69,12 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAdminUserCantCancelQueriesNotInRegistry() throws Exception {
+    public void testAdminUserCanNotCancelQueriesNotInRegistry() throws Exception {
         assertMemoryLeak(() -> {
-            try (RecordCursorFactory f = select("select cancel_query(123456789) res", adminUserContext1);
-                 RecordCursor cursor = f.getCursor(adminUserContext1)) {
+            try (
+                    RecordCursorFactory f = select("select cancel_query(123456789) res", adminUserContext1);
+                    RecordCursor cursor = f.getCursor(adminUserContext1)
+            ) {
                 assertCursor("false\n", cursor, f.getMetadata(), false);
             }
         });
@@ -150,10 +152,10 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testQueryIdToCancelMustBeNonNegativeInteger() throws Exception {
         assertMemoryLeak(() -> {
-            assertException("select cancel_query()", 7, "unexpected argument for function: cancel_query");
-            assertException("select cancel_query(null)", 20, "non-negative integer literal expected as query id");
-            assertException("select cancel_query(-1)", 20, "non-negative integer literal expected as query id");
-            assertException("select cancel_query(12.01f)", 7, "unexpected argument for function: cancel_query. expected args: (LONG). actual args: (FLOAT constant)");
+            assertExceptionNoLeakCheck("select cancel_query()", 7, "unexpected argument for function: cancel_query");
+            assertExceptionNoLeakCheck("select cancel_query(null)", 20, "non-negative integer literal expected as query id");
+            assertExceptionNoLeakCheck("select cancel_query(-1)", 20, "non-negative integer literal expected as query id");
+            assertExceptionNoLeakCheck("select cancel_query(12.01f)", 7, "unexpected argument for function: cancel_query. expected args: (LONG). actual args: (FLOAT constant)");
         });
     }
 
@@ -211,10 +213,10 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
 
                 try {
                     // readonly user can't cancel any commands
-                    assertException("select cancel_query(" + queryId + ")", 7, "Write permission denied", readOnlyUserContext);
+                    assertExceptionNoLeakCheck("select cancel_query(" + queryId + ")", 7, "Write permission denied", readOnlyUserContext);
 
                     // regular user can't cancel other user's commands
-                    assertException("select cancel_query(" + queryId + ")", 7, "Access denied for bob [built-in admin user required]", regularUserContext);
+                    assertExceptionNoLeakCheck("select cancel_query(" + queryId + ")", 7, "Access denied for bob [built-in admin user required]", regularUserContext);
                 } finally {
                     ddl("cancel query " + queryId, adminUserContext2);
                 }
@@ -227,7 +229,7 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
         });
     }
 
-    protected static void assertException(CharSequence sql, int errorPos, CharSequence contains, SqlExecutionContext sqlExecutionContext) throws Exception {
+    protected static void assertExceptionNoLeakCheck(CharSequence sql, int errorPos, CharSequence contains, SqlExecutionContext sqlExecutionContext) throws Exception {
         try {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(false);

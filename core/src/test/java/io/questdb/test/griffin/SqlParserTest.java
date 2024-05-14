@@ -10074,7 +10074,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     AbstractCairoTest.create(tableModels[i]);
                 }
                 for (String frameType : frameTypes) {
-                    assertException(query.replace("#FRAME", frameType), position, contains, false);
+                    assertExceptionNoLeakCheck(query.replace("#FRAME", frameType), position, contains, false);
                 }
             });
         } finally {
