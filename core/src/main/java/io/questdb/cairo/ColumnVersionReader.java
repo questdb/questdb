@@ -183,7 +183,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
                 maxVersion = Math.max(maxVersion, columnVersion);
             }
         }
-        return -1;
+        return maxVersion;
     }
 
     public int getRecordIndex(long partitionTimestamp, int columnIndex) {
