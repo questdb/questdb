@@ -52,655 +52,850 @@ public class OrderByDescRowSkippingTest extends AbstractCairoTest {
     // partitioned table with designated timestamp and two partitions, 5 rows per partition
     @Test
     public void test2partitionsSelectAll() throws Exception {
-        prepare2partitionsTable();
+        assertMemoryLeak(() -> {
+            prepare2partitionsTable();
 
-        assertQueryExpectSize("l\n10\n9\n8\n7\n6\n5\n4\n3\n2\n1\n", "select l from tab order by ts desc");
+            assertQueryExpectSize("l\n10\n9\n8\n7\n6\n5\n4\n3\n2\n1\n", "select l from tab order by ts desc");
+        });
     }
 
     @Test
     public void test2partitionsSelectFirstN() throws Exception {
-        prepare2partitionsTable();
+        assertMemoryLeak(() -> {
+            prepare2partitionsTable();
 
-        assertQuery("l\n10\n9\n8\n", "select l from tab order by ts desc limit 3");
+            assertQuery("l\n10\n9\n8\n", "select l from tab order by ts desc limit 3");
+        });
     }
 
     @Test
     public void test2partitionsSelectFirstNwithSameLoHireturnsNoRows() throws Exception {
-        prepare2partitionsTable();
+        assertMemoryLeak(() -> {
+            prepare2partitionsTable();
 
-        assertQuery("l\n", "select l from tab order by ts desc limit 8,8");
+            assertQuery("l\n", "select l from tab order by ts desc limit 8,8");
+        });
     }
 
     @Test
     public void test2partitionsSelectLastN() throws Exception {
-        prepare2partitionsTable();
+        assertMemoryLeak(() -> {
+            prepare2partitionsTable();
 
-        assertQuery("l\n3\n2\n1\n", "select l from tab order by ts desc limit -3", true);
+            assertQuery("l\n3\n2\n1\n", "select l from tab order by ts desc limit -3", true);
+        });
     }
 
     @Test
     public void test2partitionsSelectLastNwithSameLoHiReturnsNoRows() throws Exception {
-        prepare2partitionsTable();
+        assertMemoryLeak(() -> {
+            prepare2partitionsTable();
 
-        assertQuery("l\n", "select l from tab order by ts desc limit -8,-8");
+            assertQuery("l\n", "select l from tab order by ts desc limit -8,-8");
+        });
     }
 
     @Test
     public void test2partitionsSelectMiddleNfromBothDirections() throws Exception {
-        prepare2partitionsTable();
+        assertMemoryLeak(() -> {
+            prepare2partitionsTable();
 
-        assertQuery("l\n6\n5\n", "select l from tab order by ts desc limit 4,-4");
+            assertQuery("l\n6\n5\n", "select l from tab order by ts desc limit 4,-4");
+        });
     }
 
     @Test
     public void test2partitionsSelectMiddleNfromEnd() throws Exception {
-        prepare2partitionsTable();
+        assertMemoryLeak(() -> {
+            prepare2partitionsTable();
 
-        assertQuery("l\n8\n7\n6\n", "select l from tab order by ts desc limit -8,-5");
+            assertQuery("l\n8\n7\n6\n", "select l from tab order by ts desc limit -8,-5");
+        });
     }
 
     @Test
     public void test2partitionsSelectMiddleNfromStart() throws Exception {
-        prepare2partitionsTable();
+        assertMemoryLeak(() -> {
+            prepare2partitionsTable();
 
-        assertQuery("l\n5\n4\n3\n", "select l from tab order by ts desc limit 5,8");
+            assertQuery("l\n5\n4\n3\n", "select l from tab order by ts desc limit 5,8");
+        });
     }
 
     @Test
     public void test2partitionsSelectNbeforeStartReturnsEmptyResult() throws Exception {
-        prepare2partitionsTable();
+        assertMemoryLeak(() -> {
+            prepare2partitionsTable();
 
-        assertQuery("l\n", "select l from tab order by ts desc limit -11,-15");
+            assertQuery("l\n", "select l from tab order by ts desc limit -11,-15");
+        });
     }
 
     @Test
     public void test2partitionsSelectNbeyondEndReturnsEmptyResult() throws Exception {
-        prepare2partitionsTable();
+        assertMemoryLeak(() -> {
+            prepare2partitionsTable();
 
-        assertQuery("l\n", "select l from tab order by ts desc limit 11,12");
+            assertQuery("l\n", "select l from tab order by ts desc limit 11,12");
+        });
     }
 
     @Test
     public void test2partitionsSelectNintersectingEnd() throws Exception {
-        prepare2partitionsTable();
+        assertMemoryLeak(() -> {
+            prepare2partitionsTable();
 
-        assertQuery("l\n2\n1\n", "select l from tab order by ts desc limit 8,12");
+            assertQuery("l\n2\n1\n", "select l from tab order by ts desc limit 8,12");
+        });
     }
 
     @Test
     public void test2partitionsSelectNintersectingStart() throws Exception {
-        prepare2partitionsTable();
+        assertMemoryLeak(() -> {
+            prepare2partitionsTable();
 
-        assertQuery("l\n10\n9\n", "select l from tab order by ts desc limit -12,-8");
+            assertQuery("l\n10\n9\n", "select l from tab order by ts desc limit -12,-8");
+        });
     }
 
     @Test
     public void testEmptyTableSelectFirstNReturnsNoRows() throws Exception {
-        createEmptyTable();
+        assertMemoryLeak(() -> {
+            createEmptyTable();
 
-        assertQuery("l\n", "select l from tab order by ts desc limit 3");
+            assertQuery("l\n", "select l from tab order by ts desc limit 3");
+        });
     }
 
     @Test
     public void testEmptyTableSelectFirstNwithSameLoHireturnsNoRows() throws Exception {
-        createEmptyTable();
+        assertMemoryLeak(() -> {
+            createEmptyTable();
 
-        assertQuery("l\n", "select l from tab order by ts desc limit 8,8");
+            assertQuery("l\n", "select l from tab order by ts desc limit 8,8");
+        });
     }
 
     @Test
     public void testEmptyTableSelectLastNReturnsNoRows() throws Exception {
-        createEmptyTable();
+        assertMemoryLeak(() -> {
+            createEmptyTable();
 
-        assertQuery("l\n", "select l from tab order by ts desc limit -3");
+            assertQuery("l\n", "select l from tab order by ts desc limit -3");
+        });
     }
 
     @Test
     public void testEmptyTableSelectLastNwithSameLoHiReturnsNoRows() throws Exception {
-        createEmptyTable();
+        assertMemoryLeak(() -> {
+            createEmptyTable();
 
-        assertQuery("l\n", "select l from tab order by ts desc limit -8,-8");
+            assertQuery("l\n", "select l from tab order by ts desc limit -8,-8");
+        });
     }
 
     @Test
     public void testEmptyTableSelectMiddleNfromBothDirections() throws Exception {
-        createEmptyTable();
+        assertMemoryLeak(() -> {
+            createEmptyTable();
 
-        assertQuery("l\n", "select l from tab order by ts desc limit 4,-4");
+            assertQuery("l\n", "select l from tab order by ts desc limit 4,-4");
+        });
     }
 
     @Test
     public void testEmptyTableSelectMiddleNfromEndReturnsNoRows() throws Exception {
-        createEmptyTable();
+        assertMemoryLeak(() -> {
+            createEmptyTable();
 
-        assertQuery("l\n", "select l from tab order by ts desc limit -8,-5");
+            assertQuery("l\n", "select l from tab order by ts desc limit -8,-5");
+        });
     }
 
     @Test
     public void testEmptyTableSelectMiddleNfromStartReturnsNoRows() throws Exception {
-        createEmptyTable();
+        assertMemoryLeak(() -> {
+            createEmptyTable();
 
-        assertQuery("l\n", "select l from tab order by ts desc limit 5,8");
+            assertQuery("l\n", "select l from tab order by ts desc limit 5,8");
+        });
     }
 
     @Test
     public void testEmptyTableSelectNbeforeStartReturnsEmptyResult() throws Exception {
-        createEmptyTable();
+        assertMemoryLeak(() -> {
+            createEmptyTable();
 
-        assertQuery("l\n", "select l from tab order by ts desc limit -11,-15");
+            assertQuery("l\n", "select l from tab order by ts desc limit -11,-15");
+        });
     }
 
     @Test
     public void testEmptyTableSelectNbeyondEndReturnsEmptyResult() throws Exception {
-        createEmptyTable();
+        assertMemoryLeak(() -> {
+            createEmptyTable();
 
-        assertQuery("l\n", "select l from tab order by ts desc limit 11,12");
+            assertQuery("l\n", "select l from tab order by ts desc limit 11,12");
+        });
     }
 
     @Test
     public void testEmptyTableSelectNintersectingEndReturnsEmptyResult() throws Exception {
-        createEmptyTable();
+        assertMemoryLeak(() -> {
+            createEmptyTable();
 
-        assertQuery("l\n", "select l from tab order by ts desc limit 8,12");
+            assertQuery("l\n", "select l from tab order by ts desc limit 8,12");
+        });
     }
 
     @Test
     public void testEmptyTableSelectNintersectingStartReturnsEmptyResult() throws Exception {
-        createEmptyTable();
+        assertMemoryLeak(() -> {
+            createEmptyTable();
 
-        assertQuery("l\n", "select l from tab order by ts desc limit -12,-8");
+            assertQuery("l\n", "select l from tab order by ts desc limit -12,-8");
+        });
     }
 
     // empty table with designated timestamp
     @Test
     public void testEmptyTableSelect_allReturnsNoRows() throws Exception {
-        createEmptyTable();
+        assertMemoryLeak(() -> {
+            createEmptyTable();
 
-        assertQuery("l\n", "select l from tab order by ts desc");
+            assertQuery("l\n", "select l from tab order by ts desc");
+        });
     }
 
     // normal table without designated timestamp with rows in ascending
     @Test
     public void testNoDesignatedTsTableSelectAll() throws Exception {
-        prepareNonDesignatedTsTable();
+        assertMemoryLeak(() -> {
+            prepareNonDesignatedTsTable();
 
-        assertQueryExpectSize("l\n10\n9\n8\n7\n6\n5\n4\n3\n2\n1\n", "select l from tab order by ts desc");
+            assertQueryExpectSize("l\n10\n9\n8\n7\n6\n5\n4\n3\n2\n1\n", "select l from tab order by ts desc");
+        });
     }
 
     @Test
     public void testNoDesignatedTsTableSelectFirstN() throws Exception {
-        prepareNonDesignatedTsTable();
+        assertMemoryLeak(() -> {
+            prepareNonDesignatedTsTable();
 
-        assertQueryExpectSize("l\n10\n9\n8\n", "select l from tab order by ts desc limit 3");
+            assertQueryExpectSize("l\n10\n9\n8\n", "select l from tab order by ts desc limit 3");
+        });
     }
 
     @Test
     public void testNoDesignatedTsTableSelectFirstNwithSameLoHireturnsNoRows() throws Exception {
-        prepareNonDesignatedTsTable();
+        assertMemoryLeak(() -> {
+            prepareNonDesignatedTsTable();
 
-        assertQuery("l\n", "select l from tab order by ts desc limit 8,8");
+            assertQuery("l\n", "select l from tab order by ts desc limit 8,8");
+        });
     }
 
     @Test
     public void testNoDesignatedTsTableSelectLastN() throws Exception {
-        prepareNonDesignatedTsTable();
+        assertMemoryLeak(() -> {
+            prepareNonDesignatedTsTable();
 
-        assertQueryExpectSize("l\n3\n2\n1\n", "select l from tab order by ts desc limit -3");
+            assertQueryExpectSize("l\n3\n2\n1\n", "select l from tab order by ts desc limit -3");
+        });
     }
 
     @Test
     public void testNoDesignatedTsTableSelectLastNwithSameLoHiReturnsNoRows() throws Exception {
-        prepareNonDesignatedTsTable();
+        assertMemoryLeak(() -> {
+            prepareNonDesignatedTsTable();
 
-        assertQuery("l\n", "select l from tab order by ts desc limit -8,-8");
+            assertQuery("l\n", "select l from tab order by ts desc limit -8,-8");
+        });
     }
 
     @Test
     public void testNoDesignatedTsTableSelectMiddleNfromBothDirections() throws Exception {
-        prepareNonDesignatedTsTable();
+        assertMemoryLeak(() -> {
+            prepareNonDesignatedTsTable();
 
-        assertQuery("l\n6\n5\n", "select l from tab order by ts desc limit 4,-4");
+            assertQuery("l\n6\n5\n", "select l from tab order by ts desc limit 4,-4");
+        });
     }
 
     @Test
     public void testNoDesignatedTsTableSelectMiddleNfromEnd() throws Exception {
-        prepareNonDesignatedTsTable();
+        assertMemoryLeak(() -> {
+            prepareNonDesignatedTsTable();
 
-        assertQueryExpectSize("l\n8\n7\n6\n", "select l from tab order by ts desc limit -8,-5");
+            assertQueryExpectSize("l\n8\n7\n6\n", "select l from tab order by ts desc limit -8,-5");
+        });
     }
 
     @Test
     public void testNoDesignatedTsTableSelectMiddleNfromStart() throws Exception {
-        prepareNonDesignatedTsTable();
+        assertMemoryLeak(() -> {
+            prepareNonDesignatedTsTable();
 
-        assertQueryExpectSize("l\n5\n4\n3\n", "select l from tab order by ts desc limit 5,8");
+            assertQueryExpectSize("l\n5\n4\n3\n", "select l from tab order by ts desc limit 5,8");
+        });
     }
 
     @Test
     public void testNoDesignatedTsTableSelectNbeforeStartReturnsEmptyResult() throws Exception {
-        prepareNonDesignatedTsTable();
+        assertMemoryLeak(() -> {
+            prepareNonDesignatedTsTable();
 
-        assertQuery("l\n", "select l from tab order by ts desc limit -11,-15");
+            assertQuery("l\n", "select l from tab order by ts desc limit -11,-15");
+        });
     }
 
     @Test
     public void testNoDesignatedTsTableSelectNbeyondEndReturnsEmptyResult() throws Exception {
-        prepareNonDesignatedTsTable();
+        assertMemoryLeak(() -> {
+            prepareNonDesignatedTsTable();
 
-        assertQuery("l\n", "select l from tab order by ts desc limit 11,12");
+            assertQuery("l\n", "select l from tab order by ts desc limit 11,12");
+        });
     }
 
     @Test
     public void testNoDesignatedTsTableSelectNintersectingEnd() throws Exception {
-        prepareNonDesignatedTsTable();
+        assertMemoryLeak(() -> {
+            prepareNonDesignatedTsTable();
 
-        assertQueryExpectSize("l\n2\n1\n", "select l from tab order by ts desc limit 8,12");
+            assertQueryExpectSize("l\n2\n1\n", "select l from tab order by ts desc limit 8,12");
+        });
     }
 
     @Test
     public void testNoDesignatedTsTableSelectNintersectingStart() throws Exception {
-        prepareNonDesignatedTsTable();
+        assertMemoryLeak(() -> {
+            prepareNonDesignatedTsTable();
 
-        assertQueryExpectSize("l\n10\n9\n", "select l from tab order by ts desc limit -12,-8");
+            assertQueryExpectSize("l\n10\n9\n", "select l from tab order by ts desc limit -12,-8");
+        });
     }
 
     // normal table without designated timestamp with rows (including duplicates) in descending order
     @Test
     public void testNoDesignatedTsTableWithDuplicatesSelectAll() throws Exception {
-        prepareNoDesignatedTsTableWithDuplicates();
+        assertMemoryLeak(() -> {
+            prepareNoDesignatedTsTableWithDuplicates();
 
-        assertQueryExpectSize("l\n10\n10\n9\n9\n8\n8\n7\n7\n6\n6\n5\n5\n4\n4\n3\n3\n2\n2\n1\n1\n", "select l from tab order by ts desc");
+            assertQueryExpectSize("l\n10\n10\n9\n9\n8\n8\n7\n7\n6\n6\n5\n5\n4\n4\n3\n3\n2\n2\n1\n1\n", "select l from tab order by ts desc");
+        });
     }
 
     @Test
     public void testNoDesignatedTsTableWithDuplicatesSelectFirstN() throws Exception {
-        prepareNoDesignatedTsTableWithDuplicates();
+        assertMemoryLeak(() -> {
+            prepareNoDesignatedTsTableWithDuplicates();
 
-        assertQueryExpectSize("l\n10\n10\n9\n", "select l from tab order by ts desc limit 3");
+            assertQueryExpectSize("l\n10\n10\n9\n", "select l from tab order by ts desc limit 3");
+        });
     }
 
     @Test
     public void testNoDesignatedTsTableWithDuplicatesSelectFirstNwithSameLoHireturnsNoRows() throws Exception {
-        prepareNoDesignatedTsTableWithDuplicates();
+        assertMemoryLeak(() -> {
+            prepareNoDesignatedTsTableWithDuplicates();
 
-        assertQuery("l\n", "select l from tab order by ts desc limit 8,8");
+            assertQuery("l\n", "select l from tab order by ts desc limit 8,8");
+        });
     }
 
     @Test
     public void testNoDesignatedTsTableWithDuplicatesSelectLastN() throws Exception {
-        prepareNoDesignatedTsTableWithDuplicates();
+        assertMemoryLeak(() -> {
+            prepareNoDesignatedTsTableWithDuplicates();
 
-        assertQueryExpectSize("l\n2\n1\n1\n", "select l from tab order by ts desc limit -3");
+            assertQueryExpectSize("l\n2\n1\n1\n", "select l from tab order by ts desc limit -3");
+        });
     }
 
     @Test
     public void testNoDesignatedTsTableWithDuplicatesSelectLastNwithSameLoHiReturnsNoRows() throws Exception {
-        prepareNoDesignatedTsTableWithDuplicates();
+        assertMemoryLeak(() -> {
+            prepareNoDesignatedTsTableWithDuplicates();
 
-        assertQuery("l\n", "select l from tab order by ts desc limit -8,-8");
+            assertQuery("l\n", "select l from tab order by ts desc limit -8,-8");
+        });
     }
 
     @Test
     public void testNoDesignatedTsTableWithDuplicatesSelectMiddleNfromBothDirections() throws Exception {
-        prepareNoDesignatedTsTableWithDuplicates();
+        assertMemoryLeak(() -> {
+            prepareNoDesignatedTsTableWithDuplicates();
 
-        assertQuery("l\n6\n5\n", "select l from tab order by ts desc limit 9,-9");
+            assertQuery("l\n6\n5\n", "select l from tab order by ts desc limit 9,-9");
+        });
     }
 
     @Test
     public void testNoDesignatedTsTableWithDuplicatesSelectMiddleNfromEnd() throws Exception {
-        prepareNoDesignatedTsTableWithDuplicates();
+        assertMemoryLeak(() -> {
+            prepareNoDesignatedTsTableWithDuplicates();
 
-        assertQueryExpectSize("l\n9\n9\n8\n", "select l from tab order by ts desc limit -18,-15");
+            assertQueryExpectSize("l\n9\n9\n8\n", "select l from tab order by ts desc limit -18,-15");
+        });
     }
 
     @Test
     public void testNoDesignatedTsTableWithDuplicatesSelectMiddleNfromStart() throws Exception {
-        prepareNoDesignatedTsTableWithDuplicates();
+        assertMemoryLeak(() -> {
+            prepareNoDesignatedTsTableWithDuplicates();
 
-        assertQueryExpectSize("l\n3\n2\n2\n", "select l from tab order by ts desc limit 15,18");
+            assertQueryExpectSize("l\n3\n2\n2\n", "select l from tab order by ts desc limit 15,18");
+        });
     }
 
     @Test
     public void testNoDesignatedTsTableWithDuplicatesSelectNbeforeStartReturnsEmptyResult() throws Exception {
-        prepareNoDesignatedTsTableWithDuplicates();
+        assertMemoryLeak(() -> {
+            prepareNoDesignatedTsTableWithDuplicates();
 
-        assertQuery("l\n", "select l from tab order by ts desc limit -25,-21");
+            assertQuery("l\n", "select l from tab order by ts desc limit -25,-21");
+        });
     }
 
     @Test
     public void testNoDesignatedTsTableWithDuplicatesSelectNbeyondEndReturnsEmptyResult() throws Exception {
-        prepareNoDesignatedTsTableWithDuplicates();
+        assertMemoryLeak(() -> {
+            prepareNoDesignatedTsTableWithDuplicates();
 
-        assertQuery("l\n", "select l from tab order by ts desc limit 21,22");
+            assertQuery("l\n", "select l from tab order by ts desc limit 21,22");
+        });
     }
 
     @Test
     public void testNoDesignatedTsTableWithDuplicatesSelectNintersectingEnd() throws Exception {
-        prepareNoDesignatedTsTableWithDuplicates();
+        assertMemoryLeak(() -> {
+            prepareNoDesignatedTsTableWithDuplicates();
 
-        assertQueryExpectSize("l\n1\n1\n", "select l from tab order by ts desc limit 18,22");
+            assertQueryExpectSize("l\n1\n1\n", "select l from tab order by ts desc limit 18,22");
+        });
     }
 
     @Test
     public void testNoDesignatedTsTableWithDuplicatesSelectNintersectingStart() throws Exception {
-        prepareNoDesignatedTsTableWithDuplicates();
+        assertMemoryLeak(() -> {
+            prepareNoDesignatedTsTableWithDuplicates();
 
-        assertQueryExpectSize("l\n10\n10\n", "select l from tab order by ts desc limit -22,-18");
+            assertQueryExpectSize("l\n10\n10\n", "select l from tab order by ts desc limit -22,-18");
+        });
     }
 
     // regular table with designated timestamp and  one partition
     @Test
     public void testNormalTableSelectAll() throws Exception {
-        prepareNormalTable();
+        assertMemoryLeak(() -> {
+            prepareNormalTable();
 
-        assertQueryExpectSize("l\n10\n9\n8\n7\n6\n5\n4\n3\n2\n1\n", "select l from tab order by ts desc");
+            assertQueryExpectSize("l\n10\n9\n8\n7\n6\n5\n4\n3\n2\n1\n", "select l from tab order by ts desc");
+        });
     }
 
     @Test
     public void testNormalTableSelectFirstN() throws Exception {
-        prepareNormalTable();
+        assertMemoryLeak(() -> {
+            prepareNormalTable();
 
-        assertQuery("l\n10\n9\n8\n", "select l from tab order by ts desc limit 3");
+            assertQuery("l\n10\n9\n8\n", "select l from tab order by ts desc limit 3");
+        });
     }
 
     @Test
     public void testNormalTableSelectFirstNwithSameLoHireturnsNoRows() throws Exception {
-        prepareNormalTable();
+        assertMemoryLeak(() -> {
+            prepareNormalTable();
 
-        assertQuery("l\n", "select l from tab order by ts desc limit 8,8");
+            assertQuery("l\n", "select l from tab order by ts desc limit 8,8");
+        });
     }
 
     @Test
     public void testNormalTableSelectLastN() throws Exception {
-        prepareNormalTable();
+        assertMemoryLeak(() -> {
+            prepareNormalTable();
 
-        assertQuery("l\n3\n2\n1\n", "select l from tab order by ts desc limit -3", true);
+            assertQuery("l\n3\n2\n1\n", "select l from tab order by ts desc limit -3", true);
+        });
     }
 
     @Test
     public void testNormalTableSelectLastNwithSameLoHiReturnsNoRows() throws Exception {
-        prepareNormalTable();
+        assertMemoryLeak(() -> {
+            prepareNormalTable();
 
-        assertQuery("l\n", "select l from tab order by ts desc limit -8,-8");
+            assertQuery("l\n", "select l from tab order by ts desc limit -8,-8");
+        });
     }
 
     @Test
     public void testNormalTableSelectMiddleNfromBothDirections() throws Exception {
-        prepareNormalTable();
+        assertMemoryLeak(() -> {
+            prepareNormalTable();
 
-        assertQuery("l\n6\n5\n", "select l from tab order by ts desc limit 4,-4");
+            assertQuery("l\n6\n5\n", "select l from tab order by ts desc limit 4,-4");
+        });
     }
 
     @Test
     public void testNormalTableSelectMiddleNfromEnd() throws Exception {
-        prepareNormalTable();
+        assertMemoryLeak(() -> {
+            prepareNormalTable();
 
-        assertQuery("l\n8\n7\n6\n", "select l from tab order by ts desc limit -8,-5");
+            assertQuery("l\n8\n7\n6\n", "select l from tab order by ts desc limit -8,-5");
+        });
     }
 
     @Test
     public void testNormalTableSelectMiddleNfromStart() throws Exception {
-        prepareNormalTable();
+        assertMemoryLeak(() -> {
+            prepareNormalTable();
 
-        assertQuery("l\n5\n4\n3\n", "select l from tab order by ts desc limit 5,8");
+            assertQuery("l\n5\n4\n3\n", "select l from tab order by ts desc limit 5,8");
+        });
     }
 
     @Test
     public void testNormalTableSelectNbeforeStartReturnsEmptyResult() throws Exception {
-        prepareNormalTable();
+        assertMemoryLeak(() -> {
+            prepareNormalTable();
 
-        assertQuery("l\n", "select l from tab order by ts desc limit -11,-15");
+            assertQuery("l\n", "select l from tab order by ts desc limit -11,-15");
+        });
     }
 
     @Test
     public void testNormalTableSelectNbeyondEndReturnsEmptyResult() throws Exception {
-        prepareNormalTable();
+        assertMemoryLeak(() -> {
+            prepareNormalTable();
 
-        assertQuery("l\n", "select l from tab order by ts desc limit 11,12");
+            assertQuery("l\n", "select l from tab order by ts desc limit 11,12");
+        });
     }
 
     @Test
     public void testNormalTableSelectNintersectingEnd() throws Exception {
-        prepareNormalTable();
+        assertMemoryLeak(() -> {
+            prepareNormalTable();
 
-        assertQuery("l\n2\n1\n", "select l from tab order by ts desc limit 8,12");
+            assertQuery("l\n2\n1\n", "select l from tab order by ts desc limit 8,12");
+        });
     }
 
     @Test
     public void testNormalTableSelectNintersectingStart() throws Exception {
-        prepareNormalTable();
+        assertMemoryLeak(() -> {
+            prepareNormalTable();
 
-        assertQuery("l\n10\n9\n", "select l from tab order by ts desc limit -12,-8");
+            assertQuery("l\n10\n9\n", "select l from tab order by ts desc limit -12,-8");
+        });
     }
 
     // partitioned table with designated timestamp and 10 partitions one row per partition
     @Test
     public void testPartitionPerRowSelectAll() throws Exception {
-        preparePartitionPerRowTable();
+        assertMemoryLeak(() -> {
+            preparePartitionPerRowTable();
 
-        assertQueryExpectSize("l\n10\n9\n8\n7\n6\n5\n4\n3\n2\n1\n", "select l from tab order by ts desc");
+            assertQueryExpectSize("l\n10\n9\n8\n7\n6\n5\n4\n3\n2\n1\n", "select l from tab order by ts desc");
+        });
     }
 
     @Test
     public void testPartitionPerRowSelectFirstN() throws Exception {
-        preparePartitionPerRowTable();
+        assertMemoryLeak(() -> {
+            preparePartitionPerRowTable();
 
-        assertQuery("l\n10\n9\n8\n", "select l from tab order by ts desc limit 3");
+            assertQuery("l\n10\n9\n8\n", "select l from tab order by ts desc limit 3");
+        });
     }
 
     // special cases
     @Test
     public void testPartitionPerRowSelectFirstNorderedByMultipleColumns() throws Exception {
-        preparePartitionPerRowTable();
+        assertMemoryLeak(() -> {
+            preparePartitionPerRowTable();
 
-        assertQueryExpectSize("l\n10\n9\n8\n", "select l from tab order by ts desc, l desc limit 3");
+            assertQueryExpectSize("l\n10\n9\n8\n", "select l from tab order by ts desc, l desc limit 3");
+        });
     }
 
     @Test
     public void testPartitionPerRowSelectFirstNorderedByNonTsColumn() throws Exception {
-        preparePartitionPerRowTable();
+        assertMemoryLeak(() -> {
+            preparePartitionPerRowTable();
 
-        assertQueryExpectSize("l\n10\n9\n8\n", "select l from tab order by l desc limit 3");
+            assertQueryExpectSize("l\n10\n9\n8\n", "select l from tab order by l desc limit 3");
+        });
     }
 
     @Test
     public void testPartitionPerRowSelectFirstNwithDifferentCaseInOrderBy() throws Exception {
-        preparePartitionPerRowTableWithLongNames();
+        assertMemoryLeak(() -> {
+            preparePartitionPerRowTableWithLongNames();
 
-        assertQuery("record_type\n10\n9\n8\n7\n6\n", "select record_type from trips order by created_ON desc limit 5");
+            assertQuery("record_type\n10\n9\n8\n7\n6\n", "select record_type from trips order by created_ON desc limit 5");
+        });
     }
 
     @Test
     public void testPartitionPerRowSelectFirstNwithDifferentCaseInSelectAndOrderBy() throws Exception {
-        preparePartitionPerRowTableWithLongNames();
+        assertMemoryLeak(() -> {
+            preparePartitionPerRowTableWithLongNames();
 
-        assertQuery("record_Type\tCREATED_on\n" + DATA,
-                "select record_Type, CREATED_on from trips order by created_ON desc limit 5",
-                null, "CREATED_on###DESC", true, false);
+            assertQueryNoLeakCheck(
+                    "record_Type\tCREATED_on\n" + DATA,
+                    "select record_Type, CREATED_on from trips order by created_ON desc limit 5",
+                    null,
+                    "CREATED_on###DESC",
+                    true,
+                    false
+            );
+        });
     }
 
     @Test
     public void testPartitionPerRowSelectFirstNwithDifferentCaseInSelectAndOrderByV2() throws Exception {
-        preparePartitionPerRowTableWithLongNames();
+        assertMemoryLeak(() -> {
+            preparePartitionPerRowTableWithLongNames();
 
-        assertQuery("record_Type\tCREATED_ON\n" + DATA,
-                "select record_Type, CREATED_ON from trips order by created_on desc limit 5",
-                null, "CREATED_ON###DESC", true, false);
+            assertQueryNoLeakCheck(
+                    "record_Type\tCREATED_ON\n" + DATA,
+                    "select record_Type, CREATED_ON from trips order by created_on desc limit 5",
+                    null,
+                    "CREATED_ON###DESC",
+                    true,
+                    false
+            );
+        });
     }
 
     @Test
     public void testPartitionPerRowSelectFirstNwithDifferentCaseInSelectAndOrderByWithAlias() throws Exception {
-        preparePartitionPerRowTableWithLongNames();
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            assertQueryNoLeakCheck(
-                    compiler,
-                    "record_Type\tcre_on\n" + DATA,
-                    "select record_Type, CREATED_ON as cre_on from trips order by created_on desc limit 5",
-                    "cre_on###DESC",
-                    true,
-                    sqlExecutionContext,
-                    false
-            );
-        }
+        assertMemoryLeak(() -> {
+            preparePartitionPerRowTableWithLongNames();
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                assertQueryNoLeakCheck(
+                        compiler,
+                        "record_Type\tcre_on\n" + DATA,
+                        "select record_Type, CREATED_ON as cre_on from trips order by created_on desc limit 5",
+                        "cre_on###DESC",
+                        true,
+                        sqlExecutionContext,
+                        false
+                );
+            }
+        });
     }
 
     @Test
     public void testPartitionPerRowSelectFirstNwithDifferentCaseInSelectAndOrderByWithAliasV2() throws Exception {
-        preparePartitionPerRowTableWithLongNames();
+        assertMemoryLeak(() -> {
+            preparePartitionPerRowTableWithLongNames();
 
-        assertQuery("record_Type\tcre_on\n" + DATA,
-                "select record_Type, CREATED_ON cre_on from trips order by created_on desc limit 5",
-                null, "cre_on###DESC", true, false);
+            assertQueryNoLeakCheck(
+                    "record_Type\tcre_on\n" + DATA,
+                    "select record_Type, CREATED_ON cre_on from trips order by created_on desc limit 5",
+                    null,
+                    "cre_on###DESC",
+                    true,
+                    false
+            );
+        });
     }
 
     @Test
     public void testPartitionPerRowSelectFirstNwithDifferentNameInSubquery() throws Exception {
-        preparePartitionPerRowTableWithLongNames();
+        assertMemoryLeak(() -> {
+            preparePartitionPerRowTableWithLongNames();
 
-        assertQuery(EXPECTED,
-                "select rectype, creaton from " +
-                        "( select record_Type as rectype, CREATED_ON creaton from trips order by created_on desc limit 5)",
-                null, "creaton###DESC", true, false);
+            assertQuery(
+                    EXPECTED,
+                    "select rectype, creaton from " +
+                            "( select record_Type as rectype, CREATED_ON creaton from trips order by created_on desc limit 5)",
+                    null,
+                    "creaton###DESC",
+                    true,
+                    false
+            );
+        });
     }
 
     @Test
     public void testPartitionPerRowSelectFirstNwithDifferentNameInSubqueryV2() throws Exception {
-        preparePartitionPerRowTableWithLongNames();
+        assertMemoryLeak(() -> {
+            preparePartitionPerRowTableWithLongNames();
 
-        assertQuery(EXPECTED,
-                "select rectype, creaton from " +
-                        "( select record_Type as rectype, CREATED_ON creaton " +
-                        "from trips " +
-                        "order by created_on desc) " +
-                        "limit 5",
-                null, "creaton###DESC", true, false);
+            assertQuery(
+                    EXPECTED,
+                    "select rectype, creaton from " +
+                            "( select record_Type as rectype, CREATED_ON creaton " +
+                            "from trips " +
+                            "order by created_on desc) " +
+                            "limit 5",
+                    null,
+                    "creaton###DESC",
+                    true,
+                    false
+            );
+        });
     }
 
     @Test
     public void testPartitionPerRowSelectFirstNwithDifferentNameInSubqueryV3() throws Exception {
-        preparePartitionPerRowTableWithLongNames();
-        // order by advice is not available in the sub-query ... sort performed by limitRecordCursor
-        assertQuery(
-                EXPECTED,
-                "select rectype, creaton from " +
-                        "( select record_Type as rectype, CREATED_ON creaton from trips) " +
-                        "order by creaton desc limit 5",
-                null,
-                "creaton###DESC",
-                true,
-                true
-        );
+        assertMemoryLeak(() -> {
+            preparePartitionPerRowTableWithLongNames();
+            // order by advice is not available in the sub-query ... sort performed by limitRecordCursor
+            assertQueryNoLeakCheck(
+                    EXPECTED,
+                    "select rectype, creaton from " +
+                            "( select record_Type as rectype, CREATED_ON creaton from trips) " +
+                            "order by creaton desc limit 5",
+                    null,
+                    "creaton###DESC",
+                    true,
+                    true
+            );
+        });
     }
 
     @Test
     public void testPartitionPerRowSelectFirstNwithSameLoHireturnsNoRows() throws Exception {
-        preparePartitionPerRowTable();
+        assertMemoryLeak(() -> {
+            preparePartitionPerRowTable();
 
-        assertQuery("l\n", "select l from tab order by ts desc limit 8,8");
+            assertQuery("l\n", "select l from tab order by ts desc limit 8,8");
+        });
     }
 
     @Test
     public void testPartitionPerRowSelectLastN() throws Exception {
-        preparePartitionPerRowTable();
+        assertMemoryLeak(() -> {
+            preparePartitionPerRowTable();
 
-        assertQuery("l\n3\n2\n1\n", "select l from tab order by ts desc limit -3", true);
+            assertQuery("l\n3\n2\n1\n", "select l from tab order by ts desc limit -3", true);
+        });
     }
 
     @Test
     public void testPartitionPerRowSelectLastNorderedByMultipleColumns() throws Exception {
-        preparePartitionPerRowTable();
+        assertMemoryLeak(() -> {
+            preparePartitionPerRowTable();
 
-        assertQueryExpectSize("l\n3\n2\n1\n", "select l from tab order by ts desc, l desc limit -3");
+            assertQueryExpectSize("l\n3\n2\n1\n", "select l from tab order by ts desc, l desc limit -3");
+        });
     }
 
     @Test
     public void testPartitionPerRowSelectLastNorderedByNonTsColumn() throws Exception {
-        preparePartitionPerRowTable();
+        assertMemoryLeak(() -> {
+            preparePartitionPerRowTable();
 
-        assertQueryExpectSize("l\n3\n2\n1\n", "select l from tab order by l desc limit -3");
+            assertQueryExpectSize("l\n3\n2\n1\n", "select l from tab order by l desc limit -3");
+        });
     }
 
     @Test
     public void testPartitionPerRowSelectLastNwithSameLoHiReturnsNoRows() throws Exception {
-        preparePartitionPerRowTable();
+        assertMemoryLeak(() -> {
+            preparePartitionPerRowTable();
 
-        assertQuery("l\n", "select l from tab order by ts desc limit -8,-8");
+            assertQuery("l\n", "select l from tab order by ts desc limit -8,-8");
+        });
     }
 
     @Test
     public void testPartitionPerRowSelectMiddleNfromBothDirections() throws Exception {
-        preparePartitionPerRowTable();
+        assertMemoryLeak(() -> {
+            preparePartitionPerRowTable();
 
-        assertQuery("l\n6\n5\n", "select l from tab order by ts desc limit 4,-4");
+            assertQuery("l\n6\n5\n", "select l from tab order by ts desc limit 4,-4");
+        });
     }
 
     @Test
     public void testPartitionPerRowSelectMiddleNfromEnd() throws Exception {
-        preparePartitionPerRowTable();
+        assertMemoryLeak(() -> {
+            preparePartitionPerRowTable();
 
-        assertQuery("l\n8\n7\n6\n", "select l from tab order by ts desc limit -8,-5");
+            assertQuery("l\n8\n7\n6\n", "select l from tab order by ts desc limit -8,-5");
+        });
     }
 
     @Test
     public void testPartitionPerRowSelectMiddleNfromStart() throws Exception {
-        preparePartitionPerRowTable();
+        assertMemoryLeak(() -> {
+            preparePartitionPerRowTable();
 
-        assertQuery("l\n5\n4\n3\n", "select l from tab order by ts desc limit 5,8");
+            assertQuery("l\n5\n4\n3\n", "select l from tab order by ts desc limit 5,8");
+        });
     }
 
     @Test
     public void testPartitionPerRowSelectNbeforeStartReturnsEmptyResult() throws Exception {
-        preparePartitionPerRowTable();
+        assertMemoryLeak(() -> {
+            preparePartitionPerRowTable();
 
-        assertQuery("l\n", "select l from tab order by ts desc limit -11,-15");
+            assertQuery("l\n", "select l from tab order by ts desc limit -11,-15");
+        });
     }
 
     @Test
     public void testPartitionPerRowSelectNbeyondEndReturnsEmptyResult() throws Exception {
-        preparePartitionPerRowTable();
+        assertMemoryLeak(() -> {
+            preparePartitionPerRowTable();
 
-        assertQuery("l\n", "select l from tab order by ts desc limit 11,12");
+            assertQuery("l\n", "select l from tab order by ts desc limit 11,12");
+        });
     }
 
     @Test
     public void testPartitionPerRowSelectNintersectingEnd() throws Exception {
-        preparePartitionPerRowTable();
+        assertMemoryLeak(() -> {
+            preparePartitionPerRowTable();
 
-        assertQuery("l\n2\n1\n", "select l from tab order by ts desc limit 8,12");
+            assertQuery("l\n2\n1\n", "select l from tab order by ts desc limit 8,12");
+        });
     }
 
     @Test
     public void testPartitionPerRowSelectNintersectingStart() throws Exception {
-        preparePartitionPerRowTable();
+        assertMemoryLeak(() -> {
+            preparePartitionPerRowTable();
 
-        assertQuery("l\n10\n9\n", "select l from tab order by ts desc limit -12,-8");
+            assertQuery("l\n10\n9\n", "select l from tab order by ts desc limit -12,-8");
+        });
     }
 
     // tests "partitionIndex == partitionCount - 1" conditional in FullBwdDataFrameCursor.skipTo()
     @Test
     public void testSkipBeyondEndOfNonemptyTableReturnsNoRows() throws Exception {
-        preparePartitionPerRowTableWithLongNames();
+        assertMemoryLeak(() -> {
+            preparePartitionPerRowTableWithLongNames();
 
-        try (
-                TableReader reader = getReader("trips");
-                RecordCursorFactory factory = prepareFactory(reader);
-                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
-        ) {
-            RecordCursor.Counter counter = new RecordCursor.Counter();
-            counter.set(11);
-            cursor.skipRows(counter);
+            try (
+                    TableReader reader = getReader("trips");
+                    RecordCursorFactory factory = prepareFactory(reader);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                RecordCursor.Counter counter = new RecordCursor.Counter();
+                counter.set(11);
+                cursor.skipRows(counter);
 
-            Assert.assertTrue(counter.get() > 0);
-            Assert.assertFalse(cursor.hasNext());
-        }
+                Assert.assertTrue(counter.get() > 0);
+                Assert.assertFalse(cursor.hasNext());
+            }
+        });
     }
 
     @Test
     public void testSkipOverEmptyTableWith1EmptyPartitionReturnsNoRows() throws Exception {
-        runQueries("CREATE TABLE trips(record_type long, created_on TIMESTAMP) timestamp(created_on) partition by none;");
-
         assertMemoryLeak(() -> {
+            runQueries("CREATE TABLE trips(record_type long, created_on TIMESTAMP) timestamp(created_on) partition by none;");
+
             try (TableWriter writer = getWriter("trips")) {
                 TableWriter.Row row = writer.newRow(0L);
                 row.putLong(0, 0L);
@@ -731,24 +926,26 @@ public class OrderByDescRowSkippingTest extends AbstractCairoTest {
     // tests "partitionCount < 1" conditional in FullBwdDataFrameCursor.skipTo()
     @Test
     public void testSkipOverEmptyTableWithNoPartitionsReturnsNoRows() throws Exception {
-        runQueries("CREATE TABLE trips(record_type long, created_on TIMESTAMP) timestamp(created_on) partition by day;");
+        assertMemoryLeak(() -> {
+            runQueries("CREATE TABLE trips(record_type long, created_on TIMESTAMP) timestamp(created_on) partition by day;");
 
-        try (
-                TableReader reader = getReader("trips");
-                RecordCursorFactory factory = prepareFactory(reader);
-                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
-        ) {
-            RecordCursor.Counter counter = new RecordCursor.Counter();
-            counter.set(1);
-            cursor.skipRows(counter);
+            try (
+                    TableReader reader = getReader("trips");
+                    RecordCursorFactory factory = prepareFactory(reader);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                RecordCursor.Counter counter = new RecordCursor.Counter();
+                counter.set(1);
+                cursor.skipRows(counter);
 
-            Assert.assertEquals(1, counter.get());
-            Assert.assertFalse(cursor.hasNext());
-        }
+                Assert.assertEquals(1, counter.get());
+                Assert.assertFalse(cursor.hasNext());
+            }
+        });
     }
 
     private void assertQuery(String expected, String query) throws Exception {
-        assertQuery(
+        assertQueryNoLeakCheck(
                 expected,
                 query,
                 null,
@@ -759,7 +956,7 @@ public class OrderByDescRowSkippingTest extends AbstractCairoTest {
     }
 
     private void assertQueryExpectSize(String expected, String query) throws Exception {
-        assertQuery(
+        assertQueryNoLeakCheck(
                 expected,
                 query,
                 null,
@@ -774,11 +971,13 @@ public class OrderByDescRowSkippingTest extends AbstractCairoTest {
     }
 
     private void prepare2partitionsTable() throws Exception {
-        runQueries("CREATE TABLE tab(l long, ts TIMESTAMP) timestamp(ts) partition by day;",
+        runQueries(
+                "CREATE TABLE tab(l long, ts TIMESTAMP) timestamp(ts) partition by day;",
                 "insert into tab " +
                         "  select x," +
                         "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 17280000000) " +
-                        "  from long_sequence(10);");
+                        "  from long_sequence(10);"
+        );
     }
 
     private RecordCursorFactory prepareFactory(TableReader reader) {
@@ -807,7 +1006,8 @@ public class OrderByDescRowSkippingTest extends AbstractCairoTest {
 
     // creates test table in descending and then ascending order 10,9,..,1, 1,2,..,10
     private void prepareNoDesignatedTsTableWithDuplicates() throws Exception {
-        runQueries("CREATE TABLE tab(l long, ts TIMESTAMP);",
+        runQueries(
+                "CREATE TABLE tab(l long, ts TIMESTAMP);",
                 "insert into tab " +
                         "  select 11-x," +
                         "  timestamp_sequence(to_timestamp('2022-01-03T00:00:10', 'yyyy-MM-ddTHH:mm:ss'), -1000000) " +
@@ -815,46 +1015,53 @@ public class OrderByDescRowSkippingTest extends AbstractCairoTest {
                 "insert into tab " +
                         "  select x," +
                         "  timestamp_sequence(to_timestamp('2022-01-03T00:00:01', 'yyyy-MM-ddTHH:mm:ss'), 1000000) " +
-                        "  from long_sequence(10);");
+                        "  from long_sequence(10);"
+        );
     }
 
     private void prepareNonDesignatedTsTable() throws Exception {
-        runQueries("CREATE TABLE tab(l long, ts TIMESTAMP);",
+        runQueries(
+                "CREATE TABLE tab(l long, ts TIMESTAMP);",
                 "insert into tab " +
                         "  select x," +
                         "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 1000000) " +
-                        "  from long_sequence(10);");
+                        "  from long_sequence(10);"
+        );
     }
 
     private void prepareNormalTable() throws Exception {
-        runQueries("CREATE TABLE tab(l long, ts TIMESTAMP) timestamp(ts);",
+        runQueries(
+                "CREATE TABLE tab(l long, ts TIMESTAMP) timestamp(ts);",
                 "insert into tab " +
                         "  select x," +
                         "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 1000000) " +
-                        "  from long_sequence(10);");
+                        "  from long_sequence(10);"
+        );
     }
 
     private void preparePartitionPerRowTable() throws Exception {
-        runQueries("CREATE TABLE tab(l long, ts TIMESTAMP) timestamp(ts) partition by day;",
+        runQueries(
+                "CREATE TABLE tab(l long, ts TIMESTAMP) timestamp(ts) partition by day;",
                 "insert into tab " +
                         "  select x," +
                         "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
-                        "  from long_sequence(10);");
+                        "  from long_sequence(10);"
+        );
     }
 
     private void preparePartitionPerRowTableWithLongNames() throws Exception {
-        runQueries("CREATE TABLE trips(record_type long, created_on TIMESTAMP) timestamp(created_on) partition by day;",
+        runQueries(
+                "CREATE TABLE trips(record_type long, created_on TIMESTAMP) timestamp(created_on) partition by day;",
                 "insert into trips " +
                         "  select x," +
                         "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
-                        "  from long_sequence(10);");
+                        "  from long_sequence(10);"
+        );
     }
 
     private void runQueries(String... queries) throws Exception {
-        assertMemoryLeak(() -> {
-            for (String query : queries) {
-                compile(query);
-            }
-        });
+        for (String query : queries) {
+            compile(query);
+        }
     }
 }

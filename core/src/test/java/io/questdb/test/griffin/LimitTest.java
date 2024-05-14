@@ -255,7 +255,7 @@ public class LimitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table y (sym symbol, ts timestamp) timestamp(ts) partition by day");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "sym\tts\n",
                     "y where sym = 'googl' limit -3",
                     "ts",
