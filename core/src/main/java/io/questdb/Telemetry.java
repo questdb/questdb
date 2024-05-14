@@ -72,15 +72,14 @@ public final class Telemetry<T extends AbstractTelemetryTask> implements Closeab
 
     @Override
     public void close() {
-        if (writer == null) {
-            return;
+        telemetryQueue = Misc.free(telemetryQueue);
+
+        if (writer != null) {
+            consumeAll();
+
+            telemetryType.logStatus(writer, TelemetrySystemEvent.SYSTEM_DOWN, clock.getTicks());
+            writer = Misc.free(writer);
         }
-
-        consumeAll();
-        Misc.free(telemetryQueue);
-
-        telemetryType.logStatus(writer, TelemetrySystemEvent.SYSTEM_DOWN, clock.getTicks());
-        writer = Misc.free(writer);
     }
 
     public void consume(T task) {

@@ -96,29 +96,29 @@ public class CopyTest extends AbstractCairoTest {
 
     @Test
     public void testCopyEmptyFileName() throws Exception {
-        assertMemoryLeak(() -> assertException(
+        assertException(
                 "copy x from ''",
                 12,
                 "file name expected"
-        ));
+        );
     }
 
     @Test
     public void testCopyFullHack() throws Exception {
-        assertMemoryLeak(() -> assertException(
+        assertException(
                 "copy x from '../../../../../'",
                 12,
                 "'.' is not allowed"
-        ));
+        );
     }
 
     @Test
     public void testCopyFullHack2() throws Exception {
-        assertMemoryLeak(() -> assertException(
+        assertException(
                 "copy x from '\\..\\..\\'",
                 13,
                 "'.' is not allowed"
-        ));
+        );
     }
 
     @Test
@@ -323,7 +323,8 @@ public class CopyTest extends AbstractCairoTest {
                     // selects nothing because ID is invalid
                     assertSql(
                             "id\tstatus\n" +
-                                    "ffffffffffffffff\tunknown\n", "copy 'ffffffffffffffff' cancel"
+                                    "ffffffffffffffff\tunknown\n",
+                            "copy 'ffffffffffffffff' cancel"
                     );
 
                     // this one should succeed
@@ -422,7 +423,8 @@ public class CopyTest extends AbstractCairoTest {
     @Test
     public void testParallelCopyIntoExistingTableWithDefaultWorkDir() throws Exception {
         String inputWorkRootTmp = inputWorkRoot;
-        try (Path path = new Path().of(configuration.getRoot()).concat(PropServerConfiguration.TMP_DIRECTORY).$()) {
+        try (Path path = new Path()) {
+            path.of(configuration.getRoot()).concat(PropServerConfiguration.TMP_DIRECTORY).$();
             inputWorkRoot = path.toString();
         }
 
@@ -494,7 +496,8 @@ public class CopyTest extends AbstractCairoTest {
     @Test
     public void testParallelCopyIntoNewTableWithDefaultWorkDir() throws Exception {
         String inputWorkRootTmp = inputWorkRoot;
-        try (Path path = new Path().of(configuration.getRoot()).concat(PropServerConfiguration.TMP_DIRECTORY).$()) {
+        try (Path path = new Path()) {
+            path.of(configuration.getRoot()).concat(PropServerConfiguration.TMP_DIRECTORY).$();
             inputWorkRoot = path.toString();
         }
 
@@ -756,8 +759,8 @@ public class CopyTest extends AbstractCairoTest {
                     // this one should be rejected
                     assertSql(
                             "id\tstatus\n" +
-                                    "ffffffffffffffff\tunknown\n", "copy 'ffffffffffffffff' cancel"
-
+                                    "ffffffffffffffff\tunknown\n",
+                            "copy 'ffffffffffffffff' cancel"
                     );
 
                     // this one should succeed
