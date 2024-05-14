@@ -1207,7 +1207,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             for (int i = 0; i < columnCount; i++) {
                 final int index = getPrimaryColumnIndex(columnBase, i);
                 final MemoryMR mem1 = columns.getQuick(index);
-                if (mem1 instanceof NullMemoryMR || !mem1.isOpen()) {
+                if (mem1 instanceof NullMemoryMR || (mem1 != null && !mem1.isOpen())) {
                     reloadColumnAt(
                             partitionIndex,
                             path,
@@ -1316,7 +1316,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                                 //    instance and the column from disk
                                 // 2. Column hasn't been altered, and we can skip to next column.
                                 MemoryMR col = columns.getQuick(getPrimaryColumnIndex(base, i));
-                                if (col instanceof NullMemoryMR || !col.isOpen()) {
+                                if (col instanceof NullMemoryMR || (col != null && !col.isOpen())) {
                                     reloadColumnAt(
                                             partitionIndex,
                                             path,
