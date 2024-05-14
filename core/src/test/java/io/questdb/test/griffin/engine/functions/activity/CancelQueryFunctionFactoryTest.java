@@ -200,10 +200,10 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
                     }
 
                     // readonly user can't cancel any commands
-                    assertExceptionNoLeakCheck("select cancel_query(" + queryId + ")", 7, "Write permission denied", readOnlyUserContext);
+                    assertExceptionNoLeakCheck0("select cancel_query(" + queryId + ")", 7, "Write permission denied", readOnlyUserContext);
 
                     // regular user can't cancel other user's commands
-                    assertExceptionNoLeakCheck("select cancel_query(" + queryId + ")", 7, "Access denied for bob [built-in admin user required]", regularUserContext);
+                    assertExceptionNoLeakCheck0("select cancel_query(" + queryId + ")", 7, "Access denied for bob [built-in admin user required]", regularUserContext);
 
                     ddl("cancel query " + queryId, adminUserContext2);
                 }
@@ -219,7 +219,7 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
         });
     }
 
-    private static void assertExceptionNoLeakCheck(CharSequence sql, int errorPos, CharSequence contains, SqlExecutionContext sqlExecutionContext) throws Exception {
+    private static void assertExceptionNoLeakCheck0(CharSequence sql, int errorPos, CharSequence contains, SqlExecutionContext sqlExecutionContext) throws Exception {
         try {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(false);
