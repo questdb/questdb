@@ -70,37 +70,54 @@ public class JoinTest extends AbstractCairoTest {
 
             insert("insert into table_2 values ( '2022-10-25T01:00:00.000000Z', 'alice',  60,  '1 Glebe St' )");
             insert("insert into table_2 values ( '2022-10-25T02:00:00.000000Z', 'peter',  58, '1 Broon St' )");
+
+            // query "2"
+            assertQueryNoLeakCheck(
+                    "name\tage\tmember\taddress\tts\n" +
+                            "alice\t60\ttrue\t1 Glebe St\t2022-10-25T01:00:00.000000Z\n" +
+                            "peter\t58\tfalse\t1 Broon St\t2022-10-25T02:00:00.000000Z\n" +
+                            "david\t21\ttrue\t\t2022-10-25T03:00:00.000000Z\n",
+                    "select a.name, a.age, a.member, b.address, a.ts\n" +
+                            "from table_1 as a \n" +
+                            "left join table_2 as b \n" +
+                            "   on a.ts = b.ts ",
+                    null,
+                    "ts", false,
+                    false
+            );
+
+            // query "3"
+            assertQueryNoLeakCheck(
+                    "name\tage\taddress\tts\tdateadd\tdateadd1\n" +
+                            "alice\t60\t1 Glebe St\t2022-10-25T01:00:00.000000Z\t2022-10-25T00:59:00.000000Z\t2022-10-25T01:01:00.000000Z\n" +
+                            "peter\t58\t1 Broon St\t2022-10-25T02:00:00.000000Z\t2022-10-25T01:59:00.000000Z\t2022-10-25T02:01:00.000000Z\n" +
+                            "david\t21\t\t2022-10-25T03:00:00.000000Z\t\t\n",
+                    "select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts) \n" +
+                            "from table_1 as a \n" +
+                            "left join table_2 as b \n" +
+                            "   on a.ts between dateadd('m', -1, b.ts)  and dateadd('m', 1, b.ts) ",
+                    null,
+                    "ts",
+                    false,
+                    false
+            );
+
+            // query "4" - same as "3" but between is replaced with >= and <=
+            assertQueryNoLeakCheck(
+                    "name\tage\taddress\tts\tdateadd\tdateadd1\n" +
+                            "alice\t60\t1 Glebe St\t2022-10-25T01:00:00.000000Z\t2022-10-25T00:59:00.000000Z\t2022-10-25T01:01:00.000000Z\n" +
+                            "peter\t58\t1 Broon St\t2022-10-25T02:00:00.000000Z\t2022-10-25T01:59:00.000000Z\t2022-10-25T02:01:00.000000Z\n" +
+                            "david\t21\t\t2022-10-25T03:00:00.000000Z\t\t\n",
+                    "select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts) \n" +
+                            "from table_1 as a \n" +
+                            "left join table_2 as b \n" +
+                            "   on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts)",
+                    null,
+                    "ts",
+                    false,
+                    false
+            );
         });
-
-        // query "2"
-        assertQuery("name\tage\tmember\taddress\tts\n" +
-                        "alice\t60\ttrue\t1 Glebe St\t2022-10-25T01:00:00.000000Z\n" +
-                        "peter\t58\tfalse\t1 Broon St\t2022-10-25T02:00:00.000000Z\n" +
-                        "david\t21\ttrue\t\t2022-10-25T03:00:00.000000Z\n",
-                "select a.name, a.age, a.member, b.address, a.ts\n" +
-                        "from table_1 as a \n" +
-                        "left join table_2 as b \n" +
-                        "   on a.ts = b.ts ", null, "ts", false, false);
-
-        // query "3"
-        assertQuery("name\tage\taddress\tts\tdateadd\tdateadd1\n" +
-                        "alice\t60\t1 Glebe St\t2022-10-25T01:00:00.000000Z\t2022-10-25T00:59:00.000000Z\t2022-10-25T01:01:00.000000Z\n" +
-                        "peter\t58\t1 Broon St\t2022-10-25T02:00:00.000000Z\t2022-10-25T01:59:00.000000Z\t2022-10-25T02:01:00.000000Z\n" +
-                        "david\t21\t\t2022-10-25T03:00:00.000000Z\t\t\n",
-                "select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts) \n" +
-                        "from table_1 as a \n" +
-                        "left join table_2 as b \n" +
-                        "   on a.ts between dateadd('m', -1, b.ts)  and dateadd('m', 1, b.ts) ", null, "ts", false, false);
-
-        // query "4" - same as "3" but between is replaced with >= and <=
-        assertQuery("name\tage\taddress\tts\tdateadd\tdateadd1\n" +
-                        "alice\t60\t1 Glebe St\t2022-10-25T01:00:00.000000Z\t2022-10-25T00:59:00.000000Z\t2022-10-25T01:01:00.000000Z\n" +
-                        "peter\t58\t1 Broon St\t2022-10-25T02:00:00.000000Z\t2022-10-25T01:59:00.000000Z\t2022-10-25T02:01:00.000000Z\n" +
-                        "david\t21\t\t2022-10-25T03:00:00.000000Z\t\t\n",
-                "select a.name, a.age, b.address, a.ts, dateadd('m', -1, b.ts), dateadd('m', 1, b.ts) \n" +
-                        "from table_1 as a \n" +
-                        "left join table_2 as b \n" +
-                        "   on a.ts >=  dateadd('m', -1, b.ts)  and a.ts <= dateadd('m', 1, b.ts)", null, "ts", false, false);
     }
 
     @Test
@@ -167,19 +184,19 @@ public class JoinTest extends AbstractCairoTest {
                 quotes.commit();
                 orders.commit();
             }
-        });
 
-        assertQuery(
-                "sym\tamount\tside\ttimestamp\tsym1\tbid\task\ttimestamp1\n" +
-                        "googl\t2000.0\t49\t2018-11-02T10:00:03.000000Z\tgoogl\t100.2\t100.3\t2018-11-02T10:00:02.000000Z\n" +
-                        "msft\t150.0\t49\t2018-11-02T10:00:04.000000Z\tmsft\t183.4\t185.9\t2018-11-02T10:00:02.000002Z\n" +
-                        "googl\t3000.0\t50\t2018-11-02T10:00:05.000000Z\tgoogl\t100.2\t100.3\t2018-11-02T10:00:02.000000Z\n",
-                "select * from orders asof join quotes on(sym)",
-                null,
-                "timestamp",
-                false,
-                true
-        );
+            assertQueryNoLeakCheck(
+                    "sym\tamount\tside\ttimestamp\tsym1\tbid\task\ttimestamp1\n" +
+                            "googl\t2000.0\t49\t2018-11-02T10:00:03.000000Z\tgoogl\t100.2\t100.3\t2018-11-02T10:00:02.000000Z\n" +
+                            "msft\t150.0\t49\t2018-11-02T10:00:04.000000Z\tmsft\t183.4\t185.9\t2018-11-02T10:00:02.000002Z\n" +
+                            "googl\t3000.0\t50\t2018-11-02T10:00:05.000000Z\tgoogl\t100.2\t100.3\t2018-11-02T10:00:02.000000Z\n",
+                    "select * from orders asof join quotes on(sym)",
+                    null,
+                    "timestamp",
+                    false,
+                    true
+            );
+        });
     }
 
     @Test
@@ -190,7 +207,6 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testAsOfFullFatJoinOnStr() throws Exception {
         assertMemoryLeak(() -> {
-
             ddl(
                     "create table x as (" +
                             "select" +
@@ -514,7 +530,8 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQuery("i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
+            assertQueryNoLeakCheck(
+                    "i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
                             "1\tmsft\t50.938\t0.198\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:10:00.000000Z\n" +
                             "2\tmsft\t5.048\t0.049\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:22:00.000000Z\n" +
                             "3\tmsft\t5.359\t0.652\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:36:00.000000Z\n" +
@@ -553,7 +570,7 @@ public class JoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)");
             ddl("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)");
-            assertException(
+            assertExceptionNoLeakCheck(
                     "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from (x order by timestamp desc) x asof join y on y.sym2 = x.sym",
                     93,
                     "left"
@@ -665,7 +682,8 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQuery("i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
+            assertQueryNoLeakCheck(
+                    "i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
                             "1\tmsft\t50.938\t0.523\t2018-01-01T00:12:00.000000Z\t2018-01-01T00:12:00.000000Z\n" +
                             "2\tgoogl\t42.281\t0.044\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z\n" +
                             "3\tgoogl\t17.371\t0.915\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:36:00.000000Z\n" +
@@ -781,8 +799,7 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinNoKeyEmptySlave() throws Exception {
         assertMemoryLeak(() -> {
-            final String query =
-                    "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x asof join y";
+            final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x asof join y";
 
             final String expected = "i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
                     "1\tmsft\t50.938\tnull\t2018-01-01T00:00:00.000000Z\t\n" +
@@ -1040,8 +1057,7 @@ public class JoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10))");
             ddl("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)");
-
-            assertException(
+            assertExceptionNoLeakCheck(
                     "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x asof join y on y.sym2 = x.sym",
                     65,
                     "left"
@@ -1055,7 +1071,7 @@ public class JoinTest extends AbstractCairoTest {
             final String query = "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x asof join y on y.sym2 = x.sym";
             ddl("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)");
             ddl("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30))");
-            assertException(
+            assertExceptionNoLeakCheck(
                     query,
                     65,
                     "right"
@@ -1125,7 +1141,8 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQuery("i\tsym\tamt\ttimestamp\ti1\tsym2\tprice\ttimestamp1\n" +
+            assertQueryNoLeakCheck(
+                    "i\tsym\tamt\ttimestamp\ti1\tsym2\tprice\ttimestamp1\n" +
                             "1\tmsft\t22.463\t2018-01-01T00:12:00.000000Z\tnull\t\tnull\t\n" +
                             "2\tgoogl\t29.92\t2018-01-01T00:24:00.000000Z\t12\tgoogl\t0.885\t2018-01-01T00:24:00.000000Z\n" +
                             "3\tmsft\t65.086\t2018-01-01T00:36:00.000000Z\t18\tmsft\t0.5660000000000001\t2018-01-01T00:36:00.000000Z\n" +
@@ -1221,7 +1238,8 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQuery("i\tsym\tamt\ttimestamp\ti1\tsym2\tprice\ttimestamp1\n" +
+            assertQueryNoLeakCheck(
+                    "i\tsym\tamt\ttimestamp\ti1\tsym2\tprice\ttimestamp1\n" +
                             "1\tmsft\t22.463\t2018-01-01T00:12:00.000000Z\tnull\t\tnull\t\n" +
                             "2\tgoogl\t29.92\t2018-01-01T00:24:00.000000Z\t12\tgoogl\t0.885\t2018-01-01T00:24:00.000000Z\n" +
                             "3\tmsft\t65.086\t2018-01-01T00:36:00.000000Z\t18\tmsft\t0.5660000000000001\t2018-01-01T00:36:00.000000Z\n" +
@@ -1359,7 +1377,8 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQuery("i\tc\tc1\tamt\tprice\ttimestamp\ttimestamp1\n" +
+            assertQueryNoLeakCheck(
+                    "i\tc\tc1\tamt\tprice\ttimestamp\ttimestamp1\n" +
                             "1\tXYZ\t\t50.938\tnull\t2018-01-01T00:12:00.000000Z\t\n" +
                             "2\tABC\tABC\t42.281\t0.537\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:24:00.000000Z\n" +
                             "3\tABC\tABC\t17.371\t0.673\t2018-01-01T00:36:00.000000Z\t2018-01-01T00:36:00.000000Z\n" +
@@ -1413,7 +1432,7 @@ public class JoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)");
             ddl("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)");
-            assertException(
+            assertExceptionNoLeakCheck(
                     "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x asof join (y order by timestamp desc) y on y.sym2 = x.sym",
                     65,
                     "right"
@@ -1447,7 +1466,8 @@ public class JoinTest extends AbstractCairoTest {
                     "  from long_sequence(5)) " +
                     "timestamp(timestamp)");
 
-            assertQueryNoLeakCheck("pickup_datetime\tfare_amount\ttempF\twindDir\n" +
+            assertQueryNoLeakCheck(
+                    "pickup_datetime\tfare_amount\ttempF\twindDir\n" +
                             "1970-01-01T00:00:00.000001Z\t0.6607777894187332\t0.6508594025855301\t-1436881714\n" +
                             "1970-01-01T00:00:00.000002Z\t0.2246301342497259\t0.7905675319675964\t1545253512\n" +
                             "1970-01-01T00:00:00.000003Z\t0.08486964232560668\t0.22452340856088226\t-409854405\n" +
@@ -1456,7 +1476,11 @@ public class JoinTest extends AbstractCairoTest {
                     "SELECT pickup_datetime, fare_amount, tempF, windDir \n" +
                             "FROM (trips WHERE pickup_datetime IN '1970-01-01') \n" +
                             "ASOF JOIN weather",
-                    "pickup_datetime", false, false, true);
+                    "pickup_datetime",
+                    false,
+                    false,
+                    true
+            );
         });
     }
 
@@ -1544,7 +1568,7 @@ public class JoinTest extends AbstractCairoTest {
             );
 
             // filter is applied to final join result
-            assertQuery(expected, "select * from x cross join y", null, false, true);
+            assertQueryNoLeakCheck(expected, "select * from x cross join y", null, false, true);
         });
     }
 
@@ -1578,7 +1602,7 @@ public class JoinTest extends AbstractCairoTest {
                     "cross join TabC )";
             assertSkipToAndCalculateSize(selectWithEmpty, 0);
 
-            //async filter
+            // async filter
             String selectWithFilter = "(" +
                     "select * from TabA " +
                     "cross join TabB " +
@@ -1586,7 +1610,7 @@ public class JoinTest extends AbstractCairoTest {
                     "and TabB.x = 1 )";
             assertSkipToAndCalculateSize(selectWithFilter, 25);
 
-            //async filter with limit
+            // async filter with limit
             String selectWithFilterWithLimit = "( select * from " +
                     "(select * from TabA where x = 0 limit 3) " +
                     "cross join " +
@@ -1671,7 +1695,7 @@ public class JoinTest extends AbstractCairoTest {
             );
 
             // filter is applied to final join result
-            assertQuery(expected, "select x.kk, x.a, x.b, x.c, x.d, x.e, x.f, x.g, x.i, x.j, x.l, x.m, x.n, x.vch, y.kk, y.a, y.b from x cross join y", null, false, true);
+            assertQueryNoLeakCheck(expected, "select x.kk, x.a, x.b, x.c, x.d, x.e, x.f, x.g, x.i, x.j, x.l, x.m, x.n, x.vch, y.kk, y.a, y.b from x cross join y", null, false, true);
         });
     }
 
@@ -1729,7 +1753,7 @@ public class JoinTest extends AbstractCairoTest {
             );
 
             // filter is applied to final join result
-            assertQuery(expected, "select * from x cross join y", "k", false, true);
+            assertQueryNoLeakCheck(expected, "select * from x cross join y", "k", false, true);
         });
     }
 
@@ -1770,21 +1794,23 @@ public class JoinTest extends AbstractCairoTest {
 
     @Test
     public void testJoinColumnPropagationIntoJoinModel() throws Exception {
-        ddl(
-                "CREATE TABLE trades (" +
-                        "  symbol SYMBOL," +
-                        "  price DOUBLE," +
-                        "  amount DOUBLE," +
-                        "  timestamp TIMESTAMP " +
-                        ") timestamp (timestamp) PARTITION BY DAY;"
-        );
+        assertMemoryLeak(() -> {
+            ddl(
+                    "CREATE TABLE trades (" +
+                            "  symbol SYMBOL," +
+                            "  price DOUBLE," +
+                            "  amount DOUBLE," +
+                            "  timestamp TIMESTAMP " +
+                            ") timestamp (timestamp) PARTITION BY DAY;"
+            );
 
-        insert("insert into trades values ( 'ETH-USD', 2, 2, '2023-05-29T13:15:00.000000Z') ");
+            insert("insert into trades values ( 'ETH-USD', 2, 2, '2023-05-29T13:15:00.000000Z') ");
 
-        for (String joinType : Arrays.asList("LEFT JOIN", "LT JOIN", "ASOF JOIN", "SPLICE JOIN")) {
-            testJoinColumnPropagationIntoJoinModel0(joinType, false);
-        }
-        testJoinColumnPropagationIntoJoinModel0("JOIN", true);
+            for (String joinType : Arrays.asList("LEFT JOIN", "LT JOIN", "ASOF JOIN", "SPLICE JOIN")) {
+                testJoinColumnPropagationIntoJoinModel0(joinType, false);
+            }
+            testJoinColumnPropagationIntoJoinModel0("JOIN", true);
+        });
     }
 
     @Test
@@ -1816,7 +1842,7 @@ public class JoinTest extends AbstractCairoTest {
             ddl("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
 
             // master records should be filtered out because slave records missing
-            assertQuery(expected, "select x.c, x.a, b from x join y on y.m = x.c and 1 < 10", null, false, true);
+            assertQueryNoLeakCheck(expected, "select x.c, x.a, b from x join y on y.m = x.c and 1 < 10", null, false, true);
         });
     }
 
@@ -2095,7 +2121,7 @@ public class JoinTest extends AbstractCairoTest {
             ddl("create table y as (select cast((x-1)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(20))");
             ddl("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(40))");
 
-            assertQuery(expected, "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c)", null, false, true);
+            assertQueryNoLeakCheck(expected, "select z.c, x.a, b, d, d-b from x join y on y.m = x.c join z on (c)", null, false, true);
         });
     }
 
@@ -2114,8 +2140,13 @@ public class JoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("CREATE TABLE IF NOT EXISTS x (ts timestamp, event short) TIMESTAMP(ts);");
             insert("INSERT INTO x VALUES (now(), 42)");
-            assertQuery("count\n" +
-                    "1\n", "SELECT count(*) FROM x AS a INNER JOIN x AS b ON a.event = b.event WHERE now() = now()", null, false, true);
+            assertQueryNoLeakCheck(
+                    "count\n" +
+                            "1\n", "SELECT count(*) FROM x AS a INNER JOIN x AS b ON a.event = b.event WHERE now() = now()",
+                    null,
+                    false,
+                    true
+            );
         });
     }
 
@@ -2151,7 +2182,8 @@ public class JoinTest extends AbstractCairoTest {
             insert("insert into y select cast((x+19)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(16)");
             insert("insert into z select cast((x+15)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(2)");
 
-            assertQuery(expected +
+            assertQueryNoLeakCheck(
+                    expected +
                             "7\t253\t14\t228\t214\n" +
                             "7\t253\t14\t723\t709\n" +
                             "8\t431\t0\t348\t348\n" +
@@ -2225,7 +2257,7 @@ public class JoinTest extends AbstractCairoTest {
             );
 
             // filter is applied to final join result
-            assertQuery(expected, "select * from x join y on (kk)", null, false, true);
+            assertQueryNoLeakCheck(expected, "select * from x join y on (kk)", null, false, true);
         });
     }
 
@@ -2271,7 +2303,7 @@ public class JoinTest extends AbstractCairoTest {
             );
 
             // filter is applied to final join result
-            assertQuery(expected, "select * from x join y on (kk) order by x.a, x.b, y.a", null, true, true);
+            assertQueryNoLeakCheck(expected, "select * from x join y on (kk) order by x.a, x.b, y.a", null, true, true);
         });
     }
 
@@ -2298,7 +2330,7 @@ public class JoinTest extends AbstractCairoTest {
             insert("insert into x select cast(x+10 as int) c, abs(rnd_int() % 650) a from long_sequence(4)");
             insert("insert into y select x, cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
 
-            assertQuery(expected +
+            assertQueryNoLeakCheck(expected +
                             "12\t347\t7\n" +
                             "12\t347\t0\n" +
                             "14\t197\t50\n" +
@@ -2416,7 +2448,8 @@ public class JoinTest extends AbstractCairoTest {
             ddl("insert into y select rnd_symbol('P','L','K') m, abs(rnd_int() % 100) b from long_sequence(6)");
             ddl("insert into z select rnd_symbol('K','P','L') c, abs(rnd_int() % 1000) d from long_sequence(6)");
 
-            assertQuery(expected +
+            assertQueryNoLeakCheck(
+                    expected +
                             "L\tL\tL\t148\t38\t121\t83\n" +
                             "L\tL\tL\t148\t52\t121\t69\n",
                     "select x.c xc, z.c zc, y.m yc, x.a, b, d, d-b from x join y on y.m = x.c join z on (c)",
@@ -2424,7 +2457,6 @@ public class JoinTest extends AbstractCairoTest {
                     false,
                     true
             );
-
         });
     }
 
@@ -2463,7 +2495,8 @@ public class JoinTest extends AbstractCairoTest {
             insert("insert into y select cast((x+19)/4 + 1 as int) m, abs(rnd_int() % 100) b from long_sequence(16)");
             insert("insert into z select cast((x+15)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(2)");
 
-            assertQuery(expected +
+            assertQueryNoLeakCheck(
+                    expected +
                             "7\t253\t35\t228\t288\n" +
                             "7\t253\t35\t723\t288\n" +
                             "7\t253\t14\t228\t267\n" +
@@ -2539,43 +2572,51 @@ public class JoinTest extends AbstractCairoTest {
             ddl("create table y as (select cast((x-1)/4 + 1 as int) c, abs(rnd_int() % 100) b from long_sequence(20))");
             ddl("create table z as (select cast((x-1)/2 + 1 as int) c, abs(rnd_int() % 1000) d from long_sequence(40))");
 
-            assertQuery(expected, "select z.c, x.a, b, d, d-b, ts from x join y on(c) join z on (c)", "ts", false, true);
+            assertQueryNoLeakCheck(expected, "select z.c, x.a, b, d, d-b, ts from x join y on(c) join z on (c)", "ts", false, true);
         });
     }
 
     @Test
-    public void testJoinOfTablesWithReservedWordsColNames() throws SqlException {
-        ddl(
-                "create table x as (" +
-                        "select" +
-                        " x as i, " +
-                        " x*2 as \"in\", " +
-                        " x*3 as \"from\" " +
-                        " from long_sequence(3)" +
-                        ")"
-        );
+    public void testJoinOfTablesWithReservedWordsColNames() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(
+                    "create table x as (" +
+                            "select" +
+                            " x as i, " +
+                            " x*2 as \"in\", " +
+                            " x*3 as \"from\" " +
+                            " from long_sequence(3)" +
+                            ")"
+            );
 
-        assertSql("in\tfrom\n" +
-                "2\t3\n" +
-                "4\t6\n" +
-                "6\t9\n", "select \"in\", \"from\" from x"
-        );
+            assertSql(
+                    "in\tfrom\n" +
+                            "2\t3\n" +
+                            "4\t6\n" +
+                            "6\t9\n",
+                    "select \"in\", \"from\" from x"
+            );
 
-        assertSql("in\tfrom\tin1\tfrom1\n" +
-                "2\t3\t2\t3\n" +
-                "4\t6\t4\t6\n" +
-                "6\t9\t6\t9\n", "select x.\"in\", x.\"from\", x1.\"in\", x1.\"from\" " +
-                "from x " +
-                "join x as x1 on x.i = x1.i"
-        );
+            assertSql(
+                    "in\tfrom\tin1\tfrom1\n" +
+                            "2\t3\t2\t3\n" +
+                            "4\t6\t4\t6\n" +
+                            "6\t9\t6\t9\n",
+                    "select x.\"in\", x.\"from\", x1.\"in\", x1.\"from\" " +
+                            "from x " +
+                            "join x as x1 on x.i = x1.i"
+            );
 
-        assertSql("i\tin\tfrom\ti1\tin1\tfrom1\tcolumn\n" +
-                "1\t2\t3\t1\t2\t3\t5\n" +
-                "2\t4\t6\t2\t4\t6\t10\n" +
-                "3\t6\t9\t3\t6\t9\t15\n", "select *, x.\"in\" + x1.\"from\" " +
-                "from x " +
-                "join x as x1 on x.i = x1.i"
-        );
+            assertSql(
+                    "i\tin\tfrom\ti1\tin1\tfrom1\tcolumn\n" +
+                            "1\t2\t3\t1\t2\t3\t5\n" +
+                            "2\t4\t6\t2\t4\t6\t10\n" +
+                            "3\t6\t9\t3\t6\t9\t15\n",
+                    "select *, x.\"in\" + x1.\"from\" " +
+                            "from x " +
+                            "join x as x1 on x.i = x1.i"
+            );
+        });
     }
 
     @Test
@@ -2601,7 +2642,6 @@ public class JoinTest extends AbstractCairoTest {
                             "timestamp_sequence(0, 1000000) ts " +
                             "from long_sequence(2)) timestamp(ts)"
             );
-
 
             String expected = "geo4\tgeo1\tgeo2\tgeo8\tx\tts\tgeo41\tgeo11\tgeo21\tgeo81\tx1\tts1\n" +
                     "ques\tq\t12\t\t1\t1970-01-01T00:00:00.000000Z\t\t\t\t\tnull\t\n" +
@@ -2842,7 +2882,8 @@ public class JoinTest extends AbstractCairoTest {
             ddl("insert into x select * from (select cast(x+10 as int) c, abs(rnd_int() % 650) a, to_timestamp('2018-03-01', 'yyyy-MM-dd') + x + 10 ts from long_sequence(4)) timestamp(ts)");
             ddl("insert into y select x, cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
 
-            assertQueryNoLeakCheck(expected +
+            assertQueryNoLeakCheck(
+                    expected +
                             "11\t467\tnull\t2018-03-01T00:00:00.000011Z\n" +
                             "12\t347\t7\t2018-03-01T00:00:00.000012Z\n" +
                             "12\t347\t0\t2018-03-01T00:00:00.000012Z\n" +
@@ -2942,13 +2983,15 @@ public class JoinTest extends AbstractCairoTest {
             compile("create table t2 (j int)");
             insert("insert into t2 values (5), (4), (3), (2), (1);");
 
-            assertHashJoinSql("select * from t1 left join t2 on i = j and abs(i) > 3",
+            assertHashJoinSql(
+                    "select * from t1 left join t2 on i = j and abs(i) > 3",
                     "i\tj\n" +
                             "1\tnull\n" +
                             "2\tnull\n" +
                             "3\tnull\n" +
                             "4\t4\n" +
-                            "5\t5\n");
+                            "5\t5\n"
+            );
         });
     }
 
@@ -2960,13 +3003,15 @@ public class JoinTest extends AbstractCairoTest {
             compile("create table t2 (j int, s2 string)");
             insert("insert into t2 values (1,'a'), (5,'e'), (2, 'b'), (4, 'd'), (3,'c');");
 
-            assertHashJoinSql("select * from t1 left join t2 on j = i and s2 = s1",
+            assertHashJoinSql(
+                    "select * from t1 left join t2 on j = i and s2 = s1",
                     "i\ts1\tj\ts2\n" +
                             "1\ta\t1\ta\n" +
                             "2\tb\t2\tb\n" +
                             "3\tc\t3\tc\n" +
                             "4\td\t4\td\n" +
-                            "5\te\t5\te\n");
+                            "5\te\t5\te\n"
+            );
         });
     }
 
@@ -2978,13 +3023,15 @@ public class JoinTest extends AbstractCairoTest {
             compile("create table t2 (j int, s2 string)");
             insert("insert into t2 values (1, 'a'), (5, 'e'), (2, 'b'), (4, 'd'), (3, 'c');");
 
-            assertHashJoinSql("select * from t1 left join t2 on j = i and (s1 ~ 'a' or s2 ~ 'c')",
+            assertHashJoinSql(
+                    "select * from t1 left join t2 on j = i and (s1 ~ 'a' or s2 ~ 'c')",
                     "i\ts1\tj\ts2\n" +
                             "1\ta\t1\ta\n" +
                             "2\tb\tnull\t\n" +
                             "3\tc\t3\tc\n" +
                             "4\td\tnull\t\n" +
-                            "5\te\tnull\t\n");
+                            "5\te\tnull\t\n"
+            );
         });
     }
 
@@ -2996,7 +3043,8 @@ public class JoinTest extends AbstractCairoTest {
             compile("create table t2 (j int, s2 string)");
             insert("insert into t2 values (1,'a'), (1,'e'), (2, 'b'), (2, 'd'), (3,'c');");
 
-            assertHashJoinSql("select * from t1 left join t2 on j = i and (s1 ~ '[abde]')",
+            assertHashJoinSql(
+                    "select * from t1 left join t2 on j = i and (s1 ~ '[abde]')",
                     "i\ts1\tj\ts2\n" +
                             "1\ta\t1\ta\n" +
                             "1\ta\t1\te\n" +
@@ -3004,7 +3052,8 @@ public class JoinTest extends AbstractCairoTest {
                             "2\tb\t2\td\n" +
                             "3\tc\tnull\t\n" +
                             "4\td\tnull\t\n" +
-                            "5\te\tnull\t\n");
+                            "5\te\tnull\t\n"
+            );
         });
     }
 
@@ -3015,13 +3064,15 @@ public class JoinTest extends AbstractCairoTest {
             insert("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
             compile("create table t2 (j int, s2 string)");
 
-            assertHashJoinSql("select * from t1 left join t2 on j = i and (s1 ~ '[abde]')",
+            assertHashJoinSql(
+                    "select * from t1 left join t2 on j = i and (s1 ~ '[abde]')",
                     "i\ts1\tj\ts2\n" +
                             "1\ta\tnull\t\n" +
                             "2\tb\tnull\t\n" +
                             "3\tc\tnull\t\n" +
                             "4\td\tnull\t\n" +
-                            "5\te\tnull\t\n");
+                            "5\te\tnull\t\n"
+            );
         });
     }
 
@@ -3032,8 +3083,10 @@ public class JoinTest extends AbstractCairoTest {
             compile("create table t2 (j int, s2 string)");
             insert("insert into t2 values (1,'a'), (1,'e'), (2, 'b'), (2, 'd'), (3,'c');");
 
-            assertHashJoinSql("select * from t1 left join t2 on j = i and (s1 ~ '[abde]')",
-                    "i\ts1\tj\ts2\n");
+            assertHashJoinSql(
+                    "select * from t1 left join t2 on j = i and (s1 ~ '[abde]')",
+                    "i\ts1\tj\ts2\n"
+            );
         });
     }
 
@@ -3043,8 +3096,10 @@ public class JoinTest extends AbstractCairoTest {
             compile("create table t1 (i int, s1 string)");
             compile("create table t2 (j int, s2 string)");
 
-            assertHashJoinSql("select * from t1 left join t2 on j = i and (s1 ~ '[abde]')",
-                    "i\ts1\tj\ts2\n");
+            assertHashJoinSql(
+                    "select * from t1 left join t2 on j = i and (s1 ~ '[abde]')",
+                    "i\ts1\tj\ts2\n"
+            );
         });
     }
 
@@ -3056,11 +3111,13 @@ public class JoinTest extends AbstractCairoTest {
             compile("create table t2 (j int, s2 string)");
             insert("insert into t2 values (1,'a'), (1,'f'), (1, 'g'), (1, 'd'), (3,'c');");
 
-            assertHashJoinSql("select * from t1 left join t2 on j = i and (s2 ~ '[abde]')",
+            assertHashJoinSql(
+                    "select * from t1 left join t2 on j = i and (s2 ~ '[abde]')",
                     "i\ts1\tj\ts2\n" +
                             "1\ta\t1\ta\n" +
                             "1\ta\t1\td\n" +
-                            "2\tb\tnull\t\n");
+                            "2\tb\tnull\t\n"
+            );
         });
     }
 
@@ -3072,11 +3129,13 @@ public class JoinTest extends AbstractCairoTest {
             compile("create table t2 (j int, s2 string, ts2 timestamp) timestamp(ts2) ");
             insert("insert into t2 values (1,'a', 1), (1,'f', 2), (1, 'g', 3), (1, 'd', 4), (3,'c', 5);");
 
-            assertHashJoinSql("select * from t1 left join t2 on j = i and (s2 ~ '[abde]') order by ts1 desc",
+            assertHashJoinSql(
+                    "select * from t1 left join t2 on j = i and (s2 ~ '[abde]') order by ts1 desc",
                     "i\ts1\tts1\tj\ts2\tts2\n" +
                             "2\tb\t1970-01-01T00:00:00.000002Z\tnull\t\t\n" +
                             "1\ta\t1970-01-01T00:00:00.000001Z\t1\ta\t1970-01-01T00:00:00.000001Z\n" +
-                            "1\ta\t1970-01-01T00:00:00.000001Z\t1\td\t1970-01-01T00:00:00.000004Z\n");
+                            "1\ta\t1970-01-01T00:00:00.000001Z\t1\td\t1970-01-01T00:00:00.000004Z\n"
+            );
         });
     }
 
@@ -3088,13 +3147,15 @@ public class JoinTest extends AbstractCairoTest {
             compile("create table t2 (j int, s2 symbol)");
             insert("insert into t2 values (1, 'a'), (5, 'e'), (2, 'b'), (4, 'd'), (3, 'c');");
 
-            assertHashJoinSql("select * from t1 left join t2 on j = i and (s1 ~ 'a' or s2 ~ 'c')",
+            assertHashJoinSql(
+                    "select * from t1 left join t2 on j = i and (s1 ~ 'a' or s2 ~ 'c')",
                     "i\ts1\tj\ts2\n" +
                             "1\ta\t1\ta\n" +
                             "2\tb\tnull\t\n" +
                             "3\tc\t3\tc\n" +
                             "4\td\tnull\t\n" +
-                            "5\te\tnull\t\n");
+                            "5\te\tnull\t\n"
+            );
         });
     }
 
@@ -3106,13 +3167,15 @@ public class JoinTest extends AbstractCairoTest {
             compile("create table t2 (j int)");
             insert("insert into t2 values (5), (4), (3), (2), (1);");
 
-            assertHashJoinSql("select * from t1 left join t2 on i = j and abs(i) > 5",
+            assertHashJoinSql(
+                    "select * from t1 left join t2 on i = j and abs(i) > 5",
                     "i\tj\n" +
                             "1\tnull\n" +
                             "2\tnull\n" +
                             "3\tnull\n" +
                             "4\tnull\n" +
-                            "5\tnull\n");
+                            "5\tnull\n"
+            );
         });
     }
 
@@ -3124,13 +3187,15 @@ public class JoinTest extends AbstractCairoTest {
             compile("create table t2 (j int)");
             insert("insert into t2 values (5), (4), (3), (2), (1);");
 
-            assertHashJoinSql("select * from t1 left join t2 on i = j and abs(i) = 3",
+            assertHashJoinSql(
+                    "select * from t1 left join t2 on i = j and abs(i) = 3",
                     "i\tj\n" +
                             "1\tnull\n" +
                             "2\tnull\n" +
                             "3\t3\n" +
                             "4\tnull\n" +
-                            "5\tnull\n");
+                            "5\tnull\n"
+            );
         });
     }
 
@@ -3142,13 +3207,15 @@ public class JoinTest extends AbstractCairoTest {
             compile("create table t2 (j int)");
             insert("insert into t2 values (1), (5), (2), (4), (3);");
 
-            assertHashJoinSql("select * from t1 left join t2 on i = j and abs(i) <= 0",
+            assertHashJoinSql(
+                    "select * from t1 left join t2 on i = j and abs(i) <= 0",
                     "i\tj\n" +
                             "1\tnull\n" +
                             "2\tnull\n" +
                             "3\tnull\n" +
                             "4\tnull\n" +
-                            "5\tnull\n");
+                            "5\tnull\n"
+            );
         });
     }
 
@@ -3160,13 +3227,15 @@ public class JoinTest extends AbstractCairoTest {
             compile("create table t2 (j int)");
             insert("insert into t2 values (1), (5), (2), (4), (3);");
 
-            assertHashJoinSql("select * from t1 left join t2 on j = i and abs(i)*abs(j) >= 4 and i*j <= 9",
+            assertHashJoinSql(
+                    "select * from t1 left join t2 on j = i and abs(i)*abs(j) >= 4 and i*j <= 9",
                     "i\tj\n" +
                             "1\tnull\n" +
                             "2\t2\n" +
                             "3\t3\n" +
                             "4\tnull\n" +
-                            "5\tnull\n");
+                            "5\tnull\n"
+            );
         });
     }
 
@@ -3178,13 +3247,15 @@ public class JoinTest extends AbstractCairoTest {
             compile("create table t2 (j int)");
             insert("insert into t2 values (1), (5), (2), (4), (3);");
 
-            assertHashJoinSql("select * from t1 left join t2 on j = i and (j = 2 or i = 4)",
+            assertHashJoinSql(
+                    "select * from t1 left join t2 on j = i and (j = 2 or i = 4)",
                     "i\tj\n" +
                             "1\tnull\n" +
                             "2\t2\n" +
                             "3\tnull\n" +
                             "4\t4\n" +
-                            "5\tnull\n");
+                            "5\tnull\n"
+            );
         });
     }
 
@@ -3196,13 +3267,15 @@ public class JoinTest extends AbstractCairoTest {
             compile("create table t2 (j int)");
             insert("insert into t2 values (1), (5), (-2), (-4), (3);");
 
-            assertHashJoinSql("select * from t1 left join t2 on j = i and (abs(j) = 2 or abs(i) = 4)",
+            assertHashJoinSql(
+                    "select * from t1 left join t2 on j = i and (abs(j) = 2 or abs(i) = 4)",
                     "i\tj\n" +
                             "1\tnull\n" +
                             "2\tnull\n" +
                             "3\tnull\n" +
                             "-4\t-4\n" +
-                            "5\tnull\n");
+                            "5\tnull\n"
+            );
         });
     }
 
@@ -3214,13 +3287,15 @@ public class JoinTest extends AbstractCairoTest {
             compile("create table t2 (j int, s2 string)");
             insert("insert into t2 values (1,'a'), (5,'e'), (-2, 'b'), (4, 'd'), (3,'c');");
 
-            assertHashJoinSql("select * from t1 left join t2 on j = i and s2 = 'a'",
+            assertHashJoinSql(
+                    "select * from t1 left join t2 on j = i and s2 = 'a'",
                     "i\tj\ts2\n" +
                             "1\t1\ta\n" +
                             "2\tnull\t\n" +
                             "3\tnull\t\n" +
                             "4\tnull\t\n" +
-                            "5\tnull\t\n");
+                            "5\tnull\t\n"
+            );
         });
     }
 
@@ -3232,13 +3307,15 @@ public class JoinTest extends AbstractCairoTest {
             compile("create table t2 (j int, s2 string)");
             insert("insert into t2 values (1,'a'), (5,'e'), (-2, 'b'), (4, 'd'), (3,'c');");
 
-            assertHashJoinSql("select * from t1 left join t2 on j = i and s2 ~ '[ad]'",
+            assertHashJoinSql(
+                    "select * from t1 left join t2 on j = i and s2 ~ '[ad]'",
                     "i\tj\ts2\n" +
                             "1\t1\ta\n" +
                             "2\tnull\t\n" +
                             "3\tnull\t\n" +
                             "4\t4\td\n" +
-                            "5\tnull\t\n");
+                            "5\tnull\t\n"
+            );
         });
     }
 
@@ -3249,13 +3326,15 @@ public class JoinTest extends AbstractCairoTest {
             insert("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
             compile("create table t2 (j int, s2 varchar)");
 
-            assertHashJoinSql("select * from t1 left join t2 on j = i and (s1 ~ '[abde]')",
+            assertHashJoinSql(
+                    "select * from t1 left join t2 on j = i and (s1 ~ '[abde]')",
                     "i\ts1\tj\ts2\n" +
                             "1\ta\tnull\t\n" +
                             "2\tb\tnull\t\n" +
                             "3\tc\tnull\t\n" +
                             "4\td\tnull\t\n" +
-                            "5\te\tnull\t\n");
+                            "5\te\tnull\t\n"
+            );
         });
     }
 
@@ -3266,8 +3345,10 @@ public class JoinTest extends AbstractCairoTest {
             compile("create table t2 (j int, s2 varchar)");
             insert("insert into t2 values (1,'a'), (1,'e'), (2, 'b'), (2, 'd'), (3,'c');");
 
-            assertHashJoinSql("select * from t1 left join t2 on j = i and (s1 ~ '[abde]')",
-                    "i\ts1\tj\ts2\n");
+            assertHashJoinSql(
+                    "select * from t1 left join t2 on j = i and (s1 ~ '[abde]')",
+                    "i\ts1\tj\ts2\n"
+            );
         });
     }
 
@@ -3279,13 +3360,15 @@ public class JoinTest extends AbstractCairoTest {
             compile("create table t2 (j int, s2 string)");
             insert("insert into t2 values (5, 'e'), (3, 'c'), (2, 'b'), (4, 'd'), (1, 'a');");
 
-            assertHashJoinSql("select * from t1 left join t2 on j = i and i = 1 where 1 = 1",
+            assertHashJoinSql(
+                    "select * from t1 left join t2 on j = i and i = 1 where 1 = 1",
                     "i\ts1\tj\ts2\n" +
                             "1\ta\t1\ta\n" +
                             "2\tb\tnull\t\n" +
                             "3\tc\tnull\t\n" +
                             "4\td\tnull\t\n" +
-                            "5\te\tnull\t\n");
+                            "5\te\tnull\t\n"
+            );
         });
     }
 
@@ -3297,13 +3380,15 @@ public class JoinTest extends AbstractCairoTest {
             compile("create table t2 (j int, s2 string)");
             insert("insert into t2 values (5, 'e'), (3, 'c'), (2, 'b'), (4, 'd'), (1, 'a');");
 
-            assertHashJoinSql("select * from t1 left join t2 on j = i and j = 1 where 1 = 1",
+            assertHashJoinSql(
+                    "select * from t1 left join t2 on j = i and j = 1 where 1 = 1",
                     "i\ts1\tj\ts2\n" +
                             "1\ta\t1\ta\n" +
                             "2\tb\tnull\t\n" +
                             "3\tc\tnull\t\n" +
                             "4\td\tnull\t\n" +
-                            "5\te\tnull\t\n");
+                            "5\te\tnull\t\n"
+            );
         });
     }
 
@@ -3315,9 +3400,11 @@ public class JoinTest extends AbstractCairoTest {
             compile("create table t2 (j int, s2 string)");
             insert("insert into t2 values (5, 'e'), (3, 'c'), (2, 'b'), (4, 'd'), (1, 'a');");
 
-            assertHashJoinSql("select * from t1 left join t2 on j = i where j = 1",
+            assertHashJoinSql(
+                    "select * from t1 left join t2 on j = i where j = 1",
                     "i\ts1\tj\ts2\n" +
-                            "1\ta\t1\ta\n");
+                            "1\ta\t1\ta\n"
+            );
         });
     }
 
@@ -3329,10 +3416,12 @@ public class JoinTest extends AbstractCairoTest {
             compile("create table t2 (j int, s2 string)");
             insert("insert into t2 values (5, 'e'), (3, 'c'), (2, 'b'), (1, 'a');");
 
-            assertHashJoinSql("select * from t1 left join t2 on j = i where j = 1 or j = null",
+            assertHashJoinSql(
+                    "select * from t1 left join t2 on j = i where j = 1 or j = null",
                     "i\ts1\tj\ts2\n" +
                             "1\ta\t1\ta\n" +
-                            "4\td\tnull\t\n");
+                            "4\td\tnull\t\n"
+            );
         });
     }
 
@@ -3354,12 +3443,14 @@ public class JoinTest extends AbstractCairoTest {
             compile("create table t1 as (select x i from long_sequence(5))");
             compile("create table t2 as (select x+10 j from long_sequence(3))");
 
-            assertSql("i\tj\n" +
-                    "1\t11\n" +
-                    "2\t12\n" +
-                    "3\t13\n" +
-                    "4\tnull\n" +
-                    "5\tnull\n", "select * from t1 left join t2 on t1.i+10 = t2.j"
+            assertSql(
+                    "i\tj\n" +
+                            "1\t11\n" +
+                            "2\t12\n" +
+                            "3\t13\n" +
+                            "4\tnull\n" +
+                            "5\tnull\n",
+                    "select * from t1 left join t2 on t1.i+10 = t2.j"
             );
         });
     }
@@ -3370,12 +3461,14 @@ public class JoinTest extends AbstractCairoTest {
             compile("create table t1 as (select x i from long_sequence(5))");
             compile("create table t2 as (select x-3 j from long_sequence(3))");//-2,-1,0
 
-            assertSql("i\tj\n" +
-                    "1\t-1\n" +
-                    "2\t-2\n" +
-                    "3\tnull\n" +
-                    "4\tnull\n" +
-                    "5\tnull\n", "select * from t1 left join t2 on t1.i = - t2.j"
+            assertSql(
+                    "i\tj\n" +
+                            "1\t-1\n" +
+                            "2\t-2\n" +
+                            "3\tnull\n" +
+                            "4\tnull\n" +
+                            "5\tnull\n",
+                    "select * from t1 left join t2 on t1.i = - t2.j"
             );
         });
     }
@@ -3390,12 +3483,14 @@ public class JoinTest extends AbstractCairoTest {
 
             String query = "select * from t1 left join t2 on abs(t1.i) = abs(t2.j)";
 
-            assertSql("i\tj\n" +
-                    "1\t-1\n" +
-                    "-2\t-2\n" +
-                    "3\t3\n" +
-                    "-4\tnull\n" +
-                    "5\t-5\n", query
+            assertSql(
+                    "i\tj\n" +
+                            "1\t-1\n" +
+                            "-2\t-2\n" +
+                            "3\t3\n" +
+                            "-4\tnull\n" +
+                            "5\t-5\n",
+                    query
             );
         });
     }
@@ -3408,12 +3503,14 @@ public class JoinTest extends AbstractCairoTest {
             compile("create table t2 (j int)");
             insert("insert into t2 values (-1), (-2), (-3), (-4), (-5);");
 
-            assertSql("i\tj\n" +
-                    "1\tnull\n" +
-                    "2\tnull\n" +
-                    "3\tnull\n" +
-                    "4\t-4\n" +
-                    "5\t-5\n", "select * from t1 left join t2 on case when i < 4 then 0 else i end = abs(j)"
+            assertSql(
+                    "i\tj\n" +
+                            "1\tnull\n" +
+                            "2\tnull\n" +
+                            "3\tnull\n" +
+                            "4\t-4\n" +
+                            "5\t-5\n",
+                    "select * from t1 left join t2 on case when i < 4 then 0 else i end = abs(j)"
             );
         });
     }
@@ -3426,16 +3523,18 @@ public class JoinTest extends AbstractCairoTest {
             compile("create table t2 (j int)");
             insert("insert into t2 values (-5), (-4), (-3), (-2), (-1);");
 
-            assertSql("i\tj\n" +
-                    "1\tnull\n" +
-                    "2\tnull\n" +
-                    "3\tnull\n" +
-                    "4\tnull\n" +
-                    "5\t-5\n" +
-                    "5\t-4\n" +
-                    "5\t-3\n" +
-                    "5\t-2\n" +
-                    "5\t-1\n", "select * from t1 left join t2 on i > 4  "
+            assertSql(
+                    "i\tj\n" +
+                            "1\tnull\n" +
+                            "2\tnull\n" +
+                            "3\tnull\n" +
+                            "4\tnull\n" +
+                            "5\t-5\n" +
+                            "5\t-4\n" +
+                            "5\t-3\n" +
+                            "5\t-2\n" +
+                            "5\t-1\n",
+                    "select * from t1 left join t2 on i > 4  "
             );
         });
     }
@@ -3448,13 +3547,15 @@ public class JoinTest extends AbstractCairoTest {
             compile("create table t2 (j int)");
             insert("insert into t2 values (-5), (-4), (-3), (-2), (-1);");
 
-            assertSql("i\tj\n" +
-                    "1\tnull\n" +
-                    "2\tnull\n" +
-                    "3\tnull\n" +
-                    "4\tnull\n" +
-                    "5\t-5\n" +
-                    "5\t-4\n", "select * from t1 left join t2 on i > 4 and j < -3 "
+            assertSql(
+                    "i\tj\n" +
+                            "1\tnull\n" +
+                            "2\tnull\n" +
+                            "3\tnull\n" +
+                            "4\tnull\n" +
+                            "5\t-5\n" +
+                            "5\t-4\n",
+                    "select * from t1 left join t2 on i > 4 and j < -3 "
             );
         });
     }
@@ -3467,16 +3568,18 @@ public class JoinTest extends AbstractCairoTest {
             compile("create table t2 (j int)");
             insert("insert into t2 values (-5), (-4), (-3), (-2), (-1);");
 
-            assertSql("i\tj\n" +
-                    "1\t-4\n" +
-                    "1\t-3\n" +
-                    "1\t-2\n" +
-                    "1\t-1\n" +
-                    "2\t-2\n" +
-                    "2\t-1\n" +
-                    "3\t-1\n" +
-                    "4\t-1\n" +
-                    "5\tnull\n", "select * from t1 left join t2 on i*j >= -4 "
+            assertSql(
+                    "i\tj\n" +
+                            "1\t-4\n" +
+                            "1\t-3\n" +
+                            "1\t-2\n" +
+                            "1\t-1\n" +
+                            "2\t-2\n" +
+                            "2\t-1\n" +
+                            "3\t-1\n" +
+                            "4\t-1\n" +
+                            "5\tnull\n",
+                    "select * from t1 left join t2 on i*j >= -4 "
             );
         });
     }
@@ -3489,12 +3592,14 @@ public class JoinTest extends AbstractCairoTest {
             compile("create table t2 (j int)");
             insert("insert into t2 values (-5), (-4), (-3), (-2), (-1);");
 
-            assertSql("i\tj\n" +
-                    "1\t-1\n" +
-                    "2\t-2\n" +
-                    "3\tnull\n" +
-                    "4\tnull\n" +
-                    "5\tnull\n", "select * from t1 left join t2 on abs(i) = abs(j) and abs(i*j) <= 4"
+            assertSql(
+                    "i\tj\n" +
+                            "1\t-1\n" +
+                            "2\t-2\n" +
+                            "3\tnull\n" +
+                            "4\tnull\n" +
+                            "5\tnull\n",
+                    "select * from t1 left join t2 on abs(i) = abs(j) and abs(i*j) <= 4"
             );
         });
     }
@@ -3508,12 +3613,14 @@ public class JoinTest extends AbstractCairoTest {
 
             String query = "select * from t1 left join (select * from t2 left join t3 on t2.j-1 = t3.k) tx on t1.i+10 = tx.j";
 
-            assertSql("i\tj\tk\n" +
-                    "1\t11\tnull\n" +
-                    "2\t12\tnull\n" +
-                    "3\t13\tnull\n" +
-                    "4\tnull\tnull\n" +
-                    "5\tnull\tnull\n", query
+            assertSql(
+                    "i\tj\tk\n" +
+                            "1\t11\tnull\n" +
+                            "2\t12\tnull\n" +
+                            "3\t13\tnull\n" +
+                            "4\tnull\tnull\n" +
+                            "5\tnull\tnull\n",
+                    query
             );
         });
     }
@@ -3526,10 +3633,12 @@ public class JoinTest extends AbstractCairoTest {
 
             String query = "select * from t1 left join t2 on i=j and abs(1) = 0";
 
-            assertSql("i\tj\n" +
-                    "1\tnull\n" +
-                    "2\tnull\n" +
-                    "3\tnull\n", query);
+            assertSql(
+                    "i\tj\n" +
+                            "1\tnull\n" +
+                            "2\tnull\n" +
+                            "3\tnull\n",
+                    query);
         });
     }
 
@@ -3538,7 +3647,7 @@ public class JoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)");
             ddl("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)");
-            assertException(
+            assertExceptionNoLeakCheck(
                     "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from (x order by timestamp desc) x lt join y on y.sym2 = x.sym",
                     93,
                     "left"
@@ -3556,7 +3665,7 @@ public class JoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10))");
             ddl("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)");
-            assertException(
+            assertExceptionNoLeakCheck(
                     "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x lt join y on y.sym2 = x.sym",
                     65,
                     "left"
@@ -3569,7 +3678,7 @@ public class JoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)");
             ddl("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30))");
-            assertException(
+            assertExceptionNoLeakCheck(
                     "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x lt join y on y.sym2 = x.sym",
                     65,
                     "right"
@@ -3638,10 +3747,12 @@ public class JoinTest extends AbstractCairoTest {
             compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
             compile("insert into t2 select x, x::timestamp from long_sequence(3)");
 
-            assertSql("l1\tts1\tl2\tts2\n" +
-                    "1\t1970-01-01T00:00:00.000001Z\tnull\t\n" +
-                    "2\t1970-01-01T00:00:00.000002Z\tnull\t\n" +
-                    "3\t1970-01-01T00:00:00.000003Z\tnull\t\n", "select * from t1 lt join t2 on l1=l2"
+            assertSql(
+                    "l1\tts1\tl2\tts2\n" +
+                            "1\t1970-01-01T00:00:00.000001Z\tnull\t\n" +
+                            "2\t1970-01-01T00:00:00.000002Z\tnull\t\n" +
+                            "3\t1970-01-01T00:00:00.000003Z\tnull\t\n",
+                    "select * from t1 lt join t2 on l1=l2"
             );
         });
     }
@@ -3654,10 +3765,12 @@ public class JoinTest extends AbstractCairoTest {
             compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
             insert("insert into t2 select x, x::timestamp from long_sequence(3)");
 
-            assertSql("l1\tts1\tl2\tts2\n" +
-                    "1\t1970-01-01T00:00:00.000001Z\tnull\t\n" +
-                    "2\t1970-01-01T00:00:00.000002Z\t1\t1970-01-01T00:00:00.000001Z\n" +
-                    "3\t1970-01-01T00:00:00.000003Z\t2\t1970-01-01T00:00:00.000002Z\n", "select * from t1 lt join t2"
+            assertSql(
+                    "l1\tts1\tl2\tts2\n" +
+                            "1\t1970-01-01T00:00:00.000001Z\tnull\t\n" +
+                            "2\t1970-01-01T00:00:00.000002Z\t1\t1970-01-01T00:00:00.000001Z\n" +
+                            "3\t1970-01-01T00:00:00.000003Z\t2\t1970-01-01T00:00:00.000002Z\n",
+                    "select * from t1 lt join t2"
             );
         });
     }
@@ -3671,44 +3784,48 @@ public class JoinTest extends AbstractCairoTest {
             compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
             insert("insert into t2 select x, (x + 1000000)::timestamp from long_sequence(3)");
 
-            assertSql("l1\tts1\tl2\tts2\n" +
-                    "1\t1970-01-01T00:00:00.000001Z\tnull\t\n" +
-                    "2\t1970-01-01T00:00:00.000002Z\tnull\t\n" +
-                    "3\t1970-01-01T00:00:00.000003Z\tnull\t\n", "select * from t1 lt join t2"
+            assertSql(
+                    "l1\tts1\tl2\tts2\n" +
+                            "1\t1970-01-01T00:00:00.000001Z\tnull\t\n" +
+                            "2\t1970-01-01T00:00:00.000002Z\tnull\t\n" +
+                            "3\t1970-01-01T00:00:00.000003Z\tnull\t\n",
+                    "select * from t1 lt join t2"
             );
         });
     }
 
     @Test
     public void testMultipleJoinsWithTopLevelSelect() throws Exception {
-        ddl(
-                "CREATE TABLE train ( " +
-                        "  id INT, " +
-                        "  date timestamp, " +
-                        "  store_nbr INT, " +
-                        "  family SYMBOL, " +
-                        "  sales DOUBLE " +
-                        ") timestamp (date) PARTITION BY YEAR"
-        );
+        assertMemoryLeak(() -> {
+            ddl(
+                    "CREATE TABLE train ( " +
+                            "  id INT, " +
+                            "  date timestamp, " +
+                            "  store_nbr INT, " +
+                            "  family SYMBOL, " +
+                            "  sales DOUBLE " +
+                            ") timestamp (date) PARTITION BY YEAR"
+            );
 
-        insert("insert into train values (1, '2015-05-31T00:00:00', 1, 'A', 1.0 )");
+            insert("insert into train values (1, '2015-05-31T00:00:00', 1, 'A', 1.0 )");
 
-        String query = "WITH train_lim as (select id, date, store_nbr, family, sales from train where date < '2017-07-16' AND date > '2012-12-29') " +
-                "SELECT s.id  " +
-                "FROM train_lim s " +
-                "#JOIN_TYPE# JOIN " +
-                "( " +
-                "    SELECT * FROM train_lim   " +
-                "    #JOIN_TYPE# JOIN  " +
-                "    ( " +
-                "        SELECT * FROM train_lim  " +
-                "    ) ON (store_nbr, family) " +
-                ") ON (store_nbr, family)";
+            String query = "WITH train_lim as (select id, date, store_nbr, family, sales from train where date < '2017-07-16' AND date > '2012-12-29') " +
+                    "SELECT s.id  " +
+                    "FROM train_lim s " +
+                    "#JOIN_TYPE# JOIN " +
+                    "( " +
+                    "    SELECT * FROM train_lim   " +
+                    "    #JOIN_TYPE# JOIN  " +
+                    "    ( " +
+                    "        SELECT * FROM train_lim  " +
+                    "    ) ON (store_nbr, family) " +
+                    ") ON (store_nbr, family)";
 
-        assertRepeatedJoinQuery(query, "LT", true);
-        assertRepeatedJoinQuery(query, "ASOF", true);
-        assertRepeatedJoinQuery(query, "INNER", true);
-        assertRepeatedJoinQuery(query, "LEFT", false);
+            assertRepeatedJoinQuery(query, "LT", true);
+            assertRepeatedJoinQuery(query, "ASOF", true);
+            assertRepeatedJoinQuery(query, "INNER", true);
+            assertRepeatedJoinQuery(query, "LEFT", false);
+        });
     }
 
     @Test
@@ -3718,23 +3835,29 @@ public class JoinTest extends AbstractCairoTest {
             insert("insert into t values('2023-09-21T10:00:00.000000Z',1,1);\n");
             insert("insert into t values('2023-09-21T10:00:00.000000Z',1,1);\n");
 
-            assertSql("count\n0\n",
+            assertSql(
+                    "count\n0\n",
                     "select count(*) " +
                             "from t as t1 " +
                             "join t as t2 on t1.c0<t2.c0 " +
-                            "cross join t as t3");
+                            "cross join t as t3"
+            );
 
-            assertSql("count\n0\n",
+            assertSql(
+                    "count\n0\n",
                     "select count(*) " +
                             "from t as t3 " +
                             "cross join t as t1 " +
-                            "join t as t2 on t1.c0<t2.c0 ");
+                            "join t as t2 on t1.c0<t2.c0 "
+            );
 
-            assertSql("count\n0\n",
+            assertSql(
+                    "count\n0\n",
                     "select count(*) " +
                             "from t as t3 " +
                             "cross join t as t2 " +
-                            "join t as t1 on t1.c0<t2.c0 ");
+                            "join t as t1 on t1.c0<t2.c0 "
+            );
         });
 
     }
@@ -3782,9 +3905,7 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testSpliceCorrectness() throws Exception {
         assertMemoryLeak(() -> {
-
             ddl("create table orders (sym SYMBOL, amount DOUBLE, side BYTE, timestamp TIMESTAMP) timestamp(timestamp)");
-
             ddl("create table quotes (sym SYMBOL, bid DOUBLE, ask DOUBLE, timestamp TIMESTAMP) timestamp(timestamp)");
 
             try (
@@ -3846,22 +3967,22 @@ public class JoinTest extends AbstractCairoTest {
                 quotes.commit();
                 orders.commit();
             }
-        });
 
-        assertQuery(
-                "sym\tamount\tside\ttimestamp\tsym1\tbid\task\ttimestamp1\n" +
-                        "\tnull\t0\t\tgoogl\t100.2\t100.3\t2018-11-02T10:00:02.000000Z\n" +
-                        "\tnull\t0\t\tmsft\t185.9\t187.3\t2018-11-02T10:00:02.000001Z\n" +
-                        "\tnull\t0\t\tmsft\t186.1\t187.8\t2018-11-02T10:00:02.000002Z\n" +
-                        "\tnull\t0\t\tmsft\t183.4\t185.9\t2018-11-02T10:00:02.000002Z\n" +
-                        "googl\t2000.0\t49\t2018-11-02T10:00:03.000000Z\tgoogl\t100.2\t100.3\t2018-11-02T10:00:02.000000Z\n" +
-                        "msft\t150.0\t49\t2018-11-02T10:00:04.000000Z\tmsft\t183.4\t185.9\t2018-11-02T10:00:02.000002Z\n" +
-                        "googl\t3000.0\t50\t2018-11-02T10:00:05.000000Z\tgoogl\t100.2\t100.3\t2018-11-02T10:00:02.000000Z\n",
-                "select * from orders splice join quotes on(sym)",
-                null,
-                null,
-                false
-        );
+            assertQueryNoLeakCheck(
+                    "sym\tamount\tside\ttimestamp\tsym1\tbid\task\ttimestamp1\n" +
+                            "\tnull\t0\t\tgoogl\t100.2\t100.3\t2018-11-02T10:00:02.000000Z\n" +
+                            "\tnull\t0\t\tmsft\t185.9\t187.3\t2018-11-02T10:00:02.000001Z\n" +
+                            "\tnull\t0\t\tmsft\t186.1\t187.8\t2018-11-02T10:00:02.000002Z\n" +
+                            "\tnull\t0\t\tmsft\t183.4\t185.9\t2018-11-02T10:00:02.000002Z\n" +
+                            "googl\t2000.0\t49\t2018-11-02T10:00:03.000000Z\tgoogl\t100.2\t100.3\t2018-11-02T10:00:02.000000Z\n" +
+                            "msft\t150.0\t49\t2018-11-02T10:00:04.000000Z\tmsft\t183.4\t185.9\t2018-11-02T10:00:02.000002Z\n" +
+                            "googl\t3000.0\t50\t2018-11-02T10:00:05.000000Z\tgoogl\t100.2\t100.3\t2018-11-02T10:00:02.000000Z\n",
+                    "select * from orders splice join quotes on(sym)",
+                    null,
+                    null,
+                    false
+            );
+        });
     }
 
     @Test
@@ -4132,7 +4253,7 @@ public class JoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)");
             ddl("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)");
-            assertException(
+            assertExceptionNoLeakCheck(
                     "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from (x order by timestamp desc) x splice join y on y.sym2 = x.sym",
                     93,
                     "left"
@@ -4145,7 +4266,7 @@ public class JoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10))");
             ddl("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)");
-            assertException(
+            assertExceptionNoLeakCheck(
                     "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x splice join y on y.sym2 = x.sym",
                     65,
                     "left"
@@ -4158,7 +4279,7 @@ public class JoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)");
             ddl("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30))");
-            assertException(
+            assertExceptionNoLeakCheck(
                     "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x splice join y on y.sym2 = x.sym",
                     65,
                     "right"
@@ -4294,7 +4415,8 @@ public class JoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryNoLeakCheck("i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
+            assertQueryNoLeakCheck(
+                    "i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
                             "null\t\tnull\t0.032\t\t2018-01-01T00:02:00.000000Z\n" +
                             "null\t\tnull\t0.113\t\t2018-01-01T00:04:00.000000Z\n" +
                             "null\t\tnull\t0.11\t\t2018-01-01T00:06:00.000000Z\n" +
@@ -4366,7 +4488,8 @@ public class JoinTest extends AbstractCairoTest {
                             "19\tmsft\t4.727\t0.912\t2018-01-01T03:48:00.000000Z\t2018-01-01T01:58:00.000000Z\n" +
                             "20\tgoogl\t26.222\t0.148\t2018-01-01T04:00:00.000000Z\t2018-01-01T02:00:00.000000Z\n",
                     query,
-                    null);
+                    null
+            );
         });
     }
 
@@ -4380,7 +4503,7 @@ public class JoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)");
             ddl("create table y as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym2, round(rnd_double(0), 3) price, to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp from long_sequence(30)) timestamp(timestamp)");
-            assertException(
+            assertExceptionNoLeakCheck(
                     "select x.i, x.sym, x.amt, price, x.timestamp, y.timestamp from x splice join (y order by timestamp desc) y on y.sym2 = x.sym",
                     65,
                     "right"
@@ -4519,7 +4642,8 @@ public class JoinTest extends AbstractCairoTest {
                             "&\t2061726721\t&\n" +
                             "&\t2061726721\t&\n" +
                             "&\t2061726721\t&\n",
-                    "xy3 join xy2 on (a) limit 5");
+                    "xy3 join xy2 on (a) limit 5"
+            );
         });
     }
 
@@ -4557,7 +4681,7 @@ public class JoinTest extends AbstractCairoTest {
             insert("insert into TabA select x::timestamp, x/6 from long_sequence(10)");
             insert("insert into TabB select (x*15L*60L*1000000L)::timestamp, x/6 from long_sequence(10)");
 
-            //async filter
+            // async filter
             String selectWithFilter = "(select * from TabA where x = 0 " +
                     "union all " +
                     "select * from TabB where x = 1 " +
@@ -4565,7 +4689,7 @@ public class JoinTest extends AbstractCairoTest {
                     "select * from taBC where x = 0 )";
             assertSkipToAndCalculateSize(selectWithFilter, 10);
 
-            //async filter with limit
+            // async filter with limit
             String selectWithFilterAndLimit = "( " +
                     "selecT * from " +
                     "(select * from TabA where x = 0 limit 3) " +
@@ -4633,7 +4757,7 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     private void assertRepeatedJoinQuery(String query, String left, boolean expectSize) throws Exception {
-        assertQuery("id\n1\n", query.replace("#JOIN_TYPE#", left), null, false, expectSize);
+        assertQueryNoLeakCheck("id\n1\n", query.replace("#JOIN_TYPE#", left), null, false, expectSize);
     }
 
     private void assertSkipToAndCalculateSize(String select, int size) throws SqlException {
@@ -5263,10 +5387,10 @@ public class JoinTest extends AbstractCairoTest {
                 ")").replace("#JOIN_TYPE#", joinType);
         String expected = "LT JOIN".equals(joinType) ? "amount\tprice1\n2.0\tnull\n" : "amount\tprice1\n2.0\t2.0\n";
 
-        assertQuery(expected, query.replace("#JOIN_CLAUSE#", "symbol"), null, false, expectSize);
-        assertQuery(expected, query.replace("#JOIN_CLAUSE#", "a.symbol = b.symbol"), null, false, expectSize);
-        assertQuery(expected, query.replace("#JOIN_CLAUSE#", "a.symbol = b.symbol and a.price = b.price"), null, false, expectSize);
-        assertQuery(expected, query.replace("#JOIN_CLAUSE#", "b.symbol = a.symbol and a.timestamp = b.timestamp"), null, false, expectSize);
+        assertQueryNoLeakCheck(expected, query.replace("#JOIN_CLAUSE#", "symbol"), null, false, expectSize);
+        assertQueryNoLeakCheck(expected, query.replace("#JOIN_CLAUSE#", "a.symbol = b.symbol"), null, false, expectSize);
+        assertQueryNoLeakCheck(expected, query.replace("#JOIN_CLAUSE#", "a.symbol = b.symbol and a.price = b.price"), null, false, expectSize);
+        assertQueryNoLeakCheck(expected, query.replace("#JOIN_CLAUSE#", "b.symbol = a.symbol and a.timestamp = b.timestamp"), null, false, expectSize);
     }
 
     private void testJoinConstantFalse0(boolean fullFatJoin) throws Exception {
