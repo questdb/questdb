@@ -2955,159 +2955,121 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         false,
                         timestampIndex
                 );
+            } catch (Throwable e) {
+                Misc.freeObjList(recordFunctions); // groupByFunctions are included in recordFunctions
+                throw e;
+            }
 
-                boolean isFillNone = fillCount == 0 || fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "none");
-                boolean allGroupsFirstLast = isFillNone && allGroupsFirstLastWithSingleSymbolFilter(model, metadata);
-                if (allGroupsFirstLast) {
-                    SingleSymbolFilter symbolFilter = factory.convertToSampleByIndexDataFrameCursorFactory();
-                    if (symbolFilter != null) {
-                        int symbolColIndex = getSampleBySymbolKeyIndex(model, metadata);
-                        if (symbolColIndex == -1 || symbolFilter.getColumnIndex() == symbolColIndex) {
-                            return new SampleByFirstLastRecordCursorFactory(
-                                    factory,
-                                    timestampSampler,
-                                    groupByMetadata,
-                                    model.getColumns(),
-                                    metadata,
-                                    timezoneNameFunc,
-                                    timezoneNameFuncPos,
-                                    offsetFunc,
-                                    offsetFuncPos,
-                                    timestampIndex,
-                                    symbolFilter,
-                                    configuration.getSampleByIndexSearchPageSize()
-                            );
-                        }
-                        factory.revertFromSampleByIndexDataFrameCursorFactory();
-                    }
-                }
-
-                if (fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "prev")) {
-                    if (keyTypes.getColumnCount() == 0) {
-                        return new SampleByFillPrevNotKeyedRecordCursorFactory(
-                                asm,
-                                configuration,
+            boolean isFillNone = fillCount == 0 || fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "none");
+            boolean allGroupsFirstLast = isFillNone && allGroupsFirstLastWithSingleSymbolFilter(model, metadata);
+            if (allGroupsFirstLast) {
+                SingleSymbolFilter symbolFilter = factory.convertToSampleByIndexDataFrameCursorFactory();
+                if (symbolFilter != null) {
+                    int symbolColIndex = getSampleBySymbolKeyIndex(model, metadata);
+                    if (symbolColIndex == -1 || symbolFilter.getColumnIndex() == symbolColIndex) {
+                        return new SampleByFirstLastRecordCursorFactory(
                                 factory,
                                 timestampSampler,
                                 groupByMetadata,
-                                groupByFunctions,
-                                recordFunctions,
-                                timestampIndex,
-                                valueTypes.getColumnCount(),
+                                model.getColumns(),
+                                metadata,
                                 timezoneNameFunc,
                                 timezoneNameFuncPos,
                                 offsetFunc,
-                                offsetFuncPos
-                        );
-                    }
-
-                    return new SampleByFillPrevRecordCursorFactory(
-                            asm,
-                            configuration,
-                            factory,
-                            timestampSampler,
-                            listColumnFilterA,
-                            keyTypes,
-                            valueTypes,
-                            groupByMetadata,
-                            groupByFunctions,
-                            recordFunctions,
-                            timestampIndex,
-                            timezoneNameFunc,
-                            timezoneNameFuncPos,
-                            offsetFunc,
-                            offsetFuncPos
-                    );
-                }
-
-                if (isFillNone) {
-                    if (keyTypes.getColumnCount() == 0) {
-                        // this sample by is not keyed
-                        return new SampleByFillNoneNotKeyedRecordCursorFactory(
-                                asm,
-                                configuration,
-                                factory,
-                                timestampSampler,
-                                groupByMetadata,
-                                groupByFunctions,
-                                recordFunctions,
-                                valueTypes.getColumnCount(),
+                                offsetFuncPos,
                                 timestampIndex,
-                                timezoneNameFunc,
-                                timezoneNameFuncPos,
-                                offsetFunc,
-                                offsetFuncPos
+                                symbolFilter,
+                                configuration.getSampleByIndexSearchPageSize()
                         );
                     }
-
-                    return new SampleByFillNoneRecordCursorFactory(
-                            asm,
-                            configuration,
-                            factory,
-                            groupByMetadata,
-                            groupByFunctions,
-                            recordFunctions,
-                            timestampSampler,
-                            listColumnFilterA,
-                            keyTypes,
-                            valueTypes,
-                            timestampIndex,
-                            timezoneNameFunc,
-                            timezoneNameFuncPos,
-                            offsetFunc,
-                            offsetFuncPos
-                    );
+                    factory.revertFromSampleByIndexDataFrameCursorFactory();
                 }
+            }
 
-                if (fillCount == 1 && isNullKeyword(sampleByFill.getQuick(0).token)) {
-                    if (keyTypes.getColumnCount() == 0) {
-                        return new SampleByFillNullNotKeyedRecordCursorFactory(
-                                asm,
-                                configuration,
-                                factory,
-                                timestampSampler,
-                                groupByMetadata,
-                                groupByFunctions,
-                                recordFunctions,
-                                recordFunctionPositions,
-                                valueTypes.getColumnCount(),
-                                timestampIndex,
-                                timezoneNameFunc,
-                                timezoneNameFuncPos,
-                                offsetFunc,
-                                offsetFuncPos
-                        );
-                    }
-
-                    return new SampleByFillNullRecordCursorFactory(
-                            asm,
-                            configuration,
-                            factory,
-                            timestampSampler,
-                            listColumnFilterA,
-                            keyTypes,
-                            valueTypes,
-                            groupByMetadata,
-                            groupByFunctions,
-                            recordFunctions,
-                            recordFunctionPositions,
-                            timestampIndex,
-                            timezoneNameFunc,
-                            timezoneNameFuncPos,
-                            offsetFunc,
-                            offsetFuncPos
-                    );
-                }
-
-                assert fillCount > 0;
-
+            if (fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "prev")) {
                 if (keyTypes.getColumnCount() == 0) {
-                    return new SampleByFillValueNotKeyedRecordCursorFactory(
+                    return new SampleByFillPrevNotKeyedRecordCursorFactory(
                             asm,
                             configuration,
                             factory,
                             timestampSampler,
-                            sampleByFill,
+                            groupByMetadata,
+                            groupByFunctions,
+                            recordFunctions,
+                            timestampIndex,
+                            valueTypes.getColumnCount(),
+                            timezoneNameFunc,
+                            timezoneNameFuncPos,
+                            offsetFunc,
+                            offsetFuncPos
+                    );
+                }
+
+                return new SampleByFillPrevRecordCursorFactory(
+                        asm,
+                        configuration,
+                        factory,
+                        timestampSampler,
+                        listColumnFilterA,
+                        keyTypes,
+                        valueTypes,
+                        groupByMetadata,
+                        groupByFunctions,
+                        recordFunctions,
+                        timestampIndex,
+                        timezoneNameFunc,
+                        timezoneNameFuncPos,
+                        offsetFunc,
+                        offsetFuncPos
+                );
+            }
+
+            if (isFillNone) {
+                if (keyTypes.getColumnCount() == 0) {
+                    // this sample by is not keyed
+                    return new SampleByFillNoneNotKeyedRecordCursorFactory(
+                            asm,
+                            configuration,
+                            factory,
+                            timestampSampler,
+                            groupByMetadata,
+                            groupByFunctions,
+                            recordFunctions,
+                            valueTypes.getColumnCount(),
+                            timestampIndex,
+                            timezoneNameFunc,
+                            timezoneNameFuncPos,
+                            offsetFunc,
+                            offsetFuncPos
+                    );
+                }
+
+                return new SampleByFillNoneRecordCursorFactory(
+                        asm,
+                        configuration,
+                        factory,
+                        groupByMetadata,
+                        groupByFunctions,
+                        recordFunctions,
+                        timestampSampler,
+                        listColumnFilterA,
+                        keyTypes,
+                        valueTypes,
+                        timestampIndex,
+                        timezoneNameFunc,
+                        timezoneNameFuncPos,
+                        offsetFunc,
+                        offsetFuncPos
+                );
+            }
+
+            if (fillCount == 1 && isNullKeyword(sampleByFill.getQuick(0).token)) {
+                if (keyTypes.getColumnCount() == 0) {
+                    return new SampleByFillNullNotKeyedRecordCursorFactory(
+                            asm,
+                            configuration,
+                            factory,
+                            timestampSampler,
                             groupByMetadata,
                             groupByFunctions,
                             recordFunctions,
@@ -3121,13 +3083,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     );
                 }
 
-                return new SampleByFillValueRecordCursorFactory(
+                return new SampleByFillNullRecordCursorFactory(
                         asm,
                         configuration,
                         factory,
                         timestampSampler,
                         listColumnFilterA,
-                        sampleByFill,
                         keyTypes,
                         valueTypes,
                         groupByMetadata,
@@ -3140,10 +3101,49 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         offsetFunc,
                         offsetFuncPos
                 );
-            } catch (Throwable e) {
-                Misc.freeObjList(recordFunctions); // groupByFunctions are included in recordFunctions
-                throw e;
             }
+
+            assert fillCount > 0;
+
+            if (keyTypes.getColumnCount() == 0) {
+                return new SampleByFillValueNotKeyedRecordCursorFactory(
+                        asm,
+                        configuration,
+                        factory,
+                        timestampSampler,
+                        sampleByFill,
+                        groupByMetadata,
+                        groupByFunctions,
+                        recordFunctions,
+                        recordFunctionPositions,
+                        valueTypes.getColumnCount(),
+                        timestampIndex,
+                        timezoneNameFunc,
+                        timezoneNameFuncPos,
+                        offsetFunc,
+                        offsetFuncPos
+                );
+            }
+
+            return new SampleByFillValueRecordCursorFactory(
+                    asm,
+                    configuration,
+                    factory,
+                    timestampSampler,
+                    listColumnFilterA,
+                    sampleByFill,
+                    keyTypes,
+                    valueTypes,
+                    groupByMetadata,
+                    groupByFunctions,
+                    recordFunctions,
+                    recordFunctionPositions,
+                    timestampIndex,
+                    timezoneNameFunc,
+                    timezoneNameFuncPos,
+                    offsetFunc,
+                    offsetFuncPos
+            );
         } catch (Throwable e) {
             Misc.free(factory);
             throw e;
