@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.functions;
 
 import io.questdb.griffin.SqlException;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.BindVariableTestTuple;
 import org.junit.Test;
@@ -60,6 +61,19 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
                 bindVariableService -> {
                     bindVariableService.setLong(0, 6000);
                     bindVariableService.setStr(1, "1970-01-01T00:00:00.007000Z");
+                    bindVariableService.setInt(2, 10_000);
+                }
+        ));
+
+        tuples.add(new BindVariableTestTuple(
+                "type change with varchar",
+                "a\tts\n" +
+                        "1326447242\t1970-01-01T00:00:00.006000Z\n" +
+                        "-1191262516\t1970-01-01T00:00:00.010000Z\n" +
+                        "-2041844972\t1970-01-01T00:00:00.011000Z\n",
+                bindVariableService -> {
+                    bindVariableService.setLong(0, 6000);
+                    bindVariableService.setVarchar(1, new Utf8String("1970-01-01T00:00:00.011000Z"));
                     bindVariableService.setInt(2, 10_000);
                 }
         ));

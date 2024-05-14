@@ -112,7 +112,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
 
         for (int i = 1, n = args.size(); i < n; i++) {
             Function func = args.getQuick(i);
-            long val = Numbers.LONG_NULL;
+            long val;
             switch (ColumnType.tagOf(func.getType())) {
                 case ColumnType.DATE:
                     val = func.getDate(null);
@@ -129,6 +129,10 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                     CharSequence tsValue = func.getStrA(null);
                     val = (tsValue != null) ? tryParseTimestamp(tsValue, argPositions.getQuick(i)) : Numbers.LONG_NULL;
                     break;
+                case ColumnType.UNDEFINED:
+                    throw SqlException.$(argPositions.getQuick(i), "undefined bind variable");
+                default:
+                    throw SqlException.inconvertibleTypes(argPositions.getQuick(i), func.getType(), ColumnType.nameOf(func.getType()), ColumnType.TIMESTAMP, ColumnType.nameOf(ColumnType.TIMESTAMP));
             }
             res.setQuick(i - 1, val);
         }

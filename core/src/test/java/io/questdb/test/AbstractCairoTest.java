@@ -1730,8 +1730,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
                         }
                     } catch (SqlException e) {
                         if (errorPosition != BindVariableTestTuple.MUST_SUCCEED) {
-                            TestUtils.assertContains(tuple.getExpected(), e.getFlyweightMessage());
-                            Assert.assertEquals(errorPosition, e.getPosition());
+                            Assert.assertEquals(tuple.getDescription(), errorPosition, e.getPosition());
+                            TestUtils.assertContains(tuple.getDescription(), tuple.getExpected(), e.getFlyweightMessage());
                         } else {
                             throw e;
                         }
