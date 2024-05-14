@@ -171,7 +171,8 @@ public class CountDistinctLongGroupByFunctionFactoryTest extends AbstractCairoTe
         assertMemoryLeak(() -> assertSql(
                 "ts\tcount_distinct\n" +
                         "1970-01-01T00:00:00.050000Z\t8\n" +
-                        "1970-01-01T00:00:02.050000Z\t8\n", "with x as (select * from (select rnd_long(1, 8, 0) s, timestamp_sequence(50000, 100000L/4) ts from long_sequence(100)) timestamp(ts))\n" +
+                        "1970-01-01T00:00:02.050000Z\t8\n",
+                "with x as (select * from (select rnd_long(1, 8, 0) s, timestamp_sequence(50000, 100000L/4) ts from long_sequence(100)) timestamp(ts))\n" +
                         "select ts, count_distinct(s) from x sample by 2s align to first observation"
         ));
     }

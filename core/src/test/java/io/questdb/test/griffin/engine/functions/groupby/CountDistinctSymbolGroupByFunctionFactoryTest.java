@@ -156,8 +156,10 @@ public class CountDistinctSymbolGroupByFunctionFactoryTest extends AbstractCairo
                 "6\t1970-01-01T00:00:05.000000Z\n";
         final String query = "select count_distinct(s), ts from x sample by 5s";
         final String ddl = "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))";
-        assertQuery(expected, query, ddl, "ts", true, true);
-        assertQueryNoLeakCheck(expected, query + " align to first observation", "ts", false);
-        assertQuery(expected, query + " align to calendar", "ts", true, true);
+        assertMemoryLeak(() -> {
+            assertQueryNoLeakCheck(expected, query, ddl, "ts", true, true);
+            assertQueryNoLeakCheck(expected, query + " align to first observation", "ts", false);
+            assertQueryNoLeakCheck(expected, query + " align to calendar", "ts", true, true);
+        });
     }
 }

@@ -46,72 +46,76 @@ public class ApproxCountDistinctIntGroupByFunctionFactoryTest extends AbstractCa
 
     @Test
     public void testDifferentPrecisionsDenseHLL() throws Exception {
-        compile("create table x as (select * from (select rnd_int(1, 1000000, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(1000000)) timestamp(ts))");
+        assertMemoryLeak(() -> {
+            compile("create table x as (select * from (select rnd_int(1, 1000000, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(1000000)) timestamp(ts))");
 
-        assertQuery(
-                "count_distinct\n" +
-                        "631884\n",
-                "select count_distinct(s) from x",
-                null,
-                false,
-                true
-        );
-
-        long[] expectedEstimates = new long[]{
-                501129L,
-                544983L,
-                641215L,
-                643431L,
-                649396L,
-                664450L,
-                642849L,
-                628365L,
-                620599L,
-                624983L,
-                630138L,
-                631748L,
-                630012L,
-                631544L,
-                631788L
-        };
-        for (int precision = 4; precision <= 18; precision++) {
-            assertQuery(
-                    "approx_count_distinct" + precision + "\n" +
-                            expectedEstimates[precision - 4] + "\n",
-                    "select approx_count_distinct(s, " + precision + ") as approx_count_distinct" + precision + " from x",
+            assertQueryNoLeakCheck(
+                    "count_distinct\n" +
+                            "631884\n",
+                    "select count_distinct(s) from x",
                     null,
                     false,
                     true
             );
-        }
+
+            long[] expectedEstimates = new long[]{
+                    501129L,
+                    544983L,
+                    641215L,
+                    643431L,
+                    649396L,
+                    664450L,
+                    642849L,
+                    628365L,
+                    620599L,
+                    624983L,
+                    630138L,
+                    631748L,
+                    630012L,
+                    631544L,
+                    631788L
+            };
+            for (int precision = 4; precision <= 18; precision++) {
+                assertQueryNoLeakCheck(
+                        "approx_count_distinct" + precision + "\n" +
+                                expectedEstimates[precision - 4] + "\n",
+                        "select approx_count_distinct(s, " + precision + ") as approx_count_distinct" + precision + " from x",
+                        null,
+                        false,
+                        true
+                );
+            }
+        });
     }
 
     @Test
     public void testDifferentPrecisionsSparseHLL() throws Exception {
-        compile("create table x as (select * from (select rnd_int(1, 6, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))");
+        assertMemoryLeak(() -> {
+            compile("create table x as (select * from (select rnd_int(1, 6, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))");
 
-        assertQuery(
-                "count_distinct\n" +
-                        "6\n",
-                "select count_distinct(s) from x",
-                null,
-                false,
-                true
-        );
-
-        long[] expectedEstimates = new long[]{
-                8L, 7L, 6L, 6L, 6L, 6L, 6L, 6L, 6L, 6L, 6L, 6L, 6L, 6L, 6L
-        };
-        for (int precision = 4; precision <= 18; precision++) {
-            assertQuery(
-                    "approx_count_distinct" + precision + "\n" +
-                            expectedEstimates[precision - 4] + "\n",
-                    "select approx_count_distinct(s, " + precision + ") as approx_count_distinct" + precision + " from x",
+            assertQueryNoLeakCheck(
+                    "count_distinct\n" +
+                            "6\n",
+                    "select count_distinct(s) from x",
                     null,
                     false,
                     true
             );
-        }
+
+            long[] expectedEstimates = new long[]{
+                    8L, 7L, 6L, 6L, 6L, 6L, 6L, 6L, 6L, 6L, 6L, 6L, 6L, 6L, 6L
+            };
+            for (int precision = 4; precision <= 18; precision++) {
+                assertQueryNoLeakCheck(
+                        "approx_count_distinct" + precision + "\n" +
+                                expectedEstimates[precision - 4] + "\n",
+                        "select approx_count_distinct(s, " + precision + ") as approx_count_distinct" + precision + " from x",
+                        null,
+                        false,
+                        true
+                );
+            }
+        });
     }
 
     @Test
@@ -137,110 +141,118 @@ public class ApproxCountDistinctIntGroupByFunctionFactoryTest extends AbstractCa
 
     @Test
     public void testGroupKeyedDenseHLL() throws Exception {
-        compile("create table x as (" +
-                "select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_int(0, 100000, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(1000000)" +
-                ") timestamp(ts))");
-        assertQuery(
-                "a\tcount_distinct\n" +
-                        "a\t80974\n" +
-                        "b\t81221\n" +
-                        "c\t81204\n" +
-                        "d\t81135\n" +
-                        "e\t81116\n" +
-                        "f\t81314\n",
-                "select a, count_distinct(s) from x order by a",
-                null,
-                true,
-                true
-        );
-        assertQuery(
-                "a\tapprox_count_distinct\n" +
-                        "a\t80475\n" +
-                        "b\t81142\n" +
-                        "c\t80831\n" +
-                        "d\t80586\n" +
-                        "e\t80368\n" +
-                        "f\t81112\n",
-                "select a, approx_count_distinct(s) from x order by a",
-                null,
-                true,
-                true
-        );
+        assertMemoryLeak(() -> {
+            compile("create table x as (" +
+                    "select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_int(0, 100000, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(1000000)" +
+                    ") timestamp(ts))");
+            assertQueryNoLeakCheck(
+                    "a\tcount_distinct\n" +
+                            "a\t80974\n" +
+                            "b\t81221\n" +
+                            "c\t81204\n" +
+                            "d\t81135\n" +
+                            "e\t81116\n" +
+                            "f\t81314\n",
+                    "select a, count_distinct(s) from x order by a",
+                    null,
+                    true,
+                    true
+            );
+            assertQueryNoLeakCheck(
+                    "a\tapprox_count_distinct\n" +
+                            "a\t80475\n" +
+                            "b\t81142\n" +
+                            "c\t80831\n" +
+                            "d\t80586\n" +
+                            "e\t80368\n" +
+                            "f\t81112\n",
+                    "select a, approx_count_distinct(s) from x order by a",
+                    null,
+                    true,
+                    true
+            );
+        });
     }
 
     @Test
     public void testGroupKeyedSparseHLL() throws Exception {
-        compile("create table x as (" +
-                "select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_int(0, 16, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(20)" +
-                ") timestamp(ts))");
-        assertQuery(
-                "a\tcount_distinct\n" +
-                        "a\t2\n" +
-                        "b\t1\n" +
-                        "c\t2\n" +
-                        "d\t4\n" +
-                        "e\t4\n" +
-                        "f\t4\n",
-                "select a, count_distinct(s) from x order by a",
-                null,
-                true,
-                true
-        );
-        assertQuery(
-                "a\tapprox_count_distinct\n" +
-                        "a\t2\n" +
-                        "b\t1\n" +
-                        "c\t2\n" +
-                        "d\t4\n" +
-                        "e\t4\n" +
-                        "f\t4\n",
-                "select a, approx_count_distinct(s) from x order by a",
-                null,
-                true,
-                true
-        );
+        assertMemoryLeak(() -> {
+            compile("create table x as (" +
+                    "select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_int(0, 16, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(20)" +
+                    ") timestamp(ts))");
+            assertQueryNoLeakCheck(
+                    "a\tcount_distinct\n" +
+                            "a\t2\n" +
+                            "b\t1\n" +
+                            "c\t2\n" +
+                            "d\t4\n" +
+                            "e\t4\n" +
+                            "f\t4\n",
+                    "select a, count_distinct(s) from x order by a",
+                    null,
+                    true,
+                    true
+            );
+            assertQueryNoLeakCheck(
+                    "a\tapprox_count_distinct\n" +
+                            "a\t2\n" +
+                            "b\t1\n" +
+                            "c\t2\n" +
+                            "d\t4\n" +
+                            "e\t4\n" +
+                            "f\t4\n",
+                    "select a, approx_count_distinct(s) from x order by a",
+                    null,
+                    true,
+                    true
+            );
+        });
     }
 
     @Test
     public void testGroupNotKeyedDenseHLL() throws Exception {
-        compile("create table x as (select * from (select rnd_int(1, 1000000, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(1000000)) timestamp(ts))");
-        assertQuery(
-                "count_distinct\n" +
-                        "631884\n",
-                "select count_distinct(s) from x",
-                null,
-                false,
-                true
-        );
-        assertQuery(
-                "approx_count_distinct\n" +
-                        "630138\n",
-                "select approx_count_distinct(s) from x",
-                null,
-                false,
-                true
-        );
+        assertMemoryLeak(() -> {
+            compile("create table x as (select * from (select rnd_int(1, 1000000, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(1000000)) timestamp(ts))");
+            assertQueryNoLeakCheck(
+                    "count_distinct\n" +
+                            "631884\n",
+                    "select count_distinct(s) from x",
+                    null,
+                    false,
+                    true
+            );
+            assertQueryNoLeakCheck(
+                    "approx_count_distinct\n" +
+                            "630138\n",
+                    "select approx_count_distinct(s) from x",
+                    null,
+                    false,
+                    true
+            );
+        });
     }
 
     @Test
     public void testGroupNotKeyedSparseHLL() throws Exception {
-        compile("create table x as (select * from (select rnd_int(1, 6, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))");
-        assertQuery(
-                "count_distinct\n" +
-                        "6\n",
-                "select count_distinct(s) from x",
-                null,
-                false,
-                true
-        );
-        assertQuery(
-                "approx_count_distinct\n" +
-                        "6\n",
-                "select approx_count_distinct(s) from x",
-                null,
-                false,
-                true
-        );
+        assertMemoryLeak(() -> {
+            compile("create table x as (select * from (select rnd_int(1, 6, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))");
+            assertQueryNoLeakCheck(
+                    "count_distinct\n" +
+                            "6\n",
+                    "select count_distinct(s) from x",
+                    null,
+                    false,
+                    true
+            );
+            assertQueryNoLeakCheck(
+                    "approx_count_distinct\n" +
+                            "6\n",
+                    "select approx_count_distinct(s) from x",
+                    null,
+                    false,
+                    true
+            );
+        });
     }
 
     @Test
@@ -360,7 +372,8 @@ public class ApproxCountDistinctIntGroupByFunctionFactoryTest extends AbstractCa
         assertMemoryLeak(() -> assertSql(
                 "ts\tapprox_count_distinct\n" +
                         "1970-01-01T00:00:00.050000Z\t8\n" +
-                        "1970-01-01T00:00:02.050000Z\t8\n", "with x as (select * from (select rnd_int(1, 8, 0) s, timestamp_sequence(50000, 100000L/4) ts from long_sequence(150)) timestamp(ts))\n" +
+                        "1970-01-01T00:00:02.050000Z\t8\n",
+                "with x as (select * from (select rnd_int(1, 8, 0) s, timestamp_sequence(50000, 100000L/4) ts from long_sequence(150)) timestamp(ts))\n" +
                         "select ts, approx_count_distinct(s) from x sample by 2s align to first observation"
         ));
     }

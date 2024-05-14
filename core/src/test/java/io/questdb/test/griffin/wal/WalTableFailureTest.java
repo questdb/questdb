@@ -711,7 +711,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             TableToken tableName = createStandardWalTable(testName.getMethodName());
 
             drainWalQueue();
-            //noinspection CatchMayIgnoreException
+
             try (WalWriter writer = engine.getWalWriter(tableName)) {
                 writer.apply(new UpdateOperation(tableName, 1, 22, 1) {
                     @Override
@@ -720,7 +720,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     }
                 });
                 Assert.fail();
-            } catch (TableReferenceOutOfDateException e) {
+            } catch (TableReferenceOutOfDateException ignore) {
             }
 
             compile("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
