@@ -169,12 +169,33 @@ public class ColumnVersionReader implements Closeable, Mutable {
         return index > -1 ? getColumnNameTxnByIndex(index) : -1L;
     }
 
+    public long getMaxPartitionVersion(long partitionTimestamp) {
+        long maxVersion = -1;
+        int index = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_UP);
+        if (index > -1) {
+            final int sz = cachedColumnVersionList.size();
+            for (; index < sz && cachedColumnVersionList.getQuick(index) == partitionTimestamp; index += BLOCK_SIZE) {
+                final long thisTimestamp = cachedColumnVersionList.getQuick(index);
+                if (thisTimestamp != partitionTimestamp) {
+                    break;
+                }
+                final long columnVersion = cachedColumnVersionList.getQuick(index + COLUMN_NAME_TXN_OFFSET);
+                maxVersion = Math.max(maxVersion, columnVersion);
+            }
+        }
+        return -1;
+    }
+
     public int getRecordIndex(long partitionTimestamp, int columnIndex) {
         int index = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, partitionTimestamp, BinarySearch.SCAN_UP);
         if (index > -1) {
             final int sz = cachedColumnVersionList.size();
             for (; index < sz && cachedColumnVersionList.getQuick(index) == partitionTimestamp; index += BLOCK_SIZE) {
                 final long thisIndex = cachedColumnVersionList.getQuick(index + COLUMN_INDEX_OFFSET);
+                final long thisTimestamp = cachedColumnVersionList.getQuick(index);
+                if (thisTimestamp != partitionTimestamp) {
+                    break;
+                }
 
                 if (thisIndex == columnIndex) {
                     return index;
