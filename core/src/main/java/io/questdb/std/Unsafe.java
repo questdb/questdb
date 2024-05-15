@@ -33,7 +33,6 @@ import java.lang.reflect.AccessibleObject;
 import java.lang.reflect.Array;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 
@@ -58,11 +57,8 @@ public final class Unsafe {
     private static final long OVERRIDE;
     //#endif
     private static final AtomicLong REALLOC_COUNT = new AtomicLong(0);
-    private static final AtomicLong RSS_ALLOC_COUNT = new AtomicLong(0);
-    private static final long RSS_ALLOC_COUNT_LIMIT = Long.MAX_VALUE;
     private static final AtomicLong RSS_MEM_USED = new AtomicLong(0);
     private static final sun.misc.Unsafe UNSAFE;
-    private static final ConcurrentMap<Long, Boolean> allocSet = new java.util.concurrent.ConcurrentHashMap<>();
     private static final AnonymousClassDefiner anonymousClassDefiner;
     //#if jdk.version!=8
     private static final Method implAddExports;
@@ -163,12 +159,6 @@ public final class Unsafe {
 
     public static long free(long ptr, long size, int memoryTag) {
         if (ptr != 0) {
-            Boolean marker = allocSet.get(ptr);
-            if (marker == null) {
-                throw new RuntimeException(String.format("Double free on tag %d, size %,d", memoryTag, size));
-            } else {
-                allocSet.remove(ptr);
-            }
             Unsafe.getUnsafe().freeMemory(ptr);
             FREE_COUNT.incrementAndGet();
             recordMemAlloc(-size, memoryTag);
@@ -247,7 +237,6 @@ public final class Unsafe {
             assert memoryTag >= MemoryTag.NATIVE_PATH;
             checkAllocLimit(size, memoryTag);
             long ptr = Unsafe.getUnsafe().allocateMemory(size);
-            allocSet.put(ptr, Boolean.TRUE);
             recordMemAlloc(size, memoryTag);
             MALLOC_COUNT.incrementAndGet();
             return ptr;
@@ -264,8 +253,6 @@ public final class Unsafe {
             assert memoryTag >= MemoryTag.NATIVE_PATH;
             checkAllocLimit(-oldSize + newSize, memoryTag);
             long ptr = Unsafe.getUnsafe().reallocateMemory(address, newSize);
-            allocSet.remove(address);
-            allocSet.put(ptr, Boolean.TRUE);
             recordMemAlloc(-oldSize + newSize, memoryTag);
             REALLOC_COUNT.incrementAndGet();
             return ptr;
@@ -328,9 +315,7 @@ public final class Unsafe {
         }
         if (RSS_MEM_LIMIT > 0 && memoryTag >= NATIVE_DEFAULT) {
             long usage = RSS_MEM_USED.get();
-            long allocCount = RSS_ALLOC_COUNT.addAndGet(1);
-            System.out.printf("checkAllocLimit %,d + %,d = %,d, limit %,d, count %,d\n",
-                    usage, size, usage + size, RSS_MEM_LIMIT, allocCount);
+            System.out.printf("checkAllocLimit %,d + %,d = %,d, limit %,d\n", usage, size, usage + size, RSS_MEM_LIMIT);
             if (usage + size > RSS_MEM_LIMIT) {
                 CairoException e = CairoException.nonCritical().setOutOfMemory(true)
                         .put("global RSS memory limit exceeded [usage=")
@@ -338,13 +323,6 @@ public final class Unsafe {
                         .put(", limit=").put(RSS_MEM_LIMIT)
                         .put(", allocation=").put(size)
                         .put(']');
-                e.printStackTrace();
-                throw e;
-            }
-            if (allocCount == RSS_ALLOC_COUNT_LIMIT) {
-                CairoException e = CairoException.nonCritical().setOutOfMemory(true)
-                        .put("global RSS alloc count reached limit ")
-                        .put(RSS_ALLOC_COUNT_LIMIT);
                 e.printStackTrace();
                 throw e;
             }
