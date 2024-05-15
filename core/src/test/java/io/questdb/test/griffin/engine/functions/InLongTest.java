@@ -84,8 +84,6 @@ public class InLongTest extends AbstractCairoTest {
                 23
         ));
 
-//        assertSql("", "test");
-
         assertSql("test where a in ($1,$2,$3)", tuples);
     }
 
@@ -166,7 +164,22 @@ public class InLongTest extends AbstractCairoTest {
                 }
         ));
 
-//        assertSql("", "test");
         assertSql("test where a in ($1,null,$2)", tuples);
+    }
+
+    @Test
+    public void testConstAndBindVariableMix() throws SqlException {
+        ddl("create table test as (select x, rnd_long() a from long_sequence(100))");
+
+        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
+        tuples.add(new BindVariableTestTuple(
+                "mix",
+                "x\ta\n" +
+                        "18\t8173439391403617681\n" +
+                        "39\t8416773233910814357\n",
+                bindVariableService -> bindVariableService.setLong(0, 8173439391403617681L)
+        ));
+
+        assertSql("test where a in (8416773233910814357L, $1)", tuples);
     }
 }

@@ -175,4 +175,20 @@ public class InDoubleTest extends AbstractCairoTest {
                 "cannot compare DOUBLE with type GEOHASH(1b)"
         );
     }
+
+    @Test
+    public void testConstAndBindVariableMix() throws SqlException {
+        ddl("create table test as (select x, rnd_double() a from long_sequence(100))");
+
+        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
+        tuples.add(new BindVariableTestTuple(
+                "mix",
+                "x\ta\n" +
+                        "58\t0.6821660861001273\n" +
+                        "90\t0.3901731258748704\n",
+                bindVariableService -> bindVariableService.setStr(0, "0.6821660861001273")
+        ));
+
+        assertSql("test where a in (0.3901731258748704, $1)", tuples);
+    }
 }

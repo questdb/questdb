@@ -1733,6 +1733,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                             Assert.assertEquals(tuple.getDescription(), errorPosition, e.getPosition());
                             TestUtils.assertContains(tuple.getDescription(), tuple.getExpected(), e.getFlyweightMessage());
                         } else {
+                            System.out.println(tuple.getDescription());
                             throw e;
                         }
                     }

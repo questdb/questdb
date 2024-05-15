@@ -400,7 +400,7 @@ public class UuidTest extends AbstractCairoTest {
                         "11111111-1111-1111-1111-111111111111\n" +
                         "22222222-2222-2222-2222-222222222222\n" +
                         "33333333-3333-3333-3333-333333333333\n",
-                "select * from x where u in ('11111111-1111-1111-1111-111111111111', 'not uuid', '55555555-5555-5555-5555-555555555555', cast ('22222222-2222-2222-2222-222222222222' as UUID), cast ('33333333-3333-3333-3333-333333333333' as symbol))"
+                "select * from x where u in ('11111111-1111-1111-1111-111111111111', '55555555-5555-5555-5555-555555555555', cast ('22222222-2222-2222-2222-222222222222' as UUID), cast ('33333333-3333-3333-3333-333333333333' as symbol))"
         );
     }
 
@@ -419,21 +419,11 @@ public class UuidTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIn_null() throws Exception {
-        ddl("create table x (u UUID)");
-        insert("insert into x values ('11111111-1111-1111-1111-111111111111')");
-
-        assertException("select * from x where u in (cast (null as UUID))", 28, "NULL is not allowed in IN list");
-        assertException("select * from x where u in (cast (null as String))", 28, "NULL is not allowed in IN list");
-        assertException("select * from x where u in (null)", 28, "NULL is not allowed in IN list");
-    }
-
-    @Test
     public void testIn_unexpectedType() throws Exception {
         ddl("create table x (u UUID)");
         insert("insert into x values ('11111111-1111-1111-1111-111111111111')");
 
-        assertException("select * from x where u in (42)", 28, "STRING or UUID constant expected in IN list");
+        assertException("select * from x where u in (42)", 28, "cannot compare UUID with type INT");
     }
 
     @Test

@@ -54,8 +54,9 @@ public class InDoubleFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        boolean allConst = true;
-        boolean allRuntimeConst = true;
+        int constCount = 0;
+        int runtimeConstCount = 0;
+        final int argCount = args.size() - 1;
         for (int i = 1, n = args.size(); i < n; i++) {
             Function func = args.getQuick(i);
             switch (ColumnType.tagOf(func.getType())) {
@@ -76,23 +77,23 @@ public class InDoubleFunctionFactory implements FunctionFactory {
                     throw SqlException.position(argPositions.getQuick(i)).put("cannot compare DOUBLE with type ").put(ColumnType.nameOf(func.getType()));
             }
 
-            if (!func.isConstant()) {
-                allConst = false;
+            if (func.isConstant()) {
+                constCount++;
             }
 
-            if (!func.isRuntimeConstant()) {
-                allRuntimeConst = false;
+            if (func.isRuntimeConstant()) {
+                runtimeConstCount++;
             }
         }
 
-        if (allConst) {
+        if (constCount == argCount) {
             // bind variable will not be constant
             DoubleList values = new DoubleList(args.size() - 1);
             parseToDouble(args, argPositions, values);
             return new InDoubleConstFunction(args.getQuick(0), values);
         }
 
-        if (allRuntimeConst) {
+        if (runtimeConstCount == argCount || runtimeConstCount + constCount == argCount) {
             return new InDoubleRuntimeConstFunction(args.getQuick(0), args, argPositions);
         }
 

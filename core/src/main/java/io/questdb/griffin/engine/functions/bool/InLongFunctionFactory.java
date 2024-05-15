@@ -56,8 +56,9 @@ public class InLongFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        boolean allConst = true;
-        boolean allRuntimeConst = true;
+        int constCount = 0;
+        int runtimeConstCount = 0;
+        final int argCount = args.size() - 1;
         for (int i = 1, n = args.size(); i < n; i++) {
             Function func = args.getQuick(i);
             switch (ColumnType.tagOf(func.getType())) {
@@ -75,16 +76,16 @@ public class InLongFunctionFactory implements FunctionFactory {
                 default:
                     throw SqlException.position(argPositions.get(i)).put("cannot compare LONG with type ").put(ColumnType.nameOf(func.getType()));
             }
-            if (!func.isConstant()) {
-                allConst = false;
+            if (func.isConstant()) {
+                constCount++;
             }
 
-            if (!func.isRuntimeConstant()) {
-                allRuntimeConst = false;
+            if (func.isRuntimeConstant()) {
+                runtimeConstCount++;
             }
         }
 
-        if (allConst) {
+        if (constCount == argCount) {
             LongList inVals = new LongList(args.size() - 1);
             parseToLong(args, argPositions, inVals);
             if (inVals.size() == 0) {
@@ -95,7 +96,7 @@ public class InLongFunctionFactory implements FunctionFactory {
             return new InLongConstFunction(args.getQuick(0), inVals);
         }
 
-        if (allRuntimeConst) {
+        if (runtimeConstCount == argCount || runtimeConstCount + constCount == argCount) {
             return new InLongRuntimeConstFunction(args.getQuick(0), args, argPositions);
         }
 

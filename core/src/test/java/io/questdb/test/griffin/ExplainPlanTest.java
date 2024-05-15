@@ -35,10 +35,7 @@ import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.NegatingFunctionFactory;
 import io.questdb.griffin.engine.functions.SwappingArgsFunctionFactory;
-import io.questdb.griffin.engine.functions.bool.InCharFunctionFactory;
-import io.questdb.griffin.engine.functions.bool.InDoubleFunctionFactory;
-import io.questdb.griffin.engine.functions.bool.InTimestampStrFunctionFactory;
-import io.questdb.griffin.engine.functions.bool.InTimestampTimestampFunctionFactory;
+import io.questdb.griffin.engine.functions.bool.*;
 import io.questdb.griffin.engine.functions.cast.CastStrToRegClassFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToStrArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.catalogue.StringToStringArrayFunction;
@@ -2213,6 +2210,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                 FunctionFactoryDescriptor descriptor = value.get(i);
                 FunctionFactory factory = descriptor.getFactory();
+                if (factory instanceof InUuidFunctionFactory) {
+                    System.out.println("ok");
+                }
                 int sigArgCount = descriptor.getSigArgCount();
 
                 sink.clear();
@@ -2327,6 +2327,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             } else if (factory instanceof RndIPv4CCFunctionFactory) {
                                 args.add(new StrConstant("4.12.22.11/12"));
                                 args.add(new IntConstant(2));
+                            } else if (factory instanceof InUuidFunctionFactory && p == 1) {
+                                // this factory requires valid UUID string, otherwise it will fail
+                                args.add(new StrConstant("11111111-1111-1111-1111-111111111111"));
                             } else if (Chars.equals(key, "approx_count_distinct") && sigArgCount == 2 && p == 1 && sigArgType == ColumnType.INT) {
                                 args.add(new IntConstant(4)); // precision has to be in the range of 4 to 18
                             } else if (!useConst) {

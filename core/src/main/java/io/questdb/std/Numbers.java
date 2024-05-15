@@ -34,11 +34,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
-//#if jdk.version==8
-//$import sun.misc.FDBigInteger;
-//#else
 import jdk.internal.math.FDBigInteger;
-//#endif
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
@@ -880,6 +876,22 @@ public final class Numbers {
         long r;
         for (int i = lo; i < hi; i++) {
             int c = sequence.charAt(i);
+            long n = val << 4;
+            r = n + hexToDecimal(c);
+            val = r;
+        }
+        return val;
+    }
+
+    public static long parseHexLong(Utf8Sequence sequence, int lo, int hi) throws NumericException {
+        if (hi == 0) {
+            throw NumericException.INSTANCE;
+        }
+
+        long val = 0;
+        long r;
+        for (int i = lo; i < hi; i++) {
+            int c = sequence.byteAt(i);
             long n = val << 4;
             r = n + hexToDecimal(c);
             val = r;
