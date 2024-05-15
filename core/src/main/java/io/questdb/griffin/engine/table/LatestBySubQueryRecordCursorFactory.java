@@ -34,7 +34,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
-import io.questdb.std.str.DirectUtf16Sink;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -46,7 +46,6 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
     private final boolean indexed;
     private final RecordCursorFactory recordCursorFactory;
     private final IntHashSet symbolKeys;
-    private DirectUtf16Sink sink = new DirectUtf16Sink(8);
 
     public LatestBySubQueryRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -109,7 +108,6 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         super._close();
         recordCursorFactory.close();
         Misc.free(filter);
-        sink = Misc.free(sink);
     }
 
     private class DataFrameRecordCursorWrapper implements DataFrameRecordCursor {
@@ -222,6 +220,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         private void buildSymbolKeys() {
             final StaticSymbolTable symbolTable = delegate.getSymbolTable(columnIndex);
             final Record record = baseCursor.getRecord();
+            StringSink sink = Misc.getThreadLocalSink();
             while (baseCursor.hasNext()) {
                 int symbolKey = symbolTable.keyOf(func.get(record, 0, sink));
                 if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {

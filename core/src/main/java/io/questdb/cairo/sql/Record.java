@@ -474,6 +474,6 @@ public interface Record {
          * @param sink   sink the function can use if a conversion is required
          * @return record as a char sequence
          */
-        CharSequence get(Record record, int col, DirectUtf16Sink sink);
+        CharSequence get(Record record, int col, MutableUtf16Sink sink);
     }
 }
