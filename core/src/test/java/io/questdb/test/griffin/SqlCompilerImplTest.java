@@ -2065,7 +2065,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             assertSql("column\ntrue\n", "select cast(null as string) <= null");
             assertSql("column\ntrue\n", "select cast(null as string) >= null");
 
-
             assertFailureNoLeakCheck(7, "", "select datediff('ma', 0::timestamp, 1::timestamp) ");
         });
     }
@@ -6682,7 +6681,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             if (e instanceof FlyweightMessageContainer) {
                 TestUtils.assertContains(((FlyweightMessageContainer) e).getFlyweightMessage(), expectedMessage);
                 if (position != -1) {
-                    Assert.assertSame(Exception.class, e.getClass());
+                    Assert.assertSame(SqlException.class, e.getClass());
                     Assert.assertEquals(position, ((FlyweightMessageContainer) e).getPosition());
                 }
             } else {
@@ -6770,7 +6769,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             int errorPosition,
             CharSequence errorMessage
     ) throws Exception {
-        testInsertAsSelectError(ddl, insert, errorPosition, errorMessage, Exception.class);
+        testInsertAsSelectError(ddl, insert, errorPosition, errorMessage, SqlException.class);
     }
 
     private void testInsertAsSelectError(
@@ -6787,7 +6786,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     protected void assertFailureNoLeakCheck(int position, CharSequence expectedMessage, CharSequence sql) {
-        assertFailure0(position, expectedMessage, sql, Exception.class);
+        assertFailure0(position, expectedMessage, sql, SqlException.class);
     }
 
     private interface Fiddler {
