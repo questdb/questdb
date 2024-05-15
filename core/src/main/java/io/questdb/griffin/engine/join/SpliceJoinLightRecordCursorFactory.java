@@ -335,20 +335,25 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
         }
 
         void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
-            if (!isOpen) {
-                isOpen = true;
-                joinKeyMap.reopen();
+            try {
+                if (!isOpen) {
+                    isOpen = true;
+                    joinKeyMap.reopen();
+                }
+                // avoid resetting these
+                if (this.masterCursor == null) {
+                    this.masterCursor = masterCursor;
+                    this.slaveCursor = slaveCursor;
+                    masterRecord = masterCursor.getRecord();
+                    slaveRecord = slaveCursor.getRecord();
+                    masterRecord2 = masterCursor.getRecordB();
+                    slaveRecord2 = slaveCursor.getRecordB();
+                }
+                resetState();
+            } catch (Throwable t) {
+                close();
+                throw t;
             }
-            // avoid resetting these
-            if (this.masterCursor == null) {
-                this.masterCursor = masterCursor;
-                this.slaveCursor = slaveCursor;
-                masterRecord = masterCursor.getRecord();
-                slaveRecord = slaveCursor.getRecord();
-                masterRecord2 = masterCursor.getRecordB();
-                slaveRecord2 = slaveCursor.getRecordB();
-            }
-            resetState();
         }
     }
 }

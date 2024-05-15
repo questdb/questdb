@@ -200,16 +200,21 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
         }
 
         public RecordCursor of(RecordCursor baseCursor, SqlExecutionContext sqlExecutionContext) {
-            if (!isOpen) {
-                isOpen = true;
-                dataMap.reopen();
+            try {
+                if (!isOpen) {
+                    isOpen = true;
+                    dataMap.reopen();
+                }
+                this.baseCursor = baseCursor;
+                circuitBreaker = sqlExecutionContext.getCircuitBreaker();
+                record = baseCursor.getRecord();
+                recordB = baseCursor.getRecordB();
+                state = INIT_FIRST_TIMESTAMP;
+                return this;
+            } catch (Throwable t) {
+                close();
+                throw t;
             }
-            this.baseCursor = baseCursor;
-            circuitBreaker = sqlExecutionContext.getCircuitBreaker();
-            record = baseCursor.getRecord();
-            recordB = baseCursor.getRecordB();
-            state = INIT_FIRST_TIMESTAMP;
-            return this;
         }
 
         @Override

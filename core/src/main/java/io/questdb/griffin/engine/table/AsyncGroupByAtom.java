@@ -352,10 +352,15 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
     @Override
     public void reopen() {
-        ownerParticle.reopen();
-        for (int i = 0, n = perWorkerParticles.size(); i < n; i++) {
-            Particle p = perWorkerParticles.getQuick(i);
-            p.reopen();
+        try {
+            ownerParticle.reopen();
+            for (int i = 0, n = perWorkerParticles.size(); i < n; i++) {
+                Particle p = perWorkerParticles.getQuick(i);
+                p.reopen();
+            }
+        } catch (Throwable t) {
+            close();
+            throw t;
         }
     }
 

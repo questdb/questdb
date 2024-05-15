@@ -201,15 +201,20 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         public void of(RecordCursor managedCursor, SqlExecutionContext executionContext) throws SqlException {
-            if (!isOpen) {
-                isOpen = true;
-                dataMap.reopen();
+            try {
+                if (!isOpen) {
+                    isOpen = true;
+                    dataMap.reopen();
+                }
+                this.circuitBreaker = executionContext.getCircuitBreaker();
+                this.managedCursor = managedCursor;
+                Function.init(keyFunctions, managedCursor, executionContext);
+                isDataMapBuilt = false;
+                rowId = 0;
+            } catch (Throwable t) {
+                close();
+                throw t;
             }
-            this.circuitBreaker = executionContext.getCircuitBreaker();
-            this.managedCursor = managedCursor;
-            Function.init(keyFunctions, managedCursor, executionContext);
-            isDataMapBuilt = false;
-            rowId = 0;
         }
 
         @Override

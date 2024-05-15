@@ -117,20 +117,25 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
 
     @Override
     public void of(RecordCursor base, SqlExecutionContext executionContext) {
-        if (!isOpen) {
-            chain.reopen();
-            isOpen = true;
-        }
+        try {
+            if (!isOpen) {
+                isOpen = true;
+                chain.reopen();
+            }
 
-        this.base = base;
-        baseRecord = base.getRecord();
-        circuitBreaker = executionContext.getCircuitBreaker();
-        isChainBuilt = false;
-        rowsInGroup = 0;
-        rowsSoFar = 0;
-        groupTimestamp = Numbers.LONG_NULL;
-        timestampInitialized = false;
-        chain.clear();
+            this.base = base;
+            baseRecord = base.getRecord();
+            circuitBreaker = executionContext.getCircuitBreaker();
+            isChainBuilt = false;
+            rowsInGroup = 0;
+            rowsSoFar = 0;
+            groupTimestamp = Numbers.LONG_NULL;
+            timestampInitialized = false;
+            chain.clear();
+        } catch (Throwable t) {
+            close();
+            throw t;
+        }
     }
 
     @Override

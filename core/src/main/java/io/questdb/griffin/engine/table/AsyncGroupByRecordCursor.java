@@ -342,16 +342,21 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     }
 
     void of(PageFrameSequence<AsyncGroupByAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
-        final AsyncGroupByAtom atom = frameSequence.getAtom();
-        atom.setAllocator(allocator);
-        if (!isOpen) {
-            isOpen = true;
-            atom.reopen();
+        try {
+            final AsyncGroupByAtom atom = frameSequence.getAtom();
+            atom.setAllocator(allocator);
+            if (!isOpen) {
+                isOpen = true;
+                atom.reopen();
+            }
+            this.frameSequence = frameSequence;
+            this.circuitBreaker = executionContext.getCircuitBreaker();
+            Function.init(recordFunctions, frameSequence.getSymbolTableSource(), executionContext);
+            isDataMapBuilt = false;
+            frameLimit = -1;
+        } catch (Throwable t) {
+            close();
+            throw t;
         }
-        this.frameSequence = frameSequence;
-        this.circuitBreaker = executionContext.getCircuitBreaker();
-        Function.init(recordFunctions, frameSequence.getSymbolTableSource(), executionContext);
-        isDataMapBuilt = false;
-        frameLimit = -1;
     }
 }

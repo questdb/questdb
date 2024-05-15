@@ -83,15 +83,19 @@ class SortedRecordCursor implements DelegatingRecordCursor {
 
     @Override
     public void of(RecordCursor base, SqlExecutionContext executionContext) {
-        if (!isOpen) {
-            this.chain.reopen();
-            this.isOpen = true;
+        try {
+            if (!isOpen) {
+                this.isOpen = true;
+                this.chain.reopen();
+            }
+            this.base = base;
+            chainCursor = chain.getCursor(base);
+            circuitBreaker = executionContext.getCircuitBreaker();
+            isChainBuilt = false;
+        } catch (Throwable t) {
+            close();
+            throw t;
         }
-
-        this.base = base;
-        chainCursor = chain.getCursor(base);
-        circuitBreaker = executionContext.getCircuitBreaker();
-        isChainBuilt = false;
     }
 
     @Override

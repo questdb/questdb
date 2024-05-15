@@ -358,10 +358,15 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         @Override
         public void reopen() {
-            if (bufStart == 0) {
-                bufStart = Unsafe.malloc(bufSize + MAX_CHUNK_HEADER_SIZE + EOF_CHUNK.length(), MemoryTag.NATIVE_HTTP_CONN);
-                bufStartOfData = bufStart + MAX_CHUNK_HEADER_SIZE;
-                clear();
+            try {
+                if (bufStart == 0) {
+                    bufStart = Unsafe.malloc(bufSize + MAX_CHUNK_HEADER_SIZE + EOF_CHUNK.length(), MemoryTag.NATIVE_HTTP_CONN);
+                    bufStartOfData = bufStart + MAX_CHUNK_HEADER_SIZE;
+                    clear();
+                }
+            } catch (Throwable t) {
+                close();
+                throw t;
             }
         }
 

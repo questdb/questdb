@@ -84,9 +84,9 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
     @Override
     public void close() {
         if (isOpen) {
+            isOpen = false;
             map.close();
             super.close();
-            isOpen = false;
         }
     }
 
@@ -121,9 +121,14 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
 
     @Override
     public void reopen() {
-        if (!isOpen) {
-            map.reopen();
-            isOpen = true;
+        try {
+            if (!isOpen) {
+                isOpen = true;
+                map.reopen();
+            }
+        } catch (Throwable t) {
+            close();
+            throw t;
         }
     }
 

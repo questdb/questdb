@@ -139,8 +139,13 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
 
     @Override
     public void reopen() {
-        recordChain.reopen();
-        mem.reopen();
+        try {
+            recordChain.reopen();
+            mem.reopen();
+        } catch (Throwable t) {
+            close();
+            throw t;
+        }
     }
 
     private static byte colorOf(long blockAddress) {

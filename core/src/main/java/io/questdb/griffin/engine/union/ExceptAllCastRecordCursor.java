@@ -124,14 +124,18 @@ class ExceptAllCastRecordCursor extends AbstractSetRecordCursor {
     }
 
     void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
-        if (!isOpen) {
-            isOpen = true;
-            map.reopen();
+        try {
+            if (!isOpen) {
+                isOpen = true;
+                map.reopen();
+            }
+            super.of(cursorA, cursorB, circuitBreaker);
+            castRecord.of(cursorA.getRecord(), cursorB.getRecord());
+            castRecord.setAb(false);
+            isCursorBHashed = false;
+        } catch (Throwable t) {
+            close();
+            throw t;
         }
-
-        super.of(cursorA, cursorB, circuitBreaker);
-        castRecord.of(cursorA.getRecord(), cursorB.getRecord());
-        castRecord.setAb(false);
-        isCursorBHashed = false;
     }
 }

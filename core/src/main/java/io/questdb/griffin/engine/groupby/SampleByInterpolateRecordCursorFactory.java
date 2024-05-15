@@ -311,24 +311,29 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         }
 
         public void of(RecordCursor managedCursor, SqlExecutionContext executionContext) throws SqlException {
-            if (!isOpen) {
-                isOpen = true;
-                recordKeyMap.reopen();
-                dataMap.reopen();
+            try {
+                if (!isOpen) {
+                    isOpen = true;
+                    recordKeyMap.reopen();
+                    dataMap.reopen();
+                }
+                super.of(managedCursor, dataMap.getCursor());
+                circuitBreaker = executionContext.getCircuitBreaker();
+                managedRecord = managedCursor.getRecord();
+                loSample = -1;
+                hiSample = -1;
+                prevSample = -1;
+                rowId = 0;
+                isHasNextPending = false;
+                isMapInitialized = false;
+                isMapFilled = false;
+                isMapBuilt = false;
+                parseParams(this, executionContext);
+                areTimestampsInitialized = false;
+            } catch (Throwable t) {
+                close();
+                throw t;
             }
-            super.of(managedCursor, dataMap.getCursor());
-            circuitBreaker = executionContext.getCircuitBreaker();
-            managedRecord = managedCursor.getRecord();
-            loSample = -1;
-            hiSample = -1;
-            prevSample = -1;
-            rowId = 0;
-            isHasNextPending = false;
-            isMapInitialized = false;
-            isMapFilled = false;
-            isMapBuilt = false;
-            parseParams(this, executionContext);
-            areTimestampsInitialized = false;
         }
 
         @Override

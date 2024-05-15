@@ -176,14 +176,19 @@ public class LatestByLightRecordCursorFactory extends AbstractRecordCursorFactor
         }
 
         public void of(RecordCursor baseCursor, SqlExecutionCircuitBreaker circuitBreaker) {
-            if (!isOpen) {
-                isOpen = true;
-                latestByMap.reopen();
+            try {
+                if (!isOpen) {
+                    isOpen = true;
+                    latestByMap.reopen();
+                }
+                this.baseCursor = baseCursor;
+                baseRecord = baseCursor.getRecord();
+                this.circuitBreaker = circuitBreaker;
+                isMapBuilt = false;
+            } catch (Throwable t) {
+                close();
+                throw t;
             }
-            this.baseCursor = baseCursor;
-            baseRecord = baseCursor.getRecord();
-            this.circuitBreaker = circuitBreaker;
-            isMapBuilt = false;
         }
 
         @Override

@@ -298,27 +298,32 @@ public class Unordered8Map implements Map, Reopenable {
 
     @Override
     public void restoreInitialCapacity() {
-        if (memStart == 0 || keyCapacity != initialKeyCapacity) {
-            keyCapacity = initialKeyCapacity;
-            mask = keyCapacity - 1;
-            final long sizeBytes = entrySize * keyCapacity;
-            if (memStart == 0) {
-                memStart = Unsafe.malloc(sizeBytes, memoryTag);
-            } else {
-                memStart = Unsafe.realloc(memStart, memLimit - memStart, sizeBytes, memoryTag);
+        try {
+            if (memStart == 0 || keyCapacity != initialKeyCapacity) {
+                keyCapacity = initialKeyCapacity;
+                mask = keyCapacity - 1;
+                final long sizeBytes = entrySize * keyCapacity;
+                if (memStart == 0) {
+                    memStart = Unsafe.malloc(sizeBytes, memoryTag);
+                } else {
+                    memStart = Unsafe.realloc(memStart, memLimit - memStart, sizeBytes, memoryTag);
+                }
+                memLimit = memStart + sizeBytes;
             }
-            memLimit = memStart + sizeBytes;
-        }
 
-        if (keyMemStart == 0) {
-            keyMemStart = Unsafe.malloc(KEY_SIZE, memoryTag);
-        }
+            if (keyMemStart == 0) {
+                keyMemStart = Unsafe.malloc(KEY_SIZE, memoryTag);
+            }
 
-        if (zeroMemStart == 0) {
-            zeroMemStart = Unsafe.malloc(entrySize, memoryTag);
-        }
+            if (zeroMemStart == 0) {
+                zeroMemStart = Unsafe.malloc(entrySize, memoryTag);
+            }
 
-        clear();
+            clear();
+        } catch (Throwable t) {
+            close();
+            throw t;
+        }
     }
 
     @Override
