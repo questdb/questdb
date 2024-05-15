@@ -312,6 +312,9 @@ public final class Unsafe {
     //#endif
 
     private static void checkAllocLimit(long size, int memoryTag) {
+        if (size <= 0) {
+            return;
+        }
         if (WRITER_MEM_LIMIT > 0 && memoryTag == NATIVE_O3 && COUNTERS[memoryTag].sum() + size > WRITER_MEM_LIMIT) {
             long usage = COUNTERS[memoryTag].sum();
             if (usage + size > WRITER_MEM_LIMIT) {
