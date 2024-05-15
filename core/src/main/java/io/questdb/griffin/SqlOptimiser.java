@@ -1742,7 +1742,7 @@ public class SqlOptimiser implements Mutable {
             // It might be the case that we previously added the column to
             // the translating model, but not to the inner one.
             alias = map.valueAtQuick(index);
-            if (innerModel != null && innerModel.getColumnNameToAliasMap().excludes(alias)) {
+            if (innerModel != null && innerModel.getAliasToColumnMap().excludes(alias)) {
                 innerModel.addBottomUpColumn(nextColumn(alias), true);
             }
         }

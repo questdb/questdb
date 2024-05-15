@@ -54,6 +54,7 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
                 1,
                 0,
                 0.5,
+                0,
                 0
         );
 
@@ -86,7 +87,8 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
                 0.1,
                 0,
                 0.5,
-                1
+                1,
+                0
         );
 
         fuzzer.setFuzzCounts(
@@ -185,7 +187,9 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
                 rnd.nextDouble(),
                 rnd.nextDouble(),
                 rnd.nextDouble(),
-                0.1 * rnd.nextDouble(), 0.01,
+                0.1 * rnd.nextDouble(),
+                0.01,
+                rnd.nextDouble(),
                 rnd.nextDouble()
         );
 

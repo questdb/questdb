@@ -223,9 +223,6 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     }
 
     public void upsertColumnTop(long partitionTimestamp, int columnIndex, long colTop) {
-
-        assert partitioned;
-
         int recordIndex = getRecordIndex(partitionTimestamp, columnIndex);
         if (recordIndex > -1L) {
             cachedColumnVersionList.setQuick(recordIndex + COLUMN_TOP_OFFSET, colTop);

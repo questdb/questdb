@@ -1195,7 +1195,6 @@ public class SnapshotTest extends AbstractCairoTest {
                                         Assert.assertEquals(txReader0.getPartitionNameTxn(i), txReader1.getPartitionNameTxn(i));
                                         Assert.assertEquals(txReader0.getPartitionSize(i), txReader1.getPartitionSize(i));
                                         Assert.assertEquals(txReader0.getPartitionTimestampByIndex(i), txReader1.getPartitionTimestampByIndex(i));
-                                        Assert.assertEquals(txReader0.getPartitionColumnVersion(i), txReader1.getPartitionColumnVersion(i));
                                     }
                                 }
                             }

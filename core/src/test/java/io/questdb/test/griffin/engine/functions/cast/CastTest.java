@@ -3601,7 +3601,7 @@ public class CastTest extends AbstractCairoTest {
                         "true\n" +
                         "true\n" +
                         "true\n" +
-                        "true\n" +
+                        "false\n" +
                         "true\n" +
                         "true\n" +
                         "true\n" +
@@ -4345,7 +4345,7 @@ public class CastTest extends AbstractCairoTest {
                         "true\n" +
                         "true\n" +
                         "true\n" +
-                        "true\n" +
+                        "false\n" +
                         "true\n" +
                         "true\n" +
                         "true\n" +
@@ -6537,14 +6537,14 @@ public class CastTest extends AbstractCairoTest {
                 "insert into tab select cast(rnd_timestamp(10000000000L, 100000000000L, 2) as boolean) from long_sequence(10)",
                 "a\n" +
                         "true\n" +
+                        "false\n" +
+                        "true\n" +
+                        "true\n" +
+                        "false\n" +
                         "true\n" +
                         "true\n" +
                         "true\n" +
-                        "true\n" +
-                        "true\n" +
-                        "true\n" +
-                        "true\n" +
-                        "true\n" +
+                        "false\n" +
                         "true\n",
                 true,
                 true,

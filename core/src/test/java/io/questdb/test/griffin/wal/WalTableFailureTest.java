@@ -760,7 +760,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
     @Test
     public void testRenameToExistingNameFails() throws Exception {
         failToApplyAlter(
-                "annot rename column, column with the name already exists",
+                "cannot rename, column with the name already exists",
                 tableToken -> {
                     AlterOperationBuilder alterBuilder = new AlterOperationBuilder()
                             .ofRenameColumn(1, tableToken, 0);
@@ -1370,7 +1370,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     alterWriter2.apply(alterOperation, true);
                     Assert.fail();
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot rename column, column does not exist");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "cannot rename, column does not exist");
                 }
             } finally {
                 Misc.free(alterOperation);

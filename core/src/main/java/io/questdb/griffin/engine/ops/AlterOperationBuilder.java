@@ -145,6 +145,14 @@ public class AlterOperationBuilder {
         this.extraStrInfo.add(columnName);
     }
 
+    public AlterOperationBuilder ofColumnChangeType(int tableNamePosition, TableToken tableToken, int tableId) {
+        this.command = CHANGE_COLUMN_TYPE;
+        this.tableNamePosition = tableNamePosition;
+        this.tableToken = tableToken;
+        this.tableId = tableId;
+        return this;
+    }
+
     public AlterOperationBuilder ofDedupDisable(int tableNamePosition, TableToken tableToken) {
         this.command = SET_DEDUP_DISABLE;
         this.tableNamePosition = tableNamePosition;

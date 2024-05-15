@@ -87,7 +87,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
             this.scheduler = scheduler;
             this.metrics = metrics;
             this.milliClock = configuration.getMillisecondClock();
-            parser = new LineTcpParser(configuration.isStringAsTagSupported(), configuration.isSymbolAsFieldSupported());
+            parser = new LineTcpParser();
             this.authenticator = configuration.getFactoryProvider().getLineAuthenticatorFactory().getLineTCPAuthenticator();
             clear();
             this.checkIdleInterval = configuration.getMaintenanceInterval();

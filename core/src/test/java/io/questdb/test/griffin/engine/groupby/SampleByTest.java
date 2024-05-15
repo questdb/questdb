@@ -628,8 +628,22 @@ public class SampleByTest extends AbstractCairoTest {
                     "select symbol, sum(amount) + 2 * vwap(price, amount), " +
                             "cast(to_timezone(dateadd('h', 2, timestamp),'EST') as double) + sum(amount)" +
                             "from (" +
-                            "   select symbol, amount, price,  timestamp_floor('5m', timestamp) as timestamp from trades" +
+                            "   select symbol, amount, price, timestamp_floor('5m', timestamp) as timestamp from trades" +
                             ")\n");
+
+            assertSql("symbol\tsum\ttimestamp_floor\tlast_timestamp\n" +
+                            "a\t0.6390492980774742\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:03:00.000000Z\n" +
+                            "c\t2.3759005540157383\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:09:00.000000Z\n" +
+                            "b\t1.6749086742799453\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:07:00.000000Z\n",
+                    "select symbol, sum(amount), timestamp_floor('1d', timestamp), last(timestamp) last_timestamp " +
+                            "from trades\n");
+
+            assertSql("symbol\tsum\ttimestamp\tlast_timestamp\n" +
+                            "a\t0.6390492980774742\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:03:00.000000Z\n" +
+                            "c\t2.3759005540157383\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:09:00.000000Z\n" +
+                            "b\t1.6749086742799453\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:07:00.000000Z\n",
+                    "select symbol, sum(amount), timestamp_floor('1d', timestamp) timestamp, last(timestamp) last_timestamp " +
+                            "from trades\n");
         });
     }
 
@@ -4882,6 +4896,26 @@ public class SampleByTest extends AbstractCairoTest {
                     "select symbol || 'abcd' as symbol, sum(amount), vwap(price, amount), dateadd('h', 2, to_timezone(timestamp,'EST')) + 1000000L NYTime\n" +
                             "from trades\n" +
                             "sample by 5m"
+            );
+
+            assertSampleByFlavours(
+                    "symbol\tsum\tprice\tlast_timestamp\n" +
+                            "a\t0.6390492980774742\t0.22452340856088226\t2022-02-24T00:03:00.000000Z\n" +
+                            "c\t2.3759005540157383\t0.7675673070796104\t2022-02-24T00:09:00.000000Z\n" +
+                            "b\t1.6749086742799453\t0.3100545983862456\t2022-02-24T00:07:00.000000Z\n",
+                    "select symbol, sum(amount), last(price) price, last(timestamp) last_timestamp\n" +
+                            "from trades\n" +
+                            "sample by 1h"
+            );
+
+            assertSampleByFlavours(
+                    "symbol\tsum\tprice\ttimestamp\tlast_timestamp\n" +
+                            "a\t0.6390492980774742\t0.22452340856088226\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:03:00.000000Z\n" +
+                            "c\t2.3759005540157383\t0.7675673070796104\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:09:00.000000Z\n" +
+                            "b\t1.6749086742799453\t0.3100545983862456\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:07:00.000000Z\n",
+                    "select symbol, sum(amount), last(price) price, timestamp, max(timestamp) last_timestamp\n" +
+                            "from trades\n" +
+                            "sample by 1d"
             );
         });
     }
