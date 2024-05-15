@@ -122,6 +122,16 @@ public class DateFormatUtils {
         append0(sink, hour % 12);
     }
 
+    public static void appendHour241(@NotNull CharSink<?> sink, int hour) {
+        int h24 = (hour + 23) % 24 + 1;
+        Numbers.append(sink, h24);
+    }
+
+    public static void appendHour241Padded(@NotNull CharSink<?> sink, int hour) {
+        int h24 = (hour + 23) % 24 + 1;
+        append0(sink, h24);
+    }
+
     public static void assertChar(char c, @NotNull CharSequence in, int pos, int hi) throws NumericException {
         assertRemaining(pos, hi);
         if (in.charAt(pos) != c) {
@@ -185,9 +195,10 @@ public class DateFormatUtils {
 
         if (hourType == HOUR_24) {
             // wrong 24-hour clock hour
-            if (hour < 0 || hour > 23) {
+            if (hour < 0 || hour > 24) {
                 throw NumericException.INSTANCE;
             }
+            hour %= 24;
         } else {
             // wrong 12-hour clock hour
             if (hour < 0 || hour > 12) {

@@ -170,14 +170,14 @@ public class GenericDateFormat extends AbstractDateFormat {
                     if (hour == -1) {
                         hour = Dates.getHourOfDay(datetime);
                     }
-                    sink.put(hour + 1);
+                    DateFormatUtils.appendHour241(sink, hour);
                     break;
 
                 case DateFormatCompiler.OP_HOUR_24_TWO_DIGITS_ONE_BASED:
                     if (hour == -1) {
                         hour = Dates.getHourOfDay(datetime);
                     }
-                    DateFormatUtils.append0(sink, hour + 1);
+                    DateFormatUtils.appendHour241Padded(sink, hour);
                     break;
 
                 // DAY
@@ -473,37 +473,23 @@ public class GenericDateFormat extends AbstractDateFormat {
                     }
                     break;
 
-                // HOUR (0-23)
+                // HOUR
                 case DateFormatCompiler.OP_HOUR_24_ONE_DIGIT:
+                case DateFormatCompiler.OP_HOUR_24_ONE_DIGIT_ONE_BASED:
                     DateFormatUtils.assertRemaining(pos, hi);
                     hour = Numbers.parseInt(in, pos, ++pos);
                     break;
 
                 case DateFormatCompiler.OP_HOUR_24_TWO_DIGITS:
+                case DateFormatCompiler.OP_HOUR_24_TWO_DIGITS_ONE_BASED:
                     DateFormatUtils.assertRemaining(pos + 1, hi);
                     hour = Numbers.parseInt(in, pos, pos += 2);
                     break;
 
                 case DateFormatCompiler.OP_HOUR_24_GREEDY:
-                    l = Numbers.parseIntSafely(in, pos, hi);
-                    hour = Numbers.decodeLowInt(l);
-                    pos += Numbers.decodeHighInt(l);
-                    break;
-
-                // HOUR (1 - 24)
-                case DateFormatCompiler.OP_HOUR_24_ONE_DIGIT_ONE_BASED:
-                    DateFormatUtils.assertRemaining(pos, hi);
-                    hour = Numbers.parseInt(in, pos, ++pos) - 1;
-                    break;
-
-                case DateFormatCompiler.OP_HOUR_24_TWO_DIGITS_ONE_BASED:
-                    DateFormatUtils.assertRemaining(pos + 1, hi);
-                    hour = Numbers.parseInt(in, pos, pos += 2) - 1;
-                    break;
-
                 case DateFormatCompiler.OP_HOUR_24_GREEDY_ONE_BASED:
                     l = Numbers.parseIntSafely(in, pos, hi);
-                    hour = Numbers.decodeLowInt(l) - 1;
+                    hour = Numbers.decodeLowInt(l);
                     pos += Numbers.decodeHighInt(l);
                     break;
 
