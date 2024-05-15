@@ -1665,25 +1665,6 @@ public class DateFormatCompiler {
         asm.istore(target);
     }
 
-    private void parseDigitsSub1(int assertRemainingIndex, int parseIntIndex, int digitCount) {
-        asm.iload(LOCAL_POS);
-        if (digitCount > 1) {
-            asm.iconst(digitCount - 1);
-            asm.iadd();
-        }
-        asm.iload(P_HI);
-        asm.invokeStatic(assertRemainingIndex);
-
-        asm.aload(P_INPUT_STR);
-        asm.iload(LOCAL_POS);
-        asm.iinc(LOCAL_POS, digitCount);
-        asm.iload(LOCAL_POS);
-        asm.invokeStatic(parseIntIndex);
-        asm.iconst(1);
-        asm.isub();
-        asm.istore(DateFormatCompiler.LOCAL_HOUR);
-    }
-
     private void parseTwoDigits(int assertRemainingIndex, int parseIntIndex, int target) {
         parseDigits(assertRemainingIndex, parseIntIndex, 2, target);
     }
