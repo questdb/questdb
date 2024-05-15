@@ -26,11 +26,11 @@ package io.questdb.test.griffin.engine.functions.str;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.date.ToStrDateFunctionFactory;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
 public class ToCharDateVCFunctionFactoryTest extends AbstractFunctionFactoryTest {
@@ -47,7 +47,7 @@ public class ToCharDateVCFunctionFactoryTest extends AbstractFunctionFactoryTest
     @Test
     public void testSimple() throws SqlException, NumericException {
         call(DateFormatUtils.parseUTCDate("2018-03-10T11:03:33.123Z"),
-                "dd/MM/yyyy hh:mm:ss").andAssert("10/03/2018 12:03:33");
+                "dd/MM/yyyy hh:mm:ss").andAssert("10/03/2018 11:03:33");
     }
 
     @Override
