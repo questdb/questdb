@@ -153,31 +153,31 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
     @Override
     public final void clear() {
-        this.fieldLo = 0;
-        this.eol = false;
-        this.fieldIndex = 0;
-        this.inQuote = false;
-        this.delayedOutQuote = false;
-        this.lineNumber = 0;
-        this.lineCount = 0;
-        this.fieldRollBufCur = fieldRollBufPtr;
-        this.useFieldRollBuf = false;
-        this.rollBufferUnusable = false;
-        this.header = false;
-        this.errorCount = 0;
-        this.offset = -1;
-        this.timestampField.clear();
-        this.lastQuotePos = -1;
-        this.timestampValue = Long.MIN_VALUE;
+        fieldLo = 0;
+        eol = false;
+        fieldIndex = 0;
+        inQuote = false;
+        delayedOutQuote = false;
+        lineNumber = 0;
+        lineCount = 0;
+        fieldRollBufCur = fieldRollBufPtr;
+        useFieldRollBuf = false;
+        rollBufferUnusable = false;
+        header = false;
+        errorCount = 0;
+        offset = -1;
+        Misc.clear(timestampField);
+        lastQuotePos = -1;
+        timestampValue = Long.MIN_VALUE;
 
-        this.inputFileName = null;
-        this.importRoot = null;
-        this.timestampAdapter = null;
-        this.timestampIndex = -1;
-        this.partitionFloorMethod = null;
-        this.partitionDirFormatMethod = null;
-        this.columnDelimiter = -1;
-        this.columnDelimiterMask = 0;
+        inputFileName = null;
+        importRoot = null;
+        timestampAdapter = null;
+        timestampIndex = -1;
+        partitionFloorMethod = null;
+        partitionDirFormatMethod = null;
+        columnDelimiter = -1;
+        columnDelimiterMask = 0;
 
         closeOutputFiles();
         closeSortBuffer();
@@ -186,10 +186,12 @@ public class CsvFileIndexer implements Closeable, Mutable {
             fd = -1;
         }
 
-        this.failOnTsError = false;
-        this.path.trimTo(0);
-        this.circuitBreaker = null;
-        this.cancelled = false;
+        failOnTsError = false;
+        if (path != null) {
+            path.trimTo(0);
+        }
+        circuitBreaker = null;
+        cancelled = false;
     }
 
     @Override
@@ -198,11 +200,9 @@ public class CsvFileIndexer implements Closeable, Mutable {
             Unsafe.free(fieldRollBufPtr, fieldRollBufLen, MemoryTag.NATIVE_IMPORT);
             fieldRollBufPtr = 0;
         }
-
-        this.path.close();
-        this.typeManager.clear();
-        this.utf8Sink.close();
-
+        Misc.free(path);
+        Misc.clear(typeManager);
+        Misc.free(utf8Sink);
         clear();
     }
 
@@ -399,7 +399,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
     private void closeOutputFiles() {
         Misc.freeObjListAndClear(outputFileDenseList);
-        this.outputFileLookupMap.clear();
+        Misc.clear(outputFileLookupMap);
     }
 
     private void closeSortBuffer() {
