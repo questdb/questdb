@@ -5449,11 +5449,15 @@ public class SqlOptimiser implements Mutable {
                 QueryColumn col = columns.getQuick(i);
                 ExpressionNode ast = col.getAst();
 
-                // copy to new
-                newModel.addBottomUpColumn(queryColumnPool.next().of(
-                        col.getAlias(),
-                        ast
-                ));
+                if (ast.type == FUNCTION) {
+                    newModel.addBottomUpColumn(nextColumn(col.getAlias()));
+                } else {
+                    // copy to new
+                    newModel.addBottomUpColumn(queryColumnPool.next().of(
+                            col.getAlias(),
+                            ast
+                    ));
+                }
 
                 if (ast.type == OPERATION) {
                     CharSequence candidate = null;
