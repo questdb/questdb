@@ -34,7 +34,7 @@ import org.jetbrains.annotations.Nullable;
 public class FilesFacadeImpl implements FilesFacade {
     public static final FilesFacade INSTANCE = new FilesFacadeImpl();
     public static final int _16M = 16 * 1024 * 1024;
-    private static final long ZFS_MAGIC_NUMBER = 0x2FC12FC1;
+    private static final long ZFS_MAGIC_NUMBER = 0x2fc12fc1;
     private final FsOperation copyFsOperation = this::copy;
     private final FsOperation hardLinkFsOperation = this::hardLink;
     private long mapPageSize = 0;
@@ -59,6 +59,7 @@ public class FilesFacadeImpl implements FilesFacade {
             // path will contain file system name
             long fsStatus = Files.getFileSystemStatus(path);
             path.seekZ(); // useful for debugging
+            // allow mixed I/O for all supported FSes except ZFS
             return fsStatus < 0 && Math.abs(fsStatus) != ZFS_MAGIC_NUMBER;
         }
     }
