@@ -5492,10 +5492,10 @@ public class SqlOptimiser implements Mutable {
                             if (nestedCandidates.contains(candidate) && nestedCandidates.get(candidate) >= 2) {
                                 // remove from current, keep in new
 
-                                final QueryColumn currentCol = model.getAliasToColumnMap().get(nestedColumn.getAlias());
-                                assert Chars.equals(currentCol.getAlias(), nestedColumn.getAlias());
+                                final QueryColumn currentColumn = model.getAliasToColumnMap().get(nestedColumn.getAlias());
+                                assert Chars.equals(currentColumn.getAlias(), nestedColumn.getAlias());
 
-                                currentCol.of(currentCol.getAlias(), nestedColumn.getAst());
+                                currentColumn.of(currentColumn.getAlias(), nestedColumn.getAst());
 
                                 final int nestedColumnIndex = nestedModel.getColumnAliasIndex(nestedColumn.getAlias());
                                 nestedModel.removeColumn(nestedColumnIndex);
