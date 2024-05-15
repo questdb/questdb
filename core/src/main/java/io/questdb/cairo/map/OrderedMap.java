@@ -248,8 +248,8 @@ public class OrderedMap implements Map, Reopenable {
     public void close() {
         Misc.free(offsets);
         if (heapStart != 0) {
-            Unsafe.free(heapStart, heapSize, heapMemoryTag);
-            heapLimit = heapStart = kPos = 0;
+            heapStart = Unsafe.free(heapStart, heapSize, heapMemoryTag);
+            heapLimit = kPos = 0;
             free = 0;
             size = 0;
             heapSize = 0;
