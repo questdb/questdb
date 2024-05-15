@@ -5400,23 +5400,23 @@ public class SqlOptimiser implements Mutable {
      * @param model
      * @return
      */
-    private QueryModel rewriteTrivialExpressions(QueryModel model) throws SqlException {
-        QueryModel currentModel = model;
+    private void rewriteTrivialExpressions(QueryModel model) throws SqlException {
+        QueryModel nestedModel = model.getNestedModel();
 
-        if (currentModel.getNestedModel() != null) {
-            currentModel.setNestedModel(rewriteTrivialExpressions(currentModel.getNestedModel()));
+        if (nestedModel == null) {
+            return;
         }
 
-
-        // check if this model is now vestigial
-
+        if (!(model.getSelectModelType() == QueryModel.SELECT_MODEL_VIRTUAL
+                && nestedModel.getSelectModelType() == QueryModel.SELECT_MODEL_GROUP_BY)) {
+            rewriteTrivialExpressions(nestedModel);
+            return;
+        }
         CharSequenceIntHashMap candidates = new CharSequenceIntHashMap();
         ObjList<QueryColumn> toLift = new ObjList<>();
-        QueryModel newModel = queryModelPool.next();
-        QueryColumn newColumn = null;
+        ;
 
-
-        final ObjList<QueryColumn> columns = currentModel.getColumns();
+        final ObjList<QueryColumn> columns = nestedModel.getColumns();
         boolean anyCandidates = false;
 
         // first we want to see if this is an appropriate model to make this transformation
@@ -5452,44 +5452,48 @@ public class SqlOptimiser implements Mutable {
                 QueryColumn col = columns.getQuick(i);
                 ExpressionNode ast = col.getAst();
 
-                if (ast.type == FUNCTION) {
-                    newModel.addBottomUpColumn(nextColumn(col.getAlias()));
-                } else {
-                    // copy to new
-                    newModel.addBottomUpColumn(queryColumnPool.next().of(
-                            col.getAlias(),
-                            ast
-                    ));
+                // if there is a matching column in this model, we can lift the candidate up
+                if (model.getColumnAliasIndex(col.getAlias()) > -1) {
+                    if (ast.type == FUNCTION) {
+                        // don't pull a function up
+                        continue;
+                    }
+
+                    if (ast.type == OPERATION) {
+                        CharSequence candidate = null;
+                        if (ast.lhs.type == LITERAL) {
+                            candidate = ast.lhs.token;
+                        }
+                        if (ast.rhs.type == LITERAL) {
+                            candidate = ast.rhs.token;
+                        }
+
+                        assert candidate != null;
+
+                        if (candidates.contains(candidate) && candidates.get(candidate) >= 2) {
+                            // remove from current, keep in new
+
+                            QueryColumn currentCol = model.getAliasToColumnMap().get(col.getAlias());
+                            assert currentCol.getAlias() == col.getAlias();
+                            currentCol.of(currentCol.getAlias(), col.getAst());
+
+                            final int originalColumnIndex = nestedModel.getColumnAliasIndex(col.getAlias());
+                            nestedModel.removeColumn(originalColumnIndex);
+                            n--;
+                            i--;
+                        }
+                    }
                 }
 
-                if (ast.type == OPERATION) {
-                    CharSequence candidate = null;
-                    if (ast.lhs.type == LITERAL) {
-                        candidate = ast.lhs.token;
-                    }
-                    if (ast.rhs.type == LITERAL) {
-                        candidate = ast.rhs.token;
-                    }
+            }
+            ExpressionNode lo = model.getLimitLo();
 
-                    assert candidate != null;
-
-                    if (candidates.contains(candidate) && candidates.get(candidate) >= 2) {
-                        // remove from current, keep in new
-                        final int originalColumnIndex = currentModel.getColumnAliasIndex(col.getAlias());
-                        currentModel.removeColumn(originalColumnIndex);
-                        n--;
-                        i--;
-                    }
-
-                }
+            if (lo != null && nestedModel.getLimitLo() == null) {
+                nestedModel.setLimit(lo, model.getLimitHi());
+                model.setLimit(null, null);
             }
 
-            newModel.setNestedModel(currentModel);
-            newModel.setSelectModelType(QueryModel.SELECT_MODEL_VIRTUAL);
-            return newModel;
         }
-
-        return currentModel;
     }
 
     private boolean rewriteTrivialExpressionsValidOp(char token) {
@@ -5812,7 +5816,7 @@ public class SqlOptimiser implements Mutable {
             resolveJoinColumns(rewrittenModel);
             optimiseBooleanNot(rewrittenModel);
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
-            rewrittenModel = rewriteTrivialExpressions(rewrittenModel);
+            rewriteTrivialExpressions(rewrittenModel);
             optimiseJoins(rewrittenModel);
             rewriteCountDistinct(rewrittenModel);
             rewriteNegativeLimit(rewrittenModel, sqlExecutionContext);
