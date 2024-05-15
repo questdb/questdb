@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-use std::mem::size_of;
+use std::mem::{size_of, transmute};
 use parquet2::encoding::{delta_bitpacked, Encoding};
 use parquet2::page::DataPage;
 use parquet2::schema::types::PrimitiveType;
@@ -119,6 +119,8 @@ fn encode_delta(offsets: &[i64], values: &[u8], null_count: usize, buffer: &mut 
         let offset = offsets[row];
         let len = types::decode::<i64>( &values[offset as usize..]);
         let data = &values[offset as usize + size_of::<i32>() .. (offset + len) as usize];
-        buffer.extend_from_slice(data); //TODO: utf16 to utf8 conversion
+        let data: &[u16] = unsafe { transmute(data) };
+        let utf8 = String::from_utf16(data).expect("utf16 string");
+        buffer.extend_from_slice(utf8.as_bytes());
     }
 }

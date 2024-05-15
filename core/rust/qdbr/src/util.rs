@@ -112,6 +112,12 @@ pub fn encode_bool_iter<I: Iterator<Item = bool>>(
         Version::V2 => encode_iter_v2(writer, iter),
     }
 }
+
+#[inline]
+pub fn get_bit_width(max: u64) -> u32 {
+    64 - max.leading_zeros()
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn build_plain_page(
     buffer: Vec<u8>,
