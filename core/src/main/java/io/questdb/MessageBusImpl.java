@@ -210,16 +210,21 @@ public class MessageBusImpl implements MessageBus {
         textImportSubSeq.clear();
         vectorAggregateSubSeq.clear();
         walTxnNotificationSubSequence.clear();
+        walTxnNotificationSubSequence.clear();
         for (int i = 0, n = pageFrameReduceSubSeq.length; i < n; i++) {
             pageFrameReduceSubSeq[i].clear();
         }
-        walTxnNotificationSubSequence.clear();
+        for (int i = 0; i < pageFrameReduceShardCount; i++) {
+            for (int j = 0, n = pageFrameReduceQueue[i].getCycle(); j < n; j++) {
+                pageFrameReduceQueue[i].get(j).resetCapacities();
+            }
+        }
     }
 
     @Override
     public void close() {
         // We need to close only queues with native backing memory.
-        Misc.free(getTableWriterEventQueue());
+        Misc.free(tableWriterEventQueue);
         Misc.free(pageFrameReduceQueue);
     }
 
