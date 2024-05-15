@@ -52,7 +52,7 @@ public class CastFloatToTimestampFunctionFactory implements FunctionFactory {
         @Override
         public long getTimestamp(Record rec) {
             final float value = arg.getFloat(rec);
-            return Numbers.isNull(value) ? Numbers.LONG_NULL : (long) value;
+            return Numbers.isNull(value) || value > Long.MAX_VALUE || value < Long.MIN_VALUE ? Numbers.LONG_NULL : (long) value;
         }
     }
 }
