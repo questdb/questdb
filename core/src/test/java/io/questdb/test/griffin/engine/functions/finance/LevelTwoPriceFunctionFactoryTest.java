@@ -26,10 +26,43 @@ package io.questdb.test.griffin.engine.functions.finance;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.engine.functions.finance.LevelTwoPriceFunctionFactory;
+import io.questdb.std.ObjList;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
+import io.questdb.test.tools.BindVariableTestTuple;
 import org.junit.Test;
 
 public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTest {
+
+    @Test
+    public void testBindVarTypeChange() throws Exception {
+        assertQuery("l2price\n" +
+                "9.825714285714286\n", "select l2price(35, 8, 5.2, 23, 9.3, 42, 22.1)");
+
+        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
+        tuples.add(new BindVariableTestTuple(
+                "all doubles",
+                "l2price\n" +
+                        "9.825714285714286\n",
+                bindVariableService -> {
+                    bindVariableService.setDouble(0, 8);
+                    bindVariableService.setDouble(1, 5.2);
+                    bindVariableService.setDouble(2, 23);
+                }
+        ));
+
+        tuples.add(new BindVariableTestTuple(
+                "type change",
+                "l2price\n" +
+                        "9.825714285714286\n",
+                bindVariableService -> {
+                    bindVariableService.setInt(0, 8);
+                    bindVariableService.setDouble(1, 5.2);
+                    bindVariableService.setByte(2, (byte) 23);
+                }
+        ));
+
+        assertSql("select l2price(35, $1, $2, $3, 9.3, 42, 22.1)", tuples);
+    }
 
     @Test
     public void testInconvertibleTypes() throws Exception {
@@ -58,8 +91,6 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     /**
      * l2price should return null for the price if it encounters an order with null values.
-     *
-     * @throws Exception
      */
     @Test
     public void testLevelTwoPriceIncludingNullValue() throws Exception {
@@ -126,7 +157,8 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
                     "from long_sequence(10))");
             drainWalQueue();
 
-            assertPlan("select avg(l2price(14, ask_size, ask_value)) " +
+            assertPlan(
+                    "select avg(l2price(14, ask_size, ask_value)) " +
                             "- avg(l2price(14, bid_size, bid_value))" +
                             " as spread from x",
                     "VirtualRecord\n" +
@@ -136,18 +168,22 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
                             "      filter: null\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: x\n");
+                            "            Frame forward scan on: x\n"
+            );
 
-            assertPlan("select l2price(14, ask_size, ask_value) " +
+            assertPlan(
+                    "select l2price(14, ask_size, ask_value) " +
                             "- l2price(14, bid_size, bid_value)" +
                             " as spread from x",
                     "VirtualRecord\n" +
                             "  functions: [l2price([14,ask_size,ask_value])-l2price([14,bid_size,bid_value])]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: x\n");
+                            "        Frame forward scan on: x\n"
+            );
 
-            assertQuery("spread\n" +
+            assertQuery(
+                    "spread\n" +
                             "-0.0745689117121191\n" +
                             "-0.33476968200189616\n" +
                             "-0.2517202513378337\n" +
@@ -160,7 +196,8 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
                             "0.214176258308453\n",
                     "select l2price(14, ask_size, ask_value) " +
                             "- l2price(14, bid_size, bid_value)" +
-                            " as spread from x");
+                            " as spread from x"
+            );
         });
     }
 
@@ -168,6 +205,4 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
     protected FunctionFactory getFunctionFactory() {
         return new LevelTwoPriceFunctionFactory();
     }
-
-
 }

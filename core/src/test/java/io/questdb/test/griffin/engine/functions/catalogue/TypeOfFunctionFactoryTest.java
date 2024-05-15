@@ -25,14 +25,25 @@
 package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.griffin.SqlException;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class TypeOfFunctionFactoryTest extends AbstractCairoTest {
+
+    @Test
+    public void testBindVarNotSupported() throws Exception {
+        assertException(
+                "select typeOf($1) from test",
+                "create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))",
+                7,
+                "bind variables are not supported"
+        );
+    }
+
     @Test
     public void testOfNull() throws SqlException {
         assertSql("typeOf\n" +
