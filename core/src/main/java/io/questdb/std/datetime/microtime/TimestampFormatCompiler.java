@@ -241,6 +241,8 @@ public class TimestampFormatCompiler {
             int appendHour12PaddedIndex,
             int appendHour121Index,
             int appendHour121PaddedIndex,
+            int appendHour241Index,
+            int appendHour241PaddedIndex,
             int getYearIndex,
             int getIsoYearIndex,
             int isLeapYearIndex,
@@ -419,18 +421,13 @@ public class TimestampFormatCompiler {
                 case TimestampFormatCompiler.OP_HOUR_24_GREEDY_ONE_BASED:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_HOUR]);
-                    asm.iconst(1);
-                    asm.iadd();
-                    asm.invokeInterface(sinkPutIntIndex, 1);
-                    asm.pop();
+                    asm.invokeStatic(appendHour241Index);
                     break;
 
                 case TimestampFormatCompiler.OP_HOUR_24_TWO_DIGITS_ONE_BASED:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_HOUR]);
-                    asm.iconst(1);
-                    asm.iadd();
-                    asm.invokeStatic(append0Index);
+                    asm.invokeStatic(appendHour241PaddedIndex);
                     break;
                 // DAY
                 case TimestampFormatCompiler.OP_DAY_ONE_DIGIT:
@@ -930,46 +927,22 @@ public class TimestampFormatCompiler {
 
                 // HOUR (0-23)
                 case OP_HOUR_24_ONE_DIGIT:
+                case OP_HOUR_24_ONE_DIGIT_ONE_BASED:
                     stackState &= ~(1 << LOCAL_HOUR);
                     parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_HOUR);
                     break;
-
                 case OP_HOUR_24_TWO_DIGITS:
+                case OP_HOUR_24_TWO_DIGITS_ONE_BASED:
                     stackState &= ~(1 << LOCAL_HOUR);
                     parseTwoDigits(assertRemainingIndex, parseIntIndex, LOCAL_HOUR);
                     break;
-
                 case OP_HOUR_24_GREEDY:
+                case OP_HOUR_24_GREEDY_ONE_BASED:
                     stackState &= ~(1 << LOCAL_HOUR);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
                     invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, LOCAL_HOUR);
                     break;
-                // HOUR (1 - 24)
-                case OP_HOUR_24_ONE_DIGIT_ONE_BASED:
-                    stackState &= ~(1 << LOCAL_HOUR);
-                    parseDigitsSub1(assertRemainingIndex, parseIntIndex, 1);
-                    break;
 
-                case OP_HOUR_24_TWO_DIGITS_ONE_BASED:
-                    stackState &= ~(1 << LOCAL_HOUR);
-                    parseDigitsSub1(assertRemainingIndex, parseIntIndex, 2);
-                    break;
-
-                case OP_HOUR_24_GREEDY_ONE_BASED:
-                    stackState &= ~(1 << LOCAL_HOUR);
-                    stackState &= ~(1 << LOCAL_TEMP_LONG);
-
-                    asm.aload(P_INPUT_STR);
-                    asm.iload(LOCAL_POS);
-                    asm.iload(P_HI);
-                    asm.invokeStatic(parseIntSafelyIndex);
-                    asm.lstore(LOCAL_TEMP_LONG);
-                    decodeInt(decodeIntIndex);
-                    asm.iconst(1);
-                    asm.isub();
-                    asm.istore(LOCAL_HOUR);
-                    addTempToPos(decodeLenIndex);
-                    break;
                 // DAY
                 case OP_DAY_ONE_DIGIT:
                     stackState &= ~(1 << LOCAL_DAY);
@@ -1416,6 +1389,8 @@ public class TimestampFormatCompiler {
         int appendHour12PaddedIndex = asm.poolMethod(TimestampFormatUtils.class, "appendHour12Padded", "(Lio/questdb/std/str/CharSink;I)V");
         int appendHour121Index = asm.poolMethod(TimestampFormatUtils.class, "appendHour121", "(Lio/questdb/std/str/CharSink;I)V");
         int appendHour121PaddedIndex = asm.poolMethod(TimestampFormatUtils.class, "appendHour121Padded", "(Lio/questdb/std/str/CharSink;I)V");
+        int appendHour241Index = asm.poolMethod(TimestampFormatUtils.class, "appendHour241", "(Lio/questdb/std/str/CharSink;I)V");
+        int appendHour241PaddedIndex = asm.poolMethod(TimestampFormatUtils.class, "appendHour241Padded", "(Lio/questdb/std/str/CharSink;I)V");
         int append00000Index = asm.poolMethod(TimestampFormatUtils.class, "append00000", "(Lio/questdb/std/str/CharSink;I)V");
         int append00Index = asm.poolMethod(TimestampFormatUtils.class, "append00", "(Lio/questdb/std/str/CharSink;I)V");
         int append0Index = asm.poolMethod(TimestampFormatUtils.class, "append0", "(Lio/questdb/std/str/CharSink;I)V");
@@ -1522,6 +1497,8 @@ public class TimestampFormatCompiler {
                 appendHour12PaddedIndex,
                 appendHour121Index,
                 appendHour121PaddedIndex,
+                appendHour241Index,
+                appendHour241PaddedIndex,
                 getYearIndex,
                 getIsoYearIndex,
                 isLeapYearIndex,

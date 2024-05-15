@@ -161,6 +161,16 @@ public class TimestampFormatUtils {
         append0(sink, hour % 12);
     }
 
+    public static void appendHour241(@NotNull CharSink<?> sink, int hour) {
+        int h24 = (hour + 23) % 24 + 1;
+        Numbers.append(sink, h24);
+    }
+
+    public static void appendHour241Padded(@NotNull CharSink<?> sink, int hour) {
+        int h24 = (hour + 23) % 24 + 1;
+        append0(sink, h24);
+    }
+
     public static void appendYear(@NotNull CharSink<?> sink, int val) {
         Numbers.append(sink, val != 0 ? val : 1);
     }
@@ -259,9 +269,10 @@ public class TimestampFormatUtils {
 
         if (hourType == HOUR_24) {
             // wrong 24-hour clock hour
-            if (hour < 0 || hour > 23) {
+            if (hour < 0 || hour > 24) {
                 throw NumericException.INSTANCE;
             }
+            hour %= 24;
         } else {
             // wrong 12-hour clock hour
             if (hour < 0 || hour > 12) {
