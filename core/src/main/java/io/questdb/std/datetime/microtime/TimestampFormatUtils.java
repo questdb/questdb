@@ -144,39 +144,21 @@ public class TimestampFormatUtils {
     }
 
     public static void appendHour12(@NotNull CharSink<?> sink, int hour) {
-        if (hour < 12) {
-            Numbers.append(sink, hour);
-        } else {
-            Numbers.append(sink, hour - 12);
-        }
+        Numbers.append(sink, hour % 12);
     }
 
     public static void appendHour121(@NotNull CharSink<?> sink, int hour) {
-        if (hour == 0) {
-            sink.put("12");
-        } else if (hour < 13) {
-            Numbers.append(sink, hour);
-        } else {
-            Numbers.append(sink, hour - 12);
-        }
+        int h12 = (hour + 11) % 12 + 1;
+        Numbers.append(sink, h12);
     }
 
     public static void appendHour121Padded(@NotNull CharSink<?> sink, int hour) {
-        if (hour == 0) {
-            sink.put("12");
-        } else if (hour < 13) {
-            append0(sink, hour);
-        } else {
-            append0(sink, hour - 12);
-        }
+        int h12 = (hour + 11) % 12 + 1;
+        append0(sink, h12);
     }
 
     public static void appendHour12Padded(@NotNull CharSink<?> sink, int hour) {
-        if (hour < 12) {
-            append0(sink, hour);
-        } else {
-            append0(sink, hour - 12);
-        }
+        append0(sink, hour % 12);
     }
 
     public static void appendYear(@NotNull CharSink<?> sink, int val) {
