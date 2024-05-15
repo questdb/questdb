@@ -31,24 +31,24 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.BindVariableTestTuple;
 import org.junit.Test;
 
-public class InDoubleTest extends AbstractCairoTest {
+public class InLongTest extends AbstractCairoTest {
 
     @Test
     public void testBindVarTypeChange() throws SqlException {
-        ddl("create table test as (select x, rnd_double() a from long_sequence(100))");
+        ddl("create table test as (select x, rnd_long(2991, 2989892, 1) a from long_sequence(100))");
 
         // when more than one argument supplied, the function will match exact values from the list
         final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
         tuples.add(new BindVariableTestTuple(
                 "simple",
                 "x\ta\n" +
-                        "58\t0.6821660861001273\n" +
-                        "89\t0.3045253310626277\n" +
-                        "90\t0.3901731258748704\n",
+                        "30\t1605084\n" +
+                        "38\t223221\n" +
+                        "69\t2433166\n",
                 bindVariableService -> {
-                    bindVariableService.setStr(0, "0.6821660861001273");
-                    bindVariableService.setDouble(1, 0.3901731258748704);
-                    bindVariableService.setStr(2, "0.3045253310626277");
+                    bindVariableService.setStr(0, "1605084");
+                    bindVariableService.setInt(1, 223221);
+                    bindVariableService.setLong(2, 2433166);
                 }
         ));
 
@@ -56,33 +56,35 @@ public class InDoubleTest extends AbstractCairoTest {
                 "undefined bind variable",
                 "undefined bind variable: 1",
                 bindVariableService -> {
-                    bindVariableService.setDouble(0, 0.7763904674818695);
-                    bindVariableService.setDouble(2, 0.26369335635512836);
+                    bindVariableService.setLong(0, 402266);
+                    bindVariableService.setLong(2, 55333);
                 },
                 20
         ));
 
         tuples.add(new BindVariableTestTuple(
                 "bad type",
-                "inconvertible types: GEOHASH(4c) -> DOUBLE [from=GEOHASH(4c), to=DOUBLE]",
+                "inconvertible types: GEOHASH(4c) -> LONG [from=GEOHASH(4c), to=LONG]",
                 bindVariableService -> {
-                    bindVariableService.setStr(0, "0.42281342727402726");
+                    bindVariableService.setStr(0, "402266");
                     bindVariableService.setGeoHash(1, 30, ColumnType.getGeoHashTypeWithBits(20));
-                    bindVariableService.setDouble(2, 0.8940917126581895);
+                    bindVariableService.setLong(2, 55333);
                 },
                 20
         ));
 
         tuples.add(new BindVariableTestTuple(
-                "bad double",
-                "invalid DOUBLE value [hello]",
+                "bad long",
+                "invalid LONG value [not a long]",
                 bindVariableService -> {
-                    bindVariableService.setDouble(0, 0.8940917126581895);
-                    bindVariableService.setStr(2, "hello");
-                    bindVariableService.setStr(1, "0.42281342727402726");
+                    bindVariableService.setStr(0, "402266");
+                    bindVariableService.setLong(1, 55333);
+                    bindVariableService.setStr(2, "not a long");
                 },
                 23
         ));
+
+//        assertSql("", "test");
 
         assertSql("test where a in ($1,$2,$3)", tuples);
     }
@@ -163,16 +165,8 @@ public class InDoubleTest extends AbstractCairoTest {
                     bindVariableService.setDouble(1, 0.6590341607692226);
                 }
         ));
-        assertSql("test where a in ($1,null,$2)", tuples);
-    }
 
-    @Test
-    public void testUnsupportedConstType() throws Exception {
-        ddl("create table test as (select x, rnd_double(1) a from long_sequence(100))");
-        assertException(
-                "test where a in (0.234, cast ('1CB' as geohash(1b)))",
-                24,
-                "cannot compare DOUBLE with type GEOHASH(1b)"
-        );
+//        assertSql("", "test");
+        assertSql("test where a in ($1,null,$2)", tuples);
     }
 }

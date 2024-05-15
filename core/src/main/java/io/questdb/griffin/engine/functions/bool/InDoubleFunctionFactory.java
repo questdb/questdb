@@ -43,7 +43,7 @@ public class InDoubleFunctionFactory implements FunctionFactory {
         try {
             return Numbers.parseDouble(seq);
         } catch (NumericException e) {
-            throw SqlException.position(position).put("invalid DOUBLE value");
+            throw SqlException.position(position).put("invalid DOUBLE value [").put(seq).put(']');
         }
     }
 
