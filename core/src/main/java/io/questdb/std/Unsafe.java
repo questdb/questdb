@@ -37,7 +37,8 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 
-import static io.questdb.std.MemoryTag.*;
+import static io.questdb.std.MemoryTag.NATIVE_DEFAULT;
+import static io.questdb.std.MemoryTag.NATIVE_O3;
 
 public final class Unsafe {
     public static final long BYTE_OFFSET;
@@ -346,10 +347,6 @@ public final class Unsafe {
                         .put(RSS_ALLOC_COUNT_LIMIT);
                 e.printStackTrace();
                 throw e;
-
-            }
-            if (memoryTag == NATIVE_FUNC_RSS){
-                new Exception(String.format("NATIVE_FUNC_RSS %,d", size)).printStackTrace(System.out);
             }
         }
     }
