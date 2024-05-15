@@ -315,7 +315,6 @@ public final class Unsafe {
         }
         if (RSS_MEM_LIMIT > 0 && memoryTag >= NATIVE_DEFAULT) {
             long usage = RSS_MEM_USED.get();
-            System.out.printf("checkAllocLimit %,d + %,d = %,d, limit %,d\n", usage, size, usage + size, RSS_MEM_LIMIT);
             if (usage + size > RSS_MEM_LIMIT) {
                 throw CairoException.nonCritical().setOutOfMemory(true)
                         .put("global RSS memory limit exceeded [usage=")
