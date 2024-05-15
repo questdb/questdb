@@ -5407,6 +5407,9 @@ public class SqlOptimiser implements Mutable {
             currentModel.setNestedModel(rewriteTrivialExpressions(currentModel.getNestedModel()));
         }
 
+
+        // check if this model is now vestigial
+
         CharSequenceIntHashMap candidates = new CharSequenceIntHashMap();
         ObjList<QueryColumn> toLift = new ObjList<>();
         QueryModel newModel = queryModelPool.next();
@@ -5482,7 +5485,7 @@ public class SqlOptimiser implements Mutable {
             }
 
             newModel.setNestedModel(currentModel);
-            newModel.setModelType(QueryModel.SELECT_MODEL_VIRTUAL);
+            newModel.setSelectModelType(QueryModel.SELECT_MODEL_VIRTUAL);
             return newModel;
         }
 
