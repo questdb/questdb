@@ -648,6 +648,10 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             drainWalQueue();
             final String[] types = {"BYTE", "SHORT", "INT", "LONG", "FLOAT", "DOUBLE", "TIMESTAMP", "BOOLEAN", "DATE"};
+            String longMinValue = Long.toString(Long.MIN_VALUE + 1);
+            final String[] minVals = {"-128", Short.toString(Short.MIN_VALUE), Integer.toString(Integer.MIN_VALUE + 1), longMinValue, -Float.MAX_VALUE + "f", Double.toString(-Double.MAX_VALUE), longMinValue, "false", longMinValue};
+            String longMaxValue = Long.toString(Long.MAX_VALUE);
+            final String[] maxVals = {"127", Short.toString(Short.MAX_VALUE), Integer.toString(Integer.MAX_VALUE), longMaxValue, Float.MAX_VALUE + "f", Double.toString(Double.MAX_VALUE), longMaxValue, "true", longMaxValue};
 
             for (int i = 0, n = types.length; i < n; i++) {
                 for (int j = 0, m = types.length; j < m; j++) {
@@ -663,6 +667,9 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
                     ddl("create table y ( converted " + srcType + ", casted " + dstType + ", original " + srcType + ")", sqlExecutionContext);
                     insert("insert into y (converted, casted, original) values (null, cast(cast(null as " + srcType + ") as " + dstType + "), null)", sqlExecutionContext);
+                    insert("insert into y (converted, casted, original) values (" + minVals[i] + ", cast(cast(" + minVals[i] + " as " + srcType + ") as " + dstType + "), " + minVals[i] + ")", sqlExecutionContext);
+                    insert("insert into y (converted, casted, original) values (" + maxVals[i] + ", cast(cast(" + maxVals[i] + " as " + srcType + ") as " + dstType + "), " + maxVals[i] + ")", sqlExecutionContext);
+
                     ddl("alter table y alter column converted type " + dstType, sqlExecutionContext);
 
                     try {

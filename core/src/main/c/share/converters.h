@@ -181,15 +181,23 @@ jlong convert_from_type_to_type(void *srcBuff, void *dstBuff, size_t rowCount) {
 
     for (size_t i = 0; i < rowCount; i++) {
         if constexpr (srcNullable) {
-            if constexpr (std::is_same<T1, float>() || std::is_same<T1, double>()) {
+            if constexpr ((std::is_same<T1, float>() || std::is_same<T1, double>())) {
                 // Float point conversions have undefined behaviour
                 // when converting floating point types (float, double)
                 // to integers.
                 // The conversion can result to different results for every run, e.g. can be different
                 // even on the same platform. To avoid it, check the ranges
-                if (std::isnan(srcMem[i]) || srcMem[i] > std::numeric_limits<T2>::max() || srcMem[i] < std::numeric_limits<T2>::lowest()) {
-                    dstMem[i] = dstSentinel;
-                    continue;
+                if constexpr (!std::is_same<T2, bool>()) {
+                    if (std::isnan(srcMem[i]) || srcMem[i] > std::numeric_limits<T2>::max() ||
+                        srcMem[i] < std::numeric_limits<T2>::lowest()) {
+                        dstMem[i] = dstSentinel;
+                        continue;
+                    }
+                } else {
+                    if (std::isnan(srcMem[i])) {
+                        dstMem[i] = dstSentinel;
+                        continue;
+                    }
                 }
             } else {
                 if (srcMem[i] == srcSentinel) {
