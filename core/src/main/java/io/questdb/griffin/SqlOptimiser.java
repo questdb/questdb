@@ -5430,7 +5430,7 @@ public class SqlOptimiser implements Mutable {
      *
      * @param model the input query model
      */
-    private void rewriteTrivialExpressions(QueryModel model) throws SqlException {
+    private void rewriteTrivialExpressions(QueryModel model) {
         final QueryModel nestedModel = model.getNestedModel();
 
         if (nestedModel == null) {
