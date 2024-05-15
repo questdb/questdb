@@ -98,6 +98,7 @@ public class RegisteredRecordCursorFactory extends AbstractRecordCursorFactory {
                 cursor.of(base.getCursor(executionContext));
             } catch (Throwable t) {
                 registry.unregister(queryId, executionContext);
+                cursor.close();
                 throw t;
             }
             this.executionContext = executionContext;

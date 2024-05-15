@@ -254,8 +254,8 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
 
         private void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
             if (!isOpen) {
-                joinKeyMap.reopen();
                 isOpen = true;
+                joinKeyMap.reopen();
             }
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;

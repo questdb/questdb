@@ -133,14 +133,9 @@ class IntersectRecordCursor extends AbstractSetRecordCursor {
 
     void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
         if (!isOpen) {
-            try {
-                isOpen = true;
-                mapA.reopen();
-                mapB.reopen();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
+            isOpen = true;
+            mapA.reopen();
+            mapB.reopen();
         }
 
         super.of(cursorA, cursorB, circuitBreaker);
