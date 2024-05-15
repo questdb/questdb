@@ -1763,30 +1763,30 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final Function limitLoFunction;
             try {
                 limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
+                final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
+                return new AsyncFilteredRecordCursorFactory(
+                        configuration,
+                        executionContext.getMessageBus(),
+                        factory,
+                        filter,
+                        reduceTaskFactory,
+                        compileWorkerFilterConditionally(
+                                executionContext,
+                                filter,
+                                executionContext.getSharedWorkerCount(),
+                                filterExpr,
+                                factory.getMetadata()
+                        ),
+                        limitLoFunction,
+                        limitLoPos,
+                        preTouchColumns,
+                        executionContext.getSharedWorkerCount()
+                );
             } catch (Throwable e) {
                 Misc.free(filter);
                 Misc.free(factory);
                 throw e;
             }
-            final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
-            return new AsyncFilteredRecordCursorFactory(
-                    configuration,
-                    executionContext.getMessageBus(),
-                    factory,
-                    filter,
-                    reduceTaskFactory,
-                    compileWorkerFilterConditionally(
-                            executionContext,
-                            filter,
-                            executionContext.getSharedWorkerCount(),
-                            filterExpr,
-                            factory.getMetadata()
-                    ),
-                    limitLoFunction,
-                    limitLoPos,
-                    preTouchColumns,
-                    executionContext.getSharedWorkerCount()
-            );
         }
         return new FilteredRecordCursorFactory(factory, filter);
     }
