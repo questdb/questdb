@@ -333,7 +333,7 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public void shiftAddressRight(long shiftRightOffset) {
+    public void shiftOffsetRight(long shiftRightOffset) {
     }
 
     @Override

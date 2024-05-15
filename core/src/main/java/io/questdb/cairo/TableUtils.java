@@ -81,23 +81,6 @@ public final class TableUtils {
     public static final long META_OFFSET_VERSION = 12;
     public static final long META_OFFSET_WAL_ENABLED = 40; // BOOLEAN
     public static final String META_PREV_FILE_NAME = "_meta.prev";
-    /**
-     * TXN file structure
-     * struct {
-     * long txn;
-     * long transient_row_count; // rows count in last partition
-     * long fixed_row_count; // row count in table excluding count in last partition
-     * long max_timestamp; // last timestamp written to table
-     * long struct_version; // data structure version; whenever columns added or removed this version changes.
-     * long partition_version; // version that increments whenever non-current partitions are modified/added/removed
-     * long txn_check; // same as txn - sanity check for concurrent reads and writes
-     * int  map_writer_count; // symbol writer count
-     * int  map_writer_position[map_writer_count]; // position of each of map writers
-     * }
-     * <p>
-     * TableUtils.resetTxn() writes to this file, it could be using different offsets, beware
-     */
-
     public static final String META_SWAP_FILE_NAME = "_meta.swp";
     public static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
     public static final int NULL_LEN = -1;
@@ -112,6 +95,7 @@ public final class TableUtils {
     public static final int TABLE_TYPE_NON_WAL = 0;
     public static final int TABLE_TYPE_WAL = 1;
     public static final String TAB_INDEX_FILE_NAME = "_tab_index.d";
+    public static final String TODO_FILE_NAME = "_todo_";
     /**
      * TXN file structure
      * struct {
@@ -128,8 +112,6 @@ public final class TableUtils {
      * <p>
      * TableUtils.resetTxn() writes to this file, it could be using different offsets, beware
      */
-
-    public static final String TODO_FILE_NAME = "_todo_";
     public static final String TXN_FILE_NAME = "_txn";
     public static final String TXN_SCOREBOARD_FILE_NAME = "_txn_scoreboard";
     // transaction file structure
@@ -163,6 +145,7 @@ public final class TableUtils {
     // @formatter:on
     public static final int TX_RECORD_HEADER_SIZE = (int) TX_OFFSET_MAP_WRITER_COUNT_32 + Integer.BYTES;
     public static final String UPGRADE_FILE_NAME = "_upgrade.d";
+    public static final String WAL_SEGMENT_FILE_NAME = "segment.d";
     static final int COLUMN_VERSION_FILE_HEADER_SIZE = 40;
     static final int META_FLAG_BIT_INDEXED = 1;
     static final int META_FLAG_BIT_SEQUENTIAL = 1 << 1;

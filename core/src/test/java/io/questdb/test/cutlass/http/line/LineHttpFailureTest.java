@@ -29,6 +29,7 @@ import io.questdb.DefaultBootstrapConfiguration;
 import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.ServerMain;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientException;
@@ -69,8 +70,7 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
     @Test
     public void testChunkedDisconnect() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-            )) {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.start();
 
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
@@ -129,8 +129,7 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
     @Test
     public void testChunkedRedundantBytes() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-            )) {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.start();
 
                 Rnd rnd = TestUtils.generateRandom(LOG);
@@ -185,7 +184,7 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
             final FilesFacade filesFacade = new TestFilesFacadeImpl() {
                 @Override
                 public int openRW(LPSZ name, long opts) {
-                    if (Utf8s.endsWithAscii(name, "field1.d") && Utf8s.containsAscii(name, "wal")) {
+                    if (Utf8s.containsAscii(name, "wal") && Utf8s.endsWithAscii(name, TableUtils.WAL_SEGMENT_FILE_NAME)) {
                         ping.await();
                         httpClientRef.get().disconnect();
                         pong.countDown();
@@ -361,8 +360,7 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
                 put(DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), "5");
-            }})
-            ) {
+            }})) {
                 serverMain.start();
                 String line = "line,sym1=123 field1=123i 1234567890000000000\n";
 
@@ -482,7 +480,7 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
         AtomicInteger walWriterTaken = new AtomicInteger();
 
         serverMain.getEngine().setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
-            if (factoryType == PoolListener.SRC_WAL_WRITER && tableToken != null && tableToken.getTableName().equals("line")) {
+            if (factoryType == PoolListener.SRC_WAL_COL_FIRST_WRITER && tableToken != null && tableToken.getTableName().equals("line")) {
                 if (event == PoolListener.EV_GET || event == PoolListener.EV_CREATE) {
                     walWriterTaken.incrementAndGet();
                 }

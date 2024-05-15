@@ -24,11 +24,9 @@
 
 package io.questdb.compat;
 
-import io.questdb.Bootstrap;
-import io.questdb.DefaultBootstrapConfiguration;
-import io.questdb.DefaultHttpClientConfiguration;
-import io.questdb.ServerMain;
+import io.questdb.*;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.WalFormat;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.griffin.SqlException;
@@ -37,11 +35,14 @@ import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
 import org.influxdb.InfluxDB;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -49,6 +50,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static io.questdb.cairo.wal.WalUtils.EVENT_INDEX_FILE_NAME;
 
 public class InfluxDBClientFailureTest extends AbstractTest {
+
     @Test
     public void testAppendErrors() {
         final FilesFacade filesFacade = new FilesFacadeImpl() {
@@ -63,12 +65,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             }
         };
 
-        final Bootstrap bootstrap = new Bootstrap(new DefaultBootstrapConfiguration() {
-            @Override
-            public FilesFacade getFilesFacade() {
-                return filesFacade;
-            }
-        }, Bootstrap.getServerMainArgs(root));
+        final Bootstrap bootstrap = createBootstrap(filesFacade, WalFormat.WAL_FORMAT_COL_FIRST);
 
         try (final ServerMain serverMain = new ServerMain(bootstrap)) {
             serverMain.start();
@@ -77,7 +74,10 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
                 InfluxDBUtils.assertRequestOk(influxDB, points, "m1,tag1=value1 f1=1i,y=12i");
 
-                InfluxDBUtils.assertRequestErrorContains(influxDB, points, "m1,tag1=value1 f1=1i,x=12i",
+                InfluxDBUtils.assertRequestErrorContains(
+                        influxDB,
+                        points,
+                        "m1,tag1=value1 f1=1i,x=12i",
                         "errors encountered on line(s):write error: m1, errno: ",
                         ",\"errorId\":",
                         ", error: could not open read-write"
@@ -103,12 +103,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             }
         };
 
-        final Bootstrap bootstrap = new Bootstrap(new DefaultBootstrapConfiguration() {
-            @Override
-            public FilesFacade getFilesFacade() {
-                return filesFacade;
-            }
-        }, Bootstrap.getServerMainArgs(root));
+        final Bootstrap bootstrap = createBootstrap(filesFacade, WalFormat.WAL_FORMAT_COL_FIRST);
 
         try (final ServerMain serverMain = new ServerMain(bootstrap)) {
             serverMain.start();
@@ -155,12 +150,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             }
         };
 
-        final Bootstrap bootstrap = new Bootstrap(new DefaultBootstrapConfiguration() {
-            @Override
-            public FilesFacade getFilesFacade() {
-                return filesFacade;
-            }
-        }, Bootstrap.getServerMainArgs(root));
+        final Bootstrap bootstrap = createBootstrap(filesFacade, WalFormat.WAL_FORMAT_ROW_FIRST);
 
         try (final ServerMain serverMain = new ServerMain(bootstrap)) {
             serverMain.start();
@@ -198,12 +188,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             }
         };
 
-        final Bootstrap bootstrap = new Bootstrap(new DefaultBootstrapConfiguration() {
-            @Override
-            public FilesFacade getFilesFacade() {
-                return filesFacade;
-            }
-        }, Bootstrap.getServerMainArgs(root));
+        final Bootstrap bootstrap = createBootstrap(filesFacade, WalFormat.WAL_FORMAT_COL_FIRST);
 
         try (final ServerMain serverMain = new ServerMain(bootstrap)) {
             serverMain.start();
@@ -238,12 +223,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             }
         };
 
-        final Bootstrap bootstrap = new Bootstrap(new DefaultBootstrapConfiguration() {
-            @Override
-            public FilesFacade getFilesFacade() {
-                return filesFacade;
-            }
-        }, Bootstrap.getServerMainArgs(root));
+        final Bootstrap bootstrap = createBootstrap(filesFacade, WalFormat.WAL_FORMAT_COL_FIRST);
 
         long timestamp = IntervalUtils.parseFloorPartialTimestamp("2023-11-27T18:53:24.834Z");
         try (final ServerMain serverMain = new ServerMain(bootstrap)) {
@@ -277,7 +257,10 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
                 influxDB.setLogLevel(InfluxDB.LogLevel.BASIC);
                 influxDB.enableGzip();
-                InfluxDBUtils.assertRequestErrorContains(influxDB, points, "m1,tag1=value1 f1=1i,x=12i",
+                InfluxDBUtils.assertRequestErrorContains(
+                        influxDB,
+                        points,
+                        "m1,tag1=value1 f1=1i,x=12i",
                         "\"message\":\"gzip encoding is not supported\","
                 );
 
@@ -302,12 +285,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             }
         };
 
-        final Bootstrap bootstrap = new Bootstrap(new DefaultBootstrapConfiguration() {
-            @Override
-            public FilesFacade getFilesFacade() {
-                return filesFacade;
-            }
-        }, Bootstrap.getServerMainArgs(root));
+        final Bootstrap bootstrap = createBootstrap(filesFacade, WalFormat.WAL_FORMAT_COL_FIRST);
 
         try (final ServerMain serverMain = new ServerMain(bootstrap)) {
             serverMain.start();
@@ -355,12 +333,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             }
         };
 
-        final Bootstrap bootstrap = new Bootstrap(new DefaultBootstrapConfiguration() {
-            @Override
-            public FilesFacade getFilesFacade() {
-                return filesFacade;
-            }
-        }, Bootstrap.getServerMainArgs(root));
+        final Bootstrap bootstrap = createBootstrap(filesFacade, WalFormat.WAL_FORMAT_COL_FIRST);
 
         try (final ServerMain serverMain = new ServerMain(bootstrap)) {
             serverMain.start();
@@ -386,8 +359,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
                 Assert.assertNotNull(serverMain.getEngine().getTableTokenIfExists("good"));
 
                 serverMain.awaitTable("good");
-                assertSql(serverMain.getEngine(), "select count from good", "count\n" +
-                        "3\n");
+                assertSql(serverMain.getEngine(), "select count from good", "count\n3\n");
 
                 // This should re-create table "drop"
                 points.add("good,tag1=value1 f1=1i");
@@ -417,5 +389,21 @@ public class InfluxDBClientFailureTest extends AbstractTest {
                 }
             }
         }
+    }
+
+    private static @NotNull Bootstrap createBootstrap(FilesFacade filesFacade, int walFormat) {
+        final Map<String, String> env = new HashMap<>(System.getenv());
+        env.put(PropertyKey.CAIRO_WAL_DEFAULT_FORMAT.getEnvVarName(), walFormat == WalFormat.WAL_FORMAT_ROW_FIRST ? "row" : "column");
+        return new Bootstrap(new DefaultBootstrapConfiguration() {
+            @Override
+            public Map<String, String> getEnv() {
+                return env;
+            }
+
+            @Override
+            public FilesFacade getFilesFacade() {
+                return filesFacade;
+            }
+        }, Bootstrap.getServerMainArgs(root));
     }
 }

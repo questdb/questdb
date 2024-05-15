@@ -31,8 +31,8 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.DefaultWalListener;
+import io.questdb.cairo.wal.WalColFirstWriter;
 import io.questdb.cairo.wal.WalListener;
-import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
@@ -92,7 +92,7 @@ public class WalListenerTest extends AbstractCairoTest {
                     listener.events.remove()
             );
 
-            try (WalWriter walWriter1 = engine.getWalWriter(tableToken1.get())) {
+            try (WalColFirstWriter walWriter1 = engine.getWalColFirstWriter(tableToken1.get())) {
                 final TableWriter.Row row = walWriter1.newRow(0);
                 row.putByte(0, (byte) 1);
                 row.append();
@@ -165,7 +165,7 @@ public class WalListenerTest extends AbstractCairoTest {
                     listener.events.remove()
             );
 
-            try (WalWriter walWriter2 = engine.getWalWriter(tableToken2.get())) {
+            try (WalColFirstWriter walWriter2 = engine.getWalColFirstWriter(tableToken2.get())) {
                 walWriter2.addColumn("c", ColumnType.INT);
 
                 Assert.assertEquals(
@@ -242,6 +242,11 @@ public class WalListenerTest extends AbstractCairoTest {
         }
 
         @Override
+        public long getLastProcessedTxn(TableToken tableToken) {
+            return Long.MAX_VALUE;
+        }
+
+        @Override
         public void nonDataTxnCommitted(TableToken tableToken, long txn, long timestamp) {
             events.add(new WalListenerEvent(
                     WalListenerEventType.NON_DATA_TXN_COMMITTED,
@@ -309,11 +314,6 @@ public class WalListenerTest extends AbstractCairoTest {
                     -1,
                     oldTableToken
             ));
-        }
-
-        @Override
-        public long getLastProcessedTxn(TableToken tableToken) {
-            return Long.MAX_VALUE;
         }
     }
 

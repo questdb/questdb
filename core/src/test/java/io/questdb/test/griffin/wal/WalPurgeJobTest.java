@@ -28,10 +28,10 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.WalWriter;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
-import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.std.*;
@@ -45,8 +45,12 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
 import java.io.File;
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -55,12 +59,27 @@ import java.util.concurrent.atomic.AtomicReference;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 
+@RunWith(Parameterized.class)
 public class WalPurgeJobTest extends AbstractCairoTest {
     private final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+    private final WalFormat walFormat;
+
+    public WalPurgeJobTest(WalFormat walFormat) {
+        this.walFormat = walFormat;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {WalFormat.ROW_FIRST},
+                {WalFormat.COL_FIRST}
+        });
+    }
 
     @Before
     public void setUp() {
         super.setUp();
+        node1.setProperty(PropertyKey.CAIRO_WAL_DEFAULT_FORMAT, walFormat == WalFormat.ROW_FIRST ? "row" : "column");
         engine.setWalDirectoryPolicy(
                 new DefaultWalDirectoryPolicy() {
                     @Override
@@ -82,7 +101,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             int txnChunkSize = 10;
             node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
 
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             compile("create table " + tableName + " as (" +
                     "select x, " +
                     " timestamp_sequence('2022-02-24', 1000000L) ts " +
@@ -132,7 +151,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         // Test two segment with changes committed to the sequencer, but never applied to the table.
         // The WAL is closed but nothing can be purged.
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             compile("create table " + tableName + "("
                     + "x long,"
                     + "ts timestamp"
@@ -195,7 +214,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         //
         // We will then assert that only wal1/0 is cleaned and wal2/0 is not.
 
-        final String tableName = testName.getMethodName();
+        final String tableName = getEscapedTestName();
         compile("create table " + tableName + "("
                 + "x long,"
                 + "ts timestamp"
@@ -310,7 +329,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     @Test
     public void testDroppedTablePendingSequencer() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             compile("create table " + tableName + " as (" +
                     "select x, " +
                     " timestamp_sequence('2022-02-24', 1000000L) ts " +
@@ -353,7 +372,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         };
 
         assertMemoryLeak(ff, () -> {
-            final String tableName = testName.getMethodName();
+            final String tableName = getEscapedTestName();
             compile("create table " + tableName + "("
                     + "x long,"
                     + "ts timestamp"
@@ -468,7 +487,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     @Test
     public void testOneSegment() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             compile("create table " + tableName + " as (" +
                     "select x, " +
                     " timestamp_sequence('2022-02-24', 1000000L) ts " +
@@ -507,7 +526,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     public void testPendingSegmentTasks() throws Exception {
         assertMemoryLeak(() -> {
             // Creating a table creates a new WAL with a first segment.
-            final String tableName = testName.getMethodName();
+            final String tableName = getEscapedTestName();
             compile("create table " + tableName + " as (" +
                     "select x, " +
                     " timestamp_sequence('2022-02-24', 1000000L) ts " +
@@ -574,7 +593,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     public void testPendingSegmentTasksOnDeletedTable() throws Exception {
         assertMemoryLeak(() -> {
             // Creating a table creates a new WAL with a first segment.
-            final String tableName = testName.getMethodName();
+            final String tableName = getEscapedTestName();
             compile("create table " + tableName + " as (" +
                     "select x, " +
                     " timestamp_sequence('2022-02-24', 1000000L) ts " +
@@ -640,7 +659,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         };
 
         assertMemoryLeak(ff, () -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             compile("create table " + tableName + "("
                     + "x long,"
                     + "ts timestamp"
@@ -665,7 +684,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testRmWalDirFailure() throws Exception {
-        String tableName = testName.getMethodName();
+        String tableName = getEscapedTestName();
         compile("create table " + tableName + "("
                 + "x long,"
                 + "ts timestamp"
@@ -701,7 +720,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testRollback() throws Exception {
-        String tableName = testName.getMethodName();
+        String tableName = getEscapedTestName();
         compile("create table " + tableName + "("
                 + "x long,"
                 + "ts timestamp"
@@ -738,7 +757,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         // We create a directory called "stuff" inside the wal1 and ensure it's not deleted.
         // This tests that non-numeric directories aren't matched.
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             compile("create table " + tableName + "("
                     + "x long,"
                     + "ts timestamp"
@@ -787,7 +806,6 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testSegmentLockedWhenSweeping() throws Exception {
-
         AtomicReference<WalWriter> walWriter1Ref = new AtomicReference<>();
         FilesFacade testFF = new TestFilesFacadeImpl() {
 
@@ -814,7 +832,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         };
 
         assertMemoryLeak(testFF, () -> {
-            final String tableName = testName.getMethodName();
+            final String tableName = getEscapedTestName();
             compile("create table " + tableName + "("
                     + "x long,"
                     + "ts timestamp"
@@ -861,7 +879,6 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testSegmentsCreatedWhenSweeping() throws Exception {
-
         AtomicReference<WalWriter> walWriter1Ref = new AtomicReference<>();
         FilesFacade testFF = new TestFilesFacadeImpl() {
 
@@ -888,7 +905,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         };
 
         assertMemoryLeak(testFF, () -> {
-            final String tableName = testName.getMethodName();
+            final String tableName = getEscapedTestName();
             compile(
                     "create table " + tableName + "("
                             + "x long,"
@@ -935,7 +952,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     public void testTwoSegments() throws Exception {
         assertMemoryLeak(() -> {
             // Creating a table creates a new WAL with a single segment.
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             compile("create table " + tableName + " as (" +
                     "select x, " +
                     " timestamp_sequence('2022-02-24', 1000000L) ts " +
@@ -998,7 +1015,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     public void testUntrackedSegment() throws Exception {
         // Test a segment that was created but never tracked by the sequencer.
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             compile("create table " + tableName + "("
                     + "x long,"
                     + "ts timestamp"
@@ -1024,7 +1041,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         // We create a directory called "waldo" inside the table dir and ensure it's not deleted.
         // This tests that the directory isn't matched.
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             compile("create table " + tableName + "("
                     + "x long,"
                     + "ts timestamp"
@@ -1064,7 +1081,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     @Test
     public void testWalPurgeJobLock() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             compile("create table " + tableName + " as (" +
                     "select x, " +
                     " timestamp_sequence('2022-02-24', 1000000L) ts " +
@@ -1112,7 +1129,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     @Test
     public void testWalPurgedAfterUpdateZeroRecordsTransaction() throws Exception {
         assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
+            String tableName = getEscapedTestName();
             compile("create table " + tableName + " as (" +
                     "select x, " +
                     " timestamp_sequence('2022-02-24', 1000000L) ts " +
@@ -1242,6 +1259,11 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         }
 
         @Override
+        public void deleteSequencerPart(int seqPart) {
+            assert false;
+        }
+
+        @Override
         public void deleteWalDirectory(int walId, int lockFd) {
             events.add(new DeletionEvent(walId));
         }
@@ -1251,11 +1273,6 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             if (lockFd > -1) {
                 closedFds.add(lockFd);
             }
-        }
-
-        @Override
-        public void deleteSequencerPart(int seqPart) {
-            assert false;
         }
     }
 }

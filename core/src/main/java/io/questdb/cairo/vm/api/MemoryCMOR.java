@@ -24,6 +24,11 @@
 
 package io.questdb.cairo.vm.api;
 
-//contiguous mapped readable
+// contiguous mapped readable
 public interface MemoryCMOR extends MemoryCMR, MemoryOM {
+
+    @Override
+    default boolean hasBytes(long offset, long bytes) {
+        return offset - getOffset() + bytes <= size();
+    }
 }

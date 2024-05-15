@@ -30,7 +30,10 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cairo.wal.*;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.CheckWalTransactionsJob;
+import io.questdb.cairo.wal.WalPurgeJob;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.ExplainPlanFactory;
 import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
@@ -1836,6 +1839,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected enum SymbolAsFieldMode {
         WITH_SYMBOLS_AS_FIELD, NO_SYMBOLS_AS_FIELD
+    }
+
+    public enum WalFormat {
+        ROW_FIRST, COL_FIRST
     }
 
     public enum WalMode {

@@ -25,9 +25,12 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericTableRecordMetadata;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.wal.WalColFirstWriter;
 import io.questdb.cairo.wal.WalUtils;
-import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TableTransactionLog;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.std.ObjList;
@@ -219,7 +222,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
     }
 
     private void runColumnAdd(CyclicBarrier barrier, String tableName, AtomicReference<Throwable> exception, int iterations) {
-        try (WalWriter ww = engine.getWalWriter(engine.verifyTableName(tableName))) {
+        try (WalColFirstWriter ww = engine.getWalColFirstWriter(engine.verifyTableName(tableName))) {
             TestUtils.await(barrier);
 
             for (int i = 0; i < iterations; i++) {
@@ -245,7 +248,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
 
         try (GenericTableRecordMetadata metadata = new GenericTableRecordMetadata();
              Path path = new Path();
-             WalWriter ww = engine.getWalWriter(engine.verifyTableName(tableName))) {
+             WalColFirstWriter ww = engine.getWalColFirstWriter(engine.verifyTableName(tableName))) {
 
             path.concat(engine.getConfiguration().getRoot()).concat(ww.getTableToken()).concat(WalUtils.SEQ_DIR);
             for (int i = 0; i < iterations; i++) {

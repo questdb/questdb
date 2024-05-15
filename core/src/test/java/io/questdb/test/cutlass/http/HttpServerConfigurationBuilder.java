@@ -191,8 +191,7 @@ public class HttpServerConfigurationBuilder {
 
                     @Override
                     public long getMultipartIdleSpinCount() {
-                        if (multipartIdleSpinCount < 0) return super.getMultipartIdleSpinCount();
-                        return multipartIdleSpinCount;
+                        return multipartIdleSpinCount < 0 ? super.getMultipartIdleSpinCount() : multipartIdleSpinCount;
                     }
 
                     @Override

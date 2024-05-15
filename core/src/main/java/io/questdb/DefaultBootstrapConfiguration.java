@@ -60,7 +60,7 @@ public class DefaultBootstrapConfiguration implements BootstrapConfiguration {
     }
 
     @Override
-    public ServerConfiguration getServerConfiguration(Bootstrap bootstrap) throws Exception{
+    public ServerConfiguration getServerConfiguration(Bootstrap bootstrap) throws Exception {
         return null;
     }
 

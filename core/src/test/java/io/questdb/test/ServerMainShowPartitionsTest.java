@@ -81,7 +81,7 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
     private final String tableNameSuffix;
 
     public ServerMainShowPartitionsTest(AbstractCairoTest.WalMode walMode, String tableNameSuffix) {
-        isWal = (AbstractCairoTest.WalMode.WITH_WAL == walMode);
+        isWal = (walMode == AbstractCairoTest.WalMode.WITH_WAL);
         this.tableNameSuffix = tableNameSuffix;
     }
 

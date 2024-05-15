@@ -31,8 +31,10 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.cairo.TestRecord;
 import io.questdb.test.griffin.engine.TestBinarySequence;
 import io.questdb.test.tools.TestUtils;
@@ -522,7 +524,6 @@ public class MemoryCARWImplTest {
                 assertEquals(i, mem.getLong(o));
                 o += 8;
             }
-
         }
     }
 
@@ -914,6 +915,50 @@ public class MemoryCARWImplTest {
     public void testOkSize() {
         try (MemoryARW mem = new MemoryCARWImpl(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             assertStrings(mem);
+        }
+    }
+
+    @Test
+    public void testReuseAfterClose() {
+        final int pageSize = 256;
+        try (MemoryARW mem = new MemoryCARWImpl(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+            mem.putLong(42);
+            Assert.assertEquals(pageSize, mem.size());
+            Assert.assertEquals(8, mem.getAppendOffset());
+
+            mem.close();
+            Assert.assertEquals(0, mem.size());
+            Assert.assertEquals(0, mem.getAppendOffset());
+
+            mem.putLong(42);
+            Assert.assertEquals(pageSize, mem.size());
+            Assert.assertEquals(8, mem.getAppendOffset());
+        }
+    }
+
+    @Test
+    public void testShiftOffsetRight() {
+        try (MemoryCARW mem = new MemoryCARWImpl(32, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+            mem.shiftOffsetRight(256);
+
+            Assert.assertEquals(256, mem.getAppendOffset());
+
+            mem.jumpTo(512);
+            // jumpTo should consider the shift
+            Assert.assertEquals(256, mem.size());
+
+            long offset = 256;
+            mem.putLong(offset, 42);
+            Assert.assertEquals(42, mem.getLong(offset));
+            offset += Long.BYTES;
+
+            Utf8String us = new Utf8String("foobar");
+            mem.putVarchar(256, us);
+            TestUtils.assertEquals(us, mem.getDirectVarcharA(256, us.size(), true));
+            offset += us.size();
+
+            mem.putStr(offset, "foobar");
+            TestUtils.assertEquals("foobar", mem.getStrA(offset));
         }
     }
 

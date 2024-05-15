@@ -86,16 +86,20 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     private final static Log LOG = LogFactory.getLog(LineTcpReceiverTest.class);
     private static final long TEST_TIMEOUT_IN_MS = 120000;
     private final boolean walEnabled;
+    private final WalFormat walFormat;
     private Path path;
 
-    public LineTcpReceiverTest(WalMode walMode) {
+    public LineTcpReceiverTest(WalMode walMode, WalFormat walFormat) {
         this.walEnabled = (walMode == WalMode.WITH_WAL);
+        this.walFormat = walFormat;
     }
 
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-                {WalMode.WITH_WAL}, {WalMode.NO_WAL}
+                {WalMode.WITH_WAL, WalFormat.ROW_FIRST},
+                {WalMode.WITH_WAL, WalFormat.COL_FIRST},
+                {WalMode.NO_WAL, WalFormat.ROW_FIRST} // the second parameter doesn't matter
         });
     }
 
@@ -132,6 +136,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     public void setUp() {
         super.setUp();
         node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, walEnabled);
+        node1.setProperty(PropertyKey.CAIRO_WAL_DEFAULT_FORMAT, walFormat == WalFormat.ROW_FIRST ? "row" : "column");
         path = new Path();
     }
 
@@ -1852,7 +1857,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     private void sendWaitWalReleaseCount(String lineData, int walReleaseCount) {
         SOCountDownLatch releaseLatch = new SOCountDownLatch(walReleaseCount);
         engine.setPoolListener((factoryType, thread, tableName1, event, segment, position) -> {
-            if (factoryType == PoolListener.SRC_WAL_WRITER && event == PoolListener.EV_RETURN && tableName1 != null) {
+            if (factoryType == PoolListener.SRC_WAL_COL_FIRST_WRITER && event == PoolListener.EV_RETURN && tableName1 != null) {
                 LOG.info().$("=== released WAL writer === ").$(tableName1.getDirName()).$(":").$(tableName1.getTableName()).$();
                 releaseLatch.countDown();
             }

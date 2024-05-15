@@ -34,7 +34,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 
 // Contiguous mapped with offset readable memory
-// todo: investigate if we can map file from 0 offset and have the logc in this class done by the OS
+// todo: investigate if we can map file from 0 offset and have the logic in this class done by the OS
 public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
     private static final Log LOG = LogFactory.getLog(MemoryCMORImpl.class);
     private long mapFileOffset;
@@ -45,7 +45,7 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
 
     @Override
     public long addressOf(long offset) {
-        assert offset - mapFileOffset <= size : "offset=" + offset + ", size=" + size + ", fd=" + fd;
+        assert offset - mapFileOffset <= size : "offset=" + offset + ", size=" + size + ", mapFileOffset=" + mapFileOffset + ", fd=" + fd;
         return pageAddress + offset - mapFileOffset;
     }
 
@@ -78,11 +78,10 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
 
     @Override
     public void growToFileSize() {
-        long length = getFilesFacade().length(getFd());
+        long length = ff.length(getFd());
         if (length < 0) {
             throw CairoException.critical(ff.errno()).put("could not get length fd: ").put(fd);
         }
-
         extend(length - mapFileOffset);
     }
 

@@ -60,41 +60,6 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void simpleTest() throws Exception {
-        String tableName = "simpleTest";
-
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
-            )) {
-                serverMain.start();
-                int port = tlsProxy.getListeningPort();
-                String address = "localhost:" + port;
-                long count = 100_000;
-                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
-                        .address(address)
-                        .enableTls()
-                        .advancedTls()
-                        .disableCertificateValidation()
-                        .build()) {
-                    for (long i = 1; i <= count; i++) {
-                        sender.table(tableName).longColumn("value", i).atNow();
-                    }
-                }
-                long expectedSum = (count / 2) * (count + 1);
-                double expectedAvg = expectedSum / (double) count;
-                TestUtils.assertEventually(() -> {
-                    serverMain.assertSql(
-                            "select sum(value), max(value), min(value), avg(value) from " + tableName,
-                            "sum\tmax\tmin\tavg\n"
-                                    + expectedSum + "\t" + count + "\t1\t" + expectedAvg + "\n"
-                    );
-                });
-            }
-        });
-    }
-
-    @Test
     public void testAutoRecoveryAfterInfrastructureError() throws Exception {
         String tableName = "testAutoRecoveryAfterInfrastructureError";
         TestUtils.assertMemoryLeak(() -> {
@@ -275,6 +240,41 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
                         TestUtils.assertContains(ex.getMessage(), "Could not flush buffer");
                     }
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testSmoke() throws Exception {
+        String tableName = "testSmoke";
+
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                serverMain.start();
+                int port = tlsProxy.getListeningPort();
+                String address = "localhost:" + port;
+                long count = 100_000;
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address(address)
+                        .enableTls()
+                        .advancedTls()
+                        .disableCertificateValidation()
+                        .build()) {
+                    for (long i = 1; i <= count; i++) {
+                        sender.table(tableName).longColumn("value", i).atNow();
+                    }
+                }
+                long expectedSum = (count / 2) * (count + 1);
+                double expectedAvg = expectedSum / (double) count;
+                TestUtils.assertEventually(() -> {
+                    serverMain.assertSql(
+                            "select sum(value), max(value), min(value), avg(value) from " + tableName,
+                            "sum\tmax\tmin\tavg\n"
+                                    + expectedSum + "\t" + count + "\t1\t" + expectedAvg + "\n"
+                    );
+                });
             }
         });
     }

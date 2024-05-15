@@ -31,7 +31,8 @@ import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
 
-import static io.questdb.cairo.wal.WalTxnType.DATA;
+import static io.questdb.cairo.wal.WalTxnType.COL_FIRST_DATA;
+import static io.questdb.cairo.wal.WalTxnType.ROW_FIRST_DATA;
 import static io.questdb.cairo.wal.WalUtils.*;
 
 public class WalTxnDetails {
@@ -123,7 +124,6 @@ public class WalTxnDetails {
         long runningMinTimestamp = LAST_ROW_COMMIT;
         futureWalSegments.clear();
         for (int i = transactionMeta.size() - TXN_METADATA_LONGS_SIZE; i > -1; i -= TXN_METADATA_LONGS_SIZE) {
-
             long commitToTimestamp = runningMinTimestamp;
             long currentMinTimestamp = transactionMeta.getQuick(i + MIN_TIMESTAMP_OFFSET);
 
@@ -155,7 +155,6 @@ public class WalTxnDetails {
         // Avoid O3 commits with existing data. Start from beginning and set commit to timestamp to be min infinity until
         // the all future min timestamp are greater than current max timestamp.
         for (int i = 0, n = transactionMeta.size(); i < n; i += TXN_METADATA_LONGS_SIZE) {
-
             long commitToTimestamp = transactionMeta.get(i);
             if (commitToTimestamp < maxCommittedTimestamp) {
                 transactionMeta.set(i, Long.MIN_VALUE);
@@ -170,7 +169,6 @@ public class WalTxnDetails {
 
     private void loadTransactionDetailsV1(Path tempPath, TransactionLogCursor transactionLogCursor, int rootLen, long maxCommittedTimestamp) {
         try (WalEventReader eventReader = walEventReader) {
-
             int prevWalId = Integer.MIN_VALUE;
             int prevSegmentId = Integer.MIN_VALUE;
             int prevSegmentTxn = Integer.MIN_VALUE;
@@ -179,7 +177,6 @@ public class WalTxnDetails {
             long runningMaxTimestamp = maxCommittedTimestamp;
             int i = 0;
             while (i++ < maxLookahead && transactionLogCursor.hasNext()) {
-
                 final int walId = transactionLogCursor.getWalId();
                 final int segmentId = transactionLogCursor.getSegmentId();
                 final int segmentTxn = transactionLogCursor.getSegmentTxn();
@@ -204,8 +201,13 @@ public class WalTxnDetails {
                     }
 
                     final byte walTxnType = walEventCursor.getType();
-                    if (walTxnType == DATA) {
-                        WalEventCursor.DataInfo commitInfo = walEventCursor.getDataInfo();
+                    WalEventCursor.DataInfo commitInfo = null;
+                    if (walTxnType == ROW_FIRST_DATA) {
+                        commitInfo = walEventCursor.getRowFirstDataInfo();
+                    } else if (walTxnType == COL_FIRST_DATA) {
+                        commitInfo = walEventCursor.getColFirstDataInfo();
+                    }
+                    if (commitInfo != null) {
                         transactionMeta.add(-1); // commit to timestamp
                         transactionMeta.add(commitInfo.getMinTimestamp());
                         transactionMeta.add(commitInfo.getMaxTimestamp());
@@ -229,7 +231,6 @@ public class WalTxnDetails {
         long runningMaxTimestamp = maxCommittedTimestamp;
         int i = 0;
         while (i++ < maxLookahead && transactionLogCursor.hasNext()) {
-
             final int walId = transactionLogCursor.getWalId();
             final int segmentId = transactionLogCursor.getSegmentId();
             if (startSeqTxn == -1) {

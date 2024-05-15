@@ -99,7 +99,8 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 ILP_PORT + pgPortDelta,
                 root,
                 PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath() + "=true",
-                PropertyKey.CAIRO_VOLUMES.getPropertyPath() + '=' + otherVolumeAlias + "->" + otherVolume));
+                PropertyKey.CAIRO_VOLUMES.getPropertyPath() + '=' + otherVolumeAlias + "->" + otherVolume)
+        );
     }
 
     @Test

@@ -48,6 +48,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static io.questdb.compat.InfluxDBUtils.assertRequestErrorContains;
 
 public class InfluxDBClientTest extends AbstractTest {
+
     @Test
     public void testAppendErrors() throws Exception {
         try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{

@@ -24,10 +24,10 @@
 
 package io.questdb.test.cairo.wal;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
-import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
@@ -41,27 +41,47 @@ import io.questdb.tasks.WalTxnNotificationTask;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.griffin.AbstractMultiNodeTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.*;
 
-public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
+@RunWith(Parameterized.class)
+public class WalWriterFuzzTest extends AbstractMultiNodeTest {
+    private final WalFormat walFormat;
+
+    public WalWriterFuzzTest(WalFormat walFormat) {
+        this.walFormat = walFormat;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {WalFormat.ROW_FIRST},
+                {WalFormat.COL_FIRST}
+        });
+    }
 
     @Before
     public void setUp() {
         super.setUp();
         currentMicros = 0L;
+        node1.setProperty(PropertyKey.CAIRO_WAL_DEFAULT_FORMAT, walFormat == WalFormat.ROW_FIRST ? "row" : "column");
     }
 
     @Test
     public void testNonStructuralAlterViaWal() throws Exception {
         assertMemoryLeak(() -> {
-            final String tableName = testName.getMethodName();
+            final String tableName = getTableName();
             final String tableCopyName = tableName + "_copy";
             TableToken tableToken = createTableAndCopy(tableName, tableCopyName);
 
@@ -100,7 +120,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     @Test
     public void testOutOfOrderDuplicateTimestamps() throws Exception {
         assertMemoryLeak(() -> {
-            final String tableName = testName.getMethodName();
+            final String tableName = getTableName();
             TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
                     .col("i", ColumnType.INT)
                     .timestamp("ts")
@@ -128,18 +148,21 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                 drainWalQueue();
             }
 
-            assertSql("i\tts\n" +
-                    "2\t1970-01-01T00:00:00.000500Z\n" +
-                    "1\t1970-01-01T00:00:00.001000Z\n" +
-                    "3\t1970-01-01T00:00:00.001500Z\n" +
-                    "4\t1970-01-01T00:00:00.001500Z\n", tableName);
+            assertSql(
+                    "i\tts\n" +
+                            "2\t1970-01-01T00:00:00.000500Z\n" +
+                            "1\t1970-01-01T00:00:00.001000Z\n" +
+                            "3\t1970-01-01T00:00:00.001500Z\n" +
+                            "4\t1970-01-01T00:00:00.001500Z\n",
+                    tableName
+            );
         });
     }
 
     @Test
     public void testPartitionOverflowAppend() throws Exception {
         assertMemoryLeak(() -> {
-            final String tableName = testName.getMethodName();
+            final String tableName = getTableName();
             final String tableCopyName = tableName + "_copy";
             TableToken tt = createTableAndCopy(tableName, tableCopyName);
 
@@ -167,7 +190,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     @Test
     public void testPartitionOverflowMerge() throws Exception {
         assertMemoryLeak(() -> {
-            final String tableName = testName.getMethodName();
+            final String tableName = getTableName();
             final String tableCopyName = tableName + "_copy";
             TableToken tt = createTableAndCopy(tableName, tableCopyName);
 
@@ -195,7 +218,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     @Test
     public void testRandomInOutOfOrderMultipleWalInserts() throws Exception {
         assertMemoryLeak(() -> {
-            final String tableName = testName.getMethodName();
+            final String tableName = getTableName();
             final String tableCopyName = tableName + "_copy";
             TableToken tt = createTableAndCopy(tableName, tableCopyName);
 
@@ -240,9 +263,58 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     }
 
     @Test
+    public void testRandomInOutOfOrderMultipleWalInserts_mixedWalFormats() throws Exception {
+        // We use both formats in this test, so no need to run it twice.
+        Assume.assumeTrue(walFormat == WalFormat.ROW_FIRST);
+
+        assertMemoryLeak(() -> {
+            final String tableName = getTableName();
+            final String tableCopyName = tableName + "_copy";
+            TableToken tt = createTableAndCopy(tableName, tableCopyName);
+
+            long tsIncrement;
+            long now = Os.currentTimeMicros();
+            LOG.info().$("now :").$(now).$();
+            Rnd rnd = TestUtils.generateRandom(LOG);
+
+            try (
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    WalWriter walWriter1 = engine.getWalRowFirstWriter(tt);
+                    WalWriter walWriter2 = engine.getWalColFirstWriter(tt)
+            ) {
+                long start = now;
+                WalWriter[] writers = new WalWriter[]{walWriter1, walWriter2};
+
+                for (int i = 0; i < 5; i++) {
+                    boolean inOrder = rnd.nextBoolean();
+                    int walIndex = rnd.nextInt(writers.length);
+                    WalWriter walWriter = writers[walIndex];
+                    int rowCount = rnd.nextInt(1000) + 2;
+                    tsIncrement = rnd.nextLong(Timestamps.MINUTE_MICROS);
+
+                    LOG.infoW().$("generating wal [")
+                            .$("iteration:").$(i)
+                            .$(", walIndex: ").$(walIndex)
+                            .$(", inOrder: ").$(inOrder)
+                            .$(" rowCount: ").$(rowCount)
+                            .$(" tsIncrement: ").$(tsIncrement)
+                            .I$();
+
+                    addRowsToWalAndApplyToTable(i, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, inOrder);
+
+                    LOG.info().$("verifying wal [").$("iteration:").$(i).I$();
+                    TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+
+                    start += rowCount * tsIncrement + 1;
+                }
+            }
+        });
+    }
+
+    @Test
     public void testRandomInOutOfOrderOverlappingInserts() throws Exception {
         assertMemoryLeak(() -> {
-            final String tableName = testName.getMethodName();
+            final String tableName = getTableName();
             final String tableCopyName = tableName + "_copy";
             TableToken tableToken = createTableAndCopy(tableName, tableCopyName);
 
@@ -260,7 +332,6 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                     WalWriter walWriter2 = engine.getWalWriter(tableToken);
                     WalWriter walWriter3 = engine.getWalWriter(tableToken)
             ) {
-
                 long start = now;
                 WalWriter[] writers = new WalWriter[]{walWriter1, walWriter2, walWriter3};
 
@@ -308,7 +379,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     @Test
     public void testReadAndWriteAllTypes() throws Exception {
         assertMemoryLeak(() -> {
-            final String tableName = testName.getMethodName();
+            final String tableName = getTableName();
             final String tableCopyName = tableName + "_copy";
             TableToken tableToken = createTableAndCopy(tableName, tableCopyName);
 
@@ -330,7 +401,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     @Test
     public void testReadAndWriteFrom2WallsInOrder() throws Exception {
         assertMemoryLeak(() -> {
-            final String tableName = testName.getMethodName();
+            final String tableName = getTableName();
             final String tableCopyName = tableName + "_copy";
             TableToken tableToken = createTableAndCopy(tableName, tableCopyName);
 
@@ -344,7 +415,6 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                     WalWriter walWriter1 = engine.getWalWriter(tableToken);
                     WalWriter walWriter2 = engine.getWalWriter(tableToken)
             ) {
-
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowsToInsertTotal, tsIncrement, ts, rnd, walWriter1, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
 
@@ -357,7 +427,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     @Test
     public void testReadAndWriteFrom2WallsOutOfOrder() throws Exception {
         assertMemoryLeak(() -> {
-            final String tableName = testName.getMethodName();
+            final String tableName = getTableName();
             final String tableCopyName = tableName + "_copy";
             TableToken tableToken = createTableAndCopy(tableName, tableCopyName);
 
@@ -371,7 +441,6 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                     WalWriter walWriter1 = engine.getWalWriter(tableToken);
                     WalWriter walWriter2 = engine.getWalWriter(tableToken)
             ) {
-
                 long start = ts;
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowsToInsertTotal, tsIncrement, start, rnd, walWriter1, false);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
@@ -390,7 +459,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     @Test
     public void testUpdateViaWal_CopyIntoDeletedColumn() throws Exception {
         assertMemoryLeak(() -> {
-            final String tableName = testName.getMethodName();
+            final String tableName = getTableName();
             TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
                     .col("a", ColumnType.INT)
                     .col("b", ColumnType.INT)
@@ -410,7 +479,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                 row.append();
                 walWriter.commit();
 
-                WalWriterTest.removeColumn(walWriter, "b");
+                WalWriterTestUtils.removeColumn(walWriter, "b");
 
                 assertException("UPDATE " + tableName + " SET b = a");
             } catch (Exception e) {
@@ -422,7 +491,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     @Test
     public void testUpdateViaWal_CopyIntoNewColumn() throws Exception {
         assertMemoryLeak(() -> {
-            final String tableName = testName.getMethodName();
+            final String tableName = getTableName();
             TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
                     .col("a", ColumnType.INT)
                     .col("b", ColumnType.INT)
@@ -460,7 +529,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     @Test
     public void testUpdateViaWal_IndexedVariables() throws Exception {
         assertMemoryLeak(() -> {
-            final String tableName = testName.getMethodName();
+            final String tableName = getTableName();
             final String tableCopyName = tableName + "_copy";
             TableToken tableToken = createTableAndCopy(tableName, tableCopyName);
 
@@ -474,7 +543,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             final long pointer = Unsafe.malloc(binarySize, MemoryTag.NATIVE_DEFAULT);
             try {
                 final DirectBinarySequence binSeq = new DirectBinarySequence();
-                WalWriterTest.prepareBinPayload(pointer, binarySize);
+                WalWriterTestUtils.prepareBinPayload(pointer, binarySize);
                 final Utf8String varChar = new Utf8String("₴ п'ять доллярів");
                 try (
                         SqlCompiler compiler = engine.getSqlCompiler();
@@ -561,7 +630,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     @Test
     public void testUpdateViaWal_JoinRejected() throws Exception {
         assertMemoryLeak(() -> {
-            final String tableName = testName.getMethodName();
+            final String tableName = getTableName();
             final String tableCopyName = tableName + "_copy";
             TableToken tableToken = createTableAndCopy(tableName, tableCopyName);
 
@@ -591,7 +660,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     @Test
     public void testUpdateViaWal_NamedVariables() throws Exception {
         assertMemoryLeak(() -> {
-            final String tableName = testName.getMethodName();
+            final String tableName = getTableName();
             final String tableCopyName = tableName + "_copy";
             TableToken tableToken = createTableAndCopy(tableName, tableCopyName);
 
@@ -605,7 +674,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             final long pointer = Unsafe.malloc(binarySize, MemoryTag.NATIVE_DEFAULT);
             try {
                 final DirectBinarySequence binSeq = new DirectBinarySequence();
-                WalWriterTest.prepareBinPayload(pointer, binarySize);
+                WalWriterTestUtils.prepareBinPayload(pointer, binarySize);
 
                 final Utf8String varChar = new Utf8String("₴ п'ять доллярів");
                 try (
@@ -703,7 +772,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
         sqlExecutionContext.getRandom().reset(currentMicros * 1000, currentMicros);
 
         assertMemoryLeak(() -> {
-            final String tableName = testName.getMethodName();
+            final String tableName = getTableName();
             final String tableCopyName = tableName + "_copy";
             TableToken tableToken = createTableAndCopy(tableName, tableCopyName);
 
@@ -732,7 +801,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     @Test
     public void testUpdateViaWal_SQLFailure() throws Exception {
         assertMemoryLeak(() -> {
-            final String tableName = testName.getMethodName();
+            final String tableName = "testUpdateViaWal_SQLFailure";
             final String tableCopyName = tableName + "_copy";
             TableToken tableToken = createTableAndCopy(tableName, tableCopyName);
 
@@ -765,7 +834,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     @Test
     public void testUpdateViaWal_Simple() throws Exception {
         assertMemoryLeak(() -> {
-            final String tableName = testName.getMethodName();
+            final String tableName = getTableName();
             final String tableCopyName = tableName + "_copy";
             TableToken tableToken = createTableAndCopy(tableName, tableCopyName);
 
@@ -794,7 +863,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     @Test
     public void testUpdateViaWal_SimpleWhere() throws Exception {
         assertMemoryLeak(() -> {
-            final String tableName = testName.getMethodName();
+            final String tableName = getTableName();
             final String tableCopyName = tableName + "_copy";
             TableToken tableToken = createTableAndCopy(tableName, tableCopyName);
 
@@ -828,7 +897,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     @Test
     public void testWalTxnRepublishing() throws Exception {
         assertMemoryLeak(() -> {
-            final String tableName = testName.getMethodName();
+            final String tableName = getTableName();
             final String tableCopyName = tableName + "_copy";
             TableToken tableToken = createTableAndCopy(tableName, tableCopyName);
 
@@ -842,7 +911,6 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                     SqlCompiler compiler = engine.getSqlCompiler();
                     WalWriter walWriter = engine.getWalWriter(tableToken)
             ) {
-
                 long start = ts;
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
@@ -862,7 +930,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     @Test
     public void testWalWriterWithExistingTable() throws Exception {
         assertMemoryLeak(() -> {
-            final String tableName = testName.getMethodName();
+            final String tableName = getTableName();
             final String tableCopyName = tableName + "_copy";
             TableToken tableToken = createTableAndCopy(tableName, tableCopyName);
 
@@ -876,14 +944,11 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                     SqlCompiler compiler = engine.getSqlCompiler();
                     WalWriter walWriter = engine.getWalWriter(tableToken)
             ) {
-
                 long start = ts;
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
 
-                try (
-                        WalWriter walWriter2 = engine.getWalWriter(tableToken)
-                ) {
+                try (WalWriter walWriter2 = engine.getWalWriter(tableToken)) {
                     rnd.reset();
                     start += rowCount * tsIncrement - Timestamps.HOUR_MICROS / 2 + 1;
                     addRowsToWalAndApplyToTable(1, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter2, true);
@@ -1018,13 +1083,17 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                 .timestamp("ts");
     }
 
+    private String getTableName() {
+        return testName.getMethodName().replace('[', '_').replace(']', '_');
+    }
+
     private void testUpdateToNowFunction(String nowName) throws Exception {
         // regardless of randomised clocks tables on each node should be identical
         final Rnd rnd = TestUtils.generateRandom(LOG);
         forEachNode(node -> node.getConfigurationOverrides().setCurrentMicros(rnd.nextPositiveLong()));
 
         assertMemoryLeak(() -> {
-            final String tableName = testName.getMethodName();
+            final String tableName = getTableName();
             final String tableCopyName = tableName + "_copy";
             TableToken tableToken = createTableAndCopy(tableName, tableCopyName);
 

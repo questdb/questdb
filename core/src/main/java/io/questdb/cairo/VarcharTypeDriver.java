@@ -58,7 +58,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     /**
      * Appends UTF8 varchar type to the memory address with a header.
      * This is unsafe method, and it is assumed that the memory address is valid and has enough space to store the header and UTF8 bytes.
-     * The number of bytes to be written can be obtained from {@link #getSingleMemValueByteCount(Utf8Sequence)}
+     * The number of bytes to be written can be obtained from {@link #getPlainValueByteCount(Utf8Sequence)}
      *
      * @param dataMemAddr    memory address to store header and UTF8 bytes in
      * @param value          the UTF8 string to be stored
@@ -203,6 +203,10 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         return sequence.of(dataMemAddr + Integer.BYTES, dataMemAddr + Integer.BYTES + size(header), isAscii(header));
     }
 
+    public static int getPlainValueByteCount(@Nullable Utf8Sequence value) {
+        return value != null ? Integer.BYTES + value.size() : Integer.BYTES;
+    }
+
     /**
      * Reads UTF8 varchar size from the memory with a header.
      *
@@ -227,10 +231,6 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             return TableUtils.NULL_LEN;
         }
         return size(header);
-    }
-
-    public static int getSingleMemValueByteCount(@Nullable Utf8Sequence value) {
-        return value != null ? Integer.BYTES + value.size() : Integer.BYTES;
     }
 
     /**

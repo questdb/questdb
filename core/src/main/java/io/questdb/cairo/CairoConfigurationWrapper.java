@@ -916,6 +916,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getWalDefaultFormat() {
+        return getDelegate().getWalDefaultFormat();
+    }
+
+    @Override
     public boolean getWalEnabledDefault() {
         return getDelegate().getWalEnabledDefault();
     }

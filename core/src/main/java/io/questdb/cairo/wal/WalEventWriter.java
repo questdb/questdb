@@ -222,10 +222,16 @@ class WalEventWriter implements Closeable {
         eventMem.putInt(SymbolMapDiffImpl.END_OF_SYMBOL_DIFFS);
     }
 
-    int appendData(long startRowID, long endRowID, long minTimestamp, long maxTimestamp, boolean outOfOrder) {
+    int appendColFirstData(
+            long startRowID,
+            long endRowID,
+            long minTimestamp,
+            long maxTimestamp,
+            boolean outOfOrder
+    ) {
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
-        eventMem.putByte(WalTxnType.DATA);
+        eventMem.putByte(WalTxnType.COL_FIRST_DATA);
         eventMem.putLong(startRowID);
         eventMem.putLong(endRowID);
         eventMem.putLong(minTimestamp);
@@ -233,6 +239,35 @@ class WalEventWriter implements Closeable {
         eventMem.putBool(outOfOrder);
         writeSymbolMapDiffs();
         eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
+        eventMem.putInt(-1);
+
+        appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
+
+        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
+        return txn++;
+    }
+
+    int appendRowFirstData(
+            long startRowID,
+            long endRowID,
+            long startOffset,
+            long endOffset, // exclusive
+            long minTimestamp,
+            long maxTimestamp,
+            boolean outOfOrder
+    ) {
+        this.startOffset = eventMem.getAppendOffset() - Integer.BYTES;
+        eventMem.putLong(txn);
+        eventMem.putByte(WalTxnType.ROW_FIRST_DATA);
+        eventMem.putLong(startRowID);
+        eventMem.putLong(endRowID);
+        eventMem.putLong(startOffset);
+        eventMem.putLong(endOffset);
+        eventMem.putLong(minTimestamp);
+        eventMem.putLong(maxTimestamp);
+        eventMem.putBool(outOfOrder);
+        writeSymbolMapDiffs();
+        eventMem.putInt(this.startOffset, (int) (eventMem.getAppendOffset() - this.startOffset));
         eventMem.putInt(-1);
 
         appendIndex(eventMem.getAppendOffset() - Integer.BYTES);

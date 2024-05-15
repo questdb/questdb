@@ -327,6 +327,13 @@ public final class ColumnType {
         return -1;
     }
 
+    public static int sizeOfWalDataColumn(int columnType, boolean designatedTimestamp) {
+        if (columnType == ColumnType.TIMESTAMP && designatedTimestamp) {
+            return 16; // 128 bit column
+        }
+        return sizeOf(columnType);
+    }
+
     public static short tagOf(int type) {
         return (short) (type & 0xFF);
     }
@@ -337,14 +344,6 @@ public final class ColumnType {
 
     public static int typeOf(CharSequence name) {
         return nameTypeMap.get(name);
-    }
-
-    public static int variableColumnLengthBytes(int columnType) {
-        if (columnType == ColumnType.STRING) {
-            return Integer.BYTES;
-        }
-        assert columnType == ColumnType.BINARY;
-        return Long.BYTES;
     }
 
     private static boolean isGeoHashWideningCast(int fromType, int toType) {

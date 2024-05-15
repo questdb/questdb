@@ -31,7 +31,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
-//writable
+// writable
 public interface MemoryW extends Closeable {
 
     long appendAddressFor(long offset, long bytes);

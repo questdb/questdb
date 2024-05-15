@@ -39,7 +39,6 @@ import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_MASK;
  * UTF-8 specific variant of the {@link Chars} utility.
  */
 public final class Utf8s {
-
     private final static io.questdb.std.ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
 
     private Utf8s() {

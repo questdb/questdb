@@ -22,12 +22,19 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal.seq;
+package io.questdb.cairo;
 
-import io.questdb.std.QuietCloseable;
+import org.jetbrains.annotations.NotNull;
 
-public interface TableMetadataChangeLog extends QuietCloseable {
-    boolean hasNext();
+public interface WalWriter extends TableWriterAPI {
 
-    TableMetadataChange next();
+    int getWalId();
+
+    String getWalName();
+
+    void goActive();
+
+    boolean goActive(long maxStructureVersion);
+
+    long renameTable(@NotNull CharSequence oldName, String newTableName);
 }

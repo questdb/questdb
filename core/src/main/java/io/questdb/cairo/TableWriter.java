@@ -111,6 +111,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // Publisher source is identified by a long value
     private final AlterOperation alterOp = new AlterOperation();
     private final LongConsumer appendTimestampSetter;
+    private final IntList columnSizeCache = new IntList();
     private final ColumnVersionWriter columnVersionWriter;
     private final MPSequence commandPubSeq;
     private final RingQueue<TableWriterTask> commandQueue;
@@ -173,11 +174,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private final Uuid uuid = new Uuid();
     private final LowerCaseCharSequenceIntHashMap validationMap = new LowerCaseCharSequenceIntHashMap();
-    private final WeakClosableObjectPool<MemoryCMOR> walColumnMemoryPool;
+    // only used for row-first WAL format
+    private final ObjList<MemoryCARW> walColumns = new ObjList<>();
     private final LongObjHashMap<IntList> walFdCache = new LongObjHashMap<>();
     private final WeakClosableObjectPool<IntList> walFdCacheListPool = new WeakClosableObjectPool<>(IntList::new, 5, true);
     private final LongObjHashMap.LongObjConsumer<IntList> walFdCloseCachedFdAction;
+    // only used to mmap columns in col-first WAL format
+    // or to mmap the segment in row-first WAL format
     private final ObjList<MemoryCMOR> walMappedColumns = new ObjList<>();
+    private final WeakClosableObjectPool<MemoryCMOR> walMappedFilesPool;
+    private final MemoryCARW walTimestampMem;
     private ObjList<? extends MemoryA> activeColumns;
     private ObjList<Runnable> activeNullSetters;
     private ColumnVersionReader attachColumnVersionReader;
@@ -373,7 +379,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // Some wal specific initialization
             if (metadata.isWalEnabled()) {
-                walColumnMemoryPool = new WeakClosableObjectPool<>(GET_MEMORY_CMOR, configuration.getWalMaxSegmentFileDescriptorsCache(), true);
+                walTimestampMem = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
+                walMappedFilesPool = new WeakClosableObjectPool<>(GET_MEMORY_CMOR, configuration.getWalMaxSegmentFileDescriptorsCache(), true);
                 walFdCloseCachedFdAction = (key, fdList) -> {
                     for (int i = 0, n = fdList.size(); i < n; i++) {
                         ff.close(fdList.getQuick(i));
@@ -382,7 +389,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     walFdCacheListPool.push(fdList);
                 };
             } else {
-                walColumnMemoryPool = null;
+                walTimestampMem = null;
+                walMappedFilesPool = null;
                 walFdCloseCachedFdAction = null;
             }
         } catch (Throwable e) {
@@ -411,8 +419,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return getPrimaryColumnIndex(index) + 1;
     }
 
-    public static long getTimestampIndexValue(long timestampIndex, long indexRow) {
-        return Unsafe.getUnsafe().getLong(timestampIndex + indexRow * 16);
+    public static long getTimestampIndexValue(long timestampIndexAddr, long indexRow) {
+        return Unsafe.getUnsafe().getLong(timestampIndexAddr + indexRow * 16);
     }
 
     @Override
@@ -951,6 +959,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean inOrder,
             long rowLo,
             long rowHi,
+            long startOffset, // set to -1 for col-first format
+            long endOffset, // set to -1 for col-first format
             long o3TimestampMin,
             long o3TimestampMax,
             SymbolMapDiffCursor mapDiffCursor,
@@ -982,9 +992,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
 
-        LOG.info().$("processing WAL [path=").$(walPath).$(", roLo=").$(rowLo)
-                .$(", roHi=").$(rowHi)
+        LOG.info().$("processing WAL [path=").$(walPath)
                 .$(", seqTxn=").$(seqTxn)
+                .$(", roLo=").$(rowLo).$(", roHi=").$(rowHi)
+                .$(", startOffset=").$(startOffset).$(", endOffset=").$(endOffset)
                 .$(", tsMin=").$ts(o3TimestampMin).$(", tsMax=").$ts(o3TimestampMax)
                 .$(", commitToTimestamp=").$ts(commitToTimestamp)
                 .I$();
@@ -992,7 +1003,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long committedRowCount = txWriter.getRowCount();
         final long walSegmentId = walTxnDetails.getWalSegmentId(seqTxn);
         boolean isLastSegmentUsage = walTxnDetails.isLastSegmentUsage(seqTxn);
-        boolean committed = processWalBlock(walPath, metadata.getTimestampIndex(), inOrder, rowLo, rowHi, o3TimestampMin, o3TimestampMax, mapDiffCursor, commitToTimestamp, walSegmentId, isLastSegmentUsage);
+        boolean committed = processWalBlock(
+                walPath,
+                metadata.getTimestampIndex(),
+                inOrder,
+                rowLo,
+                rowHi,
+                startOffset,
+                endOffset,
+                o3TimestampMin,
+                o3TimestampMax,
+                mapDiffCursor,
+                commitToTimestamp,
+                walSegmentId,
+                isLastSegmentUsage
+        );
 
         if (committed) {
             // Useful for debugging
@@ -1019,14 +1044,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             metrics.tableWriter().incrementCommits();
             metrics.tableWriter().addCommittedRows(rowsAdded);
 
-            shrinkO3Mem();
+            shrinkMem();
             return rowsAdded;
         }
 
         // Nothing was committed to the table, only copied to LAG.
         // Keep in memory last committed seq txn, but do not write it to _txn file.
         txWriter.setLagTxnCount((int) (seqTxn - txWriter.getSeqTxn()));
-        shrinkO3Mem();
+        shrinkMem();
         return 0L;
     }
 
@@ -1500,6 +1525,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public void goPassive() {
         Misc.freeObjListAndKeepObjects(o3MemColumns1);
         Misc.freeObjListAndKeepObjects(o3MemColumns2);
+        Misc.free(walTimestampMem);
     }
 
     public boolean hasO3() {
@@ -1657,6 +1683,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean ordered,
             long rowLo,
             long rowHi,
+            long startOffset, // set to -1 for col-first format
+            long endOffset, // set to -1 for col-first format
             final long o3TimestampMin,
             final long o3TimestampMax,
             SymbolMapDiffCursor mapDiffCursor,
@@ -1681,16 +1709,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
 
-        assert maxTimestamp == Long.MIN_VALUE ||
-                txWriter.getPartitionTimestampByTimestamp(partitionTimestampHi) == txWriter.getPartitionTimestampByTimestamp(txWriter.maxTimestamp);
+        assert maxTimestamp == Long.MIN_VALUE
+                || txWriter.getPartitionTimestampByTimestamp(partitionTimestampHi) == txWriter.getPartitionTimestampByTimestamp(txWriter.maxTimestamp);
 
         lastPartitionTimestamp = txWriter.getPartitionTimestampByTimestamp(partitionTimestampHi);
 
+        final boolean rowFirstFormat = startOffset > -1 && endOffset > -1;
         boolean success = true;
         try {
             final long maxLagRows = getWalMaxLagRows();
             final long walLagMaxTimestampBefore = txWriter.getLagMaxTimestamp();
-            mmapWalColumns(walPath, walSegmentId, timestampIndex, rowLo, rowHi);
+            if (rowFirstFormat) {
+                readWalRows(walPath, walSegmentId, timestampIndex, rowLo, rowHi, startOffset, endOffset);
+            } else { // col-first format
+                mmapWalColumns(walPath, walSegmentId, timestampIndex, rowLo, rowHi);
+            }
             final long newMinLagTs = Math.min(o3TimestampMin, txWriter.getLagMinTimestamp());
             long initialPartitionTimestampHi = partitionTimestampHi;
             long commitMaxTimestamp, commitMinTimestamp;
@@ -1714,7 +1747,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // to squash several of them together before writing anything to disk.
                     LOG.debug().$("all WAL rows copied to LAG [table=").$(tableToken).I$();
 
-                    o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath);
+                    if (rowFirstFormat) {
+                        remapWalSymbolsInPlace(mapDiffCursor, rowLo, rowHi, walPath);
+                    } else {
+                        o3Columns = remapWalMappedSymbols(mapDiffCursor, rowLo, rowHi, walPath);
+                    }
                     // This will copy data from mmap files to memory.
                     // Symbols are already mapped to the correct destination.
                     dispatchColumnTasks(
@@ -1723,7 +1760,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             o3Lo,
                             walLagRowCount,
                             1,
-                            this.cthAppendWalColumnToLastPartition
+                            cthAppendWalColumnToLastPartition
                     );
                     walLagRowCount += commitRowCount;
                     txWriter.setLagRowCount((int) walLagRowCount);
@@ -1747,10 +1784,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 boolean needsOrdering = !ordered || walLagRowCount > 0;
                 boolean needsDedup = isDeduplicationEnabled();
 
-                long timestampAddr = 0;
-                MemoryCR walTimestampColumn = walMappedColumns.getQuick(getPrimaryColumnIndex(timestampIndex));
-                o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath);
+                if (rowFirstFormat) {
+                    remapWalSymbolsInPlace(mapDiffCursor, rowLo, rowHi, walPath);
+                } else {
+                    o3Columns = remapWalMappedSymbols(mapDiffCursor, rowLo, rowHi, walPath);
+                }
 
+                long timestampAddr = 0;
+                MemoryCR walTimestampColumn = o3Columns.getQuick(getPrimaryColumnIndex(timestampIndex));
                 if (needsOrdering || needsDedup) {
                     if (needsOrdering) {
                         LOG.info().$("sorting WAL [table=").$(tableToken)
@@ -1759,14 +1800,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 .$(", walRowLo=").$(rowLo)
                                 .$(", walRowHi=").$(rowHi).I$();
 
-                        final long timestampMemorySize = totalUncommitted << 4;
+                        final long timestampMemorySize = totalUncommitted * TIMESTAMP_MERGE_ENTRY_BYTES;
                         o3TimestampMem.jumpTo(timestampMemorySize);
                         o3TimestampMemCpy.jumpTo(timestampMemorySize);
 
                         MemoryMA timestampColumn = columns.get(getPrimaryColumnIndex(timestampIndex));
                         final long tsLagOffset = txWriter.getTransientRowCount() << 3;
                         final long tsLagSize = walLagRowCount << 3;
-                        final long mappedTimestampIndexAddr = walTimestampColumn.addressOf(rowLo << 4);
+                        final long walTimestampIndexAddr = walTimestampColumn.addressOf(rowLo * TIMESTAMP_MERGE_ENTRY_BYTES);
                         timestampAddr = o3TimestampMem.getAddress();
 
                         final long tsLagBufferAddr = mapAppendColumnBuffer(timestampColumn, tsLagOffset, tsLagSize, false);
@@ -1774,7 +1815,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             Vect.radixSortABLongIndexAsc(
                                     Math.abs(tsLagBufferAddr),
                                     walLagRowCount,
-                                    mappedTimestampIndexAddr,
+                                    walTimestampIndexAddr,
                                     commitRowCount,
                                     timestampAddr,
                                     o3TimestampMemCpy.addressOf(0)
@@ -3063,11 +3104,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 walFdCacheListPool.push(fds);
             }
 
-            for (int col = 0, n = walMappedColumns.size(); col < n; col++) {
-                MemoryCMOR mappedColumnMem = walMappedColumns.getQuick(col);
+            for (int i = 0, n = walMappedColumns.size(); i < n; i++) {
+                MemoryCMOR mappedColumnMem = walMappedColumns.getQuick(i);
                 if (mappedColumnMem != null) {
                     Misc.free(mappedColumnMem);
-                    walColumnMemoryPool.push(mappedColumnMem);
+                    walMappedFilesPool.push(mappedColumnMem);
                 }
             }
         } else {
@@ -3079,14 +3120,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 walFdCacheSize++;
             }
 
-            for (int col = 0, n = walMappedColumns.size(); col < n; col++) {
-                MemoryCMOR mappedColumnMem = walMappedColumns.getQuick(col);
+            for (int i = 0, n = walMappedColumns.size(); i < n; i++) {
+                MemoryCMOR mappedColumnMem = walMappedColumns.getQuick(i);
                 if (mappedColumnMem != null) {
                     int fd = mappedColumnMem.detachFdClose();
                     if (fds != null) {
                         fds.add(fd);
                     }
-                    walColumnMemoryPool.push(mappedColumnMem);
+                    walMappedFilesPool.push(mappedColumnMem);
                 }
             }
         }
@@ -3099,6 +3140,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // This supposed to happen rarely.
             closeWalFiles();
         }
+
+        walMappedColumns.clear();
+        walColumns.clear();
     }
 
     private void closeWalFiles() {
@@ -3404,6 +3448,37 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         metadata.setMetadataVersion(txWriter.getMetadataVersion() + 1);
     }
 
+    private long copyWalRowValue(int columnSize, int columnIndex, int columnType, long offset, MemoryCMOR srcMem) {
+        if (columnSize > 0) {
+            // fixed-size column
+            final MemoryCARW destMem = walColumns.getQuick(getPrimaryColumnIndex(columnIndex));
+            destMem.putBlockOfBytes(srcMem.addressOf(offset), columnSize);
+            return columnSize;
+        } else {
+            // var-size column
+            final MemoryCARW destDataMem = walColumns.getQuick(getPrimaryColumnIndex(columnIndex));
+            final MemoryCARW destAuxMem = walColumns.getQuick(getSecondaryColumnIndex(columnIndex));
+            switch (ColumnType.tagOf(columnType)) {
+                case ColumnType.VARCHAR:
+                    final Utf8Sequence us = VarcharTypeDriver.getPlainValue(srcMem, offset, 1);
+                    VarcharTypeDriver.appendValue(destAuxMem, destDataMem, us);
+                    return VarcharTypeDriver.getPlainValueByteCount(us);
+                case ColumnType.STRING:
+                    final CharSequence cs = srcMem.getStrA(offset);
+                    destAuxMem.putLong(destDataMem.putStr(cs));
+                    return StringTypeDriver.getPlainValueByteCount(cs);
+                case ColumnType.BINARY:
+                    final BinarySequence bs = srcMem.getBin(offset);
+                    destAuxMem.putLong(destDataMem.putBin(bs));
+                    return BinaryTypeDriver.getPlainValueByteCount(bs);
+                default:
+                    throw CairoException.nonCritical()
+                            .put("Column type ").put(ColumnType.nameOf(columnType))
+                            .put(" not supported by WAL apply");
+            }
+        }
+    }
+
     /**
      * Creates bitmap index files for a column. This method uses primary column instance as temporary tool to
      * append index data. Therefore, it must be called before primary column is initialized.
@@ -3508,106 +3583,109 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
         try {
-            boolean designatedTimestamp = columnIndex == timestampColumnIndex;
-            MemoryCR o3SrcDataMem = o3Columns.get(getPrimaryColumnIndex(columnIndex));
-            MemoryCR o3srcAuxMem = o3Columns.get(getSecondaryColumnIndex(columnIndex));
-            MemoryMA dstDataMem = columns.get(getPrimaryColumnIndex(columnIndex));
-            MemoryMA dstAuxMem = columns.get(getSecondaryColumnIndex(columnIndex));
+            final boolean designatedTimestamp = columnIndex == timestampColumnIndex;
+            final int primaryIndex = getPrimaryColumnIndex(columnIndex);
+            final int secondaryIndex = primaryIndex + 1;
+
+            MemoryCR walSrcDataMem = o3Columns.getQuick(primaryIndex);
+            MemoryCR walSrcAuxMem = o3Columns.getQuick(secondaryIndex);
+            MemoryMA dstDataMem = columns.getQuick(primaryIndex);
+            MemoryMA dstAuxMem = columns.getQuick(secondaryIndex);
             long dstRowCount = txWriter.getTransientRowCount() - getColumnTop(columnIndex) + existingLagRows;
 
             long dataVectorCopySize;
-            long o3srcDataOffset;
-            long o3dstDataOffset;
+            long walSrcDataOffset;
+            long walDstDataOffset;
             if (ColumnType.isVarSize(columnType)) {
                 // Var dataVectorCopySize column
                 final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
 
-                final long committedAuxOffset = columnTypeDriver.getAuxVectorOffset(columnRowCount);
-                final long o3srcAuxMemAddr = o3srcAuxMem.addressOf(0);
-                o3srcDataOffset = columnTypeDriver.getDataVectorOffset(o3srcAuxMemAddr, columnRowCount);
-                dataVectorCopySize = columnTypeDriver.getDataVectorSize(o3srcAuxMemAddr, columnRowCount, columnRowCount + copyRowCount - 1);
+                final long walSrcAuxMemAddr = walSrcAuxMem.addressOf(0);
+                walSrcDataOffset = columnTypeDriver.getDataVectorOffset(walSrcAuxMemAddr, columnRowCount);
+                dataVectorCopySize = columnTypeDriver.getDataVectorSize(walSrcAuxMemAddr, columnRowCount, columnRowCount + copyRowCount - 1);
 
-                final long o3dstAuxOffset = columnTypeDriver.getAuxVectorOffset(dstRowCount);
-                final long o3dstAuxSize = columnTypeDriver.getAuxVectorSize(copyRowCount);
+                final long o3DstAuxOffset = columnTypeDriver.getAuxVectorOffset(dstRowCount);
+                final long o3DstAuxSize = columnTypeDriver.getAuxVectorSize(copyRowCount);
 
-                if (o3dstAuxOffset > 0) {
-                    o3dstDataOffset = dstDataMem.getAppendOffset();
+                if (o3DstAuxOffset > 0) {
+                    walDstDataOffset = dstDataMem.getAppendOffset();
                 } else {
-                    o3dstDataOffset = 0;
+                    walDstDataOffset = 0;
                 }
 
                 // move count + 1 rows, to make sure index column remains n+1
                 // the data is copied back to start of the buffer, no need to set dataVectorCopySize first
-                long o3dstAuxAddr = mapAppendColumnBuffer(dstAuxMem, o3dstAuxOffset, o3dstAuxSize, true);
-                assert o3dstAuxAddr != 0;
+                final long o3DstAuxAddr = mapAppendColumnBuffer(dstAuxMem, o3DstAuxOffset, o3DstAuxSize, true);
+                final long committedAuxOffset = columnTypeDriver.getAuxVectorOffset(columnRowCount);
+                assert o3DstAuxAddr != 0;
                 try {
-                    final long shift = o3srcDataOffset - o3dstDataOffset;
+                    final long shift = walSrcDataOffset - walDstDataOffset;
                     columnTypeDriver.shiftCopyAuxVector(
                             shift,
-                            o3srcAuxMem.addressOf(committedAuxOffset),
+                            walSrcAuxMem.addressOf(committedAuxOffset),
                             0,
                             copyRowCount - 1, // inclusive
-                            Math.abs(o3dstAuxAddr),
-                            o3dstAuxSize
+                            Math.abs(o3DstAuxAddr),
+                            o3DstAuxSize
                     );
                 } finally {
-                    mapAppendColumnBufferRelease(o3dstAuxAddr, o3dstAuxOffset, o3dstAuxSize);
+                    mapAppendColumnBufferRelease(o3DstAuxAddr, o3DstAuxOffset, o3DstAuxSize);
                 }
             } else {
                 // Fixed dataVectorCopySize column
                 final int shl = ColumnType.pow2SizeOf(columnType);
-                o3srcDataOffset = designatedTimestamp ? columnRowCount << 4 : columnRowCount << shl;
+                walSrcDataOffset = designatedTimestamp ? columnRowCount << 4 : columnRowCount << shl;
                 dataVectorCopySize = copyRowCount << shl;
-                o3dstDataOffset = dstRowCount << shl;
+                walDstDataOffset = dstRowCount << shl;
             }
 
-            dstDataMem.jumpTo(o3dstDataOffset + dataVectorCopySize);
+            dstDataMem.jumpTo(walDstDataOffset + dataVectorCopySize);
 
             // data vector size could be 0 for some inlined varsize column types
             if (!designatedTimestamp && dataVectorCopySize > 0) {
                 if (mixedIOFlag) {
-                    if (o3SrcDataMem.isFileBased()) {
-                        long bytesWritten = ff.copyData(o3SrcDataMem.getFd(), dstDataMem.getFd(), o3srcDataOffset, o3dstDataOffset, dataVectorCopySize);
+                    if (walSrcDataMem.isFileBased()) {
+                        long bytesWritten = ff.copyData(walSrcDataMem.getFd(), dstDataMem.getFd(), walSrcDataOffset, walDstDataOffset, dataVectorCopySize);
                         if (bytesWritten != dataVectorCopySize) {
                             throw CairoException.critical(ff.errno())
                                     .put("could not copy WAL column (fd-fd) [dstFd=").put(dstDataMem.getFd())
-                                    .put(", o3dstDataOffset=").put(o3dstDataOffset)
-                                    .put(", srcFd=").put(o3SrcDataMem.getFd())
+                                    .put(", walDstDataOffset=").put(walDstDataOffset)
+                                    .put(", srcFd=").put(walSrcDataMem.getFd())
                                     .put(", dataVectorCopySize=").put(dataVectorCopySize)
                                     .put(", bytesWritten=").put(bytesWritten)
                                     .put(']');
                         }
                     } else {
-                        long bytesWritten = ff.write(dstDataMem.getFd(), o3SrcDataMem.addressOf(o3srcDataOffset), dataVectorCopySize, o3dstDataOffset);
+                        long bytesWritten = ff.write(dstDataMem.getFd(), walSrcDataMem.addressOf(walSrcDataOffset), dataVectorCopySize, walDstDataOffset);
                         if (bytesWritten != dataVectorCopySize) {
                             throw CairoException.critical(ff.errno())
                                     .put("could not copy WAL column (mem-fd) [fd=").put(dstDataMem.getFd())
-                                    .put(", o3dstDataOffset=").put(o3dstDataOffset)
-                                    .put(", o3srcDataOffset=").put(o3srcDataOffset)
+                                    .put(", walDstDataOffset=").put(walDstDataOffset)
+                                    .put(", walSrcDataOffset=").put(walSrcDataOffset)
                                     .put(", dataVectorCopySize=").put(dataVectorCopySize)
                                     .put(", bytesWritten=").put(bytesWritten)
                                     .put(']');
                         }
                     }
                 } else {
-                    long destAddr = mapAppendColumnBuffer(dstDataMem, o3dstDataOffset, dataVectorCopySize, true);
+                    long destAddr = mapAppendColumnBuffer(dstDataMem, walDstDataOffset, dataVectorCopySize, true);
                     try {
-                        Vect.memcpy(Math.abs(destAddr), o3SrcDataMem.addressOf(o3srcDataOffset), dataVectorCopySize);
+                        Vect.memcpy(Math.abs(destAddr), walSrcDataMem.addressOf(walSrcDataOffset), dataVectorCopySize);
                     } finally {
-                        mapAppendColumnBufferRelease(destAddr, o3dstDataOffset, dataVectorCopySize);
+                        mapAppendColumnBufferRelease(destAddr, walDstDataOffset, dataVectorCopySize);
                     }
                 }
             } else if (designatedTimestamp) {
                 // WAL format has timestamp written as 2 LONGs per record, in so-called timestamp index data structure.
                 // There is no point storing in 2 LONGs per record the LAG it is enough to have 1 LONG with timestamp.
                 // The sort will convert the format back to timestamp index data structure.
-                long srcLo = o3SrcDataMem.addressOf(o3srcDataOffset);
+                long srcLo = walSrcDataMem.addressOf(walSrcDataOffset);
                 // timestamp size must not be 0
-                long destAddr = mapAppendColumnBuffer(dstDataMem, o3dstDataOffset, dataVectorCopySize, true);
+                long destAddr = mapAppendColumnBuffer(dstDataMem, walDstDataOffset, dataVectorCopySize, true);
                 try {
                     Vect.copyFromTimestampIndex(srcLo, 0, copyRowCount - 1, Math.abs(destAddr));
                 } finally {
-                    mapAppendColumnBufferRelease(destAddr, o3dstDataOffset, dataVectorCopySize);
+                    mapAppendColumnBufferRelease(destAddr, walDstDataOffset, dataVectorCopySize);
                 }
             }
         } catch (Throwable th) {
@@ -3633,24 +3711,33 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void cthMergeWalFixColumnWithLag(int columnIndex, int columnType, long mergeIndex, long mergeCount, long lagRows, long mappedRowLo, long mappedRowHi) {
+    private void cthMergeWalFixColumnWithLag(
+            int columnIndex,
+            int columnType,
+            long mergeIndex,
+            long mergeCount,
+            long lagRows,
+            long walRowLo,
+            long walRowHi
+    ) {
         if (o3ErrorCount.get() > 0) {
             return;
         }
         try {
-            final int primaryColumnIndex = getPrimaryColumnIndex(columnIndex);
-            final MemoryMA lagMem = columns.getQuick(primaryColumnIndex);
-            final MemoryCR mappedMem = o3Columns.getQuick(primaryColumnIndex);
-            final MemoryCARW destMem = o3MemColumns2.getQuick(primaryColumnIndex);
+            final int primaryIndex = getPrimaryColumnIndex(columnIndex);
+
+            final MemoryMA lagMem = columns.getQuick(primaryIndex);
+            final MemoryCR walMem = o3Columns.getQuick(primaryIndex);
+            final MemoryCARW destMem = o3MemColumns2.getQuick(primaryIndex);
 
             final int shl = ColumnType.pow2SizeOf(columnType);
             destMem.jumpTo(mergeCount << shl);
-            final long srcMapped = mappedMem.addressOf(mappedRowLo << shl) - (mappedRowLo << shl);
+            final long srcMapped = walMem.addressOf(0);
             long lagMemOffset = (txWriter.getTransientRowCount() - getColumnTop(columnIndex)) << shl;
             long lagAddr = mapAppendColumnBuffer(lagMem, lagMemOffset, lagRows << shl, false);
             try {
                 long srcLag = Math.abs(lagAddr);
-                destMem.shiftAddressRight(0);
+                destMem.shiftOffsetRight(0);
                 final long dest = destMem.addressOf(0);
                 if (srcLag == 0 && lagRows != 0) {
                     throw CairoException.critical(0)
@@ -3708,8 +3795,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     columnType,
                     mergeIndex,
                     lagRows,
-                    mappedRowLo,
-                    mappedRowHi,
+                    walRowLo,
+                    walRowHi,
                     e
             );
         }
@@ -3721,8 +3808,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long timestampMergeIndexAddr,
             long timestampMergeIndexCount,
             long lagRows,
-            long mappedRowLo,
-            long mappedRowHi
+            long walRowLo,
+            long walRowHi
     ) {
         if (o3ErrorCount.get() > 0) {
             return;
@@ -3731,8 +3818,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final int primaryIndex = getPrimaryColumnIndex(columnIndex);
             final int secondaryIndex = primaryIndex + 1;
 
-            final MemoryCR o3dataMem = o3Columns.getQuick(primaryIndex);
-            final MemoryCR o3auxMem = o3Columns.getQuick(secondaryIndex);
+            final MemoryCR walDataMem = o3Columns.getQuick(primaryIndex);
+            final MemoryCR walAuxMem = o3Columns.getQuick(secondaryIndex);
             final MemoryMA lagDataMem = columns.getQuick(primaryIndex);
             final MemoryMA lagAuxMem = columns.getQuick(secondaryIndex);
 
@@ -3741,11 +3828,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
 
-            final long srcMappedDataAddr = o3dataMem.addressOf(0);
-            final long srcMappedAuxAddr = o3auxMem.addressOf(0);
+            final long srcWalDataAddr = walDataMem.addressOf(0);
+            final long srcWalAuxAddr = walAuxMem.addressOf(0);
 
-            final long src1DataSize = columnTypeDriver.getDataVectorSize(srcMappedAuxAddr, mappedRowLo, mappedRowHi - 1);
-            assert o3dataMem.size() >= src1DataSize;
+            final long src1DataSize = columnTypeDriver.getDataVectorSize(srcWalAuxAddr, walRowLo, walRowHi - 1);
+            assert walDataMem.size() >= src1DataSize;
             final long lagAuxOffset = columnTypeDriver.getAuxVectorOffset(txWriter.getTransientRowCount() - getColumnTop(columnIndex));
             final long lagAuxSize = columnTypeDriver.getAuxVectorSize(lagRows);
             final long signedLagAuxAddr = lagRows > 0 ? mapAppendColumnBuffer(lagAuxMem, lagAuxOffset, lagAuxSize, false) : 0;
@@ -3767,8 +3854,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             timestampMergeIndexCount,
                             lagAuxAddr,
                             lagDataAddr,
-                            srcMappedAuxAddr,
-                            srcMappedDataAddr,
+                            srcWalAuxAddr,
+                            srcWalDataAddr,
                             dstAuxAddr.addressOf(0),
                             dstDataAddr.addressOf(0),
                             0L
@@ -3786,8 +3873,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     columnType,
                     timestampMergeIndexAddr,
                     lagRows,
-                    mappedRowLo,
-                    mappedRowHi,
+                    walRowLo,
+                    walRowHi,
                     e
             );
         }
@@ -3811,7 +3898,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 MemoryMA colDataMem = getPrimaryColumn(columnIndex);
                 long colDataOffset;
                 final MemoryARW o3DataMem = o3MemColumns1.get(getPrimaryColumnIndex(columnIndex));
-                final MemoryARW o3auxMem = o3MemColumns1.get(getSecondaryColumnIndex(columnIndex));
+                final MemoryARW o3AuxMem = o3MemColumns1.get(getSecondaryColumnIndex(columnIndex));
 
                 long colDataExtraSize;
                 long o3dataOffset = o3DataMem.getAppendOffset();
@@ -3833,11 +3920,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     final MemoryMA colAuxMem = getSecondaryColumn(columnIndex);
                     final long colAuxMemOffset = columnTypeDriver.getAuxVectorOffset(committedRowCount);
                     long colAuxMemRequiredSize = columnTypeDriver.getAuxVectorSize(transientRowsAdded);
-                    long o3auxMemAppendOffset = o3auxMem.getAppendOffset();
+                    long o3AuxMemAppendOffset = o3AuxMem.getAppendOffset();
 
                     // ensure memory is available
-                    long offsetLimit = o3auxMemAppendOffset + columnTypeDriver.getAuxVectorOffset(transientRowsAdded);
-                    o3auxMem.jumpTo(offsetLimit);
+                    long offsetLimit = o3AuxMemAppendOffset + columnTypeDriver.getAuxVectorOffset(transientRowsAdded);
+                    o3AuxMem.jumpTo(offsetLimit);
                     long colAuxMemAddr = colAuxMem.map(colAuxMemOffset, colAuxMemRequiredSize);
                     boolean locallyMapped = colAuxMemAddr == 0;
 
@@ -3852,8 +3939,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
 
                     colDataOffset = columnTypeDriver.getDataVectorOffset(colAuxMemAddr + alignedExtraLen, 0);
-                    long dstAddr = o3auxMem.addressOf(o3auxMemAppendOffset) - columnTypeDriver.getMinAuxVectorSize();
-                    long dstAddrLimit = o3auxMem.addressOf(offsetLimit);
+                    long dstAddr = o3AuxMem.addressOf(o3AuxMemAppendOffset) - columnTypeDriver.getMinAuxVectorSize();
+                    long dstAddrLimit = o3AuxMem.addressOf(offsetLimit);
                     long dstAddrSize = dstAddrLimit - dstAddr;
 
                     columnTypeDriver.shiftCopyAuxVector(
@@ -4198,8 +4285,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ColumnTaskHandler taskHandler
     ) {
         final int timestampColumnIndex = metadata.getTimestampIndex();
-        final Sequence pubSeq = this.messageBus.getColumnTaskPubSeq();
-        final RingQueue<ColumnTask> queue = this.messageBus.getColumnTaskQueue();
+        final Sequence pubSeq = messageBus.getColumnTaskPubSeq();
+        final RingQueue<ColumnTask> queue = messageBus.getColumnTaskQueue();
         o3DoneLatch.reset();
         o3ErrorCount.set(0);
         lastErrno = 0;
@@ -4505,6 +4592,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         Misc.freeObjListAndKeepObjects(o3MemColumns1);
         Misc.freeObjListAndKeepObjects(o3MemColumns2);
+        Misc.free(walTimestampMem);
     }
 
     private void freeIndexers() {
@@ -4800,13 +4888,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int file = 0;
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 final int columnType = metadata.getColumnType(columnIndex);
-                o3RowCount = rowHi - rowLo;
                 if (columnType > 0) {
-                    int sizeBitsPow2 = ColumnType.getWalDataColumnShl(columnType, columnIndex == timestampIndex);
-
+                    final int sizeBitsPow2 = ColumnType.getWalDataColumnShl(columnType, columnIndex == timestampIndex);
                     if (ColumnType.isVarSize(columnType)) {
-                        MemoryCMOR auxMem = walColumnMemoryPool.pop();
-                        MemoryCMOR dataMem = walColumnMemoryPool.pop();
+                        MemoryCMOR dataMem = walMappedFilesPool.pop();
+                        MemoryCMOR auxMem = walMappedFilesPool.pop();
 
                         walMappedColumns.add(dataMem);
                         walMappedColumns.add(auxMem);
@@ -4819,7 +4905,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         iFile(walPath, metadata.getColumnName(columnIndex), -1L);
                         LOG.debug().$("reusing file descriptor for WAL files [fd=").$(auxFd).$(", path=").$(walPath).$(", walSegment=").$(walSegmentId).I$();
                         columnTypeDriver.configureAuxMemOM(
-                                configuration.getFilesFacade(),
+                                ff,
                                 auxMem,
                                 auxFd,
                                 walPath,
@@ -4833,7 +4919,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         dFile(walPath, metadata.getColumnName(columnIndex), -1L);
                         LOG.debug().$("reusing file descriptor for WAL files [fd=").$(dataFd).$(", path=").$(walPath).$(", walSegment=").$(walSegmentId).I$();
                         columnTypeDriver.configureDataMemOM(
-                                configuration.getFilesFacade(),
+                                ff,
                                 auxMem,
                                 dataMem,
                                 dataFd,
@@ -4844,15 +4930,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 CairoConfiguration.O_NONE
                         );
                     } else {
-                        MemoryCMOR primary = walColumnMemoryPool.pop();
-                        walMappedColumns.add(primary);
+                        MemoryCMOR primaryMem = walMappedFilesPool.pop();
+                        walMappedColumns.add(primaryMem);
                         walMappedColumns.add(null);
 
                         dFile(walPath, metadata.getColumnName(columnIndex), -1L);
                         int fd = fds != null ? fds.get(file++) : -1;
                         LOG.debug().$("reusing file descriptor for WAL files [fd=").$(fd).$(", path=").$(walPath).$(", walSegment=").$(walSegmentId).I$();
-                        primary.ofOffset(
-                                configuration.getFilesFacade(),
+                        primaryMem.ofOffset(
+                                ff,
                                 fd,
                                 walPath,
                                 rowLo << sizeBitsPow2,
@@ -4867,6 +4953,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     walMappedColumns.add(null);
                 }
             }
+            o3RowCount = rowHi - rowLo;
             o3Columns = walMappedColumns;
         } catch (Throwable th) {
             closeWalColumns(true, walSegmentId);
@@ -5347,9 +5434,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void o3CopySafe(
-            long cursor
-    ) {
+    private void o3CopySafe(long cursor) {
         final O3CopyTask task = messageBus.getO3CopyQueue().get(cursor);
         try {
             O3CopyJob.copy(
@@ -5412,6 +5497,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
         }
+
         activeColumns = o3MemColumns1;
         activeNullSetters = o3NullSetters1;
         LOG.debug().$("switched partition to memory").$();
@@ -5865,7 +5951,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // original partition timestamp
                     Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 6 * Long.BYTES, partitionTimestamp);
 
-
                     if (append) {
                         // we are appending last partition, make sure it has been mapped!
                         // this also might fail, make sure exception is trapped and partitions are
@@ -6270,6 +6355,133 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return todo;
     }
 
+    private void readWalRows(
+            @Transient Path walPath,
+            long walSegmentId,
+            int timestampIndex,
+            long rowLo,
+            long rowHi,
+            long startOffset,
+            long endOffset
+    ) {
+        walMappedColumns.clear();
+        walColumns.clear();
+        int walPathLen = walPath.size();
+        final int columnCount = metadata.getColumnCount();
+        int key = walFdCache.keyIndex(walSegmentId);
+        IntList fds = null;
+        if (key < 0) {
+            fds = walFdCache.valueAt(key);
+        }
+
+        try {
+            final int fd = fds != null ? fds.get(0) : -1;
+            MemoryCMOR walRowMemory = walMappedFilesPool.pop();
+            walMappedColumns.add(walRowMemory);
+
+            // mmap row-first segment.
+            walPath.concat(WAL_SEGMENT_FILE_NAME).$();
+            LOG.debug().$("reusing file descriptor for WAL row-first file [fd=").$(fd).$(", path=").$(walPath).$(", walSegment=").$(walSegmentId).I$();
+            walRowMemory.ofOffset(
+                    ff,
+                    fd,
+                    walPath,
+                    startOffset,
+                    endOffset,
+                    MemoryTag.MMAP_TABLE_WRITER,
+                    CairoConfiguration.O_NONE
+            );
+            walPath.trimTo(walPathLen);
+
+            // Prepare memory to copy the column values.
+            columnSizeCache.setPos(columnCount);
+            int nonDroppedColumnCount = 0;
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                final int columnType = metadata.getColumnType(columnIndex);
+                final int columnSize = ColumnType.sizeOfWalDataColumn(Math.abs(columnType), columnIndex == timestampIndex);
+                columnSizeCache.setQuick(columnIndex, columnSize);
+                if (columnType > 0) {
+                    final int sizeBitsPow2 = ColumnType.getWalDataColumnShl(columnType, columnIndex == timestampIndex);
+                    if (ColumnType.isVarSize(columnType)) {
+                        final MemoryCARW dataMem = o3MemColumns1.getQuick(getPrimaryColumnIndex(columnIndex));
+                        walColumns.add(dataMem);
+                        dataMem.jumpTo(0);
+
+                        final MemoryCARW auxMem = o3MemColumns1.getQuick(getSecondaryColumnIndex(columnIndex));
+                        walColumns.add(auxMem);
+                        auxMem.jumpTo(0);
+                        final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
+                        columnTypeDriver.configureAuxMemO3RSS(auxMem);
+                        auxMem.shiftOffsetRight(columnTypeDriver.getAuxVectorOffset(rowLo));
+                    } else {
+                        final MemoryCARW primaryMem;
+                        if (columnIndex == timestampIndex) {
+                            // We can't use o3MemColumns1 for designated timestamp values
+                            // since later it's used for sorting.
+                            primaryMem = walTimestampMem;
+                        } else {
+                            primaryMem = o3MemColumns1.getQuick(getPrimaryColumnIndex(columnIndex));
+                        }
+                        walColumns.add(primaryMem);
+                        primaryMem.jumpTo(0);
+                        primaryMem.shiftOffsetRight(rowLo << sizeBitsPow2);
+                        walColumns.add(NullMemory.INSTANCE);
+                    }
+                    nonDroppedColumnCount++;
+                } else {
+                    walColumns.add(NullMemory.INSTANCE);
+                    walColumns.add(NullMemory.INSTANCE);
+                }
+            }
+
+            // Copy the column values from the WAL segment.
+            int nonNullColumns = 0;
+            rowValueIsNotNull.fill(0, columnCount, 0);
+            long rows = 0;
+            for (long offset = startOffset; offset < endOffset; ) {
+                final int columnIndex = walRowMemory.getInt(offset);
+                offset += Integer.BYTES;
+                if (columnIndex == WalRowFirstWriter.NEW_ROW_SEPARATOR) {
+                    if (nonNullColumns < nonDroppedColumnCount) {
+                        for (int i = 0; i < columnCount; i++) {
+                            if (rowValueIsNotNull.getQuick(i) == 0) {
+                                o3NullSetters1.getQuick(i).run();
+                            }
+                        }
+                    }
+                    rowValueIsNotNull.fill(0, columnCount, 0);
+                    nonNullColumns = 0;
+                    rows++;
+                    continue;
+                }
+                final int columnType = metadata.getColumnType(columnIndex);
+                final int columnSize = columnSizeCache.getQuick(columnIndex);
+                if (columnType > -1) {
+                    offset += copyWalRowValue(columnSize, columnIndex, columnType, offset, walRowMemory);
+                    rowValueIsNotNull.setQuick(columnIndex, 1);
+                    nonNullColumns++;
+                } else {
+                    offset += skipWalRowValue(columnSize, Math.abs(columnType), offset, walRowMemory);
+                }
+            }
+            if (rows != rowHi - rowLo) {
+                throw CairoException.critical(0).put("incorrect number of rows in WAL segment [path=").put(walPath)
+                        .put(", count=").put(rows)
+                        .put(", rowLo=").put(rowLo)
+                        .put(", rowHi=").put(rowHi)
+                        .put(']');
+            }
+
+            o3RowCount = rowHi - rowLo;
+            o3Columns = walColumns;
+        } catch (Throwable th) {
+            closeWalColumns(true, walSegmentId);
+            throw th;
+        } finally {
+            rowValueIsNotNull.fill(0, columnCount, masterRef);
+        }
+    }
+
     private void rebuildAttachedPartitionColumnIndex(long partitionTimestamp, long partitionSize, CharSequence columnName) {
         if (attachIndexBuilder == null) {
             attachIndexBuilder = new IndexBuilder(configuration);
@@ -6364,7 +6576,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private ReadOnlyObjList<? extends MemoryCR> remapWalSymbols(
+    private ReadOnlyObjList<? extends MemoryCR> remapWalMappedSymbols(
             SymbolMapDiffCursor symbolMapDiffCursor,
             long rowLo,
             long rowHi,
@@ -6401,13 +6613,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     symbolColumnDest = o3MemColumns1.get(primaryColumnIndex);
                     // If rowLo != 0 then we
-                    symbolColumnDest.shiftAddressRight(0);
+                    symbolColumnDest.shiftOffsetRight(0);
                     symbolColumnDest.jumpTo((rowHi - rowLo) << 2);
 
                     o3ColumnOverrides.setQuick(primaryColumnIndex, symbolColumnDest);
                     final int cleanSymbolCount = symbolMapDiff.getCleanSymbolCount();
                     for (long rowId = rowLo; rowId < rowHi; rowId++) {
-
                         int symKey = o3SymbolColumn.getInt(rowId << 2);
                         assert (symKey >= 0 || symKey == SymbolTable.VALUE_IS_NULL);
                         if (symKey >= cleanSymbolCount) {
@@ -6425,7 +6636,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         }
                         symbolColumnDest.putInt((rowId - rowLo) << 2, symKey);
                     }
-                    symbolColumnDest.shiftAddressRight(rowLo << 2);
+                    symbolColumnDest.shiftOffsetRight(rowLo << 2);
                 }
             }
         }
@@ -6435,6 +6646,57 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return o3Columns;
         }
         return o3ColumnOverrides;
+    }
+
+    private void remapWalSymbolsInPlace(
+            SymbolMapDiffCursor symbolMapDiffCursor,
+            long rowLo,
+            long rowHi,
+            Path walPath
+    ) {
+        if (symbolMapDiffCursor != null) {
+            SymbolMapDiff symbolMapDiff;
+            while ((symbolMapDiff = symbolMapDiffCursor.nextSymbolMapDiff()) != null) {
+                int columnIndex = symbolMapDiff.getColumnIndex();
+                int columnType = metadata.getColumnType(columnIndex);
+                if (columnType == -ColumnType.SYMBOL) {
+                    // Scroll the cursor, don't apply, symbol is deleted
+                    symbolMapDiff.drain();
+                    continue;
+                }
+
+                if (!ColumnType.isSymbol(columnType)) {
+                    throw CairoException.critical(0).put("WAL column and table writer column types don't match [columnIndex=").put(columnIndex)
+                            .put(", walPath=").put(walPath)
+                            .put(']');
+                }
+                boolean identical = createWalSymbolMapping(symbolMapDiff, columnIndex, symbolRewriteMap);
+
+                if (!identical) {
+                    int primaryColumnIndex = getPrimaryColumnIndex(columnIndex);
+                    MemoryCARW o3SymbolColumn = walColumns.getQuick(primaryColumnIndex);
+
+                    final int cleanSymbolCount = symbolMapDiff.getCleanSymbolCount();
+                    for (long rowId = rowLo; rowId < rowHi; rowId++) {
+                        int symKey = o3SymbolColumn.getInt(rowId << 2);
+                        assert (symKey >= 0 || symKey == SymbolTable.VALUE_IS_NULL);
+                        if (symKey >= cleanSymbolCount) {
+                            int newKey = symbolRewriteMap.getQuick(symKey - cleanSymbolCount);
+                            if (newKey < 0) {
+                                // This symbol was not mapped in WAL
+                                // WAL is invalid
+                                throw CairoException.critical(0).put("WAL symbol key not mapped [columnIndex=").put(columnIndex)
+                                        .put(", columnKey=").put(symKey)
+                                        .put(", walPath=").put(walPath)
+                                        .put(", walRowId=").put(rowId)
+                                        .put(']');
+                            }
+                            o3SymbolColumn.putInt(rowId << 2, newKey);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private void removeColumn(int columnIndex) {
@@ -6964,7 +7226,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         dataMem.allocate(dataSizeBytes);
                     }
                     dataMem.jumpTo(dataSizeBytes);
-
                 }
             }
         } catch (CairoException e) {
@@ -7009,7 +7270,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         TableUtils.setPathForPartition(path, partitionBy, timestamp, partitionTxnName);
     }
 
-    private void shrinkO3Mem() {
+    private void shrinkMem() {
         for (int i = 0, n = o3MemColumns1.size(); i < n; i++) {
             MemoryCARW o3mem = o3MemColumns1.getQuick(i);
             if (o3mem != null) {
@@ -7021,6 +7282,31 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             MemoryCARW o3mem2 = o3MemColumns2.getQuick(i);
             if (o3mem2 != null) {
                 o3mem2.truncate();
+            }
+        }
+        if (walTimestampMem != null) {
+            walTimestampMem.truncate();
+        }
+    }
+
+    private long skipWalRowValue(int columnSize, int columnType, long offset, MemoryCMOR srcMem) {
+        if (columnSize > 0) {
+            return columnSize;
+        } else {
+            switch (ColumnType.tagOf(columnType)) {
+                case ColumnType.VARCHAR:
+                    final Utf8Sequence us = VarcharTypeDriver.getPlainValue(srcMem, offset, 1);
+                    return VarcharTypeDriver.getPlainValueByteCount(us);
+                case ColumnType.STRING:
+                    final CharSequence cs = srcMem.getStrA(offset);
+                    return StringTypeDriver.getPlainValueByteCount(cs);
+                case ColumnType.BINARY:
+                    final BinarySequence bs = srcMem.getBin(offset);
+                    return BinaryTypeDriver.getPlainValueByteCount(bs);
+                default:
+                    throw CairoException.nonCritical()
+                            .put("Column type ").put(ColumnType.nameOf(columnType))
+                            .put(" not supported by WAL apply");
             }
         }
     }
@@ -7865,7 +8151,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public interface Row {
-
         void append();
 
         void cancel();

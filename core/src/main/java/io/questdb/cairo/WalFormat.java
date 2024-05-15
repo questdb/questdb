@@ -22,12 +22,19 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal.seq;
+package io.questdb.cairo;
 
-import io.questdb.std.QuietCloseable;
+public final class WalFormat {
+    public static final int WAL_FORMAT_COL_FIRST = 1;
+    public static final int WAL_FORMAT_ROW_FIRST = 0;
 
-public interface TableMetadataChangeLog extends QuietCloseable {
-    boolean hasNext();
-
-    TableMetadataChange next();
+    public static String toString(int format) {
+        switch (format) {
+            case WAL_FORMAT_ROW_FIRST:
+                return "row";
+            case WAL_FORMAT_COL_FIRST:
+                return "column";
+        }
+        return "unknown";
+    }
 }

@@ -31,7 +31,6 @@ import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
-import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -55,7 +54,6 @@ import org.junit.Before;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
-
 
 public class FuzzRunner {
     public final static int MAX_WAL_APPLY_TIME_PER_TABLE_CEIL = 250;
@@ -519,7 +517,6 @@ public class FuzzRunner {
 
         return new Thread(() -> {
             int opIndex;
-
             try {
                 Rnd tempRnd = new Rnd();
                 while ((opIndex = nextOperation.incrementAndGet()) < transactions.size() && errors.isEmpty()) {
@@ -593,10 +590,11 @@ public class FuzzRunner {
     }
 
     private void drainWalQueue(Rnd applyRnd, String tableName) {
-        try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1);
-             O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), engine.getSnapshotAgent(), 1);
-             TableReader rdr1 = getReaderHandleTableDropped(tableName);
-             TableReader rdr2 = getReaderHandleTableDropped(tableName)
+        try (
+                ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1);
+                O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), engine.getSnapshotAgent(), 1);
+                TableReader rdr1 = getReaderHandleTableDropped(tableName);
+                TableReader rdr2 = getReaderHandleTableDropped(tableName)
         ) {
             CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
             while (walApplyJob.run(0) || checkWalTransactionsJob.run(0)) {

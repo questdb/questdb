@@ -24,11 +24,13 @@
 
 package io.questdb.cairo.vm;
 
-import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Long256Acceptor;
+import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -37,12 +39,11 @@ import org.jetbrains.annotations.NotNull;
  *
  * @author Patrick Mackinlay
  */
-public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Mutable {
+public class MemoryCARWImpl extends AbstractMemoryCARW {
     private static final Log LOG = LogFactory.getLog(MemoryCARWImpl.class);
     private final Long256Acceptor long256Acceptor = this::putLong256;
     private final int maxPages;
     private final int memoryTag;
-    private long appendAddress = 0;
     private long sizeMsb;
 
     public MemoryCARWImpl(long pageSize, int maxPages, int memoryTag) {
@@ -58,12 +59,6 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
         long result = appendAddress;
         appendAddress += bytes;
         return result;
-    }
-
-    @Override
-    public long appendAddressFor(long offset, long bytes) {
-        checkAndExtend(pageAddress + offset + bytes);
-        return addressOf(offset);
     }
 
     @Override
@@ -91,11 +86,6 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     }
 
     @Override
-    public final long getAppendOffset() {
-        return appendAddress - pageAddress;
-    }
-
-    @Override
     public long getExtendSegmentSize() {
         return 1L << sizeMsb;
     }
@@ -108,18 +98,6 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     @Override
     public long getPageSize() {
         return getExtendSegmentSize();
-    }
-
-    /**
-     * Updates append pointer with address for the given offset. All put* functions will be
-     * appending from this offset onwards effectively overwriting data. Size of virtual memory remains
-     * unaffected until the moment memory has to be extended.
-     *
-     * @param offset position from 0 in virtual memory.
-     */
-    public void jumpTo(long offset) {
-        checkAndExtend(pageAddress + offset);
-        appendAddress = pageAddress + offset;
     }
 
     public final void putLong256(@NotNull CharSequence hexString, int start, int end) {
@@ -145,7 +123,7 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
         extend0(0);
         // reset append offset
         appendAddress = pageAddress;
-        shiftAddressRight(0);
+        shiftOffsetRight(0);
     }
 
     @Override
@@ -154,17 +132,7 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
         Vect.memset(pageAddress, baseLength, 0);
     }
 
-    private void checkAndExtend(long address) {
-        assert appendAddress <= lim;
-        assert address >= pageAddress;
-        if (address <= lim) {
-            return;
-        }
-        extend0(address - pageAddress);
-    }
-
     private void extend0(long size) {
-
         if (size == 0 && pageAddress == 0) {
             return;
         }
@@ -189,7 +157,7 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
         handleMemoryReallocation(newBaseAddress, size);
     }
 
-    protected final void handleMemoryReallocation(long newBaseAddress, long newSize) {
+    private void handleMemoryReallocation(long newBaseAddress, long newSize) {
         assert newBaseAddress != 0;
         long appendOffset = appendAddress - pageAddress;
         pageAddress = newBaseAddress;
@@ -201,21 +169,31 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
         this.size = newSize;
     }
 
-    protected final void handleMemoryReleased() {
+    private void handleMemoryReleased() {
         pageAddress = 0;
         lim = 0;
         appendAddress = 0;
         size = 0;
     }
 
-    protected long reallocateMemory(long currentBaseAddress, long currentSize, long newSize) {
+    private long reallocateMemory(long currentBaseAddress, long currentSize, long newSize) {
         if (currentBaseAddress != 0) {
             return Unsafe.realloc(currentBaseAddress, currentSize, newSize, memoryTag);
         }
         return Unsafe.malloc(newSize, memoryTag);
     }
 
-    protected final void setPageSize(long size) {
+    private void setPageSize(long size) {
         this.sizeMsb = Numbers.msb(Numbers.ceilPow2(size));
+    }
+
+    @Override
+    protected void checkAndExtend(long address) {
+        assert appendAddress <= lim;
+        assert address >= pageAddress;
+        if (address <= lim) {
+            return;
+        }
+        extend0(address - pageAddress);
     }
 }

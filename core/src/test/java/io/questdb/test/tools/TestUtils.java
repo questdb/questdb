@@ -55,6 +55,8 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.*;
 import io.questdb.test.QuestDBTestNode;
 import io.questdb.test.cairo.TableModel;
+import io.questdb.test.cairo.wal.WalColFirstReader;
+import io.questdb.test.cairo.wal.WalRowFirstReader;
 import io.questdb.test.griffin.CustomisableRunnable;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import org.jetbrains.annotations.NotNull;
@@ -1245,6 +1247,32 @@ public final class TestUtils {
         } catch (URISyntaxException e) {
             throw new RuntimeException("Could not determine resource path", e);
         }
+    }
+
+    public static WalColFirstReader getWalColFirstReader(
+            CairoConfiguration configuration,
+            TableToken tableToken,
+            CharSequence walName,
+            int segmentId,
+            long walRowCount
+    ) {
+        if (tableToken.isWal()) {
+            return new WalColFirstReader(configuration, tableToken, walName, segmentId, walRowCount);
+        }
+        throw CairoException.nonCritical().put("WAL reader is not supported for table ").put(tableToken);
+    }
+
+    public static WalRowFirstReader getWalRowFirstReader(
+            CairoConfiguration configuration,
+            TableToken tableToken,
+            CharSequence walName,
+            int segmentId,
+            long walRowCount
+    ) {
+        if (tableToken.isWal()) {
+            return new WalRowFirstReader(configuration, tableToken, walName, segmentId, walRowCount);
+        }
+        throw CairoException.nonCritical().put("WAL reader is not supported for table ").put(tableToken);
     }
 
     public static TableWriter getWriter(CairoEngine engine, CharSequence tableName) {

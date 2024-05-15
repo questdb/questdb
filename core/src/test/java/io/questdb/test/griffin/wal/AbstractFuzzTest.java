@@ -131,11 +131,11 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                 5 + rnd.nextInt(10)
         );
 
-        assertMemoryLeak(() -> fuzzer.runFuzz(getTestName(), rnd));
+        assertMemoryLeak(() -> fuzzer.runFuzz(getEscapedTestName(), rnd));
     }
 
     protected void fullRandomFuzz(Rnd rnd, int tableCount) throws Exception {
-        assertMemoryLeak(() -> fuzzer.runFuzz(rnd, getTestName(), tableCount, true, true));
+        assertMemoryLeak(() -> fuzzer.runFuzz(rnd, getEscapedTestName(), tableCount, true, true));
     }
 
     protected String[] generateSymbols(Rnd rnd, int totalSymbols, int strLen, String baseSymbolTableName) {
@@ -169,10 +169,6 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         return rnd.nextLong(10 * Numbers.SIZE_1MB);
     }
 
-    protected String getTestName() {
-        return testName.getMethodName().replace('[', '_').replace(']', '_');
-    }
-
     protected void runFuzz(Rnd rnd) throws Exception {
         assertMemoryLeak(() -> {
             WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
@@ -182,7 +178,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                 int size = rnd.nextInt(16 * 1024 * 1024);
                 node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, size);
                 setZeroWalPurgeInterval();
-                fuzzer.runFuzz(getTestName(), rnd);
+                fuzzer.runFuzz(getEscapedTestName(), rnd);
             } finally {
                 sharedWorkerPool.halt();
             }

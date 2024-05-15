@@ -151,7 +151,15 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     }
 
     @Override
-    public void of(TableToken tableToken, int tableId, int timestampIndex, int compressedTimestampIndex, boolean suspended, long structureVersion, int columnCount) {
+    public void of(
+            TableToken tableToken,
+            int tableId,
+            int timestampIndex,
+            int compressedTimestampIndex,
+            boolean suspended,
+            long structureVersion,
+            int columnCount
+    ) {
         this.tableToken = tableToken;
         this.tableId = tableId;
         this.timestampIndex = timestampIndex;
@@ -203,6 +211,14 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         columnCount++;
     }
 
+    private void clear(boolean truncate, byte truncateMode) {
+        reset();
+        if (metaMem != null) {
+            metaMem.close(truncate, truncateMode);
+        }
+        Misc.free(roMetaMem);
+    }
+
     private void reset() {
         columnMetadata.clear();
         columnNameIndexMap.clear();
@@ -211,13 +227,5 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         tableToken = null;
         tableId = -1;
         suspended = false;
-    }
-
-    protected void clear(boolean truncate, byte truncateMode) {
-        reset();
-        if (metaMem != null) {
-            metaMem.close(truncate, truncateMode);
-        }
-        Misc.free(roMetaMem);
     }
 }

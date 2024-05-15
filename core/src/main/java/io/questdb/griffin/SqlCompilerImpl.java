@@ -1571,7 +1571,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
         long rowCount;
-
         if (ColumnType.isSymbolOrString(metadata.getColumnType(cursorTimestampIndex))) {
             rowCount = copyOrderedStrTimestamp(writer, cursor, copier, cursorTimestampIndex, circuitBreaker);
         } else {
