@@ -32,7 +32,7 @@ import org.junit.Test;
 
 import static org.junit.Assert.fail;
 
-public class OutOfMemoryTest extends AbstractCairoTest {
+public class RssMemoryLimitTest extends AbstractCairoTest {
 
     @After
     public void tearDown() throws Exception {
