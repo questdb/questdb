@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.wal;
 
 import io.questdb.PropertyKey;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -49,12 +50,15 @@ import static io.questdb.test.griffin.wal.FuzzRunner.MAX_WAL_APPLY_TIME_PER_TABL
 // In order to verify that the test is not broken we check that there are no duplicate
 // timestamps for the record where the comparison fails.
 public class WalWriterFuzzTest extends AbstractFuzzTest {
+    private boolean fsAllowsMixedIO;
 
     @Before
     public void setUp() {
         super.setUp();
-        // We disable mixed I/O on some OSes and FSes (wink-wink Windows).
         node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, 512 * 1024);
+        // Disable mixed I/O on some OSes and FSes (wink-wink Windows and ZFS).
+        fsAllowsMixedIO = FilesFacadeImpl.INSTANCE.allowMixedIO(root);
+        node1.setProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, fsAllowsMixedIO);
         setFuzzProperties(100, 1000, 2);
     }
 
@@ -276,5 +280,19 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         setFuzzCounts(true, 1_000_000, 500, 20, 1000, 1000, 100, 20);
         setFuzzProperties(rnd);
         runFuzz(rnd);
+    }
+
+    @Override
+    protected void runFuzz(Rnd rnd) throws Exception {
+        // Check that mixed IO is enabled by the test setup
+        LOG.info().$("expected configuration fsAllowsMixedIO=").$(fsAllowsMixedIO).$();
+        Assert.assertEquals(fsAllowsMixedIO, node1.getEngine().getConfiguration().isWriterMixedIOEnabled());
+        super.runFuzz(rnd);
+    }
+
+    @Override
+    protected void setFuzzProperties(Rnd rnd) {
+        super.setFuzzProperties(rnd);
+        node1.setProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, fsAllowsMixedIO);
     }
 }
