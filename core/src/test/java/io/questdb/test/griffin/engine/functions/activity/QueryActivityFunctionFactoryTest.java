@@ -156,10 +156,7 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
                 started.countDown();
                 try {
                     try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                        assertQueryNoLeakCheck(compiler,
-                                "t\n1\n",
-                                query,
-                                null, adminUserContext1, true, false);
+                        TestUtils.assertSql(compiler, adminUserContext1, query, sink, "t\n1\n");
                         Assert.fail("Query should have been cancelled");
                     } catch (Exception e) {
                         if (!e.getMessage().contains("cancelled by user")) {
