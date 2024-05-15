@@ -455,7 +455,7 @@ public class TruncateTest extends AbstractCairoTest {
             createX();
             createY();
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "count\n" +
                             "10\n",
                     "select count() from x",
@@ -464,7 +464,7 @@ public class TruncateTest extends AbstractCairoTest {
                     true
             );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "count\n" +
                             "20\n",
                     "select count() from y",
@@ -499,7 +499,7 @@ public class TruncateTest extends AbstractCairoTest {
 
             releaseBarrier.await();
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "count\n" +
                             "10\n",
                     "select count() from x",
@@ -508,7 +508,7 @@ public class TruncateTest extends AbstractCairoTest {
                     true
             );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "count\n" +
                             "20\n",
                     "select count() from y",
