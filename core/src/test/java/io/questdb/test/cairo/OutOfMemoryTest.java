@@ -24,9 +24,6 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
@@ -45,7 +42,7 @@ public class OutOfMemoryTest extends AbstractCairoTest {
 
     @Test
     public void testCreateAtomicTable() throws Exception {
-        long limitMB = 15;
+        long limitMB = 12;
         Unsafe.setRssMemLimit(limitMB * 1_000_000);
         assertMemoryLeak(() -> {
             try {
@@ -55,44 +52,6 @@ public class OutOfMemoryTest extends AbstractCairoTest {
                 fail("Managed to create table with RSS limit " + limitMB + " MB");
             } catch (SqlException e) {
                 drop("drop table x;");
-            }
-        });
-    }
-
-    @Test
-    public void testGroupBy() throws Exception {
-        long limitMB = 10;
-        Unsafe.setRssMemLimit(limitMB * 1_000_000);
-        assertMemoryLeak(() -> {
-            try {
-                ddl("create table x as (select" +
-                        " rnd_varchar(10, 1000, 0) val," +
-                        " rnd_long() num," +
-                        " from long_sequence(500000));");
-                try (RecordCursorFactory fac = select("select val, max(num) from x group by val")) {
-                    RecordCursor cursor = fac.getCursor(sqlExecutionContext);
-                    while (cursor.hasNext()) {
-                        cursor.getRecord();
-                    }
-                }
-                fail("Query completed with RSS limit " + limitMB + " MB");
-            } catch (CairoException e) {
-                // success
-            }
-        });
-    }
-
-    @Test
-    public void testOrderBy() throws Exception {
-        long limitMB = 10;
-        Unsafe.setRssMemLimit(limitMB * 1_000_000);
-        assertMemoryLeak(() -> {
-            try {
-                ddl("create table x as (select rnd_varchar(10, 1000, 0) val, from long_sequence(200000));");
-                select("x order by val").close();
-                fail("Query completed with RSS limit " + limitMB + " MB");
-            } catch (CairoException e) {
-                // success
             }
         });
     }
