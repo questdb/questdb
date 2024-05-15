@@ -32,9 +32,9 @@ import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 
 public class FilesFacadeImpl implements FilesFacade {
-
     public static final FilesFacade INSTANCE = new FilesFacadeImpl();
     public static final int _16M = 16 * 1024 * 1024;
+    private static final long ZFS_MAGIC_NUMBER = 0x2FC12FC1;
     private final FsOperation copyFsOperation = this::copy;
     private final FsOperation hardLinkFsOperation = this::hardLink;
     private long mapPageSize = 0;
@@ -44,9 +44,23 @@ public class FilesFacadeImpl implements FilesFacade {
         return Files.allocate(fd, size);
     }
 
+    /**
+     * Returns a flag whether it's ok to mix concurrent mmap-based writes with pwrite().
+     * <p>
+     * In particular, returns false for ZFS as there is a <a href="https://github.com/openzfs/zfs/issues/14548">known issue</a>.
+     */
     @Override
     public boolean allowMixedIO(CharSequence root) {
-        return !Os.isWindows();
+        if (root == null || Os.isWindows()) {
+            return false;
+        }
+        try (Path path = new Path()) {
+            path.of(root).$();
+            // path will contain file system name
+            long fsStatus = Files.getFileSystemStatus(path);
+            path.seekZ(); // useful for debugging
+            return fsStatus < 0 && Math.abs(fsStatus) != ZFS_MAGIC_NUMBER;
+        }
     }
 
     @Override
