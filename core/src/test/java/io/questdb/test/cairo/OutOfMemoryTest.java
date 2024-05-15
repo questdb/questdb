@@ -45,7 +45,7 @@ public class OutOfMemoryTest extends AbstractCairoTest {
 
     @Test
     public void testCreateAtomicTable() throws Exception {
-        long limitMB = 12;
+        long limitMB = 15;
         Unsafe.setRssMemLimit(limitMB * 1_000_000);
         assertMemoryLeak(() -> {
             try {
