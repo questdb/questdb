@@ -1383,6 +1383,7 @@ public final class TestUtils {
         FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
         path.slash$();
         Assert.assertTrue("Test dir cleanup error: " + ff.errno(), !ff.exists(path) || ff.rmdir(path.slash$()));
+        Path.clearThreadLocals();
     }
 
     public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {

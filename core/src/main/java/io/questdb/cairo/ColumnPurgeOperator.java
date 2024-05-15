@@ -190,11 +190,6 @@ public class ColumnPurgeOperator implements Closeable {
     }
 
     private boolean purge0(ColumnPurgeTask task, final ScoreboardUseMode scoreboardMode) {
-        LOG.info().$("purging [table=").utf8(task.getTableName().getTableName())
-                .$(", column=").utf8(task.getColumnName())
-                .$(", tableId=").$(task.getTableId())
-                .I$();
-
         setTablePath(task.getTableName());
 
         final LongList updatedColumnInfo = task.getUpdatedColumnInfo();
@@ -267,7 +262,13 @@ public class ColumnPurgeOperator implements Closeable {
                     }
                     // we would have mutated the path by checking state of the table
                     // we will have to re-setup that
-                    setUpPartitionPath(task.getPartitionBy(), partitionTimestamp, partitionTxnName);
+                    if (!isSymbolRootFiles) {
+                        setUpPartitionPath(task.getPartitionBy(), partitionTimestamp, partitionTxnName);
+                        pathTrimToPartition = path.size();
+                    } else {
+                        path.trimTo(pathTableLen);
+                        pathTrimToPartition = path.size();
+                    }
                     TableUtils.dFile(path, columnName, columnVersion);
                     setupScoreboard = false;
                 }
