@@ -59,18 +59,23 @@ public class RingQueue<T> implements Closeable {
 
     @SuppressWarnings("unchecked")
     public RingQueue(DirectObjectFactory<T> factory, long slotSize, int cycle, int memoryTag) {
-        this.mask = cycle - 1;
-        this.buf = (T[]) new Object[cycle];
+        try {
+            this.mask = cycle - 1;
+            this.buf = (T[]) new Object[cycle];
 
-        this.memorySize = slotSize * cycle;
-        this.memoryTag = memoryTag;
-        this.memory = Unsafe.calloc(memorySize, memoryTag);
-        long p = memory;
-        for (int i = 0; i < cycle; i++) {
-            // intention is that whatever comes out of the factory it should work with the
-            // memory allocated by the queue for this slot and should not reallocate ever
-            buf[i] = factory.newInstance(p, slotSize);
-            p += slotSize;
+            this.memorySize = slotSize * cycle;
+            this.memoryTag = memoryTag;
+            this.memory = Unsafe.calloc(memorySize, memoryTag);
+            long p = memory;
+            for (int i = 0; i < cycle; i++) {
+                // intention is that whatever comes out of the factory it should work with the
+                // memory allocated by the queue for this slot and should not reallocate ever
+                buf[i] = factory.newInstance(p, slotSize);
+                p += slotSize;
+            }
+        } catch (Throwable th) {
+            close();
+            throw th;
         }
     }
 

@@ -5571,6 +5571,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         // useful for debugging
                         // e.printStackTrace();
                     } finally {
+                        Path.clearThreadLocals();
                         haltLatch.countDown();
                     }
                 }).start();
@@ -5584,6 +5585,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     } catch (Exception ignore) {
                         // e.printStackTrace();
                     } finally {
+                        Path.clearThreadLocals();
                         haltLatch.countDown();
                     }
                 }).start();
