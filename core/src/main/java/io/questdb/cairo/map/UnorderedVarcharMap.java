@@ -202,7 +202,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             free = 0;
             mapSize = 0;
         }
-        allocator.close();
+        Misc.free(allocator);
     }
 
     @Override
