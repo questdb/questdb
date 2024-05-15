@@ -963,7 +963,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 LOG.error().$("Error in test: ").$(th).$();
                 throw th;
             } finally {
-                Unsafe.setRssMemLimit(0);
                 forEachNode(node -> node.getEngine().clear());
                 AbstractCairoTest.ff = ffBefore;
             }
