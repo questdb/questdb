@@ -40,6 +40,10 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.concurrent.TimeUnit;
+
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
 public class TimestampFormatCompilerTest {
@@ -52,6 +56,16 @@ public class TimestampFormatCompilerTest {
     @BeforeClass
     public static void setUp() {
         TimestampFormatUtils.updateReferenceYear(Timestamps.toMicros(1997, 1, 1, 0, 0));
+    }
+
+    @Test
+    public void test12HourSystemsOneBase() throws Exception {
+        test12HourSystems0("hh:mm a");
+    }
+
+    @Test
+    public void test12HourSystemsZeroBase() throws Exception {
+        test12HourSystems0("KK:mm a");
     }
 
     @Test(expected = NumericException.class)
@@ -119,6 +133,11 @@ public class TimestampFormatCompilerTest {
     }
 
     @Test
+    public void testFirstHourIn12HourClock() throws Exception {
+        assertThat("MM/dd/yyyy hh:mm:ss a", "2017-04-09T00:01:00.000Z", "04/09/2017 12:01:00 am");
+    }
+
+    @Test
     public void testFormatAMPM() throws Exception {
         assertFormat("pm, 31", "a, dd", "2017-03-31T14:00:00.000Z");
         assertFormat("pm, 31", "a, dd", "2017-03-31T12:00:00.000Z");
@@ -154,6 +173,12 @@ public class TimestampFormatCompilerTest {
     public void testFormatEra() throws Exception {
         assertFormat("AD", "G", "2017-04-09T00:00:00.000Z");
         assertFormat("BC", "G", "-1024-04-09T00:00:00.000Z");
+    }
+
+    @Test
+    public void testFormatFirstHourIn12HourClock() throws Exception {
+        assertFormat("04/09/2017 00:01:00 am", "MM/dd/yyyy KK:mm:ss a", "2017-04-09T00:01:00.000Z");
+        assertFormat("04/09/2017 00:59:59 am", "MM/dd/yyyy KK:mm:ss a", "2017-04-09T00:59:59.000Z");
     }
 
     @Test
@@ -210,28 +235,28 @@ public class TimestampFormatCompilerTest {
 
     @Test
     public void testFormatHourTwelve() throws Exception {
-        assertFormat("pm, 03", "a, hh", "2017-03-31T14:00:00.000Z");
-        assertFormat("pm, 01", "a, hh", "2017-03-31T12:00:00.000Z");
-        assertFormat("am, 04", "a, hh", "2017-03-31T03:00:00.000Z");
-        assertFormat("am, 12", "a, hh", "2017-03-31T11:59:59.999Z");
+        assertFormat("pm, 02", "a, hh", "2017-03-31T14:00:00.000Z");
+        assertFormat("pm, 12", "a, hh", "2017-03-31T12:00:00.000Z");
+        assertFormat("am, 03", "a, hh", "2017-03-31T03:00:00.000Z");
+        assertFormat("am, 11", "a, hh", "2017-03-31T11:59:59.999Z");
 
-        assertFormat("03", "hh", "2017-03-31T14:00:00.000Z");
-        assertFormat("01", "hh", "2017-03-31T12:00:00.000Z");
-        assertFormat("04", "hh", "2017-03-31T03:00:00.000Z");
-        assertFormat("12", "hh", "2017-03-31T11:59:59.999Z");
+        assertFormat("02", "hh", "2017-03-31T14:00:00.000Z");
+        assertFormat("12", "hh", "2017-03-31T12:00:00.000Z");
+        assertFormat("03", "hh", "2017-03-31T03:00:00.000Z");
+        assertFormat("11", "hh", "2017-03-31T11:59:59.999Z");
     }
 
     @Test
     public void testFormatHourTwelveOneDigit() throws Exception {
-        assertFormat("pm, 3", "a, h", "2017-03-31T14:00:00.000Z");
-        assertFormat("pm, 1", "a, h", "2017-03-31T12:00:00.000Z");
-        assertFormat("am, 4", "a, h", "2017-03-31T03:00:00.000Z");
-        assertFormat("am, 12", "a, h", "2017-03-31T11:59:59.999Z");
+        assertFormat("pm, 2", "a, h", "2017-03-31T14:00:00.000Z");
+        assertFormat("pm, 12", "a, h", "2017-03-31T12:00:00.000Z");
+        assertFormat("am, 3", "a, h", "2017-03-31T03:00:00.000Z");
+        assertFormat("am, 11", "a, h", "2017-03-31T11:59:59.999Z");
 
-        assertFormat("3", "h", "2017-03-31T14:00:00.000Z");
-        assertFormat("1", "h", "2017-03-31T12:00:00.000Z");
-        assertFormat("4", "h", "2017-03-31T03:00:00.000Z");
-        assertFormat("12", "h", "2017-03-31T11:59:59.999Z");
+        assertFormat("2", "h", "2017-03-31T14:00:00.000Z");
+        assertFormat("12", "h", "2017-03-31T12:00:00.000Z");
+        assertFormat("3", "h", "2017-03-31T03:00:00.000Z");
+        assertFormat("11", "h", "2017-03-31T11:59:59.999Z");
     }
 
     @Test
@@ -595,8 +620,8 @@ public class TimestampFormatCompilerTest {
 
     @Test
     public void testHour12GreedyOneBased() throws Exception {
-        assertThat("h MMy a", "2010-09-01T22:00:00.000Z", "11 0910 pm");
-        assertThat("haMMy", "2010-09-01T22:00:00.000Z", "11pm0910");
+        assertThat("h MMy a", "2010-09-01T23:00:00.000Z", "11 0910 pm");
+        assertThat("haMMy", "2010-09-01T23:00:00.000Z", "11pm0910");
     }
 
     @Test
@@ -612,8 +637,8 @@ public class TimestampFormatCompilerTest {
 
     @Test
     public void testHour12OneDigitOneBased() throws Exception {
-        assertThat("hMMy a", "2010-09-01T03:00:00.000Z", "40910 am");
-        assertThat("hMMy a", "2010-09-01T15:00:00.000Z", "40910 pm");
+        assertThat("hMMy a", "2010-09-01T04:00:00.000Z", "40910 am");
+        assertThat("hMMy a", "2010-09-01T16:00:00.000Z", "40910 pm");
     }
 
     @Test
@@ -624,8 +649,8 @@ public class TimestampFormatCompilerTest {
 
     @Test
     public void testHour12TwoDigitsOneBased() throws Exception {
-        assertThat("hhMMy a", "2010-09-01T03:00:00.000Z", "040910 am");
-        assertThat("hhMMy a", "2010-09-01T22:00:00.000Z", "110910 pm");
+        assertThat("hhMMy a", "2010-09-01T03:00:00.000Z", "030910 am");
+        assertThat("hhMMy a", "2010-09-01T23:00:00.000Z", "110910 pm");
     }
 
     @Test
@@ -1022,5 +1047,34 @@ public class TimestampFormatCompilerTest {
 
         DateFormat compiled = compiler.compile(pattern);
         TestUtils.assertEquals(expected, Timestamps.toString(compiled.parse(input, locale)));
+    }
+
+    private void test12HourSystems0(String pattern) throws Exception {
+        SimpleDateFormat javaFmt = new SimpleDateFormat(pattern);
+        javaFmt.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
+        DateFormat genericQuestFmt = get(pattern);
+        DateFormat compiledQuestFmt = compiler.compile(pattern);
+
+        long step = TimeUnit.MINUTES.toMicros(15);
+        for (long tsMicros = 0, n = TimeUnit.DAYS.toMicros(1); tsMicros < n; tsMicros += step) {
+            sink.clear();
+            long tsMillis = tsMicros / 1000;
+            String javaFormatted = javaFmt.format(new Date(tsMillis));
+
+            genericQuestFmt.format(tsMicros, defaultLocale, "UTC", sink);
+            Assert.assertEquals(javaFormatted, sink.toString().toUpperCase()); // upper case due to AM vs am and PM vs pm
+
+            sink.clear();
+            compiledQuestFmt.format(tsMicros, defaultLocale, "UTC", sink);
+            Assert.assertEquals(javaFormatted, sink.toString().toUpperCase());
+
+            // now we know both Java and QuestDB format the same way.
+            // let's try to parse it back.
+            Assert.assertEquals(tsMicros, genericQuestFmt.parse(sink, defaultLocale));
+            Assert.assertEquals(tsMicros, compiledQuestFmt.parse(sink, defaultLocale));
+
+            // sanity check
+            Assert.assertEquals(tsMillis, javaFmt.parse(sink.toString()).getTime());
+        }
     }
 }

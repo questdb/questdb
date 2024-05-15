@@ -152,18 +152,22 @@ public class TimestampFormatUtils {
     }
 
     public static void appendHour121(@NotNull CharSink<?> sink, int hour) {
-        if (hour < 12) {
-            Numbers.append(sink, hour + 1);
+        if (hour == 0) {
+            sink.put("12");
+        } else if (hour < 13) {
+            Numbers.append(sink, hour);
         } else {
-            Numbers.append(sink, hour - 11);
+            Numbers.append(sink, hour - 12);
         }
     }
 
     public static void appendHour121Padded(@NotNull CharSink<?> sink, int hour) {
-        if (hour < 12) {
-            append0(sink, hour + 1);
+        if (hour == 0) {
+            sink.put("12");
+        } else if (hour < 13) {
+            append0(sink, hour);
         } else {
-            append0(sink, hour - 11);
+            append0(sink, hour - 12);
         }
     }
 
@@ -271,20 +275,20 @@ public class TimestampFormatUtils {
             throw NumericException.INSTANCE;
         }
 
-        switch (hourType) {
-            case HOUR_PM:
+        if (hourType == HOUR_24) {
+            // wrong 24-hour clock hour
+            if (hour < 0 || hour > 23) {
+                throw NumericException.INSTANCE;
+            }
+        } else {
+            // wrong 12-hour clock hour
+            if (hour < 0 || hour > 12) {
+                throw NumericException.INSTANCE;
+            }
+            hour %= 12;
+            if (hourType == HOUR_PM) {
                 hour += 12;
-            case HOUR_24:
-                // wrong hour
-                if (hour < 0 || hour > 23) {
-                    throw NumericException.INSTANCE;
-                }
-                break;
-            default:
-                // wrong 12-hour clock hour
-                if (hour < 0 || hour > 11) {
-                    throw NumericException.INSTANCE;
-                }
+            }
         }
 
         // wrong day of month
