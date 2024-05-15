@@ -5391,14 +5391,44 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * Looks for models with trivial expressions and lifts them.
-     * For example:
-     * SELECT X, X+1, X+2 FROM foo
-     * Becomes:
-     * SELECT X, X+1, X+2 FROM (SELECT X from foo)
+     * Looks for models with trivial expressions over the same column, and lifts them from the group by.<br>
+     * <p>
+     * We are looking for patterns like: <br>
+     * <code>(select-virtual (select-group-by (select-none)))</code>
+     * <p>
+     * For a query such as this:<br>
+     * <code>SELECT ClientIP, ClientIP - 1, COUNT(*) AS c<br>
+     * FROM hits<br>
+     * GROUP BY ClientIP, ClientIP - 1<br>
+     * ORDER BY c DESC LIMIT 10;</code>
+     * <p>
+     * We begin with this model:
+     * <p>
+     * <code>
+     * (select-virtual ClientIP, column, c<br>
+     * from (select-group-by ClientIP, ClientIP - 1 column, COUNT() c<br>
+     * from (hits order by c desc))<br>
+     * limit 10)</code>
+     * <p>
+     * And re-write it to:
+     * <p>
+     * <code>
+     * (select-virtual ClientIP, ClientIP - 1 column, c<br>
+     * from (select-group-by ClientIP, COUNT() c<br>
+     * from (hits order by c desc) <br>
+     * limit 10))</code>
+     * <p>
+     * Which is effectively:<br>
+     * <code>
+     * SELECT ClientIP, ClientIP - 1, COUNT(*) AS c<br>
+     * FROM (<br>
+     * SELECT ClientIP, COUNT() c<br>
+     * FROM hits <br>
+     * ORDER BY c DESC<br>
+     * LIMIT 10<br>
+     * )
      *
-     * @param model
-     * @return
+     * @param model the input query model
      */
     private void rewriteTrivialExpressions(QueryModel model) throws SqlException {
         QueryModel nestedModel = model.getNestedModel();
@@ -5407,49 +5437,53 @@ public class SqlOptimiser implements Mutable {
             return;
         }
 
+        // first we want to see if this is an appropriate model to make this transformation
         if (!(model.getSelectModelType() == QueryModel.SELECT_MODEL_VIRTUAL
                 && nestedModel.getSelectModelType() == QueryModel.SELECT_MODEL_GROUP_BY)) {
             rewriteTrivialExpressions(nestedModel);
             return;
         }
-        CharSequenceIntHashMap candidates = new CharSequenceIntHashMap();
-        ObjList<QueryColumn> toLift = new ObjList<>();
-        ;
 
-        final ObjList<QueryColumn> columns = nestedModel.getColumns();
+        CharSequenceIntHashMap nestedCandidates = new CharSequenceIntHashMap();
+        final ObjList<QueryColumn> nestedColumns = nestedModel.getColumns();
         boolean anyCandidates = false;
 
-        // first we want to see if this is an appropriate model to make this transformation
-        for (int i = 0; i < columns.size(); i++) {
-            final QueryColumn col = columns.getQuick(i);
+        for (int i = 0; i < nestedColumns.size(); i++) {
+            final QueryColumn col = nestedColumns.getQuick(i);
             final ExpressionNode ast = col.getAst();
             if (ast.type == OPERATION && ast.paramCount == 2) {
                 // binary op
 
+                // If it's an operation we care about
                 if (ast.token.length() == 1 && rewriteTrivialExpressionsValidOp(ast.token.charAt(0))) {
-                    if (ast.lhs.type == LITERAL && ast.rhs.type == CONSTANT) {
-                        candidates.putIfAbsent(ast.lhs.token, 0);
-                        candidates.increment(ast.lhs.token);
-                        toLift.add(col);
-                        anyCandidates = true;
-                    } else if (ast.lhs.type == CONSTANT && ast.rhs.type == LITERAL) {
-                        candidates.putIfAbsent(ast.rhs.token, 0);
-                        candidates.increment(ast.rhs.token);
-                        toLift.add(col);
+                    // Check if it's a simple pattern i.e A + 1 or 1 + A
+                    CharSequence token = ast.lhs.type == LITERAL && ast.rhs.type == CONSTANT ? ast.lhs.token
+                            : ast.lhs.type == CONSTANT && ast.rhs.type == LITERAL ? ast.rhs.token : null;
+
+                    if (token != null) {
+                        // Add it to candidates list
+                        nestedCandidates.putIfAbsent(token, 0);
+                        nestedCandidates.increment(token);
                         anyCandidates = true;
                     }
                 }
+            }
+
+            if (ast.type == LITERAL) {
+                nestedCandidates.putIfAbsent(ast.token, 0);
+                nestedCandidates.increment(ast.token);
             }
         }
 
 
         if (anyCandidates) {
-            // if it is appropriate, we want to copy the columns from the current model
-            // then we want to remove any candidates from current model, and non candidates from new model
+            // we want to get the trivial expressions into the upper model
+            // and remove them from the nested model.
+            // we also want to push down the limit if it is available.
 
-
-            for (int i = 0, n = columns.size(); i < n; i++) {
-                QueryColumn col = columns.getQuick(i);
+            // go through the columns again
+            for (int i = 0, n = nestedColumns.size(); i < n; i++) {
+                QueryColumn col = nestedColumns.getQuick(i);
                 ExpressionNode ast = col.getAst();
 
                 // if there is a matching column in this model, we can lift the candidate up
@@ -5470,11 +5504,14 @@ public class SqlOptimiser implements Mutable {
 
                         assert candidate != null;
 
-                        if (candidates.contains(candidate) && candidates.get(candidate) >= 2) {
+                        // heck if the candidates is valid to be pulled up
+                        if (nestedCandidates.contains(candidate) && nestedCandidates.get(candidate) >= 2) {
                             // remove from current, keep in new
 
                             QueryColumn currentCol = model.getAliasToColumnMap().get(col.getAlias());
-                            assert currentCol.getAlias() == col.getAlias();
+                            assert
+                                    Chars.equals(currentCol.getAlias(), col.getAlias());
+
                             currentCol.of(currentCol.getAlias(), col.getAst());
 
                             final int originalColumnIndex = nestedModel.getColumnAliasIndex(col.getAlias());
@@ -5486,8 +5523,10 @@ public class SqlOptimiser implements Mutable {
                 }
 
             }
-            ExpressionNode lo = model.getLimitLo();
 
+            // if limit is on the virtual, push it down to the group by
+            ExpressionNode lo = model.getLimitLo();
+            ExpressionNode hi = model.getLimitHi();
             if (lo != null && nestedModel.getLimitLo() == null) {
                 nestedModel.setLimit(lo, model.getLimitHi());
                 model.setLimit(null, null);

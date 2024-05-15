@@ -1447,6 +1447,49 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         });
     }
 
+    @Test
+    public void testRewriteTrivialExpressionsBasic() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE hits (\n" +
+                    "    ClientIP int,\n" +
+                    "    EventTime timestamp\n" +
+                    ") timestamp(EventTime) partition by day wal;");
+
+
+            String original = "SELECT ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3, COUNT(*) AS c " +
+                    "FROM hits " +
+                    "GROUP BY ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3 " +
+                    "ORDER BY c DESC LIMIT 10;";
+
+            String target = "SELECT ClientIP, ClientIP - 1 \"column\", ClientIP - 2 column1, ClientIP - 3 column2, c " +
+                    "FROM (select ClientIP, COUNT() c " +
+                    "FROM hits " +
+                    "ORDER BY c DESC LIMIT 10)";
+
+            String model = "select-virtual ClientIP, ClientIP - 1 column, ClientIP - 2 column1, ClientIP - 3 column2, c " +
+                    "from (select-group-by [ClientIP, COUNT() c] ClientIP, COUNT() c " +
+                    "from (select [ClientIP] from hits timestamp (EventTime)) " +
+                    "order by c desc limit 10)";
+
+            assertModel(model, original, ExecutionModel.QUERY);
+            assertModel(model, target, ExecutionModel.QUERY);
+
+            String plan = "VirtualRecord\n" +
+                    "  functions: [ClientIP,ClientIP-1,ClientIP-2,ClientIP-3,c]\n" +
+                    "    Sort light lo: 10\n" +
+                    "      keys: [c desc]\n" +
+                    "        GroupBy vectorized: true workers: 1\n" +
+                    "          keys: [ClientIP]\n" +
+                    "          values: [count(*)]\n" +
+                    "            DataFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Frame forward scan on: hits\n";
+
+            assertPlan(original, plan);
+            assertPlan(target, plan);
+        });
+    }
+
     protected QueryModel compileModel(String query) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             ExecutionModel model = compiler.testCompileModel(query, sqlExecutionContext);
