@@ -641,12 +641,7 @@ public final class TestUtils {
         int sockAddrCount = Net.getAllocatedSockAddrCount();
         Assert.assertTrue("Initial allocated sockaddr count should be >= 0", sockAddrCount >= 0);
 
-        try {
-            runnable.run();
-        } catch (Throwable e) {
-            System.err.println("assertMemoryLeak swallowing this exception:");
-            e.printStackTrace();
-        }
+        runnable.run();
         Path.clearThreadLocals();
         if (fileCount != Files.getOpenFileCount()) {
             Assert.assertEquals("file descriptors, expected: " + fileDebugInfo + ", actual: " + Files.getOpenFdDebugInfo(), fileCount, Files.getOpenFileCount());
