@@ -5431,108 +5431,92 @@ public class SqlOptimiser implements Mutable {
      * @param model the input query model
      */
     private void rewriteTrivialExpressions(QueryModel model) throws SqlException {
-        QueryModel nestedModel = model.getNestedModel();
+        final QueryModel nestedModel = model.getNestedModel();
 
         if (nestedModel == null) {
             return;
         }
 
         // first we want to see if this is an appropriate model to make this transformation
-        if (!(model.getSelectModelType() == QueryModel.SELECT_MODEL_VIRTUAL
-                && nestedModel.getSelectModelType() == QueryModel.SELECT_MODEL_GROUP_BY)) {
-            rewriteTrivialExpressions(nestedModel);
-            return;
-        }
+        if (model.getSelectModelType() == QueryModel.SELECT_MODEL_VIRTUAL
+                && nestedModel.getSelectModelType() == QueryModel.SELECT_MODEL_GROUP_BY) {
 
-        CharSequenceIntHashMap nestedCandidates = new CharSequenceIntHashMap();
-        final ObjList<QueryColumn> nestedColumns = nestedModel.getColumns();
-        boolean anyCandidates = false;
+            CharSequenceIntHashMap nestedCandidates = new CharSequenceIntHashMap();
+            final ObjList<QueryColumn> nestedColumns = nestedModel.getColumns();
+            boolean anyCandidates = false;
 
-        for (int i = 0; i < nestedColumns.size(); i++) {
-            final QueryColumn col = nestedColumns.getQuick(i);
-            final ExpressionNode ast = col.getAst();
-            if (ast.type == OPERATION && ast.paramCount == 2) {
-                // binary op
-
-                // If it's an operation we care about
-                if (ast.token.length() == 1 && rewriteTrivialExpressionsValidOp(ast.token.charAt(0))) {
-                    // Check if it's a simple pattern i.e A + 1 or 1 + A
-                    CharSequence token = ast.lhs.type == LITERAL && ast.rhs.type == CONSTANT ? ast.lhs.token
-                            : ast.lhs.type == CONSTANT && ast.rhs.type == LITERAL ? ast.rhs.token : null;
-
-                    if (token != null) {
-                        // Add it to candidates list
-                        nestedCandidates.putIfAbsent(token, 0);
-                        nestedCandidates.increment(token);
-                        anyCandidates = true;
-                    }
-                }
-            }
-
-            if (ast.type == LITERAL) {
-                nestedCandidates.putIfAbsent(ast.token, 0);
-                nestedCandidates.increment(ast.token);
-            }
-        }
-
-
-        if (anyCandidates) {
-            // we want to get the trivial expressions into the upper model
-            // and remove them from the nested model.
-            // we also want to push down the limit if it is available.
-
-            // go through the columns again
             for (int i = 0, n = nestedColumns.size(); i < n; i++) {
-                QueryColumn col = nestedColumns.getQuick(i);
-                ExpressionNode ast = col.getAst();
+                final QueryColumn nestedColumn = nestedColumns.getQuick(i);
+                final ExpressionNode nestedAst = nestedColumn.getAst();
+                if (nestedAst.type == OPERATION && nestedAst.paramCount == 2) {
+                    // If it's an operation we care about
+                    if (nestedAst.token.length() == 1 && rewriteTrivialExpressionsValidOp(nestedAst.token.charAt(0))) {
+                        // Check if it's a simple pattern i.e A + 1 or 1 + A
+                        CharSequence token = nestedAst.lhs.type == LITERAL && nestedAst.rhs.type == CONSTANT ? nestedAst.lhs.token
+                                : nestedAst.lhs.type == CONSTANT && nestedAst.rhs.type == LITERAL ? nestedAst.rhs.token : null;
 
-                // if there is a matching column in this model, we can lift the candidate up
-                if (model.getColumnAliasIndex(col.getAlias()) > -1) {
-                    if (ast.type == FUNCTION) {
-                        // don't pull a function up
-                        continue;
-                    }
-
-                    if (ast.type == OPERATION) {
-                        CharSequence candidate = null;
-                        if (ast.lhs.type == LITERAL) {
-                            candidate = ast.lhs.token;
-                        }
-                        if (ast.rhs.type == LITERAL) {
-                            candidate = ast.rhs.token;
-                        }
-
-                        assert candidate != null;
-
-                        // heck if the candidates is valid to be pulled up
-                        if (nestedCandidates.contains(candidate) && nestedCandidates.get(candidate) >= 2) {
-                            // remove from current, keep in new
-
-                            QueryColumn currentCol = model.getAliasToColumnMap().get(col.getAlias());
-                            assert
-                                    Chars.equals(currentCol.getAlias(), col.getAlias());
-
-                            currentCol.of(currentCol.getAlias(), col.getAst());
-
-                            final int originalColumnIndex = nestedModel.getColumnAliasIndex(col.getAlias());
-                            nestedModel.removeColumn(originalColumnIndex);
-                            n--;
-                            i--;
+                        if (token != null) {
+                            // Add it to candidates list
+                            nestedCandidates.putIfAbsent(token, 0);
+                            nestedCandidates.increment(token);
+                            anyCandidates = true;
                         }
                     }
                 }
 
+                // or if it's a literal, add it, in case we have A, A + 1.
+                if (nestedAst.type == LITERAL) {
+                    nestedCandidates.putIfAbsent(nestedAst.token, 0);
+                    nestedCandidates.increment(nestedAst.token);
+                }
             }
 
-            // if limit is on the virtual, push it down to the group by
-            ExpressionNode lo = model.getLimitLo();
-            ExpressionNode hi = model.getLimitHi();
-            if (lo != null && nestedModel.getLimitLo() == null) {
-                nestedModel.setLimit(lo, model.getLimitHi());
-                model.setLimit(null, null);
-            }
+            if (anyCandidates) {
 
+                for (int i = nestedColumns.size() - 1; i > 0; i--) {
+                    final QueryColumn nestedColumn = nestedColumns.getQuick(i);
+                    final ExpressionNode nestedAst = nestedColumn.getAst();
+
+                    // if there is a matching column in this model, we can lift the candidate up
+                    if (model.getColumnAliasIndex(nestedColumn.getAlias()) > -1) {
+                        if (nestedAst.type == FUNCTION) {
+                            // don't pull a function up
+                            continue;
+                        }
+
+                        if (nestedAst.type == OPERATION) {
+                            final CharSequence candidate = nestedAst.lhs.type == LITERAL ? nestedAst.lhs.token : nestedAst.rhs.type == LITERAL ? nestedAst.rhs.token : null;
+                            assert candidate != null;
+
+                            // check if the candidates is valid to be pulled up
+                            if (nestedCandidates.contains(candidate) && nestedCandidates.get(candidate) >= 2) {
+                                // remove from current, keep in new
+
+                                final QueryColumn currentCol = model.getAliasToColumnMap().get(nestedColumn.getAlias());
+                                assert Chars.equals(currentCol.getAlias(), nestedColumn.getAlias());
+
+                                currentCol.of(currentCol.getAlias(), nestedColumn.getAst());
+
+                                final int nestedColumnIndex = nestedModel.getColumnAliasIndex(nestedColumn.getAlias());
+                                nestedModel.removeColumn(nestedColumnIndex);
+                            }
+                        }
+                    }
+
+                }
+
+                // if limit is on the virtual, push it down to the group by
+                final ExpressionNode lo = model.getLimitLo();
+                final ExpressionNode hi = model.getLimitHi();
+                if (lo != null && nestedModel.getLimitLo() == null && nestedModel.getLimitHi() == null) {
+                    nestedModel.setLimit(lo, hi);
+                    model.setLimit(null, null);
+                }
+            }
         }
+
+        // recurse
+        rewriteTrivialExpressions(nestedModel);
     }
 
     private boolean rewriteTrivialExpressionsValidOp(char token) {
