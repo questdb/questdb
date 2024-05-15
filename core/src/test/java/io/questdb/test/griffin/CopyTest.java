@@ -302,7 +302,7 @@ public class CopyTest extends AbstractCairoTest {
                 "36.167.171.18\t-632487017\t1970-01-01T00:00:00.970000Z\n" +
                 "179.250.189.96\t406558832\t1970-01-01T00:00:00.980000Z\n" +
                 "237.235.146.199\t1690052673\t1970-01-01T00:00:00.990000Z\n";
-        CopyRunnable assertion = () -> assertQuery(
+        CopyRunnable assertion = () -> assertQueryNoLeakCheck(
                 expected,
                 "x",
                 null,
