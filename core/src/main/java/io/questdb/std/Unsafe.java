@@ -50,7 +50,6 @@ public final class Unsafe {
     //#endif
     public static final long LONG_OFFSET;
     public static final long LONG_SCALE;
-    public static final AtomicLong RSS_ALLOC_COUNT = new AtomicLong(0);
     private static final LongAdder[] COUNTERS = new LongAdder[MemoryTag.SIZE];
     private static final AtomicLong FREE_COUNT = new AtomicLong(0);
     private static final AtomicLong MALLOC_COUNT = new AtomicLong(0);
@@ -59,6 +58,7 @@ public final class Unsafe {
     private static final long OVERRIDE;
     //#endif
     private static final AtomicLong REALLOC_COUNT = new AtomicLong(0);
+    private static final AtomicLong RSS_ALLOC_COUNT = new AtomicLong(0);
     private static final long RSS_ALLOC_COUNT_LIMIT = Long.MAX_VALUE;
     private static final AtomicLong RSS_MEM_USED = new AtomicLong(0);
     private static final sun.misc.Unsafe UNSAFE;
