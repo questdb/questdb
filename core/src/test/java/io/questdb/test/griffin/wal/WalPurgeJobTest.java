@@ -903,33 +903,34 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             assertSegmentExistence(true, tableName, 1, 0);
             drainWalQueue();
 
-            WalWriter walWriter1 = getWalWriter(tableName);
-            walWriter1Ref.set(walWriter1);
-            // This will create new segments 1 and 2 in wal1 after Sequencer transaction scan in overridden FilesFacade
-            runWalPurgeJob();
-            walWriter1Ref.set(null);
+            try (WalWriter walWriter1 = getWalWriter(tableName)) {
+                walWriter1Ref.set(walWriter1);
+                // This will create new segments 1 and 2 in wal1 after Sequencer transaction scan in overridden FilesFacade
+                runWalPurgeJob();
+                walWriter1Ref.set(null);
 
-            assertSegmentExistence(true, tableName, walWriter1.getWalId(), 1);
-            assertSegmentExistence(true, tableName, walWriter1.getWalId(), 2);
+                assertSegmentExistence(true, tableName, walWriter1.getWalId(), 1);
+                assertSegmentExistence(true, tableName, walWriter1.getWalId(), 2);
 
-            drainWalQueue();
+                drainWalQueue();
 
-            assertSql("x\tts\ti1\ti2\n" +
-                    "1\t2022-02-24T00:00:00.000000Z\tnull\tnull\n" +
-                    "2\t2022-02-25T00:00:00.000000Z\t2\tnull\n" +
-                    "2\t2022-02-25T00:00:00.000000Z\t2\tnull\n", tableName);
+                assertSql("x\tts\ti1\ti2\n" +
+                        "1\t2022-02-24T00:00:00.000000Z\tnull\tnull\n" +
+                        "2\t2022-02-25T00:00:00.000000Z\t2\tnull\n" +
+                        "2\t2022-02-25T00:00:00.000000Z\t2\tnull\n", tableName);
 
 
-            // All applied, all segments can be deleted.
-            walWriter1.close();
-            runWalPurgeJob();
+                // All applied, all segments can be deleted.
+                walWriter1.close();
+                runWalPurgeJob();
 
-            assertSegmentExistence(false, tableName, walWriter1.getWalId(), 1);
-            assertSegmentExistence(true, tableName, walWriter1.getWalId(), 2);
+                assertSegmentExistence(false, tableName, walWriter1.getWalId(), 1);
+                assertSegmentExistence(true, tableName, walWriter1.getWalId(), 2);
 
-            releaseInactive(engine);
-            runWalPurgeJob();
-            assertWalExistence(false, tableName, walWriter1.getWalId());
+                releaseInactive(engine);
+                runWalPurgeJob();
+                assertWalExistence(false, tableName, walWriter1.getWalId());
+            }
         });
     }
 
