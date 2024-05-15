@@ -28,10 +28,8 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlUtil;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.IntList;
@@ -153,9 +151,6 @@ public class ConcatFunctionFactory implements FunctionFactory {
             this.functions = functions;
             this.functionCount = functions.size();
             this.adapters = new ObjList<>(functionCount);
-            for (int i = 0; i < functionCount; i++) {
-                adapters.add(adapterReferences.getQuick(functions.getQuick(i).getType()));
-            }
         }
 
         @Override
@@ -182,6 +177,14 @@ public class ConcatFunctionFactory implements FunctionFactory {
             sinkB.clear();
             getStr(rec, sinkB);
             return sinkB;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            MultiArgFunction.super.init(symbolTableSource, executionContext);
+            for (int i = 0; i < functionCount; i++) {
+                adapters.add(adapterReferences.getQuick(functions.getQuick(i).getType()));
+            }
         }
 
         @Override

@@ -25,12 +25,14 @@
 package io.questdb.test.griffin.engine.functions.str;
 
 import io.questdb.cairo.PartitionBy;
+import io.questdb.std.ObjList;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
+import io.questdb.test.tools.BindVariableTestTuple;
 import org.junit.Test;
 
 public class ConcatFunctionFactoryTest extends AbstractCairoTest {
-
     @Test
     public void testAllTypes() throws Exception {
         assertMemoryLeak(() -> {
@@ -72,6 +74,36 @@ public class ConcatFunctionFactoryTest extends AbstractCairoTest {
                     "select concat(int, '/', short, '/', byte, '/', double, '/', float, '/', long, '/', str, '/', sym, '/', bool, '/', bin, '/', date, '/', long256, '/', chr, '/', uuid, '/', ipv4, '/', varchar, '/', timestamp) from all2 order by 1"
             );
         });
+    }
+
+    @Test
+    public void testBindVarTypeChange() throws Exception {
+        ddl("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))");
+
+        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
+        tuples.add(new BindVariableTestTuple(
+                "all varchar",
+                "concat\n" +
+                        "1hopparea51\n",
+                bindVariableService -> {
+                    bindVariableService.setVarchar(0, new Utf8String("1"));
+                    bindVariableService.setVarchar(1, new Utf8String("hopp"));
+                    bindVariableService.setVarchar(2, new Utf8String("area51"));
+                }
+        ));
+
+        tuples.add(new BindVariableTestTuple(
+                "type change",
+                "concat\n" +
+                        "AhohohoABC77\n",
+                bindVariableService -> {
+                    bindVariableService.setChar(0, 'A');
+                    bindVariableService.setStr(1, "hohoho");
+                    bindVariableService.setVarchar(2, new Utf8String("ABC77"));
+                }
+        ));
+
+        assertSql("select concat ($1, $2, $3)", tuples);
     }
 
     @Test
