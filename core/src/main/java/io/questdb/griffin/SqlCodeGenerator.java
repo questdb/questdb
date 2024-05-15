@@ -3990,8 +3990,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         GenericRecordMetadata factoryMetadata = new GenericRecordMetadata();
 
         ObjList<Function> functions = new ObjList<>();
-        ObjList<Function> partitionByFunctions = new ObjList<>();
         ObjList<WindowFunction> naturalOrderFunctions = null;
+        ObjList<Function> partitionByFunctions = null;
         try {
             // if all window function don't require sorting or more than one pass then use streaming factory
             boolean isFastPath = true;
@@ -4005,10 +4005,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         throw SqlException.$(ast.position, "too many arguments");
                     }
 
-                    partitionByFunctions.clear();
+                    partitionByFunctions = null;
                     int psz = ac.getPartitionBy().size();
                     if (psz > 0) {
-                        partitionByFunctions.checkCapacity(psz);
+                        partitionByFunctions = new ObjList<>(psz);
                         for (int j = 0; j < psz; j++) {
                             partitionByFunctions.add(functionParser.parseFunction(ac.getPartitionBy().getQuick(j), baseMetadata, executionContext));
                         }
@@ -4017,10 +4017,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final VirtualRecord partitionByRecord;
                     final RecordSink partitionBySink;
 
-                    final int partitionByCount = partitionByFunctions.size();
-                    if (partitionByCount > 0) {
-                        partitionByRecord = new VirtualRecord(new ObjList<>(partitionByFunctions));
+                    if (partitionByFunctions != null) {
+                        partitionByRecord = new VirtualRecord(partitionByFunctions);
                         keyTypes.clear();
+                        final int partitionByCount = partitionByFunctions.size();
 
                         for (int j = 0; j < partitionByCount; j++) {
                             keyTypes.add(partitionByFunctions.getQuick(j).getType());
@@ -4153,7 +4153,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             } else {
                 factoryMetadata.clear();
                 Misc.freeObjListAndClear(functions);
-                Misc.freeObjList(partitionByFunctions);
             }
 
             listColumnFilterA.clear();
@@ -4233,10 +4232,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         throw SqlException.$(ast.position, "too many arguments");
                     }
 
-                    partitionByFunctions.clear();
+                    partitionByFunctions = null;
                     int psz = ac.getPartitionBy().size();
                     if (psz > 0) {
-                        partitionByFunctions.checkCapacity(psz);
+                        partitionByFunctions = new ObjList<>(psz);
                         for (int j = 0; j < psz; j++) {
                             partitionByFunctions.add(functionParser.parseFunction(ac.getPartitionBy().getQuick(j), chainMetadata, executionContext));
                         }
@@ -4245,10 +4244,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final VirtualRecord partitionByRecord;
                     final RecordSink partitionBySink;
 
-                    final int partitionByCount = partitionByFunctions.size();
-                    if (partitionByCount > 0) {
-                        partitionByRecord = new VirtualRecord(new ObjList<>(partitionByFunctions));
+                    if (partitionByFunctions != null) {
+                        partitionByRecord = new VirtualRecord(partitionByFunctions);
                         keyTypes.clear();
+                        final int partitionByCount = partitionByFunctions.size();
 
                         for (int j = 0; j < partitionByCount; j++) {
                             keyTypes.add(partitionByFunctions.getQuick(j).getType());
