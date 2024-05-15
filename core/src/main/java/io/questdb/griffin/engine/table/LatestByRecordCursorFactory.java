@@ -198,25 +198,20 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
                 long rowIndexesCapacityThreshold,
                 SqlExecutionCircuitBreaker circuitBreaker
         ) {
-            try {
-                if (!isOpen) {
-                    isOpen = true;
-                    latestByMap.reopen();
-                }
-
-                this.baseCursor = baseCursor;
-                baseRecord = baseCursor.getRecord();
-                this.recordSink = recordSink;
-                this.rowIndexes = rowIndexes;
-                this.circuitBreaker = circuitBreaker;
-                index = 0;
-                rowIndexesPos = 0;
-                this.rowIndexesCapacityThreshold = rowIndexesCapacityThreshold;
-                isMapBuilt = false;
-            } catch (Throwable t) {
-                close();
-                throw t;
+            if (!isOpen) {
+                isOpen = true;
+                latestByMap.reopen();
             }
+
+            this.baseCursor = baseCursor;
+            baseRecord = baseCursor.getRecord();
+            this.recordSink = recordSink;
+            this.rowIndexes = rowIndexes;
+            this.circuitBreaker = circuitBreaker;
+            index = 0;
+            rowIndexesPos = 0;
+            this.rowIndexesCapacityThreshold = rowIndexesCapacityThreshold;
+            isMapBuilt = false;
         }
 
         @Override

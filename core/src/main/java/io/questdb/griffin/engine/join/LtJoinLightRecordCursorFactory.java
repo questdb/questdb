@@ -243,23 +243,18 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
         }
 
         void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
-            try {
-                if (!isOpen) {
-                    isOpen = true;
-                    joinKeyMap.reopen();
-                }
-                slaveTimestamp = Long.MIN_VALUE;
-                lastSlaveRowID = Long.MIN_VALUE;
-                this.masterCursor = masterCursor;
-                this.slaveCursor = slaveCursor;
-                masterRecord = masterCursor.getRecord();
-                slaveRecord = slaveCursor.getRecordB();
-                record.of(masterRecord, slaveRecord);
-                isMasterHasNextPending = true;
-            } catch (Throwable t) {
-                close();
-                throw t;
+            if (!isOpen) {
+                isOpen = true;
+                joinKeyMap.reopen();
             }
+            slaveTimestamp = Long.MIN_VALUE;
+            lastSlaveRowID = Long.MIN_VALUE;
+            this.masterCursor = masterCursor;
+            this.slaveCursor = slaveCursor;
+            masterRecord = masterCursor.getRecord();
+            slaveRecord = slaveCursor.getRecordB();
+            record.of(masterRecord, slaveRecord);
+            isMasterHasNextPending = true;
         }
     }
 }

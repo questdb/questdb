@@ -253,25 +253,20 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
         }
 
         private void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
-            try {
-                if (!isOpen) {
-                    isOpen = true;
-                    joinKeyMap.reopen();
-                }
-                this.masterCursor = masterCursor;
-                this.slaveCursor = slaveCursor;
-                slaveTimestamp = Long.MIN_VALUE;
-                danglingSlaveRecord = false;
-                masterRecord = masterCursor.getRecord();
-                slaveRecord = slaveCursor.getRecord();
-                MapRecord mapRecord = joinKeyMap.getRecord();
-                mapRecord.setSymbolTableResolver(slaveCursor, columnIndex);
-                record.of(masterRecord, mapRecord);
-                isMasterHasNextPending = true;
-            } catch (Throwable t) {
-                close();
-                throw t;
+            if (!isOpen) {
+                joinKeyMap.reopen();
+                isOpen = true;
             }
+            this.masterCursor = masterCursor;
+            this.slaveCursor = slaveCursor;
+            slaveTimestamp = Long.MIN_VALUE;
+            danglingSlaveRecord = false;
+            masterRecord = masterCursor.getRecord();
+            slaveRecord = slaveCursor.getRecord();
+            MapRecord mapRecord = joinKeyMap.getRecord();
+            mapRecord.setSymbolTableResolver(slaveCursor, columnIndex);
+            record.of(masterRecord, mapRecord);
+            isMasterHasNextPending = true;
         }
     }
 }

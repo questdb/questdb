@@ -84,18 +84,12 @@ class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordLis
 
     @Override
     public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
-        try {
-            if (!isOpen()) {
-                isOpen = true;
-                map.reopen();
-            }
-            super.of(dataFrameCursor, executionContext);
-            filter.init(this, executionContext);
-            possibleCombinations = -1;
-        } catch (Throwable t) {
-            close();
-            throw t;
+        if (!isOpen()) {
+            map.reopen();
         }
+        super.of(dataFrameCursor, executionContext);
+        filter.init(this, executionContext);
+        possibleCombinations = -1;
     }
 
     @Override

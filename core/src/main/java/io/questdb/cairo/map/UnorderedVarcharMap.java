@@ -309,20 +309,15 @@ public class UnorderedVarcharMap implements Map, Reopenable {
     @Override
     public void restoreInitialCapacity() {
         if (memStart == 0 || keyCapacity != initialKeyCapacity) {
-            try {
-                keyCapacity = initialKeyCapacity;
-                mask = keyCapacity - 1;
-                final long sizeBytes = entrySize * keyCapacity;
-                if (memStart == 0) {
-                    memStart = Unsafe.malloc(sizeBytes, memoryTag);
-                } else {
-                    memStart = Unsafe.realloc(memStart, memLimit - memStart, sizeBytes, memoryTag);
-                }
-                memLimit = memStart + sizeBytes;
-            } catch (Throwable t) {
-                close();
-                throw t;
+            keyCapacity = initialKeyCapacity;
+            mask = keyCapacity - 1;
+            final long sizeBytes = entrySize * keyCapacity;
+            if (memStart == 0) {
+                memStart = Unsafe.malloc(sizeBytes, memoryTag);
+            } else {
+                memStart = Unsafe.realloc(memStart, memLimit - memStart, sizeBytes, memoryTag);
             }
+            memLimit = memStart + sizeBytes;
         }
 
         clear();

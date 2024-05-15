@@ -233,22 +233,17 @@ public class Unordered2Map implements Map, Reopenable {
 
     @Override
     public void restoreInitialCapacity() {
-        try {
-            if (memStart == 0) {
-                final long sizeBytes = entrySize * TABLE_SIZE;
-                memStart = Unsafe.malloc(sizeBytes, memoryTag);
-                memLimit = memStart + sizeBytes;
-            }
-
-            if (keyMemStart == 0) {
-                keyMemStart = Unsafe.malloc(KEY_SIZE, memoryTag);
-            }
-
-            clear();
-        } catch (Throwable t) {
-            close();
-            throw t;
+        if (memStart == 0) {
+            final long sizeBytes = entrySize * TABLE_SIZE;
+            memStart = Unsafe.malloc(sizeBytes, memoryTag);
+            memLimit = memStart + sizeBytes;
         }
+
+        if (keyMemStart == 0) {
+            keyMemStart = Unsafe.malloc(KEY_SIZE, memoryTag);
+        }
+
+        clear();
     }
 
     @Override

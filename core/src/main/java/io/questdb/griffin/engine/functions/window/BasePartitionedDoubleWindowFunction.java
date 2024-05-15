@@ -62,12 +62,7 @@ abstract class BasePartitionedDoubleWindowFunction extends BaseDoubleWindowFunct
 
     @Override
     public void reopen() {
-        try {
-            map.reopen();
-        } catch (Throwable t) {
-            close();
-            throw t;
-        }
+        map.reopen();
     }
 
     @Override

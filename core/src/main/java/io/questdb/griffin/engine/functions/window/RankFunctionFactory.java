@@ -277,12 +277,7 @@ public class RankFunctionFactory implements FunctionFactory {
 
         @Override
         public void reopen() {
-            try {
-                map.reopen();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
+            map.reopen();
         }
 
         @Override

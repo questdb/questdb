@@ -146,13 +146,8 @@ public class RowNumberFunctionFactory implements FunctionFactory {
 
         @Override
         public void reopen() {
-            try {
-                rowNumber = 0;
-                map.reopen();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
+            rowNumber = 0;
+            map.reopen();
         }
 
         @Override

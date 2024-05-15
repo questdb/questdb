@@ -190,18 +190,18 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         private void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
-            try {
-                super.of(baseCursor);
-                circuitBreaker = executionContext.getCircuitBreaker();
-                if (!isOpen) {
-                    isOpen = true;
+            super.of(baseCursor);
+            circuitBreaker = executionContext.getCircuitBreaker();
+            if (!isOpen) {
+                isOpen = true;
+                try {
                     reopen(functions);
+                } catch (Throwable t) {
+                    close();
+                    throw t;
                 }
-                Function.init(functions, baseCursor, executionContext);
-            } catch (Throwable t) {
-                close();
-                throw t;
             }
+            Function.init(functions, baseCursor, executionContext);
         }
 
         private void reopen(ObjList<Function> list) {

@@ -228,26 +228,21 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
         }
 
         void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext) throws SqlException {
-            try {
-                if (!isOpen) {
-                    isOpen = true;
-                    joinKeyMap.reopen();
-                    slaveChain.reopen();
-                }
-                this.masterCursor = masterCursor;
-                this.slaveCursor = slaveCursor;
-                this.circuitBreaker = executionContext.getCircuitBreaker();
-                masterRecord = masterCursor.getRecord();
-                Record slaveRecord = slaveChain.getRecord();
-                record.of(masterRecord, slaveRecord);
-                slaveChain.setSymbolTableResolver(slaveCursor);
-                useSlaveCursor = false;
-                isMapBuilt = false;
-                filter.init(this, executionContext);
-            } catch (Throwable t) {
-                close();
-                throw t;
+            if (!isOpen) {
+                isOpen = true;
+                joinKeyMap.reopen();
+                slaveChain.reopen();
             }
+            this.masterCursor = masterCursor;
+            this.slaveCursor = slaveCursor;
+            this.circuitBreaker = executionContext.getCircuitBreaker();
+            masterRecord = masterCursor.getRecord();
+            Record slaveRecord = slaveChain.getRecord();
+            record.of(masterRecord, slaveRecord);
+            slaveChain.setSymbolTableResolver(slaveCursor);
+            useSlaveCursor = false;
+            isMapBuilt = false;
+            filter.init(this, executionContext);
         }
     }
 }

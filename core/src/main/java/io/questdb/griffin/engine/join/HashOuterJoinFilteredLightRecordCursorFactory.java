@@ -246,25 +246,20 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
         }
 
         void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
-            try {
-                if (!isOpen) {
-                    isOpen = true;
-                    slaveChain.reopen();
-                    joinKeyMap.reopen();
-                }
-                this.masterCursor = masterCursor;
-                this.slaveCursor = slaveCursor;
-                this.circuitBreaker = sqlExecutionContext.getCircuitBreaker();
-                masterRecord = masterCursor.getRecord();
-                slaveRecord = slaveCursor.getRecordB();
-                record.of(masterRecord, slaveRecord);
-                slaveChainCursor = null;
-                isMapBuilt = false;
-                filter.init(this, sqlExecutionContext);
-            } catch (Throwable t) {
-                close();
-                throw t;
+            if (!isOpen) {
+                isOpen = true;
+                slaveChain.reopen();
+                joinKeyMap.reopen();
             }
+            this.masterCursor = masterCursor;
+            this.slaveCursor = slaveCursor;
+            this.circuitBreaker = sqlExecutionContext.getCircuitBreaker();
+            masterRecord = masterCursor.getRecord();
+            slaveRecord = slaveCursor.getRecordB();
+            record.of(masterRecord, slaveRecord);
+            slaveChainCursor = null;
+            isMapBuilt = false;
+            filter.init(this, sqlExecutionContext);
         }
     }
 }

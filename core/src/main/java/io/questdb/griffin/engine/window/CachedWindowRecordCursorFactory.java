@@ -465,23 +465,23 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
         }
 
         private void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
-            try {
-                this.baseCursor = baseCursor;
-                isRecordChainBuilt = false;
-                recordChainOffset = -1;
-                circuitBreaker = executionContext.getCircuitBreaker();
-                if (!isOpen) {
-                    isOpen = true;
+            this.baseCursor = baseCursor;
+            isRecordChainBuilt = false;
+            recordChainOffset = -1;
+            circuitBreaker = executionContext.getCircuitBreaker();
+            if (!isOpen) {
+                isOpen = true;
+                try {
                     recordChain.reopen();
                     recordChain.setSymbolTableResolver(this);
                     reopenTrees();
                     reopen(allFunctions);
+                } catch (Throwable t) {
+                    close();
+                    throw t;
                 }
-                Function.init(allFunctions, this, executionContext);
-            } catch (Throwable t) {
-                close();
-                throw t;
             }
+            Function.init(allFunctions, this, executionContext);
         }
 
         private void reopen(ObjList<?> list) {
