@@ -5482,6 +5482,7 @@ public class SqlOptimiser implements Mutable {
             }
 
             newModel.setNestedModel(currentModel);
+            newModel.setModelType(QueryModel.SELECT_MODEL_VIRTUAL);
             return newModel;
         }
 
