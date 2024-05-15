@@ -570,10 +570,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "            Frame forward scan on: x\n"
             );
 
-            assertSql("i\trow_number\tavg\tsum\tfirst_value\n" +
-                    "1\t1\t50.5\t5050.0\t1.0\n" +
-                    "2\t2\t50.5\t5050.0\t1.0\n" +
-                    "3\t1\t50.5\t5050.0\t1.0\n", sql);
+            assertSql(
+                    "i\trow_number\tavg\tsum\tfirst_value\n" +
+                            "1\t1\t50.5\t5050.0\t1.0\n" +
+                            "2\t2\t50.5\t5050.0\t1.0\n" +
+                            "3\t1\t50.5\t5050.0\t1.0\n",
+                    sql
+            );
         });
     }
 
@@ -10436,7 +10439,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     private void assertPlan(String ddl, String query, String expectedPlan) throws Exception {
-        assertMemoryLeak(() -> assertQueryNoLeakCheck(ddl, query, expectedPlan));
+        assertMemoryLeak(() -> assertPlanNoLeakCheck(ddl, query, expectedPlan));
     }
 
     private void assertPlanNoLeakCheck(String ddl, String query, String expectedPlan) throws Exception {

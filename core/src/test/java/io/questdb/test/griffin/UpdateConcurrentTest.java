@@ -191,7 +191,6 @@ public class UpdateConcurrentTest extends AbstractCairoTest {
                             }
                             current.incrementAndGet();
                         }
-                        updateCompiler.close();
                     } catch (Throwable th) {
                         LOG.error().$("writer error ").$(th).$();
                         exceptions.add(th);
