@@ -48,6 +48,27 @@ public class WindowFunctionTest extends AbstractCairoTest {
     private static final List<String> WINDOW_ONLY_FUNCTIONS;
 
     @Test
+    public void testAggregateFunctionInPartitionByFails() throws Exception {
+        assertException(
+                "SELECT pickup_datetime, avg(total_amount) OVER (PARTITION BY avg(total_amount)\n" +
+                        "  ORDER BY pickup_datetime\n" +
+                        "  RANGE BETWEEN '7' PRECEDING AND CURRENT ROW) moving_average_1w\n" +
+                        "FROM trips\n" +
+                        "WHERE pickup_datetime >= '2018-12-30' and pickup_datetime <= '2018-12-31'\n" +
+                        "SAMPLE BY 1d",
+                "create table trips as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(42) total_amount," +
+                        " timestamp_sequence(0, 100000000000) pickup_datetime" +
+                        " from long_sequence(10)" +
+                        ") timestamp(pickup_datetime) partition by day",
+                24,
+                "aggregate functions in partition by are not supported"
+        );
+    }
+
+    @Test
     public void testCachedWindowFactoryMaintainsOrderOfRecordsWithSameTimestamp1() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table nodts_tab (ts timestamp, val int)");
@@ -116,32 +137,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "ts",
                     false,
                     true
-            );
-        });
-    }
-
-    @Test
-    public void testFailsOnAggregateFunctionInPartitionBy() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl(
-                    "CREATE TABLE 'trips' (\n" +
-                            "  pickup_datetime TIMESTAMP,\n" +
-                            "  total_amount DOUBLE\n" +
-                            ") timestamp (pickup_datetime) PARTITION BY MONTH;"
-            );
-            insert("insert into trips values ('2018-12-30T16:30:45.145921Z', 0)");
-            insert("insert into trips values ('2018-12-30T17:30:45.145921Z', 1)");
-            insert("insert into trips values ('2018-12-30T18:30:45.145921Z', 2)");
-
-            assertExceptionNoLeakCheck(
-                    "SELECT pickup_datetime, avg(total_amount) OVER (PARTITION BY avg(total_amount)\n" +
-                            "  ORDER BY pickup_datetime\n" +
-                            "  RANGE BETWEEN '7' PRECEDING AND CURRENT ROW) moving_average_1w\n" +
-                            "FROM trips\n" +
-                            "WHERE pickup_datetime >= '2018-12-30' and pickup_datetime <= '2018-12-31'\n" +
-                            "SAMPLE BY 1d",
-                    24,
-                    "aggregate functions in partition by are not supported"
             );
         });
     }
@@ -872,7 +867,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000004Z\t0\t3\n" +
                             "1970-01-01T00:00:00.000004Z\t1\t4\n" +
                             "1970-01-01T00:00:00.000005Z\t0\t0\n",
-                    "select * from dups"
+                    "select * from dups",
+                    "ts",
+                    true,
+                    true
             );
 
             String dupResult = "ts\ti\tj\tavg\tsum\tfirst_value\n" +
@@ -3309,6 +3307,25 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testWindowFunctionInPartitionByFails() throws Exception {
+        assertException(
+                "SELECT pickup_datetime, row_number() OVER (PARTITION BY row_number())\n" +
+                        "FROM trips\n" +
+                        "WHERE pickup_datetime >= '2018-12-30' and pickup_datetime <= '2018-12-31'\n" +
+                        "SAMPLE BY 1d",
+                "create table trips as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(42) total_amount," +
+                        " timestamp_sequence(0, 100000000000) pickup_datetime" +
+                        " from long_sequence(10)" +
+                        ") timestamp(pickup_datetime) partition by day",
+                56,
+                "window function called in non-window context, make sure to add OVER clause"
+        );
     }
 
     @Test
