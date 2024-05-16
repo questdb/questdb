@@ -444,10 +444,10 @@ public class InfluxDBClientTest extends AbstractTest {
                         "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
                         "error in line 1: Could not parse entire line, field value is invalid. Field: d; value: 10a24.2\",\"line\":1,\"errorId\":");
 
-                assertRequestErrorContains(influxDB, points, "badPoint,tag1=\"asdf\" d=1024.2", "{" +
+                assertRequestErrorContains(influxDB, points, "badPoint tag1=aasdf,d=1024.2", "{" +
                         "\"code\":\"invalid\"," +
                         "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
-                        "error in line 1: Could not parse entire line, tag value is invalid. Tag: tag1; value: \\\"asdf\\\"\",\"line\":1,\"errorId\":");
+                        "error in line 1: Could not parse entire line, field value is invalid. Field: tag1; value: aasdf\",\"line\":1,\"errorId\":");
             }
 
             assertSql(serverMain.getEngine(), "SELECT count() FROM good_point", "count\n0\n");
@@ -609,6 +609,36 @@ public class InfluxDBClientTest extends AbstractTest {
                         "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
                         "error in line 1: table: ex_tbl2; table does not exist, creating new tables is disabled\",\"line\":1,\"errorId\":");
             }
+        }
+    }
+
+    @Test
+    public void testSymbolsWithQuotes() throws Exception {
+        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+            put(PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048");
+        }})) {
+            serverMain.start();
+            try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
+                influxDB.setLogLevel(InfluxDB.LogLevel.BASIC);
+
+                List<String> points = new ArrayList<>();
+                long milliTime = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T05:00:00.000001Z");
+                points.add("m1,tag1=\"value1\" f1=1i,y=12i " + milliTime);
+                influxDB.write(Point.measurement("m1")
+                        .tag("tag1", "\"value1\"")
+                        .addField("f1", 1)
+                        .addField("y", 12)
+                        .time(milliTime, TimeUnit.MICROSECONDS)
+                        .build()
+                );
+            }
+
+            serverMain.awaitTable("m1");
+            assertSql(
+                    serverMain.getEngine(),
+                    "SELECT * FROM m1", "tag1\tf1\ty\ttimestamp\n" +
+                            "\"value1\"\t1\t12\t2022-02-24T05:00:00.000001Z\n"
+            );
         }
     }
 

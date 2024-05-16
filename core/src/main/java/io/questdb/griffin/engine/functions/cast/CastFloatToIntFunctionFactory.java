@@ -58,7 +58,7 @@ public class CastFloatToIntFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             final float value = arg.getFloat(rec);
-            return value == value ? (int) value : Numbers.INT_NULL;
+            return Numbers.isNull(value) || value > Integer.MAX_VALUE || value < Integer.MIN_VALUE ? Numbers.INT_NULL : (int) value;
         }
     }
 }
