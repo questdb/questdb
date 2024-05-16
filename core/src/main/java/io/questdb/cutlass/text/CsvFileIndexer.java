@@ -40,6 +40,7 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.DirectUtf16Sink;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
@@ -84,7 +85,8 @@ public class CsvFileIndexer implements Closeable, Mutable {
     // used for timestamp parsing
     private final TypeManager typeManager;
     // used for timestamp parsing
-    private final DirectUtf16Sink utf8Sink;
+    private final DirectUtf16Sink utf16Sink;
+    private final DirectUtf8Sink utf8Sink;
     private boolean cancelled = false;
     private @Nullable ExecutionCircuitBreaker circuitBreaker;
     private byte columnDelimiter;
@@ -130,8 +132,10 @@ public class CsvFileIndexer implements Closeable, Mutable {
     public CsvFileIndexer(CairoConfiguration configuration) {
         this.configuration = configuration;
         final TextConfiguration textConfiguration = configuration.getTextConfiguration();
-        this.utf8Sink = new DirectUtf16Sink(textConfiguration.getUtf8SinkSize());
-        this.typeManager = new TypeManager(textConfiguration, utf8Sink);
+        int utf8SinkSize = textConfiguration.getUtf8SinkSize();
+        this.utf16Sink = new DirectUtf16Sink(utf8SinkSize);
+        this.utf8Sink = new DirectUtf8Sink(utf8SinkSize);
+        this.typeManager = new TypeManager(textConfiguration, utf16Sink, utf8Sink);
         this.ff = configuration.getFilesFacade();
         this.dirMode = configuration.getMkDirMode();
         this.inputRoot = configuration.getSqlCopyInputRoot();
@@ -196,6 +200,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
         this.path.close();
         this.typeManager.clear();
+        this.utf16Sink.close();
         this.utf8Sink.close();
 
         clear();
