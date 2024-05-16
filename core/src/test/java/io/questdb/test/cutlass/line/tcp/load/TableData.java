@@ -33,7 +33,8 @@ import io.questdb.std.Rnd;
 
 import java.util.concurrent.atomic.AtomicLong;
 
-import static io.questdb.cairo.ColumnType.*;
+import static io.questdb.cairo.ColumnType.DOUBLE;
+import static io.questdb.cairo.ColumnType.FLOAT;
 
 public class TableData {
     private final IntLongPriorityQueue index = new IntLongPriorityQueue();
@@ -127,14 +128,10 @@ public class TableData {
     private String getDefaultValue(short colType) {
         switch (colType) {
             case DOUBLE:
+            case FLOAT:
                 return "null";
-            case STRING:
-            case SYMBOL:
-            case VARCHAR:
-            case TIMESTAMP:
-                return "";
             default:
-                throw new RuntimeException("Unexpected column type");
+                return "";
         }
     }
 }
