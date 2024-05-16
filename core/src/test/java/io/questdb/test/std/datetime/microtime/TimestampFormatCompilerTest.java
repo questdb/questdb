@@ -269,6 +269,8 @@ public class TimestampFormatCompilerTest {
         assertFormat("pm, 12", "a, h", "2017-03-31T12:00:00.000Z");
         assertFormat("am, 3", "a, h", "2017-03-31T03:00:00.000Z");
         assertFormat("am, 11", "a, h", "2017-03-31T11:59:59.999Z");
+        assertFormat("am, 12", "a, h", "2017-03-31T00:00:00.000Z");
+        assertFormat("pm, 12", "a, h", "2017-03-31T12:00:00.000Z");
 
         assertFormat("2", "h", "2017-03-31T14:00:00.000Z");
         assertFormat("12", "h", "2017-03-31T12:00:00.000Z");
@@ -284,6 +286,8 @@ public class TimestampFormatCompilerTest {
         assertFormat("pm, 00", "a, KK", "2017-03-31T12:00:00.000Z");
         assertFormat("am, 03", "a, KK", "2017-03-31T03:00:00.000Z");
         assertFormat("am, 11", "a, KK", "2017-03-31T11:59:59.999Z");
+        assertFormat("am, 00", "a, KK", "2017-03-31T00:00:00.000Z");
+        assertFormat("pm, 00", "a, KK", "2017-03-31T12:00:00.000Z");
 
         assertFormat("02", "KK", "2017-03-31T14:00:00.000Z");
         assertFormat("00", "KK", "2017-03-31T12:00:00.000Z");
@@ -298,6 +302,8 @@ public class TimestampFormatCompilerTest {
         assertFormat("pm, 0", "a, K", "2017-03-31T12:00:00.000Z");
         assertFormat("am, 3", "a, K", "2017-03-31T03:00:00.000Z");
         assertFormat("am, 11", "a, K", "2017-03-31T11:59:59.999Z");
+        assertFormat("am, 0", "a, K", "2017-03-31T00:00:00.000Z");
+        assertFormat("pm, 0", "a, K", "2017-03-31T12:00:00.000Z");
 
         assertFormat("2", "K", "2017-03-31T14:00:00.000Z");
         assertFormat("0", "K", "2017-03-31T12:00:00.000Z");
