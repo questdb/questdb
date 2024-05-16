@@ -222,6 +222,7 @@ pub struct ColumnImpl {
     pub row_count: usize,
     pub fixed_len_data: &'static [u8],
     pub variable_len_data: Option<&'static [u8]>,
+    pub symbol_offsets: Option<&'static [u64]>,
 }
 
 pub type Column = Arc<ColumnImpl>;
@@ -254,6 +255,7 @@ impl ColumnImpl {
             row_count,
             fixed_len_data,
             variable_len_data,
+            symbol_offsets: None,
         })
     }
 }

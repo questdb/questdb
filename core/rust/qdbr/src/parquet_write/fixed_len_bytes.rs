@@ -1,5 +1,5 @@
 use parquet2::encoding::Encoding;
-use parquet2::page::DataPage;
+use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
 use crate::parquet_write::file::WriteOptions;
 use crate::util::{build_plain_page, encode_bool_iter};
@@ -17,7 +17,7 @@ pub fn bytes_to_page(
     chunk_size: usize,
     options: WriteOptions,
     type_: PrimitiveType,
-) -> parquet2::error::Result<DataPage> {
+) -> parquet2::error::Result<Page> {
     let mut buffer = vec![];
     let mut null_count = 0;
 
@@ -46,6 +46,6 @@ pub fn bytes_to_page(
         type_,
         options,
         Encoding::Plain,
-    )
+    ).map(Page::Data)
 }
 

@@ -1,7 +1,7 @@
 use crate::parquet_write::schema::{
     to_encodings, to_parquet_schema, Column, ColumnType, Partition,
 };
-use crate::parquet_write::{boolean, primitive};
+use crate::parquet_write::{binary, boolean, fixed_len_bytes, primitive, string, symbol};
 use parquet2::compression::CompressionOptions;
 use parquet2::encoding::Encoding;
 use parquet2::metadata::SchemaDescriptor;
@@ -13,6 +13,9 @@ use parquet2::write::{
 };
 use std::io::Write;
 use std::mem;
+use arrow::compute::concat;
+use crate::parquet_write::symbol::symbol_to_pages;
+
 const DEFAULT_PAGE_SIZE: usize = 1024 * 1024;
 const DEFAULT_ROW_GROUP_SIZE: usize = 512 * 512;
 
@@ -223,6 +226,20 @@ fn column_chunk_to_pages(
     options: WriteOptions,
     encoding: Encoding,
 ) -> parquet2::error::Result<DynIter<'static, parquet2::error::Result<Page>>> {
+
+    let primitive_type = match type_ {
+        ParquetType::PrimitiveType(primitive) => primitive,
+        _ => unreachable!("GroupType is not supported"),
+    };
+
+    if matches!(column.data_type, ColumnType::Symbol) {
+        let keys: &[i32] =
+            unsafe { mem::transmute(&column.fixed_len_data[chunk_offset..chunk_offset + chunk_length]) };
+        let offsets = column.symbol_offsets.expect("symbol offsets");
+        let data = column.variable_len_data.expect("symbol data");
+        return symbol::symbol_to_pages(keys, offsets, data, options, primitive_type);
+    }
+
     let number_of_rows = chunk_length;
     let max_page_size = options.data_page_size.unwrap_or(DEFAULT_PAGE_SIZE);
     let max_page_size = max_page_size.min(2usize.pow(31) - 2usize.pow(25));
@@ -240,10 +257,6 @@ fn column_chunk_to_pages(
             (chunk_offset + offset, length)
         });
 
-    let primitive_type = match type_ {
-        ParquetType::PrimitiveType(primitive) => primitive,
-        _ => unreachable!("GroupType is not supported"),
-    };
 
     let pages = rows.map(move |(offset, length)| {
         chunk_to_page(
@@ -302,6 +315,26 @@ fn chunk_to_page(
             let chunk: &[f64] =
                 unsafe { mem::transmute(&column.fixed_len_data[offset..offset + length]) };
             primitive::float_slice_to_page_plain::<f64, f64>(chunk, options, type_)
+        }
+        ColumnType::Binary => {
+            let offsets: &[i64] =
+                unsafe { mem::transmute(&column.fixed_len_data[offset..offset + length]) };
+            let data = column.variable_len_data.expect("data");
+            binary::binary_to_page(offsets, data, options, type_, encoding)
+        }
+        ColumnType::String => {
+            let offsets: &[i64] =
+                unsafe { mem::transmute(&column.fixed_len_data[offset..offset + length]) };
+            let data = column.variable_len_data.expect("data");
+            string::string_to_page(offsets, data, options, type_, encoding)
+        }
+        ColumnType::Long128 => {
+            let chunk= &column.fixed_len_data[offset..offset + length];
+            fixed_len_bytes::bytes_to_page(chunk, 16, options, type_)
+        }
+        ColumnType::Long256 => {
+            let chunk= &column.fixed_len_data[offset..offset + length];
+            fixed_len_bytes::bytes_to_page(chunk, 32, options, type_)
         }
         other => Err(parquet2::error::Error::FeatureNotSupported(format!(
             "Writing parquet pages for data type {:?}",

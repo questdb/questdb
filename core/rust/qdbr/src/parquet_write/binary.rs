@@ -24,7 +24,7 @@
 
 use std::mem::size_of;
 use parquet2::encoding::{delta_bitpacked, Encoding};
-use parquet2::page::DataPage;
+use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
 use parquet2::types;
 use crate::parquet_write::file::WriteOptions;
@@ -36,7 +36,7 @@ pub fn binary_to_page(
     options: WriteOptions,
     type_: PrimitiveType,
     encoding: Encoding,
-) -> parquet2::error::Result<DataPage> {
+) -> parquet2::error::Result<Page> {
     let mut buffer = vec![];
     let mut null_count = 0;
 
@@ -73,7 +73,7 @@ pub fn binary_to_page(
         type_,
         options,
         encoding,
-    )
+    ).map(Page::Data)
 }
 
 fn encode_delta(offsets: &[i64], values: &[u8], null_count: usize, buffer: &mut Vec<u8>) {
