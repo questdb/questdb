@@ -42,6 +42,7 @@ import org.junit.Test;
 
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MILLIS;
@@ -834,7 +835,7 @@ public class DateFormatCompilerTest {
     }
 
     private void testAgainstJavaReferenceImpl(String pattern) throws Exception {
-        SimpleDateFormat javaFmt = new SimpleDateFormat(pattern);
+        SimpleDateFormat javaFmt = new SimpleDateFormat(pattern, Locale.UK);
         javaFmt.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
         DateFormat genericQuestFmt = get(pattern);
         DateFormat compiledQuestFmt = compiler.compile(pattern);
@@ -845,11 +846,11 @@ public class DateFormatCompilerTest {
             String javaFormatted = javaFmt.format(new Date(tsMillis));
 
             genericQuestFmt.format(tsMillis, defaultLocale, "UTC", sink);
-            Assert.assertEquals(javaFormatted, sink.toString().toUpperCase()); // upper case due to AM vs am and PM vs pm
+            Assert.assertEquals(javaFormatted, sink.toString());
 
             sink.clear();
             compiledQuestFmt.format(tsMillis, defaultLocale, "UTC", sink);
-            Assert.assertEquals(javaFormatted, sink.toString().toUpperCase());
+            Assert.assertEquals(javaFormatted, sink.toString());
 
             // now we know both Java and QuestDB format the same way.
             // let's try to parse it back.
