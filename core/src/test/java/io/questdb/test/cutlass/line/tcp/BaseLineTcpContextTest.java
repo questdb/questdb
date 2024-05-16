@@ -37,7 +37,10 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.network.*;
+import io.questdb.network.IODispatcher;
+import io.questdb.network.IORequestProcessor;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
@@ -73,7 +76,6 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     protected NoNetworkIOJob noNetworkIOJob;
     protected String recvBuffer;
     protected LineTcpMeasurementScheduler scheduler;
-    protected boolean stringAsTagSupported;
     protected boolean stringToCharCastAllowed;
     protected boolean symbolAsFieldSupported;
     protected WorkerPool workerPool;
@@ -223,18 +225,8 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean isStringAsTagSupported() {
-                return stringAsTagSupported;
-            }
-
-            @Override
             public boolean isStringToCharCastAllowed() {
                 return stringToCharCastAllowed;
-            }
-
-            @Override
-            public boolean isSymbolAsFieldSupported() {
-                return symbolAsFieldSupported;
             }
         };
     }

@@ -199,22 +199,12 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
-    public boolean isStringAsTagSupported() {
-        return false;
-    }
-
-    @Override
     public boolean isStringToCharCastAllowed() {
         return false;
     }
 
     @Override
-    public boolean isSymbolAsFieldSupported() {
-        return false;
-    }
-
-    @Override
     public boolean isUseLegacyStringDefault() {
-        return true;
+        return false;
     }
 }

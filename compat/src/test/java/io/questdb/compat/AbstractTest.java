@@ -113,7 +113,9 @@ public class AbstractTest {
 
     public void assertSql(CairoEngine engine, CharSequence sql, CharSequence expectedResult) throws SqlException {
         engine.print(sql, sink);
-        Assert.assertTrue(Chars.equals(sink, expectedResult));
+        if (!Chars.equals(sink, expectedResult)) {
+            Assert.assertEquals(expectedResult, sink);
+        }
     }
 
     @Before
