@@ -1230,6 +1230,11 @@ public class WalTableSqlTest extends AbstractCairoTest {
             TableToken tableToken = engine.verifyTableName(tableName);
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
             long notifications = engine.getMessageBus().getWalTxnNotificationPubSequence().current();
+            Assert.assertEquals(walNotification, notifications);
+
+            engine.getTableSequencerAPI().releaseAll();
+            drainWalQueue();
+            notifications = engine.getMessageBus().getWalTxnNotificationPubSequence().current();
             Assert.assertTrue(walNotification < notifications);
 
             // No notificaion second time

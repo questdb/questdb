@@ -275,7 +275,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 final long start = microClock.getTicks();
                                 walTelemetryFacade.store(WAL_TXN_APPLY_START, tableToken, walId, seqTxn, -1L, -1L, start - commitTimestamp);
                                 writer.setSeqTxn(seqTxn);
-                                structuralChangeCursor.next().apply(writer, true);
+                                try {
+                                    structuralChangeCursor.next().apply(writer, true);
+                                } catch (Throwable th) {
+                                    // Don't mark transaction as applied if exception occurred
+                                    writer.setSeqTxn(seqTxn - 1);
+                                    throw th;
+                                }
                                 walTelemetryFacade.store(WAL_TXN_STRUCTURE_CHANGE_APPLIED, tableToken, walId, seqTxn, -1L, -1L, microClock.getTicks() - start);
                             } else {
                                 // Something messed up in sequencer.
