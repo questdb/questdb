@@ -52,7 +52,9 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
 
         int slotId = -1;
         try {
-            slotId = atom.acquire(workerId, circuitBreaker);
+            if (atom.isMergeLockRequired()) {
+                slotId = atom.acquire(workerId, circuitBreaker);
+            }
             if (circuitBreaker.checkIfTripped()) {
                 return;
             }
@@ -61,7 +63,9 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
             LOG.error().$("merge shard failed [ex=").$(e).I$();
             circuitBreaker.cancel();
         } finally {
-            atom.release(slotId);
+            if (atom.isMergeLockRequired()) {
+                atom.release(slotId);
+            }
             doneLatch.countDown();
         }
     }
