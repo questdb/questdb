@@ -167,7 +167,10 @@ public final class ColumnType {
         // This is usually case for widening conversions.
         return (fromType >= BYTE && toType >= BYTE && toType <= DOUBLE && fromType < toType) || fromType == NULL
                 // char can be short and short can be char for symmetry
-                || (fromType == CHAR && toType == SHORT) || (fromType == TIMESTAMP && toType == LONG);
+                || (fromType == CHAR && toType == SHORT)
+                // Same with bytes and bools
+                || (fromType == BYTE && toType == BOOLEAN)
+                || (fromType == TIMESTAMP && toType == LONG);
     }
 
     public static boolean isChar(int columnType) {
@@ -337,14 +340,6 @@ public final class ColumnType {
 
     public static int typeOf(CharSequence name) {
         return nameTypeMap.get(name);
-    }
-
-    public static int variableColumnLengthBytes(int columnType) {
-        if (columnType == ColumnType.STRING) {
-            return Integer.BYTES;
-        }
-        assert columnType == ColumnType.BINARY;
-        return Long.BYTES;
     }
 
     private static boolean isGeoHashWideningCast(int fromType, int toType) {

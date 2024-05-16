@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastTimestampToBooleanFunctionFactory implements FunctionFactory {
@@ -50,7 +51,8 @@ public class CastTimestampToBooleanFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return arg.getTimestamp(rec) != 0;
+            long timestamp = arg.getTimestamp(rec);
+            return timestamp != Numbers.LONG_NULL && timestamp != 0;
         }
     }
 }

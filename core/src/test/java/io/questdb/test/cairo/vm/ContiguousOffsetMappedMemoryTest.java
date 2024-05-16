@@ -104,11 +104,11 @@ public class ContiguousOffsetMappedMemoryTest extends AbstractTest {
                         Assert.fail();
                     } catch (CairoException ex) {
                         TestUtils.assertContains(ex.getFlyweightMessage(), "could not mmap");
+                        Assert.assertEquals(-1, memoryROffset.getFd());
                     } catch (AssertionError ex) {
                         // expected in PARANOIA_MODE == true
                         Assert.assertTrue(PARANOIA_MODE);
                     }
-                    Assert.assertEquals(-1, memoryROffset.getFd());
 
                     // Failed to remap
                     ff = new TestFilesFacadeImpl() {
@@ -134,12 +134,15 @@ public class ContiguousOffsetMappedMemoryTest extends AbstractTest {
                             return -1;
                         }
                     };
-                    memoryROffset.of(ff, path, Files.PAGE_SIZE, 1234, MemoryTag.NATIVE_DEFAULT);
                     try {
+                        memoryROffset.of(ff, path, Files.PAGE_SIZE, 1234, MemoryTag.NATIVE_DEFAULT);
                         memoryROffset.growToFileSize();
                         Assert.fail();
                     } catch (CairoException ex) {
                         TestUtils.assertContains(ex.getFlyweightMessage(), "could not get length");
+                    } catch (AssertionError ex) {
+                        // expected in PARANOIA_MODE == true
+                        Assert.assertTrue(PARANOIA_MODE);
                     }
                 }
             });
