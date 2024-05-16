@@ -456,7 +456,7 @@ public class CaseCommonTest extends BaseFunctionFactoryTest {
             for (short l = MIN_COLUMN_TYPE_ID; l <= MAX_COLUMN_TYPE_ID; l++) {
                 for (short r = MIN_COLUMN_TYPE_ID; r <= MAX_COLUMN_TYPE_ID; r++) {
                     try {
-                        int commonType = CaseCommon.getCommonType(l, r, 0);
+                        int commonType = CaseCommon.getCommonType(l, r, 0, "UNDEFINED is not expected");
                         Function upstreamFunction = getRndFunction(l);
                         upstreamFunction.init(null, context);
                         Function commonFunction = CaseCommon.getCastFunction(upstreamFunction, 0, commonType, configuration, null);

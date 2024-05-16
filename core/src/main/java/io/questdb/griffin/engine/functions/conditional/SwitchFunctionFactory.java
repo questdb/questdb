@@ -68,6 +68,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
         if (keyType == ColumnType.UNDEFINED) {
             throw SqlException.$(argPositions.getQuick(0), "bind variable is not supported here, please use column instead");
         }
+
         final Function elseBranch;
         int returnType = -1;
         if (n % 2 == 0) {
@@ -77,7 +78,6 @@ public class SwitchFunctionFactory implements FunctionFactory {
         } else {
             elseBranch = null;
         }
-
 
         for (int i = 1; i < n; i += 2) {
             final Function keyFunc = args.getQuick(i);
@@ -94,14 +94,14 @@ public class SwitchFunctionFactory implements FunctionFactory {
             }
 
             // determine common return type
-            final Function value = args.getQuick(i + 1);
-            returnType = CaseCommon.getCommonType(returnType, value.getType(), argPositions.getQuick(i + 1));
+            returnType = CaseCommon.getCommonType(returnType, args.getQuick(i + 1).getType(), argPositions.getQuick(i + 1), "CASE values cannot be bind variables");
         }
 
         // another loop to create cast functions and replace current value function
         // start with 2 to avoid offsetting each function position
         for (int i = 2; i < n; i += 2) {
-            args.setQuick(i,
+            args.setQuick(
+                    i,
                     CaseCommon.getCastFunction(
                             args.getQuick(i),
                             argPositions.getQuick(i),

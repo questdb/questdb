@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.conditional;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -36,6 +35,8 @@ import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
+
+import static io.questdb.cairo.ColumnType.*;
 
 public class CoalesceFunctionFactory implements FunctionFactory {
     @Override
@@ -64,60 +65,56 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         final int argsSize = args.size();
         int returnType = -1;
         for (int i = 0; i < argsSize; i++) {
-            int argType = args.getQuick(i).getType();
-            if (argType == ColumnType.UNDEFINED) {
-                throw SqlException.$(argPositions.getQuick(i), "coalesce cannot be used with bind variables");
-            }
-            returnType = CaseCommon.getCommonType(returnType, args.getQuick(i).getType(), argPositions.getQuick(i));
+            returnType = CaseCommon.getCommonType(returnType, args.getQuick(i).getType(), argPositions.getQuick(i), "coalesce cannot be used with bind variables");
         }
 
-        for (int i = 0; i < args.size(); i++) {
+        for (int i = 0; i < argsSize; i++) {
             args.setQuick(i, CaseCommon.getCastFunction(args.getQuick(i), argPositions.getQuick(i), returnType, configuration, sqlExecutionContext));
         }
 
-        switch (ColumnType.tagOf(returnType)) {
-            case ColumnType.DOUBLE:
+        switch (tagOf(returnType)) {
+            case DOUBLE:
                 return argsSize == 2 ? new TwoDoubleCoalesceFunction(args) : new DoubleCoalesceFunction(args, argsSize);
-            case ColumnType.DATE:
+            case DATE:
                 return argsSize == 2 ? new TwoDateCoalesceFunction(args) : new DateCoalesceFunction(args, argsSize);
-            case ColumnType.TIMESTAMP:
+            case TIMESTAMP:
                 return argsSize == 2 ? new TwoTimestampCoalesceFunction(args) : new TimestampCoalesceFunction(args);
-            case ColumnType.LONG:
+            case LONG:
                 return argsSize == 2 ? new TwoLongCoalesceFunction(args) : new LongCoalesceFunction(args, argsSize);
-            case ColumnType.LONG256:
+            case LONG256:
                 return argsSize == 2 ? new TwoLong256CoalesceFunction(args) : new Long256CoalesceFunction(args);
-            case ColumnType.INT:
+            case INT:
                 return argsSize == 2 ? new TwoIntCoalesceFunction(args) : new IntCoalesceFunction(args, argsSize);
-            case ColumnType.IPv4:
+            case IPv4:
                 return argsSize == 2 ? new TwoIPv4CoalesceFunction(args) : new IPv4CoalesceFunction(args, argsSize);
-            case ColumnType.FLOAT:
+            case FLOAT:
                 return argsSize == 2 ? new TwoFloatCoalesceFunction(args) : new FloatCoalesceFunction(args, argsSize);
-            case ColumnType.STRING:
-            case ColumnType.SYMBOL:
+            case STRING:
+            case SYMBOL:
                 if (argsSize == 2) {
-                    int type0 = ColumnType.tagOf(args.getQuick(0).getType());
-                    if (type0 != ColumnType.tagOf(args.getQuick(1).getType())) {
+                    final int type0 = tagOf(args.getQuick(0).getType());
+                    if (type0 != tagOf(args.getQuick(1).getType())) {
                         return new TwoSymStrCoalesceFunction(args);
-                    } else if (type0 == ColumnType.SYMBOL) {
+                    } else if (type0 == SYMBOL) {
                         return new TwoSymCoalesceFunction(args);
                     } else {
                         return new TwoStrCoalesceFunction(args);
                     }
                 }
                 return new SymStrCoalesceFunction(args, argsSize);
-            case ColumnType.VARCHAR:
+            case VARCHAR:
                 return argsSize == 2 ? new TwoVarcharCoalesceFunction(args) : new VarcharCoalesceFunction(args, argsSize);
-            case ColumnType.UUID:
+            case UUID:
                 return argsSize == 2 ? new TwoUuidCoalesceFunction(args) : new UuidCoalesceFunction(args, argsSize);
-            case ColumnType.BOOLEAN:
-            case ColumnType.SHORT:
-            case ColumnType.BYTE:
-            case ColumnType.CHAR:
+            case BOOLEAN:
+            case SHORT:
+            case BYTE:
+            case CHAR:
                 // Null on these data types not supported
                 return args.getQuick(0);
             default:
                 throw SqlException.$(position, "coalesce cannot be used with ")
-                        .put(ColumnType.nameOf(returnType))
+                        .put(nameOf(returnType))
                         .put(" data type");
         }
     }
@@ -353,100 +350,6 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class TwoVarcharCoalesceFunction extends VarcharFunction implements BinaryCoalesceFunction {
-        private final Function args0;
-        private final Function args1;
-
-        public TwoVarcharCoalesceFunction(ObjList<Function> args) {
-            assert args.size() == 2;
-            this.args0 = args.getQuick(0);
-            this.args1 = args.getQuick(1);
-        }
-
-        @Override
-        public Utf8Sequence getVarcharA(Record rec) {
-            Utf8Sequence value = args0.getVarcharA(rec);
-            if (value != null) {
-                return value;
-            }
-            return args1.getVarcharA(rec);
-        }
-
-        @Override
-        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-            Utf8Sequence sequence = getVarcharA(rec);
-            if (sequence != null) {
-                utf8Sink.put(sequence);
-            }
-        }
-
-        @Override
-        public Utf8Sequence getVarcharB(Record rec) {
-            Utf8Sequence value = args0.getVarcharB(rec);
-            if (value != null) {
-                return value;
-            }
-            return args1.getVarcharB(rec);
-        }
-
-        @Override
-        public Function getLeft() {
-            return args0;
-        }
-
-        @Override
-        public Function getRight() {
-            return args1;
-        }
-    }
-
-    private static class VarcharCoalesceFunction extends VarcharFunction implements MultiArgCoalesceFunction {
-        private final ObjList<Function> args;
-        private final int size;
-
-        public VarcharCoalesceFunction(ObjList<Function> args, int size) {
-            this.args = args;
-            this.size = size;
-        }
-
-        @Override
-        public ObjList<Function> getArgs() {
-            return args;
-        }
-
-        @Override
-        public Utf8Sequence getVarcharA(Record rec) {
-            for (int i = 0; i < size; i++) {
-                Function arg = args.getQuick(i);
-                Utf8Sequence value = arg.getVarcharA(rec);
-                if (value != null) {
-                    return value;
-                }
-            }
-            return null;
-        }
-
-        @Override
-        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-            Utf8Sequence sequence = getVarcharA(rec);
-            if (sequence != null) {
-                utf8Sink.put(sequence);
-            }
-        }
-
-        @Override
-        public Utf8Sequence getVarcharB(Record rec) {
-            for (int i = 0; i < size; i++) {
-                Function arg = args.getQuick(i);
-                Utf8Sequence value = arg.getVarcharB(rec);
-                if (value != null) {
-                    return value;
-                }
-            }
-            return null;
-        }
-    }
-
     private static class SymStrCoalesceFunction extends StrFunction implements MultiArgCoalesceFunction {
         private final ObjList<Function> args;
         private final int size;
@@ -466,7 +369,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         public CharSequence getStrA(Record rec) {
             for (int i = 0; i < size; i++) {
                 Function arg = args.getQuick(i);
-                CharSequence value = (ColumnType.isSymbol(arg.getType())) ? arg.getSymbol(rec) : arg.getStrA(rec);
+                CharSequence value = (isSymbol(arg.getType())) ? arg.getSymbol(rec) : arg.getStrA(rec);
                 if (value != null) {
                     return value;
                 }
@@ -478,7 +381,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         public CharSequence getStrB(Record rec) {
             for (int i = 0; i < size; i++) {
                 Function arg = args.getQuick(i);
-                CharSequence value = (ColumnType.isSymbol(arg.getType())) ? arg.getSymbolB(rec) : arg.getStrB(rec);
+                CharSequence value = (isSymbol(arg.getType())) ? arg.getSymbolB(rec) : arg.getStrB(rec);
                 if (value != null) {
                     return value;
                 }
@@ -829,8 +732,8 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             assert args.size() == 2;
             this.args0 = args.getQuick(0);
             this.args1 = args.getQuick(1);
-            this.args0IsSymbol = ColumnType.isSymbol(args0.getType());
-            this.arg1IsSymbol = ColumnType.isSymbol(args1.getType());
+            this.args0IsSymbol = isSymbol(args0.getType());
+            this.arg1IsSymbol = isSymbol(args1.getType());
         }
 
         @Override
@@ -941,6 +844,53 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
     }
 
+    private static class TwoVarcharCoalesceFunction extends VarcharFunction implements BinaryCoalesceFunction {
+        private final Function args0;
+        private final Function args1;
+
+        public TwoVarcharCoalesceFunction(ObjList<Function> args) {
+            assert args.size() == 2;
+            this.args0 = args.getQuick(0);
+            this.args1 = args.getQuick(1);
+        }
+
+        @Override
+        public Function getLeft() {
+            return args0;
+        }
+
+        @Override
+        public Function getRight() {
+            return args1;
+        }
+
+        @Override
+        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+            Utf8Sequence sequence = getVarcharA(rec);
+            if (sequence != null) {
+                utf8Sink.put(sequence);
+            }
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(Record rec) {
+            Utf8Sequence value = args0.getVarcharA(rec);
+            if (value != null) {
+                return value;
+            }
+            return args1.getVarcharA(rec);
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(Record rec) {
+            Utf8Sequence value = args0.getVarcharB(rec);
+            if (value != null) {
+                return value;
+            }
+            return args1.getVarcharB(rec);
+        }
+    }
+
     private static class UuidCoalesceFunction extends UuidFunction implements MultiArgFunction {
         private final ObjList<Function> args;
         private final int size;
@@ -985,6 +935,53 @@ public class CoalesceFunctionFactory implements FunctionFactory {
                 }
             }
             return value;
+        }
+    }
+
+    private static class VarcharCoalesceFunction extends VarcharFunction implements MultiArgCoalesceFunction {
+        private final ObjList<Function> args;
+        private final int size;
+
+        public VarcharCoalesceFunction(ObjList<Function> args, int size) {
+            this.args = args;
+            this.size = size;
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            return args;
+        }
+
+        @Override
+        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+            Utf8Sequence sequence = getVarcharA(rec);
+            if (sequence != null) {
+                utf8Sink.put(sequence);
+            }
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(Record rec) {
+            for (int i = 0; i < size; i++) {
+                Function arg = args.getQuick(i);
+                Utf8Sequence value = arg.getVarcharA(rec);
+                if (value != null) {
+                    return value;
+                }
+            }
+            return null;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(Record rec) {
+            for (int i = 0; i < size; i++) {
+                Function arg = args.getQuick(i);
+                Utf8Sequence value = arg.getVarcharB(rec);
+                if (value != null) {
+                    return value;
+                }
+            }
+            return null;
         }
     }
 }

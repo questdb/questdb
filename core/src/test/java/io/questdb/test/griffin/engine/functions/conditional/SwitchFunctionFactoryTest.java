@@ -30,8 +30,26 @@ import org.junit.Test;
 public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
+    public void testBindVar() throws Exception {
+        assertException(
+                "select \n" +
+                        "    a,\n" +
+                        "    case a\n" +
+                        "        when '1' then $1\n" +
+                        "        when '2' then $2\n" +
+                        "        else $3\n" +
+                        "    end k\n" +
+                        "from test",
+                "create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(5))",
+                48,
+                "CASE values cannot be bind variables"
+        );
+    }
+
+    @Test
     public void testBooleanDuplicateFalse() throws Exception {
-        assertException("select \n" +
+        assertException(
+                "select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +
@@ -55,7 +73,8 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testBooleanDuplicateTrue() throws Exception {
-        assertException("select \n" +
+        assertException(
+                "select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +
@@ -79,7 +98,8 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testBooleanDuplicateWayTooManyBranches() throws Exception {
-        assertException("select \n" +
+        assertException(
+                "select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +
@@ -292,7 +312,8 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testBooleanTooManyBranchesIgnoreElse() throws Exception {
-        assertQuery("x\ta\tb\tc\tk\n" +
+        assertQuery(
+                "x\ta\tb\tc\tk\n" +
                         "false\tWCPS\tYRXPE\tRXG\tHELLO2\n" +
                         "false\tUXIBBT\tGWFFYUD\tYQEHBH\tHELLO2\n" +
                         "false\tLPD\tSBEOUOJS\tUED\tHELLO2\n" +
@@ -608,7 +629,8 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testDoubleDuplicateBranch() throws Exception {
-        assertException("select \n" +
+        assertException(
+                "select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +
@@ -698,7 +720,8 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testDuplicateBranchStringToLongCast() throws Exception {
-        assertException("select \n" +
+        assertException(
+                "select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +
@@ -787,7 +810,8 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testFloatDuplicateBranch() throws Exception {
-        assertException("select \n" +
+        assertException(
+                "select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +
@@ -925,7 +949,8 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testIntDuplicateBranch() throws Exception {
-        assertException("select \n" +
+        assertException(
+                "select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +
@@ -1176,7 +1201,8 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testLong256OrElse() throws Exception {
-        assertException("select \n" +
+        assertException(
+                "select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +
@@ -1202,7 +1228,8 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testLongDuplicateBranch() throws Exception {
-        assertException("select \n" +
+        assertException(
+                "select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +
@@ -1277,7 +1304,8 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testLongVariableKeyError() throws Exception {
-        assertException("select \n" +
+        assertException(
+                "select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +
@@ -1542,7 +1570,8 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testStrToStrOrElseDuplicateBranch() throws Exception {
-        assertException("select \n" +
+        assertException(
+                "select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +
