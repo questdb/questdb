@@ -77,9 +77,24 @@ public class ConcatFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBindVarTypeChange() throws Exception {
-        ddl("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))");
+    public void testBindVarMixed() throws Exception {
+        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
+        tuples.add(new BindVariableTestTuple(
+                "mixed",
+                "concat\n" +
+                        "hihiA10hohohoABC77\n",
+                bindVariableService -> {
+                    bindVariableService.setChar(0, 'A');
+                    bindVariableService.setStr(1, "hohoho");
+                    bindVariableService.setVarchar(2, new Utf8String("ABC77"));
+                }
+        ));
 
+        assertSql("select concat('hihi', null, $1, 10, $2, $3)", tuples);
+    }
+
+    @Test
+    public void testBindVarTypeChange() throws Exception {
         final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
         tuples.add(new BindVariableTestTuple(
                 "all varchar",
@@ -103,7 +118,40 @@ public class ConcatFunctionFactoryTest extends AbstractCairoTest {
                 }
         ));
 
-        assertSql("select concat ($1, $2, $3)", tuples);
+        assertSql("select concat($1, $2, $3)", tuples);
+    }
+
+    @Test
+    public void testColumn() throws Exception {
+        ddl("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(5))");
+
+        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
+        tuples.add(new BindVariableTestTuple(
+                "column",
+                "concat\n" +
+                        "hihi2A10hohohoABC77\n" +
+                        "hihi3A10hohohoABC77\n" +
+                        "hihi4A10hohohoABC77\n" +
+                        "hihi5A10hohohoABC77\n" +
+                        "hihi6A10hohohoABC77\n",
+                bindVariableService -> {
+                    bindVariableService.setChar(0, 'A');
+                    bindVariableService.setStr(1, "hohoho");
+                    bindVariableService.setVarchar(2, new Utf8String("ABC77"));
+                }
+        ));
+
+        assertSql("select concat('hihi', a::int + 1, $1, 10, $2, $3) from test", tuples);
+    }
+
+    @Test
+    public void testCursor() throws Exception {
+        assertException(
+                "select concat('hehe', select max(a) from test)",
+                "create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))",
+                22,
+                "unsupported type: CURSOR"
+        );
     }
 
     @Test

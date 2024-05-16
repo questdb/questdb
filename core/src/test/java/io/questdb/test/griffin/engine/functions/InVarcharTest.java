@@ -108,6 +108,16 @@ public class InVarcharTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testColumn() throws Exception {
+        assertException(
+                "test where a in ('6', '81', b)",
+                "create table test as (select cast(x as varchar) a, x b, timestamp_sequence(0, 1000000) ts from long_sequence(100))",
+                28,
+                "constant expected"
+        );
+    }
+
+    @Test
     public void testConstAndBindVarMixed() throws Exception {
         ddl("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))");
 
