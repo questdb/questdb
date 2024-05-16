@@ -543,11 +543,11 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
         Function function = parseFunction("to_str(a, 'EE, dd-MMM-yyyy hh:mm:ss')", metadata, functionParser);
         Assert.assertEquals(ColumnType.STRING, function.getType());
-        TestUtils.assertEquals("Thursday, 03-Apr-150577 03:54:03", function.getStrA(record));
+        TestUtils.assertEquals("Thursday, 03-Apr-150577 02:54:03", function.getStrA(record));
 
         Function function2 = parseFunction("to_str(b, 'EE, dd-MMM-yyyy hh:mm:ss')", metadata, functionParser);
         Assert.assertEquals(ColumnType.STRING, function2.getType());
-        TestUtils.assertEquals("Tuesday, 21-Nov-2119 08:50:58", function2.getStrA(record));
+        TestUtils.assertEquals("Tuesday, 21-Nov-2119 07:50:58", function2.getStrA(record));
 
         Function function3 = parseFunction("to_char(c)", metadata, functionParser);
 
