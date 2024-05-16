@@ -365,6 +365,9 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus
             case 0x012ff7b4:
                 strcpy((char *) lpszName, "XENIX");
                 return sb.f_type;
+            case 0x2Fc12fc1:
+                strcpy((char *) lpszName, "ZFS");
+                return FLAG_FS_SUPPORTED * ((jlong) sb.f_type);
             case 0x58465342:
                 strcpy((char *) lpszName, "XFS");
                 return FLAG_FS_SUPPORTED * ((jlong) sb.f_type);

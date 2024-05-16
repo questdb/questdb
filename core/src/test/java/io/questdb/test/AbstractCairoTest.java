@@ -1881,10 +1881,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return engine.update(updateSql, sqlExecutionContext, eventSubSeq);
     }
 
-    protected enum StringAsTagMode {
-        WITH_STRINGS_AS_TAG, NO_STRINGS_AS_TAG
-    }
-
     protected enum SymbolAsFieldMode {
         WITH_SYMBOLS_AS_FIELD, NO_SYMBOLS_AS_FIELD
     }

@@ -118,7 +118,6 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         }
     };
     protected int partitionByDefault = PartitionBy.DAY;
-    protected boolean symbolAsFieldSupported;
     protected boolean useLegacyStringDefault = true;
 
     protected final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration() {
@@ -202,11 +201,6 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         }
 
         @Override
-        public boolean isSymbolAsFieldSupported() {
-            return symbolAsFieldSupported;
-        }
-
-        @Override
         public boolean isUseLegacyStringDefault() {
             return useLegacyStringDefault;
         }
@@ -255,7 +249,6 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         commitIntervalDefault = 2000;
         partitionByDefault = PartitionBy.DAY;
         disconnectOnError = false;
-        symbolAsFieldSupported = false;
         nf = NetworkFacadeImpl.INSTANCE;
     }
 
@@ -392,7 +385,6 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
             sendToSocket(socket, lineData);
         } catch (Exception e) {
             Assert.fail("Data sending failed [e=" + e + "]");
-            LOG.error().$(e).$();
         }
     }
 

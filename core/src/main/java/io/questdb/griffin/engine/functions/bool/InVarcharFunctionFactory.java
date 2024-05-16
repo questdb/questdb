@@ -65,7 +65,6 @@ public class InVarcharFunctionFactory implements FunctionFactory {
         }
 
         boolean allConst = true;
-        boolean allRuntimeConst = true;
         for (int i = 1; i < n; i++) {
             Function func = args.getQuick(i);
             switch (ColumnType.tagOf(func.getType())) {
@@ -84,7 +83,9 @@ public class InVarcharFunctionFactory implements FunctionFactory {
                 allConst = false;
 
                 if (!func.isRuntimeConstant()) {
-                    allRuntimeConst = false;
+                    // we should never get here because
+                    // FunctionParser rejects the SQL if the expression is not constant or runtime constant
+                    throw SqlException.position(argPositions.getQuick(i)).put("unsupported expression");
                 }
             }
         }
@@ -99,13 +100,7 @@ public class InVarcharFunctionFactory implements FunctionFactory {
             }
             return new ConstFunc(arg, set);
         }
-        if (allRuntimeConst) {
-            return new RuntimeConstFunc(new ObjList<>(args));
-        }
-
-        // we should never get here because
-        // FunctionParser rejects the SQL if the expression is not constant or runtime constant
-        throw SqlException.position(argPositions.getQuick(1)).put("unsupported expression");
+        return new RuntimeConstFunc(new ObjList<>(args));
     }
 
     private static void parseToVarchar(ObjList<Function> args, Utf8SequenceHashSet set) {
