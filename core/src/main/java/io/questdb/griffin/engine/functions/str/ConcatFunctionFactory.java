@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
@@ -59,9 +58,6 @@ public class ConcatFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         final int n = args.size();
-        if (n == 1) {
-            return BooleanConstant.FALSE;
-        }
 
         boolean allConst = true;
         for (int i = 0; i < n; i++) {
