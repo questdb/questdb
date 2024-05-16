@@ -1204,6 +1204,41 @@ public class WalTableSqlTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSuspendedTablesTriedOnceOnStart() throws Exception {
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            public int openRW(LPSZ name, long opts) {
+                if (Utf8s.containsAscii(name, "fail.d")) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            String tableName = testName.getMethodName();
+            ddl("create table " + tableName + " as (" +
+                    "select x, " +
+                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(1)" +
+                    ") timestamp(ts) partition by DAY WAL"
+            );
+            ddl("alter table " + tableName + " add column fail int");
+            long walNotification = engine.getMessageBus().getWalTxnNotificationPubSequence().current();
+
+            drainWalQueue();
+            TableToken tableToken = engine.verifyTableName(tableName);
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+            long notifications = engine.getMessageBus().getWalTxnNotificationPubSequence().current();
+            Assert.assertTrue(walNotification < notifications);
+
+            // No notificaion second time
+            drainWalQueue();
+            Assert.assertEquals(notifications, engine.getMessageBus().getWalTxnNotificationPubSequence().current());
+        });
+    }
+
+    @Test
     public void testEmptyTruncate() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();

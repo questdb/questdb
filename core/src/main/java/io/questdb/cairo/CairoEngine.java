@@ -285,7 +285,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 Os.sleep(sleep *= 2);
             }
         }
-        throw CairoException.nonCritical().put("txn timed out [expectedTxn=").put(seqTxn).put(", writerTxn=").put(writerTxn);
+        throw CairoException.nonCritical().put("txn timed out [table=").put(tableName).put(", expectedTxn=").put(seqTxn).put(", writerTxn=").put(writerTxn);
     }
 
     @TestOnly
