@@ -715,7 +715,7 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
                 "create table alex as (" +
                         "select " +
                         "  CASE WHEN x % 2 = 0 THEN CAST(x as Timestamp) ELSE CAST(NULL as Timestamp) END as x" +
-                        ", CASE WHEN x % 4 = 0 THEN CAST(x * 10000000000 as Timestamp) ELSE CAST(NULL as Timestamp) END as a" +
+                        ", CASE WHEN x % 4 = 0 THEN CAST(x * 10000000000 as Timestamp) ELSEu CAST(NULL as Timestamp) END as a" +
                         ", CASE WHEN x % 4 = 1 THEN CAST(x * 50000000000 as Timestamp) ELSE CAST(NULL as Timestamp) END as b" +
                         " from long_sequence(5)" +
                         ")",

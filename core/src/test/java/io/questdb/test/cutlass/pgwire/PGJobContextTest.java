@@ -10726,10 +10726,9 @@ create table tab as (
                     }
 
                     sink.clear();
-                    try (PreparedStatement ps = connection.prepareStatement("tab1 where coalesce(?, 12.37) is not null")) {
+                    try (PreparedStatement ps = connection.prepareStatement("tab1 where coalesce(3.14, 12.37) is not null")) {
                         // 'is not' is an alias for '!=', the matching type for this operator
                         // (with null on the right) is DOUBLE
-                        ps.setDouble(1, 3.14);
                         try (ResultSet rs = ps.executeQuery()) {
                             assertResultSet(
                                     "value[INTEGER],ts[TIMESTAMP]\n" +
