@@ -206,6 +206,7 @@ public class TimestampFormatCompilerTest {
 
     @Test
     public void testFormatHour23OneDigit() throws Exception {
+        // H = hour, 0-23
         assertFormat("pm, 14", "a, H", "2017-03-31T14:00:00.000Z");
         assertFormat("pm, 12", "a, H", "2017-03-31T12:00:00.000Z");
         assertFormat("am, 3", "a, H", "2017-03-31T03:00:00.000Z");
@@ -215,10 +216,12 @@ public class TimestampFormatCompilerTest {
         assertFormat("12", "H", "2017-03-31T12:00:00.000Z");
         assertFormat("3", "H", "2017-03-31T03:00:00.000Z");
         assertFormat("11", "H", "2017-03-31T11:59:59.999Z");
+        assertFormat("0", "H", "2017-03-31T00:00:00.000Z");
     }
 
     @Test
     public void testFormatHour24() throws Exception {
+        // k = hour, 1-24
         assertFormat("pm, 14", "a, kk", "2017-03-31T14:00:00.000Z");
         assertFormat("pm, 12", "a, kk", "2017-03-31T12:00:00.000Z");
         assertFormat("am, 03", "a, kk", "2017-03-31T03:00:00.000Z");
@@ -228,10 +231,12 @@ public class TimestampFormatCompilerTest {
         assertFormat("12", "kk", "2017-03-31T12:00:00.000Z");
         assertFormat("03", "kk", "2017-03-31T03:00:00.000Z");
         assertFormat("11", "kk", "2017-03-31T11:59:59.999Z");
+        assertFormat("24", "kk", "2017-03-31T00:00:00.000Z");
     }
 
     @Test
     public void testFormatHour24OneDigit() throws Exception {
+        // k = hour, 1-24
         assertFormat("pm, 14", "a, k", "2017-03-31T14:00:00.000Z");
         assertFormat("pm, 12", "a, k", "2017-03-31T12:00:00.000Z");
         assertFormat("am, 3", "a, k", "2017-03-31T03:00:00.000Z");
@@ -245,6 +250,7 @@ public class TimestampFormatCompilerTest {
 
     @Test
     public void testFormatHourTwelve() throws Exception {
+        // h = hour, 1-12
         assertFormat("pm, 02", "a, hh", "2017-03-31T14:00:00.000Z");
         assertFormat("pm, 12", "a, hh", "2017-03-31T12:00:00.000Z");
         assertFormat("am, 03", "a, hh", "2017-03-31T03:00:00.000Z");
@@ -258,6 +264,7 @@ public class TimestampFormatCompilerTest {
 
     @Test
     public void testFormatHourTwelveOneDigit() throws Exception {
+        // h = hour, 1-12
         assertFormat("pm, 2", "a, h", "2017-03-31T14:00:00.000Z");
         assertFormat("pm, 12", "a, h", "2017-03-31T12:00:00.000Z");
         assertFormat("am, 3", "a, h", "2017-03-31T03:00:00.000Z");
@@ -267,10 +274,12 @@ public class TimestampFormatCompilerTest {
         assertFormat("12", "h", "2017-03-31T12:00:00.000Z");
         assertFormat("3", "h", "2017-03-31T03:00:00.000Z");
         assertFormat("11", "h", "2017-03-31T11:59:59.999Z");
+        assertFormat("12", "h", "2017-03-31T00:00:00.000Z");
     }
 
     @Test
     public void testFormatHourZeroEleven() throws Exception {
+        // K = hour, 0-11
         assertFormat("pm, 02", "a, KK", "2017-03-31T14:00:00.000Z");
         assertFormat("pm, 00", "a, KK", "2017-03-31T12:00:00.000Z");
         assertFormat("am, 03", "a, KK", "2017-03-31T03:00:00.000Z");
@@ -278,6 +287,7 @@ public class TimestampFormatCompilerTest {
 
         assertFormat("02", "KK", "2017-03-31T14:00:00.000Z");
         assertFormat("00", "KK", "2017-03-31T12:00:00.000Z");
+        assertFormat("00", "KK", "2017-03-31T00:00:00.000Z");
         assertFormat("03", "KK", "2017-03-31T03:00:00.000Z");
         assertFormat("11", "KK", "2017-03-31T11:59:59.999Z");
     }
