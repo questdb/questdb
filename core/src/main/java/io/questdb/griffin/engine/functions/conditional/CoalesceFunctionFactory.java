@@ -64,6 +64,10 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         final int argsSize = args.size();
         int returnType = -1;
         for (int i = 0; i < argsSize; i++) {
+            int argType = args.getQuick(i).getType();
+            if (argType == ColumnType.UNDEFINED) {
+                throw SqlException.$(argPositions.getQuick(i), "coalesce cannot be used with bind variables");
+            }
             returnType = CaseCommon.getCommonType(returnType, args.getQuick(i).getType(), argPositions.getQuick(i));
         }
 

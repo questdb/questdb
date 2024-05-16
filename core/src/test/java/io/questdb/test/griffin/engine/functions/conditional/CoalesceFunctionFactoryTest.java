@@ -725,6 +725,17 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
         );
     }
 
+    @Test
+    public void testUnsupportedBindVariables() throws Exception {
+        ddl("create table test as (select x, rnd_str(2,10,1) a from long_sequence(10))");
+        assertException(
+                "select coalesce(a, $1, $2) from test",
+                19,
+                "coalesce cannot be used with bind variables"
+        );
+    }
+
+
     private void assertCoalesce(String value, String expected) throws Exception {
         assertQuery("coalesce\n" + expected + "\n", "select coalesce(" + value + ", '')", true);
         assertQuery("coalesce\n" + expected + "\n", "select coalesce(" + value + ", " + value + ", '')", true);

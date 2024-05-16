@@ -53,7 +53,13 @@ public class InDoubleFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         int constCount = 0;
         int runtimeConstCount = 0;
         final int argCount = args.size() - 1;
@@ -101,7 +107,11 @@ public class InDoubleFunctionFactory implements FunctionFactory {
         return new InDoubleVarFunction(new ObjList<>(args));
     }
 
-    private static void parseToDouble(ObjList<Function> args, IntList argPositions, DoubleList outDoubleList) throws SqlException {
+    private static void parseToDouble(
+            ObjList<Function> args,
+            IntList argPositions,
+            DoubleList outDoubleList
+    ) throws SqlException {
         outDoubleList.extendAndSet(args.size() - 2, 0);
         for (int i = 1, n = args.size(); i < n; i++) {
             outDoubleList.setQuick(i - 1, parseValue(argPositions, args.getQuick(i), i));
