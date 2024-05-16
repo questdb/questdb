@@ -4010,7 +4010,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (psz > 0) {
                         partitionByFunctions = new ObjList<>(psz);
                         for (int j = 0; j < psz; j++) {
-                            partitionByFunctions.add(functionParser.parseFunction(ac.getPartitionBy().getQuick(j), baseMetadata, executionContext));
+                            final Function function = functionParser.parseFunction(ac.getPartitionBy().getQuick(j), baseMetadata, executionContext);
+                            partitionByFunctions.add(function);
+                            if (function instanceof GroupByFunction) {
+                                throw SqlException.$(ast.position, "aggregate functions in partition by are not supported");
+                            }
                         }
                     }
 
@@ -4097,7 +4101,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         WindowFunction af = (WindowFunction) f;
                         functions.extendAndSet(i, f);
 
-                        // sorting and/or  multiple passes are required, so fall back to old implementation
+                        // sorting and/or multiple passes are required, so fall back to old implementation
                         if ((osz > 0 && !dismissOrder) || af.getPassCount() != WindowFunction.ZERO_PASS) {
                             isFastPath = false;
                             break;
@@ -4237,7 +4241,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (psz > 0) {
                         partitionByFunctions = new ObjList<>(psz);
                         for (int j = 0; j < psz; j++) {
-                            partitionByFunctions.add(functionParser.parseFunction(ac.getPartitionBy().getQuick(j), chainMetadata, executionContext));
+                            final Function function = functionParser.parseFunction(ac.getPartitionBy().getQuick(j), chainMetadata, executionContext);
+                            partitionByFunctions.add(function);
+                            if (function instanceof GroupByFunction) {
+                                throw SqlException.$(ast.position, "aggregate functions in partition by are not supported");
+                            }
                         }
                     }
 

@@ -225,8 +225,14 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             // re-throw the exception
             throw e;
         } catch (Throwable e) {
-            internalError(context.getChunkedResponse(), context.getLastRequestBytesSent(), e.getMessage(),
-                    500, e, state, context.getMetrics()
+            internalError(
+                    context.getChunkedResponse(),
+                    context.getLastRequestBytesSent(),
+                    e.getMessage(),
+                    500,
+                    e,
+                    state,
+                    context.getMetrics()
             );
             readyForNextRequest(context);
         }
