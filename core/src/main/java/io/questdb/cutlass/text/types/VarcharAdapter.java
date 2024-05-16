@@ -28,13 +28,15 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8Sink;
 
 
 public class VarcharAdapter extends AbstractTypeAdapter {
-    private final DirectUtf16Sink utf16Sink;
+    private static final byte DOUBLE_QUOTE = '"';
+    private final DirectUtf8Sink utf8Sink;
 
-    public VarcharAdapter(DirectUtf16Sink utf16Sink) {
-        this.utf16Sink = utf16Sink;
+    public VarcharAdapter(DirectUtf8Sink utf8Sink) {
+        this.utf8Sink = utf8Sink;
     }
 
     @Override
@@ -50,11 +52,32 @@ public class VarcharAdapter extends AbstractTypeAdapter {
 
     @Override
     public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) throws Exception {
-        write(row, column, value, utf16Sink);
+        write(row, column, value, null, utf8Sink);
     }
 
     @Override
-    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value, DirectUtf16Sink utf16Sink) throws Exception {
-        row.putVarchar(column, value);
+    public void write(TableWriter.Row row, int column, DirectUtf8Sequence value, DirectUtf16Sink utf16Sink, DirectUtf8Sink utf8Sink) throws Exception {
+        deflateConsecutiveDoubleQuotes(value, utf8Sink);
+        row.putVarchar(column, utf8Sink);
+    }
+
+    // replacing consecutive double quotes with a single one
+    private static void deflateConsecutiveDoubleQuotes(DirectUtf8Sequence value, DirectUtf8Sink utf8Sink) {
+        utf8Sink.clear();
+        int quoteCount = 0;
+        for (int i = 0; i < value.size(); i++) {
+            byte b = value.byteAt(i);
+            if (b == DOUBLE_QUOTE) {
+                if (quoteCount++ % 2 == 0) {
+                    utf8Sink.putAny(b);
+                }
+            } else {
+                quoteCount = 0;
+                utf8Sink.putAny(b);
+            }
+        }
+        if (quoteCount % 2 != 0) {
+            utf8Sink.putAny(DOUBLE_QUOTE);
+        }
     }
 }
