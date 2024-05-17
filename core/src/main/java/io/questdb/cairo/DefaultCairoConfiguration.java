@@ -314,6 +314,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getGroupByPresizeMaxHeapSize() {
+        return 128 * Numbers.SIZE_1MB;
+    }
+
+    @Override
+    public long getGroupByPresizeMaxSize() {
+        return 1_000_000;
+    }
+
+    @Override
     public int getGroupByShardingThreshold() {
         return 1000;
     }
@@ -752,7 +762,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlSmallMapPageSize() {
+    public long getSqlSmallMapPageSize() {
         return 4 * 1024;
     }
 
@@ -1033,6 +1043,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getWriterTickRowsCountMod() {
         return 1024 - 1;
+    }
+
+    @Override
+    public boolean isGroupByPresizeEnabled() {
+        return true;
     }
 
     @Override
