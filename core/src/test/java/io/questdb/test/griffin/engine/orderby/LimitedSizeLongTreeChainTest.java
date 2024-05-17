@@ -38,7 +38,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 /**
- * Test RBTree removal cases asserting final tree structure .
+ * Test RBTree removal cases asserting final tree structure.
  */
 public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
 
@@ -68,7 +68,8 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
 
     @Test
     public void test_create_ordered_tree() {
-        assertTree("[Black,2]\n" +
+        assertTree(
+                "[Black,2]\n" +
                         " L-[Black,1]\n" +
                         " R-[Black,4]\n" +
                         "   L-[Red,3]\n" +
@@ -108,12 +109,12 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
                         " L-[Black,2]\n" +
                         "   L-[Red,1]\n" +
                         " R-[Black,5]\n" +
-                        "   L-[Red,4]\n"
-                , 3, 2, 5, 1, 4
+                        "   L-[Red,4]\n",
+                3, 2, 5, 1, 4
         );
     }
 
-    //sibling is black and its both children are black (?)
+    // sibling is black and its both children are black (?)
     @Test
     public void test_remove_black_node_with_black_sibling_with_both_children_black() {
         assertTree(
@@ -131,7 +132,7 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
         );
     }
 
-    //right left case
+    // right left case
     @Test
     public void test_remove_black_node_with_black_sibling_with_red_left_child() {
         assertTree(
@@ -149,9 +150,9 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
         );
     }
 
-    //new test cases
-    //current node is double black and not the root; sibling is black and at least one of its children is red
-    //right right case
+    // new test cases
+    // current node is double black and not the root; sibling is black and at least one of its children is red
+    // right right case
     @Test
     public void test_remove_black_node_with_black_sibling_with_red_right_child() {
         assertTree(
@@ -253,9 +254,7 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
                         "   R-[Red,4]\n",
                 0, 1, 2, 3, 4
         );
-
         removeRowWithValue(3);
-
         assertTree(
                 "[Black,1]\n" +
                         " L-[Black,0]\n" +
@@ -419,7 +418,7 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
 
         @Override
         public void close() {
-            //nothing to do here
+            // nothing to do here
         }
 
         @Override
