@@ -110,13 +110,13 @@ function export_java {
 }
 
 function export_jemalloc() {
-    if [ "$QDB_JEMALLOC" = "true" ]; then
-      export jemalloc_so=$(ls $BASE/libjemalloc*)
-      if [ "$QDB_OS" != "FreeBSD" && -r "$jemalloc_so" ]; then
-          if [ "$QDB_OS" == "Darwin" ]; then
-              export DYLD_INSERT_LIBRARIES=$jemalloc_so
+    if [[ "$QDB_JEMALLOC" = "true" ]]; then
+      jemalloc_so=$(ls $BASE/libjemalloc*)
+      if [[ "$QDB_OS" != "FreeBSD" && -r "${jemalloc_so}" ]]; then
+          if [[ "$QDB_OS" == "Darwin" ]]; then
+              export DYLD_INSERT_LIBRARIES=${jemalloc_so}
           else
-              export LD_PRELOAD $jemalloc_so
+              export LD_PRELOAD=${jemalloc_so}
           fi
           echo "Using jemalloc"
       fi
@@ -190,7 +190,7 @@ function start {
     mkdir -p ${QDB_LOG}
 
     JAVA_LIB="$BASE/questdb.jar"
-    
+
     JAVA_OPTS="
     -D$QDB_PROCESS_LABEL
     -ea -Dnoebug
