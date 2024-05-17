@@ -30,6 +30,7 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.After;
 import org.junit.Test;
 
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 public class RssMemoryLimitTest extends AbstractCairoTest {
@@ -51,6 +52,9 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
                         " from long_sequence(10000000)) timestamp(ts) partition by day;");
                 fail("Managed to create table with RSS limit " + limitMB + " MB");
             } catch (SqlException e) {
+                String expected = "global RSS memory limit exceeded";
+                assertTrue(String.format("Exception should contain \"%s\", but was \"%s\"", expected, e.getMessage()),
+                        e.getMessage().contains(expected));
                 drop("drop table x;");
             }
         });
