@@ -31,7 +31,10 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.std.*;
+import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleByNotKeyedRecordCursorFactory {
@@ -76,7 +79,7 @@ public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleB
             );
             peeker.setCursor(cursor);
         } catch (Throwable th) {
-            Misc.freeObjList(recordFunctions);
+            close();
             throw th;
         }
     }

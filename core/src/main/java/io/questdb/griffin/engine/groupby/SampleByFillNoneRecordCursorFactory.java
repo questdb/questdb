@@ -83,7 +83,7 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
                     offsetFuncPos
             );
         } catch (Throwable th) {
-            Misc.freeObjList(recordFunctions);
+            close();
             throw th;
         }
     }
@@ -114,7 +114,7 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
 
     @Override
     protected void _close() {
-        cursor.close();
+        Misc.free(cursor);
         super._close();
     }
 }

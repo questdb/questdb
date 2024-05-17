@@ -111,7 +111,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
 
     @Override
     protected void _close() {
-        ((JoinRecordMetadata) getMetadata()).close();
+        Misc.free(((JoinRecordMetadata) getMetadata()));
         Misc.free(masterFactory);
         Misc.free(slaveFactory);
         Misc.free(cursor);
@@ -147,8 +147,8 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             if (isOpen) {
                 isOpen = false;
                 size = -1;
-                joinKeyMap.close();
-                slaveChain.close();
+                Misc.free(joinKeyMap);
+                Misc.free(slaveChain);
                 super.close();
             }
         }
