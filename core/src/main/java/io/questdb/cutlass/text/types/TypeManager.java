@@ -34,6 +34,7 @@ import io.questdb.std.ObjectPool;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.str.DirectUtf16Sink;
+import io.questdb.std.str.DirectUtf8Sink;
 
 public class TypeManager implements Mutable {
     private final ObjectPool<DateUtf8Adapter> dateAdapterPool;
@@ -43,20 +44,21 @@ public class TypeManager implements Mutable {
     private final int probeCount;
     private final ObjList<TypeAdapter> probes = new ObjList<>();
     private final StringAdapter stringAdapter;
-    private final VarcharAdapter varcharAdapter;
     private final ObjectPool<TimestampAdapter> timestampAdapterPool;
     private final ObjectPool<TimestampUtf8Adapter> timestampUtf8AdapterPool;
+    private final VarcharAdapter varcharAdapter;
 
     public TypeManager(
             TextConfiguration configuration,
-            DirectUtf16Sink utf16Sink
+            DirectUtf16Sink utf16Sink,
+            DirectUtf8Sink utf8Sink
     ) {
         this.dateAdapterPool = new ObjectPool<>(() -> new DateUtf8Adapter(utf16Sink), configuration.getDateAdapterPoolCapacity());
         this.timestampUtf8AdapterPool = new ObjectPool<>(() -> new TimestampUtf8Adapter(utf16Sink), configuration.getTimestampAdapterPoolCapacity());
         this.timestampAdapterPool = new ObjectPool<>(TimestampAdapter::new, configuration.getTimestampAdapterPoolCapacity());
         this.inputFormatConfiguration = configuration.getInputFormatConfiguration();
         this.stringAdapter = new StringAdapter(utf16Sink);
-        this.varcharAdapter = new VarcharAdapter(utf16Sink);
+        this.varcharAdapter = new VarcharAdapter(utf8Sink);
         this.indexedSymbolAdapter = new SymbolAdapter(utf16Sink, true);
         this.notIndexedSymbolAdapter = new SymbolAdapter(utf16Sink, false);
         addDefaultProbes();

@@ -104,6 +104,11 @@ public class WebConsoleLoadingTest extends AbstractBootstrapTest {
                         env.put(PropertyKey.PG_ENABLED.getEnvVarName(), Boolean.toString(pgEnabled));
                         return Collections.unmodifiableMap(env);
                     }
+
+                    @Override
+                    public boolean useSite() {
+                        return false;
+                    }
                 },
                 getServerMainArgs()
         );

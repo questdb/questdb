@@ -32,6 +32,7 @@ import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf16Sink;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
@@ -39,13 +40,16 @@ public class TextMetadataParserTest {
     private static final JsonLexer LEXER = new JsonLexer(1024, 4096);
     private static TextMetadataParser textMetadataParser;
     private static TypeManager typeManager;
-    private static DirectUtf16Sink utf8Sink;
+    private static DirectUtf16Sink utf16Sink;
+    private static DirectUtf8Sink utf8Sink;
 
     @BeforeClass
     public static void setUpClass() {
-        utf8Sink = new DirectUtf16Sink(1024);
+        utf16Sink = new DirectUtf16Sink(1024);
+        utf8Sink = new DirectUtf8Sink(1024);
         typeManager = new TypeManager(
                 new DefaultTextConfiguration(),
+                utf16Sink,
                 utf8Sink
         );
         textMetadataParser = new TextMetadataParser(
@@ -57,7 +61,7 @@ public class TextMetadataParserTest {
     @AfterClass
     public static void tearDown() {
         LEXER.close();
-        utf8Sink.close();
+        utf16Sink.close();
         textMetadataParser.close();
     }
 

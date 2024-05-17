@@ -72,7 +72,7 @@ public class InVarcharFunctionFactory implements FunctionFactory {
                 case ColumnType.STRING:
                 case ColumnType.VARCHAR:
                 case ColumnType.SYMBOL:
-                    if (func.isRuntimeConstant()) { // bind variables
+                    if (func.isRuntimeConstant() && !func.isNullConstant()) { // bind variables
                         if (deferredValues == null) {
                             deferredValues = new ObjList<>();
                         }

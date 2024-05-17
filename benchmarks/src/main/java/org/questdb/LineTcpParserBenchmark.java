@@ -63,7 +63,7 @@ public class LineTcpParserBenchmark {
     @Setup
     public void setup() {
         this.input = new DirectUtf8Sink(BUFFER_SIZE);
-        this.parser = new LineTcpParser(false, false);
+        this.parser = new LineTcpParser();
 
         Rnd rnd = new Rnd();
         long lineLenEstimate = 0;

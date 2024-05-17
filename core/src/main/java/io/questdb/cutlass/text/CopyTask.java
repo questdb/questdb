@@ -237,7 +237,8 @@ public class CopyTask {
     public boolean run(
             TextLexerWrapper lf,
             CsvFileIndexer indexer,
-            DirectUtf16Sink utf8Sink,
+            DirectUtf16Sink utf16Sink,
+            DirectUtf8Sink utf8Sink,
             DirectLongList unmergedIndexes,
             long fileBufAddr,
             long fileBufSize,
@@ -257,7 +258,7 @@ public class CopyTask {
             } else if (phase == PHASE_INDEXING) {
                 phaseIndexing.run(indexer, fileBufAddr, fileBufSize);
             } else if (phase == PHASE_PARTITION_IMPORT) {
-                phasePartitionImport.run(lf, fileBufAddr, fileBufSize, utf8Sink, unmergedIndexes, p1, p2);
+                phasePartitionImport.run(lf, fileBufAddr, fileBufSize, utf16Sink, utf8Sink, unmergedIndexes, p1, p2);
             } else if (phase == PHASE_SYMBOL_TABLE_MERGE) {
                 phaseSymbolTableMerge.run(p1);
             } else if (phase == PHASE_UPDATE_SYMBOL_KEYS) {
@@ -813,7 +814,8 @@ public class CopyTask {
         private TimestampAdapter timestampAdapter;
         private int timestampIndex;
         private ObjList<TypeAdapter> types;
-        private DirectUtf16Sink utf8Sink;
+        private DirectUtf16Sink utf16Sink;
+        private DirectUtf8Sink utf8Sink;
         private final CsvTextLexer.Listener onFieldsPartitioned = this::onFieldsPartitioned;
 
         public void clear() {
@@ -836,7 +838,7 @@ public class CopyTask {
             this.rowsImported = 0;
             this.errors = 0;
 
-            this.utf8Sink = null;
+            this.utf16Sink = null;
         }
 
         public long getErrors() {
@@ -859,11 +861,13 @@ public class CopyTask {
                 TextLexerWrapper lf,
                 long fileBufAddr,
                 long fileBufSize,
-                DirectUtf16Sink utf8Sink,
+                DirectUtf16Sink utf16Sink,
+                DirectUtf8Sink utf8Sink,
                 DirectLongList unmergedIndexes,
                 Path path,
                 Path tmpPath
         ) throws TextException {
+            this.utf16Sink = utf16Sink;
             this.utf8Sink = utf8Sink;
 
             final CairoConfiguration configuration = engine.getConfiguration();
@@ -912,7 +916,7 @@ public class CopyTask {
                                 lexer,
                                 fileBufAddr,
                                 fileBufSize,
-                                utf8Sink,
+                                utf16Sink,
                                 unmergedIndexes,
                                 tmpPath
                         );
@@ -1313,7 +1317,7 @@ public class CopyTask {
         ) throws TextException {
             TypeAdapter type = this.types.getQuick(fieldIndex);
             try {
-                type.write(w, fieldIndex, dus, utf8Sink);
+                type.write(w, fieldIndex, dus, utf16Sink, utf8Sink);
             } catch (NumericException | Utf8Exception | ImplicitCastException ignore) {
                 errors++;
                 logError(offset, fieldIndex, dus);
