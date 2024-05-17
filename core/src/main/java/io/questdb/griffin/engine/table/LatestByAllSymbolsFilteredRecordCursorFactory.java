@@ -65,7 +65,7 @@ public class LatestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeS
                     partitionBySymbolCounts
             );
         } catch (Throwable th) {
-            _close();
+            close();
             throw th;
         }
     }

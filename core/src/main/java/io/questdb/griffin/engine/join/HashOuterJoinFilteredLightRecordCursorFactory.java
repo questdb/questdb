@@ -124,7 +124,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
 
     @Override
     protected void _close() {
-        ((JoinRecordMetadata) getMetadata()).close();
+        Misc.freeIfCloseable(getMetadata());
         Misc.free(masterFactory);
         Misc.free(slaveFactory);
         Misc.free(cursor);

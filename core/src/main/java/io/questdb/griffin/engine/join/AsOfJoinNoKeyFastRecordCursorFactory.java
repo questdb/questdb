@@ -92,7 +92,7 @@ public class AsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCurs
 
     @Override
     protected void _close() {
-        ((JoinRecordMetadata) getMetadata()).close();
+        Misc.freeIfCloseable(getMetadata());
         Misc.free(masterFactory);
         Misc.free(slaveFactory);
     }

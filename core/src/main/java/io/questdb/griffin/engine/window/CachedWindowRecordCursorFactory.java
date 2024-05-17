@@ -116,14 +116,14 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                     WindowFunction function = functions.getQuick(j);
                     if (function.getPassCount() > WindowFunction.ONE_PASS) {
                         if (twoPassFunctions == null) {
-                            twoPassFunctions = new ObjList<WindowFunction>();
+                            twoPassFunctions = new ObjList<>();
                         }
                         twoPassFunctions.add(function);
                     }
                 }
                 if (twoPassFunctions != null) {
                     if (orderedTmp == null) {
-                        orderedTmp = new ObjList<ObjList<WindowFunction>>();
+                        orderedTmp = new ObjList<>();
                     }
 
                     orderedTmp.extendAndSet(i, twoPassFunctions);
@@ -264,10 +264,10 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
         if (closed) {
             return;
         }
+        closed = true;
         Misc.free(base);
         Misc.free(cursor);
         Misc.freeObjList(allFunctions);
-        closed = true;
     }
 
     class CachedWindowRecordCursor implements RecordCursor {

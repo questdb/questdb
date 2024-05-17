@@ -86,7 +86,7 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
             this.deferredSymbolKeys = deferredSymbolKeys;
             this.deferredSymbolFuncs = deferredFuncs;
         } catch (Throwable th) {
-            _close();
+            close();
             throw th;
         }
     }

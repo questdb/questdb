@@ -52,7 +52,7 @@ public class LatestByAllIndexedRecordCursorFactory extends AbstractTreeSetRecord
 
             this.cursor = new LatestByAllIndexedRecordCursor(columnIndex, rows, columnIndexes, this.prefixes);
         } catch (Throwable th) {
-            _close();
+            close();
             throw th;
         }
     }

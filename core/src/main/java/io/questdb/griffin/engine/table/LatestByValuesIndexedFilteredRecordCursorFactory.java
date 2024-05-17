@@ -60,7 +60,7 @@ public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractDe
             }
             this.filter = filter;
         } catch (Throwable th) {
-            _close();
+            close();
             throw th;
         }
     }

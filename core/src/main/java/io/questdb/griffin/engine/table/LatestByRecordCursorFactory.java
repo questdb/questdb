@@ -110,9 +110,9 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        rowIndexes.close();
-        cursor.close();
-        base.close();
+        Misc.free(rowIndexes);
+        Misc.free(cursor);
+        Misc.free(base);
     }
 
     private static class LatestByRecordCursor implements NoRandomAccessRecordCursor {

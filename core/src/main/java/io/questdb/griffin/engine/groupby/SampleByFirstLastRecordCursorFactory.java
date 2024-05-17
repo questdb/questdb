@@ -100,7 +100,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                     offsetFuncPos
             );
         } catch (Throwable th) {
-            _close();
+            close();
             throw th;
         }
     }

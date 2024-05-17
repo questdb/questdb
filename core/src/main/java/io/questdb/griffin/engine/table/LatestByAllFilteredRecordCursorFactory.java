@@ -59,7 +59,7 @@ public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecor
                 cursor = new LatestByAllFilteredRecordCursor(map, rows, recordSink, filter, columnIndexes);
             }
         } catch (Throwable th) {
-            _close();
+            close();
             throw th;
         }
     }

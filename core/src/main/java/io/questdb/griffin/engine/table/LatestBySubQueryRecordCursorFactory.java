@@ -84,7 +84,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
             this.columnIndex = columnIndex;
             this.func = func;
         } catch (Throwable th) {
-            _close();
+            close();
             throw th;
         }
     }
