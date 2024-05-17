@@ -58,6 +58,8 @@ public interface Map extends Mutable, Closeable, Reopenable {
         return -1;
     }
 
+    boolean isOpen();
+
     void merge(Map srcMap, MapValueMergeFunction mergeFunc);
 
     /**

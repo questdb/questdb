@@ -284,6 +284,11 @@ public class OrderedMap implements Map, Reopenable {
     }
 
     @Override
+    public boolean isOpen() {
+        return heapStart != 0;
+    }
+
+    @Override
     public void merge(Map srcMap, MapValueMergeFunction mergeFunc) {
         assert this != srcMap;
         if (srcMap.size() == 0) {

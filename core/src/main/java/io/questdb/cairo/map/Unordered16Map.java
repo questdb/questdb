@@ -220,6 +220,11 @@ public class Unordered16Map implements Map, Reopenable {
     }
 
     @Override
+    public boolean isOpen() {
+        return memStart != 0;
+    }
+
+    @Override
     public void merge(Map srcMap, MapValueMergeFunction mergeFunc) {
         assert this != srcMap;
         long srcSize = srcMap.size();
