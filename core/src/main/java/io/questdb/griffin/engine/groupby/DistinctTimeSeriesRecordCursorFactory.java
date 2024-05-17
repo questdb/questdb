@@ -49,25 +49,29 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
             @Transient @NotNull BytecodeAssembler asm
     ) {
         super(base.getMetadata());
-        assert base.recordCursorSupportsRandomAccess();
-        final RecordMetadata metadata = base.getMetadata();
-        // sink will be storing record columns to map key
-        columnFilter.of(metadata.getColumnCount());
-        RecordSink recordSink = RecordSinkFactory.getInstance(asm, metadata, columnFilter, false);
-        Map dataMap = new OrderedMap(
-                configuration.getSqlSmallMapPageSize(),
-                metadata,
-                configuration.getSqlDistinctTimestampKeyCapacity(),
-                configuration.getSqlDistinctTimestampLoadFactor(),
-                Integer.MAX_VALUE
-        );
-
         this.base = base;
-        this.cursor = new DistinctTimeSeriesRecordCursor(
-                getMetadata().getTimestampIndex(),
-                dataMap,
-                recordSink
-        );
+        try {
+            assert base.recordCursorSupportsRandomAccess();
+            final RecordMetadata metadata = base.getMetadata();
+            // sink will be storing record columns to map key
+            columnFilter.of(metadata.getColumnCount());
+            RecordSink recordSink = RecordSinkFactory.getInstance(asm, metadata, columnFilter, false);
+            Map dataMap = new OrderedMap(
+                    configuration.getSqlSmallMapPageSize(),
+                    metadata,
+                    configuration.getSqlDistinctTimestampKeyCapacity(),
+                    configuration.getSqlDistinctTimestampLoadFactor(),
+                    Integer.MAX_VALUE
+            );
+            this.cursor = new DistinctTimeSeriesRecordCursor(
+                    getMetadata().getTimestampIndex(),
+                    dataMap,
+                    recordSink
+            );
+        } catch (Throwable t) {
+            close();
+            throw t;
+        }
     }
 
     @Override
@@ -105,8 +109,8 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
 
     @Override
     protected void _close() {
-        base.close();
-        cursor.close();
+        Misc.free(base);
+        Misc.free(cursor);
     }
 
     private static class DistinctTimeSeriesRecordCursor implements RecordCursor {
