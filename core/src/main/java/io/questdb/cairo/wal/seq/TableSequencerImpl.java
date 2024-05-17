@@ -235,6 +235,12 @@ public class TableSequencerImpl implements TableSequencer {
         checkDropped();
         long txn;
         try {
+            if (metadata.getMetadataVersion() >= WalUtils.MAX_STRUCTURE_VERSION) {
+                throw CairoException.nonCritical().put("cannot ALTER TABLE to WAL table, " +
+                                "structure version exceeds maximum storage value [table=").put(tableToken.getDirName())
+                        .put(", version=").put(metadata.getMetadataVersion()).put(']');
+            }
+
             // From sequencer perspective metadata version is the same as column structure version
             if (metadata.getMetadataVersion() == expectedStructureVersion) {
                 final long timestamp = microClock.getTicks();
