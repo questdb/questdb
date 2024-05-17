@@ -36,22 +36,12 @@ sudo dnf install -y -q \
     amazon-cloudwatch-agent \
     jq
 
-# Setup Cloudwatch
-sudo mkdir /etc/questdb
-sudo mv /tmp/assets/cloudwatch.template.json /etc/questdb/
-sudo mv /tmp/assets/0-per-boot.sh /var/lib/cloud/scripts/per-boot/
 sudo mv /tmp/scripts/1-per-boot.sh /var/lib/cloud/scripts/per-boot/
 sudo mv /tmp/assets/99-questdb.conf /etc/sysctl.d/
 
 # Amend bashrc
 sudo cat /tmp/assets/bashrc >> /etc/bashrc
 . /tmp/assets/bashrc
-
-# Configure logrotate
-sudo mkdir /var/log/questdb
-sudo mv /tmp/assets/logrotate.conf /etc/logrotate.d/questdb
-sudo chown root:root /etc/logrotate.d/questdb
-sudo systemctl enable --now logrotate.timer
 
 echo ""
 
@@ -65,7 +55,7 @@ sudo mount ${QUESTDB_DATA_DIR}
 groupadd -g 10001 questdb
 useradd -u 10001 -g 10001 -d ${QUESTDB_DATA_DIR} -M -s /sbin/nologin questdb
 
-# questb binary
+# QuestDB binary
 wget https://github.com/questdb/questdb/releases/download/$QUESTDB_VERSION/questdb-$QUESTDB_VERSION-no-jre-bin.tar.gz
 tar xf questdb-$QUESTDB_VERSION-no-jre-bin.tar.gz
 cp -f questdb-$QUESTDB_VERSION-no-jre-bin/questdb.jar /usr/local/bin/questdb.jar
@@ -75,7 +65,6 @@ rm -rf questdb-$QUESTDB_VERSION-no-jre-bin
 # config
 sudo mkdir -p ${QUESTDB_DATA_DIR}/conf/
 sudo mv /tmp/assets/server.conf ${QUESTDB_DATA_DIR}/conf/server.conf
-sudo ln -sf ${QUESTDB_DATA_DIR}/conf/server.conf /etc/questdb/server.conf
 
 # Setup systemd
 echo "SystemMaxUse=1G" | sudo tee -a /etc/systemd/journald.conf
