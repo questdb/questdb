@@ -282,57 +282,50 @@ fn chunk_to_page(
 ) -> parquet2::error::Result<Page> {
     match column.data_type {
         ColumnType::Boolean => {
-            let chunk: &[u8] =
-                unsafe { mem::transmute(&column.fixed_len_data[offset..offset + length]) };
-            boolean::slice_to_page(chunk, options, type_)
+            let chunk: &[u8] = unsafe { mem::transmute(column.fixed_len_data) };
+            boolean::slice_to_page(&chunk[offset..offset + length], options, type_)
         }
         ColumnType::Byte => {
-            let chunk: &[i8] =
-                unsafe { mem::transmute(&column.fixed_len_data[offset..offset + length]) };
-            primitive::int_slice_to_page::<i8, i32>(chunk, options, type_, encoding)
+            let chunk: &[i8] = unsafe { mem::transmute(column.fixed_len_data) };
+            primitive::int_slice_to_page::<i8, i32>(&chunk[offset..offset + length], options, type_, encoding)
         }
         ColumnType::Short => {
-            let chunk: &[i16] =
-                unsafe { mem::transmute(&column.fixed_len_data[offset..offset + length]) };
-            primitive::int_slice_to_page::<i16, i32>(chunk, options, type_, encoding)
+            let chunk: &[i16] = unsafe { mem::transmute(column.fixed_len_data) };
+            primitive::int_slice_to_page::<i16, i32>(&chunk[offset..offset + length], options, type_, encoding)
         }
         ColumnType::Int => {
-            let chunk: &[i32] =
-                unsafe { mem::transmute(&column.fixed_len_data[offset..offset + length]) };
-            primitive::int_slice_to_page::<i32, i32>(chunk, options, type_, encoding)
+            let chunk: &[i32] = unsafe { mem::transmute(column.fixed_len_data) };
+            primitive::int_slice_to_page::<i32, i32>(&chunk[offset..offset + length], options, type_, encoding)
         }
         ColumnType::Long => {
-            let chunk: &[i64] =
-                unsafe { mem::transmute(&column.fixed_len_data[offset..offset + length]) };
-            primitive::int_slice_to_page::<i64, i64>(chunk, options, type_, encoding)
+            let chunk: &[i64] = unsafe { mem::transmute(column.fixed_len_data) };
+            primitive::int_slice_to_page::<i64, i64>(&chunk[offset..offset + length], options, type_, encoding)
         }
         ColumnType::Float => {
-            let chunk: &[f32] =
-                unsafe { mem::transmute(&column.fixed_len_data[offset..offset + length]) };
-            primitive::float_slice_to_page_plain::<f32, f32>(chunk, options, type_)
+            let chunk: &[f32] = unsafe { mem::transmute(column.fixed_len_data) };
+            primitive::float_slice_to_page_plain::<f32, f32>(&chunk[offset..offset + length], options, type_)
         }
         ColumnType::Double => {
-            let chunk: &[f64] =
-                unsafe { mem::transmute(&column.fixed_len_data[offset..offset + length]) };
-            primitive::float_slice_to_page_plain::<f64, f64>(chunk, options, type_)
+            let chunk: &[f64] = unsafe { mem::transmute(column.fixed_len_data) };
+            primitive::float_slice_to_page_plain::<f64, f64>(&chunk[offset..offset + length], options, type_)
         }
         ColumnType::Binary => {
-            let offsets: &[i64] =
-                unsafe { mem::transmute(&column.fixed_len_data[offset..offset + length]) };
+            let offsets: &[i64] = unsafe { mem::transmute(column.fixed_len_data) };
             let data = column.variable_len_data.expect("data");
-            binary::binary_to_page(offsets, data, options, type_, encoding)
+            binary::binary_to_page(&offsets[offset..offset + length], data, options, type_, encoding)
         }
         ColumnType::String => {
-            let offsets: &[i64] =
-                unsafe { mem::transmute(&column.fixed_len_data[offset..offset + length]) };
+            let offsets: &[i64] = unsafe { mem::transmute(column.fixed_len_data) };
             let data = column.variable_len_data.expect("data");
-            string::string_to_page(offsets, data, options, type_, encoding)
+            string::string_to_page(&offsets[offset..offset + length], data, options, type_, encoding)
         }
         ColumnType::Long128 => {
+            //TODO: fix slicing
             let chunk= &column.fixed_len_data[offset..offset + length];
             fixed_len_bytes::bytes_to_page(chunk, 16, options, type_)
         }
         ColumnType::Long256 => {
+            //TODO: fix slicing
             let chunk= &column.fixed_len_data[offset..offset + length];
             fixed_len_bytes::bytes_to_page(chunk, 32, options, type_)
         }

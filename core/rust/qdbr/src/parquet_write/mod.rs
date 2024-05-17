@@ -270,6 +270,37 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn test_write_parquet_row_group_size_data_page_size() {
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let row_count = 100_000usize;
+        let row_group_size = 500usize;
+        let page_size_bytes = 256usize;
+        let col1: Vec<i64> = (0..row_count).into_iter().map(|v| v as i64).collect();
+        let col1_w = Arc::new(
+            ColumnImpl::from_raw_data("col1", 6, col1.len(), col1.as_ptr() as *const u8, null(), 0)
+                .unwrap(),
+        );
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: [col1_w].to_vec(),
+        };
+
+        ParquetWriter::new(&mut buf)
+            .with_row_group_size(Some(row_group_size))
+            .with_data_page_size(Some(page_size_bytes))
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let meta = parquet2::read::read_metadata(&mut buf).expect("metadata");
+        assert_eq!(row_count, meta.num_rows);
+        assert_eq!(row_count / row_group_size, meta.row_groups.len());
+        assert_eq!(row_group_size, meta.row_groups[0].num_rows());
+        // assert!(meta.row_groups[0].columns()[0].metadata().total_uncompressed_size < page_size_bytes as i64);
+        //TODO: data page metadata?
+    }
 
     #[test]
     fn encode_column_tops() {
