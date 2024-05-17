@@ -307,12 +307,12 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
 
     @Override
     public long getGroupByPresizeMaxHeapSize() {
-        return delegate.getGroupByPresizeMaxHeapSize();
+        return getDelegate().getGroupByPresizeMaxHeapSize();
     }
 
     @Override
     public long getGroupByPresizeMaxSize() {
-        return delegate.getGroupByPresizeMaxSize();
+        return getDelegate().getGroupByPresizeMaxSize();
     }
 
     @Override
@@ -1042,7 +1042,7 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
 
     @Override
     public boolean isGroupByPresizeEnabled() {
-        return delegate.isGroupByPresizeEnabled();
+        return getDelegate().isGroupByPresizeEnabled();
     }
 
     @Override
