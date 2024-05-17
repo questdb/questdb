@@ -566,8 +566,10 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
         private long targetHeapSize(MapStats stats) {
             final long statHeapSize = owner ? stats.mergedHeapSize : stats.maxHeapSize;
-            // Per-worker limit is 4x smaller than the owner one.
-            final long statLimit = owner ? configuration.getGroupByPresizeMaxHeapSize() : configuration.getGroupByPresizeMaxHeapSize() << 2;
+            // Per-worker limit is smaller than the owner one.
+            final long statLimit = owner
+                    ? configuration.getGroupByPresizeMaxHeapSize()
+                    : configuration.getGroupByPresizeMaxHeapSize() / perWorkerParticles.size();
             long heapSize = configuration.getSqlSmallMapPageSize();
             if (statHeapSize <= statLimit) {
                 heapSize = Math.max(statHeapSize, heapSize);
@@ -577,8 +579,10 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
         private int targetKeyCapacity(MapStats stats) {
             final long statKeyCapacity = owner ? stats.mergedSize : stats.medianSize;
-            // Per-worker limit is 4x smaller than the owner one.
-            final long statLimit = owner ? configuration.getGroupByPresizeMaxSize() : configuration.getGroupByPresizeMaxSize() << 2;
+            // Per-worker limit is smaller than the owner one.
+            final long statLimit = owner
+                    ? configuration.getGroupByPresizeMaxSize()
+                    : configuration.getGroupByPresizeMaxSize() / perWorkerParticles.size();
             int keyCapacity = configuration.getSqlSmallMapKeyCapacity();
             if (statKeyCapacity <= statLimit) {
                 keyCapacity = Math.max((int) statKeyCapacity, keyCapacity);
