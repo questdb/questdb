@@ -262,7 +262,7 @@ public class CopyWalSegmentUtils {
                     newAuxMemSize
             );
 
-            newOffsets.setSrcOffsets(dataStartOffset, columnTypeDriver.getAuxVectorOffset(startRowNumber));
+            newOffsets.setSrcOffsets(dataStartOffset, columnTypeDriver.getAuxVectorSize(startRowNumber));
             newOffsets.setDestSizes(dataSize, newAuxMemSize);
 
             if (commitMode != CommitMode.NOSYNC) {
