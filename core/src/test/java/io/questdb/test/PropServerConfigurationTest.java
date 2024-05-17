@@ -253,6 +253,9 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(256, configuration.getCairoConfiguration().getPageFrameReduceRowIdListCapacity());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getPageFrameReduceColumnListCapacity());
         Assert.assertEquals(100_000, configuration.getCairoConfiguration().getGroupByShardingThreshold());
+        Assert.assertTrue(configuration.getCairoConfiguration().isGroupByPresizeEnabled());
+        Assert.assertEquals(100_000_000, configuration.getCairoConfiguration().getGroupByPresizeMaxSize());
+        Assert.assertEquals(Numbers.SIZE_1GB, configuration.getCairoConfiguration().getGroupByPresizeMaxHeapSize());
         Assert.assertEquals(128 * 1024, configuration.getCairoConfiguration().getGroupByAllocatorDefaultChunkSize());
 
         Assert.assertEquals(SqlJitMode.JIT_MODE_ENABLED, configuration.getCairoConfiguration().getSqlJitMode());
@@ -1398,6 +1401,9 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(4, configuration.getPageFrameReduceColumnListCapacity());
         Assert.assertEquals(2048, configuration.getGroupByMergeShardQueueCapacity());
         Assert.assertEquals(100, configuration.getGroupByShardingThreshold());
+        Assert.assertFalse(configuration.isGroupByPresizeEnabled());
+        Assert.assertEquals(100_000, configuration.getGroupByPresizeMaxSize());
+        Assert.assertEquals(1024, configuration.getGroupByPresizeMaxHeapSize());
         Assert.assertEquals(4096, configuration.getGroupByAllocatorDefaultChunkSize());
 
         Assert.assertEquals(SqlJitMode.JIT_MODE_FORCE_SCALAR, configuration.getSqlJitMode());

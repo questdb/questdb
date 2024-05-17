@@ -614,6 +614,8 @@ public class MapTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             int N = 10;
             try (Map map = createMap(keyColumnType(ColumnType.INT), new SingleColumnType(ColumnType.INT), N / 2, 0.5f, 100)) {
+                Assert.assertTrue(map.isOpen());
+
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
                     populateKey(key, i, ColumnType.INT);
@@ -635,8 +637,10 @@ public class MapTest extends AbstractCairoTest {
                 Assert.assertEquals(N, map.size());
 
                 map.close();
+                Assert.assertFalse(map.isOpen());
                 map.close(); // Close must be idempotent
                 map.reopen();
+                Assert.assertTrue(map.isOpen());
 
                 Assert.assertEquals(0, map.size());
 
