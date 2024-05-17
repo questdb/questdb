@@ -952,6 +952,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getSequencerCheckInterval() {
+        return 10_000;
+    }
+
+    @Override
     public int getWalRecreateDistressedSequencerAttempts() {
         return 3;
     }

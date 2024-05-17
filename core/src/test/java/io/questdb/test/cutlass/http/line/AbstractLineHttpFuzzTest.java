@@ -435,7 +435,7 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
 
     private Thread startAlterTableThread(CairoEngine engine, SOCountDownLatch threadPushFinished, AtomicInteger failureCounter) {
         Thread thread = new Thread(() -> {
-            int totalTestConversions = (int) (numOfLines * numOfTables * columnConvertProb);
+            int totalTestConversions = random.nextInt((int) (numOfLines * numOfTables * columnConvertProb));
             try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine, 1)) {
                 while (totalTestConversions > 0 && threadPushFinished.getCount() > 0 && failureCounter.get() == 0) {
                     final CharSequence tableName = getTableName(random.nextInt(numOfTables));

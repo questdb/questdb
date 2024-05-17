@@ -359,6 +359,8 @@ public class TableSequencerAPI implements QuietCloseable {
                         }
                 )
         ) {
+            SeqTxnTracker seqTxnTracker = getSeqTxnTracker(tableToken);
+            seqTxnTracker.initTxns(0, 0, false);
             tableSequencer.unlockWrite();
         }
     }
