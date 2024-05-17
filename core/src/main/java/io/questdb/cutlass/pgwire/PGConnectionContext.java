@@ -148,7 +148,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final WeakSelfReturningObjectPool<TypesAndSelect> typesAndSelectPool;
     private final AssociativeCache<TypesAndUpdate> typesAndUpdateCache;
     private final WeakSelfReturningObjectPool<TypesAndUpdate> typesAndUpdatePool;
-    private final DirectUtf16Sink utf8Sink;
     private final DirectUtf8String utf8String = new DirectUtf8String();
     // this is a reference to types either from the context or named statement, where it is provided
     private IntList activeBindVariableTypes;
@@ -227,7 +226,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             this.path = new Path();
             this.engine = engine;
             queryLogger = engine.getConfiguration().getQueryLogger();
-            this.utf8Sink = new DirectUtf16Sink(engine.getConfiguration().getTextConfiguration().getUtf8SinkSize());
             this.maxRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
             this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
             this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
@@ -371,7 +369,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         responseUtf8Sink.reset();
         selectColumnTypes.clear();
         syncActions.clear();
-        utf8Sink.clear();
         if (activeBindVariableTypes != null) {
             activeBindVariableTypes.clear();
         }
@@ -432,7 +429,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         clear();
         sqlExecutionContext.with(DenyAllSecurityContext.INSTANCE, null, null, -1, null);
         Misc.free(path);
-        Misc.free(utf8Sink);
         Misc.free(authenticator);
         Misc.free(typesAndSelectCache);
         Misc.free(typesAndUpdateCache);
