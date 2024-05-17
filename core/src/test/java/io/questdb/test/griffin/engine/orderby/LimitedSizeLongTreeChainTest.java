@@ -42,7 +42,7 @@ import org.junit.Test;
  */
 public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
 
-    //used in all tests to hide api complexity
+    // used in all tests to hide api complexity
     LimitedSizeLongTreeChain chain;
     RecordComparator comparator;
     TestRecordCursor cursor;
@@ -407,9 +407,9 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
 
     static class TestRecordCursor implements RecordCursor {
         final Record left = new TestRecord();
-        int position = -1;
         final Record right = new TestRecord();
         final LongList values = new LongList();
+        int position = -1;
 
         TestRecordCursor(long... newValues) {
             for (int i = 0; i < newValues.length; i++) {
