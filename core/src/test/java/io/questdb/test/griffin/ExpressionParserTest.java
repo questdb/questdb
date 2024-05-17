@@ -135,6 +135,11 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEscapeClause() throws SqlException {
+        x("'a' 'b' 'c' like", "'a' like 'b' escape 'c'");
+    }
+
+    @Test
     public void testCaseAsArrayIndex() throws SqlException {
         x(
                 "a b 1 3 4 case []",

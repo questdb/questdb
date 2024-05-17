@@ -27,7 +27,7 @@ package io.questdb.griffin.engine.functions.regex;
 public class LikeStrFunctionFactory extends AbstractLikeStrFunctionFactory {
     @Override
     public String getSignature() {
-        return "like(SS)";
+        return "like(SSV)";
     }
 
     @Override

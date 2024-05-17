@@ -164,6 +164,12 @@ public class SqlKeywordsTest {
     }
 
     @Test
+    public void testIsEscapeKeyword() {
+        Assert.assertTrue(SqlKeywords.isEscapeKeyword("escape"));
+        Assert.assertTrue(SqlKeywords.isEscapeKeyword("ESCAPE"));
+    }
+
+    @Test
     public void testLinear() {
         Assert.assertFalse(isLinearKeyword("12345"));
         Assert.assertFalse(isLinearKeyword("123456"));

@@ -32,6 +32,9 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.assertTrue;
+
 public class ILikeFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
@@ -556,5 +559,176 @@ public class ILikeFunctionFactoryTest extends AbstractCairoTest {
 
     private void assertLike(String expected, String query, boolean expectSize) throws SqlException {
         assertQuery(expected, query, null, true, expectSize);
+    }
+
+    @Test
+    public void testILikeEscapeAtEndRegConstFuncWithEscapeKeyword() {
+        String createTable = "CREATE TABLE myTable (name string)";
+        String insertRow = "INSERT INTO myTable (name) VALUES ('.ZdocsZ');";
+
+        String query = "SELECT * FROM myTable WHERE name ILIKE '%docsZ' ESCAPE 'Z';";
+        String expected1 = "name\n";
+        String expected2 = "";
+        Exception e = assertThrows(SqlException.class, () -> assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true));
+
+        String expectedMessage = "[5] found [tok='%docsZ', len=6] LIKE/ILIKE pattern must not end with escape character";
+        String actualMessage = e.getMessage();
+        assertTrue(actualMessage.contains(expectedMessage));
+    }
+
+    @Test
+    public void testILikeEscapeAtEndRegConstFuncVarcharWithEscapeKeyword() {
+        String createTable = "CREATE TABLE myTable (name varchar)";
+        String insertRow = "INSERT INTO myTable (name) VALUES ('.ZdocsZ');";
+
+        String query = "SELECT * FROM myTable WHERE name ILIKE '%docsZ' ESCAPE 'Z';";
+        String expected1 = "name\n";
+        String expected2 = "";
+        Exception e = assertThrows(SqlException.class, () -> assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true));
+
+        String expectedMessage = "[5] found [tok='%docsZ', len=6] LIKE/ILIKE pattern must not end with escape character";
+        String actualMessage = e.getMessage();
+        assertTrue(actualMessage.contains(expectedMessage));
+    }
+
+    @Test
+    public void testILikeEscapeAtEndRegExpFuncWithEscapeKeyword() {
+        String createTable = "CREATE TABLE myTable (name string)";
+        String insertRow = "INSERT INTO myTable  (name) VALUES ('.ZdocsZ');";
+
+        String query = "SELECT * FROM myTable WHERE name ILIKE '_%docsZ' ESCAPE 'Z';";
+        String expected1 = "name\n";
+        String expected2 = "";
+        Exception e = assertThrows(SqlException.class, () -> assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true));
+
+        String expectedMessage = "[6] found [tok='_%docsZ', len=7] LIKE/ILIKE pattern must not end with escape character";
+        String actualMessage = e.getMessage();
+        assertTrue(actualMessage.contains(expectedMessage));
+    }
+
+    @Test
+    public void testILikeEscapeAtEndRegExpFuncVarcharWithEscapeKeyword() {
+        String createTable = "CREATE TABLE myTable (name varchar)";
+        String insertRow = "INSERT INTO myTable  (name) VALUES ('.ZdocsZ');";
+
+        String query = "SELECT * FROM myTable WHERE name ILIKE '_%docsZ' ESCAPE 'Z';";
+        String expected1 = "name\n";
+        String expected2 = "";
+        Exception e = assertThrows(SqlException.class, () -> assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true));
+
+        String expectedMessage = "[6] found [tok='_%docsZ', len=7] LIKE/ILIKE pattern must not end with escape character";
+        String actualMessage = e.getMessage();
+        assertTrue(actualMessage.contains(expectedMessage));
+    }
+
+    @Test
+    public void testILikeEscapeOneSymbolWithEscapeKeyword() throws Exception {
+        String createTable = "CREATE TABLE myTable (name string)";
+        String insertRow = "INSERT INTO myTable  (name) VALUES ('The path is Z_ignore');";
+
+        String query = "SELECT * FROM myTable WHERE name ILIKE 'The path is Z_Ignore' ESCAPE 'Z';";
+        String expected1 = "name\n";
+        String expected2 = "name\n";
+
+        assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true);
+    }
+
+    @Test
+    public void testILikeEscapeOneSymbolVarcharWithEscapeKeyword() throws Exception {
+        String createTable = "CREATE TABLE myTable (name varchar)";
+        String insertRow = "INSERT INTO myTable  (name) VALUES ('The path is Z_ignore');";
+
+        String query = "SELECT * FROM myTable WHERE name ILIKE 'The path is Z_Ignore' ESCAPE 'Z';";
+        String expected1 = "name\n";
+        String expected2 = "name\n";
+
+        assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true);
+    }
+
+    @Test
+    public void testILikeEscapeThreeSymbolsWithEscapeKeyword() throws Exception {
+        String createTable = "CREATE TABLE myTable (name string)";
+        String insertRow = "INSERT INTO myTable  (name) VALUES ('The path is Z_ignore');";
+
+        String query = "SELECT * FROM myTable WHERE name ILIKE 'The path is ZZZ_Ignore' ESCAPE 'Z';";
+        String expected1 = "name\n";
+        String expected2 = "name\nThe path is Z_ignore\n";
+
+        assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true);
+    }
+
+    @Test
+    public void testILikeEscapeThreeSymbolsVarcharWithEscapeKeyword() throws Exception {
+        String createTable = "CREATE TABLE myTable (name varchar)";
+        String insertRow = "INSERT INTO myTable  (name) VALUES ('The path is Z_ignore');";
+
+        String query = "SELECT * FROM myTable WHERE name ILIKE 'The path is ZZZ_Ignore' ESCAPE 'Z';";
+        String expected1 = "name\n";
+        String expected2 = "name\nThe path is Z_ignore\n";
+
+        assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true);
+    }
+
+    @Test
+    public void testILikeEscapeTwoSymbols() throws Exception {
+        String createTable = "CREATE TABLE myTable (name string)";
+        String insertRow = "INSERT INTO myTable  (name) VALUES ('The path is Z_ignore');";
+
+        String query = "SELECT * FROM myTable WHERE name ILIKE 'The path is ZZ_Ignore' ESCAPE 'Z';";
+        String expected1 = "name\n";
+        String expected2 = "name\nThe path is Z_ignore\n";
+
+        assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true);
+    }
+
+    @Test
+    public void testILikeEscapeTwoSymbolsVarcharWithEscapeKeyword() throws Exception {
+        String createTable = "CREATE TABLE myTable (name varchar)";
+        String insertRow = "INSERT INTO myTable  (name) VALUES ('The path is Z_ignore');";
+
+        String query = "SELECT * FROM myTable WHERE name ILIKE 'The path is ZZ_Ignore' ESCAPE 'Z';";
+        String expected1 = "name\n";
+        String expected2 = "name\nThe path is Z_ignore\n";
+
+        assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true);
+    }
+
+    @Test
+    public void testILikeNotRealEscapeWithEscapeKeyword() throws Exception {
+        String createTable = "CREATE TABLE myTable (name string)";
+        String insertRow = "INSERT INTO myTable  (name) VALUES ('ZZ?ZD:Zpath');";
+
+        String query = "SELECT * FROM myTable WHERE name ILIKE 'ZZZZ_ZZ%' ESCAPE 'Z';";
+        String expected1 = "name\n";
+        String expected2 = "name\nZZ?ZD:Zpath\n";
+
+        assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true);
+    }
+
+    @Test
+    public void testILikeNotRealEscapeVarcharWithEscapeKeyword() throws Exception {
+        String createTable = "CREATE TABLE myTable (name varchar)";
+        String insertRow = "INSERT INTO myTable  (name) VALUES ('ZZ?ZD:Zpath');";
+
+        String query = "SELECT * FROM myTable WHERE name ILIKE 'ZZZZ_ZZ%' ESCAPE 'Z';";
+        String expected1 = "name\n";
+        String expected2 = "name\nZZ?ZD:Zpath\n";
+
+        assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true);
+    }
+
+    @Test
+    public void testILikeInvalidUseEscapeKeyword() {
+        String createTable = "CREATE TABLE myTable (name varchar)";
+        String insertRow = "INSERT INTO myTable  (name) VALUES ('.ZdocsZ');";
+
+        String query = "SELECT * FROM myTable WHERE name ILIKE '_%docsZ' ESCAPE 'ZZ';";
+        String expected1 = "name\n";
+        String expected2 = "";
+        Exception e = assertThrows(SqlException.class, () -> assertQuery(expected1, query, createTable, null, insertRow, expected2, true, true, true));
+
+        String expectedMessage = "[1] found [tok='ZZ', len=2] Escape symbol must be one character";
+        String actualMessage = e.getMessage();
+        assertTrue(actualMessage.contains(expectedMessage));
     }
 }
