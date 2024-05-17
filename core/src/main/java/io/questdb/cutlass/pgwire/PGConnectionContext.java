@@ -565,6 +565,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             }
             authenticator.init(socket, recvBuffer, recvBuffer + recvBufferSize, sendBuffer, sendBufferLimit);
             return this;
+        } catch (CairoException e) {
+            if (e.isCritical()) {
+                close();
+            } else {
+                clear();
+            }
+            throw e;
         } catch (Throwable t) {
             close();
             throw t;
