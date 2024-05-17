@@ -34,6 +34,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -224,8 +225,9 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         private void buildSymbolKeys() {
             final StaticSymbolTable symbolTable = delegate.getSymbolTable(columnIndex);
             final Record record = baseCursor.getRecord();
+            StringSink sink = Misc.getThreadLocalSink();
             while (baseCursor.hasNext()) {
-                int symbolKey = symbolTable.keyOf(func.get(record, 0));
+                int symbolKey = symbolTable.keyOf(func.get(record, 0, sink));
                 if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
                     symbolKeys.add(TableUtils.toIndexKey(symbolKey));
                 }

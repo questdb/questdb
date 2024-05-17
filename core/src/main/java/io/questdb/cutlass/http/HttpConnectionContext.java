@@ -298,12 +298,24 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     @Override
     public HttpConnectionContext of(int fd, @NotNull IODispatcher<HttpConnectionContext> dispatcher) {
         super.of(fd, dispatcher);
-        // The context is obtained from the pool, so we should initialize the memory.
-        if (recvBuffer == 0) {
-            recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
+        try {
+            // The context is obtained from the pool, so we should initialize the memory.
+            if (recvBuffer == 0) {
+                recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
+            }
+            responseSink.of(socket);
+            return this;
+        } catch (CairoException e) {
+            if (e.isCritical()) {
+                close();
+            } else {
+                clear();
+            }
+            throw e;
+        } catch (Throwable t) {
+            close();
+            throw t;
         }
-        responseSink.of(socket);
-        return this;
     }
 
     public HttpRequestProcessor rejectRequest(int code, CharSequence userMessage) {

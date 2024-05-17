@@ -241,10 +241,16 @@ public final class Unsafe {
             MALLOC_COUNT.incrementAndGet();
             return ptr;
         } catch (OutOfMemoryError oom) {
-            System.err.printf(
-                    "Unsafe.malloc() OutOfMemoryError, mem_used=%d, size=%d, memoryTag=%d\n",
-                    RSS_MEM_USED.get(), size, memoryTag);
-            throw oom;
+            CairoException e = CairoException.nonCritical().setOutOfMemory(true)
+                    .put("sun.misc.Unsafe.allocateMemory() OutOfMemoryError [RSS_MEM_USED=")
+                    .put(RSS_MEM_USED.get())
+                    .put(", size=")
+                    .put(size)
+                    .put(", memoryTag=").put(memoryTag)
+                    .put("], original message: ")
+                    .put(oom.getMessage());
+            System.err.println(e.getFlyweightMessage());
+            throw e;
         }
     }
 
@@ -257,10 +263,18 @@ public final class Unsafe {
             REALLOC_COUNT.incrementAndGet();
             return ptr;
         } catch (OutOfMemoryError oom) {
-            System.err.printf(
-                    "Unsafe.realloc() OutOfMemoryError, mem_used=%d, old_size=%d, new_size=%d, memoryTag=%d",
-                    RSS_MEM_USED.get(), oldSize, newSize, memoryTag);
-            throw oom;
+            CairoException e = CairoException.nonCritical().setOutOfMemory(true)
+                    .put("sun.misc.Unsafe.reallocateMemory() OutOfMemoryError [RSS_MEM_USED=")
+                    .put(RSS_MEM_USED.get())
+                    .put(", oldSize=")
+                    .put(oldSize)
+                    .put(", newSize=")
+                    .put(newSize)
+                    .put(", memoryTag=").put(memoryTag)
+                    .put("], original message: ")
+                    .put(oom.getMessage());
+            System.err.println(e.getFlyweightMessage());
+            throw e;
         }
     }
 
@@ -319,8 +333,9 @@ public final class Unsafe {
                 throw CairoException.nonCritical().setOutOfMemory(true)
                         .put("global RSS memory limit exceeded [usage=")
                         .put(usage)
-                        .put(", limit=").put(RSS_MEM_LIMIT)
-                        .put(", allocation=").put(size)
+                        .put(", RSS_MEM_LIMIT=").put(RSS_MEM_LIMIT)
+                        .put(", size=").put(size)
+                        .put(", memoryTag=").put(memoryTag)
                         .put(']');
             }
         }

@@ -147,8 +147,8 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             if (isOpen) {
                 isOpen = false;
                 size = -1;
-                joinKeyMap.close();
-                slaveChain.close();
+                Misc.free(joinKeyMap);
+                Misc.free(slaveChain);
                 super.close();
             }
         }

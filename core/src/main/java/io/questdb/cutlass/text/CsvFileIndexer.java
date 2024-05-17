@@ -40,6 +40,7 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.DirectUtf16Sink;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
@@ -77,14 +78,13 @@ public class CsvFileIndexer implements Closeable, Mutable {
     final private ObjList<IndexOutputFile> outputFileDenseList = new ObjList<>();
     // maps partitionFloors to output file descriptors
     final private LongObjHashMap<IndexOutputFile> outputFileLookupMap = new LongObjHashMap<>();
-    // work dir path
-    private final Path path;
     // timestamp field of current line
     final private DirectUtf8String timestampField;
     // used for timestamp parsing
     private final TypeManager typeManager;
     // used for timestamp parsing
-    private final DirectUtf16Sink utf8Sink;
+    private final DirectUtf16Sink utf16Sink;
+    private final DirectUtf8Sink utf8Sink;
     private boolean cancelled = false;
     private @Nullable ExecutionCircuitBreaker circuitBreaker;
     private byte columnDelimiter;
@@ -117,6 +117,8 @@ public class CsvFileIndexer implements Closeable, Mutable {
     private DateFormat partitionDirFormatMethod;
     // used to map timestamp to output file
     private PartitionBy.PartitionFloorMethod partitionFloorMethod;
+    // work dir path
+    private Path path;
     private boolean rollBufferUnusable = false;
     private long sortBufferLength;
     private long sortBufferPtr;
@@ -126,13 +128,17 @@ public class CsvFileIndexer implements Closeable, Mutable {
     private int timestampIndex;
     private long timestampValue;
     private boolean useFieldRollBuf = false;
+    // used for timestamp parsing
+    private DirectUtf16Sink utf8Sink;
 
     public CsvFileIndexer(CairoConfiguration configuration) {
         try {
             this.configuration = configuration;
             final TextConfiguration textConfiguration = configuration.getTextConfiguration();
-            this.utf8Sink = new DirectUtf16Sink(textConfiguration.getUtf8SinkSize());
-            this.typeManager = new TypeManager(textConfiguration, utf8Sink);
+            int utf8SinkSize = textConfiguration.getUtf8SinkSize();
+            this.utf16Sink = new DirectUtf16Sink(utf8SinkSize);
+            this.utf8Sink = new DirectUtf8Sink(utf8SinkSize);
+            this.typeManager = new TypeManager(textConfiguration, utf16Sink, utf8Sink);
             this.ff = configuration.getFilesFacade();
             this.dirMode = configuration.getMkDirMode();
             this.inputRoot = configuration.getSqlCopyInputRoot();
@@ -182,7 +188,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         closeOutputFiles();
         closeSortBuffer();
 
-        if (ff.close(fd)) {
+        if (ff != null && ff.close(fd)) {
             fd = -1;
         }
 
@@ -196,13 +202,11 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
     @Override
     public void close() {
-        if (fieldRollBufPtr != 0) {
-            Unsafe.free(fieldRollBufPtr, fieldRollBufLen, MemoryTag.NATIVE_IMPORT);
-            fieldRollBufPtr = 0;
-        }
-        Misc.free(path);
+        fieldRollBufPtr = Unsafe.free(fieldRollBufPtr, fieldRollBufLen, MemoryTag.NATIVE_IMPORT);
+        path = Misc.free(path);
         Misc.clear(typeManager);
-        Misc.free(utf8Sink);
+        utf16Sink = Misc.free(utf16Sink);
+        utf8Sink = Misc.free(utf8Sink);
         clear();
     }
 

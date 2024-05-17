@@ -69,9 +69,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     };
     private static final IntList castGroups = new IntList();
+    private static final boolean[][] columnConverstionSupport = new boolean[ColumnType.NULL][ColumnType.NULL];
     @SuppressWarnings("FieldMayBeFinal")
     private static Log LOG = LogFactory.getLog(SqlCompilerImpl.class);
-    private static final boolean[][] columnConverstionSupport = new boolean[ColumnType.NULL][ColumnType.NULL];
     protected final AlterOperationBuilder alterOperationBuilder;
     protected final SqlCodeGenerator codeGenerator;
     protected final CompiledQueryImpl compiledQuery;
@@ -1880,7 +1880,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (e.isInterruption()) {
                 throw e;
             }
-            throw SqlException.$(position, "Could not create table. See log for details.");
+            throw SqlException.$(position, "Could not create table ")
+                    .put(tableToken.getTableName())
+                    .put(", reason: ")
+                    .put(e.getFlyweightMessage());
         } finally {
             if (isWalEnabled) {
                 Misc.free(writerAPI);

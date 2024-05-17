@@ -48,6 +48,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
+import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sink;
 import org.jetbrains.annotations.NotNull;
@@ -86,7 +87,7 @@ public class ServerMain implements Closeable {
             freeOnExit.register(config.getFactoryProvider());
             engine.load();
         } catch (Throwable th) {
-            freeOnExit.close();
+            Misc.free(freeOnExit);
             throw th;
         }
     }

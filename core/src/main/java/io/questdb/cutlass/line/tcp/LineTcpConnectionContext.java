@@ -232,6 +232,13 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                 securityContext.authorizeLineTcp();
             }
             return this;
+        } catch (CairoException e) {
+            if (e.isCritical()) {
+                close();
+            } else {
+                clear();
+            }
+            throw e;
         } catch (Throwable t) {
             close();
             throw t;

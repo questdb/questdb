@@ -48,8 +48,8 @@ import java.io.Closeable;
 import static io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory.prepareBindVarMemory;
 
 public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
-    // We use the first 8 bits of a hash code to determine the shard, hence 256 as the max number of shards.
-    private static final int MAX_SHARDS = 256;
+    // We use the first 8 bits of a hash code to determine the shard.
+    private static final int MAX_SHARDS = 128;
     private final ObjList<Function> bindVarFunctions;
     private final MemoryCARW bindVarMemory;
     private final CompiledFilter compiledFilter;
@@ -313,6 +313,10 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             // DataUnavailableException thrown on worker threads when filtering.
             Function.initCursor(perWorkerFilters);
         }
+    }
+
+    public boolean isMergeLockRequired() {
+        return perWorkerFunctionUpdaters != null;
     }
 
     public boolean isSharded() {

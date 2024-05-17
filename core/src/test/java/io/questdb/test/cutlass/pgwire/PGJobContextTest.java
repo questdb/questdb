@@ -10229,16 +10229,18 @@ create table tab as (
             }
         };
 
-        final WorkerPool workerPool = new TestWorkerPool(2, metrics);
+        WorkerPool workerPool = new TestWorkerPool(2, metrics);
         CircuitBreakerRegistry registry = new CircuitBreakerRegistry(conf, engine.getConfiguration());
-
-        return createPGWireServer(
-                conf,
-                engine,
-                workerPool,
-                createPGConnectionContextFactory(conf, workerCount, workerCount, null, queryScheduledCount, registry),
-                registry
-        );
+        PGWireServer.PGConnectionContextFactory connFac =
+                createPGConnectionContextFactory(conf, workerCount, workerCount, null, queryScheduledCount, registry);
+        try {
+            return createPGWireServer(conf, engine, workerPool, connFac, registry);
+        } catch (Throwable t) {
+            Misc.free(connFac);
+            Misc.free(registry);
+            Misc.free(workerPool);
+            throw t;
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -10371,80 +10373,78 @@ create table tab as (
             }
         };
 
-        WorkerPool pool = new WorkerPool(conf, metrics);
-        pool.assign(engine.getEngineMaintenanceJob());
         try (CircuitBreakerRegistry registry = new CircuitBreakerRegistry(conf, engine.getConfiguration());
-             final PGWireServer server = createPGWireServer(
-                     conf,
-                     engine,
-                     pool,
-                     createPGConnectionContextFactory(conf, workerCount, workerCount, queryStartedCountDownLatch, null, registry),
-                     registry
+             WorkerPool pool = new WorkerPool(conf, metrics);
+             PGWireServer.PGConnectionContextFactory connFac = createPGConnectionContextFactory(
+                     conf, workerCount, workerCount, queryStartedCountDownLatch, null, registry
              )
         ) {
-            Assert.assertNotNull(server);
-            int iteration = 0;
+            pool.assign(engine.getEngineMaintenanceJob());
+            try (PGWireServer server = createPGWireServer(conf, engine, pool, connFac, registry)) {
+                Assert.assertNotNull(server);
+                int iteration = 0;
 
-            do {
-                pool.start(LOG);
-                final String tableName = "xyz" + iteration++;
-                ddl("create table " + tableName + " (a int)");
+                do {
+                    pool.start(LOG);
+                    final String tableName = "xyz" + iteration++;
+                    ddl("create table " + tableName + " (a int)");
 
-                try (
-                        final Connection connection1 = getConnection(server.getPort(), false, true);
-                        final Connection connection2 = getConnection(server.getPort(), false, true);
-                        final PreparedStatement insert = connection1.prepareStatement(
-                                "insert into " + tableName + " values (?)"
-                        )
-                ) {
-                    connection1.setAutoCommit(false);
-                    int totalCount = 10;
-                    for (int i = 0; i < totalCount; i++) {
-                        insert.setInt(1, i);
-                        insert.execute();
-                    }
-                    CyclicBarrier start = new CyclicBarrier(2);
-                    CountDownLatch finished = new CountDownLatch(1);
-                    errors.set(0);
+                    try (
+                            final Connection connection1 = getConnection(server.getPort(), false, true);
+                            final Connection connection2 = getConnection(server.getPort(), false, true);
+                            final PreparedStatement insert = connection1.prepareStatement(
+                                    "insert into " + tableName + " values (?)"
+                            )
+                    ) {
+                        connection1.setAutoCommit(false);
+                        int totalCount = 10;
+                        for (int i = 0; i < totalCount; i++) {
+                            insert.setInt(1, i);
+                            insert.execute();
+                        }
+                        CyclicBarrier start = new CyclicBarrier(2);
+                        CountDownLatch finished = new CountDownLatch(1);
+                        errors.set(0);
 
-                    new Thread(() -> {
-                        try {
-                            start.await();
-                            try (
-                                    final PreparedStatement alter = connection2.prepareStatement(
-                                            "alter table " + tableName + " add column b long"
-                                    )
-                            ) {
-                                alter.execute();
+                        new Thread(() -> {
+                            try {
+                                start.await();
+                                try (
+                                        final PreparedStatement alter = connection2.prepareStatement(
+                                                "alter table " + tableName + " add column b long"
+                                        )
+                                ) {
+                                    alter.execute();
+                                }
+                            } catch (Throwable e) {
+                                e.printStackTrace();
+                                errors.incrementAndGet();
+                            } finally {
+                                finished.countDown();
                             }
-                        } catch (Throwable e) {
-                            e.printStackTrace();
-                            errors.incrementAndGet();
-                        } finally {
-                            finished.countDown();
-                        }
-                    }).start();
+                        }).start();
 
-                    start.await();
-                    Os.sleep(100);
-                    connection1.commit();
-                    finished.await();
+                        start.await();
+                        Os.sleep(100);
+                        connection1.commit();
+                        finished.await();
 
-                    if (alterRequestReturnSuccess) {
-                        Assert.assertEquals(0, errors.get());
-                        try (TableReader rdr = getReader(tableName)) {
-                            int bIndex = rdr.getMetadata().getColumnIndex("b");
-                            Assert.assertEquals(1, bIndex);
-                            Assert.assertEquals(totalCount, rdr.size());
+                        if (alterRequestReturnSuccess) {
+                            Assert.assertEquals(0, errors.get());
+                            try (TableReader rdr = getReader(tableName)) {
+                                int bIndex = rdr.getMetadata().getColumnIndex("b");
+                                Assert.assertEquals(1, bIndex);
+                                Assert.assertEquals(totalCount, rdr.size());
+                            }
                         }
+                    } finally {
+                        pool.halt();
+                        engine.releaseAllWriters();
                     }
-                } finally {
-                    pool.halt();
-                    engine.releaseAllWriters();
-                }
-                // Failure may not happen if we're lucky, even when they are expected
-                // When alterRequestReturnSuccess if false and errors are 0, repeat
-            } while (!alterRequestReturnSuccess && errors.get() == 0);
+                    // Failure may not happen if we're lucky, even when they are expected
+                    // When alterRequestReturnSuccess if false and errors are 0, repeat
+                } while (!alterRequestReturnSuccess && errors.get() == 0);
+            }
         }
     }
 
@@ -11810,27 +11810,31 @@ create table tab as (
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
-                try (final Connection connection = getConnection(server.getPort(), true, false)) {
-                    final PreparedStatement statement = connection.prepareStatement("create table x (a long, b double, ts timestamp) timestamp(ts) partition by YEAR");
+                try (final Connection connection = getConnection(server.getPort(), true, false);
+                     final PreparedStatement statement = connection.prepareStatement(
+                             "create table x (a long, b double, ts timestamp) timestamp(ts) partition by YEAR")
+                ) {
                     statement.execute();
-
-                    final PreparedStatement insert1 = connection.prepareStatement("insert into x values " +
+                    try (final PreparedStatement insert1 = connection.prepareStatement("insert into x values " +
                             "(1, 2.0, '2020-06-01T00:00:02'::timestamp)," +
                             "(2, 2.6, '2020-06-01T00:00:06'::timestamp)," +
-                            "(5, 3.0, '2020-06-01T00:00:12'::timestamp)");
-                    insert1.execute();
+                            "(5, 3.0, '2020-06-01T00:00:12'::timestamp)")) {
+                        insert1.execute();
+                    }
                     mayDrainWalQueue();
 
                     try (TableWriter writer = getWriter("x")) {
                         SOCountDownLatch finished = new SOCountDownLatch(1);
                         new Thread(() -> {
-                            try {
-                                final PreparedStatement update1 = connection.prepareStatement("update x set a=9 where b>2.5");
+                            try (
+                                    final PreparedStatement update1 = connection.prepareStatement(
+                                            "update x set a=9 where b>2.5"
+                                    )
+                            ) {
                                 int numOfRowsUpdated1 = update1.executeUpdate();
                                 assertEquals(2, numOfRowsUpdated1);
                             } catch (Throwable e) {
                                 Assert.fail(e.getMessage());
-                                e.printStackTrace();
                             } finally {
                                 finished.countDown();
                             }
