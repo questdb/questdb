@@ -47,15 +47,15 @@ import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME;
 
 public class TableSequencerAPI implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(TableSequencerAPI.class);
-    private final CairoConfiguration configuration;
+    final CairoConfiguration configuration;
+    final ConcurrentHashMap<TableSequencerImpl> seqRegistry = new ConcurrentHashMap<>(false);
     private final Function<CharSequence, SeqTxnTracker> createTxnTracker;
     private final CairoEngine engine;
     private final long inactiveTtlUs;
-    private final BiFunction<CharSequence, Object, TableSequencerEntry> openSequencerInstanceLambda;
+    private final BiFunction<CharSequence, Object, TableSequencerImpl> openSequencerInstanceLambda;
     private final int recreateDistressedSequencerAttempts;
-    private final ConcurrentHashMap<TableSequencerEntry> seqRegistry = new ConcurrentHashMap<>(false);
     private final ConcurrentHashMap<SeqTxnTracker> seqTxnTrackers = new ConcurrentHashMap<>(false);
-    private volatile boolean closed;
+    volatile boolean closed;
 
     public TableSequencerAPI(CairoEngine engine, CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -328,7 +328,7 @@ public class TableSequencerAPI implements QuietCloseable {
             return false;
         }
 
-        final TableSequencerEntry tableSequencer = seqRegistry.get(tableToken.getDirName());
+        final TableSequencerImpl tableSequencer = seqRegistry.get(tableToken.getDirName());
         if (tableSequencer != null && tableSequencer.checkClose()) {
             LOG.info().$("table is converted to non-WAL, closed table sequencer [table=").$(tableToken).I$();
             seqRegistry.remove(tableToken.getDirName(), tableSequencer);
@@ -346,8 +346,14 @@ public class TableSequencerAPI implements QuietCloseable {
                         tableToken,
                         SequencerLockType.WRITE,
                         (key, tt) -> {
-                            final TableSequencerEntry sequencer = new TableSequencerEntry(this, engine, (TableToken) tt, getSeqTxnTracker((TableToken) tt));
-                            sequencer.create(tableId, tableDescriptor);
+                            final TableSequencerImpl sequencer = new TableSequencerImpl(
+                                    this,
+                                    engine,
+                                    tableToken,
+                                    getSeqTxnTracker((TableToken) tt),
+                                    tableId,
+                                    tableDescriptor
+                            );
                             sequencer.open(tableToken);
                             return sequencer;
                         }
@@ -449,12 +455,12 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     @NotNull
-    private TableSequencerEntry getTableSequencerEntry(
+    private TableSequencerImpl getTableSequencerEntry(
             TableToken tableToken,
             SequencerLockType lock,
-            BiFunction<CharSequence, Object, TableSequencerEntry> getSequencerLambda
+            BiFunction<CharSequence, Object, TableSequencerImpl> getSequencerLambda
     ) {
-        TableSequencerEntry entry;
+        TableSequencerImpl entry;
         int attempt = 0;
         while (attempt < recreateDistressedSequencerAttempts) {
             throwIfClosed();
@@ -483,14 +489,19 @@ public class TableSequencerAPI implements QuietCloseable {
         throw CairoException.critical(0).put("sequencer is distressed [table=").put(tableToken.getDirName()).put(']');
     }
 
-    private TableSequencerEntry openSequencerInstance(CharSequence tableDir, Object tableToken) {
-        TableSequencerEntry sequencer = new TableSequencerEntry(this, this.engine, (TableToken) tableToken, getSeqTxnTracker((TableToken) tableToken));
-        sequencer.open((TableToken) tableToken);
-        return sequencer;
+    private TableSequencerImpl openSequencerInstance(CharSequence tableDir, Object tableToken) {
+        return new TableSequencerImpl(
+                this,
+                this.engine,
+                (TableToken) tableToken,
+                getSeqTxnTracker((TableToken) tableToken),
+                0,
+                null
+        );
     }
 
     @NotNull
-    private TableSequencerEntry openSequencerLocked(TableToken tableToken, SequencerLockType lock) {
+    private TableSequencerImpl openSequencerLocked(TableToken tableToken, SequencerLockType lock) {
         return getTableSequencerEntry(tableToken, lock, this.openSequencerInstanceLambda);
     }
 
@@ -503,7 +514,7 @@ public class TableSequencerAPI implements QuietCloseable {
         final Iterator<CharSequence> iterator = seqRegistry.keySet().iterator();
         while (iterator.hasNext()) {
             final CharSequence tableDir = iterator.next();
-            final TableSequencerEntry sequencer = seqRegistry.get(tableDir);
+            final TableSequencerImpl sequencer = seqRegistry.get(tableDir);
             if (sequencer != null && deadline >= sequencer.releaseTime && !sequencer.isClosed()) {
                 // Remove from registry only if this thread closed the instance
                 if (sequencer.checkClose()) {
@@ -536,37 +547,5 @@ public class TableSequencerAPI implements QuietCloseable {
     @FunctionalInterface
     public interface TableSequencerCallback {
         void onTable(int tableId, final TableToken tableName, long lastTxn);
-    }
-
-    private static class TableSequencerEntry extends TableSequencerImpl {
-        private final TableSequencerAPI pool;
-        private volatile long releaseTime = Long.MAX_VALUE;
-
-        TableSequencerEntry(TableSequencerAPI pool, CairoEngine engine, TableToken tableToken, SeqTxnTracker txnTracker) {
-            super(engine, tableToken, txnTracker);
-            this.pool = pool;
-        }
-
-        @Override
-        public void close() {
-            if (!pool.closed) {
-                if (!isDistressed() && !isDropped()) {
-                    releaseTime = pool.configuration.getMicrosecondClock().getTicks();
-                } else {
-                    // Sequencer is distressed or dropped, close before removing from the pool.
-                    // Remove from registry only if this thread closed the instance.
-                    if (checkClose()) {
-                        LOG.info()
-                                .$("closed table sequencer [table=").$(getTableToken())
-                                .$(", distressed=").$(isDistressed())
-                                .$(", dropped=").$(isDropped())
-                                .I$();
-                        pool.seqRegistry.remove(getTableToken().getDirName(), this);
-                    }
-                }
-            } else {
-                super.close();
-            }
-        }
     }
 }
