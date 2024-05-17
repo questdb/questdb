@@ -258,16 +258,6 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         return perWorkerMapSinks.getQuick(slotId);
     }
 
-    // Thread-unsafe, should be used by query owner thread only.
-    public MapFragment getOwnerFragment() {
-        return ownerFragment;
-    }
-
-    // Thread-unsafe, should be used by query owner thread only.
-    public ObjList<MapFragment> getPerWorkerFragments() {
-        return perWorkerFragments;
-    }
-
     public int getShardCount() {
         return shardCount;
     }
