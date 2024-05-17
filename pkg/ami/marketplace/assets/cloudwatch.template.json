@@ -9,7 +9,7 @@
         "collect_list": [
           {
             "file_path": "/var/log/questdb/logs.log",
-            "log_group_name": "/$ENVIRONMENT-demo-questdb/",
+            "log_group_name": "/$ENVIRONMENT-questdb/",
             "log_stream_name": "questdb-systemd-service.log",
             "timezone": "UTC"
           }
