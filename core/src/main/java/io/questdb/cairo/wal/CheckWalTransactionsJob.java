@@ -25,6 +25,7 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.FilesFacade;
@@ -34,6 +35,7 @@ import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
 public class CheckWalTransactionsJob extends SynchronizedJob {
+    private final long checkInterval;
     private final TableSequencerAPI.TableSequencerCallback checkNotifyOutstandingTxnInWalRef;
     private final CharSequence dbRoot;
     private final CairoEngine engine;
@@ -43,6 +45,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
     // Empty list means that all tables should be checked.
     private final TxReader txReader;
+    private long lastRunMs;
     private long lastProcessedCount = 0;
     private Path threadLocalPath;
 
@@ -54,8 +57,9 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
         millisecondClock = engine.getConfiguration().getMillisecondClock();
         spinLockTimeout = engine.getConfiguration().getSpinLockTimeout();
         checkNotifyOutstandingTxnInWalRef = (tableToken, txn, txn2) -> checkNotifyOutstandingTxnInWal(txn, txn2);
+        checkInterval = engine.getConfiguration().getSequencerCheckInterval();
+        lastRunMs = millisecondClock.getTicks();
     }
-
 
     public void checkMissingWalTransactions() {
         threadLocalPath = Path.PATH.get().of(dbRoot);
@@ -100,10 +104,26 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
     public boolean runSerially() {
         long unpublishedWalTxnCount = engine.getUnpublishedWalTxnCount();
         if (unpublishedWalTxnCount == lastProcessedCount) {
+            final long t = millisecondClock.getTicks();
+            if (lastRunMs + checkInterval < t) {
+                lastRunMs = t;
+                checkSequencerTrackers();
+            }
             return false;
         }
         checkMissingWalTransactions();
         lastProcessedCount = unpublishedWalTxnCount;
         return true;
+    }
+
+    private void checkSequencerTrackers() {
+        engine.getTableTokens(tableTokenBucket, false);
+        for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
+            TableToken tableToken = tableTokenBucket.get(i);
+            SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+            if (!tracker.isSuspended() && tracker.getWriterTxn() < tracker.getSeqTxn()) {
+                engine.notifyWalTxnCommitted(tableToken);
+            }
+        }
     }
 }

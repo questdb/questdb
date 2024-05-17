@@ -520,6 +520,8 @@ public interface CairoConfiguration {
 
     long getWalPurgeInterval();
 
+    long getSequencerCheckInterval();
+
     default int getWalPurgeWaitBeforeDelete() {
         return 0;
     }

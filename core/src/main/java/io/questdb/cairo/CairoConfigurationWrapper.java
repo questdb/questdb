@@ -956,6 +956,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getSequencerCheckInterval() {
+        return getDelegate().getSequencerCheckInterval();
+    }
+
+    @Override
     public int getWalPurgeWaitBeforeDelete() {
         return getDelegate().getWalPurgeWaitBeforeDelete();
     }
