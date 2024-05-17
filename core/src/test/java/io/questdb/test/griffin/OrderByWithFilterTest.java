@@ -201,6 +201,28 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderByDescWithFilterOnSubQueryRecordCursorFactoryVarchar() throws Exception {
+        runQueries(
+                "CREATE TABLE trips(l long,s symbol index capacity 10, ts TIMESTAMP) timestamp(ts) partition by month;",
+                "insert into trips " +
+                        "  select x, case when x<=3 then 'ABC' when x>6 and x <= 9 then 'DEF' else 'GHI' end," +
+                        "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
+                        "  from long_sequence(10);"
+        );
+
+        assertQuery("l\ts\tts\n" +
+                        "9\tDEF\t2022-01-12T06:13:20.000000Z\n" +
+                        "8\tDEF\t2022-01-11T02:26:40.000000Z\n" +
+                        "7\tDEF\t2022-01-09T22:40:00.000000Z\n" +
+                        "3\tABC\t2022-01-05T07:33:20.000000Z\n" +
+                        "2\tABC\t2022-01-04T03:46:40.000000Z\n" +
+                        "1\tABC\t2022-01-03T00:00:00.000000Z\n",
+                "select l, s, ts from trips where s in (select 'DEF'::varchar union all select 'ABC'::varchar ) and length(s) = 3 order by ts desc",
+                null, "ts###DESC", true, false
+        );
+    }
+
+    @Test
     public void testOrderByDescWithFilterOnValuesRecordCursorFactory() throws Exception {
         runQueries(
                 "CREATE TABLE trips(l long,s symbol index capacity 5, ts TIMESTAMP) timestamp(ts) partition by month;",

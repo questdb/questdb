@@ -30,61 +30,6 @@ import org.junit.Test;
 public class InTest extends AbstractCairoTest {
 
     @Test
-    public void testInDouble_const() throws Exception {
-        assertQuery(
-                "ts\td\n" +
-                        "2020-01-01T00:00:00.000000Z\t1.0\n" +
-                        "2020-01-01T00:10:00.000000Z\t2.0\n" +
-                        "2020-01-01T00:20:00.000000Z\t3.0\n" +
-                        "2020-01-01T00:30:00.000000Z\t4.0\n" +
-                        "2020-01-01T00:40:00.000000Z\t5.0\n" +
-                        "2020-01-01T00:50:00.000000Z\t6.0\n" +
-                        "2020-01-01T01:00:00.000000Z\t7.0\n" +
-                        "2020-01-01T01:10:00.000000Z\t8.0\n" +
-                        "2020-01-01T01:20:00.000000Z\t9.0\n",
-                "select * from tab WHERE d in (null, 1::byte, 2::short, 3::int, 4::long, 5::float, 6::double, '7'::string, '8'::symbol, '9'::varchar)",
-                "create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, x::double d from long_sequence(20))" +
-                        " timestamp(ts) PARTITION BY MONTH",
-                "ts",
-                true,
-                false
-        );
-    }
-
-    @Test
-    public void testInStr_const() throws Exception {
-        assertQuery(
-                "ts\ts\n" +
-                        "2020-01-01T00:00:00.000000Z\t1\n" +
-                        "2020-01-01T00:10:00.000000Z\t2\n" +
-                        "2020-01-01T00:20:00.000000Z\t3\n" +
-                        "2020-01-01T00:30:00.000000Z\t4\n",
-                "select * from tab WHERE s in (null, 1::string, 2::varchar, 3::symbol, '4'::char)",
-                "create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, x::string s from long_sequence(20))" +
-                        " timestamp(ts) PARTITION BY MONTH",
-                "ts",
-                true,
-                false
-        );
-    }
-
-    @Test
-    public void testInUuid_const() throws Exception {
-        assertQuery(
-                "ts\tu\n" +
-                        "2020-01-01T00:00:00.000000Z\t0010cde8-12ce-40ee-8010-a928bb8b9650\n" +
-                        "2020-01-01T00:10:00.000000Z\t9f9b2131-d49f-4d1d-ab81-39815c50d341\n" +
-                        "2020-01-01T00:20:00.000000Z\t7bcd48d8-c77a-4655-b2a2-15ba0462ad15\n",
-                "select * from tab where u in ('0010cde8-12ce-40ee-8010-a928bb8b9650', '9f9b2131-d49f-4d1d-ab81-39815c50d341'::varchar, '7bcd48d8-c77a-4655-b2a2-15ba0462ad15'::symbol);",
-                "create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, rnd_uuid4() u from long_sequence(20))" +
-                        " timestamp(ts) PARTITION BY MONTH",
-                "ts",
-                true,
-                false
-        );
-    }
-
-    @Test
     public void testInChar_const() throws Exception {
         // single-char constant
         assertQuery(
@@ -124,36 +69,20 @@ public class InTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInSymbol_const() throws Exception {
+    public void testInDouble_const() throws Exception {
         assertQuery(
-                "ts\ts\n" +
-                        "2020-01-01T00:00:00.000000Z\t1\n" +
-                        "2020-01-01T00:10:00.000000Z\t2\n" +
-                        "2020-01-01T00:20:00.000000Z\t3\n" +
-                        "2020-01-01T00:30:00.000000Z\t4\n",
-                "select * from tab WHERE s in (null, 1::string, 2::varchar, 3::symbol, '4'::char)",
-                "create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, x::symbol s from long_sequence(20))" +
-                        " timestamp(ts) PARTITION BY MONTH",
-                "ts",
-                true,
-                false
-        );
-    }
-
-    @Test
-    public void testInLong_const() throws Exception {
-        assertQuery(
-                "ts\tl\n" +
-                        "2020-01-01T00:00:00.000000Z\t1\n" +
-                        "2020-01-01T00:10:00.000000Z\t2\n" +
-                        "2020-01-01T00:20:00.000000Z\t3\n" +
-                        "2020-01-01T00:30:00.000000Z\t4\n" +
-                        "2020-01-01T00:40:00.000000Z\t5\n" +
-                        "2020-01-01T00:50:00.000000Z\t6\n" +
-                        "2020-01-01T01:00:00.000000Z\t7\n" +
-                        "2020-01-01T01:10:00.000000Z\t8\n",
-                "select * from tab WHERE l in (null, 1::byte, 2::short, 3::int, 4::long, 5::timestamp, '6'::string, '7'::symbol, '8'::varchar)",
-                "create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, x::long l from long_sequence(20))" +
+                "ts\td\n" +
+                        "2020-01-01T00:00:00.000000Z\t1.0\n" +
+                        "2020-01-01T00:10:00.000000Z\t2.0\n" +
+                        "2020-01-01T00:20:00.000000Z\t3.0\n" +
+                        "2020-01-01T00:30:00.000000Z\t4.0\n" +
+                        "2020-01-01T00:40:00.000000Z\t5.0\n" +
+                        "2020-01-01T00:50:00.000000Z\t6.0\n" +
+                        "2020-01-01T01:00:00.000000Z\t7.0\n" +
+                        "2020-01-01T01:10:00.000000Z\t8.0\n" +
+                        "2020-01-01T01:20:00.000000Z\t9.0\n",
+                "select * from tab WHERE d in (null, 1::byte, 2::short, 3::int, 4::long, 5::float, 6::double, '7'::string, '8'::symbol, '9'::varchar)",
+                "create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, x::double d from long_sequence(20))" +
                         " timestamp(ts) PARTITION BY MONTH",
                 "ts",
                 true,
@@ -195,6 +124,27 @@ public class InTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInLong_const() throws Exception {
+        assertQuery(
+                "ts\tl\n" +
+                        "2020-01-01T00:00:00.000000Z\t1\n" +
+                        "2020-01-01T00:10:00.000000Z\t2\n" +
+                        "2020-01-01T00:20:00.000000Z\t3\n" +
+                        "2020-01-01T00:30:00.000000Z\t4\n" +
+                        "2020-01-01T00:40:00.000000Z\t5\n" +
+                        "2020-01-01T00:50:00.000000Z\t6\n" +
+                        "2020-01-01T01:00:00.000000Z\t7\n" +
+                        "2020-01-01T01:10:00.000000Z\t8\n",
+                "select * from tab WHERE l in (null, 1::byte, 2::short, 3::int, 4::long, 5::timestamp, '6'::string, '7'::symbol, '8'::varchar)",
+                "create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, x::long l from long_sequence(20))" +
+                        " timestamp(ts) PARTITION BY MONTH",
+                "ts",
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testInLong_nonConst() throws Exception {
         assertQuery(
                 "ts\tl\tfixed_byte\tfixed_short\tfixed_int\tfixed_long\tfixed_timestamp\tfixed_string\tfixed_symbol\tfixed_varchar\n" +
@@ -222,6 +172,82 @@ public class InTest extends AbstractCairoTest {
                 "ts",
                 true,
                 false
+        );
+    }
+
+    @Test
+    public void testInStr_const() throws Exception {
+        assertQuery(
+                "ts\ts\n" +
+                        "2020-01-01T00:00:00.000000Z\t1\n" +
+                        "2020-01-01T00:10:00.000000Z\t2\n" +
+                        "2020-01-01T00:20:00.000000Z\t3\n" +
+                        "2020-01-01T00:30:00.000000Z\t4\n",
+                "select * from tab WHERE s in (null, 1::string, 2::varchar, 3::symbol, '4'::char)",
+                "create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, x::string s from long_sequence(20))" +
+                        " timestamp(ts) PARTITION BY MONTH",
+                "ts",
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testInSymbol_const() throws Exception {
+        assertQuery(
+                "ts\ts\n" +
+                        "2020-01-01T00:00:00.000000Z\t1\n" +
+                        "2020-01-01T00:10:00.000000Z\t2\n" +
+                        "2020-01-01T00:20:00.000000Z\t3\n" +
+                        "2020-01-01T00:30:00.000000Z\t4\n",
+                "select * from tab WHERE s in (null, 1::string, 2::varchar, 3::symbol, '4'::char)",
+                "create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, x::symbol s from long_sequence(20))" +
+                        " timestamp(ts) PARTITION BY MONTH",
+                "ts",
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testInUuid_const() throws Exception {
+        assertQuery(
+                "ts\tu\n" +
+                        "2020-01-01T00:00:00.000000Z\t0010cde8-12ce-40ee-8010-a928bb8b9650\n" +
+                        "2020-01-01T00:10:00.000000Z\t9f9b2131-d49f-4d1d-ab81-39815c50d341\n" +
+                        "2020-01-01T00:20:00.000000Z\t7bcd48d8-c77a-4655-b2a2-15ba0462ad15\n",
+                "select * from tab where u in ('0010cde8-12ce-40ee-8010-a928bb8b9650', '9f9b2131-d49f-4d1d-ab81-39815c50d341'::varchar, '7bcd48d8-c77a-4655-b2a2-15ba0462ad15'::symbol);",
+                "create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, rnd_uuid4() u from long_sequence(20))" +
+                        " timestamp(ts) PARTITION BY MONTH",
+                "ts",
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testSymbolInVarcharSubquery() throws Exception {
+        //
+        assertQuery(
+                "value\tsym\tvch\tts\n" +
+                        "2\tbar\tbaz\t1970-01-01T00:00:00.000002Z\n" +
+                        "3\tbaz\tbaz\t1970-01-01T00:00:00.000003Z\n" +
+                        "4\tbaz\tbar\t1970-01-01T00:00:00.000004Z\n" +
+                        "6\tbar\tbaz\t1970-01-01T00:00:00.000006Z\n" +
+                        "7\tbar\tbar\t1970-01-01T00:00:00.000007Z\n" +
+                        "8\tbar\tfoo\t1970-01-01T00:00:00.000008Z\n",
+                "select *\n" +
+                        "from x\n" +
+                        "where sym in (select vch from x where sym = 'baz')\n",
+                "create table x as (\n" +
+                        "  select x as value,\n" +
+                        "         rnd_symbol('foo','bar','baz') sym,\n" +
+                        "         rnd_symbol('foo','bar','baz')::varchar vch,\n" +
+                        "         cast(x as timestamp) ts\n" +
+                        "  from long_sequence(10)\n" +
+                        ") timestamp(ts) partition by day",
+                "ts",
+                true
         );
     }
 }

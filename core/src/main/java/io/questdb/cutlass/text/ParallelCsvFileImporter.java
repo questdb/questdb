@@ -40,6 +40,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.DirectUtf16Sink;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
@@ -99,7 +100,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private final TextMetadataDetector textMetadataDetector;
     private final Path tmpPath;
     private final TypeManager typeManager;
-    private final DirectUtf16Sink utf8Sink;
+    private final DirectUtf16Sink utf16Sink;
+    private final DirectUtf8Sink utf8Sink;
     private final int workerCount;
     private int atomicity;
     private ExecutionCircuitBreaker circuitBreaker;
@@ -172,8 +174,10 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             this.inputWorkRoot = configuration.getSqlCopyInputWorkRoot();
 
             TextConfiguration textConfiguration = configuration.getTextConfiguration();
-            this.utf8Sink = new DirectUtf16Sink(textConfiguration.getUtf8SinkSize());
-            this.typeManager = new TypeManager(textConfiguration, utf8Sink);
+            int utf8SinkSize = textConfiguration.getUtf8SinkSize();
+            this.utf16Sink = new DirectUtf16Sink(utf8SinkSize);
+            this.utf8Sink = new DirectUtf8Sink(utf8SinkSize);
+            this.typeManager = new TypeManager(textConfiguration, utf16Sink, utf8Sink);
             this.textDelimiterScanner = new TextDelimiterScanner(textConfiguration);
             this.textMetadataDetector = new TextMetadataDetector(typeManager, textConfiguration);
 
@@ -296,6 +300,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         Misc.clear(partitionKeysAndSizes);
         Misc.clear(partitionNameSink);
         Misc.clear(taskDistribution);
+        Misc.clear(utf16Sink);
         Misc.clear(utf8Sink);
         Misc.clear(typeManager);
         Misc.clear(symbolCapacities);
@@ -331,6 +336,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         clear();
         Misc.free(this.inputFilePath);
         Misc.free(this.tmpPath);
+        Misc.free(utf16Sink);
         Misc.free(this.utf8Sink);
         Misc.free(this.textMetadataDetector);
         Misc.free(this.textDelimiterScanner);
@@ -862,7 +868,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         this.metadata = metadata;
         this.writer = writer;//next call can throw exception
 
-        // authorize only columns present in the file 
+        // authorize only columns present in the file
         securityContext.authorizeInsert(tableToken);
 
         // add table columns missing in input file

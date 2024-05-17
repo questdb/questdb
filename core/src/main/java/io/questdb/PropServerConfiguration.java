@@ -348,6 +348,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final TextConfiguration textConfiguration = new PropTextConfiguration();
     private final int textLexerStringPoolCapacity;
     private final int timestampAdapterPoolCapacity;
+    private final boolean useLegacyStringDefault;
     private final int utf8SinkSize;
     private final PropertyValidator validator;
     private final int vectorAggregateQueueCapacity;
@@ -506,7 +507,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long pgWorkerYieldThreshold;
     private boolean stringToCharCastAllowed;
     private long symbolCacheWaitUsBeforeReload;
-    private boolean useLegacyStringDefault;
 
     public PropServerConfiguration(
             String root,
@@ -1228,6 +1228,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpAuthDB = null;
             }
 
+            this.useLegacyStringDefault = getBoolean(properties, env, PropertyKey.CAIRO_LEGACY_STRING_COLUMN_TYPE_DEFAULT, false);
             if (lineTcpEnabled || (lineHttpEnabled && httpServerEnabled)) {
                 LineTimestampAdapter timestampAdapter = getLineTimestampAdaptor(properties, env, PropertyKey.LINE_TCP_TIMESTAMP);
                 this.lineTcpTimestampAdapter = new LineTcpTimestampAdapter(timestampAdapter);
@@ -1244,7 +1245,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                     log.info().$("invalid default column type for integer ").$(integerDefaultColumnTypeName).$(", will use LONG").$();
                     this.integerDefaultColumnType = ColumnType.LONG;
                 }
-                this.useLegacyStringDefault = getBoolean(properties, env, PropertyKey.LINE_USE_LEGACY_STRING_DEFAULT, true);
             }
 
             this.ilpAutoCreateNewColumns = getBoolean(properties, env, PropertyKey.LINE_AUTO_CREATE_NEW_COLUMNS, true);
@@ -4423,6 +4423,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getUtf8SinkSize() {
             return utf8SinkSize;
+        }
+
+        @Override
+        public boolean isUseLegacyStringDefault() {
+            return useLegacyStringDefault;
         }
     }
 

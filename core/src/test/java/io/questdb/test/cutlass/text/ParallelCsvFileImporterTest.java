@@ -56,7 +56,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     private static final Rnd rnd = new Rnd();
-    private static final String stringTypeName = ColumnType.nameOf(ColumnType.STRING);
+    private static final String stringTypeName = ColumnType.nameOf(ColumnType.VARCHAR);
 
     @Before
     public void setUp() {
