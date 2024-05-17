@@ -859,7 +859,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             commit();
 
-            LOG.info().$("converting column [table=").$(tableToken).$(", column=").$(columnName)
+            LOG.info().$("converting column [table=").$(tableToken).$(", column=").utf8(columnName)
                     .$(", from=").$(ColumnType.nameOf(existingType))
                     .$(", to=").$(ColumnType.nameOf(newType)).I$();
 
@@ -941,7 +941,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 path.trimTo(rootLen);
             }
         } catch (Throwable th) {
-            LOG.error().$("could not change column type [table=").$(tableToken.getTableName()).$(", column=").$(columnName)
+            LOG.error().$("could not change column type [table=").$(tableToken.getTableName()).$(", column=").utf8(columnName)
                     .$(", error=").$(th).I$();
             throw th;
         }

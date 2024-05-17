@@ -136,7 +136,7 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
                 int columnType = tableMetadata.getColumnType(columnIndex);
                 int newColType = changeColumnTypeTo(rnd, columnType);
 
-                int capacity = 1 << (5 + rnd.nextInt(15));
+                int capacity = 1 << (5 + rnd.nextInt(3));
                 boolean indexFlag = ColumnType.isSymbol(newColType) && rnd.nextBoolean();
                 int indexValueBlockCapacity = 1 << (5 + rnd.nextInt(15));
                 boolean cacheSymbolMap = ColumnType.isSymbol(newColType) && rnd.nextBoolean();
