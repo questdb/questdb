@@ -10236,9 +10236,9 @@ create table tab as (
         try {
             return createPGWireServer(conf, engine, workerPool, connFac, registry);
         } catch (Throwable t) {
-            connFac.close();
-            registry.close();
-            workerPool.close();
+            Misc.free(connFac);
+            Misc.free(registry);
+            Misc.free(workerPool);
             throw t;
         }
     }
@@ -10376,7 +10376,8 @@ create table tab as (
         try (CircuitBreakerRegistry registry = new CircuitBreakerRegistry(conf, engine.getConfiguration());
              WorkerPool pool = new WorkerPool(conf, metrics);
              PGWireServer.PGConnectionContextFactory connFac = createPGConnectionContextFactory(
-                     conf, workerCount, workerCount, queryStartedCountDownLatch, null, registry);
+                     conf, workerCount, workerCount, queryStartedCountDownLatch, null, registry
+             )
         ) {
             pool.assign(engine.getEngineMaintenanceJob());
             try (PGWireServer server = createPGWireServer(conf, engine, pool, connFac, registry)) {
@@ -11825,13 +11826,15 @@ create table tab as (
                     try (TableWriter writer = getWriter("x")) {
                         SOCountDownLatch finished = new SOCountDownLatch(1);
                         new Thread(() -> {
-                            try (final PreparedStatement update1 = connection.prepareStatement(
-                                    "update x set a=9 where b>2.5")) {
+                            try (
+                                    final PreparedStatement update1 = connection.prepareStatement(
+                                            "update x set a=9 where b>2.5"
+                                    )
+                            ) {
                                 int numOfRowsUpdated1 = update1.executeUpdate();
                                 assertEquals(2, numOfRowsUpdated1);
                             } catch (Throwable e) {
                                 Assert.fail(e.getMessage());
-                                e.printStackTrace();
                             } finally {
                                 finished.countDown();
                             }

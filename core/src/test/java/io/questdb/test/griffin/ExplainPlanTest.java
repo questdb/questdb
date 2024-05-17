@@ -10692,4 +10692,3 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "S2\t1970-01-01T00:00:00.000001Z\n", queryDesc, "ts###DESC", true, true);
     }
 }
-
