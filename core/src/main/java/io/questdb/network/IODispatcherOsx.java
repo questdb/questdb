@@ -47,14 +47,21 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
         super(configuration, ioContextFactory);
         this.capacity = configuration.getEventCapacity();
         // bind socket
-        this.kqueue = new Kqueue(configuration.getKqueueFacade(), capacity);
-        registerListenerFd();
+        try {
+            this.kqueue = new Kqueue(configuration.getKqueueFacade(), capacity);
+            registerListenerFd();
+        } catch (Throwable t) {
+            close();
+            throw t;
+        }
     }
 
     @Override
     public void close() {
         super.close();
-        kqueue.close();
+        if (kqueue != null) {
+            kqueue.close();
+        }
         LOG.info().$("closed").$();
     }
 

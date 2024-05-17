@@ -182,7 +182,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         closeOutputFiles();
         closeSortBuffer();
 
-        if (ff.close(fd)) {
+        if (ff != null && ff.close(fd)) {
             fd = -1;
         }
 
