@@ -26,6 +26,7 @@ package io.questdb.network;
 
 import io.questdb.std.IntHashSet;
 import io.questdb.std.LongMatrix;
+import io.questdb.std.Misc;
 
 public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatcher<C> {
     private static final int EVM_DEADLINE = 1;
@@ -59,9 +60,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
     @Override
     public void close() {
         super.close();
-        if (kqueue != null) {
-            kqueue.close();
-        }
+        Misc.free(kqueue);
         LOG.info().$("closed").$();
     }
 

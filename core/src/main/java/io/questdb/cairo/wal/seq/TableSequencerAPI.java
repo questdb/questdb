@@ -342,12 +342,16 @@ public class TableSequencerAPI implements QuietCloseable {
 
     public void registerTable(int tableId, final TableStructure tableDescriptor, final TableToken tableToken) {
         try (
-                TableSequencerImpl tableSequencer = getTableSequencerEntry(tableToken, SequencerLockType.WRITE, (key, tt) -> {
-                    final TableSequencerEntry sequencer = new TableSequencerEntry(this, engine, (TableToken) tt, getSeqTxnTracker((TableToken) tt));
-                    sequencer.create(tableId, tableDescriptor);
-                    sequencer.open(tableToken);
-                    return sequencer;
-                })
+                TableSequencerImpl tableSequencer = getTableSequencerEntry(
+                        tableToken,
+                        SequencerLockType.WRITE,
+                        (key, tt) -> {
+                            final TableSequencerEntry sequencer = new TableSequencerEntry(this, engine, (TableToken) tt, getSeqTxnTracker((TableToken) tt));
+                            sequencer.create(tableId, tableDescriptor);
+                            sequencer.open(tableToken);
+                            return sequencer;
+                        }
+                )
         ) {
             tableSequencer.unlockWrite();
         }

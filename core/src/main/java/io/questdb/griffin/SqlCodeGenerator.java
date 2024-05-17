@@ -2121,7 +2121,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                     }
                 } catch (Throwable th) {
-                    joinMetadata = Misc.free(joinMetadata);
+                    Misc.free(joinMetadata);
                     master = Misc.free(master);
                     if (releaseSlave) {
                         Misc.free(slave);

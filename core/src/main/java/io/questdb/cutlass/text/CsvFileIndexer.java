@@ -196,10 +196,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
     @Override
     public void close() {
-        if (fieldRollBufPtr != 0) {
-            Unsafe.free(fieldRollBufPtr, fieldRollBufLen, MemoryTag.NATIVE_IMPORT);
-            fieldRollBufPtr = 0;
-        }
+        fieldRollBufPtr = Unsafe.free(fieldRollBufPtr, fieldRollBufLen, MemoryTag.NATIVE_IMPORT);
         path = Misc.free(path);
         Misc.clear(typeManager);
         utf8Sink = Misc.free(utf8Sink);
