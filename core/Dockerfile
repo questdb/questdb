@@ -1,14 +1,14 @@
-FROM debian:bullseye
+FROM debian:bookworm
 ARG tag_name
 
 ENV GOSU_VERSION=1.14
-ENV JDK_VERSION=17.0.7.7-1
+ENV JDK_VERSION=17.0.11.9-1
 
 RUN apt-get update \
   && apt-get install --no-install-recommends git curl wget gnupg2 ca-certificates lsb-release software-properties-common unzip -y
 
-RUN wget -O- https://apt.corretto.aws/corretto.key | gpg --dearmor | tee /etc/apt/trusted.gpg.d/winehq.gpg >/dev/null && \
-    add-apt-repository 'deb https://apt.corretto.aws stable main' && \
+RUN wget -O - https://apt.corretto.aws/corretto.key | gpg --dearmor -o /usr/share/keyrings/corretto-keyring.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/corretto-keyring.gpg] https://apt.corretto.aws stable main" | tee /etc/apt/sources.list.d/corretto.list && \
     apt-get update && \
     apt-get install --no-install-recommends -y java-17-amazon-corretto-jdk=1:${JDK_VERSION} && \
     apt-get -y install maven
@@ -42,7 +42,7 @@ RUN dpkgArch="$(dpkg --print-architecture | awk -F- '{ print $NF }')"; \
     ./gosu --version && \
     ./gosu nobody true
 
-FROM debian:bullseye-slim
+FROM debian:bookworm-slim
 
 WORKDIR /app
 
