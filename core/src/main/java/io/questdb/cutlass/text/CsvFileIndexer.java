@@ -128,8 +128,6 @@ public class CsvFileIndexer implements Closeable, Mutable {
     private int timestampIndex;
     private long timestampValue;
     private boolean useFieldRollBuf = false;
-    // used for timestamp parsing
-    private DirectUtf16Sink utf8Sink;
 
     public CsvFileIndexer(CairoConfiguration configuration) {
         try {
@@ -205,8 +203,8 @@ public class CsvFileIndexer implements Closeable, Mutable {
         fieldRollBufPtr = Unsafe.free(fieldRollBufPtr, fieldRollBufLen, MemoryTag.NATIVE_IMPORT);
         path = Misc.free(path);
         Misc.clear(typeManager);
-        utf16Sink = Misc.free(utf16Sink);
-        utf8Sink = Misc.free(utf8Sink);
+        Misc.free(utf16Sink);
+        Misc.free(utf8Sink);
         clear();
     }
 
