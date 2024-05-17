@@ -77,14 +77,10 @@ public class CsvFileIndexer implements Closeable, Mutable {
     final private ObjList<IndexOutputFile> outputFileDenseList = new ObjList<>();
     // maps partitionFloors to output file descriptors
     final private LongObjHashMap<IndexOutputFile> outputFileLookupMap = new LongObjHashMap<>();
-    // work dir path
-    private final Path path;
     // timestamp field of current line
     final private DirectUtf8String timestampField;
     // used for timestamp parsing
     private final TypeManager typeManager;
-    // used for timestamp parsing
-    private final DirectUtf16Sink utf8Sink;
     private boolean cancelled = false;
     private @Nullable ExecutionCircuitBreaker circuitBreaker;
     private byte columnDelimiter;
@@ -117,6 +113,8 @@ public class CsvFileIndexer implements Closeable, Mutable {
     private DateFormat partitionDirFormatMethod;
     // used to map timestamp to output file
     private PartitionBy.PartitionFloorMethod partitionFloorMethod;
+    // work dir path
+    private Path path;
     private boolean rollBufferUnusable = false;
     private long sortBufferLength;
     private long sortBufferPtr;
@@ -126,6 +124,8 @@ public class CsvFileIndexer implements Closeable, Mutable {
     private int timestampIndex;
     private long timestampValue;
     private boolean useFieldRollBuf = false;
+    // used for timestamp parsing
+    private DirectUtf16Sink utf8Sink;
 
     public CsvFileIndexer(CairoConfiguration configuration) {
         try {
@@ -200,9 +200,9 @@ public class CsvFileIndexer implements Closeable, Mutable {
             Unsafe.free(fieldRollBufPtr, fieldRollBufLen, MemoryTag.NATIVE_IMPORT);
             fieldRollBufPtr = 0;
         }
-        Misc.free(path);
+        path = Misc.free(path);
         Misc.clear(typeManager);
-        Misc.free(utf8Sink);
+        utf8Sink = Misc.free(utf8Sink);
         clear();
     }
 
