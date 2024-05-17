@@ -482,6 +482,18 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         return destMap;
     }
 
+    /**
+     * Calculates pre-sized map's heap size based on the given stats.
+     *
+     * @param stats statistics collected during the last query run
+     * @param dest  merge destination map flag;
+     *              once merge is done, merge destination contains entries from all fragment maps;
+     *              in the non-sharded case, it's set to true for the map in {@link #ownerFragment}
+     *              and false for maps in {@link #perWorkerFragments};
+     *              in the sharded case, it's set to true for the maps in {@link #destShards}
+     *              and false for shard maps in {@link #ownerFragment} and {@link #perWorkerFragments}
+     * @return heap size to pre-size the map
+     */
     private long targetHeapSize(MapStats stats, boolean dest) {
         final long statHeapSize = dest ? stats.mergedHeapSize : stats.maxHeapSize;
         // Per-worker limit is smaller than the owner one.
@@ -495,6 +507,18 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         return heapSize;
     }
 
+    /**
+     * Calculates pre-sized map's capacity based on the given stats.
+     *
+     * @param stats statistics collected during the last query run
+     * @param dest  merge destination map flag;
+     *              once merge is done, merge destination contains entries from all fragment maps;
+     *              in the non-sharded case, it's set to true for the map in {@link #ownerFragment}
+     *              and false for maps in {@link #perWorkerFragments};
+     *              in the sharded case, it's set to true for the maps in {@link #destShards}
+     *              and false for shard maps in {@link #ownerFragment} and {@link #perWorkerFragments}
+     * @return capacity to pre-size the map
+     */
     private int targetKeyCapacity(MapStats stats, boolean dest) {
         final long statKeyCapacity = dest ? stats.mergedSize : stats.medianSize;
         // Per-worker limit is smaller than the owner one.
