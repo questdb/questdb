@@ -398,6 +398,9 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             final Map srcMap = srcFragment.getShards().getQuick(shardIndex);
             medianList.add(srcMap.size());
         }
+        // Include shard from the owner fragment.
+        final Map srcOwnerMap = ownerFragment.getShards().getQuick(shardIndex);
+        medianList.add(srcOwnerMap.size());
         medianList.sort();
         // This is not very precise, but does the job.
         long medianSize = medianList.getQuick(medianList.size() / 2);
@@ -418,9 +421,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             srcMap.close();
         }
         // Merge shard from the owner fragment.
-        final Map srcMap = ownerFragment.getShards().getQuick(shardIndex);
-        destMap.merge(srcMap, functionUpdater);
-        srcMap.close();
+        destMap.merge(srcOwnerMap, functionUpdater);
+        srcOwnerMap.close();
 
         // Don't forget to update the stats.
         if (configuration.isGroupByPresizeEnabled()) {
