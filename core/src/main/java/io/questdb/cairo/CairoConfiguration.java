@@ -182,6 +182,10 @@ public interface CairoConfiguration {
 
     int getGroupByPoolCapacity();
 
+    long getGroupByPresizeMaxHeapSize();
+
+    long getGroupByPresizeMaxSize();
+
     int getGroupByShardingThreshold();
 
     @NotNull
@@ -434,7 +438,7 @@ public interface CairoConfiguration {
 
     int getSqlSmallMapKeyCapacity();
 
-    int getSqlSmallMapPageSize();
+    long getSqlSmallMapPageSize();
 
     int getSqlSortKeyMaxPages();
 
@@ -563,6 +567,8 @@ public interface CairoConfiguration {
     long getWriterMemoryLimit();
 
     int getWriterTickRowsCountMod();
+
+    boolean isGroupByPresizeEnabled();
 
     boolean isIOURingEnabled();
 

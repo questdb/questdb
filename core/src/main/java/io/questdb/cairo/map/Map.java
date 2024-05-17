@@ -64,7 +64,7 @@ public interface Map extends Mutable, Closeable, Reopenable {
      * Reopens previously closed map with given key capacity and initial heap size.
      * Heap size value is ignored if the map does not use heap to store keys and values.
      */
-    void reopen(int keyCapacity, int heapSize);
+    void reopen(int keyCapacity, long heapSize);
 
     void restoreInitialCapacity();
 

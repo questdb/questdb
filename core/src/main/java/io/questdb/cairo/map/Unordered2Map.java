@@ -216,7 +216,7 @@ public class Unordered2Map implements Map, Reopenable {
     }
 
     @Override
-    public void reopen(int keyCapacity, int heapSize) {
+    public void reopen(int keyCapacity, long heapSize) {
         reopen();
     }
 

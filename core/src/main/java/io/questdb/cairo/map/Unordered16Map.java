@@ -280,7 +280,7 @@ public class Unordered16Map implements Map, Reopenable {
     }
 
     @Override
-    public void reopen(int keyCapacity, int heapSize) {
+    public void reopen(int keyCapacity, long heapSize) {
         if (memStart == 0) {
             keyCapacity = (int) (keyCapacity / loadFactor);
             initialKeyCapacity = Math.max(Numbers.ceilPow2(keyCapacity), MIN_KEY_CAPACITY);

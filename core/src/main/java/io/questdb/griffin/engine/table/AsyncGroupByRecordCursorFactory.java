@@ -187,9 +187,15 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.acquire(workerId, owner, circuitBreaker);
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
-        final AsyncGroupByAtom.Particle particle = atom.getParticle(slotId);
+        final AsyncGroupByAtom.MapParticle particle = atom.getParticle(slotId);
         final RecordSink mapSink = atom.getMapSink(slotId);
         try {
+            if (atom.isSharded()) {
+                particle.shard();
+            } else {
+                particle.reopen();
+            }
+
             record.setRowIndex(0);
             long baseRowId = record.getRowId();
 
@@ -198,7 +204,8 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             } else {
                 aggregateSharded(record, frameRowCount, baseRowId, functionUpdater, particle, mapSink);
             }
-            atom.tryShard(particle);
+
+            atom.requestSharding(particle);
         } finally {
             atom.release(slotId);
         }
@@ -209,7 +216,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             DirectLongList rows,
             long baseRowId,
             GroupByFunctionsUpdater functionUpdater,
-            AsyncGroupByAtom.Particle particle,
+            AsyncGroupByAtom.MapParticle particle,
             RecordSink mapSink
     ) {
         final Map map = particle.getMap();
@@ -233,7 +240,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             DirectLongList rows,
             long baseRowId,
             GroupByFunctionsUpdater functionUpdater,
-            AsyncGroupByAtom.Particle particle,
+            AsyncGroupByAtom.MapParticle particle,
             RecordSink mapSink
     ) {
         // The first map is used to write keys.
@@ -270,7 +277,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             long frameRowCount,
             long baseRowId,
             GroupByFunctionsUpdater functionUpdater,
-            AsyncGroupByAtom.Particle particle,
+            AsyncGroupByAtom.MapParticle particle,
             RecordSink mapSink
     ) {
         final Map map = particle.getMap();
@@ -293,7 +300,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             long frameRowCount,
             long baseRowId,
             GroupByFunctionsUpdater functionUpdater,
-            AsyncGroupByAtom.Particle particle,
+            AsyncGroupByAtom.MapParticle particle,
             RecordSink mapSink
     ) {
         // The first map is used to write keys.
@@ -343,7 +350,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.acquire(workerId, owner, circuitBreaker);
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
-        final AsyncGroupByAtom.Particle particle = atom.getParticle(slotId);
+        final AsyncGroupByAtom.MapParticle particle = atom.getParticle(slotId);
         final CompiledFilter compiledFilter = atom.getCompiledFilter();
         final Function filter = atom.getFilter(slotId);
         final RecordSink mapSink = atom.getMapSink(slotId);
@@ -355,6 +362,12 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                 applyCompiledFilter(compiledFilter, atom.getBindVarMemory(), atom.getBindVarFunctions(), task);
             }
 
+            if (atom.isSharded()) {
+                particle.shard();
+            } else {
+                particle.reopen();
+            }
+
             record.setRowIndex(0);
             long baseRowId = record.getRowId();
 
@@ -363,7 +376,8 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             } else {
                 aggregateFilteredSharded(record, rows, baseRowId, functionUpdater, particle, mapSink);
             }
-            atom.tryShard(particle);
+
+            atom.requestSharding(particle);
         } finally {
             atom.release(slotId);
         }

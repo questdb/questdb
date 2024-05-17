@@ -34,6 +34,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class LongListTest {
+
     @Test
     public void testBinarySearchBlockFuzz() {
         final int N = 997; // prime
@@ -170,6 +171,30 @@ public class LongListTest {
                 blockStartValue = -l;
             }
             list.add(blockStartValue + l);
+        }
+
+        list.sort();
+
+        assertOrderedAsc(list);
+    }
+
+    @Test
+    public void testMergeSortStructuredSmallList() {
+        LongList list = new LongList();
+        for (int l = 0; l < LongSort.INSERTION_SORT_THRESHOLD - 1; l++) {
+            list.add(l);
+        }
+
+        list.sort();
+
+        assertOrderedAsc(list);
+    }
+
+    @Test
+    public void testMergeSortStructuredSmallListAllEqual() {
+        LongList list = new LongList();
+        for (int l = 0; l < LongSort.INSERTION_SORT_THRESHOLD - 1; l++) {
+            list.add(42);
         }
 
         list.sort();

@@ -89,6 +89,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String cairoAttachPartitionSuffix;
     private final CairoConfiguration cairoConfiguration = new PropCairoConfiguration();
     private final int cairoGroupByMergeShardQueueCapacity;
+    private final boolean cairoGroupByPresizeEnabled;
+    private final long cairoGroupByPresizeMaxHeapSize;
+    private final long cairoGroupByPresizeMaxSize;
     private final int cairoGroupByShardingThreshold;
     private final int cairoMaxCrashFiles;
     private final int cairoPageFrameReduceColumnListCapacity;
@@ -311,7 +314,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlSampleByDefaultAlignment;
     private final int sqlSampleByIndexSearchPageSize;
     private final int sqlSmallMapKeyCapacity;
-    private final int sqlSmallMapPageSize;
+    private final long sqlSmallMapPageSize;
     private final int sqlSortKeyMaxPages;
     private final long sqlSortKeyPageSize;
     private final int sqlSortLightValueMaxPages;
@@ -941,7 +944,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlJoinContextPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_JOIN_CONTEXT_POOL_CAPACITY, 64);
             this.sqlLexerPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_LEXER_POOL_CAPACITY, 2048);
             this.sqlSmallMapKeyCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 32);
-            this.sqlSmallMapPageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, 32 * 1024);
+            this.sqlSmallMapPageSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, 32 * 1024);
             this.sqlUnorderedMapMaxEntrySize = getInt(properties, env, PropertyKey.CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE, 32);
             this.sqlMapMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_MAP_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlMapMaxResizes = getIntSize(properties, env, PropertyKey.CAIRO_SQL_MAP_MAX_RESIZES, Integer.MAX_VALUE);
@@ -1261,6 +1264,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.cairoPageFrameReduceQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
             this.cairoGroupByMergeShardQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_MERGE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
             this.cairoGroupByShardingThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 100_000);
+            this.cairoGroupByPresizeEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_ENABLED, true);
+            this.cairoGroupByPresizeMaxSize = getLong(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_SIZE, 100_000_000);
+            this.cairoGroupByPresizeMaxHeapSize = getLong(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_HEAP_SIZE, 256 * Numbers.SIZE_1MB);
             this.cairoPageFrameReduceRowIdListCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_ROWID_LIST_CAPACITY, 256));
             this.cairoPageFrameReduceColumnListCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_COLUMN_LIST_CAPACITY, 16));
             final int defaultReduceShardCount = Math.min(sharedWorkerCount, 4);
@@ -2166,6 +2172,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getGroupByPresizeMaxHeapSize() {
+            return cairoGroupByPresizeMaxHeapSize;
+        }
+
+        @Override
+        public long getGroupByPresizeMaxSize() {
+            return cairoGroupByPresizeMaxSize;
+        }
+
+        @Override
         public int getGroupByShardingThreshold() {
             return cairoGroupByShardingThreshold;
         }
@@ -2606,7 +2622,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSqlSmallMapPageSize() {
+        public long getSqlSmallMapPageSize() {
             return sqlSmallMapPageSize;
         }
 
@@ -2882,6 +2898,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getWriterTickRowsCountMod() {
             return writerTickRowsCountMod;
+        }
+
+        @Override
+        public boolean isGroupByPresizeEnabled() {
+            return cairoGroupByPresizeEnabled;
         }
 
         @Override
