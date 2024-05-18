@@ -1360,8 +1360,6 @@ public class ExpressionParser {
             }
 
             if (shadowParseMismatchFirstPosition != -1) {
-                // todo (sivukhin): Can we add full query here? Or maybe some trace id?
-                // todo (sivukhin): Also, we can add link to the doc/migration guide
                 LOG.advisory()
                         .$("operator precedence compat mode: detected expression parsing behaviour change for query=[")
                         .$(lexer.getContent())
