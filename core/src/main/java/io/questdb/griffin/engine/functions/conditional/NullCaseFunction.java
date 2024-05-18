@@ -40,7 +40,7 @@ import org.jetbrains.annotations.Nullable;
 class NullCaseFunction implements CaseFunction {
     private final ObjList<Function> args;
 
-    public NullCaseFunction(CaseFunctionPicker picker, ObjList<Function> args) {
+    public NullCaseFunction(ObjList<Function> args) {
         this.args = args;
     }
 
@@ -51,174 +51,177 @@ class NullCaseFunction implements CaseFunction {
 
     @Override
     public int getArrayLength() {
-        return -1;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public BinarySequence getBin(Record rec) {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long getBinLen(Record rec) {
-        return -1L;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public boolean getBool(Record rec) {
-        return false;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public byte getByte(Record rec) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public char getChar(Record rec) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long getDate(Record rec) {
-        return 0L;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public double getDouble(Record rec) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public float getFloat(Record rec) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public byte getGeoByte(Record rec) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public int getGeoInt(Record rec) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long getGeoLong(Record rec) {
-        return 0L;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public short getGeoShort(Record rec) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public int getIPv4(Record rec) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public int getInt(Record rec) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long getLong(Record rec) {
-        return 0L;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long getLong128Hi(Record rec) {
-        return 0L;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long getLong128Lo(Record rec) {
-        return 0L;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void getLong256(Record rec, CharSink<?> sink) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public Long256 getLong256A(Record rec) {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public Long256 getLong256B(Record rec) {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public Record getRecord(Record rec) {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public RecordCursorFactory getRecordCursorFactory() {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public short getShort(Record rec) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void getStr(Record rec, Utf16Sink utf16Sink) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void getStr(Record rec, Utf16Sink sink, int arrayIndex) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public CharSequence getStrA(Record rec) {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public CharSequence getStrA(Record rec, int arrayIndex) {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public CharSequence getStrB(Record rec) {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public CharSequence getStrB(Record rec, int arrayIndex) {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public int getStrLen(Record rec) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public int getStrLen(Record rec, int arrayIndex) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public CharSequence getSymbol(Record rec) {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public CharSequence getSymbolB(Record rec) {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long getTimestamp(Record rec) {
-        return 0L;
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -228,20 +231,21 @@ class NullCaseFunction implements CaseFunction {
 
     @Override
     public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public @Nullable Utf8Sequence getVarcharA(Record rec) {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public @Nullable Utf8Sequence getVarcharB(Record rec) {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public int getVarcharSize(Record rec) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 }

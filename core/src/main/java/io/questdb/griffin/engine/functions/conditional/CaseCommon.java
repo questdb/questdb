@@ -272,7 +272,7 @@ public class CaseCommon {
         constructors.extendAndSet(UUID, (position, picker, args) -> new UuidCaseFunction(picker, args));
         constructors.extendAndSet(IPv4, (position, picker, args) -> new IPv4CaseFunction(picker, args));
         constructors.extendAndSet(VARCHAR, (position, picker, args) -> new VarcharCaseFunction(picker, args));
-        constructors.extendAndSet(NULL, (position, picker, args) -> new NullCaseFunction(picker, args));
+        constructors.extendAndSet(NULL, (position, picker, args) -> new NullCaseFunction(args));
         constructors.setPos(NULL + 1);
     }
 }
