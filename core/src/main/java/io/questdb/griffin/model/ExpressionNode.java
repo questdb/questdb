@@ -197,6 +197,7 @@ public class ExpressionNode implements Mutable, Sinkable {
 
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
+        // note: it's safe to take any registry (new or old) because we don't use precedence here
         OperatorRegistry registry = OperatorExpression.getRegistry();
         switch (paramCount) {
             case 0:

@@ -104,7 +104,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         final StringSink expression1 = new StringSink();
         final StringSink expression2 = new StringSink();
 
-        OperatorRegistry registry = OperatorExpression.getRegistry();
+        OperatorRegistry registry = OperatorExpression.chooseRegistry(configuration.getTempCairoSqlLegacyOperatorPrecedence());
         final boolean setOperation = registry.getOperatorType(name) == OperatorExpression.SET;
         final boolean operator = registry.isOperator(name);
 

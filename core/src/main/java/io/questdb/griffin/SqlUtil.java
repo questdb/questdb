@@ -907,6 +907,7 @@ public class SqlUtil {
     }
 
     static {
+        // note: it's safe to take any registry (new or old) because we don't use precedence here
         OperatorRegistry registry = OperatorExpression.getRegistry();
         for (int i = 0, n = registry.operators.size(); i < n; i++) {
             SqlUtil.disallowedAliases.add(registry.operators.getQuick(i).operator.token);

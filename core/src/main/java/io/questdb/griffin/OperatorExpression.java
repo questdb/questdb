@@ -24,54 +24,9 @@
 
 package io.questdb.griffin;
 
-import io.questdb.PropertyKey;
 import io.questdb.std.ObjList;
 
 public final class OperatorExpression {
-    public enum Operator {
-        UnaryMinus("-"),
-        UnaryComplement("~"),
-        UnarySetNegation("not"),
-        Dot("."),
-        DoubleColon("::"),
-        Multiplication("*"),
-        Division("/"),
-        Modulo("%"),
-        Plus("+"),
-        Minus("-"),
-        IpContainsStrictLeft("<<"),
-        IpContainsStrictRight(">>"),
-        IpContainsLeft("<<="),
-        IpContainsRight(">>="),
-        Concatenation("||"),
-        BitAnd("&"),
-        BitXor("^"),
-        BitOr("|"),
-        In("in"),
-        Between("between"),
-        Within("within"),
-        Less("<"),
-        LessOrEqual("<="),
-        Greater(">"),
-        GreaterOrEqual(">="),
-        Equal("="),
-        NotEqual("!="),
-        NotEqualSqlStyle("<>"),
-        LikeRegex("~"),
-        NotLikeRegex("!~"),
-        LikeSqlStyle("like"),
-        ILikeSqlStyle("ilike"),
-        BinaryNot("not"),
-        BinaryAnd("and"),
-        BinaryOr("or");
-
-        public final String token;
-
-        private Operator(String token) {
-            this.token = token;
-        }
-    }
-
     public static final int BINARY = 2;
     public static final int SET = 3;
     public static final int UNARY = 1;
@@ -121,7 +76,6 @@ public final class OperatorExpression {
                 add(new OperatorExpression(Operator.BinaryAnd, 11, true, BINARY, false));
                 add(new OperatorExpression(Operator.BinaryOr, 11, true, BINARY, false));
             }});
-
     private static final OperatorRegistry registry = new OperatorRegistry(
             new ObjList<OperatorExpression>() {{
                 add(new OperatorExpression(Operator.UnaryMinus, 3, false, UNARY));
@@ -167,19 +121,10 @@ public final class OperatorExpression {
                 add(new OperatorExpression(Operator.BinaryAnd, 15, true, BINARY, false));
                 add(new OperatorExpression(Operator.BinaryOr, 16, true, BINARY, false));
             }});
-
-    public static OperatorRegistry getRegistry() {
-        return registry;
-    }
-
-    public static OperatorRegistry getLegacyRegistry() {
-        return legacyRegistry;
-    }
-
     final boolean leftAssociative;
+    final OperatorExpression.Operator operator;
     final int precedence;
     final boolean symbol;
-    final OperatorExpression.Operator operator;
     final int type;
 
     private OperatorExpression(OperatorExpression.Operator operator, int precedence, boolean leftAssociative, int type, boolean symbol) {
@@ -198,7 +143,63 @@ public final class OperatorExpression {
         this.symbol = true;
     }
 
+    public static OperatorRegistry chooseRegistry(boolean cairoSqlLegacyOperatorPrecedence) {
+        return cairoSqlLegacyOperatorPrecedence ? legacyRegistry : registry;
+    }
+
+    public static OperatorRegistry getLegacyRegistry() {
+        return legacyRegistry;
+    }
+
+    public static OperatorRegistry getRegistry() {
+        return registry;
+    }
+
     public boolean greaterPrecedence(int otherPrecedence) {
         return (leftAssociative && precedence >= otherPrecedence) || (!leftAssociative && precedence > otherPrecedence);
+    }
+
+    public enum Operator {
+        UnaryMinus("-"),
+        UnaryComplement("~"),
+        UnarySetNegation("not"),
+        Dot("."),
+        DoubleColon("::"),
+        Multiplication("*"),
+        Division("/"),
+        Modulo("%"),
+        Plus("+"),
+        Minus("-"),
+        IpContainsStrictLeft("<<"),
+        IpContainsStrictRight(">>"),
+        IpContainsLeft("<<="),
+        IpContainsRight(">>="),
+        Concatenation("||"),
+        BitAnd("&"),
+        BitXor("^"),
+        BitOr("|"),
+        In("in"),
+        Between("between"),
+        Within("within"),
+        Less("<"),
+        LessOrEqual("<="),
+        Greater(">"),
+        GreaterOrEqual(">="),
+        Equal("="),
+        NotEqual("!="),
+        NotEqualSqlStyle("<>"),
+        LikeRegex("~"),
+        NotLikeRegex("!~"),
+        LikeSqlStyle("like"),
+        ILikeSqlStyle("ilike"),
+        BinaryNot("not"),
+        BinaryAnd("and"),
+        BinaryOr("or");
+
+        public final String token;
+
+        private Operator(String token) {
+            this.token = token;
+        }
     }
 }
