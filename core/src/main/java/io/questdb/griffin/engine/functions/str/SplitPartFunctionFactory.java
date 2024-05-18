@@ -38,7 +38,6 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.MutableUtf16Sink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf16Sink;
 
@@ -107,7 +106,13 @@ public class SplitPartFunctionFactory implements FunctionFactory {
 
         @Override
         public void getStr(Record rec, Utf16Sink utf16Sink) {
-            getStrWithoutClear(rec, utf16Sink);
+            CharSequence str = strFunc.getStrA(rec);
+            CharSequence delimiter = delimiterFunc.getStrA(rec);
+            int index = getIndex(rec);
+            if (str == null || delimiter == null || index == Numbers.INT_NULL) {
+                return;
+            }
+            splitToSink(utf16Sink, index, str, delimiter);
         }
 
         @Override
@@ -131,62 +136,62 @@ public class SplitPartFunctionFactory implements FunctionFactory {
             }
         }
 
-        private <S extends MutableUtf16Sink> S getStrWithClear(Record rec, S sink) {
+        private StringSink getStrWithClear(Record rec, StringSink sink) {
             sink.clear();
-            return getStrWithoutClear(rec, sink);
-        }
-
-        private <S extends Utf16Sink> S getStrWithoutClear(Record rec, S sink) {
             CharSequence str = strFunc.getStrA(rec);
             CharSequence delimiter = delimiterFunc.getStrA(rec);
             int index = getIndex(rec);
             if (str == null || delimiter == null || index == Numbers.INT_NULL) {
                 return null;
             }
-            if (index == 0) {
-                return sink;
-            }
-
-            int start;
-            int end;
-            if (index > 0) {
-                if (index == 1) {
-                    start = 0;
-                } else {
-                    start = Chars.indexOf(str, 0, str.length(), delimiter, index - 1);
-                    if (start == -1) {
-                        return sink;
-                    }
-                    start += delimiter.length();
-                }
-
-                end = Chars.indexOf(str, start, str.length(), delimiter);
-                if (end == -1) {
-                    end = str.length();
-                }
-            } else {    // if index is negative, returns index-from-last field
-                if (index == -1) {
-                    end = str.length();
-                } else {
-                    end = Chars.indexOf(str, 0, str.length(), delimiter, index + 1);
-                    if (end == -1) {
-                        return sink;
-                    }
-                }
-
-                start = Chars.indexOf(str, 0, end, delimiter, -1);
-                if (start == -1) {
-                    start = 0;
-                } else {
-                    start += delimiter.length();
-                }
-            }
-
-            sink.put(str, start, end);
+            splitToSink(sink, index, str, delimiter);
             return sink;
         }
 
         abstract int getIndex(Record rec);
+    }
+
+    private static void splitToSink(Utf16Sink sink, int index, CharSequence str, CharSequence delimiter) {
+        if (index == 0) {
+            return;
+        }
+
+        int start;
+        int end;
+        if (index > 0) {
+            if (index == 1) {
+                start = 0;
+            } else {
+                start = Chars.indexOf(str, 0, str.length(), delimiter, index - 1);
+                if (start == -1) {
+                    return;
+                }
+                start += delimiter.length();
+            }
+
+            end = Chars.indexOf(str, start, str.length(), delimiter);
+            if (end == -1) {
+                end = str.length();
+            }
+        } else {    // if index is negative, returns index-from-last field
+            if (index == -1) {
+                end = str.length();
+            } else {
+                end = Chars.indexOf(str, 0, str.length(), delimiter, index + 1);
+                if (end == -1) {
+                    return;
+                }
+            }
+
+            start = Chars.indexOf(str, 0, end, delimiter, -1);
+            if (start == -1) {
+                start = 0;
+            } else {
+                start += delimiter.length();
+            }
+        }
+
+        sink.put(str, start, end);
     }
 
     private static class SplitPartConstIndexFunction extends AbstractSplitPartFunction {

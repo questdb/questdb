@@ -39,7 +39,6 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.MutableUtf16Sink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.Nullable;
@@ -151,7 +150,7 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
         }
 
         @Nullable
-        private <S extends MutableUtf16Sink> S getStrWithClear(Record rec, S sink) {
+        private CharSequence getStrWithClear(Record rec, StringSink sink) {
             sink.clear();
             return getStrWithoutClear(rec, sink);
         }
