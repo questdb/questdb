@@ -162,10 +162,8 @@ public class DynamicTableReaderMetadata extends TableReaderMetadata implements C
         }
 
         while (true) {
-            long pTransitionIndex;
             try {
-                pTransitionIndex = createTransitionIndex(txnMetadataVersion);
-                if (pTransitionIndex < 0) {
+                if (!prepareTransition(txnMetadataVersion)) {
                     if (clock.getTicks() < deadline) {
                         return false;
                     }
@@ -178,12 +176,8 @@ public class DynamicTableReaderMetadata extends TableReaderMetadata implements C
                 continue;
             }
 
-            try {
-                applyTransitionIndex();
-                return true;
-            } finally {
-                TableUtils.freeTransitionIndex(pTransitionIndex);
-            }
+            applyTransition();
+            return true;
         }
     }
 

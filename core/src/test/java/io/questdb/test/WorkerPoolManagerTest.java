@@ -233,6 +233,9 @@ public class WorkerPoolManagerTest {
             }
 
             @Override
+            public PublicPassthroughConfiguration getPublicPassthroughConfiguration() { return null; }
+
+            @Override
             public LineUdpReceiverConfiguration getLineUdpReceiverConfiguration() {
                 return null;
             }

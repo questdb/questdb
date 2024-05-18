@@ -89,6 +89,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String cairoAttachPartitionSuffix;
     private final CairoConfiguration cairoConfiguration = new PropCairoConfiguration();
     private final int cairoGroupByMergeShardQueueCapacity;
+    private final boolean cairoGroupByPresizeEnabled;
+    private final long cairoGroupByPresizeMaxHeapSize;
+    private final long cairoGroupByPresizeMaxSize;
     private final int cairoGroupByShardingThreshold;
     private final int cairoMaxCrashFiles;
     private final int cairoPageFrameReduceColumnListCapacity;
@@ -227,8 +230,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean parallelIndexingEnabled;
     private final boolean pgEnabled;
     private final PGWireConfiguration pgWireConfiguration = new PropPGWireConfiguration();
+    private final String posthogApiKey;
+    private final boolean posthogEnabled;
     private final PropPGWireDispatcherConfiguration propPGWireDispatcherConfiguration = new PropPGWireDispatcherConfiguration();
     private final String publicDirectory;
+    private final PublicPassthroughConfiguration publicPassthroughConfiguration = new PropPublicPassthroughConfiguration();
     private final long queryTimeout;
     private final int readerPoolMaxSegments;
     private final int repeatMigrationFromVersion;
@@ -311,7 +317,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlSampleByDefaultAlignment;
     private final int sqlSampleByIndexSearchPageSize;
     private final int sqlSmallMapKeyCapacity;
-    private final int sqlSmallMapPageSize;
+    private final long sqlSmallMapPageSize;
     private final int sqlSortKeyMaxPages;
     private final long sqlSortKeyPageSize;
     private final int sqlSortLightValueMaxPages;
@@ -347,6 +353,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final TextConfiguration textConfiguration = new PropTextConfiguration();
     private final int textLexerStringPoolCapacity;
     private final int timestampAdapterPoolCapacity;
+    private final boolean useLegacyStringDefault;
     private final int utf8SinkSize;
     private final PropertyValidator validator;
     private final int vectorAggregateQueueCapacity;
@@ -503,11 +510,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long pgWorkerNapThreshold;
     private long pgWorkerSleepThreshold;
     private long pgWorkerYieldThreshold;
-    private boolean stringAsTagSupported;
+    private final long sequencerCheckInterval;
     private boolean stringToCharCastAllowed;
-    private boolean symbolAsFieldSupported;
     private long symbolCacheWaitUsBeforeReload;
-    private boolean useLegacyStringDefault;
 
     public PropServerConfiguration(
             String root,
@@ -606,6 +611,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.walApplyLookAheadTransactionCount = getInt(properties, env, PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 20);
         this.tableTypeConversionEnabled = getBoolean(properties, env, PropertyKey.TABLE_TYPE_CONVERSION_ENABLED, true);
         this.tempRenamePendingTablePrefix = getString(properties, env, PropertyKey.CAIRO_WAL_TEMP_PENDING_RENAME_TABLE_PREFIX, "temp_5822f658-31f6-11ee-be56-0242ac120002");
+        this.sequencerCheckInterval = getLong(properties, env, PropertyKey.CAIRO_WAL_SEQUENCER_CHECK_INTERVAL, 10_000);
         if (tempRenamePendingTablePrefix.length() > maxFileNameLength - 4) {
             throw CairoException.critical(0).put("Temp pending table prefix is too long [")
                     .put(PropertyKey.CAIRO_MAX_FILE_NAME_LENGTH.toString()).put("=")
@@ -943,7 +949,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlJoinContextPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_JOIN_CONTEXT_POOL_CAPACITY, 64);
             this.sqlLexerPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_LEXER_POOL_CAPACITY, 2048);
             this.sqlSmallMapKeyCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 32);
-            this.sqlSmallMapPageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, 32 * 1024);
+            this.sqlSmallMapPageSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, 32 * 1024);
             this.sqlUnorderedMapMaxEntrySize = getInt(properties, env, PropertyKey.CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE, 32);
             this.sqlMapMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_MAP_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlMapMaxResizes = getIntSize(properties, env, PropertyKey.CAIRO_SQL_MAP_MAX_RESIZES, Integer.MAX_VALUE);
@@ -1228,12 +1234,11 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpAuthDB = null;
             }
 
+            this.useLegacyStringDefault = getBoolean(properties, env, PropertyKey.CAIRO_LEGACY_STRING_COLUMN_TYPE_DEFAULT, false);
             if (lineTcpEnabled || (lineHttpEnabled && httpServerEnabled)) {
                 LineTimestampAdapter timestampAdapter = getLineTimestampAdaptor(properties, env, PropertyKey.LINE_TCP_TIMESTAMP);
                 this.lineTcpTimestampAdapter = new LineTcpTimestampAdapter(timestampAdapter);
                 this.stringToCharCastAllowed = getBoolean(properties, env, PropertyKey.LINE_TCP_UNDOCUMENTED_STRING_TO_CHAR_CAST_ALLOWED, false);
-                this.symbolAsFieldSupported = getBoolean(properties, env, PropertyKey.LINE_TCP_UNDOCUMENTED_SYMBOL_AS_FIELD_SUPPORTED, false);
-                this.stringAsTagSupported = getBoolean(properties, env, PropertyKey.LINE_TCP_UNDOCUMENTED_STRING_AS_TAG_SUPPORTED, false);
                 String floatDefaultColumnTypeName = getString(properties, env, PropertyKey.LINE_FLOAT_DEFAULT_COLUMN_TYPE, ColumnType.nameOf(ColumnType.DOUBLE));
                 this.floatDefaultColumnType = ColumnType.tagOf(floatDefaultColumnTypeName);
                 if (floatDefaultColumnType != ColumnType.DOUBLE && floatDefaultColumnType != ColumnType.FLOAT) {
@@ -1246,7 +1251,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                     log.info().$("invalid default column type for integer ").$(integerDefaultColumnTypeName).$(", will use LONG").$();
                     this.integerDefaultColumnType = ColumnType.LONG;
                 }
-                this.useLegacyStringDefault = getBoolean(properties, env, PropertyKey.LINE_USE_LEGACY_STRING_DEFAULT, true);
             }
 
             this.ilpAutoCreateNewColumns = getBoolean(properties, env, PropertyKey.LINE_AUTO_CREATE_NEW_COLUMNS, true);
@@ -1265,6 +1269,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.cairoPageFrameReduceQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
             this.cairoGroupByMergeShardQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_MERGE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
             this.cairoGroupByShardingThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 100_000);
+            this.cairoGroupByPresizeEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_ENABLED, true);
+            this.cairoGroupByPresizeMaxSize = getLong(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_SIZE, 100_000_000);
+            this.cairoGroupByPresizeMaxHeapSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_HEAP_SIZE, Numbers.SIZE_1GB);
             this.cairoPageFrameReduceRowIdListCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_ROWID_LIST_CAPACITY, 256));
             this.cairoPageFrameReduceColumnListCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_COLUMN_LIST_CAPACITY, 16));
             final int defaultReduceShardCount = Math.min(sharedWorkerCount, 4);
@@ -1287,6 +1294,9 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
         this.allowTableRegistrySharedWrite = getBoolean(properties, env, PropertyKey.DEBUG_ALLOW_TABLE_REGISTRY_SHARED_WRITE, false);
         this.enableTestFactories = getBoolean(properties, env, PropertyKey.DEBUG_ENABLE_TEST_FACTORIES, false);
+
+        this.posthogEnabled = getBoolean(properties, env, PropertyKey.POSTHOG_ENABLED, false);
+        this.posthogApiKey = getString(properties, env, PropertyKey.POSTHOG_API_KEY, null);
     }
 
     public static String rootSubdir(CharSequence dbRoot, CharSequence subdir) {
@@ -1355,6 +1365,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     @Override
     public PGWireConfiguration getPGWireConfiguration() {
         return pgWireConfiguration;
+    }
+
+    @Override
+    public PublicPassthroughConfiguration getPublicPassthroughConfiguration() {
+        return publicPassthroughConfiguration;
     }
 
     @Override
@@ -2170,6 +2185,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getGroupByPresizeMaxHeapSize() {
+            return cairoGroupByPresizeMaxHeapSize;
+        }
+
+        @Override
+        public long getGroupByPresizeMaxSize() {
+            return cairoGroupByPresizeMaxSize;
+        }
+
+        @Override
         public int getGroupByShardingThreshold() {
             return cairoGroupByShardingThreshold;
         }
@@ -2610,7 +2635,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSqlSmallMapPageSize() {
+        public long getSqlSmallMapPageSize() {
             return sqlSmallMapPageSize;
         }
 
@@ -2804,6 +2829,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getSequencerCheckInterval() {
+            return sequencerCheckInterval;
+        }
+
+        @Override
         public int getWalPurgeWaitBeforeDelete() {
             return walPurgeWaitBeforeDelete;
         }
@@ -2886,6 +2916,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getWriterTickRowsCountMod() {
             return writerTickRowsCountMod;
+        }
+
+        @Override
+        public boolean isGroupByPresizeEnabled() {
+            return cairoGroupByPresizeEnabled;
         }
 
         @Override
@@ -3517,18 +3552,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean isStringAsTagSupported() {
-            return stringAsTagSupported;
-        }
-
-        @Override
         public boolean isStringToCharCastAllowed() {
             return stringToCharCastAllowed;
-        }
-
-        @Override
-        public boolean isSymbolAsFieldSupported() {
-            return symbolAsFieldSupported;
         }
 
         @Override
@@ -3719,18 +3744,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean isStringAsTagSupported() {
-            return stringAsTagSupported;
-        }
-
-        @Override
         public boolean isStringToCharCastAllowed() {
             return stringToCharCastAllowed;
-        }
-
-        @Override
-        public boolean isSymbolAsFieldSupported() {
-            return symbolAsFieldSupported;
         }
 
         @Override
@@ -4269,6 +4284,23 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
+    class PropPublicPassthroughConfiguration implements PublicPassthroughConfiguration {
+        @Override
+        public String getPosthogApiKey() {
+            return posthogApiKey;
+        }
+
+        @Override
+        public boolean isPosthogEnabled() {
+            return posthogEnabled;
+        }
+
+        public void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
+            settings.put(PropertyKey.POSTHOG_ENABLED.getPropertyPath(), JsonPropertyValueFormatter.bool(isPosthogEnabled()));
+            settings.put(PropertyKey.POSTHOG_API_KEY.getPropertyPath(), str(getPosthogApiKey()));
+        }
+    }
+
     private class PropSqlExecutionCircuitBreakerConfiguration implements SqlExecutionCircuitBreakerConfiguration {
 
         @Override
@@ -4440,6 +4472,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getUtf8SinkSize() {
             return utf8SinkSize;
+        }
+
+        @Override
+        public boolean isUseLegacyStringDefault() {
+            return useLegacyStringDefault;
         }
     }
 

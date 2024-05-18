@@ -48,11 +48,7 @@ public interface LineHttpProcessorConfiguration {
 
     boolean isEnabled();
 
-    boolean isStringAsTagSupported();
-
     boolean isStringToCharCastAllowed();
-
-    boolean isSymbolAsFieldSupported();
 
     boolean isUseLegacyStringDefault();
 }

@@ -5629,19 +5629,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private Record.CharSequenceFunction validateSubQueryColumnAndGetGetter(IntrinsicModel intrinsicModel, RecordMetadata metadata) throws SqlException {
         int columnType = metadata.getColumnType(0);
-        if (!ColumnType.isSymbolOrString(columnType)) {
-            assert intrinsicModel.keySubQuery.getColumns() != null;
-            assert intrinsicModel.keySubQuery.getColumns().size() > 0;
-
-            throw SqlException
-                    .position(intrinsicModel.keySubQuery.getColumns().getQuick(0).getAst().position)
-                    .put("unsupported column type: ")
-                    .put(metadata.getColumnName(0))
-                    .put(": ")
-                    .put(ColumnType.nameOf(columnType));
+        switch (columnType) {
+            case ColumnType.STRING:
+                return Record.GET_STR;
+            case ColumnType.SYMBOL:
+                return Record.GET_SYM;
+            case ColumnType.VARCHAR:
+                return Record.GET_VARCHAR;
+            default:
+                assert intrinsicModel.keySubQuery.getColumns() != null;
+                assert intrinsicModel.keySubQuery.getColumns().size() > 0;
+                throw SqlException
+                        .position(intrinsicModel.keySubQuery.getColumns().getQuick(0).getAst().position)
+                        .put("unsupported column type: ")
+                        .put(metadata.getColumnName(0))
+                        .put(": ")
+                        .put(ColumnType.nameOf(columnType));
         }
-
-        return ColumnType.isString(columnType) ? Record.GET_STR : Record.GET_SYM;
     }
 
     // used in tests

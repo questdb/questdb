@@ -96,6 +96,9 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_PARALLEL_GROUPBY_ENABLED("cairo.sql.parallel.groupby.enabled"),
     CAIRO_SQL_PARALLEL_GROUPBY_MERGE_QUEUE_CAPACITY("cairo.sql.parallel.groupby.merge.shard.queue.capacity"),
     CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD("cairo.sql.parallel.groupby.sharding.threshold"),
+    CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_ENABLED("cairo.sql.parallel.groupby.presize.enabled"),
+    CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_SIZE("cairo.sql.parallel.groupby.presize.max.size"),
+    CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_HEAP_SIZE("cairo.sql.parallel.groupby.presize.max.heap.size"),
     CAIRO_PAGE_FRAME_SHARD_COUNT("cairo.page.frame.shard.count"),
     CAIRO_PAGE_FRAME_TASK_POOL_CAPACITY("cairo.page.frame.task.pool.capacity"),
     CAIRO_SQL_JOIN_METADATA_PAGE_SIZE("cairo.sql.join.metadata.page.size"),
@@ -200,6 +203,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_QUERY_CACHE_EVENT_QUEUE_CAPACITY("cairo.query.cache.event.queue.capacity"),
     CAIRO_IO_URING_ENABLED("cairo.iouring.enabled"),
     CAIRO_MAX_CRASH_FILES("cairo.max.crash.files"),
+    CAIRO_LEGACY_STRING_COLUMN_TYPE_DEFAULT("cairo.legacy.string.column.type.default"),
     CIRCUIT_BREAKER_THROTTLE("circuit.breaker.throttle"),
     CIRCUIT_BREAKER_BUFFER_SIZE("circuit.breaker.buffer.size"),
     CONFIG_VALIDATION_STRICT("config.validation.strict"),
@@ -345,7 +349,6 @@ public enum PropertyKey implements ConfigPropertyKey {
     LINE_TCP_UNDOCUMENTED_STRING_AS_TAG_SUPPORTED("line.tcp.undocumented.string.as.tag.supported"),
     LINE_FLOAT_DEFAULT_COLUMN_TYPE("line.float.default.column.type"),
     LINE_INTEGER_DEFAULT_COLUMN_TYPE("line.integer.default.column.type"),
-    LINE_USE_LEGACY_STRING_DEFAULT("line.use.legacy.string.default"),
     LINE_TCP_NET_IO_QUEUE_CAPACITY("line.tcp.net.io.queue.capacity"),
     LINE_TCP_IO_AGGRESSIVE_RECV("line.tcp.io.aggressive.recv"),
     LINE_HTTP_HEADER_MAX_SIZE("line.http.header.max.size"),
@@ -431,6 +434,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_WAL_SEGMENT_ROLLOVER_SIZE("cairo.wal.segment.rollover.size"),
     CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE("cairo.wal.writer.data.append.page.size"),
     CAIRO_WAL_WRITER_EVENT_APPEND_PAGE_SIZE("cairo.wal.writer.event.append.page.size"),
+    CAIRO_WAL_SEQUENCER_CHECK_INTERVAL("cairo.wal.sequencer.check.interval"),
     CAIRO_SYSTEM_WAL_WRITER_DATA_APPEND_PAGE_SIZE("cairo.system.wal.writer.data.append.page.size"),
     CAIRO_SYSTEM_WAL_WRITER_EVENT_APPEND_PAGE_SIZE("cairo.system.wal.writer.event.append.page.size"),
     WAL_APPLY_WORKER_COUNT("wal.apply.worker.count"),
@@ -466,7 +470,11 @@ public enum PropertyKey implements ConfigPropertyKey {
     DEBUG_ENABLE_TEST_FACTORIES("debug.enable.test.factories", false, true),
     DEBUG_CAIRO_ALLOW_MIXED_IO("debug.cairo.allow.mixed.io", false, true),
     DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE("debug.cairo.o3.column.memory.size", false, true),
-    CAIRO_DEFAULT_SEQ_PART_TXN_COUNT("cairo.default.sequencer.part.txn.count");
+    CAIRO_DEFAULT_SEQ_PART_TXN_COUNT("cairo.default.sequencer.part.txn.count"),
+    POSTHOG_API_KEY("posthog.api.key"),
+    POSTHOG_ENABLED("posthog.enabled");
+
+
 
     private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;

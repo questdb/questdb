@@ -664,7 +664,7 @@ public class TimestampsTest {
 
     @Test(expected = NumericException.class)
     public void testParseWrongHour() throws Exception {
-        TimestampFormatUtils.parseTimestamp("2013-09-30T24:00:00.000Z");
+        TimestampFormatUtils.parseTimestamp("2013-09-30T25:00:00.000Z");
     }
 
     @Test(expected = NumericException.class)

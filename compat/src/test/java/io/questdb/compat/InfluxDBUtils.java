@@ -43,7 +43,9 @@ public class InfluxDBUtils {
             Assert.fail();
         } catch (InfluxDBException e) {
             for (String error : errors) {
-                Assert.assertTrue(Chars.contains(e.getMessage(), error));
+                if (!Chars.contains(e.getMessage(), error)) {
+                    Assert.fail("Expected error message to contain [" + error + "] but got [" + e.getMessage() + "]");
+                }
             }
         }
         points.clear();
