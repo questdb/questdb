@@ -129,4 +129,9 @@ public class DefaultTextConfiguration implements TextConfiguration {
     public int getUtf8SinkSize() {
         return 4096;
     }
+
+    @Override
+    public boolean isUseLegacyStringDefault() {
+        return false;
+    }
 }

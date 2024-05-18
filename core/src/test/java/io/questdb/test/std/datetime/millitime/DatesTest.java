@@ -336,7 +336,7 @@ public class DatesTest {
 
     @Test(expected = NumericException.class)
     public void testParseWrongHour() throws Exception {
-        DateFormatUtils.parseUTCDate("2013-09-30T24:00:00.000Z");
+        DateFormatUtils.parseUTCDate("2013-09-30T25:00:00.000Z");
     }
 
     @Test(expected = NumericException.class)

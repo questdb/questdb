@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastDoubleToFloatFunctionFactory implements FunctionFactory {
@@ -50,7 +51,8 @@ public class CastDoubleToFloatFunctionFactory implements FunctionFactory {
 
         @Override
         public float getFloat(Record rec) {
-            return (float) arg.getDouble(rec);
+            double value = arg.getDouble(rec);
+            return Numbers.isNull(value) || value > Float.MAX_VALUE || value < -Float.MAX_VALUE ? Float.NaN : (float) value;
         }
     }
 }
