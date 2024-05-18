@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.model;
 
-import io.questdb.PropertyKey;
 import io.questdb.griffin.OperatorExpression;
 import io.questdb.griffin.OperatorRegistry;
 import io.questdb.std.*;

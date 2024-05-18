@@ -24,7 +24,6 @@
 
 package io.questdb.griffin;
 
-import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;

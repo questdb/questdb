@@ -198,7 +198,7 @@ public final class OperatorExpression {
 
         public final String token;
 
-        private Operator(String token) {
+        Operator(String token) {
             this.token = token;
         }
     }

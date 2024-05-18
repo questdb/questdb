@@ -30,7 +30,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 
-import static io.questdb.griffin.OperatorExpression.*;
+import static io.questdb.griffin.OperatorExpression.UNARY;
 
 public class ExpressionParser {
     private static final int BRANCH_BETWEEN_END = 14;
