@@ -73,7 +73,7 @@ public class SecurityTest extends AbstractCairoTest {
             }
 
             @Override
-            public int getSqlSmallMapPageSize() {
+            public long getSqlSmallMapPageSize() {
                 return 64;
             }
 
