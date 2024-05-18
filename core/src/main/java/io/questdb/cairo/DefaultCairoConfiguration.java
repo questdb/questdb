@@ -827,11 +827,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public boolean getSqlOperatorPrecedenceCompatMode() {
-        return false;
-    }
-
-    @Override
     public int getSqlWindowTreeKeyPageSize() {
         return 4 * 1024;
     }
@@ -879,6 +874,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public @NotNull TelemetryConfiguration getTelemetryConfiguration() {
         return telemetryConfiguration;
+    }
+
+    @Override
+    public boolean getTempCairoSqlLegacyOperatorPrecedence() {
+        return false;
     }
 
     @Override

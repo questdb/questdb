@@ -28,20 +28,21 @@ import io.questdb.std.LowerCaseAsciiCharSequenceObjHashMap;
 import io.questdb.std.ObjList;
 
 public class OperatorRegistry {
-    public final OperatorExpression unaryMinus;
-    public final OperatorExpression unaryComplement;
-    public final OperatorExpression setOperationNegation;
-    public final OperatorExpression dot;
-    public final ObjList<OperatorExpression> operators;
     public final LowerCaseAsciiCharSequenceObjHashMap<OperatorExpression> map;
+    public final ObjList<OperatorExpression> operators;
+    public OperatorExpression dot;
+    public OperatorExpression unaryComplement;
+    public OperatorExpression unaryMinus;
+    public OperatorExpression unarySetNegation;
 
     public OperatorRegistry(ObjList<OperatorExpression> operators) {
         this.map = new LowerCaseAsciiCharSequenceObjHashMap<OperatorExpression>();
         this.operators = new ObjList<OperatorExpression>();
-        OperatorExpression dot = null, unaryMinus = null, unaryComplement = null, unarySetNegation = null;
         for (int i = 0, k = operators.size(); i < k; i++) {
             OperatorExpression op = operators.getQuick(i);
             switch (op.operator) {
+                // note, that we want to skip (so use continue instead of break) only unary operators because their token clashes with binary operators
+                // for binary operators (like dot) - we don't want to skip them
                 case UnaryMinus:
                     unaryMinus = op;
                     continue;
@@ -51,24 +52,19 @@ public class OperatorRegistry {
                 case UnarySetNegation:
                     unarySetNegation = op;
                     continue;
+                case Dot:
+                    dot = op;
+                    break;
             }
             assert !map.contains(op.operator.token) : "unexpected operator conflict";
             map.put(op.operator.token, op);
             this.operators.add(op);
-            if (op.operator == OperatorExpression.Operator.Dot) {
-                dot = op;
-            }
         }
 
         assert dot != null : "dot operator ('.') must be present in operators list";
         assert unaryMinus != null : "unary minus operator ('-') must be present in operators list";
         assert unaryComplement != null : "unary complement operator ('~') must be present in operators list";
         assert unarySetNegation != null : "unary set negation operator (e.g. 'not within') must be present in operators list";
-
-        this.dot = dot;
-        this.unaryMinus = unaryMinus;
-        this.unaryComplement = unaryComplement;
-        this.setOperationNegation = unarySetNegation;
     }
 
     public int getOperatorType(CharSequence name) {
@@ -79,13 +75,17 @@ public class OperatorRegistry {
         return 0;
     }
 
+    public boolean isOperator(CharSequence name) {
+        return map.contains(name);
+    }
+
     public OperatorExpression tryGetOperator(OperatorExpression.Operator operator) {
         if (unaryMinus.operator == operator) {
             return unaryMinus;
         } else if (unaryComplement.operator == operator) {
             return unaryComplement;
-        } else if (setOperationNegation.operator == operator) {
-            return setOperationNegation;
+        } else if (unarySetNegation.operator == operator) {
+            return unarySetNegation;
         }
         return map.get(operator.token);
     }
@@ -102,9 +102,5 @@ public class OperatorRegistry {
             return op;
         }
         return null;
-    }
-
-    public boolean isOperator(CharSequence name) {
-        return map.keyIndex(name) < 0;
     }
 }

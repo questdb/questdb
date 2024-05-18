@@ -24,14 +24,13 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.PropertyKey;
-import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.Rnd;
-import io.questdb.test.AbstractBootstrapTest;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.IOException;
@@ -39,7 +38,8 @@ import java.util.*;
 import java.util.function.BiFunction;
 import java.util.stream.Collectors;
 
-public class ExpressionParserFuzzTest extends AbstractBootstrapTest {
+public class ExpressionParserFuzzTest extends AbstractCairoTest {
+    private static final Log LOG = LogFactory.getLog(ExpressionParserFuzzTest.class);
     // fixed operators with precedence (we better to fix this independently of precedence in OperatorExpression in order to test fresh implementation against fixed ordering)
     // syntax like ${operator}'${arity} used for disambiguation (e.g. unary/binary minus)
     public static String[][] operators = {
@@ -63,26 +63,42 @@ public class ExpressionParserFuzzTest extends AbstractBootstrapTest {
 
     @Test
     public void fuzzTestValidExpressions() throws Exception {
-        createDummyConfiguration(PropertyKey.TEMP_CAIRO_SQL_OPERATOR_PRECEDENCE + "=true");
-        try (final ServerMain serverMain = ServerMain.createWithoutWalApplyJob(root, new HashMap<>())) {
-            Assert.assertTrue(serverMain.getConfiguration().getCairoConfiguration().getSqlOperatorPrecedenceCompatMode());
-            serverMain.start();
-
-            final CairoEngine engine = serverMain.getEngine();
-            Rnd rnd = new Rnd();
-            ArrayList<ExpressionElement> operators = new ArrayList<>();
-            operators.addAll(numberOperators());
-            operators.addAll(logicalOperators());
-            operators.addAll(ipOperators());
-            operators.addAll(stringOperators());
-            operators.addAll(simpleComparisonOperators());
-            operators.addAll(complexComparisonOperators());
-            for (int length = 2; length <= 20; length++) {
-                fuzzTestValidExpressionAgainstOperators(rnd, engine, operators, length, length * 1024);
-            }
-        }
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        ArrayList<ExpressionElement> operators = new ArrayList<>();
+        operators.addAll(numberOperators());
+        operators.addAll(logicalOperators());
+        operators.addAll(ipOperators());
+        operators.addAll(stringOperators());
+        operators.addAll(simpleComparisonOperators());
+        operators.addAll(complexComparisonOperators());
+        final int length = rnd.nextInt(20) + 2;
+        fuzzTestValidExpressionAgainstOperators(rnd, engine, operators, length, 1024);
     }
 
+    private ArrayList<ExpressionElement> complexComparisonOperators() {
+        ArrayList<ExpressionElement> operators = new ArrayList<>();
+        operators.add(ExpressionElement.operator("in", 2, false, true));
+        operators.add(ExpressionElement.operator("not in", 2, false, true).withWrap(
+                (c, x) -> c == ExpressionContext.Query ?
+                        String.format("%s not in %s", x.get(0), x.get(1)) :
+                        String.format("not (%s in %s)", x.get(0), x.get(1))
+        ));
+        operators.add(ExpressionElement.operator("within", 2, false, true));
+        operators.add(ExpressionElement.operator("not within", 2, false, true).withWrap(
+                (c, x) -> c == ExpressionContext.Query ?
+                        String.format("%s not within %s", x.get(0), x.get(1)) :
+                        String.format("not (%s within %s)", x.get(0), x.get(1))
+        ));
+        operators.add(ExpressionElement.operator("between", 3, false, true).withWrap(
+                (c, x) -> String.format("%s between %s and %s", x.get(0), x.get(1), x.get(2))
+        ));
+        operators.add(ExpressionElement.operator("not between", 3, false, true).withWrap(
+                (c, x) -> c == ExpressionContext.Query ?
+                        String.format("%s not between %s and %s", x.get(0), x.get(1), x.get(2)) :
+                        String.format("not (%s between %s and %s)", x.get(0), x.get(1), x.get(2))
+        ));
+        return operators;
+    }
 
     /**
      * The idea of the fuzz test is the following:
@@ -133,6 +149,145 @@ public class ExpressionParserFuzzTest extends AbstractBootstrapTest {
                 throw new RuntimeException(String.format("failed for expression `%s` (postfix `%s`)", infix, expressions.stream().map(x -> x.token).collect(Collectors.toList())), e);
             }
         }
+    }
+
+    private ArrayList<ExpressionElement> ipOperators() {
+        ArrayList<ExpressionElement> operators = new ArrayList<>();
+        operators.add(ExpressionElement.operator("<<", 2, true, false));
+        operators.add(ExpressionElement.operator(">>", 2, true, false));
+        operators.add(ExpressionElement.operator("<<=", 2, true, false));
+        operators.add(ExpressionElement.operator(">>=", 2, true, false));
+        return operators;
+    }
+
+    private ArrayList<ExpressionElement> logicalOperators() {
+        ArrayList<ExpressionElement> operators = new ArrayList<>();
+        operators.add(ExpressionElement.operator("not", 1, true, false));
+        operators.add(ExpressionElement.operator("and", 2, true, false));
+        operators.add(ExpressionElement.operator("or", 2, true, false));
+        return operators;
+    }
+
+    private ArrayList<ExpressionElement> numberOperators() {
+        ArrayList<ExpressionElement> operators = new ArrayList<>();
+        operators.add(ExpressionElement.operator("-", 1, false, false));
+        operators.add(ExpressionElement.operator("~", 1, false, false));
+
+        operators.add(ExpressionElement.operator("*", 2, true, false));
+        operators.add(ExpressionElement.operator("/", 2, true, false));
+        operators.add(ExpressionElement.operator("%", 2, true, false));
+
+        operators.add(ExpressionElement.operator("+", 2, true, false));
+        operators.add(ExpressionElement.operator("-", 2, true, false));
+
+        operators.add(ExpressionElement.operator("&", 2, true, false));
+        operators.add(ExpressionElement.operator("^", 2, true, false));
+        operators.add(ExpressionElement.operator("|", 2, true, false));
+        return operators;
+    }
+
+    private ExpressionElement randomBoolLiteral(Rnd rnd) {
+        return ExpressionElement.literal(rnd.nextBoolean() ? "true" : "false");
+    }
+
+    /**
+     * Algorithm, which generates random expression in postfix notation using following approach:
+     * First, it generates N random literals;
+     * Then, it generates random operators such that sum(arity_i - 1) == N (so we can arrange these operators in single expression tree over N literals);
+     * After that, we shuffle all literals and operators in random order;
+     * Random order may not be correct postfix order, but it can be proven that exactly one cyclic shift will form valid postfix notation. So, after shuffle we just need to find this position and rotate expression array.
+     * (this fact is an easy extension of similar statement about bracket (+1/-1) sequences - the only difference here is that we can have arbitrary negative numbers - not only -1)
+     */
+    private ArrayList<ExpressionElement> randomExpression(
+            Rnd rnd,
+            List<ExpressionElement> allowedOperators,
+            int literalsCount
+    ) {
+        ArrayList<ExpressionElement> elements = new ArrayList<>();
+        for (int i = 0; i < literalsCount; i++) {
+            elements.add(randomLiteral(rnd));
+        }
+        int roots = literalsCount;
+
+        int applicableOperators = allowedOperators.size();
+        allowedOperators.sort(Comparator.comparingInt(a -> a.arity));
+        while (roots > 1) {
+            while (allowedOperators.get(applicableOperators - 1).arity > roots) {
+                applicableOperators--;
+            }
+            int operatorIndex = rnd.nextInt(applicableOperators);
+            elements.add(allowedOperators.get(operatorIndex));
+            roots -= allowedOperators.get(operatorIndex).arity - 1;
+        }
+        rnd.shuffle(elements);
+        int balance = 0, minBalance = 0, minBalanceIndex = 0;
+        for (int i = 0, n = elements.size(); i < n; i++) {
+            balance += 1 - elements.get(i).arity;
+            if (balance <= minBalance) {
+                minBalance = balance;
+                minBalanceIndex = i + 1;
+            }
+        }
+        Collections.rotate(elements, elements.size() - minBalanceIndex);
+        return elements;
+    }
+
+    private ExpressionElement randomFloatLiteral(Rnd rnd) {
+        return ExpressionElement.literal(String.valueOf(rnd.nextFloat() * Math.exp(rnd.nextInt(100))));
+    }
+
+    private ExpressionElement randomLiteral(Rnd rnd) {
+        int choice = rnd.nextInt(4);
+        switch (choice) {
+            case 0:
+                return randomNumberLiteral(rnd);
+            case 1:
+                return randomStringLiteral(rnd);
+            case 2:
+                return randomFloatLiteral(rnd);
+            default:
+                return randomBoolLiteral(rnd);
+        }
+    }
+
+    private ExpressionElement randomNumberLiteral(Rnd rnd) {
+        return ExpressionElement.literal(String.valueOf(rnd.nextPositiveInt()));
+    }
+
+    private ExpressionElement randomStringLiteral(Rnd rnd) {
+        return ExpressionElement.literal('\'' + rnd.nextString(rnd.nextInt(32) + 1) + '\'');
+    }
+
+    private ArrayList<ExpressionElement> simpleComparisonOperators() {
+        ArrayList<ExpressionElement> operators = new ArrayList<>();
+        operators.add(ExpressionElement.operator("||", 2, true, false));
+        operators.add(ExpressionElement.operator("<", 2, true, false));
+        operators.add(ExpressionElement.operator("<=", 2, true, false));
+        operators.add(ExpressionElement.operator(">", 2, true, false));
+        operators.add(ExpressionElement.operator(">=", 2, true, false));
+
+        operators.add(ExpressionElement.operator("=", 2, true, false));
+        operators.add(ExpressionElement.operator("!=", 2, true, false));
+        operators.add(ExpressionElement.operator("<>", 2, true, false));
+
+        operators.add(ExpressionElement.operator("~", 2, true, false));
+        operators.add(ExpressionElement.operator("!~", 2, true, false));
+        operators.add(ExpressionElement.operator("like", 2, true, false));
+        operators.add(ExpressionElement.operator("ilike", 2, true, false));
+
+        operators.add(ExpressionElement.operator("is null", 1, false, false).withWrap(
+                (c, x) -> c == ExpressionContext.Query ? String.format("%s is null", x.get(0)) : String.format("%s = (null)", x.get(0))
+        ));
+        operators.add(ExpressionElement.operator("is not null", 1, false, false).withWrap(
+                (c, x) -> c == ExpressionContext.Query ? String.format("%s is not null", x.get(0)) : String.format("%s != (null)", x.get(0))
+        ));
+        return operators;
+    }
+
+    private ArrayList<ExpressionElement> stringOperators() {
+        ArrayList<ExpressionElement> operators = new ArrayList<>();
+        operators.add(ExpressionElement.operator("||", 2, true, false));
+        return operators;
     }
 
     private String tryPostfixToInfix(ExpressionContext context, List<ExpressionElement> expression, boolean noAmbiguities) {
@@ -188,183 +343,24 @@ public class ExpressionParserFuzzTest extends AbstractBootstrapTest {
         return representations.peek();
     }
 
-    /**
-     * Algorithm, which generates random expression in postfix notation using following approach:
-     * First, it generates N random literals;
-     * Then, it generates random operators such that sum(arity_i - 1) == N (so we can arrange these operators in single expression tree over N literals);
-     * After that, we shuffle all literals and operators in random order;
-     * Random order may not be correct postfix order, but it can be proven that exactly one cyclic shift will form valid postfix notation. So, after shuffle we just need to find this position and rotate expression array.
-     * (this fact is an easy extension of similar statement about bracket (+1/-1) sequences - the only difference here is that we can have arbitrary negative numbers - not only -1)
-     */
-    private ArrayList<ExpressionElement> randomExpression(
-            Rnd rnd,
-            List<ExpressionElement> allowedOperators,
-            int literalsCount
-    ) {
-        ArrayList<ExpressionElement> elements = new ArrayList<>();
-        for (int i = 0; i < literalsCount; i++) {
-            elements.add(randomLiteral(rnd));
-        }
-        int roots = literalsCount;
-
-        int applicableOperators = allowedOperators.size();
-        allowedOperators.sort(Comparator.comparingInt(a -> a.arity));
-        while (roots > 1) {
-            while (allowedOperators.get(applicableOperators - 1).arity > roots) {
-                applicableOperators--;
-            }
-            int operatorIndex = rnd.nextInt(applicableOperators);
-            elements.add(allowedOperators.get(operatorIndex));
-            roots -= allowedOperators.get(operatorIndex).arity - 1;
-        }
-        rnd.shuffle(elements);
-        int balance = 0, minBalance = 0, minBalanceIndex = 0;
-        for (int i = 0, n = elements.size(); i < n; i++) {
-            balance += 1 - elements.get(i).arity;
-            if (balance <= minBalance) {
-                minBalance = balance;
-                minBalanceIndex = i + 1;
-            }
-        }
-        Collections.rotate(elements, elements.size() - minBalanceIndex);
-        return elements;
-    }
-
-
-    private ExpressionElement randomLiteral(Rnd rnd) {
-        int choice = rnd.nextInt(4);
-        switch (choice) {
-            case 0:
-                return randomNumberLiteral(rnd);
-            case 1:
-                return randomStringLiteral(rnd);
-            case 2:
-                return randomFloatLiteral(rnd);
-            default:
-                return randomBoolLiteral(rnd);
-        }
-    }
-
-    private ExpressionElement randomNumberLiteral(Rnd rnd) {
-        return ExpressionElement.literal(String.valueOf(rnd.nextPositiveInt()));
-    }
-
-    private ExpressionElement randomFloatLiteral(Rnd rnd) {
-        return ExpressionElement.literal(String.valueOf(rnd.nextFloat() * Math.exp(rnd.nextInt(100))));
-    }
-
-    private ExpressionElement randomStringLiteral(Rnd rnd) {
-        return ExpressionElement.literal('\'' + rnd.nextString(rnd.nextInt(32) + 1) + '\'');
-    }
-
-    private ExpressionElement randomBoolLiteral(Rnd rnd) {
-        return ExpressionElement.literal(rnd.nextBoolean() ? "true" : "false");
-    }
-
-    private ArrayList<ExpressionElement> numberOperators() {
-        ArrayList<ExpressionElement> operators = new ArrayList<>();
-        operators.add(ExpressionElement.operator("-", 1, false, false));
-        operators.add(ExpressionElement.operator("~", 1, false, false));
-
-        operators.add(ExpressionElement.operator("*", 2, true, false));
-        operators.add(ExpressionElement.operator("/", 2, true, false));
-        operators.add(ExpressionElement.operator("%", 2, true, false));
-
-        operators.add(ExpressionElement.operator("+", 2, true, false));
-        operators.add(ExpressionElement.operator("-", 2, true, false));
-
-        operators.add(ExpressionElement.operator("&", 2, true, false));
-        operators.add(ExpressionElement.operator("^", 2, true, false));
-        operators.add(ExpressionElement.operator("|", 2, true, false));
-        return operators;
-    }
-
-    private ArrayList<ExpressionElement> ipOperators() {
-        ArrayList<ExpressionElement> operators = new ArrayList<>();
-        operators.add(ExpressionElement.operator("<<", 2, true, false));
-        operators.add(ExpressionElement.operator(">>", 2, true, false));
-        operators.add(ExpressionElement.operator("<<=", 2, true, false));
-        operators.add(ExpressionElement.operator(">>=", 2, true, false));
-        return operators;
-    }
-
-    private ArrayList<ExpressionElement> simpleComparisonOperators() {
-        ArrayList<ExpressionElement> operators = new ArrayList<>();
-        operators.add(ExpressionElement.operator("||", 2, true, false));
-        operators.add(ExpressionElement.operator("<", 2, true, false));
-        operators.add(ExpressionElement.operator("<=", 2, true, false));
-        operators.add(ExpressionElement.operator(">", 2, true, false));
-        operators.add(ExpressionElement.operator(">=", 2, true, false));
-
-        operators.add(ExpressionElement.operator("=", 2, true, false));
-        operators.add(ExpressionElement.operator("!=", 2, true, false));
-        operators.add(ExpressionElement.operator("<>", 2, true, false));
-
-        operators.add(ExpressionElement.operator("~", 2, true, false));
-        operators.add(ExpressionElement.operator("!~", 2, true, false));
-        operators.add(ExpressionElement.operator("like", 2, true, false));
-        operators.add(ExpressionElement.operator("ilike", 2, true, false));
-
-        operators.add(ExpressionElement.operator("is null", 1, false, false).withWrap(
-                (c, x) -> c == ExpressionContext.Query ? String.format("%s is null", x.get(0)) : String.format("%s = (null)", x.get(0))
-        ));
-        operators.add(ExpressionElement.operator("is not null", 1, false, false).withWrap(
-                (c, x) -> c == ExpressionContext.Query ? String.format("%s is not null", x.get(0)) : String.format("%s != (null)", x.get(0))
-        ));
-        return operators;
-    }
-
-    private ArrayList<ExpressionElement> complexComparisonOperators() {
-        ArrayList<ExpressionElement> operators = new ArrayList<>();
-        operators.add(ExpressionElement.operator("in", 2, false, true));
-        operators.add(ExpressionElement.operator("not in", 2, false, true).withWrap(
-                (c, x) -> c == ExpressionContext.Query ?
-                        String.format("%s not in %s", x.get(0), x.get(1)) :
-                        String.format("not (%s in %s)", x.get(0), x.get(1))
-        ));
-        operators.add(ExpressionElement.operator("within", 2, false, true));
-        operators.add(ExpressionElement.operator("not within", 2, false, true).withWrap(
-                (c, x) -> c == ExpressionContext.Query ?
-                        String.format("%s not within %s", x.get(0), x.get(1)) :
-                        String.format("not (%s within %s)", x.get(0), x.get(1))
-        ));
-        operators.add(ExpressionElement.operator("between", 3, false, true).withWrap(
-                (c, x) -> String.format("%s between %s and %s", x.get(0), x.get(1), x.get(2))
-        ));
-        operators.add(ExpressionElement.operator("not between", 3, false, true).withWrap(
-                (c, x) -> c == ExpressionContext.Query ?
-                        String.format("%s not between %s and %s", x.get(0), x.get(1), x.get(2)) :
-                        String.format("not (%s between %s and %s)", x.get(0), x.get(1), x.get(2))
-        ));
-        return operators;
-    }
-
-    private ArrayList<ExpressionElement> logicalOperators() {
-        ArrayList<ExpressionElement> operators = new ArrayList<>();
-        operators.add(ExpressionElement.operator("not", 1, true, false));
-        operators.add(ExpressionElement.operator("and", 2, true, false));
-        operators.add(ExpressionElement.operator("or", 2, true, false));
-        return operators;
-    }
-
-    private ArrayList<ExpressionElement> stringOperators() {
-        ArrayList<ExpressionElement> operators = new ArrayList<>();
-        operators.add(ExpressionElement.operator("||", 2, true, false));
-        return operators;
-    }
-
     enum ExpressionContext {
         Query,
         Internal
     }
 
     static class ExpressionElement {
-        String token;
         int arity;
-        int precedence;
         boolean leftAssociative;
+        int precedence;
         boolean setOperator;
+        String token;
         private BiFunction<ExpressionContext, List<String>, String> wrapFunc;
+
+        public static ExpressionElement literal(String literal) {
+            ExpressionElement element = new ExpressionElement();
+            element.token = literal;
+            return element;
+        }
 
         public static ExpressionElement operator(
                 String token,
@@ -393,12 +389,6 @@ public class ExpressionParserFuzzTest extends AbstractBootstrapTest {
             if (matching > 1) {
                 throw new RuntimeException(String.format("found ambiguous definition of operator: %s", token));
             }
-            return element;
-        }
-
-        public static ExpressionElement literal(String literal) {
-            ExpressionElement element = new ExpressionElement();
-            element.token = literal;
             return element;
         }
 

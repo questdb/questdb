@@ -33,7 +33,6 @@ import io.questdb.std.*;
 import static io.questdb.griffin.OperatorExpression.*;
 
 public class ExpressionParser {
-    private static final Log LOG = LogFactory.getLog(ExpressionParser.class);
     private static final int BRANCH_BETWEEN_END = 14;
     private static final int BRANCH_BETWEEN_START = 13;
     private static final int BRANCH_CASE_CONTROL = 10;
@@ -56,9 +55,11 @@ public class ExpressionParser {
     private static final int IDX_ELSE = 2;
     private static final int IDX_THEN = 1;
     private static final int IDX_WHEN = 0;
+    private static final Log LOG = LogFactory.getLog(ExpressionParser.class);
     private static final LowerCaseAsciiCharSequenceObjHashMap<CharSequence> allFunctions = new LowerCaseAsciiCharSequenceObjHashMap<>();
     private static final LowerCaseAsciiCharSequenceIntHashMap caseKeywords = new LowerCaseAsciiCharSequenceIntHashMap();
     private static final IntHashSet nonLiteralBranches = new IntHashSet(); // branches that can't be followed by constants
+    private final OperatorRegistry activeRegistry;
     private final IntStack argStackDepthStack = new IntStack();
     private final IntStack backupArgStackDepthStack = new IntStack();
     private final IntStack backupCaseBraceCountStack = new IntStack();
@@ -69,11 +70,10 @@ public class ExpressionParser {
     private final IntStack caseBraceCountStack = new IntStack();
     private final IntStack castBraceCountStack = new IntStack();
     private final CharacterStore characterStore;
-    private final OperatorRegistry activeRegistry;
-    private final OperatorRegistry shadowRegistry;
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final ObjStack<ExpressionNode> opStack = new ObjStack<>();
     private final IntStack paramCountStack = new IntStack();
+    private final OperatorRegistry shadowRegistry;
     private final SqlParser sqlParser;
 
     ExpressionParser(OperatorRegistry activeRegistry,
@@ -1011,7 +1011,7 @@ public class ExpressionParser {
                             final CharSequence nextToken = SqlUtil.fetchNext(lexer);
                             OperatorExpression nextOp;
                             if (nextToken != null && (nextOp = activeRegistry.map.get(nextToken)) != null && nextOp.type == OperatorExpression.SET) {
-                                op = activeRegistry.setOperationNegation;
+                                op = activeRegistry.unarySetNegation;
                                 unaryOperator = false; // NOT is part of multi-ary set operation negation
                             }
                             lexer.backTo(lastTokenPosition + lastToken.length(), lastToken);

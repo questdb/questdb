@@ -329,7 +329,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlWindowStoreMaxPages;
     private final int sqlWindowStorePageSize;
     private final int sqlWindowTreeKeyMaxPages;
-    private final boolean tempSqlOperatorPrecedence;
     private final int sqlWindowTreeKeyPageSize;
     private final int sqlWithClauseModelPoolCapacity;
     private final int systemO3ColumnMemorySize;
@@ -343,6 +342,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean telemetryEnabled;
     private final boolean telemetryHideTables;
     private final int telemetryQueueCapacity;
+    private final boolean tempCairoSqlLegacyOperatorPrecedence;
     private final CharSequence tempRenamePendingTablePrefix;
     private final int textAnalysisMaxLines;
     private final TextConfiguration textConfiguration = new PropTextConfiguration();
@@ -1118,7 +1118,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlWindowTreeKeyPageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_SQL_WINDOW_TREE_PAGE_SIZE, sqlWindowTreeKeyPageSize));
             int sqlWindowTreeKeyMaxPages = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_TREE_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlWindowTreeKeyMaxPages = getInt(properties, env, PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_PAGES, sqlWindowTreeKeyMaxPages);
-            this.tempSqlOperatorPrecedence = getBoolean(properties, env, PropertyKey.TEMP_CAIRO_SQL_OPERATOR_PRECEDENCE, false);
+            this.tempCairoSqlLegacyOperatorPrecedence = getBoolean(properties, env, PropertyKey.TEMP_CAIRO_SQL_LEGACY_OPERATOR_PRECEDENCE, false);
             this.sqlWindowInitialRangeBufferSize = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_INITIAL_RANGE_BUFFER_SIZE, 32);
             this.sqlTxnScoreboardEntryCount = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_O3_TXN_SCOREBOARD_ENTRY_COUNT, 16384));
             this.latestByQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_LATESTBY_QUEUE_CAPACITY, 32));
@@ -2687,11 +2687,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean getSqlOperatorPrecedenceCompatMode() {
-            return tempSqlOperatorPrecedence;
-        }
-
-        @Override
         public int getSqlWindowTreeKeyPageSize() {
             return sqlWindowTreeKeyPageSize;
         }
@@ -2738,6 +2733,11 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         public @NotNull TelemetryConfiguration getTelemetryConfiguration() {
             return telemetryConfiguration;
+        }
+
+        @Override
+        public boolean getTempCairoSqlLegacyOperatorPrecedence() {
+            return tempCairoSqlLegacyOperatorPrecedence;
         }
 
         @Override

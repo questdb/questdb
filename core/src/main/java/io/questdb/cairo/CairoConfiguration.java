@@ -464,8 +464,6 @@ public interface CairoConfiguration {
 
     int getSqlWindowTreeKeyMaxPages();
 
-    boolean getSqlOperatorPrecedenceCompatMode();
-
     int getSqlWindowTreeKeyPageSize();
 
     int getStrFunctionMaxBufferLength();
@@ -487,6 +485,8 @@ public interface CairoConfiguration {
 
     @NotNull
     TelemetryConfiguration getTelemetryConfiguration();
+
+    boolean getTempCairoSqlLegacyOperatorPrecedence();
 
     CharSequence getTempRenamePendingTablePrefix();
 
