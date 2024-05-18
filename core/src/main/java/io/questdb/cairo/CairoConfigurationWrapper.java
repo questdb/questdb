@@ -306,6 +306,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getGroupByPresizeMaxHeapSize() {
+        return getDelegate().getGroupByPresizeMaxHeapSize();
+    }
+
+    @Override
+    public long getGroupByPresizeMaxSize() {
+        return getDelegate().getGroupByPresizeMaxSize();
+    }
+
+    @Override
     public int getGroupByShardingThreshold() {
         return getDelegate().getGroupByShardingThreshold();
     }
@@ -756,7 +766,7 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlSmallMapPageSize() {
+    public long getSqlSmallMapPageSize() {
         return getDelegate().getSqlSmallMapPageSize();
     }
 
@@ -1038,6 +1048,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getWriterTickRowsCountMod() {
         return getDelegate().getWriterTickRowsCountMod();
+    }
+
+    @Override
+    public boolean isGroupByPresizeEnabled() {
+        return getDelegate().isGroupByPresizeEnabled();
     }
 
     @Override

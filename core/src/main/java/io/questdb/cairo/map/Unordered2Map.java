@@ -170,6 +170,11 @@ public class Unordered2Map implements Map, Reopenable {
     }
 
     @Override
+    public boolean isOpen() {
+        return memStart != 0;
+    }
+
+    @Override
     public void merge(Map srcMap, MapValueMergeFunction mergeFunc) {
         assert this != srcMap;
         long srcSize = srcMap.size();
@@ -221,7 +226,7 @@ public class Unordered2Map implements Map, Reopenable {
     }
 
     @Override
-    public void reopen(int keyCapacity, int heapSize) {
+    public void reopen(int keyCapacity, long heapSize) {
         reopen();
     }
 

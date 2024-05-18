@@ -364,7 +364,7 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
     // Removable cumulative aggregation with timestamp & value stored in resizable ring buffers
     // When lower bound is unbounded we add but immediately discard any values that enter the frame so buffer should only contain values
     // between upper bound and current row's value.
-    static class SumOverPartitionRangeFrameFunction extends AvgDoubleWindowFunctionFactory.AvgOverPartitionRangeFrameFunction {
+    public static class SumOverPartitionRangeFrameFunction extends AvgDoubleWindowFunctionFactory.AvgOverPartitionRangeFrameFunction {
 
         public SumOverPartitionRangeFrameFunction(
                 Map map,
@@ -393,7 +393,7 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
 
     // handles sum() over (partition by x [order by o] rows between y and z)
     // removable cumulative aggregation
-    static class SumOverPartitionRowsFrameFunction extends AvgDoubleWindowFunctionFactory.AvgOverPartitionRowsFrameFunction {
+    public static class SumOverPartitionRowsFrameFunction extends AvgDoubleWindowFunctionFactory.AvgOverPartitionRowsFrameFunction {
         public SumOverPartitionRowsFrameFunction(
                 Map map,
                 VirtualRecord partitionByRecord,
@@ -426,7 +426,7 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
     // Handles sum() over ([order by ts] range between [unbounded | x] preceding and [ x preceding | current row ] ); no partition by key
     // When lower bound is unbounded we add but immediately discard any values that enter the frame so buffer should only contain values
     // between upper bound and current row's value .
-    static class SumOverRangeFrameFunction extends AvgDoubleWindowFunctionFactory.AvgOverRangeFrameFunction {
+    public static class SumOverRangeFrameFunction extends AvgDoubleWindowFunctionFactory.AvgOverRangeFrameFunction {
         public SumOverRangeFrameFunction(
                 long rangeLo,
                 long rangeHi,
@@ -435,6 +435,17 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
                 int timestampIdx
         ) {
             super(rangeLo, rangeHi, arg, configuration, timestampIdx);
+        }
+
+        public SumOverRangeFrameFunction(
+                long rangeLo,
+                long rangeHi,
+                Function arg,
+                long initialCapacity,
+                MemoryARW memory,
+                int timestampIdx
+        ) {
+            super(rangeLo, rangeHi, arg, initialCapacity, memory, timestampIdx);
         }
 
 
@@ -451,7 +462,7 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
 
     // Handles sum() over ([order by o] rows between y and z); there's no partition by.
     // Removable cumulative aggregation.
-    static class SumOverRowsFrameFunction extends AvgDoubleWindowFunctionFactory.AvgOverRowsFrameFunction {
+    public static class SumOverRowsFrameFunction extends AvgDoubleWindowFunctionFactory.AvgOverRowsFrameFunction {
 
         public SumOverRowsFrameFunction(Function arg, long rowsLo, long rowsHi, MemoryARW memory) {
             super(arg, rowsLo, rowsHi, memory);
@@ -555,7 +566,7 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
     }
 
     // Handles sum() over (rows between unbounded preceding and current row); there's no partition by.
-    static class SumOverUnboundedRowsFrameFunction extends BaseDoubleWindowFunction {
+    public static class SumOverUnboundedRowsFrameFunction extends BaseDoubleWindowFunction {
 
         private long count = 0;
         private double externalSum;

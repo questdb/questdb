@@ -25,6 +25,7 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.Metrics;
+import io.questdb.ServerConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.http.processors.*;
 import io.questdb.mp.Job;
@@ -102,16 +103,17 @@ public class HttpServer implements Closeable {
 
     public static void addDefaultEndpoints(
             HttpServer server,
-            HttpServerConfiguration configuration,
+            ServerConfiguration serverConfiguration,
             CairoEngine cairoEngine,
             WorkerPool workerPool,
             int sharedWorkerCount,
             HttpRequestProcessorBuilder jsonQueryProcessorBuilder,
             HttpRequestProcessorBuilder ilpWriteProcessorBuilderV2
     ) {
+        final HttpServerConfiguration httpServerConfiguration = serverConfiguration.getHttpServerConfiguration();
+        final LineHttpProcessorConfiguration lineHttpProcessorConfiguration = httpServerConfiguration.getLineHttpProcessorConfiguration();
         // Disable ILP HTTP if the instance configured to be read-only for HTTP requests
-        if (configuration.getLineHttpProcessorConfiguration().isEnabled() &&
-                !configuration.getHttpContextConfiguration().readOnlySecurityContext()) {
+        if (httpServerConfiguration.isEnabled() && lineHttpProcessorConfiguration.isEnabled() && !httpServerConfiguration.getHttpContextConfiguration().readOnlySecurityContext()) {
             server.bind(new HttpRequestProcessorFactory() {
                 @Override
                 public String getUrl() {
@@ -137,7 +139,7 @@ public class HttpServer implements Closeable {
             });
 
             LineHttpPingProcessor pingProcessor = new LineHttpPingProcessor(
-                    configuration.getLineHttpProcessorConfiguration().getInfluxPingVersion()
+                    httpServerConfiguration.getLineHttpProcessorConfiguration().getInfluxPingVersion()
             );
             server.bind(new HttpRequestProcessorFactory() {
                 @Override
@@ -152,7 +154,7 @@ public class HttpServer implements Closeable {
             });
         }
 
-        final SettingsProcessor settingsProcessor = new SettingsProcessor(cairoEngine.getConfiguration());
+        final SettingsProcessor settingsProcessor = new SettingsProcessor(serverConfiguration);
         server.bind(new HttpRequestProcessorFactory() {
             @Override
             public String getUrl() {
@@ -185,7 +187,7 @@ public class HttpServer implements Closeable {
 
             @Override
             public HttpRequestProcessor newInstance() {
-                return new TextImportProcessor(cairoEngine, configuration.getJsonQueryProcessorConfiguration());
+                return new TextImportProcessor(cairoEngine, httpServerConfiguration.getJsonQueryProcessorConfiguration());
             }
         });
 
@@ -198,7 +200,7 @@ public class HttpServer implements Closeable {
             @Override
             public HttpRequestProcessor newInstance() {
                 return new TextQueryProcessor(
-                        configuration.getJsonQueryProcessorConfiguration(),
+                        httpServerConfiguration.getJsonQueryProcessorConfiguration(),
                         cairoEngine,
                         workerPool.getWorkerCount(),
                         sharedWorkerCount
@@ -214,7 +216,7 @@ public class HttpServer implements Closeable {
 
             @Override
             public HttpRequestProcessor newInstance() {
-                return new TableStatusCheckProcessor(cairoEngine, configuration.getJsonQueryProcessorConfiguration());
+                return new TableStatusCheckProcessor(cairoEngine, httpServerConfiguration.getJsonQueryProcessorConfiguration());
             }
         });
 
@@ -226,7 +228,7 @@ public class HttpServer implements Closeable {
 
             @Override
             public HttpRequestProcessor newInstance() {
-                return new StaticContentProcessor(configuration);
+                return new StaticContentProcessor(httpServerConfiguration);
             }
         });
     }

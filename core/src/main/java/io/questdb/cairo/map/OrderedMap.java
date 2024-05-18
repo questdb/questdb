@@ -99,7 +99,7 @@ public class OrderedMap implements Map, Reopenable {
     private long heapLimit; // Heap memory limit pointer.
     private long heapSize;
     private long heapStart; // Heap memory start pointer.
-    private int initialHeapSize;
+    private long initialHeapSize;
     private int initialKeyCapacity;
     private long kPos;      // Current key-value memory pointer (contains searched key / pending key-value pair).
     private int keyCapacity;
@@ -111,7 +111,7 @@ public class OrderedMap implements Map, Reopenable {
     private int size = 0;
 
     public OrderedMap(
-            int heapSize,
+            long heapSize,
             @Transient @NotNull ColumnTypes keyTypes,
             int keyCapacity,
             double loadFactor,
@@ -121,7 +121,7 @@ public class OrderedMap implements Map, Reopenable {
     }
 
     public OrderedMap(
-            int heapSize,
+            long heapSize,
             @Transient @NotNull ColumnTypes keyTypes,
             @Transient @Nullable ColumnTypes valueTypes,
             int keyCapacity,
@@ -133,7 +133,7 @@ public class OrderedMap implements Map, Reopenable {
     }
 
     public OrderedMap(
-            int heapSize,
+            long heapSize,
             @Transient @NotNull ColumnTypes keyTypes,
             @Transient @Nullable ColumnTypes valueTypes,
             int keyCapacity,
@@ -144,7 +144,7 @@ public class OrderedMap implements Map, Reopenable {
     }
 
     OrderedMap(
-            int heapSize,
+            long heapSize,
             @NotNull @Transient ColumnTypes keyTypes,
             @Nullable @Transient ColumnTypes valueTypes,
             int keyCapacity,
@@ -290,6 +290,11 @@ public class OrderedMap implements Map, Reopenable {
     }
 
     @Override
+    public boolean isOpen() {
+        return heapStart != 0;
+    }
+
+    @Override
     public void merge(Map srcMap, MapValueMergeFunction mergeFunc) {
         assert this != srcMap;
         if (srcMap.size() == 0) {
@@ -299,7 +304,7 @@ public class OrderedMap implements Map, Reopenable {
     }
 
     @Override
-    public void reopen(int keyCapacity, int heapSize) {
+    public void reopen(int keyCapacity, long heapSize) {
         if (heapStart == 0) {
             keyCapacity = (int) (keyCapacity / loadFactor);
             initialKeyCapacity = Math.max(Numbers.ceilPow2(keyCapacity), MIN_KEY_CAPACITY);
