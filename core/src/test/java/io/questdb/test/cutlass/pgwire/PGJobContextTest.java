@@ -10109,8 +10109,7 @@ create table tab as (
             }
 
             String query = "select s from tab where " + where;
-
-            System.out.println("iter: " + iter + ", sql:" + query);
+            LOG.info().$("iteration [iter=").$(iter).$(". sql=").$(query).I$();
 
             sink.clear();
             expSink.clear();
@@ -10123,9 +10122,6 @@ create table tab as (
             }
             metaSink.put("\nts option: ").put(tsOption);
 
-            if (iter == 5) {
-                System.out.println("crunch time");
-            }
             try (PreparedStatement ps = connection.prepareStatement(query)) {
                 int bindIdx = 1;
                 for (int p = 0; p < paramValues.length; p++) {

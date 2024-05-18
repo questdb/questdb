@@ -146,8 +146,7 @@ public class BindVariableServiceImpl implements BindVariableService {
             case ColumnType.VAR_ARG:
                 // we cannot define bind variable as vararg, it is
                 // a code for method signature and is not a "type"
-                assert false;
-                return ColumnType.UNDEFINED;
+                throw SqlException.$(position, "unsupported type: VAR_ARG");
             case ColumnType.LONG256:
                 setLong256(index);
                 return type;
@@ -453,7 +452,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         // variable exists
         Function function = indexedVariables.getQuick(index);
         if (function != null) {
-            setIPv40(function, value, index, null);
+            setIPv40(function, value);
         } else {
             indexedVariables.setQuick(index, function = IPv4VarPool.next());
             ((IPv4BindVariable) function).value = value;
@@ -466,7 +465,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         // variable exists
         Function function = indexedVariables.getQuick(index);
         if (function != null) {
-            setIPv40(function, Numbers.parseIPv4Quiet(value), index, null);
+            setIPv40(function, Numbers.parseIPv4Quiet(value));
         } else {
             indexedVariables.setQuick(index, function = IPv4VarPool.next());
             ((IPv4BindVariable) function).value = Numbers.parseIPv4Quiet(value);
@@ -932,7 +931,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         }
     }
 
-    private static void setIPv40(Function function, int value, int index, @Nullable CharSequence name) {
+    private static void setIPv40(Function function, int value) {
         ((IPv4BindVariable) function).value = value;
     }
 

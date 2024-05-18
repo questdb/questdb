@@ -397,7 +397,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         final int position = node.position;
         Function function;
         try {
-            LOG.info().$("call ").$(node).$(" -> ").$(factory.getSignature()).$("[factory=").$(factory).$(']').$();
+            LOG.debug().$("call ").$(node).$(" -> ").$(factory.getSignature()).$("[factory=").$(factory).$(']').$();
             function = factory.newInstance(position, args, argPositions, configuration, sqlExecutionContext);
         } catch (SqlException | ImplicitCastException e) {
             Misc.freeObjList(args);
