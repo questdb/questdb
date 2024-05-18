@@ -212,37 +212,25 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
 
     @Override
     public LineTcpConnectionContext of(int fd, @NotNull IODispatcher<LineTcpConnectionContext> dispatcher) {
-        try {
-            super.of(fd, dispatcher);
-            if (recvBufStart == 0) {
-                recvBufStart = Unsafe.malloc(configuration.getNetMsgBufferSize(), MemoryTag.NATIVE_ILP_RSS);
-                recvBufEnd = recvBufStart + configuration.getNetMsgBufferSize();
-                recvBufPos = recvBufStart;
-                resetParser();
-            }
-            authenticator.init(socket, recvBufStart, recvBufEnd, 0, 0);
-            if (authenticator.isAuthenticated() && securityContext == DenyAllSecurityContext.INSTANCE) {
-                // when security context has not been set by anything else (subclass) we assume
-                // this is an authenticated, anonymous user
-                securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
-                        null,
-                        SecurityContext.AUTH_TYPE_NONE,
-                        SecurityContextFactory.ILP
-                );
-                securityContext.authorizeLineTcp();
-            }
-            return this;
-        } catch (CairoException e) {
-            if (e.isCritical()) {
-                close();
-            } else {
-                clear();
-            }
-            throw e;
-        } catch (Throwable t) {
-            close();
-            throw t;
+        super.of(fd, dispatcher);
+        if (recvBufStart == 0) {
+            recvBufStart = Unsafe.malloc(configuration.getNetMsgBufferSize(), MemoryTag.NATIVE_ILP_RSS);
+            recvBufEnd = recvBufStart + configuration.getNetMsgBufferSize();
+            recvBufPos = recvBufStart;
+            resetParser();
         }
+        authenticator.init(socket, recvBufStart, recvBufEnd, 0, 0);
+        if (authenticator.isAuthenticated() && securityContext == DenyAllSecurityContext.INSTANCE) {
+            // when security context has not been set by anything else (subclass) we assume
+            // this is an authenticated, anonymous user
+            securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
+                    null,
+                    SecurityContext.AUTH_TYPE_NONE,
+                    SecurityContextFactory.ILP
+            );
+            securityContext.authorizeLineTcp();
+        }
+        return this;
     }
 
     private boolean checkQueueFullLogHysteresis() {

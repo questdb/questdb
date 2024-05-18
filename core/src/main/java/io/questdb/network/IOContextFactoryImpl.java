@@ -69,10 +69,16 @@ public class IOContextFactoryImpl<C extends IOContext<C>> implements IOContextFa
         try {
             return context.of(fd, dispatcher);
         } catch (CairoException e) {
-            if (!e.isCritical()) {
+            if (e.isCritical()) {
+                context.close();
+            } else {
+                context.clear();
                 pool.push(context);
             }
             throw e;
+        } catch (Throwable t) {
+            context.close();
+            throw t;
         }
     }
 
