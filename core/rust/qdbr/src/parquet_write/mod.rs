@@ -216,6 +216,7 @@ mod tests {
     use std::ptr::null;
     use std::sync::Arc;
     use arrow::array::Array;
+    use parquet2::page::CompressedPage;
 
     #[test]
     fn test_write_parquet_with_fixed_sized_columns() {
@@ -298,8 +299,19 @@ mod tests {
         assert_eq!(row_count, meta.num_rows);
         assert_eq!(row_count / row_group_size, meta.row_groups.len());
         assert_eq!(row_group_size, meta.row_groups[0].num_rows());
-        // assert!(meta.row_groups[0].columns()[0].metadata().total_uncompressed_size < page_size_bytes as i64);
-        //TODO: data page metadata?
+
+        let chunk_meta = &meta.row_groups[0].columns()[0];
+        let pages = parquet2::read::get_page_iterator(chunk_meta, buf, None, vec![], page_size_bytes).expect("pages iter");
+        for page in pages {
+            let page = page.expect("page");
+            match page {
+                CompressedPage::Data(data) => {
+                    let uncompressed = data.uncompressed_size();
+                    assert!(uncompressed <= page_size_bytes);
+                }
+                _ => unreachable!(),
+            }
+        }
     }
 
     #[test]
