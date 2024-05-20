@@ -109,19 +109,47 @@ public class TableSequencerImpl implements TableSequencer {
             closeLocked();
             throw th;
         }
-        open(tableToken);
+        try {
+            walIdGenerator.open(path);
+            metadata.open(path, rootLen, tableToken);
+            tableTransactionLog.open(path);
+        } catch (CairoException ex) {
+            closeLocked();
+            if (ex.isTableDropped()) {
+                throw ex;
+            }
+            if (ex.errnoReadPathDoesNotExist()) {
+                LOG.info().$("could not open sequencer, files deleted, assuming dropped [name=").utf8(tableToken.getDirName())
+                        .$(", path=").$(path)
+                        .$(", error=").$(ex.getMessage())
+                        .I$();
+                throw CairoException.tableDropped(tableToken);
+            }
+            LOG.critical().$("could not open sequencer [name=").utf8(tableToken.getDirName())
+                    .$(", path=").$(path)
+                    .$(", error=").$(ex.getMessage())
+                    .I$();
+            throw ex;
+        } catch (Throwable th) {
+            LOG.critical().$("could not open sequencer [name=").utf8(tableToken.getDirName())
+                    .$(", path=").$(path)
+                    .$(", error=").$(th.getMessage())
+                    .I$();
+            closeLocked();
+            throw th;
+        }
     }
 
     public boolean checkClose() {
-        if (!closed) {
-            schemaLock.writeLock().lock();
-            try {
-                return closeLocked();
-            } finally {
-                schemaLock.writeLock().unlock();
-            }
+        if (closed) {
+            return false;
         }
-        return false;
+        schemaLock.writeLock().lock();
+        try {
+            return closeLocked();
+        } finally {
+            schemaLock.writeLock().unlock();
+        }
     }
 
     @Override
@@ -130,17 +158,14 @@ public class TableSequencerImpl implements TableSequencer {
             checkClose();
         } else if (!isDistressed() && !isDropped()) {
             releaseTime = pool.configuration.getMicrosecondClock().getTicks();
-        } else {
-            // Sequencer is distressed or dropped, close before removing from the pool.
+        } else if (checkClose()) {
+            LOG.info()
+                    .$("closed table sequencer [table=").$(getTableToken())
+                    .$(", distressed=").$(isDistressed())
+                    .$(", dropped=").$(isDropped())
+                    .I$();
             // Remove from registry only if this thread closed the instance.
-            if (checkClose()) {
-                LOG.info()
-                        .$("closed table sequencer [table=").$(getTableToken())
-                        .$(", distressed=").$(isDistressed())
-                        .$(", dropped=").$(isDropped())
-                        .I$();
-                pool.seqRegistry.remove(getTableToken().getDirName(), this);
-            }
+            pool.seqRegistry.remove(getTableToken().getDirName(), this);
         }
     }
 
@@ -413,15 +438,15 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     private boolean closeLocked() {
-        if (!closed) {
-            closed = true;
-            Misc.free(metadata);
-            Misc.free(tableTransactionLog);
-            Misc.free(walIdGenerator);
-            Misc.free(path);
-            return true;
+        if (closed) {
+            return false;
         }
-        return false;
+        closed = true;
+        Misc.free(metadata);
+        Misc.free(tableTransactionLog);
+        Misc.free(walIdGenerator);
+        Misc.free(path);
+        return true;
     }
 
     private void createSequencerDir(FilesFacade ff, int mkDirMode) {
@@ -451,38 +476,6 @@ public class TableSequencerImpl implements TableSequencer {
     private void notifyTxnCommitted(long txn) {
         if (txn == Long.MAX_VALUE || seqTxnTracker.notifyOnCommit(txn)) {
             engine.notifyWalTxnCommitted(tableToken);
-        }
-    }
-
-    void open(TableToken tableToken) {
-        try {
-            walIdGenerator.open(path);
-            metadata.open(path, rootLen, tableToken);
-            tableTransactionLog.open(path);
-        } catch (CairoException ex) {
-            closeLocked();
-            if (ex.isTableDropped()) {
-                throw ex;
-            }
-            if (ex.errnoReadPathDoesNotExist()) {
-                LOG.info().$("could not open sequencer, files deleted, assuming dropped [name=").utf8(tableToken.getDirName())
-                        .$(", path=").$(path)
-                        .$(", error=").$(ex.getMessage())
-                        .I$();
-                throw CairoException.tableDropped(tableToken);
-            }
-            LOG.critical().$("could not open sequencer [name=").utf8(tableToken.getDirName())
-                    .$(", path=").$(path)
-                    .$(", error=").$(ex.getMessage())
-                    .I$();
-            throw ex;
-        } catch (Throwable th) {
-            LOG.critical().$("could not open sequencer [name=").utf8(tableToken.getDirName())
-                    .$(", path=").$(path)
-                    .$(", error=").$(th.getMessage())
-                    .I$();
-            closeLocked();
-            throw th;
         }
     }
 
