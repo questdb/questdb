@@ -1743,7 +1743,7 @@ public class SqlOptimiser implements Mutable {
             // It might be the case that we previously added the column to
             // the translating model, but not to the inner one.
             alias = map.valueAtQuick(index);
-            if (innerModel != null && innerModel.getColumnNameToAliasMap().excludes(alias)) {
+            if (innerModel != null && innerModel.getAliasToColumnMap().excludes(alias)) {
                 innerModel.addBottomUpColumn(nextColumn(alias), true);
             }
         }
@@ -3514,12 +3514,9 @@ public class SqlOptimiser implements Mutable {
         }
         count.position = agg.position;
 
-        ExpressionNode mul = expressionNodePool.next();
-        mul.token = "*";
-        mul.type = OPERATION;
-        mul.position = agg.position;
+        OperatorExpression mulOp = OperatorExpression.opMap.get("*");
+        ExpressionNode mul = expressionNodePool.next().of(OPERATION, mulOp.token, mulOp.precedence, agg.position);
         mul.paramCount = 2;
-        mul.precedence = 3;
         mul.lhs = count;
         mul.rhs = constant;
 
@@ -3843,13 +3840,11 @@ public class SqlOptimiser implements Mutable {
             nullExpr.token = "null";
             nullExpr.precedence = 0;
 
-            ExpressionNode node = expressionNodePool.next();
-            node.type = OPERATION;
-            node.token = "!=";
+            OperatorExpression neqOp = OperatorExpression.opMap.get("!=");
+            ExpressionNode node = expressionNodePool.next().of(OPERATION, neqOp.token, neqOp.precedence, 0);
             node.paramCount = 2;
             node.lhs = nullExpr;
             node.rhs = distinctExpr;
-            node.precedence = 7;
 
             nested.setWhereClause(concatFilters(nested.getWhereClause(), node));
             middle.addGroupBy(distinctExpr);

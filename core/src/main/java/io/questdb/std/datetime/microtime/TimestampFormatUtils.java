@@ -144,35 +144,31 @@ public class TimestampFormatUtils {
     }
 
     public static void appendHour12(@NotNull CharSink<?> sink, int hour) {
-        if (hour < 12) {
-            Numbers.append(sink, hour);
-        } else {
-            Numbers.append(sink, hour - 12);
-        }
+        Numbers.append(sink, hour % 12);
     }
 
     public static void appendHour121(@NotNull CharSink<?> sink, int hour) {
-        if (hour < 12) {
-            Numbers.append(sink, hour + 1);
-        } else {
-            Numbers.append(sink, hour - 11);
-        }
+        int h12 = (hour + 11) % 12 + 1;
+        Numbers.append(sink, h12);
     }
 
     public static void appendHour121Padded(@NotNull CharSink<?> sink, int hour) {
-        if (hour < 12) {
-            append0(sink, hour + 1);
-        } else {
-            append0(sink, hour - 11);
-        }
+        int h12 = (hour + 11) % 12 + 1;
+        append0(sink, h12);
     }
 
     public static void appendHour12Padded(@NotNull CharSink<?> sink, int hour) {
-        if (hour < 12) {
-            append0(sink, hour);
-        } else {
-            append0(sink, hour - 12);
-        }
+        append0(sink, hour % 12);
+    }
+
+    public static void appendHour241(@NotNull CharSink<?> sink, int hour) {
+        int h24 = (hour + 23) % 24 + 1;
+        Numbers.append(sink, h24);
+    }
+
+    public static void appendHour241Padded(@NotNull CharSink<?> sink, int hour) {
+        int h24 = (hour + 23) % 24 + 1;
+        append0(sink, h24);
     }
 
     public static void appendYear(@NotNull CharSink<?> sink, int val) {
@@ -271,20 +267,21 @@ public class TimestampFormatUtils {
             throw NumericException.INSTANCE;
         }
 
-        switch (hourType) {
-            case HOUR_PM:
+        if (hourType == HOUR_24) {
+            // wrong 24-hour clock hour
+            if (hour < 0 || hour > 24) {
+                throw NumericException.INSTANCE;
+            }
+            hour %= 24;
+        } else {
+            // wrong 12-hour clock hour
+            if (hour < 0 || hour > 12) {
+                throw NumericException.INSTANCE;
+            }
+            hour %= 12;
+            if (hourType == HOUR_PM) {
                 hour += 12;
-            case HOUR_24:
-                // wrong hour
-                if (hour < 0 || hour > 23) {
-                    throw NumericException.INSTANCE;
-                }
-                break;
-            default:
-                // wrong 12-hour clock hour
-                if (hour < 0 || hour > 11) {
-                    throw NumericException.INSTANCE;
-                }
+            }
         }
 
         // wrong day of month

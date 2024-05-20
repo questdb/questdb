@@ -39,7 +39,7 @@ import org.junit.Test;
 
 
 public class LineTcpParser2Test extends LineUdpLexerTest {
-    private final LineTcpParser lineTcpParser = new LineTcpParser(false, false);
+    private final LineTcpParser lineTcpParser = new LineTcpParser();
     private boolean onErrorLine;
     private long startOfLineAddr;
 

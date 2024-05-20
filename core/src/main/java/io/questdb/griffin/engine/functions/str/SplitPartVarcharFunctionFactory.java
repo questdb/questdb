@@ -35,7 +35,6 @@ import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.std.IntList;
-import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
@@ -110,17 +109,23 @@ public class SplitPartVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-            getVarchar0(rec, utf8Sink, false);
+            Utf8Sequence utf8Str = varcharFunc.getVarcharA(rec);
+            Utf8Sequence delimiter = delimiterFunc.getVarcharA(rec);
+            int index = getIndex(rec);
+            if (utf8Str == null || delimiter == null || index == Numbers.INT_NULL) {
+                return;
+            }
+            splitToSink(utf8Sink, index, utf8Str, delimiter);
         }
 
         @Override
         public Utf8Sequence getVarcharA(Record rec) {
-            return getVarchar0(rec, sinkA, true);
+            return getVarcharWithClear(rec, sinkA);
         }
 
         @Override
         public Utf8Sequence getVarcharB(Record rec) {
-            return getVarchar0(rec, sinkB, true);
+            return getVarcharWithClear(rec, sinkB);
         }
 
         @Override
@@ -135,65 +140,68 @@ public class SplitPartVarcharFunctionFactory implements FunctionFactory {
         }
 
         @Nullable
-        private <S extends Utf8Sink> S getVarchar0(Record rec, S sink, boolean clearSink) {
+        private Utf8StringSink getVarcharWithClear(Record rec, Utf8StringSink sink) {
+            sink.clear();
+
             Utf8Sequence utf8Str = varcharFunc.getVarcharA(rec);
             Utf8Sequence delimiter = delimiterFunc.getVarcharA(rec);
             int index = getIndex(rec);
             if (utf8Str == null || delimiter == null || index == Numbers.INT_NULL) {
                 return null;
             }
-            if (index == 0) {
-                return sink;
-            }
-
-            int size = utf8Str.size();
-            int len = Utf8s.length(utf8Str);
-
-            int start;
-            int end;
-            if (index > 0) {
-                if (index == 1) {
-                    start = 0;
-                } else {
-                    start = Utf8s.indexOf(utf8Str, 0, size, delimiter, index - 1);
-                    if (start == -1) {
-                        return sink;
-                    }
-                    start += delimiter.size();
-                }
-
-                end = Utf8s.indexOf(utf8Str, start, size, delimiter);
-
-                if (end == -1) {
-                    end = len;
-                }
-            } else {    // if index is negative, returns index-from-last field
-                if (index == -1) {
-                    end = size;
-                } else {
-                    end = Utf8s.indexOf(utf8Str, 0, size, delimiter, index + 1);
-                    if (end == -1) {
-                        return sink;
-                    }
-                }
-
-                start = Utf8s.indexOf(utf8Str, 0, end, delimiter, -1);
-
-                if (start == -1) {
-                    start = 0;
-                } else {
-                    start += delimiter.size();
-                }
-            }
-
-            if (clearSink && sink instanceof Mutable) {
-                ((Mutable) sink).clear();
-            }
-            sink.put(utf8Str, start, end);
+            splitToSink(sink, index, utf8Str, delimiter);
             return sink;
         }
 
         abstract int getIndex(Record rec);
+    }
+
+    private static void splitToSink(Utf8Sink sink, int index, Utf8Sequence utf8Str, Utf8Sequence delimiter) {
+        if (index == 0) {
+            return;
+        }
+
+        int size = utf8Str.size();
+        int len = Utf8s.length(utf8Str);
+
+        int start;
+        int end;
+        if (index > 0) {
+            if (index == 1) {
+                start = 0;
+            } else {
+                start = Utf8s.indexOf(utf8Str, 0, size, delimiter, index - 1);
+                if (start == -1) {
+                    return;
+                }
+                start += delimiter.size();
+            }
+
+            end = Utf8s.indexOf(utf8Str, start, size, delimiter);
+
+            if (end == -1) {
+                end = len;
+            }
+        } else {    // if index is negative, returns index-from-last field
+            if (index == -1) {
+                end = size;
+            } else {
+                end = Utf8s.indexOf(utf8Str, 0, size, delimiter, index + 1);
+                if (end == -1) {
+                    return;
+                }
+            }
+
+            start = Utf8s.indexOf(utf8Str, 0, end, delimiter, -1);
+
+            if (start == -1) {
+                start = 0;
+            } else {
+                start += delimiter.size();
+            }
+        }
+
+        sink.put(utf8Str, start, end);
     }
 
     private static class SplitPartVarcharConstIndexFunction extends AbstractSplitPartVarcharFunction {

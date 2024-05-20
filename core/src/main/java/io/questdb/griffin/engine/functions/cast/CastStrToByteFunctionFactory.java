@@ -51,6 +51,7 @@ public class CastStrToByteFunctionFactory implements FunctionFactory {
 
         @Override
         public byte getByte(Record rec) {
+            // Related code ColumnTypeConverter::convertStrToByte
             return (byte) Numbers.parseIntQuiet(arg.getStrA(rec));
         }
     }

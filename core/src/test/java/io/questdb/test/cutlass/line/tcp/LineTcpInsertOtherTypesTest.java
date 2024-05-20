@@ -789,6 +789,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "A\t1970-01-01T00:00:07.000000Z\n" +
                         "@plant2\t1970-01-01T00:00:08.000000Z\n" +
                         "@plant\t1970-01-01T00:00:09.000000Z\n" +
+                        "\"@plant\"\t1970-01-01T00:00:10.000000Z\n" +
                         "\t1970-01-01T00:00:11.000000Z\n",
                 new CharSequence[]{
                         "e", // valid
@@ -821,6 +822,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "A\t1970-01-01T00:00:07.000000Z\n" +
                         "@plant2\t1970-01-01T00:00:08.000000Z\n" +
                         "@plant\t1970-01-01T00:00:09.000000Z\n" +
+                        "\"@plant\"\t1970-01-01T00:00:10.000000Z\n" +
                         "\t1970-01-01T00:00:11.000000Z\n" +
                         "\"abcd\t1970-01-01T00:00:12.000000Z\n",
                 new CharSequence[]{
@@ -943,25 +945,24 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                         "xxx\t1970-01-01T00:00:02.000000Z\n" +
                         "paff\t1970-01-01T00:00:03.000000Z\n" +
                         "tt\"tt\t1970-01-01T00:00:11.000000Z\n" +
-                        "tt\"tt\" \n" +
-                        " =, ,=\"\t1970-01-01T00:00:12.000000Z\n" +
+                        "tt\"tt\" \n =, ,=\"\t1970-01-01T00:00:12.000000Z\n" +
                         "\t1970-01-01T00:00:15.000000Z\n",
                 new CharSequence[]{
-                        "\"e\"", // valid
-                        "\"xxx\"", // valid
-                        "\"paff\"", // valid
-                        "\"paff", // discarded bad value
-                        "paff\"", // discarded bad value
-                        "null", // discarded bad type symbol
-                        "yyy", // discarded bad type symbol
-                        "\"tt\"tt\"", // discarded bad value
-                        "tt\"tt\"", // discarded bad value
-                        "\"tt\"tt", // discarded bad value
-                        "\"tt\\\"tt\"", // valid
-                        "\"tt\\\"tt\\\" \\\n =, ,=\\\"\"", // valid
-                        "A", // discarded bad type symbol
-                        "@plant2", // discarded bad type symbol
-                        "" // valid null
+                        "\"e\"", // 1, valid
+                        "\"xxx\"", // 2, valid
+                        "\"paff\"", // 3, valid
+                        "\"paff", // 4, no quotes, invalid
+                        "paff\"", // 5, no quotes, invalid
+                        "null", // 6, no quotes, invalid
+                        "yyy", // 7, no quotes, invalid
+                        "\"tt\"tt\"", // 8, no quotes, invalid
+                        "tt\"tt\"", // 9, no quotes, invalid
+                        "\"tt\"tt", // 10, no quotes, invalid
+                        "\"tt\\\"tt\"", // 11, valid
+                        "\"tt\\\"tt\\\" \\\n =, ,=\\\"\"", // 12, valid
+                        "A", // 13, no quotes, invalid
+                        "@plant2", // 14, no quotes, invalid
+                        "" // 15, valid null
                 },
                 false
         );

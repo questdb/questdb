@@ -122,11 +122,11 @@ public class RetryIODispatcherTest extends AbstractTest {
             "|   Rows handled  |                                                24  |                 |         |              |\r\n" +
             "|  Rows imported  |                                                24  |                 |         |              |\r\n" +
             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
-            "|              0  |                              Dispatching_base_num  |                   STRING  |           0  |\r\n" +
+            "|              0  |                              Dispatching_base_num  |                  VARCHAR  |           0  |\r\n" +
             "|              1  |                                   Pickup_DateTime  |                     DATE  |           0  |\r\n" +
-            "|              2  |                                  DropOff_datetime  |                   STRING  |           0  |\r\n" +
-            "|              3  |                                      PUlocationID  |                   STRING  |           0  |\r\n" +
-            "|              4  |                                      DOlocationID  |                   STRING  |           0  |\r\n" +
+            "|              2  |                                  DropOff_datetime  |                  VARCHAR  |           0  |\r\n" +
+            "|              3  |                                      PUlocationID  |                  VARCHAR  |           0  |\r\n" +
+            "|              4  |                                      DOlocationID  |                  VARCHAR  |           0  |\r\n" +
             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
             "\r\n" +
             "00\r\n" +

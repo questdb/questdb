@@ -76,14 +76,14 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         String tableName = "addCastColumn";
         symbolAsFieldSupported = true;
         runInContext(() -> {
-            recvBuffer = tableName + ",location=us-midwest temperature=82 1465839830100400200\n" +
-                    tableName + ",location=us-eastcoast cast=cast,temperature=81,humidity=23 1465839830101400200\n";
+            recvBuffer = tableName + ",location=us-midwest,cast= temperature=82 1465839830100400200\n" +
+                    tableName + ",location=us-eastcoast cast=\"cast\",temperature=81,humidity=23 1465839830101400200\n";
             handleIO();
             closeContext();
             drainWalQueue();
-            String expected = "location\ttemperature\ttimestamp\tcast\thumidity\n" +
-                    "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\t\tnull\n" +
-                    "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\tcast\t23.0\n";
+            String expected = "location\tcast\ttemperature\ttimestamp\thumidity\n" +
+                    "us-midwest\t\t82.0\t2016-06-13T17:43:50.100400Z\tnull\n" +
+                    "us-eastcoast\tcast\t81.0\t2016-06-13T17:43:50.101400Z\t23.0\n";
             try (TableReader reader = newOffPoolReader(configuration, tableName)) {
                 TableReaderMetadata meta = reader.getMetadata();
                 assertCursorTwoPass(expected, reader.getCursor(), meta);
@@ -1773,6 +1773,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                     "tv1\ttv2\tZen Internet Ltd\t\t2016-06-13T17:43:50.100400Z\n" +
                     "tv1\ttv2\tZen=Internet,Ltd\t\t2016-06-13T17:43:50.100400Z\n" +
                     "t\"v1\tt\"v2\t\t1\t2016-06-13T17:43:50.100400Z\n" +
+                    "\"tv1\"\ttv2\t\t1\t2016-06-13T17:43:50.100400Z\n" +
                     "tv1\"\ttv2\t\t1\t2016-06-13T17:43:50.100400Z\n" +
                     "\"tv1\ttv2\t\t1\t2016-06-13T17:43:50.100400Z\n" +
                     "tv1\ttv2\tZen Internet Ltd\tfv2\t2016-06-13T17:43:50.100400Z\n";
