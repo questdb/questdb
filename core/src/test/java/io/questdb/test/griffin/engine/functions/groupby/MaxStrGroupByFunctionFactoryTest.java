@@ -94,20 +94,22 @@ public class MaxStrGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testGroupNotKeyedWithNulls() throws Exception {
-        String expected = "max\n" +
-                "c\n";
-        assertQuery(
-                expected,
-                "select max(s) from x",
-                "create table x as (select * from (select rnd_str('a','b','c') s, timestamp_sequence(10, 100000) ts from long_sequence(100)) timestamp(ts)) timestamp(ts) PARTITION BY YEAR",
-                null,
-                false,
-                true
-        );
+        assertMemoryLeak(() -> {
+            String expected = "max\n" +
+                    "c\n";
+            assertQueryNoLeakCheck(
+                    expected,
+                    "select max(s) from x",
+                    "create table x as (select * from (select rnd_str('a','b','c') s, timestamp_sequence(10, 100000) ts from long_sequence(100)) timestamp(ts)) timestamp(ts) PARTITION BY YEAR",
+                    null,
+                    false,
+                    true
+            );
 
-        insert("insert into x values(cast(null as STRING), '2021-05-21')");
-        insert("insert into x values(cast(null as STRING), '1970-01-01')");
-        assertSql(expected, "select max(s) from x");
+            insert("insert into x values(cast(null as STRING), '2021-05-21')");
+            insert("insert into x values(cast(null as STRING), '1970-01-01')");
+            assertSql(expected, "select max(s) from x");
+        });
     }
 
     @Test

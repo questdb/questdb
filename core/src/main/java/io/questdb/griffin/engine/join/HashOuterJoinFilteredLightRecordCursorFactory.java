@@ -66,16 +66,26 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
             JoinContext joinContext
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
-        this.masterKeySink = masterKeySink;
-        this.slaveKeySink = slaveKeySink;
-        cursor = new HashOuterJoinLightRecordCursor(
-                columnSplit,
-                NullRecordFactory.getInstance(slaveFactory.getMetadata()),
-                joinColumnTypes,
-                valueTypes,
-                configuration
-        );
-        this.filter = filter;
+        try {
+            this.masterKeySink = masterKeySink;
+            this.slaveKeySink = slaveKeySink;
+            cursor = new HashOuterJoinLightRecordCursor(
+                    columnSplit,
+                    NullRecordFactory.getInstance(slaveFactory.getMetadata()),
+                    joinColumnTypes,
+                    valueTypes,
+                    configuration
+            );
+            this.filter = filter;
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
+    }
+
+    @Override
+    public boolean followedOrderByAdvice() {
+        return masterFactory.followedOrderByAdvice();
     }
 
     @Override
@@ -91,11 +101,6 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
             Misc.free(masterCursor);
             throw e;
         }
-    }
-
-    @Override
-    public boolean followedOrderByAdvice() {
-        return masterFactory.followedOrderByAdvice();
     }
 
     @Override
@@ -119,11 +124,11 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
 
     @Override
     protected void _close() {
-        ((JoinRecordMetadata) getMetadata()).close();
-        masterFactory.close();
-        slaveFactory.close();
-        cursor.close();
-        filter.close();
+        Misc.freeIfCloseable(getMetadata());
+        Misc.free(masterFactory);
+        Misc.free(slaveFactory);
+        Misc.free(cursor);
+        Misc.free(filter);
     }
 
     private class HashOuterJoinLightRecordCursor extends AbstractJoinCursor {

@@ -76,22 +76,31 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
             JoinContext joinContext
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
-        this.masterKeySink = masterSink;
-        this.slaveKeySink = slaveSink;
+        try {
+            this.masterKeySink = masterSink;
+            this.slaveKeySink = slaveSink;
+            Map joinKeyMap = MapFactory.createUnorderedMap(
+                    cairoConfiguration,
+                    joinColumnTypes,
+                    valueTypes
+            );
+            cursor = new SpliceJoinLightRecordCursor(
+                    joinKeyMap,
+                    columnSplit,
+                    masterFactory.getMetadata().getTimestampIndex(),
+                    slaveFactory.getMetadata().getTimestampIndex(),
+                    NullRecordFactory.getInstance(masterFactory.getMetadata()),
+                    NullRecordFactory.getInstance(slaveFactory.getMetadata())
+            );
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
+    }
 
-        Map joinKeyMap = MapFactory.createUnorderedMap(
-                cairoConfiguration,
-                joinColumnTypes,
-                valueTypes
-        );
-        cursor = new SpliceJoinLightRecordCursor(
-                joinKeyMap,
-                columnSplit,
-                masterFactory.getMetadata().getTimestampIndex(),
-                slaveFactory.getMetadata().getTimestampIndex(),
-                NullRecordFactory.getInstance(masterFactory.getMetadata()),
-                NullRecordFactory.getInstance(slaveFactory.getMetadata())
-        );
+    @Override
+    public boolean followedOrderByAdvice() {
+        return masterFactory.followedOrderByAdvice();
     }
 
     @Override
@@ -107,11 +116,6 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
             Misc.free(masterCursor);
             throw e;
         }
-    }
-
-    @Override
-    public boolean followedOrderByAdvice() {
-        return masterFactory.followedOrderByAdvice();
     }
 
     @Override
@@ -136,10 +140,10 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
 
     @Override
     protected void _close() {
-        ((JoinRecordMetadata) getMetadata()).close();
-        masterFactory.close();
-        slaveFactory.close();
-        cursor.close();
+        Misc.freeIfCloseable(getMetadata());
+        Misc.free(masterFactory);
+        Misc.free(slaveFactory);
+        Misc.free(cursor);
     }
 
     private class SpliceJoinLightRecordCursor extends AbstractJoinCursor {

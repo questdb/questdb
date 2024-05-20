@@ -50,6 +50,11 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFa
     }
 
     @Override
+    public boolean followedOrderByAdvice() {
+        return masterFactory.followedOrderByAdvice();
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
         RecordCursor slaveCursor = null;
@@ -62,11 +67,6 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFa
             Misc.free(masterCursor);
             throw e;
         }
-    }
-
-    @Override
-    public boolean followedOrderByAdvice() {
-        return masterFactory.followedOrderByAdvice();
     }
 
     @Override
@@ -88,9 +88,9 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFa
 
     @Override
     protected void _close() {
-        ((JoinRecordMetadata) getMetadata()).close();
-        masterFactory.close();
-        slaveFactory.close();
+        Misc.freeIfCloseable(getMetadata());
+        Misc.free(masterFactory);
+        Misc.free(slaveFactory);
     }
 
     private static class AsOfLightJoinRecordCursor extends AbstractJoinCursor {

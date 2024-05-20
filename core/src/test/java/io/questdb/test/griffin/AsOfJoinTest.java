@@ -104,32 +104,34 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
     @Test
     public void testAsOfJoinDynamicTimestamp() throws Exception {
-        ddl(
-                "create table positions2 as (" +
-                        "select x, cast(x * 1000000L as TIMESTAMP) time from long_sequence(10)" +
-                        ") timestamp(time)");
+        assertMemoryLeak(() -> {
+            ddl(
+                    "create table positions2 as (" +
+                            "select x, cast(x * 1000000L as TIMESTAMP) time from long_sequence(10)" +
+                            ") timestamp(time)");
 
-        assertSql("time\tx\tx1\tcolumn\n" +
-                "1970-01-01T00:00:01.000000Z\t1\tnull\tnull\n" +
-                "1970-01-01T00:00:02.000000Z\t2\t1\t1\n" +
-                "1970-01-01T00:00:03.000000Z\t3\t2\t1\n" +
-                "1970-01-01T00:00:04.000000Z\t4\t3\t1\n" +
-                "1970-01-01T00:00:05.000000Z\t5\t4\t1\n" +
-                "1970-01-01T00:00:06.000000Z\t6\t5\t1\n" +
-                "1970-01-01T00:00:07.000000Z\t7\t6\t1\n" +
-                "1970-01-01T00:00:08.000000Z\t8\t7\t1\n" +
-                "1970-01-01T00:00:09.000000Z\t9\t8\t1\n" +
-                "1970-01-01T00:00:10.000000Z\t10\t9\t1\n", "select t1.time1 + 1 as time, t1.x, t2.x, t1.x - t2.x\n" +
-                "from \n" +
-                "(\n" +
-                "    (\n" +
-                "        select time - 1 as time1, x\n" +
-                "        from positions2\n" +
-                "    )\n" +
-                "    timestamp(time1)\n" +
-                ") t1\n" +
-                "asof join positions2 t2"
-        );
+            assertSql("time\tx\tx1\tcolumn\n" +
+                    "1970-01-01T00:00:01.000000Z\t1\tnull\tnull\n" +
+                    "1970-01-01T00:00:02.000000Z\t2\t1\t1\n" +
+                    "1970-01-01T00:00:03.000000Z\t3\t2\t1\n" +
+                    "1970-01-01T00:00:04.000000Z\t4\t3\t1\n" +
+                    "1970-01-01T00:00:05.000000Z\t5\t4\t1\n" +
+                    "1970-01-01T00:00:06.000000Z\t6\t5\t1\n" +
+                    "1970-01-01T00:00:07.000000Z\t7\t6\t1\n" +
+                    "1970-01-01T00:00:08.000000Z\t8\t7\t1\n" +
+                    "1970-01-01T00:00:09.000000Z\t9\t8\t1\n" +
+                    "1970-01-01T00:00:10.000000Z\t10\t9\t1\n", "select t1.time1 + 1 as time, t1.x, t2.x, t1.x - t2.x\n" +
+                    "from \n" +
+                    "(\n" +
+                    "    (\n" +
+                    "        select time - 1 as time1, x\n" +
+                    "        from positions2\n" +
+                    "    )\n" +
+                    "    timestamp(time1)\n" +
+                    ") t1\n" +
+                    "asof join positions2 t2"
+            );
+        });
     }
 
     @Test
@@ -380,7 +382,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         "AAPL\t2003-01-01T00:00:00.000000Z\tAAPL\t2002-01-01T00:00:00.000000Z\tAAPL\t2001-01-01T00:00:00.000000Z\tAAPL\t2000-01-01T00:00:00.000000Z\n" +
                         "AAPL\t2004-01-01T00:00:00.000000Z\tAAPL\t2003-01-01T00:00:00.000000Z\tAAPL\t2002-01-01T00:00:00.000000Z\tAAPL\t2001-01-01T00:00:00.000000Z\n" +
                         "AAPL\t2005-01-01T00:00:00.000000Z\tAAPL\t2004-01-01T00:00:00.000000Z\tAAPL\t2003-01-01T00:00:00.000000Z\tAAPL\t2002-01-01T00:00:00.000000Z\n";
-                assertQuery(compiler, expected, query, "ts", false, sqlExecutionContext, true);
+                assertQueryNoLeakCheck(compiler, expected, query, "ts", false, sqlExecutionContext, true);
             }
         });
     }
@@ -545,7 +547,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            assertQueryFullFat(
+            assertQueryFullFatNoLeakCheck(
                     "i\tsym\tamt\tprice\ttimestamp\ttimestamp1\n" +
                             "1\tmsft\t22.463\tnull\t2018-01-01T00:12:00.000000Z\t\n" +
                             "2\tgoogl\t29.92\t0.423\t2018-01-01T00:24:00.000000Z\t2018-01-01T00:16:00.000000Z\n" +
@@ -677,7 +679,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
                 false,
                 true,
                 false
-
         );
     }
 
@@ -729,7 +730,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         "AAPL\tLSE\t2002-01-01T00:00:00.000000Z\t6\tSCAM\tMSFT\tLSE\t2001-01-01T00:00:00.000000Z\t11\tSCAM\n" +
                         "MSFT\tNASDAQ\t2002-01-01T00:00:00.000000Z\t9\tSCAM\tMSFT\tLSE\t2001-01-01T00:00:00.000000Z\t11\tSCAM\n" +
                         "AAPL\tNASDAQ\t2002-01-01T00:00:00.000000Z\t3\tSCAM\tMSFT\tLSE\t2001-01-01T00:00:00.000000Z\t11\tSCAM\n";
-                assertQuery(compiler, expected, query, "ts", false, sqlExecutionContext, true);
+                assertQueryNoLeakCheck(compiler, expected, query, "ts", false, sqlExecutionContext, true);
             }
         });
     }
@@ -785,7 +786,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         "AAPL\tLSE\t2002-01-01T00:00:00.000000Z\t6\tSCAM\tAAPL\tLSE\t2001-01-01T00:00:00.000000Z\t5\tEXCELLENT\n" +
                         "MSFT\tNASDAQ\t2002-01-01T00:00:00.000000Z\t9\tSCAM\tMSFT\tNASDAQ\t2001-01-01T00:00:00.000000Z\t8\tGOOD\n" +
                         "AAPL\tNASDAQ\t2002-01-01T00:00:00.000000Z\t3\tSCAM\tAAPL\tNASDAQ\t2001-01-01T00:00:00.000000Z\t2\tEXCELLENT\n";
-                assertQuery(compiler, expected, query, "ts", false, sqlExecutionContext, true);
+                assertQueryNoLeakCheck(compiler, expected, query, "ts", false, sqlExecutionContext, true);
             }
         });
     }
@@ -867,7 +868,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         "C\t2020-06-04T11:33:20.000000Z\t\t\n" +
                         "A\t2020-09-28T05:20:00.000000Z\t2020-02-09T17:46:39.999999Z\tA\n" +
                         "B\t2021-01-21T23:06:40.000000Z\t2020-06-04T11:33:19.999999Z\tB\n";
-                assertQuery(compiler, expected, query, "ts", false, sqlExecutionContext, true);
+                assertQueryNoLeakCheck(compiler, expected, query, "ts", false, sqlExecutionContext, true);
             }
         });
     }
@@ -892,14 +893,14 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "b\t1\t2001-01-01T00:00:00.000000Z\t\tnull\t\n" +
                     "c\t2\t2001-01-01T00:00:00.000000Z\tc\t0\t1990-01-01T00:00:00.000000Z\n";
 
-            assertQuery(expected, query, "xts", false, true);
+            assertQueryNoLeakCheck(expected, query, "xts", false, true);
         });
     }
 
     @Test
     public void testLtJoinOneTableKeyed() throws Exception {
         assertMemoryLeak(() -> {
-            //tabY
+            // tabY
             ddl("create table tabY (tag symbol, x long, ts timestamp) timestamp(ts)");
             insert("insert into tabY values ('A', 1, 10000)");
             insert("insert into tabY values ('A', 2, 20000)");
@@ -907,7 +908,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             insert("insert into tabY values ('B', 1, 30000)");
             insert("insert into tabY values ('B', 2, 40000)");
             insert("insert into tabY values ('B', 3, 50000)");
-            //check tables
+            // check tables
             String ex = "tag\tx\tts\n" +
                     "A\t1\t1970-01-01T00:00:00.010000Z\n" +
                     "A\t2\t1970-01-01T00:00:00.020000Z\n" +
@@ -932,7 +933,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testLtJoinOneTableKeyedV2() throws Exception {
         assertMemoryLeak(() -> {
-            //tabY
+            // tabY
             ddl("create table tabY (tag symbol, x long, ts timestamp) timestamp(ts)");
             insert("insert into tabY values ('A', 1, 10000)");
             insert("insert into tabY values ('A', 2, 20000)");
@@ -940,7 +941,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
             insert("insert into tabY values ('B', 1, 40000)");
             insert("insert into tabY values ('B', 2, 50000)");
             insert("insert into tabY values ('B', 3, 60000)");
-            //check tables
+            // check tables
             String ex = "tag\tx\tts\n" +
                     "A\t1\t1970-01-01T00:00:00.010000Z\n" +
                     "A\t2\t1970-01-01T00:00:00.020000Z\n" +
@@ -965,7 +966,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testLtJoinSequenceGap() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
+            // create table
             ddl("create table tab as " +
                     "(" +
                     "select " +
@@ -975,7 +976,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     " from" +
                     " long_sequence(20)" +
                     ") timestamp(ts) partition by DAY");
-            //insert
+            // insert
             insert("insert into tab values ('CC', 24, 210000)");
             insert("insert into tab values ('CC', 25, 220000)");
             String ex = "tag\tx\tts\n" +
@@ -1017,7 +1018,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testLtJoinSequenceGapOnKey() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
+            // create table
             ddl("create table tab as " +
                     "(" +
                     "select " +
@@ -1027,7 +1028,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     " from" +
                     " long_sequence(20)" +
                     ") timestamp(ts) partition by DAY");
-            //insert
+            // insert
             insert("insert into tab values ('CC', 24, 210000)");
             insert("insert into tab values ('CC', 25, 220000)");
             String ex = "tag\tx\tts\n" +
@@ -1121,7 +1122,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         "QSTDB\t2006-01-01T00:00:00.000000Z\tQSTDB\t2006-01-01T00:00:00.000000Z\tQSTDB\t2006-01-01T00:00:00.000000Z\tQSTDB\t2006-01-01T00:00:00.000000Z\n" +
                         "QSTDB\t2007-01-01T00:00:00.000000Z\tQSTDB\t2007-01-01T00:00:00.000000Z\tQSTDB\t2007-01-01T00:00:00.000000Z\tQSTDB\t2007-01-01T00:00:00.000000Z\n" +
                         "QSTDB\t2008-01-01T00:00:00.000000Z\tQSTDB\t2008-01-01T00:00:00.000000Z\tQSTDB\t2008-01-01T00:00:00.000000Z\tQSTDB\t2008-01-01T00:00:00.000000Z\n";
-                assertQuery(compiler, expected, query, "ts", false, sqlExecutionContext, true);
+                assertQueryNoLeakCheck(compiler, expected, query, "ts", false, sqlExecutionContext, true);
             }
         });
     }
@@ -1178,7 +1179,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         "QSTDB\t2006-01-01T00:00:00.000000Z\tQSTDB\t2005-01-01T00:00:00.000000Z\tQSTDB\t2004-01-01T00:00:00.000000Z\tQSTDB\t2003-01-01T00:00:00.000000Z\n" +
                         "QSTDB\t2007-01-01T00:00:00.000000Z\tQSTDB\t2006-01-01T00:00:00.000000Z\tQSTDB\t2005-01-01T00:00:00.000000Z\tQSTDB\t2004-01-01T00:00:00.000000Z\n" +
                         "QSTDB\t2008-01-01T00:00:00.000000Z\tQSTDB\t2007-01-01T00:00:00.000000Z\tQSTDB\t2006-01-01T00:00:00.000000Z\tQSTDB\t2005-01-01T00:00:00.000000Z\n";
-                assertQuery(compiler, expected, query, "ts", false, sqlExecutionContext, true);
+                assertQueryNoLeakCheck(compiler, expected, query, "ts", false, sqlExecutionContext, true);
             }
         });
     }
@@ -1239,19 +1240,21 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         "Whatever\tQSTDB\t2007-01-01T00:00:00.000000Z\tQSTDB\t2006-01-01T00:00:00.000000Z\tQSTDB\t2005-01-01T00:00:00.000000Z\tQSTDB\t2004-01-01T00:00:00.000000Z\n" +
                         "Whatever\tQSTDB\t2008-01-01T00:00:00.000000Z\tQSTDB\t2007-01-01T00:00:00.000000Z\tQSTDB\t2006-01-01T00:00:00.000000Z\tQSTDB\t2005-01-01T00:00:00.000000Z\n";
 
-                assertQuery(compiler, expected, query, "t0ts", false, sqlExecutionContext, true);
+                assertQueryNoLeakCheck(compiler, expected, query, "t0ts", false, sqlExecutionContext, true);
             }
         });
     }
 
     private void testExplicitTimestampIsNotNecessaryWhenJoining(String joinType, String timestamp) throws Exception {
-        assertQuery("ts\ty\tts1\ty1\n",
+        assertQuery(
+                "ts\ty\tts1\ty1\n",
                 "select * from " +
                         "(select * from (select * from x where y = 10 order by ts desc limit 20) order by ts ) a " +
                         joinType +
                         "(select * from x order by ts limit 5) b",
                 "create table x (ts timestamp, y int) timestamp(ts)",
-                timestamp, false
+                timestamp,
+                false
         );
     }
 

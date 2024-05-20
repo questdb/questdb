@@ -39,8 +39,8 @@ import java.io.Closeable;
 
 public class JoinRecordMetadata extends AbstractRecordMetadata implements Closeable {
 
-    private final static ColumnTypes keyTypes;
-    private final static ColumnTypes valueTypes;
+    private static final ColumnTypes keyTypes;
+    private static final ColumnTypes valueTypes;
     private final Map map;
     private int refCount;
 

@@ -67,44 +67,49 @@ public class CopyRequestJob extends SynchronizedJob implements Closeable {
     private final ParallelCsvFileImporter.PhaseStatusReporter updateStatusRef = this::updateStatus;
 
     public CopyRequestJob(final CairoEngine engine, int workerCount) throws SqlException {
-        this.requestQueue = engine.getMessageBus().getTextImportRequestQueue();
-        this.requestSubSeq = engine.getMessageBus().getTextImportRequestSubSeq();
-        this.parallelImporter = new ParallelCsvFileImporter(engine, workerCount);
-        this.serialImporter = new SerialCsvFileImporter(engine);
+        try {
+            this.requestQueue = engine.getMessageBus().getTextImportRequestQueue();
+            this.requestSubSeq = engine.getMessageBus().getTextImportRequestSubSeq();
+            this.parallelImporter = new ParallelCsvFileImporter(engine, workerCount);
+            this.serialImporter = new SerialCsvFileImporter(engine);
 
-        CairoConfiguration configuration = engine.getConfiguration();
-        this.clock = configuration.getMicrosecondClock();
+            CairoConfiguration configuration = engine.getConfiguration();
+            this.clock = configuration.getMicrosecondClock();
 
-        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
-        this.sqlExecutionContext.with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(), null, null);
-        final String statusTableName = configuration.getSystemTableNamePrefix() + "text_import_log";
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            this.statusTableToken = compiler.query()
-                    .$("CREATE TABLE IF NOT EXISTS \"")
-                    .$(statusTableName)
-                    .$("\" (" +
-                            "ts timestamp, " + // 0
-                            "id string, " + // 1
-                            "table_name symbol, " + // 2
-                            "file symbol, " + // 3
-                            "phase symbol, " + // 4
-                            "status symbol, " + // 5
-                            "message string," + // 6
-                            "rows_handled long," + // 7
-                            "rows_imported long," + // 8
-                            "errors long" + // 9
-                            ") timestamp(ts) partition by DAY BYPASS WAL"
-                    )
-                    .compile(sqlExecutionContext)
-                    .getTableToken();
+            this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
+            this.sqlExecutionContext.with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(), null, null);
+            final String statusTableName = configuration.getSystemTableNamePrefix() + "text_import_log";
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                this.statusTableToken = compiler.query()
+                        .$("CREATE TABLE IF NOT EXISTS \"")
+                        .$(statusTableName)
+                        .$("\" (" +
+                                "ts timestamp, " + // 0
+                                "id string, " + // 1
+                                "table_name symbol, " + // 2
+                                "file symbol, " + // 3
+                                "phase symbol, " + // 4
+                                "status symbol, " + // 5
+                                "message string," + // 6
+                                "rows_handled long," + // 7
+                                "rows_imported long," + // 8
+                                "errors long" + // 9
+                                ") timestamp(ts) partition by DAY BYPASS WAL"
+                        )
+                        .compile(sqlExecutionContext)
+                        .getTableToken();
+            }
+
+            this.writer = engine.getWriter(statusTableToken, "QuestDB system");
+            this.logRetentionDays = configuration.getSqlCopyLogRetentionDays();
+            this.copyContext = engine.getCopyContext();
+            this.path = new Path();
+            this.engine = engine;
+            enforceLogRetention();
+        } catch (Throwable t) {
+            close();
+            throw t;
         }
-
-        this.writer = engine.getWriter(statusTableToken, "QuestDB system");
-        this.logRetentionDays = configuration.getSqlCopyLogRetentionDays();
-        this.copyContext = engine.getCopyContext();
-        this.path = new Path();
-        this.engine = engine;
-        enforceLogRetention();
     }
 
     @Override

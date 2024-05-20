@@ -35,7 +35,7 @@ import io.questdb.std.str.Path;
  * Cursors returned by this class are not thread-safe.
  */
 public class BitmapIndexFwdReader extends AbstractIndexReader {
-    private final static Log LOG = LogFactory.getLog(BitmapIndexFwdReader.class);
+    private static final Log LOG = LogFactory.getLog(BitmapIndexFwdReader.class);
     private final Cursor cursor = new Cursor();
     private final NullCursor nullCursor = new NullCursor();
 

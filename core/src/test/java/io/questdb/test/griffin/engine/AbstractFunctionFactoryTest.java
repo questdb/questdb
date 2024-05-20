@@ -49,7 +49,6 @@ import org.junit.Assert;
 import java.util.Arrays;
 
 public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTest {
-
     public static final double DELTA = 0.000000000000001;
 
     private static int toByteRefs = 0;
@@ -436,7 +435,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
 
     protected void assertFailure(CharSequence expectedMsg, CharSequence sql) {
         try {
-            assertException(sql);
+            assertExceptionNoLeakCheck(sql);
         } catch (Exception e) {
             TestUtils.assertEquals(expectedMsg, e.getMessage());
         }
@@ -544,7 +543,6 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         public Invocation andInit(SqlExecutionContext context) throws SqlException {
             function1.init(null, context);
             function2.init(null, context);
-
             return this;
         }
 

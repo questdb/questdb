@@ -26,13 +26,14 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.network.NetworkFacade;
+import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBreaker, Closeable {
+public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBreaker, Closeable, Mutable {
     private final int bufferSize;
     private final MillisecondClock clock;
     private final SqlExecutionCircuitBreakerConfiguration configuration;

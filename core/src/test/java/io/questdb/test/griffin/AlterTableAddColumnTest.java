@@ -48,7 +48,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
 
                     ddl("alter table x add mycol int not null, mycol2 int");
 
-                    assertQueryPlain(
+                    assertQueryNoLeakCheck(
                             "c\tmycol\tmycol2\n" +
                                     "XYZ\tnull\tnull\n" +
                                     "ABC\tnull\tnull\n" +
@@ -136,7 +136,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
 
                     ddl("alter table x add column mycol int");
 
-                    assertQueryPlain(
+                    assertQueryNoLeakCheck(
                             "c\tmycol\n" +
                                     "XYZ\tnull\n" +
                                     "ABC\tnull\n" +
@@ -178,7 +178,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
 
                     ddl("alter table x add \"mycol\" int not null");
 
-                    assertQueryPlain(
+                    assertQueryNoLeakCheck(
                             "c\tmycol\n" +
                                     "XYZ\tnull\n" +
                                     "ABC\tnull\n" +
@@ -204,7 +204,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
 
                     ddl("alter table x add column \"mycol\" int not null");
 
-                    assertQueryPlain(
+                    assertQueryNoLeakCheck(
                             "c\tmycol\n" +
                                     "XYZ\tnull\n" +
                                     "ABC\tnull\n" +
@@ -230,7 +230,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
 
                     ddl("alter table x add \"spa ce\" string");
 
-                    assertQueryPlain(
+                    assertQueryNoLeakCheck(
                             "c\tspa ce\n" +
                                     "XYZ\t\n" +
                                     "ABC\t\n" +
@@ -256,7 +256,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
 
                     ddl("alter table x add mycol int");
 
-                    assertQueryPlain(
+                    assertQueryNoLeakCheck(
                             "c\tmycol\n" +
                                     "XYZ\tnull\n" +
                                     "ABC\tnull\n" +
@@ -282,7 +282,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
 
                     ddl("alter table x add mycol int not null");
 
-                    assertQueryPlain(
+                    assertQueryNoLeakCheck(
                             "c\tmycol\n" +
                                     "XYZ\tnull\n" +
                                     "ABC\tnull\n" +
@@ -308,7 +308,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
 
                     ddl("alter table x add mycol int null");
 
-                    assertQueryPlain(
+                    assertQueryNoLeakCheck(
                             "c\tmycol\n" +
                                     "XYZ\tnull\n" +
                                     "ABC\tnull\n" +
@@ -597,7 +597,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     createX();
 
                     ddl("alter table x add column mycol int, second symbol");
-                    assertQueryPlain(
+                    assertQueryNoLeakCheck(
                             "c\tmycol\tsecond\n" +
                                     "XYZ\tnull\t\n" +
                                     "ABC\tnull\t\n" +
@@ -628,7 +628,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
 
                     ddl("alter table x add column mycol int; \n");
                     ddl("alter table x add column second symbol;");
-                    assertQueryPlain(
+                    assertQueryNoLeakCheck(
                             "c\tmycol\tsecond\n" +
                                     "XYZ\tnull\t\n" +
                                     "ABC\tnull\t\n" +

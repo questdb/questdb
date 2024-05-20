@@ -52,8 +52,8 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     private final int level;
     private final TemplateParser locationParser = new TemplateParser();
     private final DirectUtf8StringZ logFileName = new DirectUtf8StringZ();
-    private final Path path = new Path();
-    private final Path renameToPath = new Path();
+    private final Path path;
+    private final Path renameToPath;
     private final RingQueue<LogRecordUtf8Sink> ring;
     private final AtomicLong rolledCounter = new AtomicLong();
     private final SCSequence subSeq;
@@ -99,11 +99,18 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
             SCSequence subSeq,
             int level
     ) {
-        this.ff = ff;
-        this.clock = clock;
-        this.ring = ring;
-        this.subSeq = subSeq;
-        this.level = level;
+        try {
+            this.path = new Path();
+            this.renameToPath = new Path();
+            this.ff = ff;
+            this.clock = clock;
+            this.ring = ring;
+            this.subSeq = subSeq;
+            this.level = level;
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override

@@ -375,7 +375,7 @@ public class ShowPartitionsTest extends AbstractCairoTest {
         String tableName = testTableName(testName.getMethodName());
         assertMemoryLeak(() -> {
             createTable(tableName);
-            assertQuery(
+            assertQueryNoLeakCheck(
                     replaceSizeToMatchOS(
                             "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\n" +
                                     "5\tMONTH\t2023-06\t2023-06-01T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t97\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\n",
@@ -393,7 +393,7 @@ public class ShowPartitionsTest extends AbstractCairoTest {
         String tableName = testTableName(testName.getMethodName());
         assertMemoryLeak(() -> {
             createTable(tableName, PartitionBy.WEEK);
-            assertQuery(
+            assertQueryNoLeakCheck(
                     replaceSizeToMatchOS(
                             "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\n" +
                                     "25\tWEEK\t2023-W25\t2023-06-19T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t25\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\n",
@@ -415,7 +415,7 @@ public class ShowPartitionsTest extends AbstractCairoTest {
             if (isWal) {
                 drainWalQueue();
             }
-            assertQuery(
+            assertQueryNoLeakCheck(
                     replaceSizeToMatchOS(
                             "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\n" +
                                     "5\tMONTH\t2023-06\t2023-06-01T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t97\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\n",
@@ -551,7 +551,7 @@ public class ShowPartitionsTest extends AbstractCairoTest {
         new Thread(() -> {
             try {
                 try {
-                    assertQuery(
+                    assertQueryNoLeakCheck(
                             finallyExpected,
                             "show partitions from " + tableName,
                             null,
@@ -569,7 +569,7 @@ public class ShowPartitionsTest extends AbstractCairoTest {
         }).start();
         done.await();
         Assert.assertEquals(0, failureCounter.get());
-        assertQuery(
+        assertQueryNoLeakCheck(
                 finallyExpected,
                 "SELECT * FROM table_partitions('" + tableName + "')",
                 null,

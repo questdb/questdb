@@ -105,65 +105,48 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public CairoEngine(CairoConfiguration configuration, Metrics metrics) {
-        ffCache = new FunctionFactoryCache(
-                configuration,
-                ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
-        );
-        this.protectedTableResolver = newProtectedTableResolver(configuration);
-        this.configuration = configuration;
-        this.copyContext = new CopyContext(configuration);
-        this.tableSequencerAPI = new TableSequencerAPI(this, configuration);
-        this.messageBus = new MessageBusImpl(configuration);
-        this.metrics = metrics;
-        // Message bus and metrics must be initialized before the pools.
-        this.writerPool = new WriterPool(configuration, this);
-        this.readerPool = new ReaderPool(configuration, messageBus);
-        this.sequencerMetadataPool = new SequencerMetadataPool(configuration, this);
-        this.tableMetadataPool = new TableMetadataPool(configuration);
-        this.walWriterPool = new WalWriterPool(configuration, this);
-        this.engineMaintenanceJob = new EngineMaintenanceJob(configuration);
-        this.telemetry = new Telemetry<>(TelemetryTask.TELEMETRY, configuration);
-        this.telemetryWal = new Telemetry<>(TelemetryWalTask.WAL_TELEMETRY, configuration);
-        this.tableIdGenerator = new IDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME);
-        this.snapshotAgent = new DatabaseSnapshotAgentImpl(this);
-        this.queryRegistry = new QueryRegistry(configuration);
-        this.rootExecutionContext = new SqlExecutionContextImpl(this, 1)
-                .with(AllowAllSecurityContext.INSTANCE);
-
         try {
+            ffCache = new FunctionFactoryCache(
+                    configuration,
+                    ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
+            );
+            this.protectedTableResolver = newProtectedTableResolver(configuration);
+            this.configuration = configuration;
+            this.copyContext = new CopyContext(configuration);
+            this.tableSequencerAPI = new TableSequencerAPI(this, configuration);
+            this.messageBus = new MessageBusImpl(configuration);
+            this.metrics = metrics;
+            // Message bus and metrics must be initialized before the pools.
+            this.writerPool = new WriterPool(configuration, this);
+            this.readerPool = new ReaderPool(configuration, messageBus);
+            this.sequencerMetadataPool = new SequencerMetadataPool(configuration, this);
+            this.tableMetadataPool = new TableMetadataPool(configuration);
+            this.walWriterPool = new WalWriterPool(configuration, this);
+            this.engineMaintenanceJob = new EngineMaintenanceJob(configuration);
+            this.telemetry = new Telemetry<>(TelemetryTask.TELEMETRY, configuration);
+            this.telemetryWal = new Telemetry<>(TelemetryWalTask.WAL_TELEMETRY, configuration);
+            this.tableIdGenerator = new IDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME);
+            this.snapshotAgent = new DatabaseSnapshotAgentImpl(this);
+            this.queryRegistry = new QueryRegistry(configuration);
+            this.rootExecutionContext = new SqlExecutionContextImpl(this, 1)
+                    .with(AllowAllSecurityContext.INSTANCE);
+
             tableIdGenerator.open();
-        } catch (Throwable e) {
-            close();
-            throw e;
-        }
-
-        // Recover snapshot, if necessary.
-        try {
+            // Recover snapshot, if necessary.
             snapshotAgent.recoverSnapshot();
-        } catch (Throwable e) {
-            close();
-            throw e;
-        }
 
-        // Migrate database files.
-        try {
+            // Migrate database files.
             EngineMigration.migrateEngineTo(this, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
-        } catch (Throwable e) {
-            close();
-            throw e;
-        }
-
-        try {
             tableNameRegistry = configuration.isReadOnlyInstance()
                     ? new TableNameRegistryRO(configuration, protectedTableResolver)
                     : new TableNameRegistryRW(configuration, protectedTableResolver);
             tableNameRegistry.reload();
-        } catch (Throwable e) {
-            close();
-            throw e;
-        }
 
-        this.sqlCompilerPool = new SqlCompilerPool(this);
+            this.sqlCompilerPool = new SqlCompilerPool(this);
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     public static void compile(SqlCompiler compiler, CharSequence sql, SqlExecutionContext sqlExecutionContext) throws SqlException {

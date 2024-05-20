@@ -3476,7 +3476,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     public void testVarcharPracticalParsing() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table testVarcharPracticalParsing ( a string, ts timestamp) timestamp(ts)");
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select * from testVarcharPracticalParsing where\n" +
                             "ts = '2024-02-29' or ts <= '2024-03-01'",
                     "Async Filter workers: 1\n" +
@@ -3486,7 +3486,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                             "        Frame forward scan on: testVarcharPracticalParsing\n"
             );
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select * from testVarcharPracticalParsing where\n" +
                             "(ts = '2024-02-29'::varchar or ts <= '2024-03-01'::varchar) or ts = '2024-05-01'::varchar",
                     "Async Filter workers: 1\n" +

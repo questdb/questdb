@@ -93,18 +93,20 @@ public class EqLong256StrFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testLong256GarbageDecode1() throws Exception {
-        try {
-            assertQuery(
-                    "rnd_long256\n0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\n",
-                    "xxxx where rnd_long256!='0xG56'",
-                    "create table xxxx as (select rnd_long256() from long_sequence(1));",
-                    null,
-                    true
-            );
-            Assert.fail();
-        } catch (ImplicitCastException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `0xG56` [STRING -> LONG256]");
-        }
+        assertMemoryLeak(() -> {
+            try {
+                assertQueryNoLeakCheck(
+                        "rnd_long256\n0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\n",
+                        "xxxx where rnd_long256!='0xG56'",
+                        "create table xxxx as (select rnd_long256() from long_sequence(1));",
+                        null,
+                        true
+                );
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `0xG56` [STRING -> LONG256]");
+            }
+        });
     }
 
     @Test
