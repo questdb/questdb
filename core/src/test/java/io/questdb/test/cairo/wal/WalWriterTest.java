@@ -1260,13 +1260,11 @@ public class WalWriterTest extends AbstractCairoTest {
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long getPageSize() {
-                try {
-                    throw new RuntimeException("Test failure");
-                } catch (Exception e) {
-                    final StackTraceElement[] stackTrace = e.getStackTrace();
-                    if (stackTrace[4].getClassName().endsWith("TableSequencerImpl") && stackTrace[4].getMethodName().equals("open")) {
-                        throw e;
-                    }
+                RuntimeException e = new RuntimeException("Test failure");
+                e.fillInStackTrace();
+                final StackTraceElement[] stackTrace = e.getStackTrace();
+                if (stackTrace[4].getClassName().endsWith("TableSequencerImpl")) {
+                    throw e;
                 }
                 return Files.PAGE_SIZE;
             }
