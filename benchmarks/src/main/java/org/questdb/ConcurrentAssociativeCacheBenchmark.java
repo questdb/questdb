@@ -24,10 +24,14 @@
 
 package org.questdb;
 
+import io.questdb.metrics.Counter;
 import io.questdb.metrics.CounterImpl;
+import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.LongGaugeImpl;
+import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentAssociativeCache;
 import io.questdb.std.Rnd;
+import io.questdb.std.SimpleAssociativeCache;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
@@ -41,7 +45,11 @@ import java.util.concurrent.TimeUnit;
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class ConcurrentAssociativeCacheBenchmark {
-
+    private static final int N_QUERIES = 100;
+    private static final LongGauge cachedGauge = new LongGaugeImpl("bench");
+    private static final Counter hitCounter = new CounterImpl("bench");
+    private static final Counter missCounter = new CounterImpl("bench");
+    private static final String[] queries = new String[N_QUERIES];
     private final ConcurrentAssociativeCache<Integer> cacheNoMetrics;
     private final ConcurrentAssociativeCache<Integer> cacheWithMetrics;
 
@@ -51,9 +59,9 @@ public class ConcurrentAssociativeCacheBenchmark {
         cacheWithMetrics = new ConcurrentAssociativeCache<>(
                 4 * cpus,
                 4 * cpus,
-                new LongGaugeImpl("bench"),
-                new CounterImpl("bench"),
-                new CounterImpl("bench")
+                cachedGauge,
+                hitCounter,
+                missCounter
         );
     }
 
@@ -69,6 +77,19 @@ public class ConcurrentAssociativeCacheBenchmark {
     }
 
     @Benchmark
+    public void testLocalWithMetrics_contented(RndState rndState) {
+        Integer v = rndState.localCache.poll("foobar");
+        rndState.localCache.put("foobar", v != null ? v : 42);
+    }
+
+    @Benchmark
+    public void testLocalWithMetrics_uncontented(RndState rndState) {
+        CharSequence k = queries[rndState.rnd.nextInt(N_QUERIES)];
+        Integer v = rndState.localCache.poll(k);
+        rndState.localCache.put(k, v != null ? v : 42);
+    }
+
+    @Benchmark
     public void testNoMetrics_contented() {
         Integer v = cacheNoMetrics.poll("foobar");
         cacheNoMetrics.put("foobar", v != null ? v : 42);
@@ -76,7 +97,7 @@ public class ConcurrentAssociativeCacheBenchmark {
 
     @Benchmark
     public void testNoMetrics_uncontented(RndState rndState) {
-        CharSequence k = rndState.rnd.nextChars(16);
+        CharSequence k = queries[rndState.rnd.nextInt(N_QUERIES)];
         Integer v = cacheNoMetrics.poll(k);
         cacheNoMetrics.put(k, v != null ? v : 42);
     }
@@ -89,13 +110,32 @@ public class ConcurrentAssociativeCacheBenchmark {
 
     @Benchmark
     public void testWithMetrics_uncontented(RndState rndState) {
-        CharSequence k = rndState.rnd.nextChars(16);
+        CharSequence k = queries[rndState.rnd.nextInt(N_QUERIES)];
         Integer v = cacheWithMetrics.poll(k);
         cacheWithMetrics.put(k, v != null ? v : 42);
     }
 
     @State(Scope.Thread)
     public static class RndState {
+        final SimpleAssociativeCache<Integer> localCache;
         final Rnd rnd = new Rnd();
+
+        public RndState() {
+            final int cpus = Runtime.getRuntime().availableProcessors();
+            this.localCache = new SimpleAssociativeCache<>(
+                    4 * cpus,
+                    4 * cpus,
+                    cachedGauge,
+                    hitCounter,
+                    missCounter
+            );
+        }
+    }
+
+    static {
+        Rnd rnd = new Rnd();
+        for (int i = 0; i < queries.length; i++) {
+            queries[i] = Chars.toString(rnd.nextChars(16));
+        }
     }
 }
