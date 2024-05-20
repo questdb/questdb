@@ -138,12 +138,14 @@ public class ConcurrentAssociativeCache<V> implements AssociativeCache<V> {
         final int row = row(key);
         final CharSequence[] rowKeys = keys.getQuick(row);
         final V[] rowValues = values.getQuick(row);
-        CharSequence outgoingKey = null;
+        CharSequence outgoingKey;
         V outgoingValue;
 
         synchronized (rowKeys) {
+            // TODO: this logic isn't great in multi-threaded scenarios
             if (Chars.equalsNc(key, rowKeys[0])) {
                 // Present entry case.
+                outgoingKey = key;
                 outgoingValue = rowValues[0];
             } else {
                 // New entry case.

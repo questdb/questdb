@@ -56,7 +56,7 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
         this.allocatorType = allocatorType;
     }
 
-    @Parameterized.Parameters(name = "{0}-{1}")
+    @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
                 {AllocatorType.THREAD_SAFE},

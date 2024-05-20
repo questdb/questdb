@@ -47,7 +47,7 @@ public class AssociativeCacheTest {
         this.cacheType = cacheType;
     }
 
-    @Parameterized.Parameters(name = "{0}-{1}")
+    @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
                 {CacheType.SIMPLE},

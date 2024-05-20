@@ -141,7 +141,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final IntList syncActions = new IntList(4);
     private final SCSequence tempSequence = new SCSequence();
     private final WeakSelfReturningObjectPool<TypesAndInsert> typesAndInsertPool;
-    private final WeakSelfReturningObjectPool<TypesAndSelect> typesAndSelectPool;
     private final WeakSelfReturningObjectPool<TypesAndUpdate> typesAndUpdatePool;
     private final DirectUtf8String utf8String = new DirectUtf8String();
     // this is a reference to types either from the context or named statement, where it is provided
@@ -251,7 +250,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
             this.metrics = engine.getMetrics();
             this.typesAndSelectCache = typesAndSelectCache;
-            this.typesAndSelectPool = new WeakSelfReturningObjectPool<>(TypesAndSelect::new, typesAndSelectCache.capacity());
 
             final boolean enabledUpdateCache = configuration.isUpdateCacheEnabled();
             final int updateBlockCount = enabledUpdateCache ? configuration.getUpdateCacheBlockCount() : 1;
@@ -2044,7 +2042,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         responseUtf8Sink.putLen(addr);
     }
 
-    //clears whole state except for characterStore because top-level batch text is using it
+    // clears whole state except for characterStore because top-level batch text is using it
     private void prepareForNewBatchQuery() {
         if (completed) {
             LOG.debug().$("prepare for new query").$();
@@ -2122,7 +2120,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 sink.putNetworkShort((short) -1);
             }
 
-            //type modifier
+            // type modifier
             sink.putIntDirect(INT_NULL_X);
             // this is special behaviour for binary fields to prevent binary data being hex encoded on the wire
             // format code
@@ -2300,12 +2298,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             case CompiledQuery.EXPLAIN:
                 // explain results should not be cached
                 typesAndSelectIsCached = false;
-                typesAndSelect = typesAndSelectPool.pop();
-                typesAndSelect.of(cq.getRecordCursorFactory(), bindVariableService);
+                typesAndSelect = new TypesAndSelect(cq.getRecordCursorFactory());
+                typesAndSelect.copyTypesFrom(bindVariableService);
                 queryTag = TAG_EXPLAIN;
             case CompiledQuery.SELECT:
-                typesAndSelect = typesAndSelectPool.pop();
-                typesAndSelect.of(cq.getRecordCursorFactory(), bindVariableService);
+                typesAndSelect = new TypesAndSelect(cq.getRecordCursorFactory());
+                typesAndSelect.copyTypesFrom(bindVariableService);
                 queryTag = TAG_SELECT;
                 LOG.debug().$("cache select [sql=").$(queryText).$(", thread=").$(Thread.currentThread().getId()).I$();
                 break;
@@ -2334,8 +2332,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 if (factory != null) {
                     // this query is non-cacheable
                     typesAndSelectIsCached = false;
-                    typesAndSelect = typesAndSelectPool.pop();
-                    typesAndSelect.of(cq.getRecordCursorFactory(), bindVariableService);
+                    typesAndSelect = new TypesAndSelect(cq.getRecordCursorFactory());
+                    typesAndSelect.copyTypesFrom(bindVariableService);
                 }
                 queryTag = TAG_PSEUDO_SELECT;
                 break;
@@ -3036,8 +3034,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     executeInsert();
                 } else if (typesAndUpdate != null) {
                     executeUpdate();
-                } else if (cq.getType() == CompiledQuery.INSERT_AS_SELECT ||
-                        cq.getType() == CompiledQuery.CREATE_TABLE_AS_SELECT) {
+                } else if (cq.getType() == CompiledQuery.INSERT_AS_SELECT
+                        || cq.getType() == CompiledQuery.CREATE_TABLE_AS_SELECT) {
                     prepareCommandComplete(true);
                 } else {
                     executeTag();
