@@ -39,6 +39,8 @@ public interface ServerConfiguration {
 
     CairoConfiguration getCairoConfiguration();
 
+    PublicPassthroughConfiguration getPublicPassthroughConfiguration();
+
     FactoryProvider getFactoryProvider();
 
     HttpMinServerConfiguration getHttpMinServerConfiguration();

@@ -448,6 +448,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
         DumpThreadStacksFunctionFactory.dumpThreadStacks();
     }
 
+    public static Utf8String utf8(CharSequence value) {
+        return value != null ? new Utf8String(value) : null;
+    }
+
     @Before
     public void setUp() {
         super.setUp();
@@ -1473,10 +1477,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
-    protected static Utf8Sequence utf8(CharSequence value) {
-        return value != null ? new Utf8String(value) : null;
-    }
-
     protected void assertCursor(CharSequence expected, RecordCursor cursor, RecordMetadata metadata, boolean header) {
         TestUtils.assertCursor(expected, cursor, metadata, header, sink);
     }
@@ -1828,10 +1828,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
             @Nullable SCSequence eventSubSeq
     ) throws SqlException {
         return engine.update(updateSql, sqlExecutionContext, eventSubSeq);
-    }
-
-    protected enum StringAsTagMode {
-        WITH_STRINGS_AS_TAG, NO_STRINGS_AS_TAG
     }
 
     protected enum SymbolAsFieldMode {

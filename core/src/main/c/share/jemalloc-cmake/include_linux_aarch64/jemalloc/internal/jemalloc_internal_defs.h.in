@@ -6,20 +6,20 @@
  * public APIs to be prefixed.  This makes it possible, with some care, to use
  * multiple allocators simultaneously.
  */
-#define JEMALLOC_PREFIX "je_"
-#define JEMALLOC_CPREFIX "JE_"
+/* #define JEMALLOC_PREFIX "je_" */
+/* #define JEMALLOC_CPREFIX "JE_" */
 
 /*
  * Define overrides for non-standard allocator-related functions if they are
  * present on the system.
  */
-/* #undef JEMALLOC_OVERRIDE___LIBC_CALLOC */
-/* #undef JEMALLOC_OVERRIDE___LIBC_FREE */
-/* #undef JEMALLOC_OVERRIDE___LIBC_MALLOC */
-/* #undef JEMALLOC_OVERRIDE___LIBC_MEMALIGN */
-/* #undef JEMALLOC_OVERRIDE___LIBC_REALLOC */
-/* #undef JEMALLOC_OVERRIDE___LIBC_VALLOC */
-/* #undef JEMALLOC_OVERRIDE___POSIX_MEMALIGN */
+#undef JEMALLOC_OVERRIDE___LIBC_CALLOC
+#undef JEMALLOC_OVERRIDE___LIBC_FREE
+#undef JEMALLOC_OVERRIDE___LIBC_MALLOC
+#undef JEMALLOC_OVERRIDE___LIBC_MEMALIGN
+#undef JEMALLOC_OVERRIDE___LIBC_REALLOC
+#undef JEMALLOC_OVERRIDE___LIBC_VALLOC
+#undef JEMALLOC_OVERRIDE___POSIX_MEMALIGN
 
 /*
  * JEMALLOC_PRIVATE_NAMESPACE is used as a prefix for all library-private APIs.
@@ -152,7 +152,7 @@
 /* #undef JEMALLOC_EXPERIMENTAL_SMALLOCX_API */
 
 /* JEMALLOC_PROF enables allocation profiling. */
-/* #undef JEMALLOC_PROF */
+#undef JEMALLOC_PROF
 
 /* Use libunwind for profile backtracing if defined. */
 /* #undef JEMALLOC_PROF_LIBUNWIND */

@@ -59,6 +59,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
     private int boundaryLen;
     private int boundaryPtr;
     private int consumedBoundaryLen;
+    private boolean firstDashRead;
     private long resumePtr;
     private int state;
 
@@ -74,6 +75,7 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
         this.boundaryByte = 0;
         this.boundary = null;
         this.consumedBoundaryLen = 0;
+        this.firstDashRead = false;
         this.headerParser.clear();
     }
 
@@ -139,6 +141,13 @@ public class HttpMultipartContentParser implements Closeable, Mutable {
                             ptr++;
                             break;
                         case '-':
+                            // make sure that we set the status to DONE only after we read the second '-'
+                            if (!firstDashRead) {
+                                firstDashRead = true;
+                                // on the first '-' we just need to read the next byte
+                                ptr++;
+                                break;
+                            }
                             listener.onPartEnd();
                             state = DONE;
                             return true;

@@ -46,6 +46,11 @@ public class NullMemoryMR implements MemoryMR {
     }
 
     @Override
+    public int detachFdClose() {
+        return -1;
+    }
+
+    @Override
     public void extend(long size) {
     }
 
@@ -72,6 +77,16 @@ public class NullMemoryMR implements MemoryMR {
     @Override
     public char getChar(long offset) {
         return 0;
+    }
+
+    @Override
+    public DirectUtf8Sequence getDirectVarcharA(long offset, int size, boolean ascii) {
+        return null;
+    }
+
+    @Override
+    public DirectUtf8Sequence getDirectVarcharB(long offset, int size, boolean ascii) {
+        return null;
     }
 
     @Override
@@ -174,16 +189,6 @@ public class NullMemoryMR implements MemoryMR {
     @Override
     public int getStrLen(long offset) {
         return TableUtils.NULL_LEN;
-    }
-
-    @Override
-    public DirectUtf8Sequence getVarcharA(long offset, int size, boolean ascii) {
-        return null;
-    }
-
-    @Override
-    public DirectUtf8Sequence getVarcharB(long offset, int size, boolean ascii) {
-        return null;
     }
 
     @Override

@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.InlinedVarchar;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8SplitString;
 import io.questdb.test.AbstractCairoTest;
@@ -198,8 +197,6 @@ public class PageFrameCursorTest extends AbstractCairoTest {
         );
 
         final Utf8SplitString utf8SplitView = new Utf8SplitString(false);
-        final InlinedVarchar utf8view = new InlinedVarchar();
-
         final StringSink actualSink = new StringSink();
         // header
         actualSink.put("b\n");
@@ -212,7 +209,7 @@ public class PageFrameCursorTest extends AbstractCairoTest {
                     final long auxTopAddress = frame.getIndexPageAddress(1);
                     final long count = frame.getPartitionHi() - frame.getPartitionLo();
                     for (int row = 0; row < count; row++) {
-                        actualSink.put(VarcharTypeDriver.getValue(auxTopAddress, dataTopAddress, row, utf8view, utf8SplitView));
+                        actualSink.put(VarcharTypeDriver.getSplitValue(auxTopAddress, dataTopAddress, row, utf8SplitView));
                         actualSink.put('\n');
                     }
                 }

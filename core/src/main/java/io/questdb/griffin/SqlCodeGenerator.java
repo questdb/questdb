@@ -5016,10 +5016,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         for (int i = 1, n = intrinsicModel.keyExcludedNodes.size(); i < n; i++) {
                             ExpressionNode expression = intrinsicModel.keyExcludedNodes.getQuick(i);
 
-                            ExpressionNode newRoot = expressionNodePool.next();
-                            newRoot.token = "and";
-                            newRoot.type = OPERATION;
-                            newRoot.precedence = 0;
+                            OperatorExpression andOp = OperatorExpression.opMap.get("and");
+                            ExpressionNode newRoot = expressionNodePool.next().of(OPERATION, andOp.token, andOp.precedence, 0);
                             newRoot.paramCount = 2;
                             newRoot.lhs = expression;
                             newRoot.rhs = root;
@@ -5030,10 +5028,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         if (intrinsicModel.filter == null) {
                             intrinsicModel.filter = root;
                         } else {
-                            ExpressionNode filter = expressionNodePool.next();
-                            filter.token = "and";
-                            filter.type = OPERATION;
-                            filter.precedence = 0;
+                            OperatorExpression andOp = OperatorExpression.opMap.get("and");
+                            ExpressionNode filter = expressionNodePool.next().of(OPERATION, andOp.token, andOp.precedence, 0);
                             filter.paramCount = 2;
                             filter.lhs = intrinsicModel.filter;
                             filter.rhs = root;
@@ -5633,19 +5629,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private Record.CharSequenceFunction validateSubQueryColumnAndGetGetter(IntrinsicModel intrinsicModel, RecordMetadata metadata) throws SqlException {
         int columnType = metadata.getColumnType(0);
-        if (!ColumnType.isSymbolOrString(columnType)) {
-            assert intrinsicModel.keySubQuery.getColumns() != null;
-            assert intrinsicModel.keySubQuery.getColumns().size() > 0;
-
-            throw SqlException
-                    .position(intrinsicModel.keySubQuery.getColumns().getQuick(0).getAst().position)
-                    .put("unsupported column type: ")
-                    .put(metadata.getColumnName(0))
-                    .put(": ")
-                    .put(ColumnType.nameOf(columnType));
+        switch (columnType) {
+            case ColumnType.STRING:
+                return Record.GET_STR;
+            case ColumnType.SYMBOL:
+                return Record.GET_SYM;
+            case ColumnType.VARCHAR:
+                return Record.GET_VARCHAR;
+            default:
+                assert intrinsicModel.keySubQuery.getColumns() != null;
+                assert intrinsicModel.keySubQuery.getColumns().size() > 0;
+                throw SqlException
+                        .position(intrinsicModel.keySubQuery.getColumns().getQuick(0).getAst().position)
+                        .put("unsupported column type: ")
+                        .put(metadata.getColumnName(0))
+                        .put(": ")
+                        .put(ColumnType.nameOf(columnType));
         }
-
-        return ColumnType.isString(columnType) ? Record.GET_STR : Record.GET_SYM;
     }
 
     // used in tests

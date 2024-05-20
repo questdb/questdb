@@ -26,9 +26,9 @@ package io.questdb.test.griffin.engine.functions.str;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.str.SplitPartFunctionFactory;
 import io.questdb.std.Numbers;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -41,7 +41,7 @@ public class SplitPartFunctionFactoryTest extends AbstractFunctionFactoryTest {
             call("abc~@~def~@~ghi", "~@~", 2);
             Assert.fail("Should fail for dynamic index param");
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "index must be a constant or runtime-constant");
+            TestUtils.assertContains(e.getFlyweightMessage(), "index must be either a constant expression or a placeholder");
         }
     }
 
@@ -93,6 +93,28 @@ public class SplitPartFunctionFactoryTest extends AbstractFunctionFactoryTest {
                 null,
                 true,
                 true);
+    }
+
+    @Test
+    public void testSinkIsCleared() throws SqlException {
+        for (int i = 0; i < 10; i++) {
+            assertQuery(
+                    "split_part\n" +
+                            "\n" +
+                            "\n" +
+                            "g\n" +
+                            "j\n" +
+                            "\n" +
+                            "\n",
+                    "select split_part(x, '.', 3) from\n" +
+                            "(select 'a.b' as x\n" +
+                            "union select 'c.d' as x\n" +
+                            "union select 'e.f.g' as x\n" +
+                            "union select 'h.i.j' as x\n" +
+                            "union select 'k.l' as x\n" +
+                            "union select 'm.n' as x)", null, false, false
+            );
+        }
     }
 
     @Test

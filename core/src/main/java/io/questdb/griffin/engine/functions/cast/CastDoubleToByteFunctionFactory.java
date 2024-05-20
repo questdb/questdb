@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastDoubleToByteFunctionFactory implements FunctionFactory {
@@ -50,7 +51,8 @@ public class CastDoubleToByteFunctionFactory implements FunctionFactory {
 
         @Override
         public byte getByte(Record rec) {
-            return (byte) arg.getDouble(rec);
+            final double value = arg.getDouble(rec);
+            return Numbers.isNull(value) || value > Byte.MAX_VALUE || value < Byte.MIN_VALUE ? 0 : (byte) value;
         }
     }
 }
