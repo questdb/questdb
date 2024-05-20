@@ -1950,7 +1950,6 @@ public class WalWriter implements TableWriterAPI {
 
                                 if (segmentRowCount == 0) {
                                     openColumnFiles(columnName, newType, newColumnIndex, path.size());
-                                    // If teh old column has .i file, we need to remove it
                                 }
                             }
 
@@ -1958,7 +1957,6 @@ public class WalWriter implements TableWriterAPI {
                                 // if we did not have to roll uncommitted rows to a new segment
                                 // remove .i files when converting var type to fixed
                                 if (ColumnType.isVarSize(existingColumnType) && !ColumnType.isVarSize(newType)) {
-                                    path.trimTo(rootLen);
                                     path.trimTo(rootLen).slash().put(segmentId);
                                     iFile(path, columnName);
                                     if (ff.exists(path)) {
