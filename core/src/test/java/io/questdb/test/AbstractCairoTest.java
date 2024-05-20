@@ -1678,7 +1678,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected void assertQuery(String expected, String query, boolean supportsRandomAccess, boolean expectSize) throws SqlException {
-        assertQueryFullFat(expected, query, null, supportsRandomAccess, expectSize, false);
+        assertQueryFullFatNoLeakCheck(expected, query, null, supportsRandomAccess, expectSize, false);
     }
 
     protected void assertQueryNoLeakCheck(SqlCompiler compiler, String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, SqlExecutionContext sqlExecutionContext, boolean expectSize) throws SqlException {
