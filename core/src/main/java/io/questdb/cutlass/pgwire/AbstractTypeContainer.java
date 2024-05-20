@@ -24,7 +24,9 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.AbstractSelfReturningObject;
 import io.questdb.std.IntList;
@@ -56,7 +58,15 @@ public abstract class AbstractTypeContainer<T extends AbstractTypeContainer<?>> 
 
     void copyTypesFrom(BindVariableService bindVariableService) {
         for (int i = 0, n = bindVariableService.getIndexedVariableCount(); i < n; i++) {
-            types.add(bindVariableService.getFunction(i).getType());
+            Function func = bindVariableService.getFunction(i);
+            // For bind variable find in vararg parameters functions are not
+            // created upfront. This is due to the type being unknown. On PG
+            // wire bind variable type and value are provided *after* the compilation.
+            if (func != null) {
+                types.add(func.getType());
+            } else {
+                types.add(ColumnType.UNDEFINED);
+            }
         }
     }
 }

@@ -150,6 +150,38 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBindVar() throws Exception {
+        assertException(
+                "select \n" +
+                        "    a,\n" +
+                        "    case\n" +
+                        "        when a > 10 then $1\n" +
+                        "        else $2\n" +
+                        "    end k\n" +
+                        "from test",
+                "create table test as (select cast(x as long) a, timestamp_sequence(0, 1000000) ts from long_sequence(5))",
+                49,
+                "CASE values cannot be bind variables"
+        );
+    }
+
+    @Test
+    public void testBindVarInElse() throws Exception {
+        assertException(
+                "select \n" +
+                        "    a,\n" +
+                        "    case\n" +
+                        "        when a > 10 then '>10'\n" +
+                        "        else $2\n" +
+                        "    end k\n" +
+                        "from test",
+                "create table test as (select cast(x as long) a, timestamp_sequence(0, 1000000) ts from long_sequence(5))",
+                68,
+                "CASE values cannot be bind variables"
+        );
+    }
+
+    @Test
     public void testBoolean() throws Exception {
         assertQuery(
                 "x\tcase\n" +
@@ -329,13 +361,16 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testByteToVarcharCast() throws Exception {
-        assertQuery(
-                "x\tcase\n" +
-                        "-920\t&BT+\n" +
-                        "363\t3\n" +
-                        "367\t3\n" +
-                        "895\t3\n" +
-                        "-6\t1W씌䒙\uD8F2\uDE8E>\n",
+        ddl(
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_varchar() a," +
+                        " rnd_varchar() b," +
+                        " rnd_varchar() c" +
+                        " from long_sequence(5)" +
+                        ")"
+        );
+        assertException(
                 "select \n" +
                         "    x,\n" +
                         "    case\n" +
@@ -344,16 +379,8 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         "        else 3::byte" +
                         "    end \n" +
                         "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_varchar() a," +
-                        " rnd_varchar() b," +
-                        " rnd_varchar() c" +
-                        " from long_sequence(5)" +
-                        ")",
-                null,
-                true,
-                true
+                104,
+                "inconvertible types BYTE to VARCHAR"
         );
     }
 
@@ -390,22 +417,28 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCaseWithNoElseInSelectClause() throws Exception {
         assertQuery("c\n0\nnull\nnull\n",
-                "select case x when 1 then 0 end c from long_sequence(3)", null, true, true);
+                "select case x when 1 then 0 end c from long_sequence(3)", null, true, true
+        );
 
         assertQuery("c\nnull\nnull\nnull\n",
-                "select case x when -1 then 0 end c from long_sequence(3)", null, true, true);
+                "select case x when -1 then 0 end c from long_sequence(3)", null, true, true
+        );
 
         assertQuery("c\n0\n0\n0\n",
-                "select case when x<5 then 0 end c from long_sequence(3)", null, true, true);
+                "select case when x<5 then 0 end c from long_sequence(3)", null, true, true
+        );
 
         assertQuery("c\n0\nnull\nnull\n",
-                "select case when x<2 then 0 end c from long_sequence(3)", null, true, true);
+                "select case when x<2 then 0 end c from long_sequence(3)", null, true, true
+        );
 
         assertQuery("c\n1\n",
-                "select case when true then 1 end c", null, true, true);
+                "select case when true then 1 end c", null, true, true
+        );
 
         assertQuery("c\nnull\n",
-                "select case when false then 2 end c", null, true, true);
+                "select case when false then 2 end c", null, true, true
+        );
     }
 
     @Test
@@ -413,16 +446,20 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
         assertException("select x from long_sequence(3) where case x when 1 then 0 end", 37, "boolean expression expected");
 
         assertQuery("x\n1\n",
-                "select x from long_sequence(3) where case when x<2 then true end", null, true, false);
+                "select x from long_sequence(3) where case when x<2 then true end", null, true, false
+        );
 
         assertQuery("x\n1\n2\n",
-                "select x from long_sequence(3) where case when x<3 then true else false end", null, true, false);
+                "select x from long_sequence(3) where case when x<3 then true else false end", null, true, false
+        );
 
         assertQuery("x\n1\n",
-                "select x from long_sequence(3) where case when x<2 then true when x<3 then false end", null, true, false);
+                "select x from long_sequence(3) where case when x<2 then true when x<3 then false end", null, true, false
+        );
 
         assertQuery("x\n",
-                "select x from long_sequence(3) where case when false then true end", null, false, false);
+                "select x from long_sequence(3) where case when false then true end", null, false, false
+        );
     }
 
     @Test
@@ -724,13 +761,16 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testDoubleToVarcharCast() throws Exception {
-        assertQuery(
-                "x\tcase\n" +
-                        "-920\t&BT+\n" +
-                        "363\t3.5\n" +
-                        "367\t3.5\n" +
-                        "895\t3.5\n" +
-                        "-6\t1W씌䒙\uD8F2\uDE8E>\n",
+        ddl(
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_varchar() a," +
+                        " rnd_varchar() b," +
+                        " rnd_varchar() c" +
+                        " from long_sequence(5)" +
+                        ")"
+        );
+        assertException(
                 "select \n" +
                         "    x,\n" +
                         "    case\n" +
@@ -739,14 +779,17 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         "        else 3.5::double" +
                         "    end \n" +
                         "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_varchar() a," +
-                        " rnd_varchar() b," +
-                        " rnd_varchar() c" +
-                        " from long_sequence(5)" +
-                        ")",
-                null,
+                106,
+                "inconvertible types DOUBLE to VARCHAR"
+        );
+    }
+
+    @Test
+    public void testEverythingIsNull() throws Exception {
+        assertQuery(
+                "case\n" +
+                        "null\n",
+                "select case when null is null then null else null end",
                 true,
                 true
         );
@@ -843,13 +886,17 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testFloatToVarcharCast() throws Exception {
-        assertQuery(
-                "x\tcase\n" +
-                        "-920\t&BT+\n" +
-                        "363\t3.5\n" +
-                        "367\t3.5\n" +
-                        "895\t3.5\n" +
-                        "-6\t1W씌䒙\uD8F2\uDE8E>\n",
+        ddl(
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_varchar() a," +
+                        " rnd_varchar() b," +
+                        " rnd_varchar() c" +
+                        " from long_sequence(5)" +
+                        ")"
+        );
+
+        assertException(
                 "select \n" +
                         "    x,\n" +
                         "    case\n" +
@@ -858,16 +905,8 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         "        else 3.5::float" +
                         "    end \n" +
                         "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_varchar() a," +
-                        " rnd_varchar() b," +
-                        " rnd_varchar() c" +
-                        " from long_sequence(5)" +
-                        ")",
-                null,
-                true,
-                true
+                106,
+                "inconvertible types DOUBLE to VARCHAR"
         );
     }
 
@@ -1030,73 +1069,41 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testIntToStringCast() throws Exception {
-        assertQuery(
-                "x\tcase\n" +
-                        "-920\tWCPS\n" +
-                        "474\t3.5\n" +
-                        "454\t3.5\n" +
-                        "-666\tULOFJGE\n" +
-                        "-574\tYICCXZOUIC\n" +
-                        "-303\tYCTGQO\n" +
-                        "355\t3.5\n" +
-                        "692\t3.5\n" +
-                        "-743\tLJU\n" +
-                        "36\t3.5\n" +
-                        "0\t3.5\n" +
-                        "799\t3.5\n" +
-                        "650\t3.5\n" +
-                        "-760\tGXHFVWSWSR\n" +
-                        "-605\tUKL\n" +
-                        "-554\tNPH\n" +
-                        "-201\tTNLE\n" +
-                        "623\t3.5\n" +
-                        "-341\tXBHYSBQYMI\n" +
-                        "386\t3.5\n",
-                "select \n" +
-                        "    x,\n" +
-                        "    case\n" +
-                        "        when x < 0 then a\n" +
-                        "        when x > 100 and x < 200 then b\n" +
-                        "        else 3.5" +
-                        "    end \n" +
-                        "from tanc",
+        ddl(
                 "create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_str() a," +
                         " rnd_str() b," +
                         " rnd_str() c" +
                         " from long_sequence(20)" +
-                        ")",
-                null,
-                true,
-                true
+                        ")"
+        );
+        assertException(
+                "select \n" +
+                        "    x,\n" +
+                        "    case\n" +
+                        "        when x < 0 then a\n" +
+                        "        when x > 100 and x < 200 then b\n" +
+                        "        else 5" +
+                        "    end \n" +
+                        "from tanc",
+                103,
+                "inconvertible types INT to STRING"
         );
     }
 
     @Test
     public void testIntToStringCastOnBranch() throws Exception {
-        assertQuery(
-                "x\tcase\n" +
-                        "-920\tWCPS\n" +
-                        "474\t10\n" +
-                        "454\t10\n" +
-                        "-666\tULOFJGE\n" +
-                        "-574\tYICCXZOUIC\n" +
-                        "-303\tYCTGQO\n" +
-                        "355\t10\n" +
-                        "692\t\n" +
-                        "-743\tLJU\n" +
-                        "36\t\n" +
-                        "0\t\n" +
-                        "799\t\n" +
-                        "650\t\n" +
-                        "-760\tGXHFVWSWSR\n" +
-                        "-605\tUKL\n" +
-                        "-554\tNPH\n" +
-                        "-201\tTNLE\n" +
-                        "623\t\n" +
-                        "-341\tXBHYSBQYMI\n" +
-                        "386\t10\n",
+        ddl(
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_str() a," +
+                        " rnd_str() b," +
+                        " rnd_str() c" +
+                        " from long_sequence(20)" +
+                        ")"
+        );
+        assertException(
                 "select \n" +
                         "    x,\n" +
                         "    case\n" +
@@ -1104,28 +1111,24 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         "        when x > 100 and x < 500 then 10\n" +
                         "    end \n" +
                         "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_str() a," +
-                        " rnd_str() b," +
-                        " rnd_str() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                null,
-                true,
-                true
+                88,
+                "inconvertible types INT to STRING"
         );
     }
 
     @Test
     public void testIntToVarcharCast() throws Exception {
-        assertQuery(
-                "x\tcase\n" +
-                        "-920\t&BT+\n" +
-                        "363\t3\n" +
-                        "367\t3\n" +
-                        "895\t3\n" +
-                        "-6\t1W씌䒙\uD8F2\uDE8E>\n",
+        ddl(
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_varchar() a," +
+                        " rnd_varchar() b," +
+                        " rnd_varchar() c" +
+                        " from long_sequence(5)" +
+                        ")"
+        );
+
+        assertException(
                 "select \n" +
                         "    x,\n" +
                         "    case\n" +
@@ -1134,43 +1137,24 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         "        else 3" +
                         "    end \n" +
                         "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_varchar() a," +
-                        " rnd_varchar() b," +
-                        " rnd_varchar() c" +
-                        " from long_sequence(5)" +
-                        ")",
-                null,
-                true,
-                true
+                103,
+                "inconvertible types INT to VARCHAR"
         );
     }
 
     @Test
     public void testIntToVarcharCastOnBranch() throws Exception {
-        assertQuery(
-                "x\tcase\n" +
-                        "-920\t&BT+\n" +
-                        "363\t10\n" +
-                        "367\t10\n" +
-                        "895\t\n" +
-                        "-6\t1W씌䒙\uD8F2\uDE8E>\n" +
-                        "-440\t:աf@ץ;윦\u0382\n" +
-                        "905\t\n" +
-                        "-212\t\uDB37\uDC95Qǜbȶ\u05EC˟\n" +
-                        "569\t\n" +
-                        "204\t10\n" +
-                        "-845\tMw1$c\n" +
-                        "768\t\n" +
-                        "343\t10\n" +
-                        "797\t\n" +
-                        "34\t\n" +
-                        "-365\tոҊG\uD9A6\uDD42\uDB48\uDC78{ϸ\uD9F4\uDFB9\uDA0A\uDC7A\uDA76\uDC87\n" +
-                        "895\t\n" +
-                        "416\t10\n" +
-                        "-765\t\uDBAF\uDD0Duh覌Ѫw租.ě\n" +
-                        "754\t\n",
+        ddl(
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_varchar() a," +
+                        " rnd_varchar() b," +
+                        " rnd_varchar() c" +
+                        " from long_sequence(20)" +
+                        ")"
+        );
+
+        assertException(
                 "select \n" +
                         "    x,\n" +
                         "    case\n" +
@@ -1178,43 +1162,24 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         "        when x > 100 and x < 500 then 10\n" +
                         "    end \n" +
                         "from tanc",
+                88,
+                "inconvertible types INT to VARCHAR"
+        );
+    }
+
+    @Test
+    public void testIpv4ToVarcharCast() throws Exception {
+        ddl(
                 "create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_varchar() a," +
                         " rnd_varchar() b," +
                         " rnd_varchar() c" +
                         " from long_sequence(20)" +
-                        ")",
-                null,
-                true,
-                true
+                        ")"
         );
-    }
 
-    @Test
-    public void testIpv4ToVarcharCast() throws Exception {
-        assertQuery(
-                "x\tcase\n" +
-                        "-920\t&BT+\n" +
-                        "363\t127.0.0.1\n" +
-                        "367\t127.0.0.1\n" +
-                        "895\t127.0.0.1\n" +
-                        "-6\t1W씌䒙\uD8F2\uDE8E>\n" +
-                        "-440\t:աf@ץ;윦\u0382\n" +
-                        "905\t127.0.0.1\n" +
-                        "-212\t\uDB37\uDC95Qǜbȶ\u05EC˟\n" +
-                        "569\t127.0.0.1\n" +
-                        "204\t127.0.0.1\n" +
-                        "-845\tMw1$c\n" +
-                        "768\t127.0.0.1\n" +
-                        "343\t127.0.0.1\n" +
-                        "797\t127.0.0.1\n" +
-                        "34\t127.0.0.1\n" +
-                        "-365\tոҊG\uD9A6\uDD42\uDB48\uDC78{ϸ\uD9F4\uDFB9\uDA0A\uDC7A\uDA76\uDC87\n" +
-                        "895\t127.0.0.1\n" +
-                        "416\t127.0.0.1\n" +
-                        "-765\t\uDBAF\uDD0Duh覌Ѫw租.ě\n" +
-                        "754\t127.0.0.1\n",
+        assertException(
                 "select \n" +
                         "    x,\n" +
                         "    case\n" +
@@ -1223,16 +1188,8 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         "        else '127.0.0.1'::ipv4" +
                         "    end \n" +
                         "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_varchar() a," +
-                        " rnd_varchar() b," +
-                        " rnd_varchar() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                null,
-                true,
-                true
+                114,
+                "inconvertible types IPv4 to VARCHAR"
         );
     }
 
@@ -1438,13 +1395,16 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testLongToVarcharCast() throws Exception {
-        assertQuery(
-                "x\tcase\n" +
-                        "-920\t&BT+\n" +
-                        "363\t3\n" +
-                        "367\t3\n" +
-                        "895\t3\n" +
-                        "-6\t1W씌䒙\uD8F2\uDE8E>\n",
+        ddl(
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_varchar() a," +
+                        " rnd_varchar() b," +
+                        " rnd_varchar() c" +
+                        " from long_sequence(5)" +
+                        ")"
+        );
+        assertException(
                 "select \n" +
                         "    x,\n" +
                         "    case\n" +
@@ -1453,16 +1413,8 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         "        else 3::long" +
                         "    end \n" +
                         "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_varchar() a," +
-                        " rnd_varchar() b," +
-                        " rnd_varchar() c" +
-                        " from long_sequence(5)" +
-                        ")",
-                null,
-                true,
-                true
+                104,
+                "inconvertible types LONG to VARCHAR"
         );
     }
 
@@ -1579,13 +1531,16 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testShortToVarcharCast() throws Exception {
-        assertQuery(
-                "x\tcase\n" +
-                        "-920\t&BT+\n" +
-                        "363\t42\n" +
-                        "367\t42\n" +
-                        "895\t42\n" +
-                        "-6\t1W씌䒙\uD8F2\uDE8E>\n",
+        ddl(
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_varchar() a," +
+                        " rnd_varchar() b," +
+                        " rnd_varchar() c" +
+                        " from long_sequence(5)" +
+                        ")"
+        );
+        assertException(
                 "select \n" +
                         "    x,\n" +
                         "    case\n" +
@@ -1594,16 +1549,8 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         "        else '42'::short" +
                         "    end \n" +
                         "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_varchar() a," +
-                        " rnd_varchar() b," +
-                        " rnd_varchar() c" +
-                        " from long_sequence(5)" +
-                        ")",
-                null,
-                true,
-                true
+                107,
+                "inconvertible types SHORT to VARCHAR"
         );
     }
 
@@ -1847,13 +1794,17 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testUuidToVarcharCast() throws Exception {
-        assertQuery(
-                "x\tcase\n" +
-                        "-920\t&BT+\n" +
-                        "363\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n" +
-                        "367\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n" +
-                        "895\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n" +
-                        "-6\t1W씌䒙\uD8F2\uDE8E>\n",
+        ddl(
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_varchar() a," +
+                        " rnd_varchar() b," +
+                        " rnd_varchar() c" +
+                        " from long_sequence(5)" +
+                        ")"
+        );
+
+        assertException(
                 "select \n" +
                         "    x,\n" +
                         "    case\n" +
@@ -1862,16 +1813,8 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         "        else 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid" +
                         "    end \n" +
                         "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_varchar() a," +
-                        " rnd_varchar() b," +
-                        " rnd_varchar() c" +
-                        " from long_sequence(5)" +
-                        ")",
-                null,
-                true,
-                true
+                141,
+                "inconvertible types UUID to VARCHAR"
         );
     }
 

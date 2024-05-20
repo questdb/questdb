@@ -51,6 +51,8 @@ import io.questdb.test.cairo.CairoTestConfiguration;
 import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.BindVariableTestSetter;
+import io.questdb.test.tools.BindVariableTestTuple;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -892,6 +894,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static void assertExceptionNoLeakCheck(CharSequence sql, int errorPos, CharSequence contains, SqlExecutionContext sqlExecutionContext) throws Exception {
+        Assert.assertNotNull(contains);
+        Assert.assertTrue(contains.length() > 0);
         try {
             assertExceptionNoLeakCheck(sql, sqlExecutionContext);
         } catch (Throwable e) {
@@ -1673,6 +1677,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
         assertQueryNoLeakCheck(compiler, expected, query, expectedTimestamp, sqlExecutionContext, supportsRandomAccess, false);
     }
 
+    protected void assertQuery(String expected, String query, boolean supportsRandomAccess, boolean expectSize) throws SqlException {
+        assertQueryFullFatNoLeakCheck(expected, query, null, supportsRandomAccess, expectSize, false);
+    }
+
     protected void assertQueryNoLeakCheck(SqlCompiler compiler, String expected, String query, String expectedTimestamp, boolean supportsRandomAccess, SqlExecutionContext sqlExecutionContext, boolean expectSize) throws SqlException {
         assertQueryNoLeakCheck(compiler, expected, query, expectedTimestamp, sqlExecutionContext, supportsRandomAccess, expectSize);
     }
@@ -1752,6 +1760,49 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected void assertSql(CharSequence expected, CharSequence sql) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             TestUtils.assertSql(compiler, sqlExecutionContext, sql, sink, expected);
+        }
+    }
+
+    protected void assertSql(CharSequence sql, ObjList<BindVariableTestTuple> tuples) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            int iterCount = tuples.size();
+            try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                for (int i = 0; i < iterCount; i++) {
+
+                    final BindVariableTestTuple tuple = tuples.getQuick(i);
+                    final BindVariableTestSetter setter = tuple.getSetter();
+                    final int errorPosition = tuple.getErrorPosition();
+                    final BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
+                    bindVariableService.clear();
+
+                    setter.assignBindVariables(sqlExecutionContext.getBindVariableService());
+
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        if (errorPosition != BindVariableTestTuple.MUST_SUCCEED) {
+                            Assert.fail(tuple.getDescription());
+                        }
+                        RecordMetadata metadata = factory.getMetadata();
+                        ((MutableUtf16Sink) sink).clear();
+                        CursorPrinter.println(metadata, sink);
+
+                        final Record record = cursor.getRecord();
+                        while (cursor.hasNext()) {
+                            TestUtils.println(record, metadata, sink);
+                        }
+                    } catch (SqlException e) {
+                        if (errorPosition != BindVariableTestTuple.MUST_SUCCEED) {
+                            Assert.assertEquals(tuple.getDescription(), errorPosition, e.getPosition());
+                            TestUtils.assertContains(tuple.getDescription(), tuple.getExpected(), e.getFlyweightMessage());
+                        } else {
+                            System.out.println(tuple.getDescription());
+                            throw e;
+                        }
+                    }
+                    if (errorPosition == BindVariableTestTuple.MUST_SUCCEED) {
+                        TestUtils.assertEquals(tuple.getDescription(), tuple.getExpected(), sink);
+                    }
+                }
+            }
         }
     }
 

@@ -6355,6 +6355,7 @@ nodejs code:
                     statement.setNull(12, Types.BIGINT);
                     statement.setNull(13, Types.REAL);
                     statement.setNull(14, Types.DOUBLE);
+                    // SMALL_INT is not nullable and will become 0
                     statement.setNull(15, Types.SMALLINT);
                     statement.setNull(16, Types.BOOLEAN);
                     statement.setNull(17, Types.VARCHAR);
@@ -6367,12 +6368,13 @@ nodejs code:
                     statement.setTimestamp(21, new PGTimestamp(500023, new GregorianCalendar()));
                     statement.setTimestamp(22, null);
 
+                    // record cursor metadata is decided before the variable types are known
                     final String expected = "x[BIGINT],$1[VARCHAR],$2[VARCHAR],$3[VARCHAR],$4[VARCHAR],$5[VARCHAR],$6[VARCHAR],$7[VARCHAR],$8[VARCHAR],$9[VARCHAR],$10[VARCHAR],$11[VARCHAR],$12[VARCHAR],$13[VARCHAR],$14[VARCHAR],$15[VARCHAR],$16[VARCHAR],$17[VARCHAR],$18[VARCHAR],$19[VARCHAR],$20[VARCHAR],$21[VARCHAR],$22[VARCHAR]\n" +
-                            "1,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
-                            "2,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
-                            "3,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
-                            "4,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
-                            "5,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n";
+                            "1,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
+                            "2,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
+                            "3,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
+                            "4,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
+                            "5,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n";
 
                     StringSink sink = new StringSink();
                     for (int i = 0; i < 10000; i++) {
@@ -6857,6 +6859,38 @@ nodejs code:
                 assertQueryAgainstIndexedSymbol(values, "s in (#X1, #X2)", new String[]{"#X1", "#X2"}, connection, tsOption, sameVal2);
                 assertQueryAgainstIndexedSymbol(values, "s in (#X1, #X2, 'S')", new String[]{"#X1", "#X2"}, connection, tsOption, sameVal2);
                 assertQueryAgainstIndexedSymbol(values, "s in (#X1, #X2, 'S', 'S') and s not in ('S1', 'S1')", new String[]{"#X1", "#X2"}, connection, tsOption, sameVal2);
+            });
+        }
+    }
+
+    @Test
+    public void testUndefinedBindVariableInSymbol() throws Exception {
+        final String[] values = {"'5'", "null", "'5' || ''", "replace(null, 'A', 'A')", "?5", "?null"};
+        final CharSequenceObjHashMap<String> valMap = new CharSequenceObjHashMap<>();
+        valMap.put("5", "5");
+        valMap.put("'5'", "5");
+        valMap.put("null", "null");
+        valMap.put("'5' || ''", "5");
+        valMap.put("replace(null, 'A', 'A')", "null");
+
+        final String[] tsOptions = {"", "timestamp(ts)", "timestamp(ts) partition by HOUR"};
+        final String strType = ColumnType.nameOf(ColumnType.STRING).toLowerCase();
+        for (String tsOption : tsOptions) {
+            assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary, mode, port) -> {
+                drop("drop table if exists tab");
+                ddl("create table tab (s symbol index, ts timestamp) " + tsOption);
+                insert("insert into tab select case when x = 10 then null::" + strType + " else x::" + strType + " end, x::timestamp from long_sequence(10) ");
+                drainWalQueue();
+
+                ResultProducer sameValIfParamsTheSame = (paramVals, isBindVals, bindVals, output) -> {
+                    String left = isBindVals[0] ? bindVals[0] : paramVals[0];
+                    String right = isBindVals[1] ? bindVals[1] : paramVals[1];
+                    boolean isSame = valMap.get(left).equals(valMap.get(right));
+                    if (isSame) {
+                        output.put(valMap.get(left)).put('\n');
+                    }
+                };
+                assertQueryAgainstIndexedSymbol(values, "s in (#X1) and s in (#X2)", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParamsTheSame);
             });
         }
     }
@@ -8440,7 +8474,7 @@ create table tab as (
     @Test
     public void testSingleInClauseNonDedicatedTimestamp() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary, mode, port) -> {
             try (PreparedStatement statement = connection.prepareStatement(
                     "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + "))")) {
                 statement.execute();
@@ -10075,6 +10109,7 @@ create table tab as (
             }
 
             String query = "select s from tab where " + where;
+            LOG.info().$("iteration [iter=").$(iter).$(". sql=").$(query).I$();
 
             sink.clear();
             expSink.clear();
@@ -10687,10 +10722,9 @@ create table tab as (
                     }
 
                     sink.clear();
-                    try (PreparedStatement ps = connection.prepareStatement("tab1 where coalesce(?, 12.37) is not null")) {
+                    try (PreparedStatement ps = connection.prepareStatement("tab1 where coalesce(3.14, 12.37) is not null")) {
                         // 'is not' is an alias for '!=', the matching type for this operator
                         // (with null on the right) is DOUBLE
-                        ps.setDouble(1, 3.14);
                         try (ResultSet rs = ps.executeQuery()) {
                             assertResultSet(
                                     "value[INTEGER],ts[TIMESTAMP]\n" +

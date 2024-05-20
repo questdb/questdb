@@ -129,7 +129,7 @@ public class CairoEngine implements Closeable, WriterSource {
             this.snapshotAgent = new DatabaseSnapshotAgentImpl(this);
             this.queryRegistry = new QueryRegistry(configuration);
             this.rootExecutionContext = new SqlExecutionContextImpl(this, 1)
-                    .with(AllowAllSecurityContext.INSTANCE, null);
+                    .with(AllowAllSecurityContext.INSTANCE);
 
             tableIdGenerator.open();
             // Recover snapshot, if necessary.

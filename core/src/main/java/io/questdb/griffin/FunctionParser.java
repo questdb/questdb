@@ -397,7 +397,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         final int position = node.position;
         Function function;
         try {
-            LOG.debug().$("call ").$(node).$(" -> ").$(factory.getSignature()).$();
+            LOG.debug().$("call ").$(node).$(" -> ").$(factory.getSignature()).$("[factory=").$(factory).$(']').$();
             function = factory.newInstance(position, args, argPositions, configuration, sqlExecutionContext);
         } catch (SqlException | ImplicitCastException e) {
             Misc.freeObjList(args);
@@ -831,8 +831,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             if (pos < candidateSigArgCount) {
                 final int sigArgType = FunctionFactoryDescriptor.toType(candidateDescriptor.getArgTypeMask(pos));
                 args.getQuick(pos).assignType(sigArgType, sqlExecutionContext.getBindVariableService());
-            } else {
-                args.getQuick(pos).assignType(ColumnType.VAR_ARG, sqlExecutionContext.getBindVariableService());
             }
         }
 

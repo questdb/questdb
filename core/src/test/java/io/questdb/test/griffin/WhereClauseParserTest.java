@@ -2362,6 +2362,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
                 "[]"
         );
 
+
         andShuffleExpressionsTest(
                 new String[]{
                         "timestamp BETWEEN '2022-03-23T08:00:00.000000Z'::varchar AND '2022-03-25T10:00:00.000000Z'::varchar",

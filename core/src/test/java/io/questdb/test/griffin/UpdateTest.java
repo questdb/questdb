@@ -629,7 +629,7 @@ public class UpdateTest extends AbstractCairoTest {
                 public Rnd getAsyncRandom() {
                     throw new RuntimeException("test error");
                 }
-            }.with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(), null);
+            }.with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext());
 
             testUpdateAsyncMode(
                     tableWriter -> {
