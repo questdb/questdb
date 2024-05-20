@@ -310,11 +310,7 @@ public class TableSequencerAPI implements QuietCloseable {
     @TestOnly
     public void openSequencer(TableToken tableToken) {
         try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
-            try {
-                sequencer.open(tableToken);
-            } finally {
-                sequencer.unlockWrite();
-            }
+            sequencer.unlockWrite();
         }
     }
 
@@ -345,18 +341,14 @@ public class TableSequencerAPI implements QuietCloseable {
                 TableSequencerImpl tableSequencer = getTableSequencerEntry(
                         tableToken,
                         SequencerLockType.WRITE,
-                        (key, tt) -> {
-                            final TableSequencerImpl sequencer = new TableSequencerImpl(
-                                    this,
-                                    engine,
-                                    tableToken,
-                                    getSeqTxnTracker((TableToken) tt),
-                                    tableId,
-                                    tableDescriptor
-                            );
-                            sequencer.open(tableToken);
-                            return sequencer;
-                        }
+                        (key, tt) -> new TableSequencerImpl(
+                                this,
+                                engine,
+                                tableToken,
+                                getSeqTxnTracker((TableToken) tt),
+                                tableId,
+                                tableDescriptor
+                        )
                 )
         ) {
             SeqTxnTracker seqTxnTracker = getSeqTxnTracker(tableToken);
