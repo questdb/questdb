@@ -27,13 +27,12 @@ package io.questdb.cutlass.http;
 import io.questdb.Metrics;
 import io.questdb.ServerConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.http.processors.*;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.*;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
-import io.questdb.std.Utf8SequenceObjHashMap;
+import io.questdb.std.*;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import org.jetbrains.annotations.NotNull;
@@ -41,21 +40,31 @@ import org.jetbrains.annotations.NotNull;
 import java.io.Closeable;
 
 public class HttpServer implements Closeable {
+    static final NoOpAssociativeCache<RecordCursorFactory> NO_OP_CACHE = new NoOpAssociativeCache<>();
 
     private final ObjList<Closeable> closeables = new ObjList<>();
     private final IODispatcher<HttpConnectionContext> dispatcher;
     private final HttpContextFactory httpContextFactory;
     private final WaitProcessor rescheduleContext;
+    private final AssociativeCache<RecordCursorFactory> selectCache;
     private final ObjList<HttpRequestProcessorSelectorImpl> selectors;
     private final int workerCount;
 
+    // used for min http server only
     public HttpServer(
             HttpMinServerConfiguration configuration,
             Metrics metrics,
             WorkerPool pool,
             SocketFactory socketFactory
     ) {
-        this(configuration, metrics, pool, socketFactory, DefaultHttpCookieHandler.INSTANCE, DefaultHttpHeaderParserFactory.INSTANCE);
+        this(
+                configuration,
+                metrics,
+                pool,
+                socketFactory,
+                DefaultHttpCookieHandler.INSTANCE,
+                DefaultHttpHeaderParserFactory.INSTANCE
+        );
     }
 
     public HttpServer(
@@ -73,7 +82,25 @@ public class HttpServer implements Closeable {
             selectors.add(new HttpRequestProcessorSelectorImpl());
         }
 
-        this.httpContextFactory = new HttpContextFactory(configuration, metrics, socketFactory, cookieHandler, headerParserFactory);
+        if (configuration instanceof HttpServerConfiguration) {
+            final HttpServerConfiguration serverConfiguration = (HttpServerConfiguration) configuration;
+            if (serverConfiguration.isQueryCacheEnabled()) {
+                this.selectCache = new ConcurrentAssociativeCache<>(
+                        serverConfiguration.getQueryCacheBlockCount(),
+                        serverConfiguration.getQueryCacheRowCount(),
+                        metrics.jsonQuery().cachedQueriesGauge(),
+                        metrics.jsonQuery().cacheHitCounter(),
+                        metrics.jsonQuery().cacheMissCounter()
+                );
+            } else {
+                this.selectCache = NO_OP_CACHE;
+            }
+        } else {
+            // Min server doesn't need select cache, so we use no-op impl.
+            this.selectCache = NO_OP_CACHE;
+        }
+
+        this.httpContextFactory = new HttpContextFactory(configuration, metrics, socketFactory, cookieHandler, headerParserFactory, selectCache);
         this.dispatcher = IODispatchers.create(configuration.getDispatcherConfiguration(), httpContextFactory);
         pool.assign(dispatcher);
         this.rescheduleContext = new WaitProcessor(configuration.getWaitProcessorConfiguration(), dispatcher);
@@ -261,6 +288,7 @@ public class HttpServer implements Closeable {
         Misc.freeObjListAndClear(selectors);
         Misc.freeObjListAndClear(closeables);
         Misc.free(httpContextFactory);
+        Misc.free(selectCache);
     }
 
     public int getPort() {
@@ -292,9 +320,16 @@ public class HttpServer implements Closeable {
     }
 
     private static class HttpContextFactory extends IOContextFactoryImpl<HttpConnectionContext> {
-        public HttpContextFactory(HttpMinServerConfiguration configuration, Metrics metrics, SocketFactory socketFactory, HttpCookieHandler cookieHandler, HttpHeaderParserFactory headerParserFactory) {
+
+        public HttpContextFactory(
+                HttpMinServerConfiguration configuration,
+                Metrics metrics, SocketFactory socketFactory,
+                HttpCookieHandler cookieHandler,
+                HttpHeaderParserFactory headerParserFactory,
+                AssociativeCache<RecordCursorFactory> selectCache
+        ) {
             super(
-                    () -> new HttpConnectionContext(configuration, metrics, socketFactory, cookieHandler, headerParserFactory),
+                    () -> new HttpConnectionContext(configuration, metrics, socketFactory, cookieHandler, headerParserFactory, selectCache),
                     configuration.getHttpContextConfiguration().getConnectionPoolInitialCapacity()
             );
         }

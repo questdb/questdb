@@ -85,8 +85,19 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private long totalReceived;
 
     @TestOnly
-    public HttpConnectionContext(HttpMinServerConfiguration configuration, Metrics metrics, SocketFactory socketFactory) {
-        this(configuration, metrics, socketFactory, DefaultHttpCookieHandler.INSTANCE, DefaultHttpHeaderParserFactory.INSTANCE);
+    public HttpConnectionContext(
+            HttpMinServerConfiguration configuration,
+            Metrics metrics,
+            SocketFactory socketFactory
+    ) {
+        this(
+                configuration,
+                metrics,
+                socketFactory,
+                DefaultHttpCookieHandler.INSTANCE,
+                DefaultHttpHeaderParserFactory.INSTANCE,
+                HttpServer.NO_OP_CACHE
+        );
     }
 
     public HttpConnectionContext(
@@ -94,7 +105,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             Metrics metrics,
             SocketFactory socketFactory,
             HttpCookieHandler cookieHandler,
-            HttpHeaderParserFactory headerParserFactory
+            HttpHeaderParserFactory headerParserFactory,
+            AssociativeCache<RecordCursorFactory> selectCache
     ) {
         super(
                 socketFactory,
@@ -120,23 +132,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.authenticator = contextConfiguration.getFactoryProvider().getHttpAuthenticatorFactory().getHttpAuthenticator();
         this.rejectProcessor = contextConfiguration.getFactoryProvider().getRejectProcessorFactory().getRejectProcessor(this);
         this.forceFragmentationReceiveChunkSize = contextConfiguration.getForceRecvFragmentationChunkSize();
-
-        if (configuration instanceof HttpServerConfiguration) {
-            final HttpServerConfiguration serverConfiguration = (HttpServerConfiguration) configuration;
-            final boolean enableQueryCache = serverConfiguration.isQueryCacheEnabled();
-            final int blockCount = enableQueryCache ? serverConfiguration.getQueryCacheBlockCount() : 1;
-            final int rowCount = enableQueryCache ? serverConfiguration.getQueryCacheRowCount() : 1;
-            this.selectCache = new AssociativeCache<>(
-                    blockCount,
-                    rowCount,
-                    metrics.jsonQuery().cachedQueriesGauge(),
-                    metrics.jsonQuery().cacheHitCounter(),
-                    metrics.jsonQuery().cacheMissCounter()
-            );
-        } else {
-            // Min server doesn't need select cache, so we use no-op settings.
-            this.selectCache = new AssociativeCache<>(1, 1);
-        }
+        this.selectCache = selectCache;
     }
 
     @Override

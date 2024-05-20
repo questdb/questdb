@@ -50,7 +50,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 @RunWith(Parameterized.class)
 public class GroupByAllocatorTest extends AbstractCairoTest {
-
     private final AllocatorType allocatorType;
 
     public GroupByAllocatorTest(AllocatorType allocatorType) {
@@ -304,38 +303,48 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
         };
         assertMemoryLeak(() -> {
             try (GroupByAllocator allocator = createAllocator(config)) {
-                ObjList<Thread> threads = new ObjList<>();
-                int threadCount = 10;
-                long[] ptrs = new long[threadCount];
-                for (int th = 0; th < threadCount; th++) {
-                    int threadId = th;
+                final int threadCounts = 8;
+
+                final AtomicInteger errors = new AtomicInteger();
+                final CyclicBarrier barrier = new CyclicBarrier(threadCounts);
+                final ObjList<Thread> threads = new ObjList<>();
+                final long[] ptrs = new long[threadCounts];
+                for (int t = 0; t < threadCounts; t++) {
+                    int threadId = t;
                     Thread thread = new Thread(() -> {
-                        int size = M;
-                        long ptr = allocator.malloc(size);
-                        // Touch the first byte to make sure the memory is allocated.
-                        Unsafe.getUnsafe().putByte(ptr, (byte) threadId);
-                        ptr = allocator.malloc(size);
-                        Unsafe.getUnsafe().putByte(ptr, (byte) threadId);
+                        try {
+                            barrier.await();
 
-                        // This call should lead to slow path (malloc + memcpy).
-                        ptr = allocator.realloc(ptr, size, size + minChunkSize);
-                        Unsafe.getUnsafe().putByte(ptr, (byte) threadId);
+                            int size = M;
+                            long ptr = allocator.malloc(size);
+                            // Touch the first byte to make sure the memory is allocated.
+                            Unsafe.getUnsafe().putByte(ptr, (byte) threadId);
+                            ptr = allocator.malloc(size);
+                            Unsafe.getUnsafe().putByte(ptr, (byte) threadId);
 
-                        ptr = allocator.malloc(size);
-                        for (int i = 0; i < size; i++) {
-                            Unsafe.getUnsafe().putByte(ptr + i, (byte) threadId);
-                        }
-                        for (int i = 0; i < N; i++) {
-                            ptr = allocator.realloc(ptr, size, ++size);
-                            for (int j = 0; j < M; j++) {
-                                Assert.assertEquals(threadId, Unsafe.getUnsafe().getByte(ptr + j));
+                            // This call should lead to slow path (malloc + memcpy).
+                            ptr = allocator.realloc(ptr, size, size + minChunkSize);
+                            Unsafe.getUnsafe().putByte(ptr, (byte) threadId);
+
+                            ptr = allocator.malloc(size);
+                            for (int i = 0; i < size; i++) {
+                                Unsafe.getUnsafe().putByte(ptr + i, (byte) threadId);
                             }
-                            for (int j = M; j < size; j++) {
-                                // Touch the tail part of the memory to make sure it's allocated.
-                                Unsafe.getUnsafe().putByte(ptr + j, (byte) 123);
+                            for (int i = 0; i < N; i++) {
+                                ptr = allocator.realloc(ptr, size, ++size);
+                                for (int j = 0; j < M; j++) {
+                                    Assert.assertEquals(threadId, Unsafe.getUnsafe().getByte(ptr + j));
+                                }
+                                for (int j = M; j < size; j++) {
+                                    // Touch the tail part of the memory to make sure it's allocated.
+                                    Unsafe.getUnsafe().putByte(ptr + j, (byte) 123);
+                                }
                             }
+                            ptrs[threadId] = ptr;
+                        } catch (Throwable th) {
+                            th.printStackTrace();
+                            errors.incrementAndGet();
                         }
-                        ptrs[threadId] = ptr;
                     });
                     threads.add(thread);
                     thread.start();
@@ -346,7 +355,7 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
                 }
 
                 // realloc on another thread
-                for (int threadId = 0; threadId < threadCount; threadId++) {
+                for (int threadId = 0; threadId < threadCounts; threadId++) {
                     long ptr = ptrs[threadId];
                     ptr = allocator.realloc(ptr, N, 2L * N);
                     for (int j = 0; j < M; j++) {

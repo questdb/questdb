@@ -10182,42 +10182,6 @@ create table tab as (
         }
     }
 
-    private PGWireServer.PGConnectionContextFactory createPGConnectionContextFactory(
-            PGWireConfiguration conf,
-            int workerCount,
-            int sharedWorkerCount,
-            SOCountDownLatch queryStartedCount,
-            SOCountDownLatch queryScheduledCount,
-            CircuitBreakerRegistry registry
-    ) {
-        return new PGWireServer.PGConnectionContextFactory(
-                engine,
-                conf,
-                registry,
-                () -> new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount) {
-                    @Override
-                    public QueryFutureUpdateListener getQueryFutureUpdateListener() {
-                        return new QueryFutureUpdateListener() {
-                            @Override
-                            public void reportProgress(long commandId, int status) {
-                                if (status == OperationFuture.QUERY_STARTED && queryStartedCount != null) {
-                                    queryStartedCount.countDown();
-                                }
-                            }
-
-                            @Override
-                            public void reportStart(TableToken tableToken, long commandId) {
-                                if (queryScheduledCount != null) {
-                                    queryScheduledCount.countDown();
-                                }
-                            }
-                        };
-                    }
-                }
-        ) {
-        };
-    }
-
     private PGWireServer createPGServer(SOCountDownLatch queryScheduledCount) {
         int workerCount = 2;
 
@@ -10236,9 +10200,38 @@ create table tab as (
                 conf,
                 engine,
                 workerPool,
-                createPGConnectionContextFactory(conf, workerCount, workerCount, null, queryScheduledCount, registry),
-                registry
+                registry,
+                createPGSqlExecutionContextFactory(workerCount, workerCount, null, queryScheduledCount, registry)
         );
+    }
+
+    private ObjectFactory<SqlExecutionContextImpl> createPGSqlExecutionContextFactory(
+            int workerCount,
+            int sharedWorkerCount,
+            SOCountDownLatch queryStartedCount,
+            SOCountDownLatch queryScheduledCount,
+            CircuitBreakerRegistry registry
+    ) {
+        return () -> new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount) {
+            @Override
+            public QueryFutureUpdateListener getQueryFutureUpdateListener() {
+                return new QueryFutureUpdateListener() {
+                    @Override
+                    public void reportProgress(long commandId, int status) {
+                        if (status == OperationFuture.QUERY_STARTED && queryStartedCount != null) {
+                            queryStartedCount.countDown();
+                        }
+                    }
+
+                    @Override
+                    public void reportStart(TableToken tableToken, long commandId) {
+                        if (queryScheduledCount != null) {
+                            queryScheduledCount.countDown();
+                        }
+                    }
+                };
+            }
+        };
     }
 
     @SuppressWarnings("unchecked")
@@ -10378,8 +10371,8 @@ create table tab as (
                      conf,
                      engine,
                      pool,
-                     createPGConnectionContextFactory(conf, workerCount, workerCount, queryStartedCountDownLatch, null, registry),
-                     registry
+                     registry,
+                     createPGSqlExecutionContextFactory(workerCount, workerCount, queryStartedCountDownLatch, null, registry)
              )
         ) {
             Assert.assertNotNull(server);

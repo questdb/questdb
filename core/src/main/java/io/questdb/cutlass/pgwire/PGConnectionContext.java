@@ -142,11 +142,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final IntList syncActions = new IntList(4);
     private final SCSequence tempSequence = new SCSequence();
     // insert 'statements' are cached only for the duration of user session
-    private final AssociativeCache<TypesAndInsert> typesAndInsertCache;
+    private final SimpleAssociativeCache<TypesAndInsert> typesAndInsertCache;
     private final WeakSelfReturningObjectPool<TypesAndInsert> typesAndInsertPool;
     private final AssociativeCache<TypesAndSelect> typesAndSelectCache;
     private final WeakSelfReturningObjectPool<TypesAndSelect> typesAndSelectPool;
-    private final AssociativeCache<TypesAndUpdate> typesAndUpdateCache;
+    private final SimpleAssociativeCache<TypesAndUpdate> typesAndUpdateCache;
     private final WeakSelfReturningObjectPool<TypesAndUpdate> typesAndUpdatePool;
     private final DirectUtf16Sink utf8Sink;
     private final DirectUtf8String utf8String = new DirectUtf8String();
@@ -214,7 +214,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             CairoEngine engine,
             PGWireConfiguration configuration,
             SqlExecutionContextImpl sqlExecutionContext,
-            NetworkSqlExecutionCircuitBreaker circuitBreaker
+            NetworkSqlExecutionCircuitBreaker circuitBreaker,
+            AssociativeCache<TypesAndSelect> typesAndSelectCache
     ) {
         super(
                 configuration.getFactoryProvider().getPGWireSocketFactory(),
@@ -248,22 +249,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         this.binarySequenceParamsPool = new ObjectPool<>(DirectBinarySequence::new, configuration.getBinParamCountCapacity());
 
         this.metrics = engine.getMetrics();
-        final boolean enableSelectCache = configuration.isSelectCacheEnabled();
-        final int selectBlockCount = enableSelectCache ? configuration.getSelectCacheBlockCount() : 1;
-        final int selectRowCount = enableSelectCache ? configuration.getSelectCacheRowCount() : 1;
-        this.typesAndSelectCache = new AssociativeCache<>(
-                selectBlockCount,
-                selectRowCount,
-                metrics.pgWire().cachedSelectsGauge(),
-                metrics.pgWire().selectCacheHitCounter(),
-                metrics.pgWire().selectCacheMissCounter()
-        );
-        this.typesAndSelectPool = new WeakSelfReturningObjectPool<>(TypesAndSelect::new, selectBlockCount * selectRowCount);
+        this.typesAndSelectCache = typesAndSelectCache;
+        this.typesAndSelectPool = new WeakSelfReturningObjectPool<>(TypesAndSelect::new, typesAndSelectCache.capacity());
 
         final boolean enabledUpdateCache = configuration.isUpdateCacheEnabled();
         final int updateBlockCount = enabledUpdateCache ? configuration.getUpdateCacheBlockCount() : 1;
         final int updateRowCount = enabledUpdateCache ? configuration.getUpdateCacheRowCount() : 1;
-        this.typesAndUpdateCache = new AssociativeCache<>(
+        this.typesAndUpdateCache = new SimpleAssociativeCache<>(
                 updateBlockCount,
                 updateRowCount,
                 metrics.pgWire().cachedUpdatesGauge()
@@ -273,7 +265,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         final boolean enableInsertCache = configuration.isInsertCacheEnabled();
         final int insertBlockCount = enableInsertCache ? configuration.getInsertCacheBlockCount() : 1;
         final int insertRowCount = enableInsertCache ? configuration.getInsertCacheRowCount() : 1;
-        this.typesAndInsertCache = new AssociativeCache<>(insertBlockCount, insertRowCount);
+        this.typesAndInsertCache = new SimpleAssociativeCache<>(insertBlockCount, insertRowCount);
         this.typesAndInsertPool = new WeakSelfReturningObjectPool<>(TypesAndInsert::new, insertBlockCount * insertRowCount);
 
         this.batchCallback = new PGConnectionBatchCallback();

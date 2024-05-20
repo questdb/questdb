@@ -247,6 +247,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int rollBufferLimit;
     private final int rollBufferSize;
     private final String root;
+    private final long sequencerCheckInterval;
     private final int[] sharedWorkerAffinity;
     private final int sharedWorkerCount;
     private final boolean sharedWorkerHaltOnError;
@@ -510,7 +511,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long pgWorkerNapThreshold;
     private long pgWorkerSleepThreshold;
     private long pgWorkerYieldThreshold;
-    private final long sequencerCheckInterval;
     private boolean stringToCharCastAllowed;
     private long symbolCacheWaitUsBeforeReload;
 
@@ -900,9 +900,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgWorkerNapThreshold = getLong(properties, env, PropertyKey.PG_WORKER_NAP_THRESHOLD, 7_000);
                 this.pgWorkerSleepThreshold = getLong(properties, env, PropertyKey.PG_WORKER_SLEEP_THRESHOLD, 10_000);
                 this.pgDaemonPool = getBoolean(properties, env, PropertyKey.PG_DAEMON_POOL, true);
-                this.pgSelectCacheEnabled = getBoolean(properties, env, PropertyKey.PG_SELECT_CACHE_ENABLED, true);
-                this.pgSelectCacheBlockCount = getInt(properties, env, PropertyKey.PG_SELECT_CACHE_BLOCK_COUNT, 4);
-                this.pgSelectCacheRowCount = getInt(properties, env, PropertyKey.PG_SELECT_CACHE_ROW_COUNT, 4);
                 this.pgInsertCacheEnabled = getBoolean(properties, env, PropertyKey.PG_INSERT_CACHE_ENABLED, true);
                 this.pgInsertCacheBlockCount = getInt(properties, env, PropertyKey.PG_INSERT_CACHE_BLOCK_COUNT, 4);
                 this.pgInsertCacheRowCount = getInt(properties, env, PropertyKey.PG_INSERT_CACHE_ROW_COUNT, 4);
@@ -938,9 +935,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.readerPoolMaxSegments = getInt(properties, env, PropertyKey.CAIRO_READER_POOL_MAX_SEGMENTS, 10);
             this.walWriterPoolMaxSegments = getInt(properties, env, PropertyKey.CAIRO_WAL_WRITER_POOL_MAX_SEGMENTS, 10);
             this.spinLockTimeout = getLong(properties, env, PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1_000);
-            this.httpSqlCacheEnabled = getBoolean(properties, env, PropertyKey.HTTP_QUERY_CACHE_ENABLED, true);
-            this.httpSqlCacheBlockCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_BLOCK_COUNT, 4);
-            this.httpSqlCacheRowCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_ROW_COUNT, 4);
             this.sqlCharacterStoreCapacity = getInt(properties, env, PropertyKey.CAIRO_CHARACTER_STORE_CAPACITY, 1024);
             this.sqlCharacterStoreSequencePoolCapacity = getInt(properties, env, PropertyKey.CAIRO_CHARACTER_STORE_SEQUENCE_POOL_CAPACITY, 64);
             this.sqlColumnPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_COLUMN_POOL_CAPACITY, 4096);
@@ -1262,6 +1256,18 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sharedWorkerNapThreshold = getLong(properties, env, PropertyKey.SHARED_WORKER_NAP_THRESHOLD, 7_000);
             this.sharedWorkerSleepThreshold = getLong(properties, env, PropertyKey.SHARED_WORKER_SLEEP_THRESHOLD, 10_000);
             this.sharedWorkerSleepTimeout = getLong(properties, env, PropertyKey.SHARED_WORKER_SLEEP_TIMEOUT, 10);
+
+            // Now all worker counts are known, so we can set select cache capacity props.
+            if (pgEnabled) {
+                this.pgSelectCacheEnabled = getBoolean(properties, env, PropertyKey.PG_SELECT_CACHE_ENABLED, true);
+                final int effectivePGWorkerCount = pgWorkerCount > 0 ? pgWorkerCount : sharedWorkerCount;
+                this.pgSelectCacheBlockCount = getInt(properties, env, PropertyKey.PG_SELECT_CACHE_BLOCK_COUNT, 4 * effectivePGWorkerCount);
+                this.pgSelectCacheRowCount = getInt(properties, env, PropertyKey.PG_SELECT_CACHE_ROW_COUNT, 4 * effectivePGWorkerCount);
+            }
+            final int effectiveHttpWorkerCount = httpWorkerCount > 0 ? httpWorkerCount : sharedWorkerCount;
+            this.httpSqlCacheEnabled = getBoolean(properties, env, PropertyKey.HTTP_QUERY_CACHE_ENABLED, true);
+            this.httpSqlCacheBlockCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_BLOCK_COUNT, 4 * effectiveHttpWorkerCount);
+            this.httpSqlCacheRowCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_ROW_COUNT, 4 * effectiveHttpWorkerCount);
 
             this.sqlCompilerPoolCapacity = 2 * (httpWorkerCount + pgWorkerCount + sharedWorkerCount + walApplyWorkerCount);
 
@@ -2430,6 +2436,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getSequencerCheckInterval() {
+            return sequencerCheckInterval;
+        }
+
+        @Override
         public boolean getSimulateCrashEnabled() {
             return simulateCrashEnabled;
         }
@@ -2826,11 +2837,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getWalPurgeInterval() {
             return walPurgeInterval;
-        }
-
-        @Override
-        public long getSequencerCheckInterval() {
-            return sequencerCheckInterval;
         }
 
         @Override
