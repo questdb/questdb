@@ -84,7 +84,7 @@ public class ConcurrentAssociativeCache<V> implements AssociativeCache<V> {
     @Override
     public void close() {
         long freed = 0;
-        for (int i = 0, n = keys.size(); i < n; i++) {
+        for (int i = 0; i < rows; i++) {
             final CharSequence[] rowKeys = keys.getQuick(i);
             final V[] rowValues = values.getQuick(i);
             synchronized (rowKeys) {

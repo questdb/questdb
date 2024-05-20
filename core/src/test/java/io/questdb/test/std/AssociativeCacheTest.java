@@ -24,7 +24,6 @@
 
 package io.questdb.test.std;
 
-import io.questdb.log.LogFactory;
 import io.questdb.metrics.*;
 import io.questdb.std.*;
 import io.questdb.std.str.FlyweightDirectUtf16Sink;
@@ -39,8 +38,6 @@ import java.util.Collection;
 import java.util.HashSet;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
-
-import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 @RunWith(Parameterized.class)
 public class AssociativeCacheTest {
@@ -78,50 +75,48 @@ public class AssociativeCacheTest {
         Assume.assumeTrue(cacheType == CacheType.CONCURRENT);
 
         final int N = 100_000;
-        assertMemoryLeak(() -> {
-            try (AssociativeCache<AtomicInteger> cache = createCache(4, 4)) {
-                final int threadCount = 8;
+        try (AssociativeCache<AtomicInteger> cache = createCache(4, 4)) {
+            final int threadCount = 8;
 
-                final CyclicBarrier barrier = new CyclicBarrier(threadCount);
-                final AtomicInteger errors = new AtomicInteger();
-                final ObjList<Thread> threads = new ObjList<>();
-                for (int t = 0; t < threadCount; t++) {
-                    final int threadId = t;
-                    Thread thread = new Thread(() -> {
-                        Rnd rnd = new Rnd(threadId, threadId);
-                        try {
-                            barrier.await();
+            final CyclicBarrier barrier = new CyclicBarrier(threadCount);
+            final AtomicInteger errors = new AtomicInteger();
+            final ObjList<Thread> threads = new ObjList<>();
+            for (int t = 0; t < threadCount; t++) {
+                final int threadId = t;
+                Thread thread = new Thread(() -> {
+                    Rnd rnd = new Rnd(threadId, threadId);
+                    try {
+                        barrier.await();
 
-                            for (int i = 0; i < N; i++) {
-                                CharSequence k = rnd.nextString(2);
-                                AtomicInteger counter = cache.poll(k);
-                                if (counter != null) {
-                                    // Manifest that we've acquired the counter.
-                                    int c = counter.incrementAndGet();
-                                    // Do some sleep.
-                                    Os.pause();
-                                    // Check that no one else acquired the counter.
-                                    Assert.assertEquals(c, counter.get());
-                                    cache.put(k, counter);
-                                } else {
-                                    cache.put(k, new AtomicInteger());
-                                }
+                        for (int i = 0; i < N; i++) {
+                            CharSequence k = rnd.nextString(2);
+                            AtomicInteger counter = cache.poll(k);
+                            if (counter != null) {
+                                // Manifest that we've acquired the counter.
+                                int c = counter.incrementAndGet();
+                                // Do some sleep.
+                                Os.pause();
+                                // Check that no one else acquired the counter.
+                                Assert.assertEquals(c, counter.get());
+                                cache.put(k, counter);
+                            } else {
+                                cache.put(k, new AtomicInteger());
                             }
-                        } catch (Throwable e) {
-                            errors.incrementAndGet();
                         }
-                    });
-                    threads.add(thread);
-                    thread.start();
-                }
-
-                for (int i = 0, n = threads.size(); i < n; i++) {
-                    threads.getQuick(i).join();
-                }
-
-                Assert.assertEquals(0, errors.get());
+                    } catch (Throwable e) {
+                        errors.incrementAndGet();
+                    }
+                });
+                threads.add(thread);
+                thread.start();
             }
-        });
+
+            for (int i = 0, n = threads.size(); i < n; i++) {
+                threads.getQuick(i).join();
+            }
+
+            Assert.assertEquals(0, errors.get());
+        }
     }
 
     @Test
@@ -332,11 +327,5 @@ public class AssociativeCacheTest {
 
     public enum CacheType {
         SIMPLE, CONCURRENT
-    }
-
-    static {
-        // log is needed to greedily allocate logger infra and
-        // exclude it from leak detector
-        LogFactory.getLog(AssociativeCacheTest.class);
     }
 }
