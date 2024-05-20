@@ -111,7 +111,10 @@ public class ConcurrentAssociativeCache<V> implements AssociativeCache<V> {
 
         synchronized (rowKeys) {
             for (int i = 0; i < blocks; i++) {
-                if (Chars.equalsNc(key, rowKeys[i])) {
+                if (rowKeys[i] == null) {
+                    break;
+                }
+                if (Chars.equals(key, rowKeys[i])) {
                     value = rowValues[i];
                     rowValues[i] = null;
                     break;
