@@ -41,7 +41,7 @@ public class MapFactory {
             @Transient @NotNull ColumnTypes keyTypes
     ) {
         final int keyCapacity = configuration.getSqlSmallMapKeyCapacity();
-        final int pageSize = configuration.getSqlSmallMapPageSize();
+        final long pageSize = configuration.getSqlSmallMapPageSize();
         return new OrderedMap(
                 pageSize,
                 keyTypes,
@@ -60,7 +60,7 @@ public class MapFactory {
             @Transient @Nullable ColumnTypes valueTypes
     ) {
         final int keyCapacity = configuration.getSqlSmallMapKeyCapacity();
-        final int pageSize = configuration.getSqlSmallMapPageSize();
+        final long pageSize = configuration.getSqlSmallMapPageSize();
         return new OrderedMap(
                 pageSize,
                 keyTypes,
@@ -83,7 +83,7 @@ public class MapFactory {
             @Transient @Nullable ColumnTypes valueTypes
     ) {
         final int keyCapacity = configuration.getSqlSmallMapKeyCapacity();
-        final int pageSize = configuration.getSqlSmallMapPageSize();
+        final long pageSize = configuration.getSqlSmallMapPageSize();
         return createUnorderedMap(configuration, keyTypes, valueTypes, keyCapacity, pageSize);
     }
 
@@ -98,7 +98,7 @@ public class MapFactory {
             @Transient @NotNull ColumnTypes keyTypes,
             @Transient @Nullable ColumnTypes valueTypes,
             int keyCapacity,
-            int pageSize
+            long pageSize
     ) {
         final int maxEntrySize = configuration.getSqlUnorderedMapMaxEntrySize();
 

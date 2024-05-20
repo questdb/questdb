@@ -329,19 +329,6 @@ class LineTcpMeasurementEvent implements Closeable {
 
             entitiesWritten++;
             switch (entityType) {
-                case LineTcpParser.ENTITY_TYPE_TAG: {
-                    if (ColumnType.tagOf(colType) == ColumnType.SYMBOL) {
-                        offset = buffer.addSymbol(
-                                offset,
-                                entity.getValue(),
-                                parser.hasNonAsciiChars(),
-                                localDetails.getSymbolLookup(columnWriterIndex)
-                        );
-                    } else {
-                        throw castError(tud.getTableNameUtf16(), "tag", colType, entity.getName());
-                    }
-                    break;
-                }
                 case LineTcpParser.ENTITY_TYPE_INTEGER: {
                     switch (ColumnType.tagOf(colType)) {
                         case ColumnType.LONG:
@@ -560,16 +547,25 @@ class LineTcpMeasurementEvent implements Closeable {
                     }
                     break;
                 }
+                case LineTcpParser.ENTITY_TYPE_TAG:
                 case LineTcpParser.ENTITY_TYPE_SYMBOL: {
-                    if (ColumnType.tagOf(colType) == ColumnType.SYMBOL) {
-                        offset = buffer.addSymbol(
-                                offset,
-                                entity.getValue(),
-                                parser.hasNonAsciiChars(),
-                                localDetails.getSymbolLookup(columnWriterIndex)
-                        );
-                    } else {
-                        throw castError(tud.getTableNameUtf16(), "symbol", colType, entity.getName());
+                    switch (colType) {
+                        case ColumnType.SYMBOL:
+                            offset = buffer.addSymbol(
+                                    offset,
+                                    entity.getValue(),
+                                    parser.hasNonAsciiChars(),
+                                    localDetails.getSymbolLookup(columnWriterIndex)
+                            );
+                            break;
+                        case ColumnType.VARCHAR:
+                            offset = buffer.addVarchar(offset, entity.getValue(), parser.hasNonAsciiChars());
+                            break;
+                        case ColumnType.STRING:
+                            offset = buffer.addString(offset, entity.getValue(), parser.hasNonAsciiChars());
+                            break;
+                        default:
+                            throw castError(tud.getTableNameUtf16(), "symbol", colType, entity.getName());
                     }
                     break;
                 }

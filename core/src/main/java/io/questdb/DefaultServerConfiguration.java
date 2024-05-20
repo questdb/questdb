@@ -48,6 +48,7 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     private final DefaultMetricsConfiguration metricsConfiguration = new DefaultMetricsConfiguration();
     private final DefaultPGWireConfiguration pgWireConfiguration = new DefaultPGWireConfiguration();
     private final WorkerPoolConfiguration walApplyPoolConfiguration = new DefaultWalApplyWorkerPoolConfiguration();
+    private final PublicPassthroughConfiguration publicPassthroughConfiguration = new DefaultPublicPassthroughConfiguration();
 
     public DefaultServerConfiguration(CharSequence root) {
         this.cairoConfiguration = new DefaultCairoConfiguration(root);
@@ -102,4 +103,7 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     public WorkerPoolConfiguration getWorkerPoolConfiguration() {
         return httpServerConfiguration;
     }
+
+    @Override
+    public PublicPassthroughConfiguration getPublicPassthroughConfiguration() { return publicPassthroughConfiguration; }
 }

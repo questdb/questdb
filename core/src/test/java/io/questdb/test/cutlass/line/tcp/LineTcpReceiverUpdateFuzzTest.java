@@ -94,7 +94,6 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
                 -1,
                 false,
                 false,
-                false,
                 false
         );
         runTest();
@@ -112,7 +111,6 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
                 -1,
                 false,
                 false,
-                false,
                 false
         );
         runTest();
@@ -128,7 +126,6 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
                 2,
                 2,
                 -1,
-                false,
                 false,
                 false,
                 false

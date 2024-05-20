@@ -52,7 +52,7 @@ public class CastDoubleToDateFunctionFactory implements FunctionFactory {
         @Override
         public long getDate(Record rec) {
             final double value = arg.getDouble(rec);
-            return value == value ? (long) value : Numbers.LONG_NULL;
+            return Numbers.isNull(value) || value > Long.MAX_VALUE || value < Long.MIN_VALUE ? Numbers.LONG_NULL : (long) value;
         }
     }
 }

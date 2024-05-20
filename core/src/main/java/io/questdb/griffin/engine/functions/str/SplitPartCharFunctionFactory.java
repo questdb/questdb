@@ -35,9 +35,12 @@ import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
-import io.questdb.std.*;
-import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.Nullable;
 
 public class SplitPartCharFunctionFactory implements FunctionFactory {
@@ -90,7 +93,7 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
         protected final Function indexFunc;
         protected final Function strFunc;
         private final int indexPosition;
-        private final StringSink sink = new StringSink();
+        private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
 
         public AbstractSplitPartFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition) {
@@ -122,17 +125,17 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
 
         @Override
         public void getStr(Record rec, Utf16Sink utf16Sink) {
-            getStr0(rec, utf16Sink, false);
+            getStrWithoutClear(rec, utf16Sink);
         }
 
         @Override
         public CharSequence getStrA(Record rec) {
-            return getStr0(rec, sink, true);
+            return getStrWithClear(rec, sinkA);
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
-            return getStr0(rec, sinkB, true);
+            return getStrWithClear(rec, sinkB);
         }
 
         @Override
@@ -147,7 +150,13 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
         }
 
         @Nullable
-        private <S extends Utf16Sink> S getStr0(Record rec, S sink, boolean clearSink) {
+        private CharSequence getStrWithClear(Record rec, StringSink sink) {
+            sink.clear();
+            return getStrWithoutClear(rec, sink);
+        }
+
+        @Nullable
+        private <S extends Utf16Sink> S getStrWithoutClear(Record rec, S sink) {
             CharSequence str = strFunc.getStrA(rec);
             char delimiter = getDelimiter(rec);
             int index = getIndex(rec);
@@ -193,9 +202,6 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
                 }
             }
 
-            if (clearSink && sink instanceof Mutable) {
-                ((Mutable) sink).clear();
-            }
             sink.put(str, start, end);
             return sink;
         }
