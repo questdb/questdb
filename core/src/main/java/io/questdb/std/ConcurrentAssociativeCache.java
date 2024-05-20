@@ -108,6 +108,7 @@ public class ConcurrentAssociativeCache<V> implements AssociativeCache<V> {
         final CharSequence[] rowKeys = keys.getQuick(row);
         final V[] rowValues = values.getQuick(row);
         V value = null;
+
         synchronized (rowKeys) {
             for (int i = 0; i < blocks; i++) {
                 CharSequence k = rowKeys[i];
@@ -135,7 +136,6 @@ public class ConcurrentAssociativeCache<V> implements AssociativeCache<V> {
         final int row = row(key);
         final CharSequence[] rowKeys = keys.getQuick(row);
         final V[] rowValues = values.getQuick(row);
-
         CharSequence outgoingKey = null;
         V outgoingValue;
 
