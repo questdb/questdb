@@ -471,6 +471,7 @@ public class WalWriter implements TableWriterAPI {
     public void rollUncommittedToNewSegment(int convertColumnIndex, int convertToColumnType) {
         final long uncommittedRows = getUncommittedRowCount();
         final long oldSegmentRowCount = segmentRowCount;
+        long rowsRemainInCurrentSegment = currentTxnStartRowNum;
 
         if (uncommittedRows > 0) {
             final int oldSegmentId = segmentId;
@@ -499,7 +500,7 @@ public class WalWriter implements TableWriterAPI {
                                 .$(path).$(Files.SEPARATOR).$(oldSegmentId)
                                 .$(", lastSegmentTxn=").$(lastSegmentTxn)
                                 .$(", newSegmentId=").$(newSegmentId)
-                                .$(", skipRows=").$(currentTxnStartRowNum)
+                                .$(", skipRows=").$(rowsRemainInCurrentSegment)
                                 .$(", rowCount=").$(uncommittedRows)
                                 .I$();
                     } else {
@@ -508,7 +509,7 @@ public class WalWriter implements TableWriterAPI {
                                 .$(path).$(Files.SEPARATOR).$(oldSegmentId)
                                 .$(", lastSegmentTxn=").$(lastSegmentTxn)
                                 .$(", newSegmentId=").$(newSegmentId)
-                                .$(", skipRows=").$(currentTxnStartRowNum)
+                                .$(", skipRows=").$(rowsRemainInCurrentSegment)
                                 .$(", rowCount=").$(uncommittedRows)
                                 .$(", existingType=").$(ColumnType.nameOf(existingType))
                                 .$(", newType=").$(ColumnType.nameOf(convertToColumnType))
@@ -1930,6 +1931,8 @@ public class WalWriter implements TableWriterAPI {
                             configureSymbolMapWriter(newColumnIndex, columnName, 0, -1);
                         }
                         columnCount++;
+
+                        long rowsRemainInCurrentSegment = currentTxnStartRowNum;
                         // Roll last transaction to new segment
                         rollUncommittedToNewSegment(existingColumnIndex, newType);
 
@@ -1947,8 +1950,23 @@ public class WalWriter implements TableWriterAPI {
 
                                 if (segmentRowCount == 0) {
                                     openColumnFiles(columnName, newType, newColumnIndex, path.size());
+                                    // If teh old column has .i file, we need to remove it
                                 }
                             }
+
+                            if (rowsRemainInCurrentSegment == 0) {
+                                // if we did not have to roll uncommitted rows to a new segment
+                                // remove .i files when converting var type to fixed
+                                if (ColumnType.isVarSize(existingColumnType) && !ColumnType.isVarSize(newType)) {
+                                    path.trimTo(rootLen);
+                                    path.trimTo(rootLen).slash().put(segmentId);
+                                    iFile(path, columnName);
+                                    if (ff.exists(path)) {
+                                        ff.remove(path);
+                                    }
+                                }
+                            }
+
                             if (securityContext != null) {
                                 ddlListener.onColumnTypeChanged(securityContext, metadata.getTableToken(), columnName, existingColumnType, newType);
                             }
