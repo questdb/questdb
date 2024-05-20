@@ -51,6 +51,7 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
                         " from long_sequence(10000000)) timestamp(ts) partition by day;");
                 fail("Managed to create table with RSS limit " + limitMB + " MB");
             } catch (Exception e) {
+                Unsafe.setRssMemLimit(0);
                 String expected = "global RSS memory limit exceeded";
                 assertTrue(String.format("Exception should contain \"%s\", but was \"%s\"", expected, e.getMessage()),
                         e.getMessage().contains(expected));
