@@ -24,7 +24,6 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.griffin.SqlException;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.After;
@@ -51,7 +50,7 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
                         " rnd_timestamp(to_timestamp('2024-03-01', 'yyyy-mm-dd'), to_timestamp('2024-04-01', 'yyyy-mm-dd'), 0) ts" +
                         " from long_sequence(10000000)) timestamp(ts) partition by day;");
                 fail("Managed to create table with RSS limit " + limitMB + " MB");
-            } catch (SqlException e) {
+            } catch (Exception e) {
                 String expected = "global RSS memory limit exceeded";
                 assertTrue(String.format("Exception should contain \"%s\", but was \"%s\"", expected, e.getMessage()),
                         e.getMessage().contains(expected));
