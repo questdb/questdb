@@ -295,13 +295,39 @@ mod tests {
             .expect("parquet writer");
 
         buf.set_position(0);
-        let meta = parquet2::read::read_metadata(&mut buf).expect("metadata");
+        let bytes: Bytes = buf.into_inner().into();
+        let mut reader = Cursor::new(bytes.clone());
+        let parquet_reader = ParquetRecordBatchReaderBuilder::try_new(bytes)
+            .expect("reader")
+            .with_batch_size(8192)
+            .build()
+            .expect("builder");
+
+        let mut expected = 0;
+        for batch in parquet_reader {
+            if let Ok(batch) = batch {
+                let i64array = batch
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<arrow::array::Int64Array>()
+                    .expect("Failed to downcast");
+                for v in i64array.iter() {
+                    assert!(v.is_some());
+                    let v = v.unwrap();
+                    assert_eq!(expected, v);
+                    expected += 1;
+                }
+            }
+        }
+        assert_eq!(expected, row_count as i64);
+
+        let meta = parquet2::read::read_metadata(&mut reader).expect("metadata");
         assert_eq!(row_count, meta.num_rows);
         assert_eq!(row_count / row_group_size, meta.row_groups.len());
         assert_eq!(row_group_size, meta.row_groups[0].num_rows());
 
         let chunk_meta = &meta.row_groups[0].columns()[0];
-        let pages = parquet2::read::get_page_iterator(chunk_meta, buf, None, vec![], page_size_bytes).expect("pages iter");
+        let pages = parquet2::read::get_page_iterator(chunk_meta, reader, None, vec![], page_size_bytes).expect("pages iter");
         for page in pages {
             let page = page.expect("page");
             match page {
