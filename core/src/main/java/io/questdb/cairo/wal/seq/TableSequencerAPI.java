@@ -52,15 +52,14 @@ public class TableSequencerAPI implements QuietCloseable {
     private final Function<CharSequence, SeqTxnTracker> createTxnTracker;
     private final CairoEngine engine;
     private final long inactiveTtlUs;
-    private final BiFunction<CharSequence, Object, TableSequencerImpl> openSequencerInstanceLambda;
     private final int recreateDistressedSequencerAttempts;
     private final ConcurrentHashMap<SeqTxnTracker> seqTxnTrackers = new ConcurrentHashMap<>(false);
+    private final BiFunction<CharSequence, Object, TableSequencerImpl> openSequencerInstanceLambda = this::openSequencerInstance;
     volatile boolean closed;
 
     public TableSequencerAPI(CairoEngine engine, CairoConfiguration configuration) {
         this.configuration = configuration;
         this.engine = engine;
-        this.openSequencerInstanceLambda = this::openSequencerInstance;
         this.inactiveTtlUs = configuration.getInactiveWalWriterTTL() * 1000;
         this.recreateDistressedSequencerAttempts = configuration.getWalRecreateDistressedSequencerAttempts();
         this.createTxnTracker = dir -> new SeqTxnTracker();
@@ -464,22 +463,18 @@ public class TableSequencerAPI implements QuietCloseable {
             } else if (lock == SequencerLockType.WRITE) {
                 entry.writeLock();
             }
-
             boolean isDistressed = entry.isDistressed();
             if (!isDistressed && !entry.isClosed()) {
                 return entry;
-            } else {
-                if (lock == SequencerLockType.READ) {
-                    entry.unlockRead();
-                } else if (lock == SequencerLockType.WRITE) {
-                    entry.unlockWrite();
-                }
+            } else if (lock == SequencerLockType.READ) {
+                entry.unlockRead();
+            } else if (lock == SequencerLockType.WRITE) {
+                entry.unlockWrite();
             }
             if (isDistressed) {
                 attempt++;
             }
         }
-
         throw CairoException.critical(0).put("sequencer is distressed [table=").put(tableToken.getDirName()).put(']');
     }
 
