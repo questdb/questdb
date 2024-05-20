@@ -38,7 +38,7 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
             assertException(
                     "create table dest as (select * from src where v % 2 = 0 order by ts desc) timestamp(ts);",
                     13,
-                    "Could not create table dest: cannot insert rows out of order to non-partitioned table."
+                    "cannot insert rows out of order to non-partitioned table."
             );
         });
     }

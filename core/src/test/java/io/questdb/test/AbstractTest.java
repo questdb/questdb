@@ -27,6 +27,7 @@ package io.questdb.test;
 import io.questdb.Bootstrap;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Unsafe;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
@@ -65,6 +66,7 @@ public class AbstractTest {
 
     @After
     public void tearDown() throws Exception {
+        Unsafe.setRssMemLimit(0);
         LOG.info().$("Finished test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
         TestUtils.removeTestPath(root);
     }
