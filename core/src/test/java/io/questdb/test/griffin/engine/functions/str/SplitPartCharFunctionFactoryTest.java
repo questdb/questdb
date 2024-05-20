@@ -84,6 +84,28 @@ public class SplitPartCharFunctionFactoryTest extends AbstractFunctionFactoryTes
     }
 
     @Test
+    public void testSinkIsCleared() throws SqlException {
+        for (int i = 0; i < 10; i++) {
+            assertQuery(
+                    "split_part\n" +
+                            "\n" +
+                            "\n" +
+                            "g\n" +
+                            "j\n" +
+                            "\n" +
+                            "\n",
+                    "select split_part(x, '.'::char, 3) from\n" +
+                            "(select 'a.b' as x\n" +
+                            "union select 'c.d' as x\n" +
+                            "union select 'e.f.g' as x\n" +
+                            "union select 'h.i.j' as x\n" +
+                            "union select 'k.l' as x\n" +
+                            "union select 'm.n' as x)", null, false, false
+            );
+        }
+    }
+
+    @Test
     public void testZeroDelimiter() throws Exception {
         assertMemoryLeak(() -> callCustomised(true, true, "abc,def,ghi,jkl", CharConstant.ZERO.getChar(null), 2).andAssert(null));
     }
