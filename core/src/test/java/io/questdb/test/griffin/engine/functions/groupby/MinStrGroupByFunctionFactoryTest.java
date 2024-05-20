@@ -93,20 +93,22 @@ public class MinStrGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testGroupNotKeyedWithNulls() throws Exception {
-        String expected = "min\n" +
-                "a\n";
-        assertQuery(
-                expected,
-                "select min(s) from x",
-                "create table x as (select * from (select rnd_str('a','b','c') s, timestamp_sequence(10, 100000) ts from long_sequence(100)) timestamp(ts)) timestamp(ts) PARTITION BY YEAR",
-                null,
-                false,
-                true
-        );
+        assertMemoryLeak(() -> {
+            String expected = "min\n" +
+                    "a\n";
+            assertQueryNoLeakCheck(
+                    expected,
+                    "select min(s) from x",
+                    "create table x as (select * from (select rnd_str('a','b','c') s, timestamp_sequence(10, 100000) ts from long_sequence(100)) timestamp(ts)) timestamp(ts) PARTITION BY YEAR",
+                    null,
+                    false,
+                    true
+            );
 
-        insert("insert into x values(cast(null as STRING), '2021-05-21')");
-        insert("insert into x values(cast(null as STRING), '1970-01-01')");
-        assertSql(expected, "select min(s) from x");
+            insert("insert into x values(cast(null as STRING), '2021-05-21')");
+            insert("insert into x values(cast(null as STRING), '1970-01-01')");
+            assertSql(expected, "select min(s) from x");
+        });
     }
 
     @Test

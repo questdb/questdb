@@ -26,10 +26,11 @@ package io.questdb.cutlass.auth;
 
 import io.questdb.cairo.SecurityContext;
 import io.questdb.network.Socket;
+import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.NotNull;
 
-public interface Authenticator extends QuietCloseable {
+public interface Authenticator extends QuietCloseable, Mutable {
 
     int NEEDS_DISCONNECT = 3;
     int NEEDS_READ = 0;

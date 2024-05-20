@@ -107,36 +107,41 @@ public class TelemetryConfigLogger implements Closeable {
             TableToken tableToken
     ) throws SqlException {
         final TableWriter configWriter = engine.getWriter(tableToken, "telemetryConfig");
-        final CompiledQuery cc = compiler.query().$(TELEMETRY_CONFIG_TABLE_NAME).$(" LIMIT -1").compile(sqlExecutionContext);
-        try (
-                final RecordCursorFactory factory = cc.getRecordCursorFactory();
-                final RecordCursor cursor = factory.getCursor(sqlExecutionContext)
-        ) {
-            final boolean enabled = telemetryConfiguration.getEnabled();
-            if (cursor.hasNext()) {
-                final Record record = cursor.getRecord();
-                final boolean _enabled = record.getBool(1);
-                final Long256 l256 = record.getLong256A(0);
-                final CharSequence _questDBVersion = record.getSymA(2);
+        try {
+            final CompiledQuery cc = compiler.query().$(TELEMETRY_CONFIG_TABLE_NAME).$(" LIMIT -1").compile(sqlExecutionContext);
+            try (
+                    final RecordCursorFactory factory = cc.getRecordCursorFactory();
+                    final RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                final boolean enabled = telemetryConfiguration.getEnabled();
+                if (cursor.hasNext()) {
+                    final Record record = cursor.getRecord();
+                    final boolean _enabled = record.getBool(1);
+                    final Long256 l256 = record.getLong256A(0);
+                    final CharSequence _questDBVersion = record.getSymA(2);
 
-                // if the configuration changed to enable or disable telemetry
-                // we need to update the table to reflect that
-                if (enabled != _enabled || !questDBVersion.equals(_questDBVersion)) {
-                    appendConfigRow(engine, configWriter, l256, enabled);
-                    LOG.advisory()
-                            .$("instance config changes [id=").$256(l256.getLong0(), l256.getLong1(), 0, 0)
-                            .$(", enabled=").$(enabled)
-                            .I$();
+                    // if the configuration changed to enable or disable telemetry
+                    // we need to update the table to reflect that
+                    if (enabled != _enabled || !questDBVersion.equals(_questDBVersion)) {
+                        appendConfigRow(engine, configWriter, l256, enabled);
+                        LOG.advisory()
+                                .$("instance config changes [id=").$256(l256.getLong0(), l256.getLong1(), 0, 0)
+                                .$(", enabled=").$(enabled)
+                                .I$();
+                    } else {
+                        LOG.advisory()
+                                .$("instance [id=").$256(l256.getLong0(), l256.getLong1(), 0, 0)
+                                .$(", enabled=").$(enabled)
+                                .I$();
+                    }
                 } else {
-                    LOG.advisory()
-                            .$("instance [id=").$256(l256.getLong0(), l256.getLong1(), 0, 0)
-                            .$(", enabled=").$(enabled)
-                            .I$();
+                    // if there are no record for telemetry id we need to create one using clocks
+                    appendConfigRow(engine, configWriter, null, enabled);
                 }
-            } else {
-                // if there are no record for telemetry id we need to create one using clocks
-                appendConfigRow(engine, configWriter, null, enabled);
             }
+        } catch (Throwable th) {
+            Misc.free(configWriter);
+            throw th;
         }
         return configWriter;
     }

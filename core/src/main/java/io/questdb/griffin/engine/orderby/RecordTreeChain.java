@@ -66,10 +66,15 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
             long valuePageSize,
             int valueMaxPages
     ) {
-        this.comparator = comparator;
-        this.mem = new MemoryPages(keyPageSize, keyMaxPages);
-        this.recordChain = new RecordChain(columnTypes, recordSink, valuePageSize, valueMaxPages);
-        this.recordChainRecord = this.recordChain.getRecordB();
+        try {
+            this.comparator = comparator;
+            this.mem = new MemoryPages(keyPageSize, keyMaxPages);
+            this.recordChain = new RecordChain(columnTypes, recordSink, valuePageSize, valueMaxPages);
+            this.recordChainRecord = this.recordChain.getRecordB();
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override

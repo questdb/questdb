@@ -164,7 +164,6 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     }
 
     private void extend0(long size) {
-
         if (size == 0 && pageAddress == 0) {
             return;
         }

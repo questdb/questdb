@@ -62,14 +62,19 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
             @Transient ObjList<VectorAggregateFunction> vafList
     ) {
         super(metadata);
-        this.entryPool = new ObjectPool<>(VectorAggregateEntry::new, configuration.getGroupByPoolCapacity());
-        this.base = base;
-        this.vafList = new ObjList<>(vafList.size());
-        this.vafList.addAll(vafList);
-        this.cursor = new GroupByNotKeyedVectorRecordCursor(this.vafList);
-        this.perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
-        this.sharedCircuitBreaker = new AtomicBooleanCircuitBreaker();
-        this.workerCount = workerCount;
+        try {
+            this.entryPool = new ObjectPool<>(VectorAggregateEntry::new, configuration.getGroupByPoolCapacity());
+            this.base = base;
+            this.vafList = new ObjList<>(vafList.size());
+            this.vafList.addAll(vafList);
+            this.cursor = new GroupByNotKeyedVectorRecordCursor(this.vafList);
+            this.perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
+            this.sharedCircuitBreaker = new AtomicBooleanCircuitBreaker();
+            this.workerCount = workerCount;
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override

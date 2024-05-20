@@ -47,7 +47,7 @@ public class SimpleTableTest extends AbstractCairoTest {
             assertSql(expected1, "select timestamp time from t;");
 
             try {
-                assertException("select timestamp with time zone from t;");
+                assertExceptionNoLeakCheck("select timestamp with time zone from t;");
             } catch (SqlException e) {
                 Assert.assertEquals(31, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "String literal expected after 'timestamp with time zone'");
