@@ -1824,11 +1824,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             boolean isWalEnabled,
             RecordCursor cursor,
             RecordMetadata cursorMetadata,
-            int position,
             long batchSize,
             long o3MaxLag,
             SqlExecutionCircuitBreaker circuitBreaker
-    ) throws SqlException {
+    ) {
         TableWriterAPI writerAPI = null;
         TableWriter writer = null;
 
@@ -1868,22 +1867,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     circuitBreaker
             );
         } catch (CairoException e) {
-            if (e.isAuthorizationError() || e.isCancellation()) {
-                // No point printing stack trace for authorization or cancellation errors
-                LOG.error().$("could not create table [error=").$(e.getFlyweightMessage()).I$();
-            } else {
-                LOG.error().$("could not create table [error=").$((Throwable) e).I$();
-            }
             // Close writer, the table will be removed
             writerAPI = Misc.free(writerAPI);
             writer = null;
-            if (e.isInterruption()) {
-                throw e;
-            }
-            throw SqlException.$(position, "Could not create table ")
-                    .put(tableToken.getTableName())
-                    .put(": ")
-                    .put(e.getFlyweightMessage());
+            throw e;
         } finally {
             if (isWalEnabled) {
                 Misc.free(writerAPI);
@@ -2009,7 +1996,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     throw SqlException.$(name.position, "Could not create table, ").put(e.getFlyweightMessage());
                 }
             } else {
-                tableToken = createTableFromCursorExecutor(createTableModel, executionContext, name.position, volumeAlias);
+                tableToken = createTableFromCursorExecutor(createTableModel, executionContext, volumeAlias);
             }
 
             if (createTableModel.getQueryModel() == null) {
@@ -2023,7 +2010,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private TableToken createTableFromCursorExecutor(
             CreateTableModel model,
             SqlExecutionContext executionContext,
-            int position,
             CharSequence volumeAlias
     ) throws SqlException {
         executionContext.setUseSimpleCircuitBreaker(true);
@@ -2066,17 +2052,21 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         model.isWalEnabled(),
                         cursor,
                         metadata,
-                        position,
                         model.getBatchSize(),
                         model.getBatchO3MaxLag(),
                         circuitBreaker
                 );
             } catch (CairoException e) {
-                LogRecord record = LOG.error().$(e.getFlyweightMessage());
+                LogRecord record = LOG.error()
+                        .$("could not create table as select [model=`").$(model)
+                        .$("`, message=[")
+                        .$(e.getFlyweightMessage());
                 if (!e.isCancellation()) {
-                    record.$(" [errno=").$(e.getErrno()).$(']');
+                    record.$(", errno=").$(e.getErrno());
+                } else {
+                    record.$(']'); // we are closing bracket for the underlying message
                 }
-                record.$();
+                record.I$();
                 engine.drop(path, tableToken);
                 engine.unlockTableName(tableToken);
                 throw e;
