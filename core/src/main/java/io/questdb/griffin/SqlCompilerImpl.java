@@ -1996,7 +1996,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     throw SqlException.$(name.position, "Could not create table, ").put(e.getFlyweightMessage());
                 }
             } else {
-                tableToken = createTableFromCursorExecutor(createTableModel, executionContext, volumeAlias);
+                tableToken = createTableFromCursorExecutor(createTableModel, executionContext, volumeAlias, name.position);
             }
 
             if (createTableModel.getQueryModel() == null) {
@@ -2010,7 +2010,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private TableToken createTableFromCursorExecutor(
             CreateTableModel model,
             SqlExecutionContext executionContext,
-            CharSequence volumeAlias
+            CharSequence volumeAlias,
+            int position
     ) throws SqlException {
         executionContext.setUseSimpleCircuitBreaker(true);
         try (
@@ -2057,6 +2058,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         circuitBreaker
                 );
             } catch (CairoException e) {
+                e.position(position);
                 LogRecord record = LOG.error()
                         .$("could not create table as select [model=`").$(model)
                         .$("`, message=[")
