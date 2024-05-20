@@ -25,7 +25,7 @@
 package io.questdb.mp;
 
 public final class TimeoutException extends RuntimeException {
-    public final static TimeoutException INSTANCE = new TimeoutException();
+    public static final TimeoutException INSTANCE = new TimeoutException();
 
     private TimeoutException() {
     }

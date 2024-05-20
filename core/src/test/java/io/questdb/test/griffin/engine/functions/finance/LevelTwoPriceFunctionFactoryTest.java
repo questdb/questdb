@@ -126,7 +126,7 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
                     "from long_sequence(10))");
             drainWalQueue();
 
-            assertPlan("select avg(l2price(14, ask_size, ask_value)) " +
+            assertPlanNoLeakCheck("select avg(l2price(14, ask_size, ask_value)) " +
                             "- avg(l2price(14, bid_size, bid_value))" +
                             " as spread from x",
                     "VirtualRecord\n" +
@@ -138,7 +138,7 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
                             "            Row forward scan\n" +
                             "            Frame forward scan on: x\n");
 
-            assertPlan("select l2price(14, ask_size, ask_value) " +
+            assertPlanNoLeakCheck("select l2price(14, ask_size, ask_value) " +
                             "- l2price(14, bid_size, bid_value)" +
                             " as spread from x",
                     "VirtualRecord\n" +

@@ -85,7 +85,7 @@ public class FullFatJoinNoLeakTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try {
                 createTablesToJoin();
-                assertException(sql, sqlExecutionContext, true);
+                assertExceptionNoLeakCheck(sql, sqlExecutionContext, true);
             } catch (LimitOverflowException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "limit of 0 resizes exceeded in FastMap");
                 Assert.assertFalse(ex.isCritical());

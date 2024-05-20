@@ -80,9 +80,9 @@ public class IDGenerator implements Closeable {
             final FilesFacade ff = configuration.getFilesFacade();
             uniqueIdFd = TableUtils.openFileRWOrFail(ff, path, configuration.getWriterFileOpenOpts());
             uniqueIdMem = TableUtils.mapRW(ff, uniqueIdFd, uniqueIdMemSize, MemoryTag.MMAP_DEFAULT);
-        } catch (Throwable e) {
+        } catch (Throwable th) {
             close();
-            throw e;
+            throw th;
         } finally {
             path.trimTo(rootLen);
         }

@@ -26,30 +26,30 @@ package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.griffin.SqlException;
-import io.questdb.std.NumericException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import org.junit.Test;
 
 public class MaxFloatGroupByFunctionTest extends AbstractCairoTest {
+
     @Test
-    public void testSampleByWithFill() throws SqlException, NumericException {
-        TableModel tm = new TableModel(configuration, "tab", PartitionBy.DAY);
-        tm.timestamp("ts").col("ch", ColumnType.FLOAT);
-        createPopulateTable(tm, 100, "2020-01-01", 2);
+    public void testSampleByWithFill() throws Exception {
+        assertMemoryLeak(() -> {
+            TableModel tm = new TableModel(configuration, "tab", PartitionBy.DAY);
+            tm.timestamp("ts").col("ch", ColumnType.FLOAT);
+            createPopulateTable(tm, 100, "2020-01-01", 2);
 
-        assertSql(
-                "ts\tmin\tmax\tfirst\tlast\tcount\n" +
-                        "2020-01-01T00:28:47.990000Z\t0.0010\t0.0010\t0.0010\t0.0010\t1\n" +
-                        "2020-01-01T00:29:47.990000Z\t0.0010\t0.0010\t0.0010\t0.0010\t1\n", "select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by 1m FILL(LINEAR) align to first observation LIMIT 2"
-        );
+            assertSql(
+                    "ts\tmin\tmax\tfirst\tlast\tcount\n" +
+                            "2020-01-01T00:28:47.990000Z\t0.0010\t0.0010\t0.0010\t0.0010\t1\n" +
+                            "2020-01-01T00:29:47.990000Z\t0.0010\t0.0010\t0.0010\t0.0010\t1\n", "select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by 1m FILL(LINEAR) align to first observation LIMIT 2"
+            );
 
-
-        assertSql(
-                "ts\tmin\tmax\tfirst\tlast\tcount\n" +
-                        "2020-01-01T00:28:00.000000Z\t0.0010\t0.0010\t0.0010\t0.0010\t1\n" +
-                        "2020-01-01T00:29:00.000000Z\t0.0010\t0.0010\t0.0010\t0.0010\t1\n", "select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by 1m FILL(LINEAR) align to calendar LIMIT 2"
-        );
+            assertSql(
+                    "ts\tmin\tmax\tfirst\tlast\tcount\n" +
+                            "2020-01-01T00:28:00.000000Z\t0.0010\t0.0010\t0.0010\t0.0010\t1\n" +
+                            "2020-01-01T00:29:00.000000Z\t0.0010\t0.0010\t0.0010\t0.0010\t1\n", "select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by 1m FILL(LINEAR) align to calendar LIMIT 2"
+            );
+        });
     }
 }

@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin.engine.functions.conditional;
 
-import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -389,7 +388,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCaseWithNoElseInSelectClause() throws SqlException {
+    public void testCaseWithNoElseInSelectClause() throws Exception {
         assertQuery("c\n0\nnull\nnull\n",
                 "select case x when 1 then 0 end c from long_sequence(3)", null, true, true);
 
@@ -1239,22 +1238,24 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testKeyedFunctionVarArgumentNumeric() throws Exception {
-        String[] types = {"INT", "LONG", "SHORT", "STRING", "TIMESTAMP", "BOOLEAN"};
+        assertMemoryLeak(() -> {
+            String[] types = {"INT", "LONG", "SHORT", "STRING", "TIMESTAMP", "BOOLEAN"};
 
-        for (String type : types) {
-            ddl("create table tt as (" +
-                    "select cast(x as TIMESTAMP) as ts, cast(x as " + type + ") as x from long_sequence(10)" +
-                    ") timestamp(ts)");
+            for (String type : types) {
+                ddl("create table tt as (" +
+                        "select cast(x as TIMESTAMP) as ts, cast(x as " + type + ") as x from long_sequence(10)" +
+                        ") timestamp(ts)");
 
-            // this is a bit confusing. for booleans, every value x != 0 will evaluate to 1
-            // however, for int etc, only the value 1 will evaluate to 1
-            assertSql("sum\n" +
-                    (type.equals("BOOLEAN") ? "10\n" : "1\n"), "select sum(case x when CAST(1 as " + type + ") then 1 else 0 end) " +
-                    "from tt"
-            );
+                // this is a bit confusing. for booleans, every value x != 0 will evaluate to 1
+                // however, for int etc, only the value 1 will evaluate to 1
+                assertSql("sum\n" +
+                        (type.equals("BOOLEAN") ? "10\n" : "1\n"), "select sum(case x when CAST(1 as " + type + ") then 1 else 0 end) " +
+                        "from tt"
+                );
 
-            drop("drop table tt");
-        }
+                drop("drop table tt");
+            }
+        });
     }
 
     @Test

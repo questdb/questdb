@@ -27,8 +27,10 @@ package io.questdb.test.cutlass.json;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.json.JsonParser;
+import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
+import io.questdb.test.ServerMainVectorGroupByTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
@@ -792,5 +794,10 @@ public class JsonLexerTest {
         @Override
         public void onEvent(int code, CharSequence tag, int position) {
         }
+    }
+
+    static {
+        // needed to prevent a false positive in memory leak detection
+        LogFactory.getLog(ServerMainVectorGroupByTest.class);
     }
 }

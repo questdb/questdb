@@ -38,7 +38,7 @@ import java.lang.management.ThreadMXBean;
 
 @RunListener.ThreadSafe
 public class TestListener extends RunListener {
-    private final static Log LOG = LogFactory.getLog(TestListener.class);
+    private static final Log LOG = LogFactory.getLog(TestListener.class);
 
     long testStartMs = -1;
 

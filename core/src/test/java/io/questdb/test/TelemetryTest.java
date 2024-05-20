@@ -46,8 +46,8 @@ import java.util.HashSet;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class TelemetryTest extends AbstractCairoTest {
-    private final static FilesFacade FF = TestFilesFacadeImpl.INSTANCE;
-    private final static String TELEMETRY = TelemetryTask.TABLE_NAME;
+    private static final FilesFacade FF = TestFilesFacadeImpl.INSTANCE;
+    private static final String TELEMETRY = TelemetryTask.TABLE_NAME;
 
     @Test
     public void testTelemetryCanDeleteTableWhenDisabled() throws Exception {

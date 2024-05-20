@@ -39,93 +39,108 @@ import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 public class ShowTablesFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testMetadataQuery() throws Exception {
-        TableModel tm1 = new TableModel(configuration, "table1", PartitionBy.DAY);
-        tm1.col("abc", ColumnType.STRING);
-        tm1.timestamp("ts1");
-        createPopulateTable(tm1, 0, "2020-01-01", 0);
-        tm1 = new TableModel(configuration, "table2", PartitionBy.NONE);
-        tm1.timestamp("ts2");
-        createPopulateTable(tm1, 0, "2020-01-01", 0);
+        assertMemoryLeak(() -> {
+            TableModel tm1 = new TableModel(configuration, "table1", PartitionBy.DAY);
+            tm1.col("abc", ColumnType.STRING);
+            tm1.timestamp("ts1");
+            createPopulateTable(tm1, 0, "2020-01-01", 0);
+            tm1 = new TableModel(configuration, "table2", PartitionBy.NONE);
+            tm1.timestamp("ts2");
+            createPopulateTable(tm1, 0, "2020-01-01", 0);
 
-        assertSql(
-                "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
-                        "2\ttable2\tts2\tNONE\t1000\t300000000\n" +
-                        "1\ttable1\tts1\tDAY\t1000\t300000000\n", "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() order by id desc"
-        );
+            assertSql(
+                    "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
+                            "2\ttable2\tts2\tNONE\t1000\t300000000\n" +
+                            "1\ttable1\tts1\tDAY\t1000\t300000000\n",
+                    "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() order by id desc"
+            );
+        });
     }
 
     @Test
     public void testMetadataQueryDefaultHysteresisParams() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 83737);
-        node1.setProperty(PropertyKey.CAIRO_O3_MAX_LAG, 28);
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 83737);
+            node1.setProperty(PropertyKey.CAIRO_O3_MAX_LAG, 28);
 
-        TableModel tm1 = new TableModel(configuration, "table1", PartitionBy.DAY);
-        tm1.col("abc", ColumnType.STRING);
-        tm1.timestamp("ts1");
-        createPopulateTable(tm1, 0, "2020-01-01", 0);
+            TableModel tm1 = new TableModel(configuration, "table1", PartitionBy.DAY);
+            tm1.col("abc", ColumnType.STRING);
+            tm1.timestamp("ts1");
+            createPopulateTable(tm1, 0, "2020-01-01", 0);
 
-        assertSql(
-                "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
-                        "1\ttable1\tts1\tDAY\t83737\t28000\n", "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()"
-        );
+            assertSql(
+                    "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
+                            "1\ttable1\tts1\tDAY\t83737\t28000\n",
+                    "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()"
+            );
+        });
     }
 
     @Test
     public void testMetadataQueryMissingMetaFile() throws Exception {
-        TableModel tm1 = new TableModel(configuration, "table1", PartitionBy.DAY);
-        tm1.col("abc", ColumnType.STRING);
-        tm1.timestamp("ts1");
-        createPopulateTable(tm1, 0, "2020-01-01", 0);
-        tm1 = new TableModel(configuration, "table2", PartitionBy.NONE);
-        tm1.timestamp("ts2");
-        createPopulateTable(tm1, 0, "2020-01-01", 0);
+        assertMemoryLeak(() -> {
+            TableModel tm1 = new TableModel(configuration, "table1", PartitionBy.DAY);
+            tm1.col("abc", ColumnType.STRING);
+            tm1.timestamp("ts1");
+            createPopulateTable(tm1, 0, "2020-01-01", 0);
+            tm1 = new TableModel(configuration, "table2", PartitionBy.NONE);
+            tm1.timestamp("ts2");
+            createPopulateTable(tm1, 0, "2020-01-01", 0);
 
-        engine.releaseAllWriters();
-        engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
 
-        FilesFacade filesFacade = configuration.getFilesFacade();
-        try (Path path = new Path()) {
-            TableToken tableToken = engine.verifyTableName("table1");
-            path.concat(configuration.getRoot()).concat(tableToken).concat(META_FILE_NAME).$();
-            filesFacade.remove(path);
-        }
+            FilesFacade filesFacade = configuration.getFilesFacade();
+            try (Path path = new Path()) {
+                TableToken tableToken = engine.verifyTableName("table1");
+                path.concat(configuration.getRoot()).concat(tableToken).concat(META_FILE_NAME).$();
+                filesFacade.remove(path);
+            }
 
-        refreshTablesInBaseEngine();
-        assertSql(
-                "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
-                        "2\ttable2\tts2\tNONE\t1000\t300000000\n", "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()"
-        );
+            refreshTablesInBaseEngine();
+            assertSql(
+                    "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
+                            "2\ttable2\tts2\tNONE\t1000\t300000000\n",
+                    "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()"
+            );
+        });
     }
 
     @Test
     public void testMetadataQueryWithWhere() throws Exception {
-        TableModel tm1 = new TableModel(configuration, "table1", PartitionBy.DAY);
-        tm1.col("abc", ColumnType.STRING);
-        tm1.timestamp("ts1");
-        createPopulateTable(tm1, 0, "2020-01-01", 0);
-        tm1 = new TableModel(configuration, "table2", PartitionBy.NONE);
-        tm1.timestamp("ts2");
-        createPopulateTable(tm1, 0, "2020-01-01", 0);
+        assertMemoryLeak(() -> {
+            TableModel tm1 = new TableModel(configuration, "table1", PartitionBy.DAY);
+            tm1.col("abc", ColumnType.STRING);
+            tm1.timestamp("ts1");
+            createPopulateTable(tm1, 0, "2020-01-01", 0);
+            tm1 = new TableModel(configuration, "table2", PartitionBy.NONE);
+            tm1.timestamp("ts2");
+            createPopulateTable(tm1, 0, "2020-01-01", 0);
 
-        assertSql(
-                "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
-                        "1\ttable1\tts1\tDAY\t1000\t300000000\n", "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() where table_name = 'table1'"
-        );
+            assertSql(
+                    "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
+                            "1\ttable1\tts1\tDAY\t1000\t300000000\n",
+                    "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables() where table_name = 'table1'"
+            );
+        });
     }
 
     @Test
     public void testMetadataQueryWithWhereAndSelect() throws Exception {
-        TableModel tm1 = new TableModel(configuration, "table1", PartitionBy.DAY);
-        tm1.col("abc", ColumnType.STRING);
-        tm1.timestamp("ts1");
-        createPopulateTable(tm1, 0, "2020-01-01", 0);
-        tm1 = new TableModel(configuration, "table2", PartitionBy.NONE);
-        tm1.timestamp("ts2");
-        createPopulateTable(tm1, 0, "2020-01-01", 0);
+        assertMemoryLeak(() -> {
+            TableModel tm1 = new TableModel(configuration, "table1", PartitionBy.DAY);
+            tm1.col("abc", ColumnType.STRING);
+            tm1.timestamp("ts1");
+            createPopulateTable(tm1, 0, "2020-01-01", 0);
+            tm1 = new TableModel(configuration, "table2", PartitionBy.NONE);
+            tm1.timestamp("ts2");
+            createPopulateTable(tm1, 0, "2020-01-01", 0);
 
-        assertSql(
-                "designatedTimestamp\n" +
-                        "ts1\n", "select designatedTimestamp from tables where table_name = 'table1'"
-        );
+            assertSql(
+                    "designatedTimestamp\n" +
+                            "ts1\n",
+                    "select designatedTimestamp from tables where table_name = 'table1'"
+            );
+        });
     }
 }

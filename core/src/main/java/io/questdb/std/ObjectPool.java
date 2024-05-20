@@ -32,8 +32,7 @@ import org.jetbrains.annotations.NotNull;
  * Single threaded object pool based on ObjList. The goal is to optimise intermediate allocation of intermediate objects.
  */
 public class ObjectPool<T extends Mutable> implements Mutable {
-
-    private final static Log LOG = LogFactory.getLog(ObjectPool.class);
+    private static final Log LOG = LogFactory.getLog(ObjectPool.class);
     private final ObjectFactory<T> factory;
     private final ObjList<T> list;
     private int pos = 0;

@@ -27,7 +27,7 @@ package io.questdb.network;
 import io.questdb.cutlass.http.HttpException;
 
 public class NoSpaceLeftInResponseBufferException extends HttpException {
-    public final static NoSpaceLeftInResponseBufferException INSTANCE;
+    public static final NoSpaceLeftInResponseBufferException INSTANCE;
 
     static {
         INSTANCE = new NoSpaceLeftInResponseBufferException();

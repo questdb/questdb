@@ -189,7 +189,7 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
                     "  notional_base_ccy DOUBLE\n" +
                     ") timestamp (trade_timestamp) PARTITION BY DAY;");
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "SELECT  \n" +
                             "    trade_timestamp as candle_st,\n" +
                             "    venue,\n" +
@@ -225,7 +225,7 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
 
     private void assertExecutionPlan(StringSink sink, String typeName, String function, CharSequence expectedPlan) throws Exception {
         try {
-            assertPlan(sink, expectedPlan);
+            assertPlanNoLeakCheck(sink, expectedPlan);
         } catch (AssertionError ae) {
             throwWithContext(typeName, function, ae);
         }

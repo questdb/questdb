@@ -78,79 +78,85 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             @Transient @Nullable IntList symbolTableSkewIndex
     ) {
         super(metadata);
-        this.workerCount = workerCount;
-        entryPool = new ObjectPool<>(VectorAggregateEntry::new, configuration.getGroupByPoolCapacity());
-        // columnTypes and functions must align in the following way:
-        // columnTypes[0] is the type of key, for now single key is supported
-        // functions.size = columnTypes.size - 1, functions do not have instance for key, only for values
-        // functions[0].type == columnTypes[1]
-        // ...
-        // functions[n].type == columnTypes[n+1]
+        try {
+            this.workerCount = workerCount;
+            entryPool = new ObjectPool<>(VectorAggregateEntry::new, configuration.getGroupByPoolCapacity());
+            // columnTypes and functions must align in the following way:
+            // columnTypes[0] is the type of key, for now single key is supported
+            // functions.size = columnTypes.size - 1, functions do not have instance for key, only for values
+            // functions[0].type == columnTypes[1]
+            // ...
+            // functions[n].type == columnTypes[n+1]
 
-        perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
-        sharedCircuitBreaker = new AtomicBooleanCircuitBreaker();
-        this.base = base;
-        // first column is INT or SYMBOL
-        pRosti = new long[workerCount];
-        final int vafCount = vafList.size();
-        this.vafList = new ObjList<>(vafCount);
-        raf = configuration.getRostiAllocFacade();
-        for (int i = 0; i < workerCount; i++) {
-            long ptr = raf.alloc(columnTypes, configuration.getGroupByMapCapacity());
-            if (ptr == 0) {
-                for (int k = i - 1; k > -1; k--) {
-                    raf.free(pRosti[k]);
+            perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
+            sharedCircuitBreaker = new AtomicBooleanCircuitBreaker();
+            this.base = base;
+            // first column is INT or SYMBOL
+            pRosti = new long[workerCount];
+            final int vafCount = vafList.size();
+            this.vafList = new ObjList<>(vafCount);
+            this.vafList.addAll(vafList);
+            raf = configuration.getRostiAllocFacade();
+            for (int i = 0; i < workerCount; i++) {
+                long ptr = raf.alloc(columnTypes, configuration.getGroupByMapCapacity());
+                if (ptr == 0) {
+                    for (int k = i - 1; k > -1; k--) {
+                        raf.free(pRosti[k]);
+                        pRosti[k] = 0;
+                    }
+                    throw new OutOfMemoryError();
                 }
-                throw new OutOfMemoryError();
+                pRosti[i] = ptr;
+
+                // remember, single key for now
+                switch (ColumnType.tagOf(columnTypes.getColumnType(0))) {
+                    case ColumnType.INT:
+                        Unsafe.getUnsafe().putInt(Rosti.getInitialValueSlot(pRosti[i], 0), Numbers.INT_NULL);
+                        break;
+                    case ColumnType.SYMBOL:
+                        Unsafe.getUnsafe().putInt(Rosti.getInitialValueSlot(pRosti[i], 0), SymbolTable.VALUE_IS_NULL);
+                        break;
+                    default:
+                }
+
+                // configure map with default values
+                // when our execution order is sum(x) then min(y) over the same map
+                // min(y) may not find any new keys slots(they will be created by first pass with sum(x))
+                // for aggregation function to continue, such slots have to be initialized to the
+                // appropriate value for the function.
+                for (int j = 0; j < vafCount; j++) {
+                    this.vafList.getQuick(j).initRosti(pRosti[i]);
+                }
             }
-            pRosti[i] = ptr;
 
-            // remember, single key for now
-            switch (ColumnType.tagOf(columnTypes.getColumnType(0))) {
-                case ColumnType.INT:
-                    Unsafe.getUnsafe().putInt(Rosti.getInitialValueSlot(pRosti[i], 0), Numbers.INT_NULL);
-                    break;
-                case ColumnType.SYMBOL:
-                    Unsafe.getUnsafe().putInt(Rosti.getInitialValueSlot(pRosti[i], 0), SymbolTable.VALUE_IS_NULL);
-                    break;
-                default:
+            // all maps are the same at this point
+            // check where our keys are and pull them to front
+            final long pRosti = this.pRosti[0];
+            final long columnOffsets = Rosti.getValueOffsets(pRosti);
+
+            // skew logic assumes single key, for multiple keys skew would be different
+
+            final IntList columnSkewIndex = new IntList();
+            // key is in the middle, shift aggregates before the key one position left
+            addOffsets(columnSkewIndex, this.vafList, 0, keyColumnIndexInThisCursor, columnOffsets);
+
+            // this is offset of the key column
+            columnSkewIndex.add(0);
+
+            // add remaining aggregate columns as is
+            addOffsets(columnSkewIndex, this.vafList, keyColumnIndexInThisCursor, vafCount, columnOffsets);
+
+            keyColumnIndex = keyColumnIndexInBase;
+            if (symbolTableSkewIndex != null && symbolTableSkewIndex.size() > 0) {
+                final IntList symbolSkew = new IntList(symbolTableSkewIndex.size());
+                symbolSkew.addAll(symbolTableSkewIndex);
+                cursor = new RostiRecordCursor(pRosti, columnSkewIndex, symbolSkew);
+            } else {
+                cursor = new RostiRecordCursor(pRosti, columnSkewIndex, null);
             }
-
-            // configure map with default values
-            // when our execution order is sum(x) then min(y) over the same map
-            // min(y) may not find any new keys slots(they will be created by first pass with sum(x))
-            // for aggregation function to continue, such slots have to be initialized to the
-            // appropriate value for the function.
-            for (int j = 0; j < vafCount; j++) {
-                vafList.getQuick(j).initRosti(pRosti[i]);
-            }
-        }
-
-        // all maps are the same at this point
-        // check where our keys are and pull them to front
-        final long pRosti = this.pRosti[0];
-        final long columnOffsets = Rosti.getValueOffsets(pRosti);
-
-        // skew logic assumes single key, for multiple keys skew would be different
-
-        final IntList columnSkewIndex = new IntList();
-        // key is in the middle, shift aggregates before the key one position left
-        addOffsets(columnSkewIndex, vafList, 0, keyColumnIndexInThisCursor, columnOffsets);
-
-        // this is offset of the key column
-        columnSkewIndex.add(0);
-
-        // add remaining aggregate columns as is
-        addOffsets(columnSkewIndex, vafList, keyColumnIndexInThisCursor, vafCount, columnOffsets);
-
-        this.vafList.addAll(vafList);
-        keyColumnIndex = keyColumnIndexInBase;
-        if (symbolTableSkewIndex != null && symbolTableSkewIndex.size() > 0) {
-            final IntList symbolSkew = new IntList(symbolTableSkewIndex.size());
-            symbolSkew.addAll(symbolTableSkewIndex);
-            cursor = new RostiRecordCursor(pRosti, columnSkewIndex, symbolSkew);
-        } else {
-            cursor = new RostiRecordCursor(pRosti, columnSkewIndex, null);
+        } catch (Throwable th) {
+            close();
+            throw th;
         }
     }
 
@@ -224,7 +230,10 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         Misc.free(base);
         Misc.freeObjList(vafList);
         for (int i = 0, n = pRosti.length; i < n; i++) {
-            raf.free(pRosti[i]);
+            if (pRosti[i] != 0) {
+                raf.free(pRosti[i]);
+                pRosti[i] = 0;
+            }
         }
     }
 

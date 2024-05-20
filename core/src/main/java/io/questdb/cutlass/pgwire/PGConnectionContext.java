@@ -131,7 +131,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final WeakMutableObjectPool<Portal> namedPortalPool;
     private final CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap;
     private final WeakMutableObjectPool<NamedStatementWrapper> namedStatementWrapperPool;
-    private final Path path = new Path();
     private final ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters;
     private final QueryLogger queryLogger;
     private final int recvBufferSize;
@@ -141,14 +140,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final int sendBufferSize;
     private final IntList syncActions = new IntList(4);
     private final SCSequence tempSequence = new SCSequence();
-    // insert 'statements' are cached only for the duration of user session
-    private final SimpleAssociativeCache<TypesAndInsert> typesAndInsertCache;
     private final WeakSelfReturningObjectPool<TypesAndInsert> typesAndInsertPool;
-    private final AssociativeCache<TypesAndSelect> typesAndSelectCache;
     private final WeakSelfReturningObjectPool<TypesAndSelect> typesAndSelectPool;
-    private final SimpleAssociativeCache<TypesAndUpdate> typesAndUpdateCache;
     private final WeakSelfReturningObjectPool<TypesAndUpdate> typesAndUpdatePool;
-    private final DirectUtf16Sink utf8Sink;
     private final DirectUtf8String utf8String = new DirectUtf8String();
     // this is a reference to types either from the context or named statement, where it is provided
     private IntList activeBindVariableTypes;
@@ -169,6 +163,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private long maxReceiveRows;
     private long maxSendRows;
     private int parsePhaseBindVariableCount;
+    private Path path;
     private boolean queryContainsSecret;
     // command tag used when returning row count to client,
     // see CommandComplete (B) at https://www.postgresql.org/docs/current/protocol-message-formats.html
@@ -195,14 +190,18 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private int transactionState = NO_TRANSACTION;
     private final PGResumeProcessor resumeQueryCompleteRef = this::resumeQueryComplete;
     private TypesAndInsert typesAndInsert = null;
+    // insert 'statements' are cached only for the duration of user session
+    private SimpleAssociativeCache<TypesAndInsert> typesAndInsertCache;
     // these references are held by context only for a period of processing single request
     // in PF world this request can span multiple messages, but still, only for one request
     // the rationale is to be able to return "selectAndTypes" instance to thread-local
     // cache, which is "typesAndSelectCache". We typically do this after query results are
     // served to client or query errored out due to network issues
     private TypesAndSelect typesAndSelect = null;
+    private AssociativeCache<TypesAndSelect> typesAndSelectCache;
     private boolean typesAndSelectIsCached = true;
     private TypesAndUpdate typesAndUpdate = null;
+    private SimpleAssociativeCache<TypesAndUpdate> typesAndUpdateCache;
     private boolean typesAndUpdateIsCached = false;
     private final PGResumeProcessor resumeCursorQueryRef = this::resumeCursorQuery;
     private final PGResumeProcessor resumeComputeCursorSizeQueryRef = this::resumeComputeCursorSizeQuery;
@@ -223,56 +222,62 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 LOG,
                 engine.getMetrics().pgWire().connectionCountGauge()
         );
-        this.engine = engine;
-        queryLogger = engine.getConfiguration().getQueryLogger();
-        this.utf8Sink = new DirectUtf16Sink(engine.getConfiguration().getTextConfiguration().getUtf8SinkSize());
-        this.maxRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
-        this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
-        this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
-        this.sendBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
-        this.forceSendFragmentationChunkSize = configuration.getForceSendFragmentationChunkSize();
-        this.forceRecvFragmentationChunkSize = configuration.getForceRecvFragmentationChunkSize();
-        this.characterStore = new CharacterStore(
-                configuration.getCharacterStoreCapacity(),
-                configuration.getCharacterStorePoolCapacity()
-        );
-        this.maxBlobSizeOnQuery = configuration.getMaxBlobSizeOnQuery();
-        this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
-        this.circuitBreaker = circuitBreaker;
-        this.sqlExecutionContext = sqlExecutionContext;
-        this.sqlExecutionContext.with(DenyAllSecurityContext.INSTANCE, bindVariableService, this.rnd = configuration.getRandom());
-        this.namedStatementWrapperPool = new WeakMutableObjectPool<>(NamedStatementWrapper::new, configuration.getNamesStatementPoolCapacity()); // 32
-        this.namedPortalPool = new WeakMutableObjectPool<>(Portal::new, configuration.getNamesStatementPoolCapacity()); // 32
-        this.namedStatementMap = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
-        this.pendingWriters = new ObjObjHashMap<>(configuration.getPendingWritersCacheSize());
-        this.namedPortalMap = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
-        this.binarySequenceParamsPool = new ObjectPool<>(DirectBinarySequence::new, configuration.getBinParamCountCapacity());
 
-        this.metrics = engine.getMetrics();
-        this.typesAndSelectCache = typesAndSelectCache;
-        this.typesAndSelectPool = new WeakSelfReturningObjectPool<>(TypesAndSelect::new, typesAndSelectCache.capacity());
+        try {
+            this.path = new Path();
+            this.engine = engine;
+            queryLogger = engine.getConfiguration().getQueryLogger();
+            this.maxRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
+            this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
+            this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
+            this.sendBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
+            this.forceSendFragmentationChunkSize = configuration.getForceSendFragmentationChunkSize();
+            this.forceRecvFragmentationChunkSize = configuration.getForceRecvFragmentationChunkSize();
+            this.characterStore = new CharacterStore(
+                    configuration.getCharacterStoreCapacity(),
+                    configuration.getCharacterStorePoolCapacity()
+            );
+            this.maxBlobSizeOnQuery = configuration.getMaxBlobSizeOnQuery();
+            this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
+            this.circuitBreaker = circuitBreaker;
+            this.sqlExecutionContext = sqlExecutionContext;
+            this.sqlExecutionContext.with(DenyAllSecurityContext.INSTANCE, bindVariableService, this.rnd = configuration.getRandom());
+            this.namedStatementWrapperPool = new WeakMutableObjectPool<>(NamedStatementWrapper::new, configuration.getNamesStatementPoolCapacity()); // 32
+            this.namedPortalPool = new WeakMutableObjectPool<>(Portal::new, configuration.getNamesStatementPoolCapacity()); // 32
+            this.namedStatementMap = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
+            this.pendingWriters = new ObjObjHashMap<>(configuration.getPendingWritersCacheSize());
+            this.namedPortalMap = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
+            this.binarySequenceParamsPool = new ObjectPool<>(DirectBinarySequence::new, configuration.getBinParamCountCapacity());
 
-        final boolean enabledUpdateCache = configuration.isUpdateCacheEnabled();
-        final int updateBlockCount = enabledUpdateCache ? configuration.getUpdateCacheBlockCount() : 1;
-        final int updateRowCount = enabledUpdateCache ? configuration.getUpdateCacheRowCount() : 1;
-        this.typesAndUpdateCache = new SimpleAssociativeCache<>(
-                updateBlockCount,
-                updateRowCount,
-                metrics.pgWire().cachedUpdatesGauge()
-        );
-        this.typesAndUpdatePool = new WeakSelfReturningObjectPool<>(parent -> new TypesAndUpdate(parent, engine), updateBlockCount * updateRowCount);
+            this.metrics = engine.getMetrics();
+            this.typesAndSelectCache = typesAndSelectCache;
+            this.typesAndSelectPool = new WeakSelfReturningObjectPool<>(TypesAndSelect::new, typesAndSelectCache.capacity());
 
-        final boolean enableInsertCache = configuration.isInsertCacheEnabled();
-        final int insertBlockCount = enableInsertCache ? configuration.getInsertCacheBlockCount() : 1;
-        final int insertRowCount = enableInsertCache ? configuration.getInsertCacheRowCount() : 1;
-        this.typesAndInsertCache = new SimpleAssociativeCache<>(insertBlockCount, insertRowCount);
-        this.typesAndInsertPool = new WeakSelfReturningObjectPool<>(TypesAndInsert::new, insertBlockCount * insertRowCount);
+            final boolean enabledUpdateCache = configuration.isUpdateCacheEnabled();
+            final int updateBlockCount = enabledUpdateCache ? configuration.getUpdateCacheBlockCount() : 1;
+            final int updateRowCount = enabledUpdateCache ? configuration.getUpdateCacheRowCount() : 1;
+            this.typesAndUpdateCache = new SimpleAssociativeCache<>(
+                    updateBlockCount,
+                    updateRowCount,
+                    metrics.pgWire().cachedUpdatesGauge()
+            );
+            this.typesAndUpdatePool = new WeakSelfReturningObjectPool<>(parent -> new TypesAndUpdate(parent, engine), updateBlockCount * updateRowCount);
 
-        this.batchCallback = new PGConnectionBatchCallback();
-        this.queryTag = TAG_OK;
-        this.queryContainsSecret = false;
-        FactoryProvider factoryProvider = configuration.getFactoryProvider();
-        this.securityContextFactory = factoryProvider.getSecurityContextFactory();
+            final boolean enableInsertCache = configuration.isInsertCacheEnabled();
+            final int insertBlockCount = enableInsertCache ? configuration.getInsertCacheBlockCount() : 1;
+            final int insertRowCount = enableInsertCache ? configuration.getInsertCacheRowCount() : 1;
+            this.typesAndInsertCache = new SimpleAssociativeCache<>(insertBlockCount, insertRowCount);
+            this.typesAndInsertPool = new WeakSelfReturningObjectPool<>(TypesAndInsert::new, insertBlockCount * insertRowCount);
+
+            this.batchCallback = new PGConnectionBatchCallback();
+            this.queryTag = TAG_OK;
+            this.queryContainsSecret = false;
+            FactoryProvider factoryProvider = configuration.getFactoryProvider();
+            this.securityContextFactory = factoryProvider.getSecurityContextFactory();
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     public static int getInt(long address, long msgLimit, CharSequence errorMessage) throws BadProtocolException {
@@ -344,27 +349,22 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         clearCursorAndFactory();
 
         // Clear every field, even if already cleaned to be on the safe side.
-        bindSelectColumnFormats.clear();
-        bindVariableTypes.clear();
-        characterStore.clear();
-        circuitBreaker.clear();
+        Misc.clear(bindSelectColumnFormats);
+        Misc.clear(bindVariableTypes);
+        Misc.clear(characterStore);
+        Misc.clear(circuitBreaker);
 
         clearPool(namedPortalMap, namedPortalPool, "named portal");
         clearPool(namedStatementMap, namedStatementWrapperPool, "named statement");
 
-        pendingWriters.clear();
-        responseUtf8Sink.reset();
-        selectColumnTypes.clear();
-        syncActions.clear();
-        utf8Sink.clear();
-        if (activeBindVariableTypes != null) {
-            activeBindVariableTypes.clear();
-        }
-        if (activeSelectColumnTypes != null) {
-            activeSelectColumnTypes.clear();
-        }
-        authenticator.clear();
-        bindVariableService.clear();
+        Misc.clear(responseUtf8Sink);
+        Misc.clear(pendingWriters);
+        Misc.clear(selectColumnTypes);
+        Misc.clear(syncActions);
+        Misc.clear(activeBindVariableTypes);
+        Misc.clear(activeSelectColumnTypes);
+        Misc.clear(authenticator);
+        Misc.clear(bindVariableService);
         bufferRemainingOffset = 0;
         bufferRemainingSize = 0;
         completed = true;
@@ -405,8 +405,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     public void clearWriters() {
-        closePendingWriters(false);
-        pendingWriters.clear();
+        if (pendingWriters != null) {
+            closePendingWriters(false);
+            pendingWriters.clear();
+        }
     }
 
     @Override
@@ -415,13 +417,14 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         typesAndSelectIsCached = false;
         typesAndUpdateIsCached = false;
         clear();
-        sqlExecutionContext.with(DenyAllSecurityContext.INSTANCE, null, null, -1, null);
-        Misc.free(path);
-        Misc.free(utf8Sink);
-        Misc.free(authenticator);
-        Misc.free(typesAndSelectCache);
-        Misc.free(typesAndUpdateCache);
-        Misc.free(typesAndInsertCache);
+        if (sqlExecutionContext != null) {
+            sqlExecutionContext.with(DenyAllSecurityContext.INSTANCE, null, null, -1, null);
+        }
+        path = Misc.free(path);
+        authenticator = Misc.free(authenticator);
+        typesAndSelectCache = Misc.free(typesAndSelectCache);
+        typesAndUpdateCache = Misc.free(typesAndUpdateCache);
+        typesAndInsertCache = Misc.free(typesAndInsertCache);
     }
 
     @Override
@@ -1288,7 +1291,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private <T extends Mutable> void clearPool(CharSequenceObjHashMap<T> map, WeakMutableObjectPool<T> pool, String poolName) {
+    private <T extends Mutable> void clearPool(
+            @Nullable CharSequenceObjHashMap<T> map, @Nullable WeakMutableObjectPool<T> pool, String poolName
+    ) {
+        if (map == null || pool == null) {
+            return;
+        }
         for (int i = 0, n = map.keys().size(); i < n; i++) {
             CharSequence key = map.keys().get(i);
             pool.push(map.get(key));
@@ -1479,7 +1487,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void evictNamedStatementWrappersAndClear() {
-        if (namedStatementMap.size() > 0) {
+        if (namedStatementMap != null && namedStatementMap.size() > 0) {
             ObjList<CharSequence> names = namedStatementMap.keys();
             for (int i = 0, n = names.size(); i < n; i++) {
                 CharSequence name = names.getQuick(i);
@@ -2041,7 +2049,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         if (completed) {
             LOG.debug().$("prepare for new query").$();
             isEmptyQuery = false;
-            bindVariableService.clear();
+            Misc.clear(bindVariableService);
             currentCursor = Misc.free(currentCursor);
             typesAndInsert = null;
             clearCursorAndFactory();
@@ -2049,7 +2057,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             queryTag = TAG_OK;
             queryText = null;
             wrapper = null;
-            syncActions.clear();
+            Misc.clear(syncActions);
             freezeRecvBuffer = false;
             sendParameterDescription = false;
         }
@@ -2057,7 +2065,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void prepareForNewQuery() {
         prepareForNewBatchQuery();
-        characterStore.clear();
+        Misc.clear(characterStore);
     }
 
     private void prepareNoDataMessage() {
@@ -3057,7 +3065,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private class ResponseUtf8Sink implements Utf8Sink {
+    private class ResponseUtf8Sink implements Utf8Sink, Mutable {
 
         private long bookmarkPtr = -1;
 
@@ -3067,6 +3075,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         public void bump(int size) {
             sendBufferPtr += size;
+        }
+
+        @Override
+        public void clear() {
+            reset();
         }
 
         @Override

@@ -194,6 +194,7 @@ public class QuestDBTestNode {
             }
             overrides.reset();
         }
+
         private void close() {
             engine = Misc.free(engine);
         }

@@ -52,17 +52,21 @@ public class CopyJob extends AbstractQueueConsumerJob<CopyTask> implements Close
 
     public CopyJob(MessageBus messageBus) {
         super(messageBus.getTextImportQueue(), messageBus.getTextImportSubSeq());
-        this.tlw = new TextLexerWrapper(messageBus.getConfiguration().getTextConfiguration());
-        this.fileBufSize = messageBus.getConfiguration().getSqlCopyBufferSize();
-        this.fileBufAddr = Unsafe.malloc(fileBufSize, MemoryTag.NATIVE_IMPORT);
-        this.indexer = new CsvFileIndexer(messageBus.getConfiguration());
-
-        int utf8SinkSize = messageBus.getConfiguration().getTextConfiguration().getUtf8SinkSize();
-        this.utf16Sink = new DirectUtf16Sink(utf8SinkSize);
-        this.utf8Sink = new DirectUtf8Sink(utf8SinkSize);
-        this.mergeIndexes = new DirectLongList(INDEX_MERGE_LIST_CAPACITY, MemoryTag.NATIVE_IMPORT);
-        this.tmpPath1 = new Path();
-        this.tmpPath2 = new Path();
+        try {
+            this.tlw = new TextLexerWrapper(messageBus.getConfiguration().getTextConfiguration());
+            this.fileBufSize = messageBus.getConfiguration().getSqlCopyBufferSize();
+            this.fileBufAddr = Unsafe.malloc(fileBufSize, MemoryTag.NATIVE_IMPORT);
+            this.indexer = new CsvFileIndexer(messageBus.getConfiguration());
+            int utf8SinkSize = messageBus.getConfiguration().getTextConfiguration().getUtf8SinkSize();
+            this.utf16Sink = new DirectUtf16Sink(utf8SinkSize);
+            this.utf8Sink = new DirectUtf8Sink(utf8SinkSize);
+            this.mergeIndexes = new DirectLongList(INDEX_MERGE_LIST_CAPACITY, MemoryTag.NATIVE_IMPORT);
+            this.tmpPath1 = new Path();
+            this.tmpPath2 = new Path();
+        } catch (Throwable t) {
+            close();
+            throw t;
+        }
     }
 
     public static void assignToPool(MessageBus messageBus, WorkerPool pool) {

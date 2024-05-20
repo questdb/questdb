@@ -34,51 +34,77 @@ public class FunctionParserErrorTest extends AbstractCairoTest {
 
     @Test
     public void testFunctionParserErrorIsNotPersistent() throws Exception {
-        try {
-            assertQuery("",
-                    "select * from " +
-                            "(select cast(x as timestamp) ts, '0x05cb69971d94a00000192178ef80f0' as id, x from long_sequence(10) ) " +
-                            "where ts between '2022-03-20' AND id <> '0x05ab6d9fabdabb00066a5db735d17a' AND id <> '0x05aba84839b9c7000006765675e630' AND id <> '0x05abc58d80ba1f000001ed05351873'",
-                    null, null, true, true);
-            Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getMessage(), "unexpected argument for function: between");
-        }
+        assertMemoryLeak(() -> {
+            try {
+                assertQueryNoLeakCheck(
+                        "",
+                        "select * from " +
+                                "(select cast(x as timestamp) ts, '0x05cb69971d94a00000192178ef80f0' as id, x from long_sequence(10) ) " +
+                                "where ts between '2022-03-20' AND id <> '0x05ab6d9fabdabb00066a5db735d17a' AND id <> '0x05aba84839b9c7000006765675e630' AND id <> '0x05abc58d80ba1f000001ed05351873'",
+                        null,
+                        null,
+                        true,
+                        true
+                );
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getMessage(), "unexpected argument for function: between");
+            }
 
-        runTestQuery();
+            runTestQuery();
+        });
     }
 
     @Test
     public void testFunctionParserErrorIsNotPersistent2() throws Exception {
-        try {
-            assertQuery("",
-                    "select abs(ln(1,2), 4) + 10+'asdf' from long_sequence(1);",
-                    null, null, true, true);
-            Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "unexpected argument for function: ln");
-        }
+        assertMemoryLeak(() -> {
+            try {
+                assertQueryNoLeakCheck(
+                        "",
+                        "select abs(ln(1,2), 4) + 10+'asdf' from long_sequence(1);",
+                        null,
+                        null,
+                        true,
+                        true
+                );
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "unexpected argument for function: ln");
+            }
 
-        runTestQuery();
+            runTestQuery();
+        });
     }
 
     @Test
     public void testFunctionParserErrorIsNotPersistent3() throws Exception {
-        try {
-            assertQuery("",
-                    "select abs(1,2,3,4) from long_sequence(1)",
-                    null, null, true, true);
-            Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "unexpected argument for function: abs");
-        }
+        assertMemoryLeak(() -> {
+            try {
+                assertQueryNoLeakCheck(
+                        "",
+                        "select abs(1,2,3,4) from long_sequence(1)",
+                        null,
+                        null,
+                        true,
+                        true
+                );
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "unexpected argument for function: abs");
+            }
 
-        runTestQuery();
+            runTestQuery();
+        });
     }
 
     private void runTestQuery() throws Exception {
-        assertQuery("x\n1\n",
+        assertQueryNoLeakCheck(
+                "x\n1\n",
                 "select x from long_sequence(1) where x < 10 and x > 0",
-                null, null, true, false);
+                null,
+                null,
+                true,
+                false
+        );
     }
 }
