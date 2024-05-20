@@ -137,8 +137,8 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
                 int newColType = changeColumnTypeTo(rnd, columnType);
 
                 int capacity = 1 << (5 + rnd.nextInt(3));
-                boolean indexFlag = ColumnType.isSymbol(newColType) && rnd.nextBoolean();
-                int indexValueBlockCapacity = 1 << (5 + rnd.nextInt(15));
+                boolean indexFlag = ColumnType.isSymbol(newColType) && (columnType == ColumnType.BOOLEAN || columnType == ColumnType.BYTE);
+                int indexValueBlockCapacity = (columnType == ColumnType.BOOLEAN) ? 4 : 128;
                 boolean cacheSymbolMap = ColumnType.isSymbol(newColType) && rnd.nextBoolean();
                 transaction.operationList.add(new FuzzChangeColumnTypeOperation(columnName, newColType, capacity, indexFlag, indexValueBlockCapacity, cacheSymbolMap));
                 transaction.structureVersion = metadataVersion;
