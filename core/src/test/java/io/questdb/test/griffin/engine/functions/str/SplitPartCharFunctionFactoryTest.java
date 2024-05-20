@@ -84,7 +84,7 @@ public class SplitPartCharFunctionFactoryTest extends AbstractFunctionFactoryTes
     }
 
     @Test
-    public void testSinkIsCleared() throws SqlException {
+    public void testSinkIsCleared() throws Exception {
         for (int i = 0; i < 10; i++) {
             assertQuery(
                     "split_part\n" +

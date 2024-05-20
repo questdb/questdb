@@ -120,29 +120,7 @@ public class SplitPartVarcharFunctionFactoryTest extends AbstractFunctionFactory
     }
 
     @Test
-    public void testSinkIsCleared() throws SqlException {
-        for (int i = 0; i < 10; i++) {
-            assertQuery(
-                    "split_part\n" +
-                            "\n" +
-                            "\n" +
-                            "g\n" +
-                            "j\n" +
-                            "\n" +
-                            "\n",
-                    "select split_part(x, cast('.' as varchar), 3) from\n" +
-                            "(select      cast('a.b' as varchar) as x\n" +
-                            "union select cast('c.d' as varchar) as x\n" +
-                            "union select cast('e.f.g' as varchar) as x\n" +
-                            "union select cast('h.i.j' as varchar) as x\n" +
-                            "union select cast('k.l' as varchar) as x\n" +
-                            "union select cast('m.n' as varchar) as x)", null, false, false
-            );
-        }
-    }
-
-    @Test
-    public void testSinkIsCleared() throws SqlException {
+    public void testSinkIsCleared() throws Exception {
         for (int i = 0; i < 10; i++) {
             assertQuery(
                     "split_part\n" +
