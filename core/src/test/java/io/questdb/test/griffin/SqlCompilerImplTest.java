@@ -2904,7 +2904,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertFailure(
                 ff,
                 sql,
-                "Could not create table. See log for details"
+                "Could not create table y: could not mmap"
         );
     }
 
@@ -2972,7 +2972,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertFailure(
                 ff,
                 sql,
-                "Could not create table. See log for details"
+                "Could not create table y: could not mmap "
         );
     }
 
@@ -3459,7 +3459,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertFailure(
                 ff,
                 "create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(5000000))",
-                "Could not create table. See log for details"
+                "Could not create table x: could not mmap column"
         );
     }
 

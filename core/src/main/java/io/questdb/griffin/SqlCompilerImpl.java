@@ -1882,7 +1882,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
             throw SqlException.$(position, "Could not create table ")
                     .put(tableToken.getTableName())
-                    .put(", reason: ")
+                    .put(": ")
                     .put(e.getFlyweightMessage());
         } finally {
             if (isWalEnabled) {
