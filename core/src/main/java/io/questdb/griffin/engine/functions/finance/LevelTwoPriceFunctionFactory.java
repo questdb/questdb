@@ -332,7 +332,7 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            final long t = args.getQuick(0).getLong(rec);
+            final double t = args.getQuick(0).getDouble(rec);
 
             double ta = 0; // target accumulator
             double pa = 0; // price accumulator
