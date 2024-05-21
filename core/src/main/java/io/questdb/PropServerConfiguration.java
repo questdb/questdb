@@ -24,6 +24,7 @@
 
 package io.questdb;
 
+import com.sun.management.OperatingSystemMXBean;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.http.*;
@@ -248,6 +249,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int rollBufferSize;
     private final String root;
     private final long rssMemoryLimit;
+    private final long sequencerCheckInterval;
     private final int[] sharedWorkerAffinity;
     private final int sharedWorkerCount;
     private final boolean sharedWorkerHaltOnError;
@@ -511,7 +513,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long pgWorkerNapThreshold;
     private long pgWorkerSleepThreshold;
     private long pgWorkerYieldThreshold;
-    private final long sequencerCheckInterval;
     private boolean stringToCharCastAllowed;
     private long symbolCacheWaitUsBeforeReload;
 
@@ -579,7 +580,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         validateProperties(properties, configValidationStrict);
 
         this.writerMemoryLimit = getLongSize(properties, env, PropertyKey.WRITER_MEMORY_LIMIT, 0);
-        this.rssMemoryLimit = getLongSize(properties, env, PropertyKey.RSS_MEMORY_LIMIT, 0);
+        this.rssMemoryLimit = getLongSize(properties, env, PropertyKey.RSS_MEMORY_LIMIT, detectRssLimitDefault());
         this.isReadOnlyInstance = getBoolean(properties, env, PropertyKey.READ_ONLY_INSTANCE, false);
         this.cairoTableRegistryAutoReloadFrequency = getLong(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY, 500);
         this.cairoTableRegistryCompactionThreshold = getInt(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD, 30);
@@ -1387,6 +1388,20 @@ public class PropServerConfiguration implements ServerConfiguration {
     @Override
     public void init(CairoEngine engine, FreeOnExit freeOnExit) {
         this.factoryProvider = fpf.getInstance(this, engine, freeOnExit);
+    }
+
+    private long detectRssLimitDefault() {
+        OperatingSystemMXBean mxBean = Os.getOsMXBean();
+        if (mxBean != null) {
+            long totalMemory = mxBean.getTotalPhysicalMemorySize();
+            long rssLimitDefault = totalMemory / 3 * 2;
+            log.advisoryW().$(String.format(
+                    "Total system RAM: %,d bytes => default RSS limit = %,d bytes", totalMemory, rssLimitDefault
+            )).$();
+            return rssLimitDefault;
+        }
+        log.advisoryW().$("Could not determine total system RAM, automatic RSS limit disabled").$();
+        return 0;
     }
 
     private int[] getAffinity(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, int workerCount) throws ServerConfigurationException {
@@ -2437,6 +2452,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getSequencerCheckInterval() {
+            return sequencerCheckInterval;
+        }
+
+        @Override
         public boolean getSimulateCrashEnabled() {
             return simulateCrashEnabled;
         }
@@ -2833,11 +2853,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getWalPurgeInterval() {
             return walPurgeInterval;
-        }
-
-        @Override
-        public long getSequencerCheckInterval() {
-            return sequencerCheckInterval;
         }
 
         @Override
