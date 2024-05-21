@@ -150,7 +150,7 @@ public class ConcurrentAssociativeCache<V> implements AssociativeCache<V> {
 
         synchronized (rowKeys) {
             // Find a block to place the object.
-            int idx = -1;
+            int idx = blocks - 1;
             for (int i = 0; i < blocks; i++) {
                 if (rowKeys[i] == null) {
                     // Empty block found.
@@ -169,20 +169,14 @@ public class ConcurrentAssociativeCache<V> implements AssociativeCache<V> {
                 }
             }
 
-            if (idx != -1) {
-                // Block found!
-                outgoingValue = rowValues[idx];
-                rowKeys[idx] = Chars.toString(key);
-                rowValues[idx] = value;
-            } else {
-                // Evict object at the very last block and insert to the first block.
-                outgoingValue = rowValues[blocks - 1];
-
-                System.arraycopy(rowKeys, 0, rowKeys, 1, blocks - 1);
-                System.arraycopy(rowValues, 0, rowValues, 1, blocks - 1);
-                rowKeys[0] = Chars.toString(key);
-                rowValues[0] = value;
-            }
+            // Evict object at the found block (or the very last block).
+            outgoingValue = rowValues[idx];
+            // Shift the arrays to be able to insert to the first block.
+            System.arraycopy(rowKeys, 0, rowKeys, 1, idx);
+            System.arraycopy(rowValues, 0, rowValues, 1, idx);
+            // We can now insert the object.
+            rowKeys[0] = Chars.toString(key);
+            rowValues[0] = value;
         }
 
         if (outgoingValue == null) {
