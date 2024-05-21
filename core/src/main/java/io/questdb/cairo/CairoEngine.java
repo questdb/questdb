@@ -1367,6 +1367,9 @@ public class CairoEngine implements Closeable, WriterSource {
         fromPath.of(root).concat(fromTableToken).$();
 
         TableToken toTableToken = lockTableName(toTableName, fromTableToken.getTableId(), false);
+        while (!lockTableCreate(toTableToken)) {
+            Os.pause();
+        }
 
         if (toTableToken == null) {
             LOG.error()
@@ -1397,6 +1400,7 @@ public class CairoEngine implements Closeable, WriterSource {
             return toTableToken;
         } finally {
             tableNameRegistry.unlockTableName(toTableToken);
+            unLockTableCreate(toTableToken);
         }
     }
 
