@@ -24,7 +24,10 @@
 
 package io.questdb.griffin;
 
-import io.questdb.*;
+import io.questdb.MessageBus;
+import io.questdb.PropServerConfiguration;
+import io.questdb.TelemetryOrigin;
+import io.questdb.TelemetrySystemEvent;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -98,7 +101,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final TimestampValueRecord partitionFunctionRec = new TimestampValueRecord();
     private final QueryBuilder queryBuilder;
     private final ObjectPool<QueryColumn> queryColumnPool;
-    private final QueryLogger queryLogger;
     private final ObjectPool<QueryModel> queryModelPool;
     private final Path renamePath;
     private final ObjectPool<ExpressionNode> sqlNodePool;
@@ -106,11 +108,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final ObjList<TableWriterAPI> tableWriters = new ObjList<>();
     private final IntIntHashMap typeCast = new IntIntHashMap();
     private final VacuumColumnVersions vacuumColumnVersions;
-    protected CharSequence query;
+    protected CharSequence sqlText;
     private final ExecutableMethod insertAsSelectMethod = this::insertAsSelect;
-    protected boolean queryContainsSecret;
-    protected int queryFd;
-    protected boolean queryLogged;
     private boolean closed = false;
     // Helper var used to pass back count in cases it can't be done via method result.
     private long insertCount;
@@ -125,7 +124,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             this.path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
             this.renamePath = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
             this.engine = engine;
-            queryLogger = engine.getConfiguration().getQueryLogger();
             this.maxRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
             this.queryBuilder = new QueryBuilder(this);
             this.configuration = engine.getConfiguration();
@@ -207,10 +205,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         alterOperationBuilder.clear();
         functionParser.clear();
         compiledQuery.clear();
-        query = null;
-        queryLogged = false;
-        queryFd = -1;
-        queryContainsSecret = false;
+        sqlText = null;
         columnNames.clear();
     }
 
@@ -237,7 +232,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         lexer.of(query);
         isSingleQueryMode = true;
 
-        compileInner(executionContext, query, true);
+        compileInner(executionContext, query);
         return compiledQuery;
     }
 
@@ -291,11 +286,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                 final CharSequence currentQuery;
                 try {
-                    compileInner(executionContext, query, false);
+                    compileInner(executionContext, query);
                 } finally {
                     currentQuery = query.subSequence(position, goToQueryEnd());
-                    // try to log query even if exception is thrown
-                    logQuery(currentQuery, executionContext);
                 }
                 // We've to move lexer because some query handlers don't consume all tokens (e.g. SET )
                 // some code in postCompile might need full text of current query
@@ -337,10 +330,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     @Override
     public void setFullFatJoins(boolean value) {
         codeGenerator.setFullFatJoins(value);
-    }
-
-    public boolean shouldLog(@SuppressWarnings("unused") KeywordBasedExecutor executor) {
-        return true;
     }
 
     @TestOnly
@@ -548,7 +537,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             unknownAlterStatement(executionContext, tok);
             return;
         }
-        logQuery(executionContext);
         final int tableNamePosition = lexer.getPosition();
         tok = expectToken(lexer, "table name");
         SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, tableNamePosition);
@@ -1502,7 +1490,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private void compileInner(@Transient @NotNull SqlExecutionContext executionContext, CharSequence query, boolean doLog) throws SqlException {
+    private void compileInner(@Transient @NotNull SqlExecutionContext executionContext, CharSequence sqlText) throws SqlException {
         SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         if (!circuitBreaker.isTimerSet()) {
             circuitBreaker.resetTimer();
@@ -1513,29 +1501,41 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         final KeywordBasedExecutor executor = keywordBasedExecutors.get(tok);
-        this.queryLogged = !doLog;
-        this.queryContainsSecret = false;
-        executionContext.containsSecret(false);
-        if (doLog) {
-            this.query = query;
-            this.queryFd = executionContext.getRequestFd();
-        }
+        final long beginNanos = configuration.getNanosecondClock().getTicks();
 
         if (executor != null) {
-            if (shouldLog(executor)) {
-                logQuery(executionContext);
-            }
             // an executor can return compiled query with NONE type as a fallback to execution model
-            executor.execute(executionContext);
+            try {
+                // we cannot log start of the executor SQL because we do not know if it
+                // contains secrets or not.
+                executor.execute(executionContext);
+                // executor might decide that SQL contains secret, otherwise we're logging it
+                this.sqlText = executionContext.containsSecret() ? "** redacted for privacy** " : sqlText;
+            } catch (Throwable e) {
+                // Executor is all-in-one, it parses SQL text and executes it right away. The convention is
+                // that before parsing secrets the executor will notify the execution context. In that, even if
+                // executor fails, the secret SQL text must not be logged
+                this.sqlText = executionContext.containsSecret() ? "** redacted for privacy** " : sqlText;
+                SystemOperator.logError(
+                        "fail-at-executor",
+                        e,
+                        -1,
+                        this.sqlText,
+                        executionContext,
+                        beginNanos
+                );
+                throw e;
+            }
+        } else {
+            this.sqlText = sqlText;
         }
         // executor is allowed to give up on the execution and fall back to standard behaviour
         if (executor == null || compiledQuery.getType() == CompiledQuery.NONE) {
-            logQuery(executionContext);
-            compileUsingModel(executionContext);
+            compileUsingModel(executionContext, beginNanos);
         }
         final short type = compiledQuery.getType();
         if ((type == CompiledQuery.ALTER || type == CompiledQuery.UPDATE) && !executionContext.isWalApplication()) {
-            compiledQuery.withSqlStatement(Chars.toString(query));
+            compiledQuery.withSqlStatement(Chars.toString(sqlText));
         }
         compiledQuery.withContext(executionContext);
     }
@@ -1548,7 +1548,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofSet();
     }
 
-    private void compileUsingModel(SqlExecutionContext executionContext) throws SqlException {
+    private void compileUsingModel(SqlExecutionContext executionContext, long beginNanos) throws SqlException {
         // This method will not populate sql cache directly;
         // factories are assumed to be non-reentrant and once
         // factory is out of this method the caller assumes
@@ -1558,15 +1558,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // lexer would have parsed first token to determine direction of execution flow
         lexer.unparseLast();
         codeGenerator.clear();
-        int queryStart = lexer.lastTokenPosition();
-        long queryId = -1;
+        long sqlId = -1;
 
         ExecutionModel executionModel = null;
         try {
             executionModel = compileExecutionModel(executionContext);
-            if (query == null) { // we need query text for query registry
-                query = lexer.getContent().subSequence(queryStart, lexer.getPosition());
-            }
             switch (executionModel.getModelType()) {
                 case ExecutionModel.QUERY:
                     QueryModel queryModel = (QueryModel) executionModel;
@@ -1574,35 +1570,45 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     compiledQuery.of(factory);
                     break;
                 case ExecutionModel.CREATE_TABLE:
-                    queryId = queryRegistry.register(query, executionContext);
+                    sqlId = queryRegistry.register(sqlText, executionContext);
+                    SystemOperator.logStart(sqlId, sqlText, executionContext);
                     createTableWithRetries(executionModel, executionContext);
+                    SystemOperator.logEnd(sqlId, sqlText, executionContext, beginNanos);
                     break;
                 case ExecutionModel.COPY:
+                    SystemOperator.logStart(sqlId, sqlText, executionContext);
                     copy(executionContext, (CopyModel) executionModel);
+                    SystemOperator.logEnd(sqlId, sqlText, executionContext, beginNanos);
                     break;
                 case ExecutionModel.RENAME_TABLE:
-                    queryId = queryRegistry.register(query, executionContext);
+                    sqlId = queryRegistry.register(sqlText, executionContext);
+                    SystemOperator.logStart(sqlId, sqlText, executionContext);
                     final RenameTableModel rtm = (RenameTableModel) executionModel;
                     engine.rename(executionContext.getSecurityContext(), path, mem, GenericLexer.unquote(rtm.getFrom().token), renamePath, GenericLexer.unquote(rtm.getTo().token));
                     compiledQuery.ofRenameTable();
                     break;
                 case ExecutionModel.UPDATE:
+                    SystemOperator.logStart(sqlId, sqlText, executionContext);
                     final QueryModel updateQueryModel = (QueryModel) executionModel;
                     TableToken tableToken = executionContext.getTableToken(updateQueryModel.getTableName());
                     try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken)) {
                         final UpdateOperation updateOperation = generateUpdate(updateQueryModel, executionContext, metadata);
                         compiledQuery.ofUpdate(updateOperation);
                     }
+                    SystemOperator.logEnd(sqlId, sqlText, executionContext, beginNanos);
                     // update is delayed until operation execution (for non-wal tables) or pushed to wal job completely
                     break;
                 case ExecutionModel.EXPLAIN:
-                    queryId = queryRegistry.register(query, executionContext);
+                    sqlId = queryRegistry.register(sqlText, executionContext);
+                    SystemOperator.logStart(sqlId, sqlText, executionContext);
                     compiledQuery.ofExplain(generateExplain((ExplainModel) executionModel, executionContext));
+                    SystemOperator.logEnd(sqlId, sqlText, executionContext, beginNanos);
                     break;
                 default:
                     final InsertModel insertModel = (InsertModel) executionModel;
                     if (insertModel.getQueryModel() != null) {
-                        queryId = queryRegistry.register(query, executionContext);
+                        SystemOperator.logStart(sqlId, sqlText, executionContext);
+                        sqlId = queryRegistry.register(sqlText, executionContext);
                         executeWithRetries(
                                 insertAsSelectMethod,
                                 executionModel,
@@ -1610,9 +1616,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 executionContext
                         );
                     } else {
+                        SystemOperator.logStart(sqlId, sqlText, executionContext);
                         insert(executionModel, executionContext);
-                        compiledQuery.getInsertOperation().setInsertSql(query);
+                        compiledQuery.getInsertOperation().setInsertSql(sqlText);
                     }
+                    SystemOperator.logEnd(sqlId, sqlText, executionContext, beginNanos);
                     break;
             }
 
@@ -1623,15 +1631,24 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             || type == CompiledQuery.RENAME_TABLE  // non-wal rename table is complete at this point
                             || type == CompiledQuery.CREATE_TABLE || type == CompiledQuery.CREATE_TABLE_AS_SELECT // create table is complete at this point
             ) {
-                queryRegistry.unregister(queryId, executionContext);
+                queryRegistry.unregister(sqlId, executionContext);
             }
-        } catch (Throwable th) {
+        } catch (Throwable e) {
             if (executionModel != null) {
                 freeTableNameFunctions(executionModel.getQueryModel());
             }
             // unregister query on error
-            queryRegistry.unregister(queryId, executionContext);
-            throw th;
+            queryRegistry.unregister(sqlId, executionContext);
+
+            SystemOperator.logError(
+                    "fail-at-compile",
+                    e,
+                    sqlId,
+                    sqlText,
+                    executionContext,
+                    beginNanos
+            );
+            throw e;
         }
     }
 
@@ -2103,10 +2120,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             SqlExecutionContext executionContext
     ) throws SqlException {
         executeWithRetries(createTableMethod, executionModel, configuration.getCreateAsSelectRetryCount(), executionContext);
-    }
-
-    private void doLogQuery(CharSequence currentQuery, SqlExecutionContext executionContext) {
-        queryLogger.logParseQuery(LOG, true, queryFd, currentQuery, executionContext.getSecurityContext());
     }
 
     private void executeWithRetries(
@@ -2992,7 +3005,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     ) throws SqlException {
         RecordCursorFactory factory = codeGenerator.generate(selectQueryModel, executionContext);
         if (isSelect) {
-            return new SystemOperator(queryRegistry, query, factory);
+            return new SystemOperator(queryRegistry, sqlText, factory);
         } else {
             return factory;
         }
@@ -3013,20 +3026,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 lexer.restart();
                 queryModel = (QueryModel) compileExecutionModel(executionContext);
             }
-        }
-    }
-
-    protected final void logQuery(CharSequence currentQuery, SqlExecutionContext executionContext) {
-        if (!queryContainsSecret) {
-            queryLogged = true;
-            doLogQuery(currentQuery, executionContext);
-        }
-    }
-
-    protected final void logQuery(SqlExecutionContext executionContext) {
-        if (!queryLogged && !queryContainsSecret) {
-            queryLogged = true;
-            doLogQuery(query, executionContext);
         }
     }
 

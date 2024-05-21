@@ -60,7 +60,7 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
 
     @Test
     public void testSelect() throws Exception {
-        long limitMB = 10;
+        long limitMB = 12;
         Unsafe.setRssMemLimit(limitMB * 1_000_000);
         assertMemoryLeak(() -> {
             ddl("create table test as (select rnd_str() a, rnd_double() b from long_sequence(1000000))");

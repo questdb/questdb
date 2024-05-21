@@ -26,7 +26,6 @@ package io.questdb.cutlass.pgwire;
 
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
-import io.questdb.QueryLogger;
 import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterSource;
@@ -132,7 +131,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap;
     private final WeakMutableObjectPool<NamedStatementWrapper> namedStatementWrapperPool;
     private final ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters;
-    private final QueryLogger queryLogger;
     private final int recvBufferSize;
     private final ResponseUtf8Sink responseUtf8Sink = new ResponseUtf8Sink();
     private final SecurityContextFactory securityContextFactory;
@@ -211,41 +209,40 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     public PGConnectionContext(CairoEngine engine, PGWireConfiguration configuration, SqlExecutionContextImpl sqlExecutionContext, NetworkSqlExecutionCircuitBreaker circuitBreaker) {
         super(configuration.getFactoryProvider().getPGWireSocketFactory(), configuration.getNetworkFacade(), LOG, engine.getMetrics().pgWire().connectionCountGauge());
-try {
+        try {
             this.path = new Path();
             this.engine = engine;
-            queryLogger = engine.getConfiguration().getQueryLogger();
-        this.maxRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
-        this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
-        this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
-        this.sendBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
-        this.forceSendFragmentationChunkSize = configuration.getForceSendFragmentationChunkSize();
-        this.forceRecvFragmentationChunkSize = configuration.getForceRecvFragmentationChunkSize();
-        this.characterStore = new CharacterStore(configuration.getCharacterStoreCapacity(), configuration.getCharacterStorePoolCapacity());
-        this.maxBlobSizeOnQuery = configuration.getMaxBlobSizeOnQuery();
-        this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
-        this.circuitBreaker = circuitBreaker;
-        this.sqlExecutionContext = sqlExecutionContext;
-        this.sqlExecutionContext.with(DenyAllSecurityContext.INSTANCE, bindVariableService, this.rnd = configuration.getRandom());
-        this.namedStatementWrapperPool = new WeakMutableObjectPool<>(NamedStatementWrapper::new, configuration.getNamesStatementPoolCapacity()); // 32
-        this.namedPortalPool = new WeakMutableObjectPool<>(Portal::new, configuration.getNamesStatementPoolCapacity()); // 32
-        this.namedStatementMap = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
-        this.pendingWriters = new ObjObjHashMap<>(configuration.getPendingWritersCacheSize());
-        this.namedPortalMap = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
-        this.binarySequenceParamsPool = new ObjectPool<>(DirectBinarySequence::new, configuration.getBinParamCountCapacity());
+            this.maxRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
+            this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
+            this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
+            this.sendBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
+            this.forceSendFragmentationChunkSize = configuration.getForceSendFragmentationChunkSize();
+            this.forceRecvFragmentationChunkSize = configuration.getForceRecvFragmentationChunkSize();
+            this.characterStore = new CharacterStore(configuration.getCharacterStoreCapacity(), configuration.getCharacterStorePoolCapacity());
+            this.maxBlobSizeOnQuery = configuration.getMaxBlobSizeOnQuery();
+            this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
+            this.circuitBreaker = circuitBreaker;
+            this.sqlExecutionContext = sqlExecutionContext;
+            this.sqlExecutionContext.with(DenyAllSecurityContext.INSTANCE, bindVariableService, this.rnd = configuration.getRandom());
+            this.namedStatementWrapperPool = new WeakMutableObjectPool<>(NamedStatementWrapper::new, configuration.getNamesStatementPoolCapacity()); // 32
+            this.namedPortalPool = new WeakMutableObjectPool<>(Portal::new, configuration.getNamesStatementPoolCapacity()); // 32
+            this.namedStatementMap = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
+            this.pendingWriters = new ObjObjHashMap<>(configuration.getPendingWritersCacheSize());
+            this.namedPortalMap = new CharSequenceObjHashMap<>(configuration.getNamedStatementCacheCapacity());
+            this.binarySequenceParamsPool = new ObjectPool<>(DirectBinarySequence::new, configuration.getBinParamCountCapacity());
 
-        this.metrics = engine.getMetrics();
-        final boolean enableSelectCache = configuration.isSelectCacheEnabled();
-        final int selectBlockCount = enableSelectCache ? configuration.getSelectCacheBlockCount() : 1;
-        final int selectRowCount = enableSelectCache ? configuration.getSelectCacheRowCount() : 1;
-        this.typesAndSelectCache = new AssociativeCache<>(selectBlockCount, selectRowCount, metrics.pgWire().cachedSelectsGauge(), metrics.pgWire().selectCacheHitCounter(), metrics.pgWire().selectCacheMissCounter());
-        this.typesAndSelectPool = new WeakSelfReturningObjectPool<>(TypesAndSelect::new, selectBlockCount * selectRowCount);
+            this.metrics = engine.getMetrics();
+            final boolean enableSelectCache = configuration.isSelectCacheEnabled();
+            final int selectBlockCount = enableSelectCache ? configuration.getSelectCacheBlockCount() : 1;
+            final int selectRowCount = enableSelectCache ? configuration.getSelectCacheRowCount() : 1;
+            this.typesAndSelectCache = new AssociativeCache<>(selectBlockCount, selectRowCount, metrics.pgWire().cachedSelectsGauge(), metrics.pgWire().selectCacheHitCounter(), metrics.pgWire().selectCacheMissCounter());
+            this.typesAndSelectPool = new WeakSelfReturningObjectPool<>(TypesAndSelect::new, selectBlockCount * selectRowCount);
 
-        final boolean enabledUpdateCache = configuration.isUpdateCacheEnabled();
-        final int updateBlockCount = enabledUpdateCache ? configuration.getUpdateCacheBlockCount() : 1;
-        final int updateRowCount = enabledUpdateCache ? configuration.getUpdateCacheRowCount() : 1;
-        this.typesAndUpdateCache = new AssociativeCache<>(updateBlockCount, updateRowCount, metrics.pgWire().cachedUpdatesGauge());
-        this.typesAndUpdatePool = new WeakSelfReturningObjectPool<>(parent -> new TypesAndUpdate(parent, engine), updateBlockCount * updateRowCount);
+            final boolean enabledUpdateCache = configuration.isUpdateCacheEnabled();
+            final int updateBlockCount = enabledUpdateCache ? configuration.getUpdateCacheBlockCount() : 1;
+            final int updateRowCount = enabledUpdateCache ? configuration.getUpdateCacheRowCount() : 1;
+            this.typesAndUpdateCache = new AssociativeCache<>(updateBlockCount, updateRowCount, metrics.pgWire().cachedUpdatesGauge());
+            this.typesAndUpdatePool = new WeakSelfReturningObjectPool<>(parent -> new TypesAndUpdate(parent, engine), updateBlockCount * updateRowCount);
 
             final boolean enableInsertCache = configuration.isInsertCacheEnabled();
             final int insertBlockCount = enableInsertCache ? configuration.getInsertCacheBlockCount() : 1;
@@ -1299,7 +1296,7 @@ try {
         }
     }
 
-    private boolean compileQuery(boolean doLog) throws SqlException {
+    private boolean compileQuery() throws SqlException {
         if (queryText != null && queryText.length() > 0) {
             // try insert, peek because this is our private cache,
             // and we do not want to remove statement from it
@@ -1309,7 +1306,6 @@ try {
             // poll this cache because it is shared, and we do not want
             // select factory to be used by another thread concurrently
             if (typesAndInsert != null) {
-                queryLogger.logExecQuery(LOG, doLog, getFd(), queryText, sqlExecutionContext.getSecurityContext());
                 typesAndInsert.defineBindVariables(bindVariableService);
                 queryTag = TAG_INSERT;
                 return false;
@@ -1318,7 +1314,6 @@ try {
             typesAndUpdate = typesAndUpdateCache.poll(queryText);
 
             if (typesAndUpdate != null) {
-                queryLogger.logExecQuery(LOG, doLog, getFd(), queryText, sqlExecutionContext.getSecurityContext());
                 typesAndUpdate.defineBindVariables(bindVariableService);
                 queryTag = TAG_UPDATE;
                 typesAndUpdateIsCached = true;
@@ -1328,7 +1323,6 @@ try {
             typesAndSelect = typesAndSelectCache.poll(queryText);
 
             if (typesAndSelect != null) {
-                queryLogger.logExecQuery(LOG, doLog, getFd(), queryText, sqlExecutionContext.getSecurityContext());
                 LOG.info().$("query cache used [fd=").$(getFd()).I$();
                 // cache hit, define bind variables
                 bindVariableService.clear();
@@ -1343,7 +1337,6 @@ try {
                 processCompiledQuery(cc);
             }
         } else {
-            queryLogger.logEmptyQuery(LOG, doLog, getFd(), queryText, sqlExecutionContext.getSecurityContext());
             isEmptyQuery = true;
         }
 
@@ -1902,7 +1895,7 @@ try {
         CharacterStoreEntry e = characterStore.newEntry();
         if (Utf8s.utf8ToUtf16(lo, hi, e)) {
             queryText = characterStore.toImmutable();
-            compileQuery(true);
+            compileQuery();
             return;
         }
         LOG.error().$("invalid UTF8 bytes in parse query").$();
@@ -2738,7 +2731,7 @@ try {
                     }
                     LOG.info().$(e.getFlyweightMessage()).$();
                     freeFactory();
-                    compileQuery(false);
+                    compileQuery();
                     buildSelectColumnTypes();
                     applyLatestBindColumnFormats();
                 } catch (Throwable e) {
@@ -2757,7 +2750,7 @@ try {
         this.activeBindVariableTypes = wrapper.bindVariableTypes;
         this.parsePhaseBindVariableCount = wrapper.bindVariableTypes.size();
         this.activeSelectColumnTypes = wrapper.selectColumnTypes;
-        if (!wrapper.alreadyExecuted && compileQuery(false) && typesAndSelect != null) {
+        if (!wrapper.alreadyExecuted && compileQuery() && typesAndSelect != null) {
             buildSelectColumnTypes();
         }
         // We'll have to compile/execute the statement next time.

@@ -55,6 +55,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final WindowContextImpl windowContext = new WindowContextImpl();
     private final int workerCount;
     private BindVariableService bindVariableService;
+    private boolean cacheHit = false;
     private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
     private MicrosecondClock clock;
     private boolean cloneSymbolTables = false;
@@ -227,6 +228,10 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         now = clock.getTicks();
     }
 
+    public boolean isCacheHit() {
+        return cacheHit;
+    }
+
     @Override
     public boolean isColumnPreTouchEnabled() {
         return columnPreTouchEnabled;
@@ -255,6 +260,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void pushTimestampRequiredFlag(boolean flag) {
         timestampRequiredStack.push(flag ? 1 : 0);
+    }
+
+    @Override
+    public void setCacheHit(boolean value) {
+        cacheHit = value;
     }
 
     @Override
@@ -310,6 +320,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.random = rnd;
         this.containsSecret = false;
         this.useSimpleCircuitBreaker = false;
+        this.cacheHit = false;
         return this;
     }
 
@@ -347,6 +358,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.circuitBreaker = circuitBreaker == null ? SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER : circuitBreaker;
         this.containsSecret = false;
         this.useSimpleCircuitBreaker = false;
+        this.cacheHit = false;
         return this;
     }
 

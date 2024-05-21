@@ -45,18 +45,61 @@ public class SystemOperator extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
     private final RegisteredRecordCursor cursor;
     private final QueryRegistry registry;
-    private final String sql;
-    private SqlExecutionContext executionContext;
-    private long queryId;
+    private final String sqlText;
     private long beginNanos;
+    private SqlExecutionContext executionContext;
     private boolean failed = false;
+    private long sqlId;
 
-    public SystemOperator(QueryRegistry registry, CharSequence sql, RecordCursorFactory base) {
+    public SystemOperator(QueryRegistry registry, CharSequence sqlText, RecordCursorFactory base) {
         super(base.getMetadata());
         this.base = base;
         this.registry = registry;
-        this.sql = Chars.toString(sql);
+        this.sqlText = Chars.toString(sqlText);
         this.cursor = new RegisteredRecordCursor();
+    }
+
+    public static void logEnd(long sqlId, CharSequence sqlText, SqlExecutionContext executionContext, long beginNanos) {
+        LOG.info()
+                .$("fin [id=").$(sqlId)
+                .$(", sql=`").$(sqlText).$('`')
+                .$(", principal=").$(executionContext.getSecurityContext().getPrincipal())
+                .$(", cacheHit=").$(executionContext.isCacheHit())
+                .$(", timing=").$(executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos)
+                .I$();
+    }
+
+    public static void logError(
+            CharSequence subtext,
+            Throwable e,
+            long sqlId,
+            CharSequence sqlText,
+            SqlExecutionContext executionContext,
+            long beginNanos
+    ) {
+        LOG.error()
+                .$(subtext)
+                .$(" [id=").$(sqlId)
+                .$(", sql=`").$(sqlText).$('`')
+                .$(", principal=").$(executionContext.getSecurityContext().getPrincipal())
+                .$(", cacheHit=").$(executionContext.isCacheHit())
+                .$(", timing=").$(executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos)
+                .$(", message=").$(e.getMessage())
+                .I$();
+    }
+
+    public static void logStart(
+            long sqlId,
+            CharSequence sqlText,
+            SqlExecutionContext executionContext
+    ) {
+        LOG.info()
+                .$("txn")
+                .$(" [id=").$(sqlId)
+                .$(", sql=`").$(sqlText).$('`')
+                .$(", principal=").$(executionContext.getSecurityContext().getPrincipal())
+                .$(", cacheHit=").$(executionContext.isCacheHit())
+                .I$();
     }
 
     @Override
@@ -97,22 +140,18 @@ public class SystemOperator extends AbstractRecordCursorFactory {
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         if (!cursor.isOpen) {
-            queryId = registry.register(sql, executionContext);
+            this.executionContext = executionContext;
+            sqlId = registry.register(sqlText, executionContext);
             beginNanos = executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks();
+            logStart(sqlId, sqlText, executionContext);
             try {
                 final RecordCursor baseCursor = base.getCursor(executionContext);
                 cursor.of(baseCursor); // this should not fail, it is just variable assigment
             } catch (Throwable e) {
-                registry.unregister(queryId, executionContext);
-                LOG.error()
-                        .$("fail-at-cursor [id=").$(queryId)
-                        .$(", sql=`").$(sql).$('`')
-                        .$(", timing=").$(executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos)
-                        .$(", message=").$(e.getMessage())
-                        .I$();
+                registry.unregister(sqlId, executionContext);
+                logError("fail-at-cursor", e);
                 throw e;
             }
-            this.executionContext = executionContext;
         }
         return cursor;
     }
@@ -172,6 +211,17 @@ public class SystemOperator extends AbstractRecordCursorFactory {
         return base.usesCompiledFilter();
     }
 
+    private void logError(CharSequence subtext, Throwable e) {
+        logError(
+                subtext,
+                e,
+                sqlId,
+                sqlText,
+                executionContext,
+                beginNanos
+        );
+    }
+
     @Override
     protected void _close() {
         cursor.close();
@@ -192,15 +242,11 @@ public class SystemOperator extends AbstractRecordCursorFactory {
         @Override
         public void close() {
             if (isOpen) {
-                registry.unregister(queryId, executionContext);
+                registry.unregister(sqlId, executionContext);
                 isOpen = false;
                 base.close();
                 if (!failed) {
-                    LOG.info()
-                            .$("done [id=").$(queryId)
-                            .$(", sql=`").$(sql).$('`')
-                            .$(", timing=").$(executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos)
-                            .I$();
+                    logEnd(sqlId, sqlText, executionContext, beginNanos);
                 }
             }
         }
@@ -226,12 +272,7 @@ public class SystemOperator extends AbstractRecordCursorFactory {
                 return base.hasNext();
             } catch (Throwable e) {
                 failed = true;
-                LOG.error()
-                        .$("fail-at-next [id=").$(queryId)
-                        .$(", sql=`").$(sql).$('`')
-                        .$(", timing=").$(executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos)
-                        .$(", message=").$(e.getMessage())
-                        .I$();
+                logError("fail-at-next", e);
                 throw e;
             }
         }
