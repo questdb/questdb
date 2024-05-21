@@ -45,7 +45,7 @@ import java.util.concurrent.TimeUnit;
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class AssociativeCacheBenchmark {
-    private static final int N_QUERIES = 100;
+    private static final int N_QUERIES = 50;
     private static final LongGauge cachedGauge = new LongGaugeImpl("bench");
     private static final Counter hitCounter = new CounterImpl("bench");
     private static final Counter missCounter = new CounterImpl("bench");
@@ -77,42 +77,42 @@ public class AssociativeCacheBenchmark {
     }
 
     @Benchmark
-    public void testLocalWithMetrics_contented(RndState rndState) {
-        Integer v = rndState.localCache.poll("foobar");
-        rndState.localCache.put("foobar", v != null ? v : 42);
-    }
-
-    @Benchmark
-    public void testLocalWithMetrics_uncontented(RndState rndState) {
-        CharSequence k = queries[rndState.rnd.nextInt(N_QUERIES)];
-        Integer v = rndState.localCache.poll(k);
-        rndState.localCache.put(k, v != null ? v : 42);
-    }
-
-    @Benchmark
-    public void testNoMetrics_contented() {
+    public void testConcurrentNoMetrics_contented() {
         Integer v = cacheNoMetrics.poll("foobar");
         cacheNoMetrics.put("foobar", v != null ? v : 42);
     }
 
     @Benchmark
-    public void testNoMetrics_uncontented(RndState rndState) {
+    public void testConcurrentNoMetrics_uncontented(RndState rndState) {
         CharSequence k = queries[rndState.rnd.nextInt(N_QUERIES)];
         Integer v = cacheNoMetrics.poll(k);
         cacheNoMetrics.put(k, v != null ? v : 42);
     }
 
     @Benchmark
-    public void testWithMetrics_contented() {
+    public void testConcurrentWithMetrics_contented() {
         Integer v = cacheWithMetrics.poll("foobar");
         cacheWithMetrics.put("foobar", v != null ? v : 42);
     }
 
     @Benchmark
-    public void testWithMetrics_uncontented(RndState rndState) {
+    public void testConcurrentWithMetrics_uncontented(RndState rndState) {
         CharSequence k = queries[rndState.rnd.nextInt(N_QUERIES)];
         Integer v = cacheWithMetrics.poll(k);
         cacheWithMetrics.put(k, v != null ? v : 42);
+    }
+
+    @Benchmark
+    public void testSimpleWithMetrics_contented(RndState rndState) {
+        Integer v = rndState.localCache.poll("foobar");
+        rndState.localCache.put("foobar", v != null ? v : 42);
+    }
+
+    @Benchmark
+    public void testSimpleWithMetrics_uncontented(RndState rndState) {
+        CharSequence k = queries[rndState.rnd.nextInt(N_QUERIES)];
+        Integer v = rndState.localCache.poll(k);
+        rndState.localCache.put(k, v != null ? v : 42);
     }
 
     @State(Scope.Thread)
