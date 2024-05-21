@@ -31,11 +31,12 @@ import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.io.*;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.lang.management.ManagementFactory;
 import java.util.concurrent.locks.LockSupport;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 public final class Os {
     public static final int ARCH_AARCH64 = 1;
@@ -136,29 +137,6 @@ public final class Os {
      * @return used RSS memory in bytes
      */
     public static native long getRss();
-
-    /**
-     * Attempts to determine the total system RAM assigned to our process. It
-     * inspects /proc/meminfo to get this info. This approach is compatible with
-     * cgroups (Docker) and will honor the limit set on the local cgroup.
-     * <p>
-     * If the file doesn't exist or can't be parsed, returns `Long.MAX_VALUE`.
-     */
-    public static long getTotalMemoryFromProcFile() {
-        try (BufferedReader r = new BufferedReader(new FileReader("/proc/meminfo"))) {
-            // unit is shown as kB for legacy reasons, actual unit is KB!
-            Pattern numRe = Pattern.compile("MemTotal:\\D+(\\d+) kB");
-            for (String line; (line = r.readLine()) != null; ) {
-                Matcher m = numRe.matcher(line);
-                if (m.matches()) {
-                    return Long.parseLong(m.group(1)) << 10;
-                }
-            }
-        } catch (Exception e) {
-            // Fall through to returning Long.MAX_VALUE
-        }
-        return Long.MAX_VALUE;
-    }
 
     @SuppressWarnings("EmptyMethod")
     public static void init() {
