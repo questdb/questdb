@@ -22,27 +22,25 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.std.json;
 
-import io.questdb.std.str.DirectUtf8Sequence;
-import io.questdb.std.str.DirectUtf8Sink;
-
-public class Json {
-    public static native boolean loaded();
-
-    private static native boolean isValid(long pUtf8Json, long pUtd8JsonSize);
-
-    public static boolean isValid(DirectUtf8Sequence json) {
-        return isValid(json.ptr(), json.size());
+public class JsonException extends RuntimeException {
+    public JsonException(int code) {
     }
 
-    public static void main(String[] args) {
-        Os.init();
+    public JsonException(String message) {
+        super(message);
+    }
 
-        DirectUtf8Sink sink = new DirectUtf8Sink(64);
+    public JsonException(String message, Throwable cause) {
+        super(message, cause);
+    }
 
-        sink.put("{\"abc\" : 3.14 }");
+    public JsonException(Throwable cause) {
+        super(cause);
+    }
 
-        System.out.println(isValid(sink));
+    public JsonException(String message, Throwable cause, boolean enableSuppression, boolean writableStackTrace) {
+        super(message, cause, enableSuppression, writableStackTrace);
     }
 }
