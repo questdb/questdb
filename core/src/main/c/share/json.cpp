@@ -24,6 +24,7 @@
 
 #include <jni.h>
 #include <simdjson.h>
+#include <utility>
 #include "byte_sink.h"
 
 template <typename T>
@@ -52,6 +53,25 @@ static simdjson::padded_string_view maybe_copied_string_view(
     return simdjson::padded_string_view(temp_buffer);
 }
 
+template <typename F>
+auto value_at_path(
+        const char *json_chars,
+        size_t json_len,
+        size_t json_capacity,
+        const char *path_chars,
+        size_t path_len,
+        F&& extractor
+) -> decltype(std::forward<F>(extractor)(simdjson::simdjson_result<simdjson::ondemand::value>{})) {
+    std::string temp_buffer;
+    const simdjson::padded_string_view json_buf = maybe_copied_string_view(
+            json_chars, json_len, json_capacity, temp_buffer);
+    const std::string_view path{path_chars, path_len};
+    simdjson::ondemand::parser parser;
+    auto doc = parser.iterate(json_buf);
+    auto res = doc.at_path(path);
+    return std::forward<F>(extractor)(res);
+}
+
 extern "C" {
 
 JNIEXPORT jint JNICALL
@@ -74,7 +94,6 @@ Java_io_questdb_std_json_Json_validate(
     const simdjson::padded_string_view jsonBuf = maybe_copied_string_view(
             jsonChars, jsonLen, jsonCapacity, tempBuffer);
     simdjson::dom::parser parser;
-    auto d = simdjson::dom::element();
     auto dom = parser.parse(jsonBuf);
     bubble_error(env, dom);
 }
@@ -90,25 +109,85 @@ Java_io_questdb_std_json_Json_queryPathString(
         size_t path_len,
         questdb_byte_sink_t* dest_sink
 ) {
-    std::string temp_buffer;
-    const simdjson::padded_string_view json_buf = maybe_copied_string_view(
-            json_chars, json_len, json_capacity, temp_buffer);
-    const std::string_view path{path_chars, path_len};
-    simdjson::ondemand::parser parser;
-    auto doc = parser.iterate(json_buf);
-    auto res = doc.at_path(path);
-    auto str_res = res.get_string();
-    if (!bubble_error(env, str_res)) {
-        return;
-    }
-    auto str = str_res.value_unsafe();
-    auto dest = questdb_byte_sink_book(dest_sink, str.length());
-    if (dest == nullptr) {
-        env->ThrowNew(env->FindClass("io/questdb/std/json/JsonException"), "Could not allocate");
-    }
-    memccpy(dest, str.data(), 1, str.length());
-    dest_sink->ptr += str.length();
+    value_at_path(
+            json_chars, json_len, json_capacity, path_chars, path_len,
+            [env, dest_sink](simdjson::simdjson_result<simdjson::ondemand::value> res) {
+                auto str_res = res.get_string();
+                if (!bubble_error(env, str_res)) {
+                    return;
+                }
+                const auto str = str_res.value_unsafe();
+                const auto dest = questdb_byte_sink_book(dest_sink, str.length());
+                if (dest == nullptr) {
+                    env->ThrowNew(env->FindClass("io/questdb/std/json/JsonException"), "Could not allocate");
+                }
+                memcpy(dest, str.data(), str.length());
+                dest_sink->ptr += str.length();
+                return;
+            });
 }
 
+JNIEXPORT jboolean JNICALL
+Java_io_questdb_std_json_Json_queryPathBoolean(
+        JNIEnv* env,
+        jclass /*cl*/,
+        const char* json_chars,
+        size_t json_len,
+        size_t json_capacity,
+        const char* path_chars,
+        size_t path_len
+) {
+    return value_at_path(
+            json_chars, json_len, json_capacity, path_chars, path_len,
+            [env](simdjson::simdjson_result<simdjson::ondemand::value> res) -> jboolean {
+                auto bool_res = res.get_bool();
+                if (!bubble_error(env, bool_res)) {
+                    return false;
+                }
+                return bool_res.value_unsafe();
+            });
+}
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_json_Json_queryPathLong(
+        JNIEnv* env,
+        jclass /*cl*/,
+        const char* json_chars,
+        size_t json_len,
+        size_t json_capacity,
+        const char* path_chars,
+        size_t path_len
+) {
+    return value_at_path(
+            json_chars, json_len, json_capacity, path_chars, path_len,
+            [env](simdjson::simdjson_result<simdjson::ondemand::value> res) -> jlong {
+                auto int_res = res.get_int64();
+                if (!bubble_error(env, int_res)) {
+                    return 0;
+                }
+                return int_res.value_unsafe();
+            });
+}
+
+JNIEXPORT jdouble JNICALL
+Java_io_questdb_std_json_Json_queryPathDouble(
+        JNIEnv* env,
+        jclass /*cl*/,
+        const char* json_chars,
+        size_t json_len,
+        size_t json_capacity,
+        const char* path_chars,
+        size_t path_len
+) {
+    return value_at_path(
+            json_chars, json_len, json_capacity, path_chars, path_len,
+            [env](simdjson::simdjson_result<simdjson::ondemand::value> res) -> jdouble {
+                auto double_res = res.get_double();
+                if (!bubble_error(env, double_res)) {
+                    return 0.0;
+                }
+                return double_res.value_unsafe();
+            });
+}
 
 } // extern "C"

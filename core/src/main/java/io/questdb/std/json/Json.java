@@ -34,10 +34,25 @@ public class Json {
 
     private static native void validate(long s, long len, long capacity) throws JsonException;
 
-    public static native void queryPathString(long jsonPtr, long jsonLen, long jsonCapacity, long pathPtr, long pathLen, long dest) throws JsonException;
+    private static native void queryPathString(long jsonPtr, long jsonLen, long jsonCapacity, long pathPtr, long pathLen, long dest) throws JsonException;
+    private static native boolean queryPathBoolean(long jsonPtr, long jsonLen, long jsonCapacity, long pathPtr, long pathLen) throws JsonException;
+    private static native long queryPathLong(long jsonPtr, long jsonLen, long jsonCapacity, long pathPtr, long pathLen) throws JsonException;
+    private static native double queryPathDouble(long jsonPtr, long jsonLen, long jsonCapacity, long pathPtr, long pathLen) throws JsonException;
 
     public static void queryPathString(DirectUtf8Sink json, DirectUtf8Sequence path, DirectUtf8Sink dest) throws JsonException {
         queryPathString(json.ptr(), json.size(), json.capacity(), path.ptr(), path.size(), dest.borrowDirectByteSink().ptr());
+    }
+
+    public static boolean queryPathBoolean(DirectUtf8Sink json, DirectUtf8Sequence path) throws JsonException {
+        return queryPathBoolean(json.ptr(), json.size(), json.capacity(), path.ptr(), path.size());
+    }
+
+    public static long queryPathLong(DirectUtf8Sink json, DirectUtf8Sequence path) throws JsonException {
+        return queryPathLong(json.ptr(), json.size(), json.capacity(), path.ptr(), path.size());
+    }
+
+    public static double queryPathDouble(DirectUtf8Sink json, DirectUtf8Sequence path) throws JsonException {
+        return queryPathDouble(json.ptr(), json.size(), json.capacity(), path.ptr(), path.size());
     }
 
     public static void validate(DirectUtf8Sink json) throws JsonException{
@@ -58,6 +73,8 @@ public class Json {
                 "  \"name\": \"John\",\n" +
                 "  \"age\": 30,\n" +
                 "  \"city\": \"New York\",\n" +
+                "  \"hasChildren\": false,\n" +
+                "  \"height\": 5.6,\n" +
                 "  \"pets\": [\n" +
                 "    {\"name\": \"Max\", \"species\": \"Dog\"},\n" +
                 "    {\"name\": \"Whiskers\", \"species\": \"Cat\"}\n" +
@@ -72,11 +89,19 @@ public class Json {
 
         validate(sink);
 
-        String path = ".name";
-//        String path = ".pets[1].species";
-//        String path = "[0].make";
+        String strPath = ".name";
         DirectUtf8Sink dest = new DirectUtf8Sink(64);
-        queryPathString(sink, new GcUtf8String(path), dest);
-        System.out.println(dest);
+        queryPathString(sink, new GcUtf8String(strPath), dest);
+        System.out.println(strPath + ": " + dest);
+
+        String booleanPath = ".hasChildren";
+        System.out.println(booleanPath + ": " + queryPathBoolean(sink, new GcUtf8String(booleanPath)));
+
+        String longPath = ".age";
+        System.out.println(longPath + ": " + queryPathLong(sink, new GcUtf8String(longPath)));
+
+        String doublePath = ".height";
+        System.out.println(doublePath + ": " + queryPathDouble(sink, new GcUtf8String(doublePath)));
+
     }
 }
