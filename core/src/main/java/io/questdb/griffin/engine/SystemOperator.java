@@ -34,20 +34,24 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 
 // Factory that adds query to registry on getCursor() and removes on cursor close().
-public class RegisteredRecordCursorFactory extends AbstractRecordCursorFactory {
-
+public class SystemOperator extends AbstractRecordCursorFactory {
+    private static final Log LOG = LogFactory.getLog(SystemOperator.class);
     private final RecordCursorFactory base;
     private final RegisteredRecordCursor cursor;
     private final QueryRegistry registry;
     private final String sql;
     private SqlExecutionContext executionContext;
     private long queryId;
+    private long beginNanos;
+    private boolean failed = false;
 
-    public RegisteredRecordCursorFactory(QueryRegistry registry, CharSequence sql, RecordCursorFactory base) {
+    public SystemOperator(QueryRegistry registry, CharSequence sql, RecordCursorFactory base) {
         super(base.getMetadata());
         this.base = base;
         this.registry = registry;
@@ -94,12 +98,19 @@ public class RegisteredRecordCursorFactory extends AbstractRecordCursorFactory {
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         if (!cursor.isOpen) {
             queryId = registry.register(sql, executionContext);
+            beginNanos = executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks();
             try {
-                cursor.of(base.getCursor(executionContext));
-            } catch (Throwable t) {
+                final RecordCursor baseCursor = base.getCursor(executionContext);
+                cursor.of(baseCursor); // this should not fail, it is just variable assigment
+            } catch (Throwable e) {
                 registry.unregister(queryId, executionContext);
-                cursor.close();
-                throw t;
+                LOG.error()
+                        .$("fail-at-cursor [id=").$(queryId)
+                        .$(", sql=`").$(sql).$('`')
+                        .$(", timing=").$(executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos)
+                        .$(", message=").$(e.getMessage())
+                        .I$();
+                throw e;
             }
             this.executionContext = executionContext;
         }
@@ -184,6 +195,13 @@ public class RegisteredRecordCursorFactory extends AbstractRecordCursorFactory {
                 registry.unregister(queryId, executionContext);
                 isOpen = false;
                 base.close();
+                if (!failed) {
+                    LOG.info()
+                            .$("done [id=").$(queryId)
+                            .$(", sql=`").$(sql).$('`')
+                            .$(", timing=").$(executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos)
+                            .I$();
+                }
             }
         }
 
@@ -204,7 +222,18 @@ public class RegisteredRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() throws DataUnavailableException {
-            return base.hasNext();
+            try {
+                return base.hasNext();
+            } catch (Throwable e) {
+                failed = true;
+                LOG.error()
+                        .$("fail-at-next [id=").$(queryId)
+                        .$(", sql=`").$(sql).$('`')
+                        .$(", timing=").$(executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos)
+                        .$(", message=").$(e.getMessage())
+                        .I$();
+                throw e;
+            }
         }
 
         @Override

@@ -32,7 +32,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriterMetadata;
-import io.questdb.griffin.engine.RegisteredRecordCursorFactory;
+import io.questdb.griffin.engine.SystemOperator;
 import io.questdb.griffin.engine.ops.*;
 import io.questdb.griffin.model.*;
 import io.questdb.log.Log;
@@ -1570,7 +1570,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             switch (executionModel.getModelType()) {
                 case ExecutionModel.QUERY:
                     QueryModel queryModel = (QueryModel) executionModel;
-                    LOG.info().$("plan [q=`").$(queryModel).$("`, fd=").$(executionContext.getRequestFd()).$(']').$();
                     RecordCursorFactory factory = generateWithRetries(queryModel, executionContext);
                     compiledQuery.of(factory);
                     break;
@@ -2993,7 +2992,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     ) throws SqlException {
         RecordCursorFactory factory = codeGenerator.generate(selectQueryModel, executionContext);
         if (isSelect) {
-            return new RegisteredRecordCursorFactory(queryRegistry, query, factory);
+            return new SystemOperator(queryRegistry, query, factory);
         } else {
             return factory;
         }

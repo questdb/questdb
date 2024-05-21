@@ -24,12 +24,13 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Test;
 
-import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 public class RssMemoryLimitTest extends AbstractCairoTest {
@@ -50,13 +51,24 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
                         " rnd_timestamp(to_timestamp('2024-03-01', 'yyyy-mm-dd'), to_timestamp('2024-04-01', 'yyyy-mm-dd'), 0) ts" +
                         " from long_sequence(10000000)) timestamp(ts) partition by day;");
                 fail("Managed to create table with RSS limit " + limitMB + " MB");
-            } catch (Exception e) {
+            } catch (CairoException e) {
                 Unsafe.setRssMemLimit(0);
-                String expected = "global RSS memory limit exceeded";
-                assertTrue(String.format("Exception should contain \"%s\", but was \"%s\"", expected, e.getMessage()),
-                        e.getMessage().contains(expected));
-                drop("drop table x;");
+                TestUtils.assertContains(e.getFlyweightMessage(), "global RSS memory limit exceeded");
             }
+        });
+    }
+
+    @Test
+    public void testSelect() throws Exception {
+        long limitMB = 10;
+        Unsafe.setRssMemLimit(limitMB * 1_000_000);
+        assertMemoryLeak(() -> {
+            ddl("create table test as (select rnd_str() a, rnd_double() b from long_sequence(1000000))");
+            assertException(
+                    "select a, sum(b) from test",
+                    0,
+                    "global RSS memory limit exceeded"
+            );
         });
     }
 }
