@@ -1367,9 +1367,6 @@ public class CairoEngine implements Closeable, WriterSource {
         fromPath.of(root).concat(fromTableToken).$();
 
         TableToken toTableToken = lockTableName(toTableName, fromTableToken.getTableId(), false);
-        while (!lockTableCreate(toTableToken)) {
-            Os.pause();
-        }
 
         if (toTableToken == null) {
             LOG.error()
@@ -1377,6 +1374,9 @@ public class CairoEngine implements Closeable, WriterSource {
                     .$("', to='").utf8(toTableName)
                     .I$();
             throw CairoException.nonCritical().put("Rename target exists");
+        }
+        while (!lockTableCreate(toTableToken)) {
+            Os.pause();
         }
 
         if (ff.exists(toPath.of(root).concat(toTableToken).$())) {
