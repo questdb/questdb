@@ -146,11 +146,11 @@ public final class Os {
      */
     public static long getTotalMemoryFromProcFile() {
         try (BufferedReader r = new BufferedReader(new FileReader("/proc/meminfo"))) {
-            Pattern numRe = Pattern.compile("MemTotal\\s\\D+(\\d+).*");
+            Pattern numRe = Pattern.compile("MemTotal:\\D+(\\d+) kB");
             for (String line; (line = r.readLine()) != null; ) {
                 Matcher m = numRe.matcher(line);
                 if (m.matches()) {
-                    return Long.parseLong(m.group(1));
+                    return 1000 * Long.parseLong(m.group(1));
                 }
             }
         } catch (Exception e) {
