@@ -24,6 +24,7 @@
 
 package io.questdb;
 
+import com.sun.management.OperatingSystemMXBean;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.SqlJitMode;
@@ -188,14 +189,14 @@ public class Bootstrap {
             log.errorW().$(e).$();
             throw new BootstrapException(e);
         }
-
-        // metrics
         if (config.getMetricsConfiguration().isEnabled()) {
             metrics = Metrics.enabled();
         } else {
             metrics = Metrics.disabled();
             log.advisoryW().$("Metrics are disabled, health check endpoint will not consider unhandled errors").$();
         }
+        Unsafe.setWriterMemLimit(config.getCairoConfiguration().getWriterMemoryLimit());
+        setRssMemoryLimit();
     }
 
     public static String[] getServerMainArgs(CharSequence root) {
@@ -497,6 +498,33 @@ public class Bootstrap {
         extractConfDir(buffer);
     }
 
+    private long getAndLogTotalSystemMemory() {
+        long fromMxBean = Long.MAX_VALUE;
+        OperatingSystemMXBean mxBean = Os.getOsMXBean();
+        if (mxBean != null) {
+            fromMxBean = mxBean.getTotalPhysicalMemorySize();
+        }
+        long fromProcFile = Os.getTotalMemoryFromProcFile();
+        long coalescedValue = Math.min(fromProcFile, fromMxBean);
+        final StringBuilder b = new StringBuilder();
+        if (fromMxBean == fromProcFile && fromMxBean != Long.MAX_VALUE) {
+            b.append(String.format("Total RAM (reported by both OperatingSystemMXBean and /proc/meminfo): %,d bytes", fromMxBean));
+        } else if (fromMxBean != Long.MAX_VALUE && fromProcFile == Long.MAX_VALUE) {
+            b.append(String.format("Total RAM (reported by OperatingSystemMXBean): %,d bytes", fromMxBean));
+        } else if (fromProcFile != Long.MAX_VALUE && fromMxBean == Long.MAX_VALUE) {
+            b.append(String.format("Total RAM (reported by /proc/meminfo): %,d bytes", fromProcFile));
+        } else if (coalescedValue != Long.MAX_VALUE) {
+            b.append("\nTotal RAM:\n");
+            b.append(String.format(" - as reported by OperatingSystemMXBean: %,16d bytes\n", fromMxBean));
+            b.append(String.format(" - as reported by /proc/meminfo:         %,16d bytes\n", fromProcFile));
+            b.append(String.format(" - coalesced value:                      %,16d bytes", coalescedValue));
+        } else {
+            b.append("Could not determine total system RAM, automatic RSS memory limit disabled.");
+        }
+        log.advisoryW().$(b).$();
+        return coalescedValue;
+    }
+
     private void reportValidateConfig() {
         final boolean httpEnabled = config.getHttpServerConfiguration().isEnabled();
         final boolean httpReadOnly = config.getHttpServerConfiguration().getHttpContextConfiguration().readOnlySecurityContext();
@@ -539,6 +567,19 @@ public class Bootstrap {
                     log.errorW().$(" - Unknown SQL JIT compiler mode: ").$(jitMode).$();
                     break;
             }
+        }
+    }
+
+    private void setRssMemoryLimit() {
+        long totalMemory = getAndLogTotalSystemMemory();
+        long configuredRssLimit = config.getCairoConfiguration().getRssMemoryLimit();
+        if (configuredRssLimit > 0) {
+            log.advisoryW().$(String.format("Using configured RSS memory limit: %,d bytes", configuredRssLimit)).$();
+            Unsafe.setRssMemLimit(configuredRssLimit);
+        } else if (totalMemory <= Long.MAX_VALUE / 2) {
+            long limit = totalMemory * 2 / 3;
+            log.advisoryW().$(String.format("Setting automatic RSS memory limit to %,d bytes", limit)).$();
+            Unsafe.setRssMemLimit(limit);
         }
     }
 

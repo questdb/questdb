@@ -138,30 +138,25 @@ public final class Os {
     public static native long getRss();
 
     /**
-     * Attempts to determine the total RAM available to the JVM process. There is no
-     * universally reliable way to determine this.
+     * Attempts to determine the total system RAM assigned to our process. It
+     * inspects /proc/meminfo to get this info. This approach is compatible with
+     * cgroups (Docker) and will honor the limit set on the local cgroup.
      * <p>
-     * Returns `Long.MAX_VALUE` if it couldn't acquire the value from the system.
+     * If the file doesn't exist or can't be parsed, returns `Long.MAX_VALUE`.
      */
-    public static long getTotalSystemMemory() {
-        long fromMeminfo = Long.MAX_VALUE;
-        long fromMxBean = Long.MAX_VALUE;
+    public static long getTotalMemoryFromProcFile() {
         try (BufferedReader r = new BufferedReader(new FileReader("/proc/meminfo"))) {
             Pattern numRe = Pattern.compile("MemTotal\\s\\D+(\\d+).*");
             for (String line; (line = r.readLine()) != null; ) {
                 Matcher m = numRe.matcher(line);
                 if (m.matches()) {
-                    fromMeminfo = Long.parseLong(m.group(1));
+                    return Long.parseLong(m.group(1));
                 }
             }
         } catch (Exception e) {
-            // fall back to MX Bean
+            // Fall through to returning Long.MAX_VALUE
         }
-        OperatingSystemMXBean mxBean = getOsMXBean();
-        if (mxBean != null) {
-            fromMxBean = mxBean.getTotalPhysicalMemorySize();
-        }
-        return Math.min(fromMeminfo, fromMxBean);
+        return Long.MAX_VALUE;
     }
 
     @SuppressWarnings("EmptyMethod")

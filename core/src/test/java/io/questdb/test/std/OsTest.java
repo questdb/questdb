@@ -109,7 +109,7 @@ public class OsTest {
 
     @Test
     public void testTotalSystemMemory() {
-        long totalSystemMemory = Os.getTotalSystemMemory();
+        long totalSystemMemory = Os.getTotalMemoryFromProcFile();
         assertTrue("Could not determine total system memory",
                 totalSystemMemory > 0 && totalSystemMemory < (1L << 48));
     }
