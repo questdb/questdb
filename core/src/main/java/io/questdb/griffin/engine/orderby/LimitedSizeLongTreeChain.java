@@ -166,13 +166,23 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         }
     }
 
-    // important invariant:
-    // when (maxValues == currentValues) then upon returning from this method the comparator left side must be set
-    // to the moreStableRecord with the max/min rowId
+    /**
+     * Inserts record into the tree. If tree is full and record is bigger/smaller than the smallest/biggest
+     * record in the tree, then it will be inserted and smallest/biggest record will be removed.
+     * <p>
+     * <strong>important invariant:</strong>
+     * when <code>(maxValues == currentValues)</code> then upon returning from this method the comparator left side must be set
+     * to the ownedRecord with the max/min rowId.
+     *
+     * @param currentRecord record to insert into the tree
+     * @param sourceCursor  cursor to get record from
+     * @param ownedRecord   record to store data in. This record is owned by the tree and it must not be rewinded externally.
+     * @param comparator    comparator to compare records
+     */
     public void put(
             Record currentRecord,
             RecordCursor sourceCursor,
-            Record moreStableRecord,
+            Record ownedRecord,
             RecordComparator comparator
     ) {
         if (maxValues == 0) {
@@ -198,7 +208,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
             minMaxNode = root;
             minMaxRowId = currentRecordRowId;
             currentValues++;
-            prepareComparatorIfNeeded(sourceCursor, moreStableRecord, comparator);
+            prepareComparatorLeftSideIfAtMaxCapacity(sourceCursor, ownedRecord, comparator);
             return;
         }
 
@@ -213,8 +223,8 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
             parent = p;
             final long r = refOf(p);
             long rowId = valueChain.getLong(r);
-            sourceCursor.recordAt(moreStableRecord, rowId);
-            cmp = comparator.compare(moreStableRecord);
+            sourceCursor.recordAt(ownedRecord, rowId);
+            cmp = comparator.compare(ownedRecord);
             if (cmp < 0) {
                 p = leftOf(p);
             } else if (cmp > 0) {
@@ -225,7 +235,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
                     refreshMinMaxNode();
                 }
                 currentValues++;
-                prepareComparatorIfNeeded(sourceCursor, moreStableRecord, comparator);
+                prepareComparatorLeftSideIfAtMaxCapacity(sourceCursor, ownedRecord, comparator);
                 return;
             }
         } while (p > -1);
@@ -241,7 +251,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         fixInsert(p);
         refreshMinMaxNode();
         currentValues++;
-        prepareComparatorIfNeeded(sourceCursor, moreStableRecord, comparator);
+        prepareComparatorLeftSideIfAtMaxCapacity(sourceCursor, ownedRecord, comparator);
     }
 
     // remove node and put on freelist (if holds only one value in chain)
@@ -300,11 +310,11 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         return previousOffset != CHAIN_END;
     }
 
-    private void prepareComparatorIfNeeded(RecordCursor sourceCursor, Record moreStableRecord, RecordComparator comparator) {
+    private void prepareComparatorLeftSideIfAtMaxCapacity(RecordCursor sourceCursor, Record ownedRecord, RecordComparator comparator) {
         if (currentValues == maxValues) {
             assert minMaxRowId != -1;
-            sourceCursor.recordAt(moreStableRecord, minMaxRowId);
-            comparator.setLeft(moreStableRecord);
+            sourceCursor.recordAt(ownedRecord, minMaxRowId);
+            comparator.setLeft(ownedRecord);
         }
     }
 
