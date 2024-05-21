@@ -41,7 +41,7 @@ import org.jetbrains.annotations.Nullable;
  * When an object is taken from the cache, its key is kept around. This way, when the object
  * is later returned, there is a chance that we're able to reuse the key and avoid String
  * allocation. Objects are always inserted to the first block which means that eviction
- * in each block is FIFO.
+ * in each row is FIFO.
  * <p>
  * The cache uses striped locking, i.e. each row is synchronized with its own lock.
  */
