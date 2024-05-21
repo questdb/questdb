@@ -149,18 +149,23 @@ public class ConcurrentAssociativeCache<V> implements AssociativeCache<V> {
         V outgoingValue;
 
         synchronized (rowKeys) {
-            // Find a spot to place the object.
+            // Find a block to place the object.
             int idx = 0;
             for (int i = 0; i < blocks; i++) {
                 if (rowKeys[i] == null) {
+                    // Empty block found.
                     idx = i;
                     break;
                 }
-                if (rowValues[i] == null && Chars.equals(key, rowKeys[i])) {
-                    // The value for the key was previously cleared by poll(), so insert and call it a day.
-                    rowValues[i] = value;
-                    cachedGauge.inc();
-                    return;
+                if (rowValues[i] == null) {
+                    // The value was previously cleared by poll().
+                    idx = i;
+                    if (Chars.equals(key, rowKeys[i])) {
+                        // That's out key, so insert and call it a day.
+                        rowValues[i] = value;
+                        cachedGauge.inc();
+                        return;
+                    }
                 }
             }
 
