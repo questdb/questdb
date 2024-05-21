@@ -39,7 +39,7 @@ public class ExpressionNode implements Mutable, Sinkable {
     public static final int BIND_VARIABLE = 6;
     public static final int CONSTANT = 2;
     public static final int CONTROL = 16;
-    public final static ExpressionNodeFactory FACTORY = new ExpressionNodeFactory();
+    public static final ExpressionNodeFactory FACTORY = new ExpressionNodeFactory();
     public static final int FUNCTION = 8;
     public static final int LITERAL = 4;
     public static final int MEMBER_ACCESS = 5;

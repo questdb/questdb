@@ -337,6 +337,8 @@ public interface CairoConfiguration {
         return RostiAllocFacadeImpl.INSTANCE;
     }
 
+    long getRssMemoryLimit();
+
     boolean getSampleByDefaultAlignmentCalendar();
 
     int getSampleByIndexSearchPageSize();

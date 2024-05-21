@@ -54,7 +54,7 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
                 for (int i = 0, n = tableModels.length; i < n; i++) {
                     AbstractCairoTest.create(tableModels[i]);
                 }
-                assertException(query, position, contains, false);
+                assertExceptionNoLeakCheck(query, position, contains, false);
             });
         } finally {
             try (Path path = new Path()) {

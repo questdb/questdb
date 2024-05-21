@@ -83,6 +83,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     //  - record with max value for firstN/bottomN query
     //  - record with min value for lastN/topN query
     private long minMaxRowId = -1;
+    private long rightRecordRowId = -1;
 
     public LimitedSizeLongTreeChain(long keyPageSize, int keyMaxPages, long valuePageSize, int valueMaxPages, boolean isFirstN, long maxValues) {
         super(keyPageSize, keyMaxPages);
@@ -99,6 +100,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         this.valueChain.jumpTo(0);
 
         minMaxRowId = -1;
+        rightRecordRowId = -1;
         minMaxNode = -1;
         currentValues = 0;
         freeList.clear();
@@ -114,6 +116,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     }
 
     // returns address of node containing searchRecord; otherwise returns -1
+    @TestOnly
     public long find(
             Record searchedRecord,
             RecordCursor sourceCursor,
@@ -179,7 +182,10 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
 
         // if maxValues < 0 then there's no limit (unless there's more than 2^64 records, which is unlikely)
         if (maxValues == currentValues) {
-            sourceCursor.recordAt(rightRecord, minMaxRowId);
+            if (rightRecordRowId != minMaxRowId) {
+                sourceCursor.recordAt(rightRecord, minMaxRowId);
+                rightRecordRowId = minMaxRowId;
+            }
             int cmp = comparator.compare(rightRecord);
 
             if (isFirstN && cmp >= 0) { // bigger than max for firstN/bottomN
@@ -205,7 +211,8 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         do {
             parent = p;
             final long r = refOf(p);
-            sourceCursor.recordAt(rightRecord, valueChain.getLong(r));
+            rightRecordRowId = valueChain.getLong(r);
+            sourceCursor.recordAt(rightRecord, rightRecordRowId);
             cmp = comparator.compare(rightRecord);
             if (cmp < 0) {
                 p = leftOf(p);

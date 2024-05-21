@@ -37,8 +37,8 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class Worker extends Thread {
-    public final static MicrosecondClock CLOCK_MICROS = MicrosecondClockImpl.INSTANCE;
-    public final static int NO_THREAD_AFFINITY = -1;
+    public static final MicrosecondClock CLOCK_MICROS = MicrosecondClockImpl.INSTANCE;
+    public static final int NO_THREAD_AFFINITY = -1;
     private final int affinity;
     private final String criticalErrorLine;
     private final SOCountDownLatch haltLatch;

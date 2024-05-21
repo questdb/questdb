@@ -30,6 +30,7 @@ import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -152,6 +153,13 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
     }
 
     public SqlException put(@Nullable CharSequence cs) {
+        if (cs != null) {
+            message.put(cs);
+        }
+        return this;
+    }
+
+    public SqlException put(@Nullable Utf8Sequence cs) {
         if (cs != null) {
             message.put(cs);
         }

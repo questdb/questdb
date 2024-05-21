@@ -26,15 +26,18 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -783,6 +786,28 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             assumeNonWal();
             testConvertVarToFixed("varchar");
+        });
+    }
+
+    @Test
+    public void testWalConversionFromVarToFixedDoesNotLeaveAuxFiles() throws Exception {
+        assumeWal();
+        assertMemoryLeak(() -> {
+            ddl("create table x (s string, timestamp timestamp) timestamp (timestamp) PARTITION BY HOUR WAL;");
+            ddl("alter table x alter column s type int;");
+
+            TableToken xTbl = engine.verifyTableName("x");
+
+            Path path = Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(xTbl).concat("wal1").concat("0").concat("s.d");
+            Assert.assertTrue(Files.exists(path.$()));
+
+            path = Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(xTbl).concat("wal1").concat("0").concat("s.i");
+            Assert.assertFalse(Files.exists(path.$()));
+
+            insert("insert into x(s, timestamp) values(1, '2024-02-04T00:00:00.000Z')", sqlExecutionContext);
+            drainWalQueue();
+
+            assertSql("s\n1\n", "select s from x limit -1");
         });
     }
 

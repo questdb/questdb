@@ -42,28 +42,33 @@ class RndStringMemory implements Closeable {
     private final MemoryAR strMem;
 
     RndStringMemory(String signature, int count, int lo, int hi, int position, CairoConfiguration configuration) throws SqlException {
-        this.count = count;
-        this.lo = lo;
-        this.hi = hi;
+        try {
+            this.count = count;
+            this.lo = lo;
+            this.hi = hi;
 
-        final int pageSize = configuration.getRndFunctionMemoryPageSize();
-        final int maxPages = configuration.getRndFunctionMemoryMaxPages();
-        final long memLimit = (long) maxPages * pageSize;
-        // check against worst case, the highest possible mem usage
-        final long requiredMem = count * (Vm.getStorageLength(hi) + Long.BYTES);
-        if (requiredMem > memLimit) {
-            throw SqlException.position(position)
-                    .put("breached memory limit set for ").put(signature)
-                    .put(" [pageSize=").put(pageSize)
-                    .put(", maxPages=").put(maxPages)
-                    .put(", memLimit=").put(memLimit)
-                    .put(", requiredMem=").put(requiredMem)
-                    .put(']');
+            final int pageSize = configuration.getRndFunctionMemoryPageSize();
+            final int maxPages = configuration.getRndFunctionMemoryMaxPages();
+            final long memLimit = (long) maxPages * pageSize;
+            // check against worst case, the highest possible mem usage
+            final long requiredMem = count * (Vm.getStorageLength(hi) + Long.BYTES);
+            if (requiredMem > memLimit) {
+                throw SqlException.position(position)
+                        .put("breached memory limit set for ").put(signature)
+                        .put(" [pageSize=").put(pageSize)
+                        .put(", maxPages=").put(maxPages)
+                        .put(", memLimit=").put(memLimit)
+                        .put(", requiredMem=").put(requiredMem)
+                        .put(']');
+            }
+
+            final int idxPages = count * 8 / pageSize + 1;
+            strMem = Vm.getARInstance(pageSize, maxPages - idxPages, MemoryTag.NATIVE_FUNC_RSS);
+            idxMem = Vm.getARInstance(pageSize, idxPages, MemoryTag.NATIVE_FUNC_RSS);
+        } catch (Throwable th) {
+            close();
+            throw th;
         }
-
-        final int idxPages = count * 8 / pageSize + 1;
-        strMem = Vm.getARInstance(pageSize, maxPages - idxPages, MemoryTag.NATIVE_FUNC_RSS);
-        idxMem = Vm.getARInstance(pageSize, idxPages, MemoryTag.NATIVE_FUNC_RSS);
     }
 
     @Override

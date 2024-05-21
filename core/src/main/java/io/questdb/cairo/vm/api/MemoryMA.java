@@ -28,7 +28,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 
-//mapped appendable 
+// mapped appendable
 public interface MemoryMA extends MemoryM, MemoryA {
 
     default void close(boolean truncate) {

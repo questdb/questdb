@@ -52,8 +52,14 @@ public class CountRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        cursor.of(base.getCursor(executionContext), executionContext.getCircuitBreaker());
-        return cursor;
+        final RecordCursor baseCursor = base.getCursor(executionContext);
+        try {
+            cursor.of(baseCursor, executionContext.getCircuitBreaker());
+            return cursor;
+        } catch (Throwable th) {
+            baseCursor.close();
+            throw th;
+        }
     }
 
     @Override

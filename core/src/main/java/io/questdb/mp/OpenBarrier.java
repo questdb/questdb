@@ -25,7 +25,7 @@
 package io.questdb.mp;
 
 public final class OpenBarrier implements Barrier {
-    public final static OpenBarrier INSTANCE = new OpenBarrier();
+    public static final OpenBarrier INSTANCE = new OpenBarrier();
 
     private OpenBarrier() {
     }

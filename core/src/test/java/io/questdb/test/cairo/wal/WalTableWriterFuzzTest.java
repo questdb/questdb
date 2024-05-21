@@ -412,7 +412,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
 
                 WalWriterTest.removeColumn(walWriter, "b");
 
-                assertException("UPDATE " + tableName + " SET b = a");
+                assertExceptionNoLeakCheck("UPDATE " + tableName + " SET b = a");
             } catch (Exception e) {
                 assertTrue(e.getMessage().endsWith("Invalid column: b"));
             }
@@ -580,7 +580,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
 
                 update("UPDATE " + tableCopyName + " SET INT=12345678");
                 try {
-                    assertException("UPDATE " + tableName + " t SET INT=12345678 FROM " + tableCopyName + " c WHERE t.INT=c.INT");
+                    assertExceptionNoLeakCheck("UPDATE " + tableName + " t SET INT=12345678 FROM " + tableCopyName + " c WHERE t.INT=c.INT");
                 } catch (Exception e) {
                     assertTrue(e.getMessage().endsWith("UPDATE statements with join are not supported yet for WAL tables"));
                 }

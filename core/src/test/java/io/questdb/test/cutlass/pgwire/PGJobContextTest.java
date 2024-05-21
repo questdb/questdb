@@ -6177,7 +6177,7 @@ nodejs code:
                     insert.setNull(2, Types.NULL);
                     try {
                         insert.executeUpdate();
-                        assertException("cannot insert null when the column is designated");
+                        assertExceptionNoLeakCheck("cannot insert null when the column is designated");
                     } catch (PSQLException expected) {
                         Assert.assertEquals("ERROR: timestamp before 1970-01-01 is not allowed\n" +
                                 "  Position: 1", expected.getMessage());
@@ -6355,6 +6355,7 @@ nodejs code:
                     statement.setNull(12, Types.BIGINT);
                     statement.setNull(13, Types.REAL);
                     statement.setNull(14, Types.DOUBLE);
+                    // SMALL_INT is not nullable and will become 0
                     statement.setNull(15, Types.SMALLINT);
                     statement.setNull(16, Types.BOOLEAN);
                     statement.setNull(17, Types.VARCHAR);
@@ -6367,12 +6368,13 @@ nodejs code:
                     statement.setTimestamp(21, new PGTimestamp(500023, new GregorianCalendar()));
                     statement.setTimestamp(22, null);
 
+                    // record cursor metadata is decided before the variable types are known
                     final String expected = "x[BIGINT],$1[VARCHAR],$2[VARCHAR],$3[VARCHAR],$4[VARCHAR],$5[VARCHAR],$6[VARCHAR],$7[VARCHAR],$8[VARCHAR],$9[VARCHAR],$10[VARCHAR],$11[VARCHAR],$12[VARCHAR],$13[VARCHAR],$14[VARCHAR],$15[VARCHAR],$16[VARCHAR],$17[VARCHAR],$18[VARCHAR],$19[VARCHAR],$20[VARCHAR],$21[VARCHAR],$22[VARCHAR]\n" +
-                            "1,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
-                            "2,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
-                            "3,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
-                            "4,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
-                            "5,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n";
+                            "1,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
+                            "2,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
+                            "3,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
+                            "4,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
+                            "5,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n";
 
                     StringSink sink = new StringSink();
                     for (int i = 0; i < 10000; i++) {
@@ -6857,6 +6859,38 @@ nodejs code:
                 assertQueryAgainstIndexedSymbol(values, "s in (#X1, #X2)", new String[]{"#X1", "#X2"}, connection, tsOption, sameVal2);
                 assertQueryAgainstIndexedSymbol(values, "s in (#X1, #X2, 'S')", new String[]{"#X1", "#X2"}, connection, tsOption, sameVal2);
                 assertQueryAgainstIndexedSymbol(values, "s in (#X1, #X2, 'S', 'S') and s not in ('S1', 'S1')", new String[]{"#X1", "#X2"}, connection, tsOption, sameVal2);
+            });
+        }
+    }
+
+    @Test
+    public void testUndefinedBindVariableInSymbol() throws Exception {
+        final String[] values = {"'5'", "null", "'5' || ''", "replace(null, 'A', 'A')", "?5", "?null"};
+        final CharSequenceObjHashMap<String> valMap = new CharSequenceObjHashMap<>();
+        valMap.put("5", "5");
+        valMap.put("'5'", "5");
+        valMap.put("null", "null");
+        valMap.put("'5' || ''", "5");
+        valMap.put("replace(null, 'A', 'A')", "null");
+
+        final String[] tsOptions = {"", "timestamp(ts)", "timestamp(ts) partition by HOUR"};
+        final String strType = ColumnType.nameOf(ColumnType.STRING).toLowerCase();
+        for (String tsOption : tsOptions) {
+            assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary, mode, port) -> {
+                drop("drop table if exists tab");
+                ddl("create table tab (s symbol index, ts timestamp) " + tsOption);
+                insert("insert into tab select case when x = 10 then null::" + strType + " else x::" + strType + " end, x::timestamp from long_sequence(10) ");
+                drainWalQueue();
+
+                ResultProducer sameValIfParamsTheSame = (paramVals, isBindVals, bindVals, output) -> {
+                    String left = isBindVals[0] ? bindVals[0] : paramVals[0];
+                    String right = isBindVals[1] ? bindVals[1] : paramVals[1];
+                    boolean isSame = valMap.get(left).equals(valMap.get(right));
+                    if (isSame) {
+                        output.put(valMap.get(left)).put('\n');
+                    }
+                };
+                assertQueryAgainstIndexedSymbol(values, "s in (#X1) and s in (#X2)", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParamsTheSame);
             });
         }
     }
@@ -8440,7 +8474,7 @@ create table tab as (
     @Test
     public void testSingleInClauseNonDedicatedTimestamp() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary, mode, port) -> {
             try (PreparedStatement statement = connection.prepareStatement(
                     "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + "))")) {
                 statement.execute();
@@ -9406,7 +9440,7 @@ create table tab as (
                     try (PreparedStatement stmt = connection.prepareStatement("update update_after_drop set id = ?")) {
                         stmt.setLong(1, 42);
                         stmt.executeUpdate();
-                        assertException("id column was dropped, the UPDATE should have failed");
+                        assertExceptionNoLeakCheck("id column was dropped, the UPDATE should have failed");
                     } catch (PSQLException e) {
                         TestUtils.assertContains(e.getMessage(), "Invalid column: id");
                     }
@@ -10075,6 +10109,7 @@ create table tab as (
             }
 
             String query = "select s from tab where " + where;
+            LOG.info().$("iteration [iter=").$(iter).$(". sql=").$(query).I$();
 
             sink.clear();
             expSink.clear();
@@ -10229,16 +10264,18 @@ create table tab as (
             }
         };
 
-        final WorkerPool workerPool = new TestWorkerPool(2, metrics);
+        WorkerPool workerPool = new TestWorkerPool(2, metrics);
         CircuitBreakerRegistry registry = new CircuitBreakerRegistry(conf, engine.getConfiguration());
-
-        return createPGWireServer(
-                conf,
-                engine,
-                workerPool,
-                createPGConnectionContextFactory(conf, workerCount, workerCount, null, queryScheduledCount, registry),
-                registry
-        );
+        PGWireServer.PGConnectionContextFactory connFac =
+                createPGConnectionContextFactory(conf, workerCount, workerCount, null, queryScheduledCount, registry);
+        try {
+            return createPGWireServer(conf, engine, workerPool, connFac, registry);
+        } catch (Throwable t) {
+            Misc.free(connFac);
+            Misc.free(registry);
+            Misc.free(workerPool);
+            throw t;
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -10371,80 +10408,78 @@ create table tab as (
             }
         };
 
-        WorkerPool pool = new WorkerPool(conf, metrics);
-        pool.assign(engine.getEngineMaintenanceJob());
         try (CircuitBreakerRegistry registry = new CircuitBreakerRegistry(conf, engine.getConfiguration());
-             final PGWireServer server = createPGWireServer(
-                     conf,
-                     engine,
-                     pool,
-                     createPGConnectionContextFactory(conf, workerCount, workerCount, queryStartedCountDownLatch, null, registry),
-                     registry
+             WorkerPool pool = new WorkerPool(conf, metrics);
+             PGWireServer.PGConnectionContextFactory connFac = createPGConnectionContextFactory(
+                     conf, workerCount, workerCount, queryStartedCountDownLatch, null, registry
              )
         ) {
-            Assert.assertNotNull(server);
-            int iteration = 0;
+            pool.assign(engine.getEngineMaintenanceJob());
+            try (PGWireServer server = createPGWireServer(conf, engine, pool, connFac, registry)) {
+                Assert.assertNotNull(server);
+                int iteration = 0;
 
-            do {
-                pool.start(LOG);
-                final String tableName = "xyz" + iteration++;
-                ddl("create table " + tableName + " (a int)");
+                do {
+                    pool.start(LOG);
+                    final String tableName = "xyz" + iteration++;
+                    ddl("create table " + tableName + " (a int)");
 
-                try (
-                        final Connection connection1 = getConnection(server.getPort(), false, true);
-                        final Connection connection2 = getConnection(server.getPort(), false, true);
-                        final PreparedStatement insert = connection1.prepareStatement(
-                                "insert into " + tableName + " values (?)"
-                        )
-                ) {
-                    connection1.setAutoCommit(false);
-                    int totalCount = 10;
-                    for (int i = 0; i < totalCount; i++) {
-                        insert.setInt(1, i);
-                        insert.execute();
-                    }
-                    CyclicBarrier start = new CyclicBarrier(2);
-                    CountDownLatch finished = new CountDownLatch(1);
-                    errors.set(0);
+                    try (
+                            final Connection connection1 = getConnection(server.getPort(), false, true);
+                            final Connection connection2 = getConnection(server.getPort(), false, true);
+                            final PreparedStatement insert = connection1.prepareStatement(
+                                    "insert into " + tableName + " values (?)"
+                            )
+                    ) {
+                        connection1.setAutoCommit(false);
+                        int totalCount = 10;
+                        for (int i = 0; i < totalCount; i++) {
+                            insert.setInt(1, i);
+                            insert.execute();
+                        }
+                        CyclicBarrier start = new CyclicBarrier(2);
+                        CountDownLatch finished = new CountDownLatch(1);
+                        errors.set(0);
 
-                    new Thread(() -> {
-                        try {
-                            start.await();
-                            try (
-                                    final PreparedStatement alter = connection2.prepareStatement(
-                                            "alter table " + tableName + " add column b long"
-                                    )
-                            ) {
-                                alter.execute();
+                        new Thread(() -> {
+                            try {
+                                start.await();
+                                try (
+                                        final PreparedStatement alter = connection2.prepareStatement(
+                                                "alter table " + tableName + " add column b long"
+                                        )
+                                ) {
+                                    alter.execute();
+                                }
+                            } catch (Throwable e) {
+                                e.printStackTrace();
+                                errors.incrementAndGet();
+                            } finally {
+                                finished.countDown();
                             }
-                        } catch (Throwable e) {
-                            e.printStackTrace();
-                            errors.incrementAndGet();
-                        } finally {
-                            finished.countDown();
-                        }
-                    }).start();
+                        }).start();
 
-                    start.await();
-                    Os.sleep(100);
-                    connection1.commit();
-                    finished.await();
+                        start.await();
+                        Os.sleep(100);
+                        connection1.commit();
+                        finished.await();
 
-                    if (alterRequestReturnSuccess) {
-                        Assert.assertEquals(0, errors.get());
-                        try (TableReader rdr = getReader(tableName)) {
-                            int bIndex = rdr.getMetadata().getColumnIndex("b");
-                            Assert.assertEquals(1, bIndex);
-                            Assert.assertEquals(totalCount, rdr.size());
+                        if (alterRequestReturnSuccess) {
+                            Assert.assertEquals(0, errors.get());
+                            try (TableReader rdr = getReader(tableName)) {
+                                int bIndex = rdr.getMetadata().getColumnIndex("b");
+                                Assert.assertEquals(1, bIndex);
+                                Assert.assertEquals(totalCount, rdr.size());
+                            }
                         }
+                    } finally {
+                        pool.halt();
+                        engine.releaseAllWriters();
                     }
-                } finally {
-                    pool.halt();
-                    engine.releaseAllWriters();
-                }
-                // Failure may not happen if we're lucky, even when they are expected
-                // When alterRequestReturnSuccess if false and errors are 0, repeat
-            } while (!alterRequestReturnSuccess && errors.get() == 0);
+                    // Failure may not happen if we're lucky, even when they are expected
+                    // When alterRequestReturnSuccess if false and errors are 0, repeat
+                } while (!alterRequestReturnSuccess && errors.get() == 0);
+            }
         }
     }
 
@@ -10687,10 +10722,9 @@ create table tab as (
                     }
 
                     sink.clear();
-                    try (PreparedStatement ps = connection.prepareStatement("tab1 where coalesce(?, 12.37) is not null")) {
+                    try (PreparedStatement ps = connection.prepareStatement("tab1 where coalesce(3.14, 12.37) is not null")) {
                         // 'is not' is an alias for '!=', the matching type for this operator
                         // (with null on the right) is DOUBLE
-                        ps.setDouble(1, 3.14);
                         try (ResultSet rs = ps.executeQuery()) {
                             assertResultSet(
                                     "value[INTEGER],ts[TIMESTAMP]\n" +
@@ -11058,7 +11092,7 @@ create table tab as (
                 workerPool.start(LOG);
                 for (int i = 0; i < 10; i++) {
                     try (Connection ignored1 = getConnectionWitSslInitRequest(Mode.EXTENDED, server.getPort(), false, -2)) {
-                        assertException("Connection should not be established when server disconnects during authentication");
+                        assertExceptionNoLeakCheck("Connection should not be established when server disconnects during authentication");
                     } catch (PSQLException ignored) {
 
                     }
@@ -11810,27 +11844,31 @@ create table tab as (
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
-                try (final Connection connection = getConnection(server.getPort(), true, false)) {
-                    final PreparedStatement statement = connection.prepareStatement("create table x (a long, b double, ts timestamp) timestamp(ts) partition by YEAR");
+                try (final Connection connection = getConnection(server.getPort(), true, false);
+                     final PreparedStatement statement = connection.prepareStatement(
+                             "create table x (a long, b double, ts timestamp) timestamp(ts) partition by YEAR")
+                ) {
                     statement.execute();
-
-                    final PreparedStatement insert1 = connection.prepareStatement("insert into x values " +
+                    try (final PreparedStatement insert1 = connection.prepareStatement("insert into x values " +
                             "(1, 2.0, '2020-06-01T00:00:02'::timestamp)," +
                             "(2, 2.6, '2020-06-01T00:00:06'::timestamp)," +
-                            "(5, 3.0, '2020-06-01T00:00:12'::timestamp)");
-                    insert1.execute();
+                            "(5, 3.0, '2020-06-01T00:00:12'::timestamp)")) {
+                        insert1.execute();
+                    }
                     mayDrainWalQueue();
 
                     try (TableWriter writer = getWriter("x")) {
                         SOCountDownLatch finished = new SOCountDownLatch(1);
                         new Thread(() -> {
-                            try {
-                                final PreparedStatement update1 = connection.prepareStatement("update x set a=9 where b>2.5");
+                            try (
+                                    final PreparedStatement update1 = connection.prepareStatement(
+                                            "update x set a=9 where b>2.5"
+                                    )
+                            ) {
                                 int numOfRowsUpdated1 = update1.executeUpdate();
                                 assertEquals(2, numOfRowsUpdated1);
                             } catch (Throwable e) {
                                 Assert.fail(e.getMessage());
-                                e.printStackTrace();
                             } finally {
                                 finished.countDown();
                             }

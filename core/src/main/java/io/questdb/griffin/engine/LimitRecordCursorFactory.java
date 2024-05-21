@@ -53,8 +53,12 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         // Forcefully disable column pre-touch for LIMIT K,N queries for all downstream
         // async filtered factories to avoid redundant disk reads.
         executionContext.setColumnPreTouchEnabled(preTouchEnabled && cursor.hiFunction == null);
+        final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
-            cursor.of(base.getCursor(executionContext), executionContext);
+            cursor.of(baseCursor, executionContext);
+        } catch (Throwable th) {
+            baseCursor.close();
+            throw th;
         } finally {
             executionContext.setColumnPreTouchEnabled(preTouchEnabled);
         }

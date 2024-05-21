@@ -270,10 +270,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
         this.tableToken = tableToken;
         this.o3QuickSortEnabled = configuration.isO3QuickSortEnabled();
-        this.path = new Path().of(root).concat(tableToken);
-        this.other = new Path().of(root).concat(tableToken);
-        this.rootLen = path.size();
         try {
+            this.path = new Path().of(root).concat(tableToken);
+            this.other = new Path().of(root).concat(tableToken);
+            this.rootLen = path.size();
             if (lock) {
                 lock();
             } else {
@@ -4400,8 +4400,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             Misc.free(o3TimestampMemCpy);
             Misc.free(ownMessageBus);
             if (tempMem16b != 0) {
-                Unsafe.free(tempMem16b, 16, MemoryTag.NATIVE_TABLE_WRITER);
-                tempMem16b = 0;
+                tempMem16b = Unsafe.free(tempMem16b, 16, MemoryTag.NATIVE_TABLE_WRITER);
             }
             LOG.info().$("closed '").utf8(tableToken.getTableName()).$('\'').$();
         }
@@ -5996,21 +5995,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 .$();
                         continue;
                     }
-
-                    o3PartitionUpdRemaining.incrementAndGet();
                     final O3Basket o3Basket = o3BasketPool.next();
                     o3Basket.checkCapacity(configuration, columnCount, indexCount);
-
                     AtomicInteger columnCounter = o3ColumnCounters.next();
-
-                    // async partition processing set this counter to the column count
-                    // and then manages issues if publishing of column tasks fails
-                    // mid-column-count.
-                    latchCount++;
 
                     // To collect column top values and partition updates
                     // from o3 partition tasks add them to pre-allocated continuous block of memory
                     long partitionUpdateSinkAddr = o3PartitionUpdateSink.allocateBlock();
+
+                    o3PartitionUpdRemaining.incrementAndGet();
+                    // async partition processing set this counter to the column count
+                    // and then manages issues if publishing of column tasks fails
+                    // mid-column-count.
+                    latchCount++;
                     // Set column top memory to -1, no need to initialize partition update memory, it always set by O3 partition tasks
                     Vect.memset(partitionUpdateSinkAddr + (long) PARTITION_SINK_SIZE_LONGS * Long.BYTES, (long) metadata.getColumnCount() * Long.BYTES, -1);
                     Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr, partitionTimestamp);

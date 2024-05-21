@@ -59,24 +59,35 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             RecordValueSink slaveValueSink,
             IntList columnIndex, // this column index will be used to retrieve symbol tables from underlying slave
             JoinContext joinContext,
-            ColumnFilter masterTableKeyColumns) {
+            ColumnFilter masterTableKeyColumns
+    ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
-        Map joinKeyMap = MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes);
-        this.masterKeySink = masterKeySink;
-        this.slaveKeySink = slaveKeySink;
-        int slaveWrappedOverMaster = slaveColumnTypes.getColumnCount() - masterTableKeyColumns.getColumnCount();
-        this.cursor = new AsOfJoinRecordCursor(
-                columnSplit,
-                joinKeyMap,
-                NullRecordFactory.getInstance(slaveColumnTypes),
-                masterFactory.getMetadata().getTimestampIndex(),
-                slaveFactory.getMetadata().getTimestampIndex(),
-                slaveValueSink,
-                masterTableKeyColumns,
-                slaveWrappedOverMaster,
-                columnIndex
-        );
-        this.columnIndex = columnIndex;
+        try {
+            this.masterKeySink = masterKeySink;
+            this.slaveKeySink = slaveKeySink;
+            Map joinKeyMap = MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes);
+            int slaveWrappedOverMaster = slaveColumnTypes.getColumnCount() - masterTableKeyColumns.getColumnCount();
+            this.cursor = new AsOfJoinRecordCursor(
+                    columnSplit,
+                    joinKeyMap,
+                    NullRecordFactory.getInstance(slaveColumnTypes),
+                    masterFactory.getMetadata().getTimestampIndex(),
+                    slaveFactory.getMetadata().getTimestampIndex(),
+                    slaveValueSink,
+                    masterTableKeyColumns,
+                    slaveWrappedOverMaster,
+                    columnIndex
+            );
+            this.columnIndex = columnIndex;
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
+    }
+
+    @Override
+    public boolean followedOrderByAdvice() {
+        return masterFactory.followedOrderByAdvice();
     }
 
     @Override
@@ -93,11 +104,6 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             Misc.free(cursor);
             throw e;
         }
-    }
-
-    @Override
-    public boolean followedOrderByAdvice() {
-        return masterFactory.followedOrderByAdvice();
     }
 
     @Override
@@ -120,10 +126,10 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
 
     @Override
     protected void _close() {
-        cursor.close();
-        ((JoinRecordMetadata) getMetadata()).close();
-        masterFactory.close();
-        slaveFactory.close();
+        Misc.freeIfCloseable(getMetadata());
+        Misc.free(masterFactory);
+        Misc.free(slaveFactory);
+        Misc.free(cursor);
     }
 
     private class AsOfJoinRecordCursor extends AbstractSymbolWrapOverCursor {
@@ -147,7 +153,9 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
                 int masterTimestampIndex,
                 int slaveTimestampIndex,
                 RecordValueSink valueSink,
-                ColumnFilter masterTableKeyColumns, int slaveWrappedOverMaster, IntList slaveColumnIndex
+                ColumnFilter masterTableKeyColumns,
+                int slaveWrappedOverMaster,
+                IntList slaveColumnIndex
         ) {
             super(columnSplit, slaveWrappedOverMaster, masterTableKeyColumns, slaveColumnIndex);
             this.record = new SymbolWrapOverJoinRecord(columnSplit, nullRecord, slaveWrappedOverMaster, masterTableKeyColumns);
@@ -246,8 +254,8 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
 
         private void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
             if (!isOpen) {
-                joinKeyMap.reopen();
                 isOpen = true;
+                joinKeyMap.reopen();
             }
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;

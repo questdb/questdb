@@ -2713,24 +2713,24 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     MemoryTag.NATIVE_DEFAULT
             );
 
-            ddl(
-                    "CREATE TABLE tab (" +
-                            "  ts TIMESTAMP," +
-                            "  price DOUBLE," +
-                            "  quantity DOUBLE) timestamp (ts) PARTITION BY DAY"
-            );
-            insert("insert into tab select (x * 864000000)::timestamp, x, x % 100 from long_sequence(" + ROW_COUNT + ")");
-
-            context.with(
-                    context.getSecurityContext(),
-                    context.getBindVariableService(),
-                    context.getRandom(),
-                    context.getRequestFd(),
-                    circuitBreaker
-            );
-            context.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
-
             try {
+                ddl(
+                        "CREATE TABLE tab (" +
+                                "  ts TIMESTAMP," +
+                                "  price DOUBLE," +
+                                "  quantity DOUBLE) timestamp (ts) PARTITION BY DAY"
+                );
+                insert("insert into tab select (x * 864000000)::timestamp, x, x % 100 from long_sequence(" + ROW_COUNT + ")");
+
+                context.with(
+                        context.getSecurityContext(),
+                        context.getBindVariableService(),
+                        context.getRandom(),
+                        context.getRequestFd(),
+                        circuitBreaker
+                );
+                context.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
                 assertSql("", query);
                 Assert.fail();
             } catch (CairoException ex) {

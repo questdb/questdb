@@ -118,7 +118,7 @@ public class ShowTablesTest extends AbstractCairoTest {
 
     @Test
     public void testShowTimeZoneWrongSyntax() throws Exception {
-        assertMemoryLeak(() -> assertException("show time", 9,"expected 'TABLES', 'COLUMNS FROM <tab>', 'PARTITIONS FROM <tab>', 'TRANSACTION ISOLATION LEVEL', 'transaction_isolation', 'max_identifier_length', 'standard_conforming_strings', 'parameters', 'server_version', 'search_path', 'datestyle', or 'time zone'"
+        assertMemoryLeak(() -> assertException("show time", 9, "expected 'TABLES', 'COLUMNS FROM <tab>', 'PARTITIONS FROM <tab>', 'TRANSACTION ISOLATION LEVEL', 'transaction_isolation', 'max_identifier_length', 'standard_conforming_strings', 'parameters', 'server_version', 'search_path', 'datestyle', or 'time zone'"
         ));
     }
 
