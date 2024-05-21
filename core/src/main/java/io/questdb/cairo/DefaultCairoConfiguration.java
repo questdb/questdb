@@ -119,6 +119,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean getCairoSqlLegacyOperatorPrecedence() {
+        return false;
+    }
+
+    @Override
     public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
         return circuitBreakerConfiguration;
     }
@@ -560,6 +565,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getSequencerCheckInterval() {
+        return 10_000;
+    }
+
+    @Override
     public boolean getSimulateCrashEnabled() {
         return false;
     }
@@ -892,11 +902,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public boolean getTempCairoSqlLegacyOperatorPrecedence() {
-        return false;
-    }
-
-    @Override
     public CharSequence getTempRenamePendingTablePrefix() {
         return "temp_5822f658-31f6-11ee-be56-0242ac120002";
     }
@@ -964,11 +969,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getWalPurgeInterval() {
         return 30_000;
-    }
-
-    @Override
-    public long getSequencerCheckInterval() {
-        return 10_000;
     }
 
     @Override

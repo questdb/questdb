@@ -36,8 +36,8 @@ public class OperatorRegistry {
     public OperatorExpression unarySetNegation;
 
     public OperatorRegistry(ObjList<OperatorExpression> operators) {
-        this.map = new LowerCaseAsciiCharSequenceObjHashMap<OperatorExpression>();
-        this.operators = new ObjList<OperatorExpression>();
+        this.map = new LowerCaseAsciiCharSequenceObjHashMap<>();
+        this.operators = new ObjList<>();
         for (int i = 0, k = operators.size(); i < k; i++) {
             OperatorExpression op = operators.getQuick(i);
             switch (op.operator) {
@@ -79,8 +79,9 @@ public class OperatorRegistry {
         return map.contains(name);
     }
 
-    /***
-     * tryGetOperator gets operator taking into account current registry structure: there are only 3 unary operators that have duplicate token representation: '~', '-', 'not'
+    /*
+     * Gets operator taking into account current registry structure:
+     * there are only 3 unary operators that have duplicate token representation: '~', '-', 'not'.
      */
     public OperatorExpression tryGetOperator(OperatorExpression.Operator operator) {
         if (unaryMinus.operator == operator) {
@@ -93,11 +94,13 @@ public class OperatorRegistry {
         return map.get(operator.token);
     }
 
-    /***
-     * tryGuessOperator tries to choose operator from the registry only based on token & precedence.
-     * it takes into account current registry structure with only 3 unary operators that have duplicate token representations: '~', '-', 'not'
-     * although, as UnarySetNegation and BinaryNot operators have same precedence in the legacy registry, we can't distinguish them from each other - so only UnaryMinus and UnaryComplement handled
-     * the method only required for the purpose of parsing behaviour validation between different registries: see {@link ExpressionParser#parseExpr}
+    /*
+     * Tries to choose operator from the registry only based on token & precedence. It takes into account
+     * current registry structure with only 3 unary operators that have duplicate token representations: '~', '-', 'not'.
+     * Although, as UnarySetNegation and BinaryNot operators have same precedence in the legacy registry, we can't
+     * distinguish them from each other - so only UnaryMinus and UnaryComplement handled.
+     * The method only required for the purpose of parsing behaviour validation between different registries:
+     * see {@link ExpressionParser#parseExpr}.
      */
     public OperatorExpression tryGuessOperator(CharSequence token, int precedence) {
         if (unaryMinus.operator.token.contentEquals(token) && unaryMinus.precedence == precedence) {

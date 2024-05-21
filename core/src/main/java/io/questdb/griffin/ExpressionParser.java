@@ -76,11 +76,13 @@ public class ExpressionParser {
     private final OperatorRegistry shadowRegistry;
     private final SqlParser sqlParser;
 
-    ExpressionParser(OperatorRegistry activeRegistry,
-                     OperatorRegistry shadowRegistry,
-                     ObjectPool<ExpressionNode> expressionNodePool,
-                     SqlParser sqlParser,
-                     CharacterStore characterStore) {
+    ExpressionParser(
+            OperatorRegistry activeRegistry,
+            OperatorRegistry shadowRegistry,
+            ObjectPool<ExpressionNode> expressionNodePool,
+            SqlParser sqlParser,
+            CharacterStore characterStore
+    ) {
         this.activeRegistry = activeRegistry;
         this.shadowRegistry = shadowRegistry;
         this.expressionNodePool = expressionNodePool;

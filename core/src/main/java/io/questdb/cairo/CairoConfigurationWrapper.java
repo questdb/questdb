@@ -111,6 +111,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean getCairoSqlLegacyOperatorPrecedence() {
+        return getDelegate().getCairoSqlLegacyOperatorPrecedence();
+    }
+
+    @Override
     public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
         return getDelegate().getCircuitBreakerConfiguration();
     }
@@ -561,6 +566,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getSequencerCheckInterval() {
+        return getDelegate().getSequencerCheckInterval();
+    }
+
+    @Override
     public boolean getSimulateCrashEnabled() {
         return getDelegate().getSimulateCrashEnabled();
     }
@@ -891,11 +901,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public boolean getTempCairoSqlLegacyOperatorPrecedence() {
-        return getDelegate().getTempCairoSqlLegacyOperatorPrecedence();
-    }
-
-    @Override
     public CharSequence getTempRenamePendingTablePrefix() {
         return getDelegate().getTempRenamePendingTablePrefix();
     }
@@ -963,11 +968,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public long getWalPurgeInterval() {
         return getDelegate().getWalPurgeInterval();
-    }
-
-    @Override
-    public long getSequencerCheckInterval() {
-        return getDelegate().getSequencerCheckInterval();
     }
 
     @Override

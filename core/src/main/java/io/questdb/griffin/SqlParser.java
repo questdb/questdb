@@ -103,7 +103,7 @@ public class SqlParser {
         this.traversalAlgo = traversalAlgo;
         this.characterStore = characterStore;
         this.optimiser = optimiser;
-        boolean tempCairoSqlLegacyOperatorPrecedence = configuration.getTempCairoSqlLegacyOperatorPrecedence();
+        boolean tempCairoSqlLegacyOperatorPrecedence = configuration.getCairoSqlLegacyOperatorPrecedence();
         if (tempCairoSqlLegacyOperatorPrecedence) {
             this.expressionParser = new ExpressionParser(
                     OperatorExpression.getLegacyRegistry(),

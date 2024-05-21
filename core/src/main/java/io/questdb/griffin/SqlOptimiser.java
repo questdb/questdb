@@ -3516,7 +3516,7 @@ public class SqlOptimiser implements Mutable {
         }
         count.position = agg.position;
 
-        OperatorExpression mulOp = OperatorExpression.chooseRegistry(configuration.getTempCairoSqlLegacyOperatorPrecedence()).map.get("*");
+        OperatorExpression mulOp = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence()).map.get("*");
         ExpressionNode mul = expressionNodePool.next().of(OPERATION, mulOp.operator.token, mulOp.precedence, agg.position);
         mul.paramCount = 2;
         mul.lhs = count;
@@ -3842,7 +3842,7 @@ public class SqlOptimiser implements Mutable {
             nullExpr.token = "null";
             nullExpr.precedence = 0;
 
-            OperatorExpression neqOp = OperatorExpression.chooseRegistry(configuration.getTempCairoSqlLegacyOperatorPrecedence()).map.get("!=");
+            OperatorExpression neqOp = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence()).map.get("!=");
             ExpressionNode node = expressionNodePool.next().of(OPERATION, neqOp.operator.token, neqOp.precedence, 0);
             node.paramCount = 2;
             node.lhs = nullExpr;

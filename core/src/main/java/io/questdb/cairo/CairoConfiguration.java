@@ -93,6 +93,8 @@ public interface CairoConfiguration {
     @NotNull
     BuildInformation getBuildInformation();
 
+    boolean getCairoSqlLegacyOperatorPrecedence();
+
     @NotNull
     SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
 
@@ -343,6 +345,8 @@ public interface CairoConfiguration {
 
     int getSampleByIndexSearchPageSize();
 
+    long getSequencerCheckInterval();
+
     boolean getSimulateCrashEnabled();
 
     /**
@@ -492,8 +496,6 @@ public interface CairoConfiguration {
     @NotNull
     TelemetryConfiguration getTelemetryConfiguration();
 
-    boolean getTempCairoSqlLegacyOperatorPrecedence();
-
     CharSequence getTempRenamePendingTablePrefix();
 
     @NotNull
@@ -523,8 +525,6 @@ public interface CairoConfiguration {
     int getWalMaxSegmentFileDescriptorsCache();
 
     long getWalPurgeInterval();
-
-    long getSequencerCheckInterval();
 
     default int getWalPurgeWaitBeforeDelete() {
         return 0;

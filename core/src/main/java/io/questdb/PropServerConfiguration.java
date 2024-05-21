@@ -103,6 +103,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int cairoSqlCopyQueueCapacity;
     private final String cairoSqlCopyRoot;
     private final String cairoSqlCopyWorkRoot;
+    private final boolean cairoSqlLegacyOperatorPrecedence;
     private final long cairoTableRegistryAutoReloadFrequency;
     private final int cairoTableRegistryCompactionThreshold;
     private final PropSqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new PropSqlExecutionCircuitBreakerConfiguration();
@@ -248,6 +249,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int rollBufferSize;
     private final String root;
     private final long rssMemoryLimit;
+    private final long sequencerCheckInterval;
     private final int[] sharedWorkerAffinity;
     private final int sharedWorkerCount;
     private final boolean sharedWorkerHaltOnError;
@@ -349,7 +351,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean telemetryEnabled;
     private final boolean telemetryHideTables;
     private final int telemetryQueueCapacity;
-    private final boolean tempCairoSqlLegacyOperatorPrecedence;
     private final CharSequence tempRenamePendingTablePrefix;
     private final int textAnalysisMaxLines;
     private final TextConfiguration textConfiguration = new PropTextConfiguration();
@@ -512,7 +513,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long pgWorkerNapThreshold;
     private long pgWorkerSleepThreshold;
     private long pgWorkerYieldThreshold;
-    private final long sequencerCheckInterval;
     private boolean stringToCharCastAllowed;
     private long symbolCacheWaitUsBeforeReload;
 
@@ -1126,7 +1126,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlWindowTreeKeyPageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_SQL_WINDOW_TREE_PAGE_SIZE, sqlWindowTreeKeyPageSize));
             int sqlWindowTreeKeyMaxPages = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_TREE_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlWindowTreeKeyMaxPages = getInt(properties, env, PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_PAGES, sqlWindowTreeKeyMaxPages);
-            this.tempCairoSqlLegacyOperatorPrecedence = getBoolean(properties, env, PropertyKey.TEMP_CAIRO_SQL_LEGACY_OPERATOR_PRECEDENCE, false);
+            this.cairoSqlLegacyOperatorPrecedence = getBoolean(properties, env, PropertyKey.CAIRO_SQL_LEGACY_OPERATOR_PRECEDENCE, false);
             this.sqlWindowInitialRangeBufferSize = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_INITIAL_RANGE_BUFFER_SIZE, 32);
             this.sqlTxnScoreboardEntryCount = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_O3_TXN_SCOREBOARD_ENTRY_COUNT, 16384));
             this.latestByQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_LATESTBY_QUEUE_CAPACITY, 32));
@@ -1991,6 +1991,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean getCairoSqlLegacyOperatorPrecedence() {
+            return cairoSqlLegacyOperatorPrecedence;
+        }
+
+        @Override
         public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
             return circuitBreakerConfiguration;
         }
@@ -2439,6 +2444,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getSequencerCheckInterval() {
+            return sequencerCheckInterval;
+        }
+
+        @Override
         public boolean getSimulateCrashEnabled() {
             return simulateCrashEnabled;
         }
@@ -2768,11 +2778,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean getTempCairoSqlLegacyOperatorPrecedence() {
-            return tempCairoSqlLegacyOperatorPrecedence;
-        }
-
-        @Override
         public CharSequence getTempRenamePendingTablePrefix() {
             return tempRenamePendingTablePrefix;
         }
@@ -2840,11 +2845,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getWalPurgeInterval() {
             return walPurgeInterval;
-        }
-
-        @Override
-        public long getSequencerCheckInterval() {
-            return sequencerCheckInterval;
         }
 
         @Override

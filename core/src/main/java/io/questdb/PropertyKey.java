@@ -196,7 +196,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_WINDOW_TREE_PAGE_SIZE("cairo.sql.window.tree.page.size"),
     CAIRO_SQL_ANALYTIC_TREE_MAX_PAGES("cairo.sql.analytic.tree.max.pages"),
     CAIRO_SQL_WINDOW_TREE_MAX_PAGES("cairo.sql.window.tree.max.pages"),
-    TEMP_CAIRO_SQL_LEGACY_OPERATOR_PRECEDENCE("temp.cairo.sql.legacy.operator.precedence"),
+    CAIRO_SQL_LEGACY_OPERATOR_PRECEDENCE("cairo.sql.legacy.operator.precedence"),
     CAIRO_O3_TXN_SCOREBOARD_ENTRY_COUNT("cairo.o3.txn.scoreboard.entry.count"),
     CAIRO_LATESTBY_QUEUE_CAPACITY("cairo.latestby.queue.capacity"),
     CAIRO_O3_PARTITION_PURGE_LIST_INITIAL_CAPACITY("cairo.o3.partition.purge.list.initial.capacity"),
@@ -475,7 +475,6 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_DEFAULT_SEQ_PART_TXN_COUNT("cairo.default.sequencer.part.txn.count"),
     POSTHOG_API_KEY("posthog.api.key"),
     POSTHOG_ENABLED("posthog.enabled");
-
 
 
     private static final Map<String, PropertyKey> nameMapping;
