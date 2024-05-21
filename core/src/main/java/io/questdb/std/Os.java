@@ -146,11 +146,12 @@ public final class Os {
      */
     public static long getTotalMemoryFromProcFile() {
         try (BufferedReader r = new BufferedReader(new FileReader("/proc/meminfo"))) {
+            // unit is shown as kB for legacy reasons, actual unit is KB!
             Pattern numRe = Pattern.compile("MemTotal:\\D+(\\d+) kB");
             for (String line; (line = r.readLine()) != null; ) {
                 Matcher m = numRe.matcher(line);
                 if (m.matches()) {
-                    return 1000 * Long.parseLong(m.group(1));
+                    return Long.parseLong(m.group(1)) << 10;
                 }
             }
         } catch (Exception e) {
