@@ -36,18 +36,18 @@ import java.io.InputStream;
 import java.util.concurrent.locks.LockSupport;
 
 public final class Os {
-    public static final int FREEBSD = 4;
-    public static final int LINUX = 2;
-    public static final int DARWIN = 1;
     public static final int ARCH_AARCH64 = 1;
     public static final int ARCH_AMD64 = 2;
+    public static final int DARWIN = 1;
+    public static final int FREEBSD = 4;
+    public static final int LINUX = 2;
     public static final long PARK_NANOS_MAX = 5 * 1_000_000_000L;
     public static final int WINDOWS = 3;
     public static final int _32Bit = -2;
-    public static final int type;
-    public static final String name;
     public static final int arch;
     public static final String archName;
+    public static final String name;
+    public static final int type;
 
     private Os() {
     }
@@ -94,6 +94,8 @@ public final class Os {
     public static int forkExecWriteFd(long forkExecT) {
         return Unsafe.getUnsafe().getInt(forkExecT + 4);
     }
+
+    public static native void free(long mem);
 
     public static byte[] generateKerberosToken(CharSequence spn) throws KerberosException {
         // We use Path as a LPSZ sink here.
@@ -151,15 +153,11 @@ public final class Os {
         return type == Os.WINDOWS;
     }
 
+    public static native long malloc(long size);
+
     public static void park() {
         LockSupport.parkNanos(Os.PARK_NANOS_MAX);
     }
-
-    public static native long malloc(long size);
-
-    public static native long realloc(long mem, long size);
-
-    public static native void free(long mem);
 
     public static void pause() {
         try {
@@ -167,6 +165,8 @@ public final class Os {
         } catch (InterruptedException ignore) {
         }
     }
+
+    public static native long realloc(long mem, long size);
 
     public static int setCurrentThreadAffinity(int cpu) {
         if (cpu == -1) {
