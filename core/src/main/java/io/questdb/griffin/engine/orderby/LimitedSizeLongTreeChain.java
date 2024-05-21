@@ -83,7 +83,6 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     //  - record with max value for firstN/bottomN query
     //  - record with min value for lastN/topN query
     private long minMaxRowId = -1;
-    private long moreStableRecordRowId = -1;
 
     public LimitedSizeLongTreeChain(long keyPageSize, int keyMaxPages, long valuePageSize, int valueMaxPages, boolean isFirstN, long maxValues) {
         super(keyPageSize, keyMaxPages);
@@ -100,7 +99,6 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         this.valueChain.jumpTo(0);
 
         minMaxRowId = -1;
-        moreStableRecordRowId = -1;
         minMaxNode = -1;
         currentValues = 0;
         freeList.clear();
@@ -170,7 +168,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
 
     // important invariant:
     // when (maxValues == currentValues) then upon returning from this method the comparator left side must be set
-    // to the moreStableRecord with the max/min value
+    // to the moreStableRecord with the max/min rowId
     public void put(
             Record currentRecord,
             RecordCursor sourceCursor,
@@ -183,7 +181,6 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
 
         // if maxValues < 0 then there's no limit (unless there's more than 2^64 records, which is unlikely)
         if (maxValues == currentValues) {
-            assert moreStableRecordRowId == minMaxRowId;
             int cmp = comparator.compare(currentRecord);
 
             if (isFirstN && cmp <= 0) { // bigger than max for firstN/bottomN
@@ -215,8 +212,8 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         do {
             parent = p;
             final long r = refOf(p);
-            moreStableRecordRowId = valueChain.getLong(r);
-            sourceCursor.recordAt(moreStableRecord, moreStableRecordRowId);
+            long rowId = valueChain.getLong(r);
+            sourceCursor.recordAt(moreStableRecord, rowId);
             cmp = comparator.compare(moreStableRecord);
             if (cmp < 0) {
                 p = leftOf(p);
@@ -306,8 +303,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     private void prepareComparatorIfNeeded(RecordCursor sourceCursor, Record moreStableRecord, RecordComparator comparator) {
         if (currentValues == maxValues) {
             assert minMaxRowId != -1;
-            moreStableRecordRowId = minMaxRowId;
-            sourceCursor.recordAt(moreStableRecord, moreStableRecordRowId);
+            sourceCursor.recordAt(moreStableRecord, minMaxRowId);
             comparator.setLeft(moreStableRecord);
         }
     }
