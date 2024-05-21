@@ -73,6 +73,7 @@ public class CairoEngine implements Closeable, WriterSource {
     protected final CairoConfiguration configuration;
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
     private final CopyContext copyContext;
+    private final ConcurrentHashMap<TableToken> createTableLock = new ConcurrentHashMap<>();
     private final EngineMaintenanceJob engineMaintenanceJob;
     private final FunctionFactoryCache ffCache;
     private final MessageBusImpl messageBus;
@@ -865,6 +866,10 @@ public class CairoEngine implements Closeable, WriterSource {
         return readerPool.lock(tableToken);
     }
 
+    public boolean lockTableCreate(TableToken tableToken) {
+        return createTableLock.putIfAbsent(tableToken.getTableName(), tableToken) == null;
+    }
+
     public TableToken lockTableName(CharSequence tableName, boolean isWal) {
         int tableId = (int) getTableIdGenerator().getNextId();
         return lockTableName(tableName, tableId, isWal);
@@ -1140,6 +1145,10 @@ public class CairoEngine implements Closeable, WriterSource {
         this.snapshotAgent.setWalPurgeJobRunLock(walPurgeJobRunLock);
     }
 
+    public void unLockTableCreate(TableToken tableToken) {
+        createTableLock.remove(tableToken.getTableName(), tableToken);
+    }
+
     public void unlock(
             @SuppressWarnings("unused") SecurityContext securityContext,
             TableToken tableToken,
@@ -1297,9 +1306,13 @@ public class CairoEngine implements Closeable, WriterSource {
                     if (tableToken != null) {
                         return tableToken;
                     }
+                    Os.pause();
                     continue;
                 }
                 throw EntryUnavailableException.instance("table exists");
+            }
+            while (!lockTableCreate(tableToken)) {
+                Os.pause();
             }
             try {
                 String lockedReason = lockAll(tableToken, "createTable", true);
@@ -1336,6 +1349,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 throw th;
             } finally {
                 tableNameRegistry.unlockTableName(tableToken);
+                unLockTableCreate(tableToken);
             }
 
             getDdlListener(tableToken).onTableCreated(securityContext, tableToken);

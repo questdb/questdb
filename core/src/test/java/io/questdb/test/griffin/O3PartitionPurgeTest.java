@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
+import io.questdb.log.Log;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
@@ -41,6 +42,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
@@ -50,7 +52,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
 
     @BeforeClass
     public static void begin() {
-        purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), engine.getSnapshotAgent(), 1);
+        purgeJob = new O3PartitionPurgeJob(engine, engine.getSnapshotAgent(), 1);
     }
 
     @AfterClass
@@ -612,6 +614,54 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
 
             // Main assert here is that job runs without exceptions
             runPartitionPurgeJobs();
+        });
+    }
+
+    @Test
+    public void testTableRecreatedInBeforePartitionDirDelete() throws Exception {
+        AtomicBoolean dropTable = new AtomicBoolean();
+        Thread recreateTable = new Thread(() -> {
+            try {
+                drop("drop table tbl");
+                ddl("create table tbl as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY");
+            } catch (Throwable e) {
+                LOG.info().$("Failed to recreate table: ").$(e).$();
+            } finally {
+                Path.clearThreadLocals();
+            }
+        });
+
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean unlinkOrRemove(Path path, Log LOG) {
+                if (dropTable.get() && Utf8s.endsWithAscii(path, "1970-01-10")) {
+                    recreateTable.start();
+                    Os.sleep(50);
+                }
+                int checkedType = isSoftLink(path) ? Files.DT_LNK : Files.DT_UNKNOWN;
+                return unlinkOrRemove(path, checkedType, LOG);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            ddl("create table tbl as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY");
+
+            // This should lock partition 1970-01-10.1 to not do delete in writer
+            try (TableReader rdr = getReader("tbl")) {
+                rdr.openPartition(0);
+
+                // ooo insert
+                insert("insert into tbl select 4, '1970-01-10T07'");
+            }
+
+            dropTable.set(true);
+            purgeJob.drain(0);
+            dropTable.set(false);
+            recreateTable.join();
+
+            try (TableReader rdr = getReader("tbl")) {
+                rdr.openPartition(0);
+            }
         });
     }
 
