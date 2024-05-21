@@ -22,31 +22,12 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.conditional;
+package io.questdb.test.tools;
 
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.IPv4Function;
-import io.questdb.std.ObjList;
+import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.griffin.SqlException;
 
-public class IPv4CaseFunction extends IPv4Function implements CaseFunction {
-
-    private final ObjList<Function> args;
-    private final CaseFunctionPicker picker;
-
-    public IPv4CaseFunction(CaseFunctionPicker picker, ObjList<Function> args) {
-        super();
-        this.picker = picker;
-        this.args = args;
-    }
-
-    @Override
-    public ObjList<Function> getArgs() {
-        return args;
-    }
-
-    @Override
-    public int getIPv4(Record rec) {
-        return picker.pick(rec).getIPv4(rec);
-    }
+@FunctionalInterface
+public interface BindVariableTestSetter {
+    void assignBindVariables(BindVariableService bindVariableService) throws SqlException;
 }

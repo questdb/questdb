@@ -22,141 +22,141 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.constants;
+package io.questdb.griffin.engine.functions.conditional;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashes;
-import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.ScalarFunction;
-import io.questdb.griffin.PlanSink;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
-import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
+import org.jetbrains.annotations.Nullable;
 
-public final class NullConstant implements ConstantFunction, ScalarFunction {
+class NullCaseFunction implements CaseFunction {
+    private final ObjList<Function> args;
 
-    public static final NullConstant NULL = new NullConstant();
+    public NullCaseFunction(ObjList<Function> args) {
+        this.args = args;
+    }
 
-    private final int type;
-
-    private NullConstant() {
-        this.type = ColumnType.NULL;
+    @Override
+    public ObjList<Function> getArgs() {
+        return args;
     }
 
     @Override
     public int getArrayLength() {
-        return TableUtils.NULL_LEN;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public BinarySequence getBin(Record rec) {
-        return NullBinConstant.INSTANCE.getBin(null);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long getBinLen(Record rec) {
-        return NullBinConstant.INSTANCE.getBinLen(null);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public boolean getBool(Record rec) {
-        return BooleanConstant.FALSE.getBool(null);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public byte getByte(Record rec) {
-        return ByteConstant.ZERO.getByte(null);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public char getChar(Record rec) {
-        return CharConstant.ZERO.getChar(null);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long getDate(Record rec) {
-        return DateConstant.NULL.getDate(null);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public double getDouble(Record rec) {
-        return DoubleConstant.NULL.getDouble(null);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public float getFloat(Record rec) {
-        return FloatConstant.NULL.getFloat(null);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public byte getGeoByte(Record rec) {
-        return GeoHashes.BYTE_NULL;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public int getGeoInt(Record rec) {
-        return GeoHashes.INT_NULL;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long getGeoLong(Record rec) {
-        return GeoHashes.NULL;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public short getGeoShort(Record rec) {
-        return GeoHashes.SHORT_NULL;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public int getIPv4(Record rec) {
-        return IPv4Constant.NULL.getIPv4(null);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public int getInt(Record rec) {
-        return IntConstant.NULL.getInt(null);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long getLong(Record rec) {
-        return LongConstant.NULL.getLong(null);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long getLong128Hi(Record rec) {
-        return Numbers.LONG_NULL;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long getLong128Lo(Record rec) {
-        return Numbers.LONG_NULL;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void getLong256(Record rec, CharSink<?> sink) {
-        // intentionally left empty
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public Long256 getLong256A(Record rec) {
-        return Long256NullConstant.INSTANCE.getLong256A(null);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public Long256 getLong256B(Record rec) {
-        return Long256NullConstant.INSTANCE.getLong256B(null);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public Record getRecord(Record rec) {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -166,12 +166,12 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
 
     @Override
     public short getShort(Record rec) {
-        return ShortConstant.ZERO.getShort(null);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void getStr(Record rec, Utf16Sink utf16Sink) {
-        // intentionally left empty
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -181,7 +181,7 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
 
     @Override
     public CharSequence getStrA(Record rec) {
-        return StrConstant.NULL.getStrA(null);
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -191,7 +191,7 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
 
     @Override
     public CharSequence getStrB(Record rec) {
-        return StrConstant.NULL.getStrB(null);
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -201,7 +201,7 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
 
     @Override
     public int getStrLen(Record rec) {
-        return StrConstant.NULL.getStrLen(null);
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -211,51 +211,41 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
 
     @Override
     public CharSequence getSymbol(Record rec) {
-        return SymbolConstant.NULL.getSymbol(null);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public CharSequence getSymbolB(Record rec) {
-        return SymbolConstant.NULL.getSymbolB(null);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long getTimestamp(Record rec) {
-        return TimestampConstant.NULL.getTimestamp(null);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public int getType() {
-        return type;
+        return ColumnType.NULL;
     }
 
     @Override
     public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-        // empty
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public Utf8Sequence getVarcharA(Record rec) {
-        return null;
+    public @Nullable Utf8Sequence getVarcharA(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
-    public Utf8Sequence getVarcharB(Record rec) {
-        return null;
+    public @Nullable Utf8Sequence getVarcharB(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public int getVarcharSize(Record rec) {
-        return VarcharConstant.NULL.getVarcharSize(null);
-    }
-
-    @Override
-    public boolean isNullConstant() {
-        return true;
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.val("null");
+        throw new UnsupportedOperationException();
     }
 }

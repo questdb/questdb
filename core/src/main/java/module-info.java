@@ -30,6 +30,7 @@ open module io.questdb {
     requires transitive jdk.unsupported;
     requires static org.jetbrains.annotations;
     requires static java.management;
+    requires jdk.unsupported.desktop;
 
     uses io.questdb.griffin.FunctionFactory;
     exports io.questdb;
@@ -302,6 +303,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.rnd.RndLongCCFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndLongFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndUuidFunctionFactory,
+            io.questdb.griffin.engine.functions.rnd.RndUUIDCFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampSequenceFunctionFactory,
             io.questdb.griffin.engine.functions.long128.LongsToLong128FunctionFactory,
             io.questdb.griffin.engine.functions.long256.LongsToLong256FunctionFactory,

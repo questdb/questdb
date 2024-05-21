@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -52,43 +53,32 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
         }
 
         final Function target = args.getQuick(0);
-
         if (target.isNullConstant()) {
             return target;
         }
 
-        for (int i = 0, n = args.size(); i < n; i++) {
-            if (!allowedColumnType(args.getQuick(i).getType())) {
-                if (!args.getQuick(i).isNullConstant()) {
-                    throw SqlException.position(argPositions.getQuick(i))
-                            .put("l2price requires arguments of type `DOUBLE`, or convertible to `DOUBLE`, not `")
-                            .put(ColumnType.nameOf(args.getQuick(i).getType()))
-                            .put("`.");
-                }
-            }
-        }
+        validateColumnTypes(args, argPositions, true);
 
         final int numberOfPairs = (args.size() - 1) / 2;
-
         switch (numberOfPairs) {
             case 0:
                 throw SqlException.position(argPositions.getLast()).put("not enough arguments for l2price");
             case 1:
-                return new L2PriceFunction1(new ObjList<>(args));
+                return new L2PriceFunction1(new ObjList<>(args), argPositions);
             case 2:
-                return new L2PriceFunction2(new ObjList<>(args));
+                return new L2PriceFunction2(new ObjList<>(args), argPositions);
             case 3:
-                return new L2PriceFunction3(new ObjList<>(args));
+                return new L2PriceFunction3(new ObjList<>(args), argPositions);
             case 4:
-                return new L2PriceFunction4(new ObjList<>(args));
+                return new L2PriceFunction4(new ObjList<>(args), argPositions);
             case 5:
-                return new L2PriceFunction5(new ObjList<>(args));
+                return new L2PriceFunction5(new ObjList<>(args), argPositions);
+            default:
+                return new L2PriceFunctionN(new ObjList<>(args), argPositions);
         }
-
-        return new L2PriceFunctionN(new ObjList<>(args));
     }
 
-    private static boolean allowedColumnType(int type) {
+    private static boolean allowedColumnType(int type, boolean allowUndefined) {
         switch (type) {
             case ColumnType.BYTE:
             case ColumnType.SHORT:
@@ -97,16 +87,33 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
             case ColumnType.FLOAT:
             case ColumnType.DOUBLE:
                 return true;
+            case ColumnType.UNDEFINED:
+                return allowUndefined;
             default:
                 return false;
         }
     }
 
-    private abstract static class L2PriceBaseFunction extends DoubleFunction implements MultiArgFunction {
-        protected final ObjList<Function> args;
+    private static void validateColumnTypes(ObjList<Function> args, IntList argPositions, boolean allowUndefined) throws SqlException {
+        for (int i = 0, n = args.size(); i < n; i++) {
+            if (!allowedColumnType(args.getQuick(i).getType(), allowUndefined)) {
+                if (!args.getQuick(i).isNullConstant()) {
+                    throw SqlException.position(argPositions.getQuick(i))
+                            .put("l2price requires arguments of type `DOUBLE`, or convertible to `DOUBLE`, not `")
+                            .put(ColumnType.nameOf(args.getQuick(i).getType()))
+                            .put("`.");
+                }
+            }
+        }
+    }
 
-        public L2PriceBaseFunction(ObjList<Function> args) {
+    private abstract static class L2PriceBaseFunction extends DoubleFunction implements MultiArgFunction {
+        final IntList argPositions;
+        final ObjList<Function> args;
+
+        L2PriceBaseFunction(ObjList<Function> args, IntList argPositions) {
             this.args = args;
+            this.argPositions = argPositions;
         }
 
         @Override
@@ -118,14 +125,20 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
         public String getName() {
             return "l2price";
         }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            MultiArgFunction.super.init(symbolTableSource, executionContext);
+            validateColumnTypes(args, argPositions, false);
+        }
     }
 
     /**
      * Unrolled loop for 1 pair.
      */
     private static class L2PriceFunction1 extends L2PriceBaseFunction {
-        public L2PriceFunction1(ObjList<Function> args) {
-            super(args);
+        public L2PriceFunction1(ObjList<Function> args, IntList argPositions) {
+            super(args, argPositions);
         }
 
         @Override
@@ -145,8 +158,8 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
      * Unrolled loop for 2 pairs.
      */
     private static class L2PriceFunction2 extends L2PriceBaseFunction {
-        public L2PriceFunction2(ObjList<Function> args) {
-            super(args);
+        public L2PriceFunction2(ObjList<Function> args, IntList argPositions) {
+            super(args, argPositions);
         }
 
         @Override
@@ -173,8 +186,8 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
      * Unrolled loop for 3 pairs.
      */
     private static class L2PriceFunction3 extends L2PriceBaseFunction {
-        public L2PriceFunction3(ObjList<Function> args) {
-            super(args);
+        public L2PriceFunction3(ObjList<Function> args, IntList argPositions) {
+            super(args, argPositions);
         }
 
         @Override
@@ -210,8 +223,8 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
      * Unrolled loop for 4 pairs.
      */
     private static class L2PriceFunction4 extends L2PriceBaseFunction {
-        public L2PriceFunction4(ObjList<Function> args) {
-            super(args);
+        public L2PriceFunction4(ObjList<Function> args, IntList argPositions) {
+            super(args, argPositions);
         }
 
         @Override
@@ -257,8 +270,8 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
      * Unrolled loop for 5 pairs.
      */
     private static class L2PriceFunction5 extends L2PriceBaseFunction {
-        public L2PriceFunction5(ObjList<Function> args) {
-            super(args);
+        public L2PriceFunction5(ObjList<Function> args, IntList argPositions) {
+            super(args, argPositions);
         }
 
         @Override
@@ -313,8 +326,8 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
     }
 
     private static class L2PriceFunctionN extends L2PriceBaseFunction {
-        public L2PriceFunctionN(ObjList<Function> args) {
-            super(args);
+        public L2PriceFunctionN(ObjList<Function> args, IntList argPositions) {
+            super(args, argPositions);
         }
 
         @Override

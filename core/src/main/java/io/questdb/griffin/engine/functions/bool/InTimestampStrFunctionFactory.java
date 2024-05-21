@@ -34,7 +34,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
@@ -65,15 +64,6 @@ public class InTimestampStrFunctionFactory implements FunctionFactory {
             );
         }
         return new EqTimestampStrFunction(args.getQuick(0), rightFn);
-    }
-
-    private static void parseAndApplyIntervalEx(CharSequence seq, LongList out, int position) throws SqlException {
-        if (seq != null) {
-            parseIntervalEx(seq, 0, seq.length(), position, out, IntervalOperation.INTERSECT);
-        } else {
-            addHiLoInterval(Numbers.LONG_NULL, Numbers.LONG_NULL, IntervalOperation.INTERSECT, out);
-        }
-        applyLastEncodedIntervalEx(out);
     }
 
     private static class EqTimestampStrConstantFunction extends NegatableBooleanFunction implements UnaryFunction {
@@ -134,9 +124,9 @@ public class InTimestampStrFunctionFactory implements FunctionFactory {
                 // we are ignoring exception contents here, so we do not need the exact position
                 parseAndApplyIntervalEx(timestampAsString, intervals, 0);
             } catch (SqlException e) {
-                return false;
+                return negated;
             }
-            return negated != isInIntervals(intervals, left.getTimestamp(rec));
+            return negated != isInIntervals(intervals, ts);
         }
 
         @Override
