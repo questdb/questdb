@@ -168,6 +168,9 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         }
     }
 
+    // important invariant:
+    // when (maxValues == currentValues) then upon returning from this method the comparator left side must be set
+    // to the moreStableRecord with the max/min value
     public void put(
             Record currentRecord,
             RecordCursor sourceCursor,
@@ -198,7 +201,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
             minMaxNode = root;
             minMaxRowId = currentRecordRowId;
             currentValues++;
-            prepareForLimitCheck(sourceCursor, moreStableRecord, comparator);
+            prepareComparatorIfNeeded(sourceCursor, moreStableRecord, comparator);
             return;
         }
 
@@ -225,7 +228,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
                     refreshMinMaxNode();
                 }
                 currentValues++;
-                prepareForLimitCheck(sourceCursor, moreStableRecord, comparator);
+                prepareComparatorIfNeeded(sourceCursor, moreStableRecord, comparator);
                 return;
             }
         } while (p > -1);
@@ -241,7 +244,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         fixInsert(p);
         refreshMinMaxNode();
         currentValues++;
-        prepareForLimitCheck(sourceCursor, moreStableRecord, comparator);
+        prepareComparatorIfNeeded(sourceCursor, moreStableRecord, comparator);
     }
 
     // remove node and put on freelist (if holds only one value in chain)
@@ -300,8 +303,9 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         return previousOffset != CHAIN_END;
     }
 
-    private void prepareForLimitCheck(RecordCursor sourceCursor, Record moreStableRecord, RecordComparator comparator) {
+    private void prepareComparatorIfNeeded(RecordCursor sourceCursor, Record moreStableRecord, RecordComparator comparator) {
         if (currentValues == maxValues) {
+            assert minMaxRowId != -1;
             moreStableRecordRowId = minMaxRowId;
             sourceCursor.recordAt(moreStableRecord, moreStableRecordRowId);
             comparator.setLeft(moreStableRecord);
