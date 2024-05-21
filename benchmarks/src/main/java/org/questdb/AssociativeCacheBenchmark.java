@@ -77,42 +77,42 @@ public class AssociativeCacheBenchmark {
     }
 
     @Benchmark
-    public void testConcurrentNoMetrics_contented() {
-        Integer v = cacheNoMetrics.poll("foobar");
-        cacheNoMetrics.put("foobar", v != null ? v : 42);
-    }
-
-    @Benchmark
-    public void testConcurrentNoMetrics_uncontented(RndState rndState) {
+    public void testConcurrentNoMetrics_randomKeys(RndState rndState) {
         CharSequence k = queries[rndState.rnd.nextInt(N_QUERIES)];
         Integer v = cacheNoMetrics.poll(k);
         cacheNoMetrics.put(k, v != null ? v : 42);
     }
 
     @Benchmark
-    public void testConcurrentWithMetrics_contented() {
-        Integer v = cacheWithMetrics.poll("foobar");
-        cacheWithMetrics.put("foobar", v != null ? v : 42);
+    public void testConcurrentNoMetrics_sameKey() {
+        Integer v = cacheNoMetrics.poll(queries[0]);
+        cacheNoMetrics.put(queries[0], v != null ? v : 42);
     }
 
     @Benchmark
-    public void testConcurrentWithMetrics_uncontented(RndState rndState) {
+    public void testConcurrentWithMetrics_randomKeys(RndState rndState) {
         CharSequence k = queries[rndState.rnd.nextInt(N_QUERIES)];
         Integer v = cacheWithMetrics.poll(k);
         cacheWithMetrics.put(k, v != null ? v : 42);
     }
 
     @Benchmark
-    public void testSimpleWithMetrics_contented(RndState rndState) {
-        Integer v = rndState.localCache.poll("foobar");
-        rndState.localCache.put("foobar", v != null ? v : 42);
+    public void testConcurrentWithMetrics_sameKey() {
+        Integer v = cacheWithMetrics.poll(queries[0]);
+        cacheWithMetrics.put(queries[0], v != null ? v : 42);
     }
 
     @Benchmark
-    public void testSimpleWithMetrics_uncontented(RndState rndState) {
+    public void testSimpleWithMetrics_randomKeys(RndState rndState) {
         CharSequence k = queries[rndState.rnd.nextInt(N_QUERIES)];
         Integer v = rndState.localCache.poll(k);
         rndState.localCache.put(k, v != null ? v : 42);
+    }
+
+    @Benchmark
+    public void testSimpleWithMetrics_sameKey(RndState rndState) {
+        Integer v = rndState.localCache.poll(queries[0]);
+        rndState.localCache.put(queries[0], v != null ? v : 42);
     }
 
     @State(Scope.Thread)

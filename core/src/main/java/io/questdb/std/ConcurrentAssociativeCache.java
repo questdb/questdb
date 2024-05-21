@@ -122,7 +122,7 @@ public class ConcurrentAssociativeCache<V> implements AssociativeCache<V> {
                 if (rowKeys[i] == null) {
                     break;
                 }
-                if (Chars.equals(key, rowKeys[i])) {
+                if (rowValues[i] != null && Chars.equals(key, rowKeys[i])) {
                     value = rowValues[i];
                     rowValues[i] = null;
                     break;
@@ -161,7 +161,7 @@ public class ConcurrentAssociativeCache<V> implements AssociativeCache<V> {
                     // The value was previously cleared by poll().
                     idx = i;
                     if (Chars.equals(key, rowKeys[i])) {
-                        // That's out key, so insert and call it a day.
+                        // That's our key, so insert and call it a day.
                         rowValues[i] = value;
                         cachedGauge.inc();
                         return;
@@ -174,7 +174,7 @@ public class ConcurrentAssociativeCache<V> implements AssociativeCache<V> {
             // Shift the arrays to be able to insert to the first block.
             System.arraycopy(rowKeys, 0, rowKeys, 1, idx);
             System.arraycopy(rowValues, 0, rowValues, 1, idx);
-            // We can now insert the object.
+            // We can now insert the new object.
             rowKeys[0] = Chars.toString(key);
             rowValues[0] = value;
         }
