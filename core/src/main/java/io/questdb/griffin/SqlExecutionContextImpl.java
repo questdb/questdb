@@ -326,6 +326,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     public void with(int requestFd) {
         this.requestFd = requestFd;
+        this.cacheHit = false;
+        this.containsSecret = false;
     }
 
     public void with(BindVariableService bindVariableService) {

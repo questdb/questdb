@@ -284,16 +284,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 batchCallback.preCompile(this);
                 clear(); // we don't use normal compile here because we can't reset existing lexer
 
-                final CharSequence currentQuery;
-                try {
-                    compileInner(executionContext, query);
-                } finally {
-                    currentQuery = query.subSequence(position, goToQueryEnd());
-                }
+                // Fetch sqlText, this will move lexer pointer (state change).
+                // We try to avoid logging the entire sql batch, in case batch contains secrets
+                final CharSequence sqlText = query.subSequence(position, goToQueryEnd());
+                // re-position lexer pointer to where sqlText just began
+                lexer.backTo(position, null);
+                compileInner(executionContext, sqlText);
+                // consume residual text, such as semicolon
+                goToQueryEnd();
                 // We've to move lexer because some query handlers don't consume all tokens (e.g. SET )
                 // some code in postCompile might need full text of current query
                 try {
-                    batchCallback.postCompile(this, compiledQuery, currentQuery);
+                    batchCallback.postCompile(this, compiledQuery, sqlText);
                     recompileStale = false;
                 } catch (TableReferenceOutOfDateException e) {
                     if (retries == maxRecompileAttempts) {
@@ -1532,6 +1534,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // executor is allowed to give up on the execution and fall back to standard behaviour
         if (executor == null || compiledQuery.getType() == CompiledQuery.NONE) {
             compileUsingModel(executionContext, beginNanos);
+        } else {
+            SystemOperator.logEnd(-1, this.sqlText, executionContext, beginNanos);
         }
         final short type = compiledQuery.getType();
         if ((type == CompiledQuery.ALTER || type == CompiledQuery.UPDATE) && !executionContext.isWalApplication()) {

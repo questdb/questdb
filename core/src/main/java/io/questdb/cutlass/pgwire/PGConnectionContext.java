@@ -1982,6 +1982,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             Misc.clear(syncActions);
             freezeRecvBuffer = false;
             sendParameterDescription = false;
+            sqlExecutionContext.setCacheHit(false);
+            sqlExecutionContext.containsSecret(false);
         }
     }
 
@@ -2365,6 +2367,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void processParse(long address, long lo, long msgLimit) throws BadProtocolException, SqlException {
         sqlExecutionContext.getCircuitBreaker().resetTimer();
+        sqlExecutionContext.setCacheHit(false);
+        sqlExecutionContext.containsSecret(false);
 
         // make sure there are no left-over sync actions
         // we are starting a new iteration of the parse
