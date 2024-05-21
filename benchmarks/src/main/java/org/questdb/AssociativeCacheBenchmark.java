@@ -44,7 +44,7 @@ import java.util.concurrent.TimeUnit;
 @State(Scope.Benchmark)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
-public class ConcurrentAssociativeCacheBenchmark {
+public class AssociativeCacheBenchmark {
     private static final int N_QUERIES = 100;
     private static final LongGauge cachedGauge = new LongGaugeImpl("bench");
     private static final Counter hitCounter = new CounterImpl("bench");
@@ -53,7 +53,7 @@ public class ConcurrentAssociativeCacheBenchmark {
     private final ConcurrentAssociativeCache<Integer> cacheNoMetrics;
     private final ConcurrentAssociativeCache<Integer> cacheWithMetrics;
 
-    public ConcurrentAssociativeCacheBenchmark() {
+    public AssociativeCacheBenchmark() {
         final int cpus = Runtime.getRuntime().availableProcessors();
         cacheNoMetrics = new ConcurrentAssociativeCache<>(8 * cpus, 2 * cpus);
         cacheWithMetrics = new ConcurrentAssociativeCache<>(
@@ -67,7 +67,7 @@ public class ConcurrentAssociativeCacheBenchmark {
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
-                .include(ConcurrentAssociativeCacheBenchmark.class.getSimpleName())
+                .include(AssociativeCacheBenchmark.class.getSimpleName())
                 .warmupIterations(3)
                 .measurementIterations(3)
                 .forks(1)
