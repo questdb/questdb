@@ -40,9 +40,10 @@ import org.jetbrains.annotations.Nullable;
  * <p>
  * When an object is taken from the cache, its key is kept around. This way, when the object
  * is later returned, there is a chance that we're able to reuse the key and avoid String
- * allocation.
+ * allocation. Objects are always inserted to the first block which means that eviction
+ * in each block is FIFO.
  * <p>
- * It uses striped locking, i.e. each row is synchronized with its own lock.
+ * The cache uses striped locking, i.e. each row is synchronized with its own lock.
  */
 public class ConcurrentAssociativeCache<V> implements AssociativeCache<V> {
     private static final int MIN_BLOCKS = 1;
@@ -161,10 +162,9 @@ public class ConcurrentAssociativeCache<V> implements AssociativeCache<V> {
                     // The value was previously cleared by poll().
                     idx = i;
                     if (Chars.equals(key, rowKeys[i])) {
-                        // That's our key, so insert and call it a day.
-                        rowValues[i] = value;
-                        cachedGauge.inc();
-                        return;
+                        // That's our key, so reuse it to avoid String allocation.
+                        key = rowKeys[i];
+                        break;
                     }
                 }
             }
