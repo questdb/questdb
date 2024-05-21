@@ -46,10 +46,7 @@ import io.questdb.griffin.engine.table.AsyncFilterAtom;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
-import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Chars;
-import io.questdb.std.Misc;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.str.DirectUtf8Sink;
 import org.jetbrains.annotations.NotNull;
 
@@ -83,7 +80,13 @@ public class ServerMain implements Closeable {
             final ServerConfiguration config = bootstrap.getConfiguration();
             config.init(engine, freeOnExit);
             Unsafe.setWriterMemLimit(config.getCairoConfiguration().getWriterMemoryLimit());
-            Unsafe.setRssMemLimit(config.getCairoConfiguration().getRssMemoryLimit());
+            long configuredMemoryLimit = config.getCairoConfiguration().getRssMemoryLimit();
+            long osMemorySize = Os.getTotalSystemMemory();
+            if (configuredMemoryLimit > 0) {
+                Unsafe.setRssMemLimit(configuredMemoryLimit);
+            } else if (osMemorySize < Long.MAX_VALUE / 2) {
+                Unsafe.setRssMemLimit(osMemorySize * 2 / 3);
+            }
             freeOnExit.register(config.getFactoryProvider());
             engine.load();
         } catch (Throwable th) {

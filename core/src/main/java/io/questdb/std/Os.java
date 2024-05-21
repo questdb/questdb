@@ -24,16 +24,18 @@
 
 package io.questdb.std;
 
+import com.sun.management.OperatingSystemMXBean;
 import io.questdb.std.ex.FatalError;
 import io.questdb.std.ex.KerberosException;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
+import java.io.*;
+import java.lang.management.ManagementFactory;
 import java.util.concurrent.locks.LockSupport;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public final class Os {
     public static final int ARCH_AARCH64 = 1;
@@ -122,6 +124,10 @@ public final class Os {
 
     public static native int getEnvironmentType();
 
+    public static @Nullable OperatingSystemMXBean getOsMXBean() {
+        return ManagementFactory.getPlatformMXBean(OperatingSystemMXBean.class);
+    }
+
     public static native int getPid();
 
     /**
@@ -130,6 +136,33 @@ public final class Os {
      * @return used RSS memory in bytes
      */
     public static native long getRss();
+
+    /**
+     * Attempts to determine the total RAM available to the JVM process. There is no
+     * universally reliable way to determine this.
+     * <p>
+     * Returns `Long.MAX_VALUE` if it couldn't acquire the value from the system.
+     */
+    public static long getTotalSystemMemory() {
+        long fromMeminfo = Long.MAX_VALUE;
+        long fromMxBean = Long.MAX_VALUE;
+        try (BufferedReader r = new BufferedReader(new FileReader("/proc/meminfo"))) {
+            Pattern numRe = Pattern.compile("MemTotal\\s\\D+(\\d+).*");
+            for (String line; (line = r.readLine()) != null; ) {
+                Matcher m = numRe.matcher(line);
+                if (m.matches()) {
+                    fromMeminfo = Long.parseLong(m.group(1));
+                }
+            }
+        } catch (Exception e) {
+            // fall back to MX Bean
+        }
+        OperatingSystemMXBean mxBean = getOsMXBean();
+        if (mxBean != null) {
+            fromMxBean = mxBean.getTotalPhysicalMemorySize();
+        }
+        return Math.min(fromMeminfo, fromMxBean);
+    }
 
     @SuppressWarnings("EmptyMethod")
     public static void init() {

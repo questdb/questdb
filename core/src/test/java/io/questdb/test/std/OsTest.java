@@ -35,7 +35,11 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
+
 public class OsTest {
+
     @Test
     public void testAffinity() throws Exception {
         if (Os.arch != Os.ARCH_AARCH64 || Os.type != Os.DARWIN) {
@@ -49,7 +53,7 @@ public class OsTest {
                 threadHalt.countDown();
             }).start();
 
-            Assert.assertTrue(threadHalt.await(1, TimeUnit.SECONDS));
+            assertTrue(threadHalt.await(1, TimeUnit.SECONDS));
             Assert.assertEquals(0, result.get());
 
             Assert.assertEquals(0, Os.setCurrentThreadAffinity(-1));
@@ -61,21 +65,26 @@ public class OsTest {
         long reference = System.currentTimeMillis();
         long actual = Os.currentTimeMicros();
         long delta = actual / 1000 - reference;
-        Assert.assertTrue(delta < 200);
+        assertTrue(delta < 200);
     }
 
     @Test
     public void testCurrentTimeNanos() {
         long reference = System.currentTimeMillis();
         long actual = Os.currentTimeNanos();
-        Assert.assertTrue(actual > 0);
+        assertTrue(actual > 0);
         long delta = actual / 1_000_000 - reference;
-        Assert.assertTrue(delta < 200);
+        assertTrue(delta < 200);
     }
 
     @Test
     public void testGetRss() {
         Assert.assertNotEquals(0, Os.getRss());
+    }
+
+    @Test
+    public void testOsMxBeanAvailable() {
+        assertNotNull("OperatingSystemMXBean does not exist on this JVM", Os.getOsMXBean());
     }
 
     @Test
@@ -93,8 +102,15 @@ public class OsTest {
 
         TestUtils.await(barrier);
         t.interrupt();
-        Assert.assertTrue(doneLatch.await(10_000_000_000L));
+        assertTrue(doneLatch.await(10_000_000_000L));
         long sleepTime = System.currentTimeMillis() - time;
-        Assert.assertTrue(String.valueOf(sleepTime), sleepTime >= 1000);
+        assertTrue(String.valueOf(sleepTime), sleepTime >= 1000);
+    }
+
+    @Test
+    public void testTotalSystemMemory() {
+        long totalSystemMemory = Os.getTotalSystemMemory();
+        assertTrue("Could not determine total system memory",
+                totalSystemMemory > 0 && totalSystemMemory < (1L << 48));
     }
 }
