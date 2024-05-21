@@ -49,15 +49,11 @@ public class TypesAndSelect implements QuietCloseable {
     }
 
     public void copyTypesFrom(BindVariableService bindVariableService) {
-        for (int i = 0, n = bindVariableService.getIndexedVariableCount(); i < n; i++) {
-            types.add(bindVariableService.getFunction(i).getType());
-        }
+        AbstractTypeContainer.copyTypes(bindVariableService, types);
     }
 
     public void defineBindVariables(BindVariableService bindVariableService) throws SqlException {
-        for (int i = 0, n = types.size(); i < n; i++) {
-            bindVariableService.define(i, types.getQuick(i), 0);
-        }
+        AbstractTypeContainer.defineBindVariables(types, bindVariableService);
     }
 
     public RecordCursorFactory getFactory() {

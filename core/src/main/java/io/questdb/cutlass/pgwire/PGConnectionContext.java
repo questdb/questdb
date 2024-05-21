@@ -1247,7 +1247,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         currentCursor = Misc.free(currentCursor);
         // do not free factory, we may cache it
         currentFactory = null;
-        // we resumed the cursor send the typeAndSelect will be null
+        // we resumed the cursor send the typesAndSelect will be null
         // we do not want to overwrite cache entries and potentially
         // leak memory
         if (typesAndSelect != null) {
