@@ -42,7 +42,7 @@ public class SimpleAssociativeCache<V> implements AssociativeCache<V>, Mutable {
     private final int blocks;
     private final LongGauge cachedGauge;
     private final Counter hitCounter;
-    private final CharSequence[] keys;
+    private final String[] keys;
     private final Counter missCounter;
     private final int rowMask;
     private final int rows;
@@ -65,7 +65,7 @@ public class SimpleAssociativeCache<V> implements AssociativeCache<V>, Mutable {
         if (capacity < 0) {
             throw new OutOfMemoryError();
         }
-        this.keys = new CharSequence[capacity];
+        this.keys = new String[capacity];
         this.values = (V[]) new Object[capacity];
         this.rowMask = this.rows - 1;
         this.blockShift = Numbers.msb(this.blocks);
@@ -130,47 +130,31 @@ public class SimpleAssociativeCache<V> implements AssociativeCache<V>, Mutable {
     @Override
     public void put(@NotNull CharSequence key, @Nullable V value) {
         final int lo = lo(key);
+        V outgoingValue;
 
         if (Chars.equalsNc(key, keys[lo])) {
             // Present entry case.
-            if (values[lo] != value) {
-                if (values[lo] == null) {
-                    // The value was previously cleared by poll(), so we're inserting.
-                    cachedGauge.inc();
-                } else {
-                    // We're replacing the value with another one, no need to change the gauge.
-                    Misc.freeIfCloseable(values[lo]);
-                }
-                values[lo] = value;
+            if (values[lo] == value) {
+                return;
             }
-            return;
-        }
-
-        // New entry case.
-
-        final CharSequence outgoingKey = keys[lo + blocks - 1];
-        if (outgoingKey != null) {
-            int idx = lo + blocks - 1;
-            if (values[idx] == null) {
-                // The value for the outgoing key was previously cleared by poll(), so we're inserting.
-                cachedGauge.inc();
-            } else {
-                // We're replacing the value with another one, no need to change the gauge.
-                values[idx] = Misc.freeIfCloseable(values[idx]);
-            }
+            outgoingValue = values[lo];
         } else {
-            // The block has empty entries, so we're inserting.
-            cachedGauge.inc();
-        }
+            // New entry case.
+            outgoingValue = values[lo + blocks - 1];
 
-        System.arraycopy(keys, lo, keys, lo + 1, blocks - 1);
-        System.arraycopy(values, lo, values, lo + 1, blocks - 1);
-        if (value == null) {
-            keys[lo] = null;
-        } else {
+            System.arraycopy(keys, lo, keys, lo + 1, blocks - 1);
+            System.arraycopy(values, lo, values, lo + 1, blocks - 1);
             keys[lo] = Chars.toString(key);
         }
         values[lo] = value;
+
+        if (outgoingValue == null) {
+            // We're inserting.
+            cachedGauge.inc();
+        } else {
+            // We're replacing the value with another one, no need to change the gauge.
+            Misc.freeIfCloseable(outgoingValue);
+        }
     }
 
     private int getIndex(CharSequence key) {

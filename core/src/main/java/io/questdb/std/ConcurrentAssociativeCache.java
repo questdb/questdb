@@ -34,7 +34,15 @@ import org.jetbrains.annotations.Nullable;
 /**
  * Thread-safe cache implementation.
  * <p>
- * The cache uses striped locking, i.e. each row is synchronized with its own lock.
+ * The cache is organized in rows (think, hash table buckets), each holding a fixed number
+ * of blocks (items). A row is represented with an array of string keys and an array of
+ * cached object values. The arrays are filled left-to-right.
+ * <p>
+ * When an object is taken from the cache, its key is kept around. This way, when the object
+ * is later returned, there is a chance that we're able to reuse the key and avoid String
+ * allocation.
+ * <p>
+ * It uses striped locking, i.e. each row is synchronized with its own lock.
  */
 public class ConcurrentAssociativeCache<V> implements AssociativeCache<V> {
     private static final int MIN_BLOCKS = 1;
@@ -44,7 +52,7 @@ public class ConcurrentAssociativeCache<V> implements AssociativeCache<V> {
     private final Counter hitCounter;
     // Each row has its own array of keys.
     // Arrays are also used for locking.
-    private final ObjList<CharSequence[]> keys;
+    private final ObjList<String[]> keys;
     private final Counter missCounter;
     private final int rowMask;
     private final int rows;
@@ -67,7 +75,7 @@ public class ConcurrentAssociativeCache<V> implements AssociativeCache<V> {
         this.keys = new ObjList<>(this.rows);
         this.values = new ObjList<>(this.rows);
         for (int i = 0; i < this.rows; i++) {
-            keys.add(new CharSequence[this.blocks]);
+            keys.add(new String[this.blocks]);
             values.add((V[]) new Object[this.blocks]);
         }
         this.rowMask = this.rows - 1;
@@ -85,7 +93,7 @@ public class ConcurrentAssociativeCache<V> implements AssociativeCache<V> {
     public void close() {
         long freed = 0;
         for (int i = 0; i < rows; i++) {
-            final CharSequence[] rowKeys = keys.getQuick(i);
+            final String[] rowKeys = keys.getQuick(i);
             final V[] rowValues = values.getQuick(i);
             synchronized (rowKeys) {
                 for (int j = 0; j < blocks; j++) {
@@ -105,7 +113,7 @@ public class ConcurrentAssociativeCache<V> implements AssociativeCache<V> {
     @Override
     public V poll(@NotNull CharSequence key) {
         final int row = row(key);
-        final CharSequence[] rowKeys = keys.getQuick(row);
+        final String[] rowKeys = keys.getQuick(row);
         final V[] rowValues = values.getQuick(row);
         V value = null;
 
@@ -136,41 +144,38 @@ public class ConcurrentAssociativeCache<V> implements AssociativeCache<V> {
     @Override
     public void put(@NotNull CharSequence key, @Nullable V value) {
         final int row = row(key);
-        final CharSequence[] rowKeys = keys.getQuick(row);
+        final String[] rowKeys = keys.getQuick(row);
         final V[] rowValues = values.getQuick(row);
-        CharSequence outgoingKey;
         V outgoingValue;
 
         synchronized (rowKeys) {
-            // TODO: this logic isn't great in multi-threaded scenarios
-            if (Chars.equalsNc(key, rowKeys[0])) {
-                // Present entry case.
-                outgoingKey = key;
-                outgoingValue = rowValues[0];
-            } else {
-                // New entry case.
-                outgoingKey = rowKeys[blocks - 1];
-                outgoingValue = rowValues[blocks - 1];
-                rowValues[blocks - 1] = null;
-
-                System.arraycopy(rowKeys, 0, rowKeys, 1, blocks - 1);
-                System.arraycopy(rowValues, 0, rowValues, 1, blocks - 1);
-                rowKeys[0] = value != null ? Chars.toString(key) : null;
+            // Find a spot to place the object.
+            int idx = 0;
+            for (int i = 0; i < blocks; i++) {
+                if (rowKeys[i] == null) {
+                    idx = i;
+                    break;
+                }
+                if (rowValues[i] == null && Chars.equals(key, rowKeys[i])) {
+                    // The value for the key was previously cleared by poll(), so insert and call it a day.
+                    rowValues[i] = value;
+                    cachedGauge.inc();
+                    return;
+                }
             }
-            rowValues[0] = value;
+
+            // Insert the value to the found spot (or the very first block).
+            outgoingValue = rowValues[idx];
+            rowKeys[idx] = Chars.toString(key);
+            rowValues[idx] = value;
         }
 
-        if (outgoingKey != null) {
-            if (outgoingValue == null) {
-                // The value for the outgoing key was previously cleared by poll(), so we're inserting.
-                cachedGauge.inc();
-            } else {
-                // We're replacing the value with another one, no need to change the gauge.
-                Misc.freeIfCloseable(outgoingValue);
-            }
-        } else {
-            // The block has empty entries, so we're inserting.
+        if (outgoingValue == null) {
+            // We're inserting.
             cachedGauge.inc();
+        } else {
+            // We're replacing the value with another one, no need to change the gauge.
+            Misc.freeIfCloseable(outgoingValue);
         }
     }
 

@@ -55,10 +55,10 @@ public class ConcurrentAssociativeCacheBenchmark {
 
     public ConcurrentAssociativeCacheBenchmark() {
         final int cpus = Runtime.getRuntime().availableProcessors();
-        cacheNoMetrics = new ConcurrentAssociativeCache<>(4 * cpus, 4 * cpus);
+        cacheNoMetrics = new ConcurrentAssociativeCache<>(8 * cpus, 2 * cpus);
         cacheWithMetrics = new ConcurrentAssociativeCache<>(
-                4 * cpus,
-                4 * cpus,
+                8 * cpus,
+                2 * cpus,
                 cachedGauge,
                 hitCounter,
                 missCounter
@@ -123,8 +123,8 @@ public class ConcurrentAssociativeCacheBenchmark {
         public RndState() {
             final int cpus = Runtime.getRuntime().availableProcessors();
             this.localCache = new SimpleAssociativeCache<>(
-                    4 * cpus,
-                    4 * cpus,
+                    8 * cpus,
+                    2 * cpus,
                     cachedGauge,
                     hitCounter,
                     missCounter
@@ -135,7 +135,7 @@ public class ConcurrentAssociativeCacheBenchmark {
     static {
         Rnd rnd = new Rnd();
         for (int i = 0; i < queries.length; i++) {
-            queries[i] = Chars.toString(rnd.nextChars(16));
+            queries[i] = Chars.toString(rnd.nextChars(100));
         }
     }
 }
