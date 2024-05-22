@@ -26,7 +26,6 @@ package io.questdb.test.cairo;
 
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.cairo.vm.Vm;
@@ -355,14 +354,8 @@ public class VarcharTypeDriverTest extends AbstractTest {
             for (int z = 0; z < 10; z++) {
                 int cut = rnd.nextInt(n);
                 long actualUsedSize = VarcharTypeDriver.INSTANCE.setAppendPosition(cut, auxMem, dataMem);
-                if (cut == 0) {
-                    Assert.assertEquals(TableUtils.ESTIMATED_VAR_COL_SIZE, actualUsedSize);
-                    expectedUsedSize = 0;
-                } else {
-                    expectedUsedSize = usedSpace.getQuick(cut - 1);
-                    Assert.assertEquals(expectedUsedSize, actualUsedSize);
-                }
-
+                expectedUsedSize = (cut == 0) ? 0 : usedSpace.getQuick(cut - 1);
+                Assert.assertEquals(expectedUsedSize, actualUsedSize);
                 long expectedAuxUsedSize = VARCHAR_AUX_WIDTH_BYTES * (long) cut;
                 long expectedDataUsedSize = expectedUsedSize - expectedAuxUsedSize;
                 Assert.assertEquals(expectedAuxUsedSize, auxMem.getAppendOffset());
