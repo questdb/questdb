@@ -30,11 +30,12 @@ import io.questdb.std.ex.KerberosException;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
-import java.io.*;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.lang.management.ManagementFactory;
 import java.util.concurrent.locks.LockSupport;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 public final class Os {
     public static final int ARCH_AARCH64 = 1;
@@ -136,28 +137,6 @@ public final class Os {
             return -1;
         }
         return bean.getTotalPhysicalMemorySize();
-    }
-
-    /**
-     * Attempts to determine physical RAM size by inspecting /proc/meminfo.
-     * Only works on Linux and similar OS.
-     * <p>
-     * If the file doesn't exist or can't be parsed, returns -1.
-     */
-    public static long getMemorySizeFromMemInfo() {
-        try (BufferedReader r = new BufferedReader(new FileReader("/proc/meminfo"))) {
-            // unit is shown as kB for legacy reasons, actual unit is KB!
-            Pattern numRe = Pattern.compile("MemTotal:\\D+(\\d+) kB");
-            for (String line; (line = r.readLine()) != null; ) {
-                Matcher m = numRe.matcher(line);
-                if (m.matches()) {
-                    return Long.parseLong(m.group(1)) << 10;
-                }
-            }
-        } catch (Exception e) {
-            // Fall through to returning -1
-        }
-        return -1;
     }
 
     public static native int getPid();

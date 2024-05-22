@@ -107,11 +107,4 @@ public class OsTest {
         assertTrue("Could not obtain memory size from OperatingSystemMXBean",
                 fromMXBean > 0 && fromMXBean < (1L << 48));
     }
-
-    @Test
-    public void testSystemMemoryByMemInfo() {
-        long fromMemInfo = Os.getMemorySizeFromMemInfo();
-        assertTrue("/proc/meminfo reported an invalid value for memory size",
-                fromMemInfo >= -1 && fromMemInfo < (1L << 48));
-    }
 }
