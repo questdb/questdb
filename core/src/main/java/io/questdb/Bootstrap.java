@@ -53,6 +53,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
+import static io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory.toSizePretty;
+
 public class Bootstrap {
 
     public static final String SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION = "--use-default-log-factory-configuration";
@@ -197,10 +199,10 @@ public class Bootstrap {
         Unsafe.setWriterMemLimit(config.getCairoConfiguration().getWriterMemoryLimit());
         long rssMemoryLimit = config.getCairoConfiguration().getRssMemoryLimit();
         if (rssMemoryLimit > 0) {
-            log.advisoryW().$(String.format("Setting RSS memory limit to %,d bytes", rssMemoryLimit)).$();
+            log.advisoryW().$("Setting RSS memory limit to ").$(toSizePretty(rssMemoryLimit)).$();
             Unsafe.setRssMemLimit(rssMemoryLimit);
         } else {
-            log.errorW().$("RSS memory limit is neither configured nor could be determined automatically").$();
+            log.advisoryW().$("RSS memory limit is neither configured nor could be determined automatically").$();
         }
     }
 

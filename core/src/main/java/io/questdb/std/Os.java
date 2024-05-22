@@ -29,7 +29,6 @@ import io.questdb.std.ex.FatalError;
 import io.questdb.std.ex.KerberosException;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 import java.io.*;
 import java.lang.management.ManagementFactory;
@@ -124,27 +123,28 @@ public final class Os {
 
     public static native int getEnvironmentType();
 
-    public static @Nullable OperatingSystemMXBean getOsMXBean() {
-        return ManagementFactory.getPlatformMXBean(OperatingSystemMXBean.class);
+    /**
+     * Uses the com.sun.management.OperatingSystemMXBean to get the memory size.
+     * This report takes into account the limit set through cgroups (e.g., inside
+     * a Docker container).
+     * <p>
+     * If the MXBean doesn't exist, returns -1.
+     */
+    public static long getMemorySizeFromMXBean() {
+        OperatingSystemMXBean bean = ManagementFactory.getPlatformMXBean(OperatingSystemMXBean.class);
+        if (bean == null) {
+            return -1;
+        }
+        return bean.getTotalPhysicalMemorySize();
     }
 
-    public static native int getPid();
-
     /**
-     * Returns physical memory used by this process (Resident Set Size/Working Set Size).
-     *
-     * @return used RSS memory in bytes
-     */
-    public static native long getRss();
-
-    /**
-     * Attempts to determine the total system RAM assigned to our process. It
-     * inspects /proc/meminfo to get this info. This approach is compatible with
-     * cgroups (Docker) and will honor the limit set on the local cgroup.
+     * Attempts to determine physical RAM size by inspecting /proc/meminfo.
+     * Only works on Linux and similar OS.
      * <p>
-     * If the file doesn't exist or can't be parsed, returns `Long.MAX_VALUE`.
+     * If the file doesn't exist or can't be parsed, returns -1.
      */
-    public static long getTotalMemoryFromProcFile() {
+    public static long getMemorySizeFromMemInfo() {
         try (BufferedReader r = new BufferedReader(new FileReader("/proc/meminfo"))) {
             // unit is shown as kB for legacy reasons, actual unit is KB!
             Pattern numRe = Pattern.compile("MemTotal:\\D+(\\d+) kB");
@@ -155,10 +155,19 @@ public final class Os {
                 }
             }
         } catch (Exception e) {
-            // Fall through to returning Long.MAX_VALUE
+            // Fall through to returning -1
         }
-        return Long.MAX_VALUE;
+        return -1;
     }
+
+    public static native int getPid();
+
+    /**
+     * Returns physical memory used by this process (Resident Set Size/Working Set Size).
+     *
+     * @return used RSS memory in bytes
+     */
+    public static native long getRss();
 
     @SuppressWarnings("EmptyMethod")
     public static void init() {

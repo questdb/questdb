@@ -24,7 +24,6 @@
 
 package io.questdb.test.std;
 
-import com.sun.management.OperatingSystemMXBean;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Os;
 import io.questdb.test.tools.TestUtils;
@@ -36,7 +35,6 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 public class OsTest {
@@ -84,11 +82,6 @@ public class OsTest {
     }
 
     @Test
-    public void testOsMxBeanAvailable() {
-        assertNotNull("OperatingSystemMXBean does not exist on this JVM", Os.getOsMXBean());
-    }
-
-    @Test
     public void testSleepEnds() {
         SOCountDownLatch doneLatch = new SOCountDownLatch(1);
         CyclicBarrier barrier = new CyclicBarrier(2);
@@ -109,11 +102,16 @@ public class OsTest {
     }
 
     @Test
-    public void testTotalSystemMemory() {
-        OperatingSystemMXBean mxBean = Os.getOsMXBean();
-        assertNotNull("This JVM does not provide the OperatingSystemMXBean", mxBean);
-        long totalSystemMemory = mxBean.getTotalPhysicalMemorySize();
-        assertTrue("Could not determine total system memory",
-                totalSystemMemory > 0 && totalSystemMemory < (1L << 48));
+    public void testSystemMemoryByMXBean() {
+        long fromMXBean = Os.getMemorySizeFromMXBean();
+        assertTrue("Could not obtain memory size from OperatingSystemMXBean",
+                fromMXBean > 0 && fromMXBean < (1L << 48));
+    }
+
+    @Test
+    public void testSystemMemoryByMemInfo() {
+        long fromMemInfo = Os.getMemorySizeFromMemInfo();
+        assertTrue("/proc/meminfo reported an invalid value for memory size",
+                fromMemInfo >= -1 && fromMemInfo < (1L << 48));
     }
 }

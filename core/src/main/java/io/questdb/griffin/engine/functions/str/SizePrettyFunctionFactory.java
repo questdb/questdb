@@ -59,6 +59,12 @@ public class SizePrettyFunctionFactory implements FunctionFactory {
         }
     }
 
+    public static String toSizePretty(long size) {
+        StringSink sink = new StringSink(10);
+        toSizePretty(sink, size);
+        return sink.toString();
+    }
+
     @Override
     public String getSignature() {
         return SYMBOL + "(L)";

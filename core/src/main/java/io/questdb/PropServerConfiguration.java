@@ -24,7 +24,6 @@
 
 package io.questdb;
 
-import com.sun.management.OperatingSystemMXBean;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.http.*;
@@ -42,6 +41,7 @@ import io.questdb.cutlass.text.CsvFileIndexer;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
 import io.questdb.log.Log;
+import io.questdb.log.LogRecord;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.*;
@@ -66,6 +66,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
 
 import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.str;
+import static io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory.toSizePretty;
 
 public class PropServerConfiguration implements ServerConfiguration {
 
@@ -1302,6 +1303,45 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.posthogApiKey = getString(properties, env, PropertyKey.POSTHOG_API_KEY, null);
     }
 
+    public static long resolveRssLimitDefault(Log log, long fromMxBean, long fromMemInfo) {
+        assert fromMxBean >= -1 : "Os.getMemorySizeFromMXBean() reported negative memory size";
+        assert fromMemInfo >= -1 : "Os.getMemorySizeFromMemInfo() reported negative memory size";
+
+        LogRecord msg = log.advisoryW().$(String.format(
+                "\nSystem RAM size:\n" +
+                        " - reported by OperatingSystemMXBean: %10s\n" +
+                        " - reported by /proc/meminfo:         %10s\n",
+                fromMxBean != -1 ? toSizePretty(fromMxBean) : "<N/A>",
+                fromMemInfo != -1 ? toSizePretty(fromMemInfo) : "<N/A>"
+        ));
+        if (fromMxBean == -1 ^ fromMemInfo == -1) {
+            long limit = Math.max(fromMemInfo, fromMxBean) / 3 * 2;
+            msg.$("Default RSS limit = ").$(toSizePretty(limit)).$();
+            return limit;
+        }
+        if (fromMxBean == -1) {
+            // fromMemInfo == -1 as well, otherwise the preceding branch would be taken
+            msg.$("Could not determine total system RAM, automatic RSS limit disabled").$();
+            return 0;
+        }
+        // At this point we know both techniques reported a valid number. Coalesce them.
+        long smallAmount = 10L << 20; // 10 MiB
+        if (fromMxBean <= fromMemInfo - smallAmount) {
+            // This should indicate that we are in a cgroups-based container with a RAM limit.
+            // fromMemInfo usually reports physical RAM, and fromMxBean includes the cgroups limit.
+            // Take almost all the cgroups-limited RAM.
+            long limit = Math.min(fromMxBean, Math.max(smallAmount, fromMxBean - smallAmount));
+            msg.$("Default RSS limit = ").$(toSizePretty(limit)).$();
+            return limit;
+        }
+        // At this point, fromMxBean is either close to fromMemInfo, or even larger.
+        // Seeing a larger value is unexpected, but we won't complain in the log.
+        // Let's trust the MBean and take two thirds of it.
+        long limit = fromMxBean / 3 * 2;
+        msg.$("Default RSS limit = ").$(toSizePretty(limit)).$();
+        return limit;
+    }
+
     public static String rootSubdir(CharSequence dbRoot, CharSequence subdir) {
         if (dbRoot != null) {
             int len = dbRoot.length();
@@ -1391,17 +1431,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     private long detectRssLimitDefault() {
-        OperatingSystemMXBean mxBean = Os.getOsMXBean();
-        if (mxBean != null) {
-            long totalMemory = mxBean.getTotalPhysicalMemorySize();
-            long rssLimitDefault = totalMemory / 3 * 2;
-            log.advisoryW().$(String.format(
-                    "Total system RAM: %,d bytes => default RSS limit = %,d bytes", totalMemory, rssLimitDefault
-            )).$();
-            return rssLimitDefault;
-        }
-        log.advisoryW().$("Could not determine total system RAM, automatic RSS limit disabled").$();
-        return 0;
+        long fromMxBean = Os.getMemorySizeFromMXBean();
+        long fromMemInfo = Os.getMemorySizeFromMemInfo();
+        return resolveRssLimitDefault(log, fromMxBean, fromMemInfo);
     }
 
     private int[] getAffinity(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, int workerCount) throws ServerConfigurationException {
