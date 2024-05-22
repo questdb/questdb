@@ -176,6 +176,18 @@ public interface ColumnTypeDriver {
      */
     long setAppendAuxMemAppendPosition(MemoryMA auxMem, long rowCount);
 
+    /**
+     * Sets the append position in both the auxiliary and data vectors.
+     * <p>
+     * <strong>Warning:</strong> The expected usage of the returned value is to <strong>estimate</strong> the average size of a record.
+     * When a table is empty (i.e., the position is 0), there is no data available to estimate the size of a record, so this method returns
+     * a fixed constant instead of 0. Therefore, it should not be relied upon for precise calculations, such as truncating buffers, etc.
+     *
+     * @param pos     the position to set
+     * @param auxMem  the auxiliary memory
+     * @param dataMem the data memory
+     * @return the sum of bytes used in entries up to the specified position, or a fixed constant if the position is 0.
+     */
     long setAppendPosition(long pos, MemoryMA auxMem, MemoryMA dataMem);
 
     void setDataVectorEntriesToNull(long dataMemAddr, long rowCount);
