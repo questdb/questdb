@@ -96,29 +96,6 @@ import static org.junit.Assert.*;
 @SuppressWarnings("SqlNoDataSourceInspection")
 public class PGJobContextTest extends BasePGTest {
 
-    public static final int CONN_AWARE_EXTENDED_BINARY = 4;
-    public static final int CONN_AWARE_EXTENDED_CACHED_BINARY = 64;
-    public static final int CONN_AWARE_EXTENDED_CACHED_TEXT = 128;
-    public static final int CONN_AWARE_EXTENDED_PREPARED_BINARY = 16;
-    public static final int CONN_AWARE_EXTENDED_PREPARED_TEXT = 32;
-    public static final int CONN_AWARE_EXTENDED_TEXT = 8;
-    public static final int CONN_AWARE_EXTENDED_ALL = CONN_AWARE_EXTENDED_BINARY
-            | CONN_AWARE_EXTENDED_TEXT
-            | CONN_AWARE_EXTENDED_PREPARED_BINARY
-            | CONN_AWARE_EXTENDED_PREPARED_TEXT
-            | CONN_AWARE_EXTENDED_CACHED_BINARY
-            | CONN_AWARE_EXTENDED_CACHED_TEXT;
-    public static final int CONN_AWARE_SIMPLE_BINARY = 1;
-    public static final int CONN_AWARE_SIMPLE_TEXT = 2;
-    public static final int CONN_AWARE_ALL =
-            CONN_AWARE_SIMPLE_BINARY
-                    | CONN_AWARE_SIMPLE_TEXT
-                    | CONN_AWARE_EXTENDED_BINARY
-                    | CONN_AWARE_EXTENDED_TEXT
-                    | CONN_AWARE_EXTENDED_PREPARED_BINARY
-                    | CONN_AWARE_EXTENDED_PREPARED_TEXT
-                    | CONN_AWARE_EXTENDED_CACHED_BINARY
-                    | CONN_AWARE_EXTENDED_CACHED_TEXT;
     /**
      * When set to true, tests or sections of tests that are don't work with the WAL are skipped.
      */
@@ -10145,75 +10122,6 @@ create table tab as (
                     assertResultSet(expected, sink, rs);
                 }
             }
-        }
-    }
-
-    private void assertWithPgServer(long bits, ConnectionAwareRunnable runnable) throws Exception {
-        assertWithPgServer(bits, Long.MAX_VALUE, runnable);
-    }
-
-    private void assertWithPgServer(long bits, long queryTimeout, ConnectionAwareRunnable runnable) throws Exception {
-        if ((bits & CONN_AWARE_SIMPLE_BINARY) == CONN_AWARE_SIMPLE_BINARY) {
-            assertWithPgServer(Mode.SIMPLE, true, runnable, -2, queryTimeout);
-            assertWithPgServer(Mode.SIMPLE, true, runnable, -1, queryTimeout);
-        }
-
-        if ((bits & CONN_AWARE_SIMPLE_TEXT) == CONN_AWARE_SIMPLE_TEXT) {
-            assertWithPgServer(Mode.SIMPLE, false, runnable, -2, queryTimeout);
-            assertWithPgServer(Mode.SIMPLE, false, runnable, -1, queryTimeout);
-        }
-
-        if ((bits & CONN_AWARE_EXTENDED_BINARY) == CONN_AWARE_EXTENDED_BINARY) {
-            assertWithPgServer(Mode.EXTENDED, true, runnable, -2, queryTimeout);
-            assertWithPgServer(Mode.EXTENDED, true, runnable, -1, queryTimeout);
-        }
-
-        if ((bits & CONN_AWARE_EXTENDED_TEXT) == CONN_AWARE_EXTENDED_TEXT) {
-            assertWithPgServer(Mode.EXTENDED, false, runnable, -2, queryTimeout);
-            assertWithPgServer(Mode.EXTENDED, false, runnable, -1, queryTimeout);
-        }
-
-        if ((bits & CONN_AWARE_EXTENDED_PREPARED_BINARY) == CONN_AWARE_EXTENDED_PREPARED_BINARY) {
-            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, true, runnable, -2, queryTimeout);
-            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, true, runnable, -1, queryTimeout);
-        }
-
-        if ((bits & CONN_AWARE_EXTENDED_PREPARED_TEXT) == CONN_AWARE_EXTENDED_PREPARED_TEXT) {
-            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, false, runnable, -2, queryTimeout);
-            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, false, runnable, -1, queryTimeout);
-        }
-
-        if ((bits & CONN_AWARE_EXTENDED_CACHED_BINARY) == CONN_AWARE_EXTENDED_CACHED_BINARY) {
-            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, true, runnable, -2, queryTimeout);
-            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, true, runnable, -1, queryTimeout);
-        }
-
-        if ((bits & CONN_AWARE_EXTENDED_CACHED_TEXT) == CONN_AWARE_EXTENDED_CACHED_TEXT) {
-            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, false, runnable, -2, queryTimeout);
-            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, false, runnable, -1, queryTimeout);
-        }
-    }
-
-    private void assertWithPgServer(Mode mode, boolean binary, ConnectionAwareRunnable runnable, int prepareThreshold, long queryTimeout) throws Exception {
-        LOG.info().$("asserting PG Wire server [mode=").$(mode)
-                .$(", binary=").$(binary)
-                .$(", prepareThreshold=").$(prepareThreshold)
-                .I$();
-        super.setUp();
-        try {
-            assertMemoryLeak(() -> {
-                try (
-                        final PGWireServer server = createPGServer(2, queryTimeout);
-                        WorkerPool workerPool = server.getWorkerPool()
-                ) {
-                    workerPool.start(LOG);
-                    try (final Connection connection = getConnection(mode, server.getPort(), binary, prepareThreshold)) {
-                        runnable.run(connection, binary, mode, server.getPort());
-                    }
-                }
-            });
-        } finally {
-            super.tearDown();
         }
     }
 

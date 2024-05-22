@@ -34,7 +34,7 @@ import java.sql.ResultSet;
 
 import static io.questdb.cairo.sql.SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
 
-public class PGFunctionsTest extends BasePGTest {
+public class PGMemoryLimitTest extends BasePGTest {
 
     @Test
     public void testListTablesDoesntLeakMetaFds() throws Exception {
