@@ -51,12 +51,10 @@ public abstract class AbstractTypeContainer<T extends AbstractTypeContainer<?>> 
     }
 
     public void defineBindVariables(BindVariableService bindVariableService) throws SqlException {
-        for (int i = 0, n = types.size(); i < n; i++) {
-            bindVariableService.define(i, types.getQuick(i), 0);
-        }
+        defineBindVariables(types, bindVariableService);
     }
 
-    void copyTypesFrom(BindVariableService bindVariableService) {
+    static void copyTypes(BindVariableService bindVariableService, IntList types) {
         for (int i = 0, n = bindVariableService.getIndexedVariableCount(); i < n; i++) {
             Function func = bindVariableService.getFunction(i);
             // For bind variable find in vararg parameters functions are not
@@ -68,5 +66,15 @@ public abstract class AbstractTypeContainer<T extends AbstractTypeContainer<?>> 
                 types.add(ColumnType.UNDEFINED);
             }
         }
+    }
+
+    static void defineBindVariables(IntList types, BindVariableService bindVariableService) throws SqlException {
+        for (int i = 0, n = types.size(); i < n; i++) {
+            bindVariableService.define(i, types.getQuick(i), 0);
+        }
+    }
+
+    protected void copyTypesFrom(BindVariableService bindVariableService) {
+        copyTypes(bindVariableService, types);
     }
 }

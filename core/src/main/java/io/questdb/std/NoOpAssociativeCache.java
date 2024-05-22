@@ -28,15 +28,27 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Cache for externally created objects, e.g. {@link io.questdb.cairo.sql.RecordCursorFactory}.
- * <p>
- * Note: implementations are not necessarily thread-safe.
+ * No-op cache implementation. It doesn't cache anything and simply closes given objects.
  */
-public interface AssociativeCache<V> extends QuietCloseable {
+public class NoOpAssociativeCache<V> implements AssociativeCache<V> {
 
-    int capacity();
+    @Override
+    public int capacity() {
+        return 0;
+    }
 
-    V poll(@NotNull CharSequence key);
+    @Override
+    public void close() {
+        // no-op
+    }
 
-    void put(@NotNull CharSequence key, @Nullable V value);
+    @Override
+    public V poll(@NotNull CharSequence key) {
+        return null;
+    }
+
+    @Override
+    public void put(@NotNull CharSequence key, @Nullable V value) {
+        Misc.freeIfCloseable(value);
+    }
 }
