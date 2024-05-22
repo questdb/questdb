@@ -34,7 +34,9 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class GroupByLongHashSetTest extends AbstractCairoTest {
+import java.util.Set;
+
+public class GroupByLongHashSetFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testFuzzWithLongNullAsNoKeyValue() throws Exception {
@@ -91,12 +93,15 @@ public class GroupByLongHashSetTest extends AbstractCairoTest {
                 set.setAllocator(allocator);
                 set.of(0);
 
+                Set<Long> referenceSet = new java.util.HashSet<>();
                 for (int i = 0; i < N; i++) {
-                    set.add(rnd.nextPositiveLong() + 1);
+                    long val = rnd.nextPositiveLong() + 1;
+                    set.add(val);
+                    referenceSet.add(val);
                 }
 
-                Assert.assertEquals(N, set.size());
-                Assert.assertTrue(set.capacity() >= N);
+                Assert.assertEquals(referenceSet.size(), set.size());
+                Assert.assertTrue(set.capacity() >= referenceSet.size());
 
                 rnd.reset(seed0, seed1);
 
@@ -107,11 +112,13 @@ public class GroupByLongHashSetTest extends AbstractCairoTest {
                 set.of(0);
                 rnd.reset(seed0, seed1);
 
+                referenceSet.clear();
                 for (int i = 0; i < N; i++) {
                     long val = rnd.nextPositiveLong() + 1;
                     long index = set.keyIndex(val);
-                    Assert.assertTrue(index >= 0);
+                    Assert.assertTrue(index >= 0 || referenceSet.contains(val));
                     set.addAt(index, val);
+                    referenceSet.add(val);
                 }
             }
         });
