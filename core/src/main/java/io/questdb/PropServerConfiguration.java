@@ -396,7 +396,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long writerDataIndexKeyAppendPageSize;
     private final long writerDataIndexValueAppendPageSize;
     private final long writerFileOpenOpts;
-    private final long writerMemoryLimit;
     private final long writerMiscAppendPageSize;
     private final boolean writerMixedIOEnabled;
     private final int writerTickRowsCountMod;
@@ -580,7 +579,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         boolean configValidationStrict = getBoolean(properties, env, PropertyKey.CONFIG_VALIDATION_STRICT, false);
         validateProperties(properties, configValidationStrict);
 
-        this.writerMemoryLimit = getLongSize(properties, env, PropertyKey.WRITER_MEMORY_LIMIT, 0);
         this.rssMemoryLimit = getLongSize(properties, env, PropertyKey.RSS_MEMORY_LIMIT, detectRssLimitDefault());
         this.isReadOnlyInstance = getBoolean(properties, env, PropertyKey.READ_ONLY_INSTANCE, false);
         this.cairoTableRegistryAutoReloadFrequency = getLong(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY, 500);

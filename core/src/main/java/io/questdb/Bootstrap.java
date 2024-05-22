@@ -114,7 +114,10 @@ public class Bootstrap {
         log = LogFactory.getLog(LOG_NAME);
 
         // report copyright and architecture
-        log.advisoryW().$(buildInformation.getSwName()).$(' ').$(buildInformation.getSwVersion()).$(". Copyright (C) 2014-").$(Dates.getYear(System.currentTimeMillis())).$(", all rights reserved.").$();
+        log.advisoryW()
+                .$(buildInformation.getSwName()).$(' ').$(buildInformation.getSwVersion())
+                .$(". Copyright (C) 2014-").$(Dates.getYear(System.currentTimeMillis()))
+                .$(", all rights reserved.").$();
         boolean isOsSupported = true;
         switch (Os.type) {
             case Os.WINDOWS:
@@ -196,14 +199,8 @@ public class Bootstrap {
             metrics = Metrics.disabled();
             log.advisoryW().$("Metrics are disabled, health check endpoint will not consider unhandled errors").$();
         }
+        Unsafe.setRssMemLimit(config.getMemoryConfiguration().getRamUsageLimit());
 
-        long writerMemoryLimit = config.getCairoConfiguration().getWriterMemoryLimit();
-        logValueOrUnlimited("TableWriter", writerMemoryLimit);
-        Unsafe.setWriterMemLimit(writerMemoryLimit);
-
-        long rssMemoryLimit = config.getCairoConfiguration().getRssMemoryLimit();
-        logValueOrUnlimited("RSS", rssMemoryLimit);
-        Unsafe.setRssMemLimit(rssMemoryLimit);
     }
 
     public static String[] getServerMainArgs(CharSequence root) {
@@ -505,11 +502,6 @@ public class Bootstrap {
         extractConfDir(buffer);
     }
 
-    private void logValueOrUnlimited(String limitName, long limitValue) {
-        log.advisoryW().$("Setting ").$(limitName).$(" memory limit to ")
-                .$(limitValue != 0 ? toSizePretty(limitValue) : "0 (unlimited)").$();
-    }
-
     private void reportValidateConfig() {
         final boolean httpEnabled = config.getHttpServerConfiguration().isEnabled();
         final boolean httpReadOnly = config.getHttpServerConfiguration().getHttpContextConfiguration().readOnlySecurityContext();
@@ -518,6 +510,7 @@ public class Bootstrap {
         final boolean pgReadOnly = config.getPGWireConfiguration().readOnlySecurityContext();
         final String pgReadOnlyHint = pgEnabled && pgReadOnly ? " [read-only]" : "";
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
+
         log.advisoryW().$("Config:").$();
         log.advisoryW().$(" - http.enabled : ").$(httpEnabled).$(httpReadOnlyHint).$();
         log.advisoryW().$(" - tcp.enabled  : ").$(config.getLineTcpReceiverConfiguration().isEnabled()).$();
@@ -553,6 +546,11 @@ public class Bootstrap {
                     break;
             }
         }
+        MemoryConfiguration ramConfig = config.getMemoryConfiguration();
+        log.advisoryW().$(" - system RAM: ").$(toSizePretty(ramConfig.getTotalSystemMemory())).$();
+        long ramUsageLimit = ramConfig.getRamUsageLimit();
+        log.advisoryW().$(" - RAM usage limit: ")
+                .$(ramUsageLimit != 0 ? toSizePretty(ramUsageLimit) : "0 (unlimited)").$();
     }
 
     private void verifyFileLimits() {

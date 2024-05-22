@@ -1041,11 +1041,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getWriterMemoryLimit() {
-        return 0;
-    }
-
-    @Override
     public int getWriterTickRowsCountMod() {
         return 1024 - 1;
     }
