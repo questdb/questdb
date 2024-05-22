@@ -196,14 +196,24 @@ public class Bootstrap {
             metrics = Metrics.disabled();
             log.advisoryW().$("Metrics are disabled, health check endpoint will not consider unhandled errors").$();
         }
-        Unsafe.setWriterMemLimit(config.getCairoConfiguration().getWriterMemoryLimit());
-        long rssMemoryLimit = config.getCairoConfiguration().getRssMemoryLimit();
-        if (rssMemoryLimit > 0) {
-            log.advisoryW().$("Setting RSS memory limit to ").$(toSizePretty(rssMemoryLimit)).$();
-            Unsafe.setRssMemLimit(rssMemoryLimit);
+
+        long writerMemoryLimit = config.getCairoConfiguration().getWriterMemoryLimit();
+        LogRecord msg = log.advisoryW().$("Setting TableWriter memory limit to ");
+        if (writerMemoryLimit != 0) {
+            msg.$(toSizePretty(writerMemoryLimit)).$();
         } else {
-            log.advisoryW().$("RSS memory limit is neither configured nor could be determined automatically").$();
+            msg.$("0 (unlimited)").$();
         }
+        Unsafe.setWriterMemLimit(writerMemoryLimit);
+
+        long rssMemoryLimit = config.getCairoConfiguration().getRssMemoryLimit();
+        msg = log.advisoryW().$("Setting RSS memory limit to ");
+        if (rssMemoryLimit != 0) {
+            msg.$(toSizePretty(rssMemoryLimit)).$();
+        } else {
+            msg.$("0 (unlimited)").$();
+        }
+        Unsafe.setRssMemLimit(rssMemoryLimit);
     }
 
     public static String[] getServerMainArgs(CharSequence root) {
