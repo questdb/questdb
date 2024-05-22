@@ -26,7 +26,7 @@ package io.questdb.test.griffin.engine.groupby;
 
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocatorArena;
-import io.questdb.griffin.engine.groupby.GroupByIntHashSet;
+import io.questdb.griffin.engine.groupby.GroupByLongHashSet;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
@@ -34,11 +34,13 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class GroupByIntHashSetTest extends AbstractCairoTest {
+import java.util.Set;
+
+public class GroupByLongHashSetFuzzTest extends AbstractCairoTest {
 
     @Test
-    public void testFuzzWithIntNullAsNoKeyValue() throws Exception {
-        testFuzz(Numbers.INT_NULL);
+    public void testFuzzWithLongNullAsNoKeyValue() throws Exception {
+        testFuzz(Numbers.LONG_NULL);
     }
 
     @Test
@@ -50,10 +52,10 @@ public class GroupByIntHashSetTest extends AbstractCairoTest {
     public void testMerge() throws Exception {
         assertMemoryLeak(() -> {
             try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
-                GroupByIntHashSet setA = new GroupByIntHashSet(16, 0.5, -1);
+                GroupByLongHashSet setA = new GroupByLongHashSet(16, 0.5, -1);
                 setA.setAllocator(allocator);
                 setA.of(0);
-                GroupByIntHashSet setB = new GroupByIntHashSet(16, 0.9, -1);
+                GroupByLongHashSet setB = new GroupByLongHashSet(16, 0.9, -1);
                 setB.setAllocator(allocator);
                 setB.of(0);
 
@@ -80,38 +82,43 @@ public class GroupByIntHashSetTest extends AbstractCairoTest {
         });
     }
 
-    private void testFuzz(int noKeyValue) throws Exception {
+    private void testFuzz(long noKeyValue) throws Exception {
         assertMemoryLeak(() -> {
             final int N = 1000;
             final Rnd rnd = TestUtils.generateRandom(LOG);
             final long seed0 = rnd.getSeed0();
             final long seed1 = rnd.getSeed1();
             try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
-                GroupByIntHashSet set = new GroupByIntHashSet(16, 0.7, noKeyValue);
+                GroupByLongHashSet set = new GroupByLongHashSet(16, 0.7, noKeyValue);
                 set.setAllocator(allocator);
                 set.of(0);
 
+                Set<Long> referenceSet = new java.util.HashSet<>();
                 for (int i = 0; i < N; i++) {
-                    set.add(rnd.nextPositiveInt());
+                    long val = rnd.nextPositiveLong() + 1;
+                    set.add(val);
+                    referenceSet.add(val);
                 }
 
-                Assert.assertEquals(N, set.size());
-                Assert.assertTrue(set.capacity() >= N);
+                Assert.assertEquals(referenceSet.size(), set.size());
+                Assert.assertTrue(set.capacity() >= referenceSet.size());
 
                 rnd.reset(seed0, seed1);
 
                 for (int i = 0; i < N; i++) {
-                    Assert.assertTrue(set.keyIndex(rnd.nextPositiveInt()) < 0);
+                    Assert.assertTrue(set.keyIndex(rnd.nextPositiveLong() + 1) < 0);
                 }
 
                 set.of(0);
                 rnd.reset(seed0, seed1);
 
+                referenceSet.clear();
                 for (int i = 0; i < N; i++) {
-                    int val = rnd.nextPositiveInt();
+                    long val = rnd.nextPositiveLong() + 1;
                     long index = set.keyIndex(val);
-                    Assert.assertTrue(index >= 0);
+                    Assert.assertTrue(index >= 0 || referenceSet.contains(val));
                     set.addAt(index, val);
+                    referenceSet.add(val);
                 }
             }
         });
