@@ -39,8 +39,6 @@ public interface ServerConfiguration {
 
     CairoConfiguration getCairoConfiguration();
 
-    PublicPassthroughConfiguration getPublicPassthroughConfiguration();
-
     FactoryProvider getFactoryProvider();
 
     HttpMinServerConfiguration getHttpMinServerConfiguration();
@@ -56,6 +54,8 @@ public interface ServerConfiguration {
     MetricsConfiguration getMetricsConfiguration();
 
     PGWireConfiguration getPGWireConfiguration();
+
+    PublicPassthroughConfiguration getPublicPassthroughConfiguration();
 
     default String getReleaseType() {
         return OSS;

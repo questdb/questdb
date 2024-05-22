@@ -233,10 +233,12 @@ public class WorkerPoolManagerTest {
             }
 
             @Override
-            public PublicPassthroughConfiguration getPublicPassthroughConfiguration() { return null; }
+            public LineUdpReceiverConfiguration getLineUdpReceiverConfiguration() {
+                return null;
+            }
 
             @Override
-            public LineUdpReceiverConfiguration getLineUdpReceiverConfiguration() {
+            public MemoryConfiguration getMemoryConfiguration() {
                 return null;
             }
 
@@ -247,6 +249,11 @@ public class WorkerPoolManagerTest {
 
             @Override
             public PGWireConfiguration getPGWireConfiguration() {
+                return null;
+            }
+
+            @Override
+            public PublicPassthroughConfiguration getPublicPassthroughConfiguration() {
                 return null;
             }
 

@@ -341,6 +341,8 @@ public interface CairoConfiguration {
 
     int getSampleByIndexSearchPageSize();
 
+    long getSequencerCheckInterval();
+
     boolean getSimulateCrashEnabled();
 
     /**
@@ -519,8 +521,6 @@ public interface CairoConfiguration {
     int getWalMaxSegmentFileDescriptorsCache();
 
     long getWalPurgeInterval();
-
-    long getSequencerCheckInterval();
 
     default int getWalPurgeWaitBeforeDelete() {
         return 0;

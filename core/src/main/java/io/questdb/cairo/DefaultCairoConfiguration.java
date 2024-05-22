@@ -555,6 +555,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getSequencerCheckInterval() {
+        return 10_000;
+    }
+
+    @Override
     public boolean getSimulateCrashEnabled() {
         return false;
     }
@@ -954,11 +959,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getWalPurgeInterval() {
         return 30_000;
-    }
-
-    @Override
-    public long getSequencerCheckInterval() {
-        return 10_000;
     }
 
     @Override

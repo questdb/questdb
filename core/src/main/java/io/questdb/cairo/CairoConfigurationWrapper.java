@@ -556,6 +556,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getSequencerCheckInterval() {
+        return getDelegate().getSequencerCheckInterval();
+    }
+
+    @Override
     public boolean getSimulateCrashEnabled() {
         return getDelegate().getSimulateCrashEnabled();
     }
@@ -953,11 +958,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public long getWalPurgeInterval() {
         return getDelegate().getWalPurgeInterval();
-    }
-
-    @Override
-    public long getSequencerCheckInterval() {
-        return getDelegate().getSequencerCheckInterval();
     }
 
     @Override
