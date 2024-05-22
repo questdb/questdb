@@ -56,7 +56,7 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
         this.allocatorType = allocatorType;
     }
 
-    @Parameterized.Parameters(name = "{0}-{1}")
+    @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
                 {AllocatorType.THREAD_SAFE},
@@ -303,14 +303,19 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
         };
         assertMemoryLeak(() -> {
             try (GroupByAllocator allocator = createAllocator(config)) {
-                ObjList<Thread> threads = new ObjList<>();
-                int threadCount = 10;
-                long[] ptrs = new long[threadCount];
+                final int threadCount = 8;
+
+                final AtomicInteger errors = new AtomicInteger();
+                final CyclicBarrier barrier = new CyclicBarrier(threadCount);
+                final ObjList<Thread> threads = new ObjList<>();
+                final long[] ptrs = new long[threadCount];
                 for (int t = 0; t < threadCount; t++) {
                     int threadId = t;
                     Thread thread = new Thread(() -> {
                         int size = M;
                         try {
+                            barrier.await();
+
                             long ptr = allocator.malloc(size);
                             // Touch the first byte to make sure the memory is allocated.
                             Unsafe.getUnsafe().putByte(ptr, (byte) threadId);
@@ -339,6 +344,7 @@ public class GroupByAllocatorTest extends AbstractCairoTest {
                         } catch (Throwable th) {
                             ptrs[threadId] = -1;
                             th.printStackTrace();
+                            errors.incrementAndGet();
                         }
                     });
                     threads.add(thread);

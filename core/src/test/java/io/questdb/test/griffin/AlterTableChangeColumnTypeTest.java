@@ -32,10 +32,7 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.NumericException;
-import io.questdb.std.Rnd;
+import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8String;
@@ -121,8 +118,8 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
     @Test
     public void testChangeFloatToDouble() throws Exception {
+        assumeWal();
         assertMemoryLeak(() -> {
-            assumeWal();
             ddl("create table x (ts timestamp, col float) timestamp(ts) partition by day wal", sqlExecutionContext);
             insert("insert into x values('2024-05-14T16:00:00.000000Z', 0.0)", sqlExecutionContext);
             insert("insert into x values('2024-05-14T16:00:01.000000Z', 0.1)", sqlExecutionContext);
@@ -756,6 +753,46 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     public void testNewTypeMissing() throws Exception {
         assumeNonWal();
         assertFailure("alter table x alter column c type", 33, "column type expected");
+    }
+
+    @Test
+    public void testShouldTruncateConvertedColumns() throws Exception {
+        assumeNonWal();
+        assertMemoryLeak(() -> {
+            // Create table with many partitions
+            ddl(
+                    "create table x as (" +
+                            "select" +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 72000000 timestamp," +
+                            " x," +
+                            " rnd_str(5,1024,2) c" +
+                            " from long_sequence(1000)" +
+                            ") timestamp (timestamp) PARTITION BY HOUR BYPASS WAL"
+            );
+
+            // One each platform the table size can be slightly different, query the size from QuestDB
+            getFirstRowFirstColumn("select sum(diskSize) from table_partitions('x')", sink);
+            long initialSize = Numbers.parseLong(sink);
+
+            // 5-15Mb approx
+            Assert.assertTrue(initialSize > 5E6 && initialSize < 15E6);
+
+            // Test the size isn't ballooned after the conversion, it's no more than 25% larger than the initial size
+            ddl("alter table x alter column c type varchar", sqlExecutionContext);
+            assertSql("column\ntrue\n", "select sum(diskSize) < " + (initialSize * 1.25) + " from table_partitions('x')");
+
+            // Test the size back to the original
+            ddl("alter table x alter column c type string", sqlExecutionContext);
+            assertSql("sum\n" + initialSize + "\n", "select sum(diskSize) from table_partitions('x')");
+
+            // Test the size isn't ballooned after the conversion, it's no more than 50% larger than the initial size
+            ddl("alter table x alter column x type string", sqlExecutionContext);
+            assertSql("column\ntrue\n", "select sum(diskSize) < " + (initialSize * 1.5) + " from table_partitions('x')");
+
+            // Test the size back to the original
+            ddl("alter table x alter column x type int", sqlExecutionContext);
+            assertSql("sum\n" + initialSize + "\n", "select sum(diskSize) from table_partitions('x')");
+        });
     }
 
     @Test

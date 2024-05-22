@@ -260,17 +260,12 @@ public class Services {
                 configuration,
                 cairoEngine,
                 workerPool,
-                new PGWireServer.PGConnectionContextFactory(
+                registry,
+                () -> new SqlExecutionContextImpl(
                         cairoEngine,
-                        configuration,
-                        registry,
-                        () -> new SqlExecutionContextImpl(
-                                cairoEngine,
-                                workerPool.getWorkerCount(),
-                                workerPoolManager.getSharedWorkerCount()
-                        )
-                ),
-                registry
+                        workerPool.getWorkerCount(),
+                        workerPoolManager.getSharedWorkerCount()
+                )
         );
     }
 }

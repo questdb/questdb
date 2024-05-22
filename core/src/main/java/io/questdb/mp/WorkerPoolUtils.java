@@ -74,7 +74,7 @@ public class WorkerPoolUtils {
     public static void setupWriterJobs(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
         final MessageBus messageBus = cairoEngine.getMessageBus();
         final O3PartitionPurgeJob purgeDiscoveryJob = new O3PartitionPurgeJob(
-                messageBus,
+                cairoEngine,
                 cairoEngine.getSnapshotAgent(),
                 workerPool.getWorkerCount()
         );
