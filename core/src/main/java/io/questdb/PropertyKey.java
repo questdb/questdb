@@ -465,7 +465,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_O3_LAST_PARTITION_MAX_SPLITS("cairo.o3.last.partition.max.splits"),
     CAIRO_O3_PARTITION_SPLIT_MIN_SIZE("cairo.o3.partition.split.min.size"),
     DEBUG_WAL_PURGE_WAIT_BEFORE_DELETE("debug.wal.purge.wait.before.delete", false, true),
-    RSS_MEMORY_LIMIT("cairo.rss.memory.limit"),
+    RAM_USAGE_LIMIT("ram.usage.limit"),
     DEBUG_ALLOW_TABLE_REGISTRY_SHARED_WRITE("debug.allow.table.registry.shared.write", false, true),
     DEBUG_ENABLE_TEST_FACTORIES("debug.enable.test.factories", false, true),
     DEBUG_CAIRO_ALLOW_MIXED_IO("debug.cairo.allow.mixed.io", false, true),
