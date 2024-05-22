@@ -1,6 +1,6 @@
 use crate::parquet_write::file::WriteOptions;
-use crate::util;
-use crate::util::MaxMin;
+use crate::parquet_write::util;
+use crate::parquet_write::util::MaxMin;
 use parquet2::encoding::hybrid_rle::bitpacked_encode;
 use parquet2::encoding::Encoding;
 use parquet2::page::Page;
@@ -58,7 +58,7 @@ pub fn slice_to_page(
 fn build_statistics(bool_statistics: MaxMin<i32>) -> ParquetStatistics {
     let (max, min) = bool_statistics.get_current_values();
     let statistics = &BooleanStatistics {
-        null_count: None,
+        null_count: Some(0),
         distinct_count: None,
         max_value: max.map(|x| x != 0),
         min_value: min.map(|x| x != 0),

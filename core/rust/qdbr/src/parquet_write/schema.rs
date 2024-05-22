@@ -288,8 +288,8 @@ pub fn to_encodings(partition: &Partition) -> Vec<Encoding> {
 fn encoding_map(data_type: ColumnType) -> Encoding {
     match data_type {
         ColumnType::Float | ColumnType::Double => Encoding::Plain,
-        ColumnType::Int | ColumnType::Long => Encoding::DeltaBinaryPacked,
+        // _ => Encoding::DeltaBinaryPacked, //TODO: for tests only
+        _ => Encoding::Plain, //TODO: for tests only
         //_ => Encoding::RleDictionary,
-        _ => Encoding::Rle, //TODO: for tests only
     }
 }

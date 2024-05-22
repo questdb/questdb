@@ -13,8 +13,6 @@ use parquet2::write::{
 };
 use std::io::Write;
 use std::mem;
-use arrow::compute::concat;
-use crate::parquet_write::symbol::symbol_to_pages;
 
 const DEFAULT_PAGE_SIZE: usize = 1024 * 1024;
 const DEFAULT_ROW_GROUP_SIZE: usize = 512 * 512;
@@ -285,19 +283,19 @@ fn chunk_to_page(
             let chunk: &[u8] = unsafe { mem::transmute(column.fixed_len_data) };
             boolean::slice_to_page(&chunk[offset..offset + length], options, type_)
         }
-        ColumnType::Byte => {
+        ColumnType::Byte | ColumnType::GeoByte => {
             let chunk: &[i8] = unsafe { mem::transmute(column.fixed_len_data) };
             primitive::int_slice_to_page::<i8, i32>(&chunk[offset..offset + length], options, type_, encoding)
         }
-        ColumnType::Short => {
+        ColumnType::Short | ColumnType::GeoShort => {
             let chunk: &[i16] = unsafe { mem::transmute(column.fixed_len_data) };
             primitive::int_slice_to_page::<i16, i32>(&chunk[offset..offset + length], options, type_, encoding)
         }
-        ColumnType::Int => {
+        ColumnType::Int | ColumnType::GeoInt => {
             let chunk: &[i32] = unsafe { mem::transmute(column.fixed_len_data) };
             primitive::int_slice_to_page::<i32, i32>(&chunk[offset..offset + length], options, type_, encoding)
         }
-        ColumnType::Long => {
+        ColumnType::Long | ColumnType::GeoLong | ColumnType::Date | ColumnType::Timestamp => {
             let chunk: &[i64] = unsafe { mem::transmute(column.fixed_len_data) };
             primitive::int_slice_to_page::<i64, i64>(&chunk[offset..offset + length], options, type_, encoding)
         }

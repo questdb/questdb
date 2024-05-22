@@ -28,7 +28,7 @@ use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
 use parquet2::types;
 use crate::parquet_write::file::WriteOptions;
-use crate::util::{build_plain_page, encode_bool_iter, ExactSizedIter};
+use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter};
 
 pub fn binary_to_page(
     offsets: &[i64],

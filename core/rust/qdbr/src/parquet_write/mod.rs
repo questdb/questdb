@@ -7,12 +7,14 @@ mod string;
 mod fixed_len_bytes;
 mod varchar;
 mod symbol;
+mod jni;
+mod util;
 
 use parquet2::encoding::Encoding;
 use parquet2::metadata::Descriptor;
 use parquet2::page::{DataPage, DataPageHeader, DataPageHeaderV1, DataPageHeaderV2, Page};
 use parquet2::schema::types::PrimitiveType;
-use parquet2::statistics::{serialize_statistics, ParquetStatistics, PrimitiveStatistics};
+use parquet2::statistics::{ParquetStatistics, PrimitiveStatistics, serialize_statistics};
 use parquet2::types::NativeType;
 use parquet2::write::DynIter;
 

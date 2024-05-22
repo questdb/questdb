@@ -1,6 +1,6 @@
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::Nullable;
-use crate::util::{build_plain_page, encode_bool_iter, ExactSizedIter, MaxMin};
+use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter, MaxMin};
 use num_traits::Bounded;
 use parquet2::encoding::delta_bitpacked::encode;
 use parquet2::encoding::Encoding;
@@ -25,6 +25,7 @@ where
         // append the non-null values
         for x in slice.iter().filter(|x| !x.is_null()) {
             let parquet_native: P = x.as_();
+            eprintln!("int: {:?}", parquet_native);
             buffer.extend_from_slice(parquet_native.to_le_bytes().as_ref())
         }
     } else {
@@ -54,6 +55,7 @@ where
         let iterator = slice.iter().filter(|x| !x.is_null()).map(|x| {
             let parquet_native: P = x.as_();
             let integer: i64 = parquet_native.as_();
+            eprintln!("int: {:?}", integer);
             integer
         });
         let iterator = ExactSizedIter::new(iterator, slice.len() - null_count);
@@ -153,12 +155,7 @@ where
     let buffer = encode_fn(slice, is_nullable, null_count, buffer);
 
     let statistics = if options.write_statistics {
-        let null_count = if is_nullable {
-            Some(null_count as i64)
-        } else {
-            None
-        };
-        Some(build_statistics(null_count, statistics, type_.clone()))
+        Some(build_statistics(Some(null_count as i64), statistics, type_.clone()))
     } else {
         None
     };

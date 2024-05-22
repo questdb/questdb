@@ -2,7 +2,7 @@ use parquet2::encoding::Encoding;
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
 use crate::parquet_write::file::WriteOptions;
-use crate::util::{build_plain_page, encode_bool_iter};
+use crate::parquet_write::util::{build_plain_page, encode_bool_iter};
 
 fn encode_plain(data: &[u8], chunk_size: usize, buffer: &mut Vec<u8>) {
     // append the non-null values

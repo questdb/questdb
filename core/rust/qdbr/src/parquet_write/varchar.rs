@@ -2,7 +2,7 @@ use parquet2::encoding::Encoding;
 use parquet2::page::DataPage;
 use parquet2::schema::types::PrimitiveType;
 use crate::parquet_write::file::WriteOptions;
-use crate::util::{build_plain_page, encode_bool_iter};
+use crate::parquet_write::util::{build_plain_page, encode_bool_iter};
 
 const HEADER_FLAG_INLINED: u32 = 1 << 0;
 const HEADER_FLAG_ASCII: u32 = 1 << 1;

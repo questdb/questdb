@@ -6,8 +6,8 @@ use parquet2::page::{Page, DictPage};
 use parquet2::schema::types::PrimitiveType;
 use parquet2::write::DynIter;
 use crate::parquet_write::file::WriteOptions;
-use crate::util;
-use crate::util::{build_plain_page, encode_bool_iter, ExactSizedIter};
+use crate::parquet_write::util;
+use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter};
 
 fn encode_dict(keys: &[i32], offsets: &[u64], data: &[u8], page: &mut Vec<u8>) -> (Vec<u32>, u32) {
     let mut indices: Vec<u32> = Vec::new();
