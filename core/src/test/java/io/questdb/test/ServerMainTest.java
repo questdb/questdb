@@ -42,6 +42,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Predicate;
 
 import static io.questdb.test.tools.TestUtils.*;
 import static java.util.Arrays.asList;
@@ -213,7 +214,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.repeat.migration.from.version\tQDB_CAIRO_REPEAT_MIGRATION_FROM_VERSION\t426\tdefault\tfalse\tfalse\n" +
                                     "cairo.rnd.memory.max.pages\tQDB_CAIRO_RND_MEMORY_MAX_PAGES\t128\tdefault\tfalse\tfalse\n" +
                                     "cairo.rnd.memory.page.size\tQDB_CAIRO_RND_MEMORY_PAGE_SIZE\t8192\tdefault\tfalse\tfalse\n" +
-                                    "cairo.rss.memory.limit\tQDB_CAIRO_RSS_MEMORY_LIMIT\t0\tdefault\tfalse\tfalse\n" +
                                     "cairo.snapshot.instance.id\tQDB_CAIRO_SNAPSHOT_INSTANCE_ID\t\tdefault\tfalse\tfalse\n" +
                                     "cairo.snapshot.recovery.enabled\tQDB_CAIRO_SNAPSHOT_RECOVERY_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.spin.lock.timeout\tQDB_CAIRO_SPIN_LOCK_TIMEOUT\t1000\tdefault\tfalse\tfalse\n" +
@@ -561,18 +561,24 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.default.sequencer.part.txn.count\tQDB_CAIRO_DEFAULT_SEQUENCER_PART_TXN_COUNT\t0\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.sequencer.check.interval\tQDB_CAIRO_WAL_SEQUENCER_CHECK_INTERVAL\t10000\tdefault\tfalse\tfalse\n" +
                                     "posthog.enabled\tQDB_POSTHOG_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
-                                    "posthog.api.key\tQDB_POSTHOG_API_KEY\t\tdefault\tfalse\tfalse\n"+
+                                    "posthog.api.key\tQDB_POSTHOG_API_KEY\t\tdefault\tfalse\tfalse\n" +
                                     "cairo.legacy.string.column.type.default\tQDB_CAIRO_LEGACY_STRING_COLUMN_TYPE_DEFAULT\tfalse\tdefault\tfalse\tfalse\n"
                             )
                                     .split("\n");
 
+                    // rss.memory.limit is a special case because it has a dynamic default
+                    String rssLimitPrefix = "cairo.rss.memory.limit\tQDB_CAIRO_RSS_MEMORY_LIMIT\t";
+                    String rssLimitSuffix = "\tdefault\tfalse\tfalse";
+                    Predicate<String> isRssLimitProp = prop ->
+                            prop.startsWith(rssLimitPrefix) && prop.endsWith(rssLimitSuffix);
                     final Set<String> missingProps = new HashSet<>();
                     for (String property : expectedProps) {
-                        if (!actualProps.remove(property)) {
+                        if (!actualProps.remove(property) && !isRssLimitProp.test(property)) {
                             missingProps.add(property);
                         }
                     }
-
+                    assertTrue("Missing property: " + rssLimitPrefix + "*" + rssLimitSuffix,
+                            actualProps.removeIf(isRssLimitProp));
                     assertTrue(
                             "Missing properties: " + missingProps
                                     + "\n"
