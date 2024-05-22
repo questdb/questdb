@@ -24,6 +24,7 @@
 
 package io.questdb.test.std;
 
+import com.sun.management.OperatingSystemMXBean;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Os;
 import io.questdb.test.tools.TestUtils;
@@ -109,7 +110,9 @@ public class OsTest {
 
     @Test
     public void testTotalSystemMemory() {
-        long totalSystemMemory = Os.getTotalMemoryFromProcFile();
+        OperatingSystemMXBean mxBean = Os.getOsMXBean();
+        assertNotNull("This JVM does not provide the OperatingSystemMXBean", mxBean);
+        long totalSystemMemory = mxBean.getTotalPhysicalMemorySize();
         assertTrue("Could not determine total system memory",
                 totalSystemMemory > 0 && totalSystemMemory < (1L << 48));
     }
