@@ -198,21 +198,11 @@ public class Bootstrap {
         }
 
         long writerMemoryLimit = config.getCairoConfiguration().getWriterMemoryLimit();
-        LogRecord msg = log.advisoryW().$("Setting TableWriter memory limit to ");
-        if (writerMemoryLimit != 0) {
-            msg.$(toSizePretty(writerMemoryLimit)).$();
-        } else {
-            msg.$("0 (unlimited)").$();
-        }
+        logValueOrUnlimited("TableWriter", writerMemoryLimit);
         Unsafe.setWriterMemLimit(writerMemoryLimit);
 
         long rssMemoryLimit = config.getCairoConfiguration().getRssMemoryLimit();
-        msg = log.advisoryW().$("Setting RSS memory limit to ");
-        if (rssMemoryLimit != 0) {
-            msg.$(toSizePretty(rssMemoryLimit)).$();
-        } else {
-            msg.$("0 (unlimited)").$();
-        }
+        logValueOrUnlimited("RSS", rssMemoryLimit);
         Unsafe.setRssMemLimit(rssMemoryLimit);
     }
 
@@ -513,6 +503,11 @@ public class Bootstrap {
         }
         setPublicVersion(publicDir, thisVersion);
         extractConfDir(buffer);
+    }
+
+    private void logValueOrUnlimited(String limitName, long limitValue) {
+        log.advisoryW().$("Setting ").$(limitName).$(" memory limit to ")
+                .$(limitValue != 0 ? toSizePretty(limitValue) : "0 (unlimited)").$();
     }
 
     private void reportValidateConfig() {
