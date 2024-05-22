@@ -6841,38 +6841,6 @@ nodejs code:
     }
 
     @Test
-    public void testUndefinedBindVariableInSymbol() throws Exception {
-        final String[] values = {"'5'", "null", "'5' || ''", "replace(null, 'A', 'A')", "?5", "?null"};
-        final CharSequenceObjHashMap<String> valMap = new CharSequenceObjHashMap<>();
-        valMap.put("5", "5");
-        valMap.put("'5'", "5");
-        valMap.put("null", "null");
-        valMap.put("'5' || ''", "5");
-        valMap.put("replace(null, 'A', 'A')", "null");
-
-        final String[] tsOptions = {"", "timestamp(ts)", "timestamp(ts) partition by HOUR"};
-        final String strType = ColumnType.nameOf(ColumnType.STRING).toLowerCase();
-        for (String tsOption : tsOptions) {
-            assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary, mode, port) -> {
-                drop("drop table if exists tab");
-                ddl("create table tab (s symbol index, ts timestamp) " + tsOption);
-                insert("insert into tab select case when x = 10 then null::" + strType + " else x::" + strType + " end, x::timestamp from long_sequence(10) ");
-                drainWalQueue();
-
-                ResultProducer sameValIfParamsTheSame = (paramVals, isBindVals, bindVals, output) -> {
-                    String left = isBindVals[0] ? bindVals[0] : paramVals[0];
-                    String right = isBindVals[1] ? bindVals[1] : paramVals[1];
-                    boolean isSame = valMap.get(left).equals(valMap.get(right));
-                    if (isSame) {
-                        output.put(valMap.get(left)).put('\n');
-                    }
-                };
-                assertQueryAgainstIndexedSymbol(values, "s in (#X1) and s in (#X2)", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParamsTheSame);
-            });
-        }
-    }
-
-    @Test
     public void testQueryCountWithTsSmallerThanMinTsInTable() throws Exception {
         assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (conn, binary, mode, port) -> {
             ddl(
@@ -9228,6 +9196,38 @@ create table tab as (
     }
 
     @Test
+    public void testUndefinedBindVariableInSymbol() throws Exception {
+        final String[] values = {"'5'", "null", "'5' || ''", "replace(null, 'A', 'A')", "?5", "?null"};
+        final CharSequenceObjHashMap<String> valMap = new CharSequenceObjHashMap<>();
+        valMap.put("5", "5");
+        valMap.put("'5'", "5");
+        valMap.put("null", "null");
+        valMap.put("'5' || ''", "5");
+        valMap.put("replace(null, 'A', 'A')", "null");
+
+        final String[] tsOptions = {"", "timestamp(ts)", "timestamp(ts) partition by HOUR"};
+        final String strType = ColumnType.nameOf(ColumnType.STRING).toLowerCase();
+        for (String tsOption : tsOptions) {
+            assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary, mode, port) -> {
+                drop("drop table if exists tab");
+                ddl("create table tab (s symbol index, ts timestamp) " + tsOption);
+                insert("insert into tab select case when x = 10 then null::" + strType + " else x::" + strType + " end, x::timestamp from long_sequence(10) ");
+                drainWalQueue();
+
+                ResultProducer sameValIfParamsTheSame = (paramVals, isBindVals, bindVals, output) -> {
+                    String left = isBindVals[0] ? bindVals[0] : paramVals[0];
+                    String right = isBindVals[1] ? bindVals[1] : paramVals[1];
+                    boolean isSame = valMap.get(left).equals(valMap.get(right));
+                    if (isSame) {
+                        output.put(valMap.get(left)).put('\n');
+                    }
+                };
+                assertQueryAgainstIndexedSymbol(values, "s in (#X1) and s in (#X2)", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParamsTheSame);
+            });
+        }
+    }
+
+    @Test
     public void testUnsupportedParameterType() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
@@ -9725,6 +9725,66 @@ create table tab as (
                         );
                     }
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testUpdateRecoversFromOomError() throws Exception {
+        // UPDATEs with JOINs are not supported for WAL tables.
+        Assume.assumeFalse(walEnabled);
+
+        // TODO(puzpuzpuz): this test fails on CONN_AWARE_EXTENDED_PREPARED_BINARY and CONN_AWARE_EXTENDED_PREPARED_TEXT
+        assertWithPgServer(CONN_AWARE_ALL ^ CONN_AWARE_EXTENDED_PREPARED_BINARY ^ CONN_AWARE_EXTENDED_PREPARED_TEXT, (connection, binary, mode, port) -> {
+            try (Statement stat = connection.createStatement()) {
+                stat.execute(
+                        "create table up as" +
+                                " (select timestamp_sequence(0, 1000000) ts," +
+                                " x" +
+                                " from long_sequence(5))" +
+                                " timestamp(ts) partition by DAY;"
+                );
+                stat.execute(
+                        "create table down as" +
+                                " (select timestamp_sequence(0, 1000000) ts," +
+                                " x * 100 as y" +
+                                " from long_sequence(5))" +
+                                " timestamp(ts) partition by DAY;"
+                );
+            }
+
+            try (Statement stat = connection.createStatement()) {
+                // Set RSS limit, so that the UPDATE will fail with OOM.
+                Unsafe.setRssMemLimit(8_900_000);
+                try {
+                    stat.execute(
+                            "UPDATE up SET x = y" +
+                                    " FROM down " +
+                                    " WHERE up.ts = down.ts and x < 4"
+                    );
+                    Assert.fail();
+                } catch (PSQLException e) {
+                    assertContains(e.getMessage(), "global RSS memory limit exceeded");
+                }
+
+                // Remove the limit and verify that the update succeeds.
+                Unsafe.setRssMemLimit(0);
+                stat.execute(
+                        "UPDATE up SET x = y" +
+                                " FROM down " +
+                                " WHERE up.ts = down.ts and x < 4"
+                );
+            }
+
+            final String expected = "ts[TIMESTAMP],x[BIGINT]\n" +
+                    "1970-01-01 00:00:00.0,100\n" +
+                    "1970-01-01 00:00:01.0,200\n" +
+                    "1970-01-01 00:00:02.0,300\n" +
+                    "1970-01-01 00:00:03.0,4\n" +
+                    "1970-01-01 00:00:04.0,5\n";
+            try (ResultSet resultSet = connection.prepareStatement("up").executeQuery()) {
+                sink.clear();
+                assertResultSet(expected, sink, resultSet);
             }
         });
     }
