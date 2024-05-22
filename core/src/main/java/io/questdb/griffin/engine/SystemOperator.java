@@ -64,13 +64,12 @@ public class SystemOperator extends AbstractRecordCursorFactory {
                 .$("fin [id=").$(sqlId)
                 .$(", sql=`").$(sqlText).$('`')
                 .$(", principal=").$(executionContext.getSecurityContext().getPrincipal())
-                .$(", cacheHit=").$(executionContext.isCacheHit())
-                .$(", timing=").$(executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos)
+                .$(", cache=").$(executionContext.isCacheHit())
+                .$(", time=").$(executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos)
                 .I$();
     }
 
     public static void logError(
-            CharSequence subtext,
             Throwable e,
             long sqlId,
             CharSequence sqlText,
@@ -78,13 +77,13 @@ public class SystemOperator extends AbstractRecordCursorFactory {
             long beginNanos
     ) {
         LOG.error()
-                .$(subtext)
+                .$("err")
                 .$(" [id=").$(sqlId)
                 .$(", sql=`").$(sqlText).$('`')
                 .$(", principal=").$(executionContext.getSecurityContext().getPrincipal())
-                .$(", cacheHit=").$(executionContext.isCacheHit())
-                .$(", timing=").$(executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos)
-                .$(", message=").$(e.getMessage())
+                .$(", cache=").$(executionContext.isCacheHit())
+                .$(", time=").$(executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos)
+                .$(", msg=").$(e.getMessage())
                 .I$();
     }
 
@@ -94,11 +93,11 @@ public class SystemOperator extends AbstractRecordCursorFactory {
             SqlExecutionContext executionContext
     ) {
         LOG.info()
-                .$("txn")
+                .$("exe")
                 .$(" [id=").$(sqlId)
                 .$(", sql=`").$(sqlText).$('`')
                 .$(", principal=").$(executionContext.getSecurityContext().getPrincipal())
-                .$(", cacheHit=").$(executionContext.isCacheHit())
+                .$(", cache=").$(executionContext.isCacheHit())
                 .I$();
     }
 
@@ -149,7 +148,7 @@ public class SystemOperator extends AbstractRecordCursorFactory {
                 cursor.of(baseCursor); // this should not fail, it is just variable assigment
             } catch (Throwable e) {
                 registry.unregister(sqlId, executionContext);
-                logError("fail-at-cursor", e);
+                logError(e);
                 throw e;
             }
         }
@@ -211,9 +210,8 @@ public class SystemOperator extends AbstractRecordCursorFactory {
         return base.usesCompiledFilter();
     }
 
-    private void logError(CharSequence subtext, Throwable e) {
+    private void logError(Throwable e) {
         logError(
-                subtext,
                 e,
                 sqlId,
                 sqlText,
@@ -272,7 +270,7 @@ public class SystemOperator extends AbstractRecordCursorFactory {
                 return base.hasNext();
             } catch (Throwable e) {
                 failed = true;
-                logError("fail-at-next", e);
+                logError(e);
                 throw e;
             }
         }

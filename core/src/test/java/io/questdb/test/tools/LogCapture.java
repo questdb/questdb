@@ -11,6 +11,9 @@ import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
 public class LogCapture {
     private final LogConsoleWriter consoleWriter;
     private final StringSink sink = new SynchronizedSink();
@@ -21,6 +24,8 @@ public class LogCapture {
         consoleWriter.setInterceptor(logRecordSink -> logRecordSink.toSink(sink));
     }
 
+    @SuppressWarnings("unused")
+    // used in the Ent, will be useful in OSS eventually
     public void assertLogged(String message) {
         final int idx = sink.indexOf(message);
         if (idx < 0) {
@@ -28,6 +33,15 @@ public class LogCapture {
         }
     }
 
+    public void assertLoggedRE(String regex) {
+        Matcher matcher = Pattern.compile(regex).matcher(sink.toString());
+        if (!matcher.find()) {
+            Assert.fail("Message '" + regex + "' was not logged");
+        }
+    }
+
+    @SuppressWarnings("unused")
+    // used in the Ent
     public void assertNotLogged(String message) {
         final int idx = sink.indexOf(message);
         if (idx > -1) {

@@ -27,6 +27,7 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.CairoException;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Test;
@@ -35,9 +36,18 @@ import static org.junit.Assert.fail;
 
 public class RssMemoryLimitTest extends AbstractCairoTest {
 
+    private static final LogCapture capture = new LogCapture();
+
+    @Override
+    public void setUp() {
+        super.setUp();
+        capture.start();
+    }
+
     @After
     public void tearDown() throws Exception {
         Unsafe.setRssMemLimit(0);
+        capture.stop();
         super.tearDown();
     }
 
@@ -55,12 +65,15 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
                 Unsafe.setRssMemLimit(0);
                 TestUtils.assertContains(e.getFlyweightMessage(), "global RSS memory limit exceeded");
             }
+            capture.waitFor("SystemOperator err ");
+            capture.assertLoggedRE(" exe \\[.*, sql=`create atomic table x as \\(select rnd_timestamp\\(to_timestamp\\(");
+            capture.assertLoggedRE(" err \\[.*, sql=`create atomic table x as \\(select rnd_timestamp\\(to_timestamp\\(");
         });
     }
 
     @Test
     public void testSelect() throws Exception {
-        long limitMB = 12;
+        long limitMB = 20;
         Unsafe.setRssMemLimit(limitMB * 1_000_000);
         assertMemoryLeak(() -> {
             ddl("create table test as (select rnd_str() a, rnd_double() b from long_sequence(1000000))");
@@ -69,6 +82,9 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
                     0,
                     "global RSS memory limit exceeded"
             );
+            capture.waitFor("SystemOperator err ");
+            capture.assertLoggedRE(" exe \\[.*, sql=`select a, sum\\(b\\) from test");
+            capture.assertLoggedRE(" err \\[.*, sql=`select a, sum\\(b\\) from test");
         });
     }
 }

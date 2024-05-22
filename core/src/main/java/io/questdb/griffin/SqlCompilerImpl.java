@@ -1519,7 +1519,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 // executor fails, the secret SQL text must not be logged
                 this.sqlText = executionContext.containsSecret() ? "** redacted for privacy** " : sqlText;
                 SystemOperator.logError(
-                        "fail-at-executor",
                         e,
                         -1,
                         this.sqlText,
@@ -1645,7 +1644,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             queryRegistry.unregister(sqlId, executionContext);
 
             SystemOperator.logError(
-                    "fail-at-compile",
                     e,
                     sqlId,
                     sqlText,
