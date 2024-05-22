@@ -25,7 +25,6 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
@@ -46,23 +45,20 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
 
     @After
     public void tearDown() throws Exception {
-        Unsafe.setRssMemLimit(0);
         capture.stop();
         super.tearDown();
     }
 
     @Test
     public void testCreateAtomicTable() throws Exception {
-        long limitMB = 12;
-        Unsafe.setRssMemLimit(limitMB * 1_000_000);
-        assertMemoryLeak(() -> {
+        long limitMiB = 12;
+        assertMemoryLeak(limitMiB, () -> {
             try {
                 ddl("create atomic table x as (select" +
                         " rnd_timestamp(to_timestamp('2024-03-01', 'yyyy-mm-dd'), to_timestamp('2024-04-01', 'yyyy-mm-dd'), 0) ts" +
                         " from long_sequence(10000000)) timestamp(ts) partition by day;");
-                fail("Managed to create table with RSS limit " + limitMB + " MB");
+                fail("Managed to create table with RSS limit " + limitMiB + " MB");
             } catch (CairoException e) {
-                Unsafe.setRssMemLimit(0);
                 TestUtils.assertContains(e.getFlyweightMessage(), "global RSS memory limit exceeded");
             }
             capture.waitFor("SystemOperator err ");
@@ -73,9 +69,7 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
 
     @Test
     public void testSelect() throws Exception {
-        long limitMB = 20;
-        Unsafe.setRssMemLimit(limitMB * 1_000_000);
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(14, () -> {
             ddl("create table test as (select rnd_str() a, rnd_double() b from long_sequence(1000000))");
             assertException(
                     "select a, sum(b) from test",
