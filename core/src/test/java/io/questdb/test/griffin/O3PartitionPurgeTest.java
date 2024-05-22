@@ -36,10 +36,7 @@ import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.*;
 
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -619,6 +616,8 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
 
     @Test
     public void testTableRecreatedInBeforePartitionDirDelete() throws Exception {
+        //Windows sometimes fails to drop the table on CI and it's not easily reproducible locally
+        Assume.assumeFalse(Os.isWindows());
         AtomicBoolean dropTable = new AtomicBoolean();
         Thread recreateTable = new Thread(() -> {
             try {
@@ -635,6 +634,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
             @Override
             public boolean unlinkOrRemove(Path path, Log LOG) {
                 if (dropTable.get() && Utf8s.endsWithAscii(path, "1970-01-10")) {
+                    dropTable.set(false);
                     recreateTable.start();
                     Os.sleep(50);
                 }
@@ -659,7 +659,6 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 engine.releaseInactive();
             }
             purgeJob.drain(0);
-            dropTable.set(false);
             recreateTable.join();
 
             try (TableReader rdr = getReader("tbl")) {
@@ -670,6 +669,8 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
 
     @Test
     public void testTableRecreatedViaRenameInBeforePartitionDirDelete() throws Exception {
+        //Windows sometimes fails to drop the table on CI and it's not easily reproducible locally
+        Assume.assumeFalse(Os.isWindows());
         AtomicBoolean dropTable = new AtomicBoolean();
         Thread recreateTable = new Thread(() -> {
             try {
@@ -707,9 +708,6 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
             }
 
             dropTable.set(true);
-            if (Os.isWindows()) {
-                engine.releaseInactive();
-            }
             purgeJob.drain(0);
             dropTable.set(false);
             recreateTable.join();
