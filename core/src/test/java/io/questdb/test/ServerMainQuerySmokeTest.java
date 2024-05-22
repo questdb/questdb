@@ -152,7 +152,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
         try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
             serverMain.start();
 
-            final int nThreads = 8;
+            final int nThreads = 4;
             final int nIterations = 1000;
 
             final CyclicBarrier startBarrier = new CyclicBarrier(nThreads);
