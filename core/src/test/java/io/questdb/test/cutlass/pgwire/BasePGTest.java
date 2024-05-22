@@ -43,6 +43,7 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjectFactory;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.StringSink;
@@ -100,14 +101,13 @@ public abstract class BasePGTest extends AbstractCairoTest {
             PGWireConfiguration configuration,
             CairoEngine cairoEngine,
             WorkerPool workerPool,
-            PGWireServer.PGConnectionContextFactory contextFactory,
-            CircuitBreakerRegistry registry
+            CircuitBreakerRegistry registry,
+            ObjectFactory<SqlExecutionContextImpl> executionContextObjectFactory
     ) {
         if (!configuration.isEnabled()) {
             return null;
         }
-
-        return new PGWireServer(configuration, cairoEngine, workerPool, contextFactory, registry);
+        return new PGWireServer(configuration, cairoEngine, workerPool, registry, executionContextObjectFactory);
     }
 
     public static PGWireServer createPGWireServer(
@@ -121,18 +121,12 @@ public abstract class BasePGTest extends AbstractCairoTest {
 
         CircuitBreakerRegistry registry = new CircuitBreakerRegistry(configuration, cairoEngine.getConfiguration());
 
-
         return new PGWireServer(
                 configuration,
                 cairoEngine,
                 workerPool,
-                new PGWireServer.PGConnectionContextFactory(
-                        cairoEngine,
-                        configuration,
-                        registry,
-                        () -> new SqlExecutionContextImpl(cairoEngine, workerPool.getWorkerCount(), workerPool.getWorkerCount())
-                ),
-                registry
+                registry,
+                () -> new SqlExecutionContextImpl(cairoEngine, workerPool.getWorkerCount(), workerPool.getWorkerCount())
         );
     }
 

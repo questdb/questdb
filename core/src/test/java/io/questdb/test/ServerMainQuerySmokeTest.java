@@ -26,7 +26,10 @@ package io.questdb.test;
 
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
+import io.questdb.mp.SOCountDownLatch;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -34,6 +37,8 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.test.cutlass.pgwire.BasePGTest.assertResultSet;
 import static io.questdb.test.tools.TestUtils.unchecked;
@@ -47,7 +52,11 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
         unchecked(() -> createDummyConfiguration(
                 // Force enable parallel GROUP BY and filter for smoke tests.
                 PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED + "=true",
-                PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED.getPropertyPath() + "=true"
+                PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED + "=true",
+                PropertyKey.SHARED_WORKER_COUNT + "=4",
+                PropertyKey.PG_WORKER_COUNT + "=4",
+                PropertyKey.PG_SELECT_CACHE_ENABLED + "=true",
+                PropertyKey.DEBUG_ENABLE_TEST_FACTORIES + "=true"
         ));
         dbPath.parent().$();
     }
@@ -114,6 +123,70 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                     assertResultSet(expected, sink, rs);
                 }
             }
+        }
+    }
+
+    @Test
+    public void testServerMainGlobalQueryCacheSmokeTest() {
+        // Verify that global cache is correctly synchronized, so that
+        // no record cursor factory is used by multiple threads concurrently.
+        class TestCase {
+            final String expectedResult;
+            final String query;
+
+            TestCase(String query, String expectedResult) {
+                this.query = query;
+                this.expectedResult = expectedResult;
+            }
+        }
+        final int nQueries = 10;
+        final TestCase[] testCases = new TestCase[nQueries];
+        for (int i = 0; i < nQueries; i++) {
+            testCases[i] = new TestCase(
+                    "select owners owners_" + i + " from test_owner_counter();",
+                    "owners_" + i + "[INTEGER]\n" +
+                            "1\n"
+            );
+        }
+
+        try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
+            serverMain.start();
+
+            final int nThreads = 4;
+            final int nIterations = 1000;
+
+            final CyclicBarrier startBarrier = new CyclicBarrier(nThreads);
+            final SOCountDownLatch doneLatch = new SOCountDownLatch(nThreads);
+            final AtomicInteger errors = new AtomicInteger();
+            for (int t = 0; t < nThreads; t++) {
+                final int threadId = t;
+                new Thread(() -> {
+                    final Rnd rnd = new Rnd(threadId, threadId);
+                    final StringSink sink = new StringSink();
+                    try {
+                        startBarrier.await();
+
+                        try (Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES)) {
+                            for (int i = 0; i < nIterations; i++) {
+                                final TestCase testCase = testCases[rnd.nextInt(nQueries)];
+                                try (ResultSet rs = conn.prepareStatement(testCase.query).executeQuery()) {
+                                    sink.clear();
+                                    assertResultSet(testCase.expectedResult, sink, rs);
+                                }
+                            }
+                        }
+                    } catch (Throwable th) {
+                        errors.incrementAndGet();
+                        th.printStackTrace();
+                    } finally {
+                        doneLatch.countDown();
+                    }
+                }).start();
+            }
+
+            doneLatch.await();
+
+            Assert.assertEquals(0, errors.get());
         }
     }
 }
