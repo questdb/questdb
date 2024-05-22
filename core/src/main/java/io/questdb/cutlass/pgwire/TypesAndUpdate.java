@@ -43,7 +43,7 @@ public class TypesAndUpdate extends AbstractTypeContainer<TypesAndUpdate> {
     @Override
     public void close() {
         super.close();
-        this.compiledQuery.ofUpdate(Misc.free(compiledQuery.getUpdateOperation()));
+        compiledQuery.ofUpdate(Misc.free(compiledQuery.getUpdateOperation()));
     }
 
     public CompiledQuery getCompiledQuery() {

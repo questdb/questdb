@@ -72,7 +72,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     };
     private static final IntList castGroups = new IntList();
-    private static final boolean[][] columnConverstionSupport = new boolean[ColumnType.NULL][ColumnType.NULL];
+    private static final boolean[][] columnConversionSupport = new boolean[ColumnType.NULL][ColumnType.NULL];
     @SuppressWarnings("FieldMayBeFinal")
     private static Log LOG = LogFactory.getLog(SqlCompilerImpl.class);
     protected final AlterOperationBuilder alterOperationBuilder;
@@ -361,9 +361,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private static void addSupportedConversion(short fromType, short... toTypes) {
         for (short toType : toTypes) {
-            columnConverstionSupport[fromType][toType] = true;
+            columnConversionSupport[fromType][toType] = true;
             // Make it symmetrical
-            columnConverstionSupport[toType][fromType] = true;
+            columnConversionSupport[toType][fromType] = true;
         }
     }
 
@@ -671,7 +671,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 columnName,
                                 tableMetadata,
                                 columnIndex,
-                                executionContext);
+                                executionContext
+                        );
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'cache' or 'nocache' expected").put(" found '").put(tok).put('\'');
                     }
@@ -2579,7 +2580,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private boolean isCompatibleColumnTypeChange(int from, int to) {
-        return columnConverstionSupport[ColumnType.tagOf(from)][ColumnType.tagOf(to)];
+        return columnConversionSupport[ColumnType.tagOf(from)][ColumnType.tagOf(to)];
     }
 
     private void lightlyValidateInsertModel(InsertModel model) throws SqlException {

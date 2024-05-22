@@ -624,9 +624,9 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             metrics.jsonQuery().markComplete();
             sendUpdateConfirmation(state, keepAliveHeader, updatedCount);
         } catch (CairoException e) {
-            // close e.g. when query has been cancelled
-            if (e.isInterruption()) {
-                cq.getUpdateOperation().close();
+            // close e.g. when query has been cancelled, or we got an OOM
+            if (e.isInterruption() || e.isOutOfMemory()) {
+                Misc.free(cq.getUpdateOperation());
             }
             throw e;
         } finally {
