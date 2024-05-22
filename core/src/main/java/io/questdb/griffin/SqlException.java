@@ -73,7 +73,13 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         return SqlException.$(position, "window function called in non-window context, make sure to add OVER clause");
     }
 
-    public static SqlException inconvertibleTypes(int position, int fromType, CharSequence fromName, int toType, CharSequence toName) {
+    public static SqlException inconvertibleTypes(
+            int position,
+            int fromType,
+            CharSequence fromName,
+            int toType,
+            CharSequence toName
+    ) {
         return $(position, "inconvertible types: ")
                 .put(ColumnType.nameOf(fromType))
                 .put(" -> ")
