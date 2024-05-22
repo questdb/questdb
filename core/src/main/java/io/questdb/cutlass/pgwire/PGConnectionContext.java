@@ -2441,6 +2441,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             queryText = characterStore.toImmutable();
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.compileBatch(queryText, sqlExecutionContext, batchCallback);
+                clearCursorAndFactory();
                 if (isEmptyQuery) {
                     prepareEmptyQueryResponse();
                 }
@@ -2454,8 +2455,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 } else {
                     prepareError(ex.getPosition(), ex.getFlyweightMessage(), ex.isCritical(), ex.getErrno());
                 }
-            } finally {
-                clearCursorAndFactory();
             }
         } else {
             LOG.error().$("invalid UTF8 bytes in parse query").$();

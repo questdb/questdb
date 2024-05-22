@@ -262,6 +262,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             @NotNull SqlExecutionContext executionContext,
             BatchCallback batchCallback
     ) throws Exception {
+        System.out.println("BATCH");
         clear();
         lexer.of(query);
         isSingleQueryMode = false;
