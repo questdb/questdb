@@ -41,7 +41,6 @@ import io.questdb.cutlass.text.CsvFileIndexer;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
 import io.questdb.log.Log;
-import io.questdb.log.LogRecord;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.*;
@@ -66,7 +65,6 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
 
 import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.str;
-import static io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory.toSizePretty;
 
 public class PropServerConfiguration implements ServerConfiguration {
 
@@ -208,6 +206,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int maxSqlRecompileAttempts;
     private final int maxSwapFileCount;
     private final int maxUncommittedRows;
+    private final MemoryConfiguration memoryConfiguration;
     private final int metadataStringPoolCapacity;
     private final MetricsConfiguration metricsConfiguration = new PropMetricsConfiguration();
     private final boolean metricsEnabled;
@@ -249,7 +248,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int rollBufferLimit;
     private final int rollBufferSize;
     private final String root;
-    private final long rssMemoryLimit;
     private final long sequencerCheckInterval;
     private final int[] sharedWorkerAffinity;
     private final int sharedWorkerCount;
@@ -579,7 +577,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         boolean configValidationStrict = getBoolean(properties, env, PropertyKey.CONFIG_VALIDATION_STRICT, false);
         validateProperties(properties, configValidationStrict);
 
-        this.rssMemoryLimit = getLongSize(properties, env, PropertyKey.RSS_MEMORY_LIMIT, detectRssLimitDefault());
+        this.memoryConfiguration = new MemoryConfigurationImpl(getLongSize(properties, env, PropertyKey.RSS_MEMORY_LIMIT, -1));
         this.isReadOnlyInstance = getBoolean(properties, env, PropertyKey.READ_ONLY_INSTANCE, false);
         this.cairoTableRegistryAutoReloadFrequency = getLong(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY, 500);
         this.cairoTableRegistryCompactionThreshold = getInt(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD, 30);
@@ -1301,30 +1299,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.posthogApiKey = getString(properties, env, PropertyKey.POSTHOG_API_KEY, null);
     }
 
-    public static long resolveRssLimitDefault(long fromMxBean, long fromMemInfo) {
-        assert fromMxBean >= -1 : "Os.getMemorySizeFromMXBean() reported negative memory size";
-        assert fromMemInfo >= -1 : "Os.getMemorySizeFromMemInfo() reported negative memory size";
-        if (fromMxBean == -1 ^ fromMemInfo == -1) {
-            return Math.max(fromMemInfo, fromMxBean) / 3 * 2;
-        }
-        if (fromMxBean == -1) {
-            // fromMemInfo == -1 as well, otherwise the preceding branch would be taken
-            return 0;
-        }
-        // At this point we know both sources reported a valid number. Coalesce them.
-        long smallAmount = 10L << 20; // 10 MiB
-        if (fromMxBean <= fromMemInfo - smallAmount) {
-            // This should indicate that we are in a cgroups-based container with a RAM limit.
-            // fromMemInfo usually reports physical RAM, and fromMxBean includes the cgroups limit.
-            // Take almost all the cgroups-limited RAM.
-            return Math.min(fromMxBean, Math.max(smallAmount, fromMxBean - smallAmount));
-        }
-        // At this point, fromMxBean is either close to fromMemInfo, or even larger.
-        // Seeing a larger value is unexpected, but we won't complain in the log.
-        // Let's trust the MXBean and take two thirds of it.
-        return fromMxBean / 3 * 2;
-    }
-
     public static String rootSubdir(CharSequence dbRoot, CharSequence subdir) {
         if (dbRoot != null) {
             int len = dbRoot.length();
@@ -1384,6 +1358,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @Override
+    public MemoryConfiguration getMemoryConfiguration() {
+        return memoryConfiguration;
+    }
+
+    @Override
     public MetricsConfiguration getMetricsConfiguration() {
         return metricsConfiguration;
     }
@@ -1411,25 +1390,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     @Override
     public void init(CairoEngine engine, FreeOnExit freeOnExit) {
         this.factoryProvider = fpf.getInstance(this, engine, freeOnExit);
-    }
-
-    private long detectRssLimitDefault() {
-        long fromMxBean = Os.getMemorySizeFromMXBean();
-        long fromMemInfo = Os.getMemorySizeFromMemInfo();
-        long limit = resolveRssLimitDefault(fromMxBean, fromMemInfo);
-        LogRecord msg = log.advisoryW().$(String.format(
-                "\nSystem RAM size:\n" +
-                        " - reported by OperatingSystemMXBean: %10s\n" +
-                        " - reported by /proc/meminfo:         %10s\n",
-                fromMxBean != -1 ? toSizePretty(fromMxBean) : "<N/A>",
-                fromMemInfo != -1 ? toSizePretty(fromMemInfo) : "<N/A>"
-        ));
-        if (limit != 0) {
-            msg.$(String.format("Default RSS memory limit:             %10s", toSizePretty(limit))).$();
-        } else {
-            msg.$("Automatic RSS limit disabled").$();
-        }
-        return limit;
     }
 
     private int[] getAffinity(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, int workerCount) throws ServerConfigurationException {
@@ -2465,11 +2425,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getRssMemoryLimit() {
-            return rssMemoryLimit;
-        }
-
-        @Override
         public boolean getSampleByDefaultAlignmentCalendar() {
             return sqlSampleByDefaultAlignment;
         }
@@ -2956,11 +2911,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getWriterFileOpenOpts() {
             return writerFileOpenOpts;
-        }
-
-        @Override
-        public long getWriterMemoryLimit() {
-            return writerMemoryLimit;
         }
 
         @Override

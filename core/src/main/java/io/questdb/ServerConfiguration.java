@@ -51,6 +51,8 @@ public interface ServerConfiguration {
 
     LineUdpReceiverConfiguration getLineUdpReceiverConfiguration();
 
+    MemoryConfiguration getMemoryConfiguration();
+
     MetricsConfiguration getMetricsConfiguration();
 
     PGWireConfiguration getPGWireConfiguration();

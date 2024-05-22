@@ -45,6 +45,7 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     private final DefaultHttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
     private final DefaultLineTcpReceiverConfiguration lineTcpReceiverConfiguration = new DefaultLineTcpReceiverConfiguration();
     private final DefaultLineUdpReceiverConfiguration lineUdpReceiverConfiguration = new DefaultLineUdpReceiverConfiguration();
+    private final DefaultMemoryConfiguration memoryConfiguration = new DefaultMemoryConfiguration();
     private final DefaultMetricsConfiguration metricsConfiguration = new DefaultMetricsConfiguration();
     private final DefaultPGWireConfiguration pgWireConfiguration = new DefaultPGWireConfiguration();
     private final WorkerPoolConfiguration walApplyPoolConfiguration = new DefaultWalApplyWorkerPoolConfiguration();
@@ -82,6 +83,11 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     @Override
     public LineUdpReceiverConfiguration getLineUdpReceiverConfiguration() {
         return lineUdpReceiverConfiguration;
+    }
+
+    @Override
+    public MemoryConfiguration getMemoryConfiguration() {
+        return memoryConfiguration;
     }
 
     @Override
