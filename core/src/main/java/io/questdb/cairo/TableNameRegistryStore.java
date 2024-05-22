@@ -429,9 +429,6 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                 throw e;
             }
         } while (true);
-        System.out.println("RELOADED TABLES FILE");
-
-
 
         long mapMem = memory.getLong(0);
         long currentOffset = Long.BYTES;
