@@ -447,7 +447,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             FlyweightMessageContainer container,
             CharSequence keepAliveHeader
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        state.logSqlError(container);
         sendException(
                 response,
                 state.getHttpConnectionContext(),

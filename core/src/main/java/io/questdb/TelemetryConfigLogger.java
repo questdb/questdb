@@ -95,8 +95,7 @@ public class TelemetryConfigLogger implements Closeable {
             try (OperationFuture fut = cc.execute(tempSequence)) {
                 fut.await();
             }
-        } catch (SqlException ex) {
-            LOG.info().$("Failed to alter telemetry table [table=").$(TELEMETRY_CONFIG_TABLE_NAME).$(", error=").$(ex.getFlyweightMessage()).I$();
+        } catch (SqlException ignore) {
         }
     }
 
