@@ -2454,6 +2454,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 } else {
                     prepareError(ex.getPosition(), ex.getFlyweightMessage(), ex.isCritical(), ex.getErrno());
                 }
+            } finally {
+                clearCursorAndFactory();
             }
         } else {
             LOG.error().$("invalid UTF8 bytes in parse query").$();

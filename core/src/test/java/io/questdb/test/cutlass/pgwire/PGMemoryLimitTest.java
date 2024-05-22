@@ -24,39 +24,70 @@
 
 package io.questdb.test.cutlass.pgwire;
 
-import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
+import org.postgresql.util.PSQLException;
 
-import java.sql.CallableStatement;
-import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.Statement;
 
-import static io.questdb.cairo.sql.SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
+import static io.questdb.test.tools.TestUtils.assertContains;
 
 public class PGMemoryLimitTest extends BasePGTest {
-
     @Test
-    public void testListTablesDoesntLeakMetaFds() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, TIMEOUT_FAIL_ON_FIRST_CHECK, (connection, binary, mode, port) -> {
-            try (CallableStatement st1 = connection.prepareCall("create table a (i int)")) {
-                st1.execute();
+    public void testUpdateRecoversFromOomError() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement stat = connection.createStatement()) {
+                stat.execute(
+                        "create table up as" +
+                                " (select timestamp_sequence(0, 1000000) ts," +
+                                " x" +
+                                " from long_sequence(5))" +
+                                " timestamp(ts) partition by DAY;"
+                );
+                stat.execute(
+                        "create table down as" +
+                                " (select timestamp_sequence(0, 1000000) ts," +
+                                " x * 100 as y" +
+                                " from long_sequence(5))" +
+                                " timestamp(ts) partition by DAY;"
+                );
             }
-            sink.clear();
-            long openFilesBefore = TestFilesFacadeImpl.INSTANCE.getOpenFileCount();
-            try (PreparedStatement ps = connection.prepareStatement("select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()")) {
-                try (ResultSet rs = ps.executeQuery()) {
-                    assertResultSet(
-                            "id[INTEGER],table_name[VARCHAR],designatedTimestamp[VARCHAR],partitionBy[VARCHAR],maxUncommittedRows[INTEGER],o3MaxLag[BIGINT]\n" +
-                                    "2,a,null,NONE,1000,300000000\n",
-                            sink,
-                            rs
+
+            try (Statement stat = connection.createStatement()) {
+                // Set RSS limit, so that the UPDATE will fail with OOM.
+                Unsafe.setRssMemLimit(8_900_000);
+                try {
+                    stat.execute(
+                            "UPDATE up SET x = y" +
+                                    " FROM down " +
+                                    " WHERE up.ts = down.ts and x < 4"
                     );
+                    Assert.fail();
+                } catch (PSQLException e) {
+                    assertContains(e.getMessage(), "global RSS memory limit exceeded");
                 }
+
+                // Remove the limit and verify that the update succeeds.
+                Unsafe.setRssMemLimit(0);
+                stat.execute(
+                        "UPDATE up SET x = y" +
+                                " FROM down " +
+                                " WHERE up.ts = down.ts and x < 4"
+                );
             }
-            engine.releaseAllReaders();
-            long openFilesAfter = TestFilesFacadeImpl.INSTANCE.getOpenFileCount();
-            Assert.assertEquals(openFilesBefore, openFilesAfter);
+
+            final String expected = "ts[TIMESTAMP],x[BIGINT]\n" +
+                    "1970-01-01 00:00:00.0,100\n" +
+                    "1970-01-01 00:00:01.0,200\n" +
+                    "1970-01-01 00:00:02.0,300\n" +
+                    "1970-01-01 00:00:03.0,4\n" +
+                    "1970-01-01 00:00:04.0,5\n";
+            try (ResultSet resultSet = connection.prepareStatement("up").executeQuery()) {
+                sink.clear();
+                assertResultSet(expected, sink, resultSet);
+            }
         });
     }
 }

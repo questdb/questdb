@@ -9730,66 +9730,6 @@ create table tab as (
     }
 
     @Test
-    public void testUpdateRecoversFromOomError() throws Exception {
-        // UPDATEs with JOINs are not supported for WAL tables.
-        Assume.assumeFalse(walEnabled);
-
-        // TODO(puzpuzpuz): this test fails on CONN_AWARE_EXTENDED_PREPARED_BINARY and CONN_AWARE_EXTENDED_PREPARED_TEXT
-        assertWithPgServer(CONN_AWARE_ALL ^ CONN_AWARE_EXTENDED_PREPARED_BINARY ^ CONN_AWARE_EXTENDED_PREPARED_TEXT, (connection, binary, mode, port) -> {
-            try (Statement stat = connection.createStatement()) {
-                stat.execute(
-                        "create table up as" +
-                                " (select timestamp_sequence(0, 1000000) ts," +
-                                " x" +
-                                " from long_sequence(5))" +
-                                " timestamp(ts) partition by DAY;"
-                );
-                stat.execute(
-                        "create table down as" +
-                                " (select timestamp_sequence(0, 1000000) ts," +
-                                " x * 100 as y" +
-                                " from long_sequence(5))" +
-                                " timestamp(ts) partition by DAY;"
-                );
-            }
-
-            try (Statement stat = connection.createStatement()) {
-                // Set RSS limit, so that the UPDATE will fail with OOM.
-                Unsafe.setRssMemLimit(8_900_000);
-                try {
-                    stat.execute(
-                            "UPDATE up SET x = y" +
-                                    " FROM down " +
-                                    " WHERE up.ts = down.ts and x < 4"
-                    );
-                    Assert.fail();
-                } catch (PSQLException e) {
-                    assertContains(e.getMessage(), "global RSS memory limit exceeded");
-                }
-
-                // Remove the limit and verify that the update succeeds.
-                Unsafe.setRssMemLimit(0);
-                stat.execute(
-                        "UPDATE up SET x = y" +
-                                " FROM down " +
-                                " WHERE up.ts = down.ts and x < 4"
-                );
-            }
-
-            final String expected = "ts[TIMESTAMP],x[BIGINT]\n" +
-                    "1970-01-01 00:00:00.0,100\n" +
-                    "1970-01-01 00:00:01.0,200\n" +
-                    "1970-01-01 00:00:02.0,300\n" +
-                    "1970-01-01 00:00:03.0,4\n" +
-                    "1970-01-01 00:00:04.0,5\n";
-            try (ResultSet resultSet = connection.prepareStatement("up").executeQuery()) {
-                sink.clear();
-                assertResultSet(expected, sink, resultSet);
-            }
-        });
-    }
-
-    @Test
     public void testUpdateWithNowAndSystimestamp() throws Exception {
         assertMemoryLeak(() -> {
             currentMicros = 123678000L;
