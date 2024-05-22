@@ -83,7 +83,6 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     //  - record with max value for firstN/bottomN query
     //  - record with min value for lastN/topN query
     private long minMaxRowId = -1;
-    private long rightRecordRowId = -1;
 
     public LimitedSizeLongTreeChain(long keyPageSize, int keyMaxPages, long valuePageSize, int valueMaxPages, boolean isFirstN, long maxValues) {
         super(keyPageSize, keyMaxPages);
@@ -100,7 +99,6 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         this.valueChain.jumpTo(0);
 
         minMaxRowId = -1;
-        rightRecordRowId = -1;
         minMaxNode = -1;
         currentValues = 0;
         freeList.clear();
@@ -168,29 +166,36 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         }
     }
 
+    /**
+     * Inserts record into the tree. If tree is full and record is bigger/smaller than the smallest/biggest
+     * record in the tree, then it will be inserted and smallest/biggest record will be removed.
+     * <p>
+     * <strong>important invariant:</strong>
+     * when <code>(maxValues == currentValues)</code> then upon returning from this method the comparator left side must be set
+     * to the ownedRecord with the max/min rowId.
+     *
+     * @param currentRecord record to insert into the tree
+     * @param sourceCursor  cursor to get record from
+     * @param ownedRecord   record to store data in. This record is owned by the tree and it must not be rewinded externally.
+     * @param comparator    comparator to compare records
+     */
     public void put(
-            Record leftRecord,
+            Record currentRecord,
             RecordCursor sourceCursor,
-            Record rightRecord,
+            Record ownedRecord,
             RecordComparator comparator
     ) {
         if (maxValues == 0) {
             return;
         }
 
-        comparator.setLeft(leftRecord);
-
         // if maxValues < 0 then there's no limit (unless there's more than 2^64 records, which is unlikely)
         if (maxValues == currentValues) {
-            if (rightRecordRowId != minMaxRowId) {
-                sourceCursor.recordAt(rightRecord, minMaxRowId);
-                rightRecordRowId = minMaxRowId;
-            }
-            int cmp = comparator.compare(rightRecord);
+            int cmp = comparator.compare(currentRecord);
 
-            if (isFirstN && cmp >= 0) { // bigger than max for firstN/bottomN
+            if (isFirstN && cmp <= 0) { // bigger than max for firstN/bottomN
                 return;
-            } else if (!isFirstN && cmp <= 0) { // smaller than min for lastN/topN
+            } else if (!isFirstN && cmp >= 0) { // smaller than min for lastN/topN
                 return;
             } else { // record has to be inserted, so we've to remove current minMax
                 removeAndCache(minMaxNode);
@@ -198,12 +203,18 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         }
 
         if (root == EMPTY) {
-            putParent(leftRecord.getRowId());
+            long currentRecordRowId = currentRecord.getRowId();
+            putParent(currentRecordRowId);
             minMaxNode = root;
-            minMaxRowId = leftRecord.getRowId();
+            minMaxRowId = currentRecordRowId;
             currentValues++;
+            prepareComparatorLeftSideIfAtMaxCapacity(sourceCursor, ownedRecord, comparator);
             return;
         }
+
+        // ok, we need to insert new record into already existing tree
+        // let's optimize for tree-traversal
+        comparator.setLeft(currentRecord);
 
         long p = root;
         long parent;
@@ -211,24 +222,25 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         do {
             parent = p;
             final long r = refOf(p);
-            rightRecordRowId = valueChain.getLong(r);
-            sourceCursor.recordAt(rightRecord, rightRecordRowId);
-            cmp = comparator.compare(rightRecord);
+            long rowId = valueChain.getLong(r);
+            sourceCursor.recordAt(ownedRecord, rowId);
+            cmp = comparator.compare(ownedRecord);
             if (cmp < 0) {
                 p = leftOf(p);
             } else if (cmp > 0) {
                 p = rightOf(p);
             } else {
-                setRef(p, appendValue(leftRecord.getRowId(), r)); // appends value to chain, minMax shouldn't change
+                setRef(p, appendValue(currentRecord.getRowId(), r)); // appends value to chain, minMax shouldn't change
                 if (minMaxRowId == -1) {
                     refreshMinMaxNode();
                 }
                 currentValues++;
+                prepareComparatorLeftSideIfAtMaxCapacity(sourceCursor, ownedRecord, comparator);
                 return;
             }
         } while (p > -1);
 
-        p = allocateBlock(parent, leftRecord.getRowId());
+        p = allocateBlock(parent, currentRecord.getRowId());
 
         if (cmp < 0) {
             setLeft(parent, p);
@@ -239,6 +251,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         fixInsert(p);
         refreshMinMaxNode();
         currentValues++;
+        prepareComparatorLeftSideIfAtMaxCapacity(sourceCursor, ownedRecord, comparator);
     }
 
     // remove node and put on freelist (if holds only one value in chain)
@@ -295,6 +308,14 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         long ref = refOf(position);
         long previousOffset = valueChain.getLong(ref + 8);
         return previousOffset != CHAIN_END;
+    }
+
+    private void prepareComparatorLeftSideIfAtMaxCapacity(RecordCursor sourceCursor, Record ownedRecord, RecordComparator comparator) {
+        if (currentValues == maxValues) {
+            assert minMaxRowId != -1;
+            sourceCursor.recordAt(ownedRecord, minMaxRowId);
+            comparator.setLeft(ownedRecord);
+        }
     }
 
     private void refreshMinMaxNode() {
