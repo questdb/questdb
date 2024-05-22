@@ -77,9 +77,6 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
                     closeOnDone
             );
             return future;
-        } catch (Throwable th) {
-            operation.close();
-            throw th;
         } finally {
             if (closeOnDone && isDone) {
                 operation.close();
