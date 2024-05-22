@@ -785,7 +785,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             ddl("alter table x alter column c type string", sqlExecutionContext);
             assertSql("sum\n" + initialSize + "\n", "select sum(diskSize) from table_partitions('x')");
 
-            // Test the size isn't ballooned after the conversion, it's no more than 25% larger than the initial size
+            // Test the size isn't ballooned after the conversion, it's no more than 50% larger than the initial size
             ddl("alter table x alter column x type string", sqlExecutionContext);
             assertSql("column\ntrue\n", "select sum(diskSize) < " + (initialSize * 1.5) + " from table_partitions('x')");
 
