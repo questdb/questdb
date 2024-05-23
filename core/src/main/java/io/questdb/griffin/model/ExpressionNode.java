@@ -25,6 +25,7 @@
 package io.questdb.griffin.model;
 
 import io.questdb.griffin.OperatorExpression;
+import io.questdb.griffin.OperatorRegistry;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
@@ -195,6 +196,8 @@ public class ExpressionNode implements Mutable, Sinkable {
 
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
+        // note: it's safe to take any registry (new or old) because we don't use precedence here
+        OperatorRegistry registry = OperatorExpression.getRegistry();
         switch (paramCount) {
             case 0:
                 if (queryModel != null) {
@@ -213,7 +216,7 @@ public class ExpressionNode implements Mutable, Sinkable {
                 sink.putAscii(')');
                 break;
             case 2:
-                if (OperatorExpression.isOperator(token)) {
+                if (registry.isOperator(token)) {
                     toSink(sink, lhs);
                     sink.putAscii(' ');
                     sink.put(token);
@@ -230,7 +233,7 @@ public class ExpressionNode implements Mutable, Sinkable {
                 break;
             default:
                 int n = args.size();
-                if (OperatorExpression.isOperator(token) && n > 0) {
+                if (registry.isOperator(token) && n > 0) {
                     // special case for "in"
                     toSink(sink, args.getQuick(n - 1));
                     sink.putAscii(' ');

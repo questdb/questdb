@@ -102,8 +102,9 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         final StringSink expression1 = new StringSink();
         final StringSink expression2 = new StringSink();
 
-        final boolean setOperation = OperatorExpression.getOperatorType(name) == OperatorExpression.SET;
-        final boolean operator = OperatorExpression.isOperator(name);
+        OperatorRegistry registry = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence());
+        final boolean setOperation = registry.getOperatorType(name) == OperatorExpression.SET;
+        final boolean operator = registry.isOperator(name);
 
         if (operator && !setOperation) {
             switch (argCount) {
