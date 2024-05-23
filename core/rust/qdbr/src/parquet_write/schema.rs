@@ -220,8 +220,8 @@ pub struct ColumnImpl {
     pub name: String,
     pub data_type: ColumnType,
     pub row_count: usize,
-    pub fixed_len_data: &'static [u8],
-    pub variable_len_data: Option<&'static [u8]>,
+    pub primary_data: &'static [u8],
+    pub secondary_data: Option<&'static [u8]>,
     pub symbol_offsets: Option<&'static [u64]>,
 }
 
@@ -232,30 +232,31 @@ impl ColumnImpl {
         name: &str,
         column_type: i32,
         row_count: usize,
-        fixed_len_data_ptr: *const u8,
-        variable_len_data_ptr: *const u8,
-        variable_len_data_size: usize,
+        primary_data_ptr: *const u8,
+        primary_data_size: usize,
+        secondary_data_ptr: *const u8,
+        secondary_data_size: usize,
     ) -> parquet2::error::Result<Self> {
         assert!(row_count > 0);
         let column_type: ColumnType = column_type
             .try_into()
             .map_err(|err| parquet2::error::Error::InvalidParameter(err))?;
-        assert!(!fixed_len_data_ptr.is_null());
+        assert!(!primary_data_ptr.is_null());
 
-        let fixed_len_data = unsafe { from_raw_parts(fixed_len_data_ptr, row_count) };
-        let variable_len_data = if variable_len_data_ptr.is_null() {
+        let primary_data = unsafe { from_raw_parts(primary_data_ptr, primary_data_size) };
+        let secondary_data = if secondary_data_ptr.is_null() {
             None
         } else {
-            Some(unsafe { from_raw_parts(variable_len_data_ptr, variable_len_data_size) })
+            Some(unsafe { from_raw_parts(secondary_data_ptr, secondary_data_size) })
         };
 
         Ok(ColumnImpl {
             name: name.to_string(),
             data_type: column_type,
             row_count,
-            fixed_len_data,
-            variable_len_data,
-            symbol_offsets: None,
+            primary_data,
+            secondary_data,
+            symbol_offsets: None, // TODO: fix symbols
         })
     }
 }

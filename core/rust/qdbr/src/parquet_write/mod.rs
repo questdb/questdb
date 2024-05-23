@@ -215,10 +215,12 @@ mod tests {
     use parquet2::deserialize::{HybridEncoded, HybridRleIter};
     use parquet2::encoding::{hybrid_rle, uleb128};
     use std::io::Cursor;
+    use std::mem::size_of;
     use std::ptr::null;
     use std::sync::Arc;
     use arrow::array::Array;
     use parquet2::page::CompressedPage;
+    use parquet2::types;
 
     #[test]
     fn test_write_parquet_with_fixed_sized_columns() {
@@ -229,11 +231,11 @@ mod tests {
         let expected2 = vec![Some(0.5f32), Some(0.001), None, Some(3.14)];
 
         let col1_w = Arc::new(
-            ColumnImpl::from_raw_data("col1", 5, col1.len(), col1.as_ptr() as *const u8, null(), 0)
+            ColumnImpl::from_raw_data("col1", 5, col1.len(), col1.as_ptr() as *const u8, col1.len() * size_of::<i32>(),  null(), 0)
                 .unwrap(),
         );
         let col2_w = Arc::new(
-            ColumnImpl::from_raw_data("col2", 9, col2.len(), col2.as_ptr() as *const u8, null(), 0)
+            ColumnImpl::from_raw_data("col2", 9, col2.len(), col2.as_ptr() as *const u8, col2.len() * size_of::<f32>(), null(), 0)
                 .unwrap(),
         );
 
@@ -281,7 +283,7 @@ mod tests {
         let page_size_bytes = 256usize;
         let col1: Vec<i64> = (0..row_count).into_iter().map(|v| v as i64).collect();
         let col1_w = Arc::new(
-            ColumnImpl::from_raw_data("col1", 6, col1.len(), col1.as_ptr() as *const u8, null(), 0)
+            ColumnImpl::from_raw_data("col1", 6, col1.len(), col1.as_ptr() as *const u8, col1.len() * size_of::<i64>(), null(), 0)
                 .unwrap(),
         );
 
@@ -366,5 +368,12 @@ mod tests {
                 _ => assert!(false),
             }
         }
+    }
+
+    #[test]
+    fn decode_len() {
+       let data =  [1u8, 0, 0, 0, 65, 0, 1, 0, 0, 0, 67, 0, 1, 0, 0, 0, 67, 0, 1, 0, 0, 0, 65, 0, 1, 0, 0, 0, 67, 0, 1, 0, 0, 0, 65, 0, 1, 0, 0, 0, 65, 0, 1, 0, 0, 0, 65, 0, 1, 0, 0, 0, 66, 0, 1, 0, 0, 0, 65, 0];
+        let len = types::decode::<i32>(&data[0..4]);
+        assert_eq!(len, 1);
     }
 }

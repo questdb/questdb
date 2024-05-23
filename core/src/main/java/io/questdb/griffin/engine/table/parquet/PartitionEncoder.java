@@ -34,10 +34,12 @@ import io.questdb.std.str.Path;
 
 public class PartitionEncoder implements QuietCloseable {
     private DirectLongList columnAddrs = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
+    private DirectLongList columnSizes = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
     private DirectIntList columnIds = new DirectIntList(16, MemoryTag.NATIVE_DEFAULT);
     private DirectIntList columnNameLengths = new DirectIntList(16, MemoryTag.NATIVE_DEFAULT);
     private DirectUtf8Sink columnNames = new DirectUtf8Sink(32);
     private DirectLongList columnSecondaryAddrs = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
+    private DirectLongList columnSecondarySizes = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
     private DirectLongList columnTops = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
     private DirectIntList columnTypes = new DirectIntList(16, MemoryTag.NATIVE_DEFAULT);
 
@@ -49,7 +51,9 @@ public class PartitionEncoder implements QuietCloseable {
         columnIds = Misc.free(columnIds);
         columnTops = Misc.free(columnTops);
         columnAddrs = Misc.free(columnAddrs);
+        columnSizes = Misc.free(columnSizes);
         columnSecondaryAddrs = Misc.free(columnSecondaryAddrs);
+        columnSecondarySizes = Misc.free(columnSecondarySizes);
     }
 
     public void encode(TableReader tableReader, int partitionIndex, Path destPath) {
@@ -61,17 +65,23 @@ public class PartitionEncoder implements QuietCloseable {
         final int columnBase = tableReader.getColumnBase(partitionIndex);
         for (int i = 0; i < columnCount; i++) {
             final String columnName = metadata.getColumnName(i);
+            final int columnType = metadata.getColumnType(i);
             columnNames.put(columnName);
             columnNameLengths.add(columnName.length());
-            columnTypes.add(metadata.getColumnType(i));
+            columnTypes.add(columnType);
             columnIds.add(metadata.getColumnMetadata(i).getWriterIndex());
             final long colTop = Math.min(tableReader.getColumnTop(columnBase, i), partitionSize);
             columnTops.add(colTop);
             final int primaryIndex = TableReader.getPrimaryColumnIndex(columnBase, i);
+
             final MemoryR primaryMem = tableReader.getColumn(primaryIndex);
             columnAddrs.add(primaryMem.addressOf(0));
+            columnSizes.add(primaryMem.size());
+
+            // offsets/aux for variable length columns
             final MemoryR secondaryMem = tableReader.getColumn(primaryIndex + 1);
             columnSecondaryAddrs.add(secondaryMem != null ? secondaryMem.addressOf(0) : 0);
+            columnSecondarySizes.add(secondaryMem != null ? secondaryMem.size() : 0);
         }
 
         try {
@@ -85,7 +95,9 @@ public class PartitionEncoder implements QuietCloseable {
                     metadata.getTimestampIndex(),
                     columnTops.getAddress(),
                     columnAddrs.getAddress(),
+                    columnSizes.getAddress(),
                     columnSecondaryAddrs.getAddress(),
+                    columnSecondarySizes.getAddress(),
                     partitionSize,
                     destPath.ptr(),
                     destPath.size()
@@ -110,7 +122,9 @@ public class PartitionEncoder implements QuietCloseable {
             int timestampIndex,
             long columnTopsPtr,
             long columnAddrsPtr,
+            long columnSizesPtr,
             long columnSecondaryAddrsPtr,
+            long columnSecondarySizesPtr,
             long rowCount,
             long destPathPtr,
             int destPathLength
@@ -123,7 +137,9 @@ public class PartitionEncoder implements QuietCloseable {
         columnIds.clear();
         columnTops.clear();
         columnAddrs.clear();
+        columnSizes.clear();
         columnSecondaryAddrs.clear();
+        columnSecondarySizes.clear();
     }
 
     static {

@@ -1,6 +1,5 @@
 use std::fs::File;
 use std::path::Path;
-use std::ptr::null;
 use std::slice;
 use std::sync::Arc;
 use anyhow::Context;
@@ -36,10 +35,12 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     col_name_lengths_ptr: *const i32,
     col_types_ptr: *const i32,
     col_ids_ptr: *const i32,
-    timestamp_index: jint,
+    _timestamp_index: jint,
     _col_tops_ptr: *const i64,
-    col_addrs_ptr: *const *const u8,
-    _col_secondary_addrs_ptr: *const *const u8,
+    primary_col_addrs_ptr: *const *const u8,
+    primary_col_sizes_ptr: *const i64,
+    secondary_col_addrs_ptr: *const *const u8,
+    secondary_col_sizes_ptr: *const i64,
     row_count: jlong,
     dest_path: *const u8,
     dest_path_len: i32,
@@ -54,11 +55,17 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         );
         let col_types = unsafe { slice::from_raw_parts(col_types_ptr, col_count) };
         let _col_ids = unsafe { slice::from_raw_parts(col_ids_ptr, col_count) };
-        let col_addrs = unsafe { slice::from_raw_parts(col_addrs_ptr, col_count) };
+
+        let primary_col_addrs_slice = unsafe { slice::from_raw_parts(primary_col_addrs_ptr, col_count) };
+        let primary_col_sizes_slice = unsafe { slice::from_raw_parts(primary_col_sizes_ptr, col_count) };
+
+        let secondary_col_addrs_slice = unsafe { slice::from_raw_parts(secondary_col_addrs_ptr, col_count) };
+        let secondary_col_sizes_slice = unsafe { slice::from_raw_parts(secondary_col_sizes_ptr, col_count) };
 
         let dest_path = unsafe {
             std::str::from_utf8_unchecked(slice::from_raw_parts(dest_path, dest_path_len as usize))
         };
+
         let dest_path = Path::new(&dest_path);
 
         let row_count = row_count as usize;
@@ -67,8 +74,23 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         for i in 0..col_count {
             let col_name = col_names[i];
             let col_type = col_types[i];
-            let col_addr_fixed = col_addrs[i];
-            let column = ColumnImpl::from_raw_data(col_name, col_type, row_count, col_addr_fixed, null(), 0)?;
+
+            let primary_col_addr = primary_col_addrs_slice[i];
+            let primary_col_size = primary_col_sizes_slice[i];
+
+            let secondary_col_addr = secondary_col_addrs_slice[i];
+            let secondary_col_size = secondary_col_sizes_slice[i];
+
+            let column = ColumnImpl::from_raw_data(
+                col_name,
+                col_type,
+                row_count,
+                primary_col_addr,
+                primary_col_size as usize,
+                secondary_col_addr,
+                secondary_col_size as usize
+            )?;
+
             columns.push(Arc::new(column));
         }
 
@@ -84,7 +106,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             )
         })?;
 
-        ParquetWriter::new(&mut file).finish(partition).map(|_| ()).context("")
+        // FIXME: statistics is a global option (not a column-wise), should be implemented for all types
+        ParquetWriter::new(&mut file).with_statistics(false).finish(partition).map(|_| ()).context("")
     };
 
     match encode() {

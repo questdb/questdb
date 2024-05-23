@@ -40,7 +40,10 @@ pub fn string_to_page(
     let mut buffer = vec![];
     let mut null_count = 0;
 
-    let lengths = offsets.iter().map(|offset| types::decode::<i32>( &data[*offset as usize..]));
+    let lengths = offsets.iter().map(|offset| {
+        let offset = *offset as usize;
+        types::decode::<i32>( &data[offset..offset + size_of::<i32>()])
+    });
     let nulls_iterator = lengths.clone().map(|len| {
         if len < 0 {
             null_count += 1;
@@ -58,7 +61,7 @@ pub fn string_to_page(
         Encoding::Plain => encode_plain(offsets, data, null_count, &mut buffer),
         Encoding::DeltaLengthByteArray => encode_delta(offsets, data, null_count, &mut buffer),
         other => Err(parquet2::error::Error::OutOfSpec(format!(
-            "Encoding binary as {:?}",
+            "Encoding string as {:?}",
             other
         )))?,
     }
@@ -82,29 +85,31 @@ fn encode_non_null_values<'a, I: Iterator<Item = &'a [u8]>>(
     buffer: &mut Vec<u8>,
 ) {
     iter.for_each(|x| {
+        let data: &[u16] = unsafe { transmute(x) };
+        let utf8 = String::from_utf16(data).expect("utf16 string");
         // BYTE_ARRAY: first 4 bytes denote length in littleendian.
-        let len = (x.len() as u32).to_le_bytes();
+        let len = (utf8.len() as u32).to_le_bytes();
         buffer.extend_from_slice(&len);
-        buffer.extend_from_slice(x);
+        buffer.extend_from_slice(utf8.as_bytes());
     })
 }
 
 fn encode_plain(offsets: &[i64], values: &[u8], null_count: usize, buffer: &mut Vec<u8>) {
-    let len_before = buffer.len();
-    let length = offsets.len() - null_count;
-    let capacity = (offsets[offsets.len() - 1] - offsets[0]) as usize - (length * size_of::<i32>());
-    buffer.reserve(capacity);
+    let non_null_values_iter = offsets.iter().map(|offset| {
+        let offset = *offset as usize;
+        (offset, types::decode::<i32>( &values[offset..offset + size_of::<i32>()]))
+    })
+        .filter(|(_offset, len)| *len >= 0)
+        .map(|(offset, len)| &values[offset + size_of::<i32>() .. offset + size_of::<i32>() + len as usize]);
 
-    let non_null_values_iter = offsets.iter().map(|offset| (*offset, types::decode::<i32>( &values[*offset as usize..])))
-        .filter(|(offset, len)| *len >= 0)
-        .map(|(offset, len)| &values[offset as usize + size_of::<i32>() .. (offset + len as i64) as usize]);
     encode_non_null_values(non_null_values_iter, buffer);
-    // Ensure we allocated properly.
-    debug_assert_eq!(buffer.len() - len_before, capacity);
 }
 
 fn encode_delta(offsets: &[i64], values: &[u8], null_count: usize, buffer: &mut Vec<u8>) {
-    let lengths = offsets.iter().map(|offset| types::decode::<i32>( &values[*offset as usize..]) as i64)
+    let lengths = offsets.iter().map(|offset| {
+        let offset = *offset as usize;
+        types::decode::<i32>( &values[offset..offset + size_of::<i32>()]) as i64
+    })
         .filter(|len| *len >= 0);
     let length = offsets.len() - null_count;
     let lengths = ExactSizedIter::new(lengths, length);
@@ -116,9 +121,9 @@ fn encode_delta(offsets: &[i64], values: &[u8], null_count: usize, buffer: &mut 
         buffer.reserve(capacity);
     }
     for row in 0..offsets.len() {
-        let offset = offsets[row];
-        let len = types::decode::<i64>( &values[offset as usize..]);
-        let data = &values[offset as usize + size_of::<i32>() .. (offset + len) as usize];
+        let offset = offsets[row] as usize;
+        let len = types::decode::<i32>( &values[offset..offset + size_of::<i32>()]);
+        let data = &values[offset + size_of::<i32>() .. offset + len as usize];
         let data: &[u16] = unsafe { transmute(data) };
         let utf8 = String::from_utf16(data).expect("utf16 string");
         buffer.extend_from_slice(utf8.as_bytes());

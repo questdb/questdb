@@ -53,6 +53,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                     " rnd_geohash(8) a_geo_short," +
                     " rnd_geohash(16) a_geo_int," +
                     " rnd_geohash(32) a_geo_long," +
+                    " rnd_str('hello', 'world', '!') a_string," +
                     " cast(timestamp_sequence(600000000000, 700) as date) a_date," +
                     " timestamp_sequence(500000000000, 600) a_ts," +
                     " timestamp_sequence(400000000000, 500) designated_ts" +
