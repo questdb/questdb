@@ -1015,6 +1015,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public boolean isCacheHit() {
+            return sqlExecutionContext.isCacheHit();
+        }
+
+        @Override
         public boolean isColumnPreTouchEnabled() {
             return sqlExecutionContext.isColumnPreTouchEnabled();
         }
@@ -1042,6 +1047,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public void pushTimestampRequiredFlag(boolean flag) {
             sqlExecutionContext.pushTimestampRequiredFlag(flag);
+        }
+
+        @Override
+        public void setCacheHit(boolean value) {
+            sqlExecutionContext.setCacheHit(value);
         }
 
         @Override

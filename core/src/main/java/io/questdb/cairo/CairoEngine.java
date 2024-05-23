@@ -37,6 +37,7 @@ import io.questdb.cairo.wal.*;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cutlass.text.CopyContext;
 import io.questdb.griffin.*;
+import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
@@ -1185,7 +1186,12 @@ public class CairoEngine implements Closeable, WriterSource {
                     CompiledQuery cc = compiler.compile(updateSql, sqlExecutionContext);
                     switch (cc.getType()) {
                         case UPDATE:
-                            try (OperationFuture future = cc.execute(eventSubSeq)) {
+                            try (
+                                    // update operation is stashed in the compiled query,
+                                    // and it has to be released to avoid memory leak
+                                    UpdateOperation ignore = cc.getUpdateOperation();
+                                    OperationFuture future = cc.execute(eventSubSeq)
+                            ) {
                                 future.await();
                                 return future.getAffectedRowsCount();
                             }

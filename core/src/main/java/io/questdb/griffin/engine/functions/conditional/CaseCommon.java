@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.conditional;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
@@ -86,7 +87,7 @@ public class CaseCommon {
 
         final int type = typeEscalationMap.get(Numbers.encodeLowHighInts(commonType, valueType));
         if (type == LongIntHashMap.NO_ENTRY_VALUE) {
-            throw SqlException.$(valuePos, "inconvertible types ").put(nameOf(valueType)).put(" to ").put(nameOf(commonType));
+            throw SqlException.inconvertibleTypes(valuePos, valueType, ColumnType.nameOf(valueType), commonType, ColumnType.nameOf(commonType));
         }
         return type;
     }

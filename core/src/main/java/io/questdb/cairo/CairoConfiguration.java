@@ -302,10 +302,6 @@ public interface CairoConfiguration {
 
     int getPartitionPurgeListCapacity();
 
-    default QueryLogger getQueryLogger() {
-        return DefaultQueryLogger.INSTANCE;
-    }
-
     int getQueryRegistryPoolSize();
 
     @NotNull
