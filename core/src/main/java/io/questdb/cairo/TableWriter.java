@@ -7087,11 +7087,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (columnType > 0) { // Not deleted
                 final long pos = size - getColumnTop(columnIndex);
                 if (ColumnType.isVarSize(columnType)) {
-                    dataSizeBytes = ColumnType.getDriver(columnType).setAppendPosition(
+                    ColumnTypeDriver driver = ColumnType.getDriver(columnType);
+                    dataSizeBytes = driver.setAppendPosition(
                             pos,
                             auxMem,
                             dataMem
-                    );
+                    ) - driver.getMinAuxVectorSize();
                 } else {
                     dataSizeBytes = pos << ColumnType.pow2SizeOf(columnType);
                     if (doubleAllocate) {

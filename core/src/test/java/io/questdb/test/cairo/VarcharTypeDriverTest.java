@@ -356,7 +356,6 @@ public class VarcharTypeDriverTest extends AbstractTest {
                 long actualUsedSize = VarcharTypeDriver.INSTANCE.setAppendPosition(cut, auxMem, dataMem);
                 expectedUsedSize = (cut == 0) ? 0 : usedSpace.getQuick(cut - 1);
                 Assert.assertEquals(expectedUsedSize, actualUsedSize);
-
                 long expectedAuxUsedSize = VARCHAR_AUX_WIDTH_BYTES * (long) cut;
                 long expectedDataUsedSize = expectedUsedSize - expectedAuxUsedSize;
                 Assert.assertEquals(expectedAuxUsedSize, auxMem.getAppendOffset());
