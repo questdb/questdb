@@ -1513,7 +1513,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 // contains secrets or not.
                 executor.execute(executionContext);
                 // executor might decide that SQL contains secret, otherwise we're logging it
-                this.sqlText = executionContext.containsSecret() ? "** redacted for privacy** " : sqlText;
+                this.sqlText = executionContext.containsSecret() ? "** redacted for privacy ** " : sqlText;
             } catch (Throwable e) {
                 // Executor is all-in-one, it parses SQL text and executes it right away. The convention is
                 // that before parsing secrets the executor will notify the execution context. In that, even if
