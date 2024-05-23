@@ -27,38 +27,41 @@ package io.questdb;
 import io.questdb.std.Os;
 
 public class MemoryConfigurationImpl implements MemoryConfiguration {
-    private final long configuredLimitMib;
+    private final long configuredLimitBytes;
     private final long configuredLimitPercent;
     private final long ramUsageLimit;
     private final long totalSystemMemory;
 
-    public MemoryConfigurationImpl(long configuredLimitMib, long configuredLimitPercent) {
-        this.configuredLimitMib = configuredLimitMib;
+    public MemoryConfigurationImpl(long configuredLimitBytes, long configuredLimitPercent) {
+        this.configuredLimitBytes = configuredLimitBytes;
         this.configuredLimitPercent = configuredLimitPercent;
         this.totalSystemMemory = Os.getMemorySizeFromMXBean();
         assert totalSystemMemory >= -1 : "Os.getMemorySizeFromMXBean() reported negative memory size";
-        long limitMib = Math.min(Long.MAX_VALUE >> 20, Math.max(configuredLimitMib, 0)) << 20;
-        long limitPercent = (configuredLimitPercent > 0 && configuredLimitPercent <= 100 && totalSystemMemory != -1)
-                ? totalSystemMemory / 100 * configuredLimitPercent
-                : 0;
-        this.ramUsageLimit = (limitMib == 0) ? limitPercent
-                : (limitPercent == 0) ? limitMib
-                : Math.min(limitMib, limitPercent);
+        this.ramUsageLimit = resolveRamUsageLimit(configuredLimitBytes, configuredLimitPercent, totalSystemMemory);
+    }
+
+    public static long resolveRamUsageLimit(
+            long configuredLimitBytes, long configuredLimitPercent, long totalSystemMemory
+    ) {
+        long limitByPercent = (totalSystemMemory != -1) ? totalSystemMemory / 100 * configuredLimitPercent : 0;
+        return (configuredLimitBytes == 0) ? limitByPercent
+                : (limitByPercent == 0) ? configuredLimitBytes
+                : Math.min(configuredLimitBytes, limitByPercent);
     }
 
     @Override
-    public long getEffectiveRamUsageLimit() {
-        return ramUsageLimit;
-    }
-
-    @Override
-    public long getRamUsageLimitMib() {
-        return configuredLimitMib;
+    public long getRamUsageLimitBytes() {
+        return configuredLimitBytes;
     }
 
     @Override
     public long getRamUsageLimitPercent() {
         return configuredLimitPercent;
+    }
+
+    @Override
+    public long getResolvedRamUsageLimitBytes() {
+        return ramUsageLimit;
     }
 
     @Override

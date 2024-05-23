@@ -26,20 +26,20 @@ package io.questdb;
 
 public interface MemoryConfiguration {
     /**
-     * Returns the QuestDB-imposed limit on the total memory allocated with any `NATIVE_*`
-     * tag. As a special case, `NATIVE_PATH` is exempted from this limit.
+     * Returns the value of the configuration property ram.usage.limit.bytes.
      */
-    long getEffectiveRamUsageLimit();
-
-    /**
-     * Returns the value of the configuration property ram.usage.limit.mib.
-     */
-    long getRamUsageLimitMib();
+    long getRamUsageLimitBytes();
 
     /**
      * Returns the value of the configuration property ram.usage.limit.percent.
      */
     long getRamUsageLimitPercent();
+
+    /**
+     * Returns the QuestDB-imposed limit on the total memory allocated with any `NATIVE_*`
+     * tag. As a special case, `NATIVE_PATH` is exempted from this limit.
+     */
+    long getResolvedRamUsageLimitBytes();
 
     /**
      * Returns the total RAM as reported by `OperatingSystemMXBean`. This takes into account
