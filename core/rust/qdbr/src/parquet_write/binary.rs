@@ -101,7 +101,6 @@ fn encode_delta(offsets: &[i64], values: &[u8], null_count: usize, buffer: &mut 
         let len = types::decode::<i64>( &values[offset..offset + size_of::<i64>()]);
         if len > 0 {
             let data = &values[offset + size_of::<i64>()..offset + size_of::<i64>() + len as usize];
-            eprintln!("bin_slice: {:X?}", data);
             buffer.extend_from_slice(data);
         }
     }

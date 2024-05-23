@@ -25,7 +25,6 @@ where
         // append the non-null values
         for x in slice.iter().filter(|x| !x.is_null()) {
             let parquet_native: P = x.as_();
-            eprintln!("int: {:?}", parquet_native);
             buffer.extend_from_slice(parquet_native.to_le_bytes().as_ref())
         }
     } else {
@@ -55,7 +54,6 @@ where
         let iterator = slice.iter().filter(|x| !x.is_null()).map(|x| {
             let parquet_native: P = x.as_();
             let integer: i64 = parquet_native.as_();
-            eprintln!("int: {:?}", integer);
             integer
         });
         let iterator = ExactSizedIter::new(iterator, slice.len() - null_count);
