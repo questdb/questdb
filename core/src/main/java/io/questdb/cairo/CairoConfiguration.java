@@ -337,11 +337,11 @@ public interface CairoConfiguration {
         return RostiAllocFacadeImpl.INSTANCE;
     }
 
-    long getRssMemoryLimit();
-
     boolean getSampleByDefaultAlignmentCalendar();
 
     int getSampleByIndexSearchPageSize();
+
+    long getSequencerCheckInterval();
 
     boolean getSimulateCrashEnabled();
 
@@ -522,8 +522,6 @@ public interface CairoConfiguration {
 
     long getWalPurgeInterval();
 
-    long getSequencerCheckInterval();
-
     default int getWalPurgeWaitBeforeDelete() {
         return 0;
     }
@@ -567,8 +565,6 @@ public interface CairoConfiguration {
     long getWriterCommandQueueSlotSize();
 
     long getWriterFileOpenOpts();
-
-    long getWriterMemoryLimit();
 
     int getWriterTickRowsCountMod();
 

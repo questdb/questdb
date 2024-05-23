@@ -545,11 +545,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getRssMemoryLimit() {
-        return 0;
-    }
-
-    @Override
     public boolean getSampleByDefaultAlignmentCalendar() {
         return true;
     }
@@ -557,6 +552,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSampleByIndexSearchPageSize() {
         return 0;
+    }
+
+    @Override
+    public long getSequencerCheckInterval() {
+        return 10_000;
     }
 
     @Override
@@ -962,11 +962,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getSequencerCheckInterval() {
-        return 10_000;
-    }
-
-    @Override
     public int getWalRecreateDistressedSequencerAttempts() {
         return 3;
     }
@@ -1038,11 +1033,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
         // case on Linux it is absolutely not the case on Windows. We must not enable anything other
         // than MMAP on Windows.
         return Os.type != Os.WINDOWS ? O_ASYNC : O_NONE;
-    }
-
-    @Override
-    public long getWriterMemoryLimit() {
-        return 0;
     }
 
     @Override

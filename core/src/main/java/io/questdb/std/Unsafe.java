@@ -37,7 +37,6 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 
 import static io.questdb.std.MemoryTag.NATIVE_DEFAULT;
-import static io.questdb.std.MemoryTag.NATIVE_O3;
 
 public final class Unsafe {
     public static final long BYTE_OFFSET;
@@ -64,7 +63,6 @@ public final class Unsafe {
     private static final Method implAddExports;
     //#endif
     private static long RSS_MEM_LIMIT = 0;
-    private static long WRITER_MEM_LIMIT = 0;
 
     private Unsafe() {
     }
@@ -292,10 +290,6 @@ public final class Unsafe {
         RSS_MEM_LIMIT = limit;
     }
 
-    public static void setWriterMemLimit(long limit) {
-        WRITER_MEM_LIMIT = limit;
-    }
-
     //#if jdk.version!=8
     private static long AccessibleObject_override_fieldOffset() {
         if (isJava8Or11()) {
@@ -316,16 +310,6 @@ public final class Unsafe {
     private static void checkAllocLimit(long size, int memoryTag) {
         if (size <= 0) {
             return;
-        }
-        if (WRITER_MEM_LIMIT > 0 && memoryTag == NATIVE_O3 && COUNTERS[memoryTag].sum() + size > WRITER_MEM_LIMIT) {
-            long usage = COUNTERS[memoryTag].sum();
-            if (usage + size > WRITER_MEM_LIMIT) {
-                throw CairoException.critical(0).put("table writing memory limit reached [usage=")
-                        .put(usage)
-                        .put(", limit=").put(WRITER_MEM_LIMIT)
-                        .put(", allocation=").put(size)
-                        .put(']');
-            }
         }
         if (RSS_MEM_LIMIT > 0 && memoryTag >= NATIVE_DEFAULT) {
             long usage = RSS_MEM_USED.get();

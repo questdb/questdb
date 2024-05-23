@@ -22,18 +22,26 @@
  *
  ******************************************************************************/
 
-open module io.questdb.test {
-    requires transitive io.questdb;
-    requires static junit;
-    requires transitive jdk.unsupported;
-    requires static org.jetbrains.annotations;
-    requires static java.sql;
-    requires static org.postgresql.jdbc;
-    requires static java.management;
-    requires jdk.management;
+package io.questdb;
 
-    uses io.questdb.griffin.FunctionFactory;
+public class DefaultMemoryConfiguration implements MemoryConfiguration {
+    @Override
+    public long getRamUsageLimitBytes() {
+        return 0;
+    }
 
-    exports io.questdb.test;
-    exports io.questdb.test.cairo;
+    @Override
+    public long getRamUsageLimitPercent() {
+        return 0;
+    }
+
+    @Override
+    public long getResolvedRamUsageLimitBytes() {
+        return 0;
+    }
+
+    @Override
+    public long getTotalSystemMemory() {
+        return 0;
+    }
 }
