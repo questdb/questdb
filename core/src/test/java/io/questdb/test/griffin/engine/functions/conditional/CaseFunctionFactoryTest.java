@@ -380,7 +380,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         "    end \n" +
                         "from tanc",
                 104,
-                "inconvertible types BYTE to VARCHAR"
+                "inconvertible types: BYTE -> VARCHAR [from=BYTE, to=VARCHAR]"
         );
     }
 
@@ -780,7 +780,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         "    end \n" +
                         "from tanc",
                 106,
-                "inconvertible types DOUBLE to VARCHAR"
+                "inconvertible types: DOUBLE -> VARCHAR [from=DOUBLE, to=VARCHAR]"
         );
     }
 
@@ -906,7 +906,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         "    end \n" +
                         "from tanc",
                 106,
-                "inconvertible types DOUBLE to VARCHAR"
+                "inconvertible types: DOUBLE -> VARCHAR [from=DOUBLE, to=VARCHAR]"
         );
     }
 
@@ -1088,7 +1088,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         "    end \n" +
                         "from tanc",
                 103,
-                "inconvertible types INT to STRING"
+                "inconvertible types: INT -> STRING [from=INT, to=STRING]"
         );
     }
 
@@ -1112,7 +1112,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         "    end \n" +
                         "from tanc",
                 88,
-                "inconvertible types INT to STRING"
+                "inconvertible types: INT -> STRING [from=INT, to=STRING]"
         );
     }
 
@@ -1138,7 +1138,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         "    end \n" +
                         "from tanc",
                 103,
-                "inconvertible types INT to VARCHAR"
+                "inconvertible types: INT -> VARCHAR [from=INT, to=VARCHAR]"
         );
     }
 
@@ -1163,7 +1163,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         "    end \n" +
                         "from tanc",
                 88,
-                "inconvertible types INT to VARCHAR"
+                "inconvertible types: INT -> VARCHAR [from=INT, to=VARCHAR]"
         );
     }
 
@@ -1189,7 +1189,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         "    end \n" +
                         "from tanc",
                 114,
-                "inconvertible types IPv4 to VARCHAR"
+                "inconvertible types: IPv4 -> VARCHAR [from=IPv4, to=VARCHAR]"
         );
     }
 
@@ -1414,7 +1414,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         "    end \n" +
                         "from tanc",
                 104,
-                "inconvertible types LONG to VARCHAR"
+                "inconvertible types: LONG -> VARCHAR [from=LONG, to=VARCHAR]"
         );
     }
 
@@ -1550,7 +1550,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         "    end \n" +
                         "from tanc",
                 107,
-                "inconvertible types SHORT to VARCHAR"
+                "inconvertible types: SHORT -> VARCHAR [from=SHORT, to=VARCHAR]"
         );
     }
 
@@ -1814,7 +1814,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         "    end \n" +
                         "from tanc",
                 141,
-                "inconvertible types UUID to VARCHAR"
+                "inconvertible types: UUID -> VARCHAR [from=UUID, to=VARCHAR]"
         );
     }
 

@@ -432,7 +432,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         "    end k\n" +
                         "from tanc",
                 94,
-                "inconvertible types LONG256 to INT"
+                "inconvertible types: LONG256 -> INT [from=LONG256, to=INT]"
         );
     }
 
@@ -462,7 +462,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         "    end k\n" +
                         "from tanc",
                 128,
-                "inconvertible types UUID to INT"
+                "inconvertible types: UUID -> INT [from=UUID, to=INT]"
         );
     }
 

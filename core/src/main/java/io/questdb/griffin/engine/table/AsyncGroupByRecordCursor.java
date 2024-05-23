@@ -204,17 +204,12 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                     Os.pause();
                 }
             } while (frameIndex < frameLimit);
-        } catch (Throwable e) {
-            LOG.error().$("group by error [ex=").$(e).I$();
-            if (e instanceof CairoException) {
-                CairoException ce = (CairoException) e;
-                if (ce.isInterruption()) {
-                    throwTimeoutException();
-                } else {
-                    throw ce;
-                }
+        } catch (CairoException e) {
+            if (e.isInterruption()) {
+                throwTimeoutException();
+            } else {
+                throw e;
             }
-            throw CairoException.nonCritical().put(e.getMessage());
         }
 
         if (!allFramesActive) {

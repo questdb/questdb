@@ -194,13 +194,6 @@ public class PageFrameReduceJob implements Job, Closeable {
                     if (th instanceof CairoException) {
                         CairoException e = (CairoException) th;
                         interruptReason = e.getInterruptionReason();
-                        if (e.isCancellation()) {
-                            LOG.error().$(e.getFlyweightMessage()).$();
-                        } else {
-                            LOG.error().$("reduce error [ex=").$(th).I$();
-                        }
-                    } else {
-                        LOG.error().$("reduce error [ex=").$(th).I$();
                     }
                     task.setErrorMsg(th);
                     frameSequence.cancel(interruptReason);

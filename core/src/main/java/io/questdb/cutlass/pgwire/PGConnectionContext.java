@@ -26,7 +26,6 @@ package io.questdb.cutlass.pgwire;
 
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
-import io.questdb.QueryLogger;
 import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterSource;
@@ -132,7 +131,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final CharSequenceObjHashMap<NamedStatementWrapper> namedStatementMap;
     private final WeakMutableObjectPool<NamedStatementWrapper> namedStatementWrapperPool;
     private final ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters;
-    private final QueryLogger queryLogger;
     private final int recvBufferSize;
     private final ResponseUtf8Sink responseUtf8Sink = new ResponseUtf8Sink();
     private final SecurityContextFactory securityContextFactory;
@@ -225,7 +223,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         try {
             this.path = new Path();
             this.engine = engine;
-            queryLogger = engine.getConfiguration().getQueryLogger();
             this.maxRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
             this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
             this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
@@ -246,6 +243,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             this.binarySequenceParamsPool = new ObjectPool<>(DirectBinarySequence::new, configuration.getBinParamCountCapacity());
 
             this.metrics = engine.getMetrics();
+
             this.typesAndSelectCache = typesAndSelectCache;
 
             final boolean enabledUpdateCache = configuration.isUpdateCacheEnabled();
@@ -1306,7 +1304,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private boolean compileQuery(boolean doLog) throws SqlException {
+    private boolean compileQuery() throws SqlException {
         if (queryText != null && queryText.length() > 0) {
             // try insert, peek because this is our private cache,
             // and we do not want to remove statement from it
@@ -1316,7 +1314,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             // poll this cache because it is shared, and we do not want
             // select factory to be used by another thread concurrently
             if (typesAndInsert != null) {
-                queryLogger.logExecQuery(LOG, doLog, getFd(), queryText, sqlExecutionContext.getSecurityContext());
                 typesAndInsert.defineBindVariables(bindVariableService);
                 queryTag = TAG_INSERT;
                 return false;
@@ -1325,7 +1322,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             typesAndUpdate = typesAndUpdateCache.poll(queryText);
 
             if (typesAndUpdate != null) {
-                queryLogger.logExecQuery(LOG, doLog, getFd(), queryText, sqlExecutionContext.getSecurityContext());
                 typesAndUpdate.defineBindVariables(bindVariableService);
                 queryTag = TAG_UPDATE;
                 typesAndUpdateIsCached = true;
@@ -1335,7 +1331,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             typesAndSelect = typesAndSelectCache.poll(queryText);
 
             if (typesAndSelect != null) {
-                queryLogger.logExecQuery(LOG, doLog, getFd(), queryText, sqlExecutionContext.getSecurityContext());
                 LOG.info().$("query cache used [fd=").$(getFd()).I$();
                 // cache hit, define bind variables
                 bindVariableService.clear();
@@ -1350,7 +1345,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 processCompiledQuery(cc);
             }
         } else {
-            queryLogger.logEmptyQuery(LOG, doLog, getFd(), queryText, sqlExecutionContext.getSecurityContext());
             isEmptyQuery = true;
         }
 
@@ -1909,7 +1903,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         CharacterStoreEntry e = characterStore.newEntry();
         if (Utf8s.utf8ToUtf16(lo, hi, e)) {
             queryText = characterStore.toImmutable();
-            compileQuery(true);
+            compileQuery();
             return;
         }
         LOG.error().$("invalid UTF8 bytes in parse query").$();
@@ -1996,6 +1990,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             Misc.clear(syncActions);
             freezeRecvBuffer = false;
             sendParameterDescription = false;
+            sqlExecutionContext.setCacheHit(false);
+            sqlExecutionContext.containsSecret(false);
         }
     }
 
@@ -2379,6 +2375,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void processParse(long address, long lo, long msgLimit) throws BadProtocolException, SqlException {
         sqlExecutionContext.getCircuitBreaker().resetTimer();
+        sqlExecutionContext.setCacheHit(false);
+        sqlExecutionContext.containsSecret(false);
 
         // make sure there are no left-over sync actions
         // we are starting a new iteration of the parse
@@ -2451,6 +2449,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             queryText = characterStore.toImmutable();
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.compileBatch(queryText, sqlExecutionContext, batchCallback);
+                clearCursorAndFactory();
                 if (isEmptyQuery) {
                     prepareEmptyQueryResponse();
                 }
@@ -2745,7 +2744,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     }
                     LOG.info().$(e.getFlyweightMessage()).$();
                     freeFactory();
-                    compileQuery(false);
+                    compileQuery();
                     buildSelectColumnTypes();
                     applyLatestBindColumnFormats();
                 } catch (Throwable e) {
@@ -2764,7 +2763,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         this.activeBindVariableTypes = wrapper.bindVariableTypes;
         this.parsePhaseBindVariableCount = wrapper.bindVariableTypes.size();
         this.activeSelectColumnTypes = wrapper.selectColumnTypes;
-        if (!wrapper.alreadyExecuted && compileQuery(false) && typesAndSelect != null) {
+        if (!wrapper.alreadyExecuted && compileQuery() && typesAndSelect != null) {
             buildSelectColumnTypes();
         }
         // We'll have to compile/execute the statement next time.
