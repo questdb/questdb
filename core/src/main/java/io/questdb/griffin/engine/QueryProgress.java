@@ -62,7 +62,7 @@ public class QueryProgress extends AbstractRecordCursorFactory {
     }
 
     public static void logEnd(long sqlId, CharSequence sqlText, SqlExecutionContext executionContext, long beginNanos) {
-        LOG.info()
+        LOG.infoW()
                 .$("fin [id=").$(sqlId)
                 .$(", sql=`").$(sqlText).$('`')
                 .$(", principal=").$(executionContext.getSecurityContext().getPrincipal())
@@ -80,7 +80,7 @@ public class QueryProgress extends AbstractRecordCursorFactory {
     ) {
         final int errno = e instanceof CairoException ? ((CairoException) e).getErrno() : 0;
         final int pos = e instanceof FlyweightMessageContainer ? ((FlyweightMessageContainer) e).getPosition() : 0;
-        LOG.error()
+        LOG.errorW()
                 .$("err")
                 .$(" [id=").$(sqlId)
                 .$(", sql=`").$(sqlText).$('`')
@@ -98,7 +98,7 @@ public class QueryProgress extends AbstractRecordCursorFactory {
             CharSequence sqlText,
             SqlExecutionContext executionContext
     ) {
-        LOG.info()
+        LOG.infoW()
                 .$("exe")
                 .$(" [id=").$(sqlId)
                 .$(", sql=`").$(sqlText).$('`')
