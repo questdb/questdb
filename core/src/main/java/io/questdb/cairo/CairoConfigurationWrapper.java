@@ -111,6 +111,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean getCairoSqlLegacyOperatorPrecedence() {
+        return getDelegate().getCairoSqlLegacyOperatorPrecedence();
+    }
+
+    @Override
     public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
         return getDelegate().getCircuitBreakerConfiguration();
     }

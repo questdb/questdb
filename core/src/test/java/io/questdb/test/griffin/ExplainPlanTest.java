@@ -1875,7 +1875,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
-                            "  filter: ((100<l or l!=0) and s is not null)\n" +
+                            "  filter: (100<l or (l!=0 and s is not null))\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: trips\n"
@@ -1885,7 +1885,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Async Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
-                            "  filter: ((100<l or l!=0) and not (s in [null,A1000,A2000]))\n" +
+                            "  filter: (100<l or (l!=0 and not (s in [null,A1000,A2000])))\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: trips\n"
@@ -1893,11 +1893,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             bindVariableService.clear();
             bindVariableService.setStr("s1", "A500");
+
             assertPlanNoLeakCheck("select s, count() from trips where l > 100 or l != 0 and s not in (null, 'A1000', :s1)",
                     "Async Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
-                            "  filter: ((100<l or l!=0) and not (s in [null,A1000] or s in [:s1::string]))\n" +
+                            "  filter: (100<l or (l!=0 and not (s in [null,A1000] or s in [:s1::string])))\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: trips\n"
@@ -2008,7 +2009,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
-                            "  filter: ((100<l or l!=0) and s is not null)\n" +
+                            "  filter: (100<l or (l!=0 and s is not null))\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: trips\n"
@@ -2016,11 +2017,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             bindVariableService.clear();
             bindVariableService.setStr("s1", "A500");
+
             assertPlanNoLeakCheck("select s, count() from trips where l > 100 or l != 0 and s not in (null, 'A1000', :s1)",
                     "Async Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
-                            "  filter: ((100<l or l!=0) and not (s in [null,A1000] or s in [:s1::string]))\n" +
+                            "  filter: (100<l or (l!=0 and not (s in [null,A1000] or s in [:s1::string])))\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: trips\n"
@@ -2261,9 +2263,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     FunctionFactoryDescriptor descriptor = value.get(i);
                     FunctionFactory factory = descriptor.getFactory();
                     if (factory instanceof InUuidFunctionFactory) {
-                    System.out.println("ok");
-                }
-                int sigArgCount = descriptor.getSigArgCount();
+                        System.out.println("ok");
+                    }
+                    int sigArgCount = descriptor.getSigArgCount();
 
                     sink.clear();
                     sink.put(factory.getSignature()).put(" types: ");
@@ -2378,9 +2380,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     args.add(new StrConstant("4.12.22.11/12"));
                                     args.add(new IntConstant(2));
                                 } else if (factory instanceof InUuidFunctionFactory && p == 1) {
-                                // this factory requires valid UUID string, otherwise it will fail
-                                args.add(new StrConstant("11111111-1111-1111-1111-111111111111"));
-                            } else if (Chars.equals(key, "approx_count_distinct") && sigArgCount == 2 && p == 1 && sigArgType == ColumnType.INT) {
+                                    // this factory requires valid UUID string, otherwise it will fail
+                                    args.add(new StrConstant("11111111-1111-1111-1111-111111111111"));
+                                } else if (Chars.equals(key, "approx_count_distinct") && sigArgCount == 2 && p == 1 && sigArgType == ColumnType.INT) {
                                     args.add(new IntConstant(4)); // precision has to be in the range of 4 to 18
                                 } else if (!useConst) {
                                     args.add(colFuncs.get(sigArgType));

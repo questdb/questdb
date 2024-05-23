@@ -93,6 +93,8 @@ public interface CairoConfiguration {
     @NotNull
     BuildInformation getBuildInformation();
 
+    boolean getCairoSqlLegacyOperatorPrecedence();
+
     @NotNull
     SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
 
