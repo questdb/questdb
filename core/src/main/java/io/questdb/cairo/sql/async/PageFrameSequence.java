@@ -56,10 +56,12 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private final PageFrameReduceTaskFactory localTaskFactory;
     private final MessageBus messageBus;
     private final PageAddressCache pageAddressCache;
-    private final AtomicInteger reduceCounter = new AtomicInteger(0);
+    private final AtomicInteger reduceFinishedCounter = new AtomicInteger(0);
+    private final AtomicInteger reduceStartedCounter = new AtomicInteger(0);
     private final PageFrameReducer reducer;
     private final byte taskType; // PageFrameReduceTask.TYPE_*
     private final AtomicBoolean valid = new AtomicBoolean(true);
+    private final WorkStealingStrategy workStealingStrategy;
     public volatile boolean done;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private int circuitBreakerFd;
@@ -85,6 +87,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             T atom,
             PageFrameReducer reducer,
             PageFrameReduceTaskFactory localTaskFactory,
+            int sharedWorkerCount,
             byte taskType
     ) {
         this.pageAddressCache = new PageAddressCache(configuration);
@@ -93,6 +96,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         this.reducer = reducer;
         this.clock = configuration.getMillisecondClock();
         this.localTaskFactory = localTaskFactory;
+        this.workStealingStrategy = WorkStealingStrategyFactory.getInstance(configuration, sharedWorkerCount);
         this.taskType = taskType;
     }
 
@@ -149,7 +153,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
         // It could be the case that one of the workers reduced a page frame, then marked the task as done,
         // but haven't incremented reduce counter yet. In this case, we wait for the desired counter value.
-        while (reduceCounter.get() != dispatchStartFrameIndex) {
+        while (reduceFinishedCounter.get() != dispatchStartFrameIndex) {
             Os.pause();
         }
     }
@@ -229,8 +233,12 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         return pageAddressCache;
     }
 
-    public AtomicInteger getReduceCounter() {
-        return reduceCounter;
+    public AtomicInteger getReduceFinishedCounter() {
+        return reduceFinishedCounter;
+    }
+
+    public AtomicInteger getReduceStartedCounter() {
+        return reduceStartedCounter;
     }
 
     public PageFrameReducer getReducer() {
@@ -264,6 +272,10 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
     public byte getTaskType() {
         return taskType;
+    }
+
+    public WorkStealingStrategy getWorkStealingStrategy() {
+        return workStealingStrategy;
     }
 
     public boolean isActive() {
@@ -349,7 +361,9 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             done = false;
             valid.set(true);
             cancelReason.set(SqlExecutionCircuitBreaker.STATE_OK);
-            reduceCounter.set(0);
+            reduceFinishedCounter.set(0);
+            reduceStartedCounter.set(0);
+            workStealingStrategy.of(reduceStartedCounter);
             shard = rnd.nextInt(messageBus.getPageFrameReduceShardCount());
             reduceQueue = messageBus.getPageFrameReduceQueue(shard);
 
@@ -403,7 +417,9 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             id = newId;
             dispatchStartFrameIndex = 0;
             collectedFrameIndex = -1;
-            reduceCounter.set(0);
+            reduceFinishedCounter.set(0);
+            reduceStartedCounter.set(0);
+            workStealingStrategy.of(reduceStartedCounter);
             valid.set(true);
             cancelReason.set(SqlExecutionCircuitBreaker.STATE_OK);
         }
@@ -447,6 +463,8 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         final MCSequence reduceSubSeq = messageBus.getPageFrameReduceSubSeq(shard);
         final MPSequence reducePubSeq = messageBus.getPageFrameReducePubSeq(shard);
 
+        final int collectedFrameCount = collectedFrameIndex + 1;
+
         long cursor;
         int i = dispatchStartFrameIndex;
         OUT:
@@ -471,9 +489,16 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                     dispatched = true;
                     break;
                 } else if (cursor == -1) {
-                    idle = false;
+                    if (!workStealingStrategy.shouldStealWork(collectedFrameCount)) {
+                        return dispatched;
+                    }
                     // start stealing work to unload the queue
+                    idle = false;
                     if (stealWork(reduceQueue, reduceSubSeq, record, circuitBreaker)) {
+                        if (reduceFinishedCounter.get() > collectedFrameCount) {
+                            // We have something to collect, so let's do it!
+                            return true;
+                        }
                         continue;
                     }
                     break OUT;
@@ -483,13 +508,18 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             }
         }
 
+        if (reduceFinishedCounter.get() > collectedFrameCount) {
+            // We have something to collect, so let's do it!
+            return true;
+        }
+
         // Reduce counter is here to provide safe backoff point
         // for job stealing code. It is needed because queue is shared
         // and there is possibility of never ending stealing if we don't
         // specifically count only our items
 
         // join the gang to consume published tasks
-        while (reduceCounter.get() < frameCount) {
+        while (reduceFinishedCounter.get() < dispatchStartFrameIndex) {
             idle = false;
             if (stealWork(reduceQueue, reduceSubSeq, record, circuitBreaker)) {
                 if (isActive()) {
@@ -564,7 +594,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             cancel(interruptReason);
             throw e;
         } finally {
-            reduceCounter.incrementAndGet();
+            reduceFinishedCounter.incrementAndGet();
         }
     }
 }
