@@ -675,13 +675,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         );
                     } else if (SqlKeywords.isTypeKeyword(tok)) {
                         alterTableChangeColumnType(
+                                securityContext,
                                 tableNamePosition,
                                 tableToken,
                                 columnNamePosition,
                                 columnName,
                                 tableMetadata,
                                 columnIndex,
-                                executionContext);
+                                executionContext
+                        );
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'add', 'drop', 'cache' or 'nocache' expected").put(" found '").put(tok).put('\'');
                     }
@@ -845,6 +847,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void alterTableChangeColumnType(
+            SecurityContext securityContext,
             int tableNamePosition,
             TableToken tableToken,
             int columnNamePosition,
@@ -890,6 +893,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(lexer.lastTokenPosition(), "incompatible column type change [existing=")
                     .put(ColumnType.nameOf(existingColumnType)).put(", new=").put(ColumnType.nameOf(newColumnType)).put(']');
         }
+        securityContext.authorizeAlterTableAlterColumnType(tableToken, alterOperationBuilder.getExtraStrInfo());
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
@@ -952,7 +956,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             alterOperationBuilder.ofRemoveCacheSymbol(tableNamePosition, tableToken, metadata.getTableId(), columnName);
         }
 
-        securityContext.authorizeAlterTableAlterColumnCache(tableToken, alterOperationBuilder.getExtraStrInfo());
+        securityContext.authorizeAlterTableAlterColumnType(tableToken, alterOperationBuilder.getExtraStrInfo());
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 

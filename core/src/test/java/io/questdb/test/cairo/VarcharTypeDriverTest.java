@@ -319,7 +319,7 @@ public class VarcharTypeDriverTest extends AbstractTest {
     public void testSetAppendPosition() throws Exception {
         FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
         long pageSize = Files.PAGE_SIZE;
-        final Rnd rnd = TestUtils.generateRandom(null);
+        final Rnd rnd = TestUtils.generateRandom(null, 288810070957291L, 1716373831287L);
 
         try (Path auxPath = new Path().of(temp.newFile().getAbsolutePath()).$();
              Path dataPath = new Path().of(temp.newFile().getAbsolutePath()).$();
