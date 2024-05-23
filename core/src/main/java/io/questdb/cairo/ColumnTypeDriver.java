@@ -176,6 +176,14 @@ public interface ColumnTypeDriver {
      */
     long setAppendAuxMemAppendPosition(MemoryMA auxMem, long rowCount);
 
+    /**
+     * Sets the append position in both the auxiliary and data vectors.
+     *
+     * @param pos     the position to set, starting from 0
+     * @param auxMem  the auxiliary memory
+     * @param dataMem the data memory
+     * @return the sum of bytes used by entries up to the specified position (excluding the position itself)
+     */
     long setAppendPosition(long pos, MemoryMA auxMem, MemoryMA dataMem);
 
     void setDataVectorEntriesToNull(long dataMemAddr, long rowCount);

@@ -569,11 +569,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
 
         dataMem.jumpTo(0);
         auxMem.jumpTo(0);
-        // Assume var length columns use 28 bytes per value to estimate the record size
-        // if there are no rows in the partition yet.
-        // The record size used to estimate the partition size
-        // to split partition in O3 commit when necessary
-        return TableUtils.ESTIMATED_VAR_COL_SIZE;
+        return 0;
     }
 
     @Override
