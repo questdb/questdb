@@ -23,8 +23,6 @@
  ******************************************************************************/
 
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.engine.functions.lt.LtStrVarcharFunctionFactory;
-import io.questdb.griffin.engine.functions.lt.LtVarcharStrFunctionFactory;
 
 open module io.questdb {
     requires transitive jdk.unsupported;
@@ -133,6 +131,7 @@ open module io.questdb {
             // test functions
             io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory,
             io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory,
+            io.questdb.griffin.engine.functions.test.TestOwnerCountingFunctionFactory,
             io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory,
             io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.test.TestNPEFactory,
@@ -203,8 +202,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.lt.LtStrFunctionFactory,
             io.questdb.griffin.engine.functions.lt.LtLongFunctionFactory,
             io.questdb.griffin.engine.functions.lt.LtLong256FunctionFactory,
-            LtStrVarcharFunctionFactory,
-            LtVarcharStrFunctionFactory,
+            io.questdb.griffin.engine.functions.lt.LtStrVarcharFunctionFactory,
+            io.questdb.griffin.engine.functions.lt.LtVarcharStrFunctionFactory,
             io.questdb.griffin.engine.functions.lt.LtVarcharFunctionFactory,
 
 //                   '+' operator

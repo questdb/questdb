@@ -10217,42 +10217,6 @@ create table tab as (
         }
     }
 
-    private PGWireServer.PGConnectionContextFactory createPGConnectionContextFactory(
-            PGWireConfiguration conf,
-            int workerCount,
-            int sharedWorkerCount,
-            SOCountDownLatch queryStartedCount,
-            SOCountDownLatch queryScheduledCount,
-            CircuitBreakerRegistry registry
-    ) {
-        return new PGWireServer.PGConnectionContextFactory(
-                engine,
-                conf,
-                registry,
-                () -> new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount) {
-                    @Override
-                    public QueryFutureUpdateListener getQueryFutureUpdateListener() {
-                        return new QueryFutureUpdateListener() {
-                            @Override
-                            public void reportProgress(long commandId, int status) {
-                                if (status == OperationFuture.QUERY_STARTED && queryStartedCount != null) {
-                                    queryStartedCount.countDown();
-                                }
-                            }
-
-                            @Override
-                            public void reportStart(TableToken tableToken, long commandId) {
-                                if (queryScheduledCount != null) {
-                                    queryScheduledCount.countDown();
-                                }
-                            }
-                        };
-                    }
-                }
-        ) {
-        };
-    }
-
     private PGWireServer createPGServer(SOCountDownLatch queryScheduledCount) {
         int workerCount = 2;
 
@@ -10266,16 +10230,48 @@ create table tab as (
 
         WorkerPool workerPool = new TestWorkerPool(2, metrics);
         CircuitBreakerRegistry registry = new CircuitBreakerRegistry(conf, engine.getConfiguration());
-        PGWireServer.PGConnectionContextFactory connFac =
-                createPGConnectionContextFactory(conf, workerCount, workerCount, null, queryScheduledCount, registry);
         try {
-            return createPGWireServer(conf, engine, workerPool, connFac, registry);
+            return createPGWireServer(
+                    conf,
+                    engine,
+                    workerPool,
+                    registry,
+                    createPGSqlExecutionContextFactory(workerCount, workerCount, null, queryScheduledCount, registry)
+            );
         } catch (Throwable t) {
-            Misc.free(connFac);
             Misc.free(registry);
             Misc.free(workerPool);
             throw t;
         }
+    }
+
+    private ObjectFactory<SqlExecutionContextImpl> createPGSqlExecutionContextFactory(
+            int workerCount,
+            int sharedWorkerCount,
+            SOCountDownLatch queryStartedCount,
+            SOCountDownLatch queryScheduledCount,
+            CircuitBreakerRegistry registry
+    ) {
+        return () -> new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount) {
+            @Override
+            public QueryFutureUpdateListener getQueryFutureUpdateListener() {
+                return new QueryFutureUpdateListener() {
+                    @Override
+                    public void reportProgress(long commandId, int status) {
+                        if (status == OperationFuture.QUERY_STARTED && queryStartedCount != null) {
+                            queryStartedCount.countDown();
+                        }
+                    }
+
+                    @Override
+                    public void reportStart(TableToken tableToken, long commandId) {
+                        if (queryScheduledCount != null) {
+                            queryScheduledCount.countDown();
+                        }
+                    }
+                };
+            }
+        };
     }
 
     @SuppressWarnings("unchecked")
@@ -10408,14 +10404,19 @@ create table tab as (
             }
         };
 
-        try (CircuitBreakerRegistry registry = new CircuitBreakerRegistry(conf, engine.getConfiguration());
-             WorkerPool pool = new WorkerPool(conf, metrics);
-             PGWireServer.PGConnectionContextFactory connFac = createPGConnectionContextFactory(
-                     conf, workerCount, workerCount, queryStartedCountDownLatch, null, registry
-             )
+        try (
+                CircuitBreakerRegistry registry = new CircuitBreakerRegistry(conf, engine.getConfiguration());
+                WorkerPool pool = new WorkerPool(conf, metrics)
         ) {
             pool.assign(engine.getEngineMaintenanceJob());
-            try (PGWireServer server = createPGWireServer(conf, engine, pool, connFac, registry)) {
+            try (
+                    PGWireServer server = createPGWireServer(
+                            conf,
+                            engine,
+                            pool,
+                            registry,
+                            createPGSqlExecutionContextFactory(workerCount, workerCount, queryStartedCountDownLatch, null, registry))
+            ) {
                 Assert.assertNotNull(server);
                 int iteration = 0;
 

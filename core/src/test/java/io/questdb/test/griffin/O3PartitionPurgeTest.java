@@ -655,9 +655,6 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
             }
 
             dropTable.set(true);
-            if (Os.isWindows()) {
-                engine.releaseInactive();
-            }
             purgeJob.drain(0);
             recreateTable.join();
 
