@@ -27,8 +27,6 @@ package io.questdb;
 import io.questdb.std.Os;
 
 public class MemoryConfigurationImpl implements MemoryConfiguration {
-    private static final long SMALL_AMOUNT = 10L << 20; // 10 MiB
-
     private final long ramUsageLimit;
     private final long totalSystemMemory;
 
@@ -37,7 +35,7 @@ public class MemoryConfigurationImpl implements MemoryConfiguration {
         assert totalSystemMemory >= -1 : "Os.getMemorySizeFromMXBean() reported negative memory size";
         this.ramUsageLimit =
                 (configuredAllocationLimit != -1) ? configuredAllocationLimit
-                        : (totalSystemMemory != -1) ? Math.min(totalSystemMemory, Math.max(SMALL_AMOUNT, totalSystemMemory - SMALL_AMOUNT))
+                        : (totalSystemMemory != -1) ? totalSystemMemory / 10 * 9
                         : 0;
     }
 
