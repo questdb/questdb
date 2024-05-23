@@ -1187,6 +1187,8 @@ public class CairoEngine implements Closeable, WriterSource {
                     switch (cc.getType()) {
                         case UPDATE:
                             try (
+                                    // update operation is stashed in the compiled query,
+                                    // and it has to be released to avoid memory leak
                                     UpdateOperation ignore = cc.getUpdateOperation();
                                     OperationFuture future = cc.execute(eventSubSeq)
                             ) {

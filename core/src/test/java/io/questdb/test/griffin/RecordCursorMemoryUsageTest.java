@@ -27,7 +27,6 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.engine.SystemOperator;
 import io.questdb.griffin.engine.groupby.SampleByFillNoneRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillNullRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillPrevRecordCursorFactory;
@@ -122,7 +121,7 @@ public class RecordCursorMemoryUsageTest extends AbstractCairoTest {
                     " timestamp_sequence(0, 1000000000) ts" +
                     " from long_sequence(10000)) timestamp(ts)");
 
-            try (SystemOperator factory = (SystemOperator) select("select sym1, sum(d) from tab SAMPLE BY 1d " + fill + " ALIGN TO " + alignment)) {
+            try (RecordCursorFactory factory = select("select sym1, sum(d) from tab SAMPLE BY 1d " + fill + " ALIGN TO " + alignment)) {
                 Assert.assertSame(expectedFactoryClass, factory.getBaseFactory().getClass());
 
                 long freeDuring;

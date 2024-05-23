@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Record;
@@ -38,10 +39,11 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
+import io.questdb.std.FlyweightMessageContainer;
 
 // Factory that adds query to registry on getCursor() and removes on cursor close().
-public class SystemOperator extends AbstractRecordCursorFactory {
-    private static final Log LOG = LogFactory.getLog(SystemOperator.class);
+public class QueryProgress extends AbstractRecordCursorFactory {
+    private static final Log LOG = LogFactory.getLog(QueryProgress.class);
     private final RecordCursorFactory base;
     private final RegisteredRecordCursor cursor;
     private final QueryRegistry registry;
@@ -51,7 +53,7 @@ public class SystemOperator extends AbstractRecordCursorFactory {
     private boolean failed = false;
     private long sqlId;
 
-    public SystemOperator(QueryRegistry registry, CharSequence sqlText, RecordCursorFactory base) {
+    public QueryProgress(QueryRegistry registry, CharSequence sqlText, RecordCursorFactory base) {
         super(base.getMetadata());
         this.base = base;
         this.registry = registry;
@@ -76,6 +78,8 @@ public class SystemOperator extends AbstractRecordCursorFactory {
             SqlExecutionContext executionContext,
             long beginNanos
     ) {
+        final int errno = e instanceof CairoException ? ((CairoException) e).getErrno() : 0;
+        final int pos = e instanceof FlyweightMessageContainer ? ((FlyweightMessageContainer) e).getPosition() : 0;
         LOG.error()
                 .$("err")
                 .$(" [id=").$(sqlId)
@@ -84,6 +88,8 @@ public class SystemOperator extends AbstractRecordCursorFactory {
                 .$(", cache=").$(executionContext.isCacheHit())
                 .$(", time=").$(executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos)
                 .$(", msg=").$(e.getMessage())
+                .$(", errno=").$(errno)
+                .$(", pos=").$(pos)
                 .I$();
     }
 

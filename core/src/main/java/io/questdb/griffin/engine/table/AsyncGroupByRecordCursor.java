@@ -208,12 +208,8 @@ class AsyncGroupByRecordCursor implements RecordCursor {
             if (e.isInterruption()) {
                 throwTimeoutException();
             } else {
-                LOG.error().$("group-by error [message=").$(e.getFlyweightMessage()).I$();
                 throw e;
             }
-        } catch (Throwable e) {
-            LOG.error().$("group-by error [ex=").$(e).I$();
-            throw CairoException.nonCritical().put(e.getMessage());
         }
 
         if (!allFramesActive) {
