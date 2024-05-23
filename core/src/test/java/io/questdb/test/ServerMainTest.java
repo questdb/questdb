@@ -566,7 +566,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     .split("\n");
 
                     // rss.memory.limit is a special case because it has a dynamic default
-                    String rssLimitPrefix = "cairo.rss.memory.limit\tQDB_CAIRO_RSS_MEMORY_LIMIT\t";
+                    String rssLimitPrefix = "ram.usage.limit\tQDB_RAM_USAGE_LIMIT\t";
                     String rssLimitSuffix = "\tdefault\tfalse\tfalse";
                     Predicate<String> isRssLimitProp = prop ->
                             prop.startsWith(rssLimitPrefix) && prop.endsWith(rssLimitSuffix);
