@@ -29,7 +29,17 @@ public interface MemoryConfiguration {
      * Returns the QuestDB-imposed limit on the total memory allocated with any `NATIVE_*`
      * tag. As a special case, `NATIVE_PATH` is exempted from this limit.
      */
-    long getRamUsageLimit();
+    long getEffectiveRamUsageLimit();
+
+    /**
+     * Returns the value of the configuration property ram.usage.limit.mib.
+     */
+    long getRamUsageLimitMib();
+
+    /**
+     * Returns the value of the configuration property ram.usage.limit.percent.
+     */
+    long getRamUsageLimitPercent();
 
     /**
      * Returns the total RAM as reported by `OperatingSystemMXBean`. This takes into account

@@ -26,7 +26,17 @@ package io.questdb;
 
 public class DefaultMemoryConfiguration implements MemoryConfiguration {
     @Override
-    public long getRamUsageLimit() {
+    public long getEffectiveRamUsageLimit() {
+        return 0;
+    }
+
+    @Override
+    public long getRamUsageLimitMib() {
+        return 0;
+    }
+
+    @Override
+    public long getRamUsageLimitPercent() {
         return 0;
     }
 

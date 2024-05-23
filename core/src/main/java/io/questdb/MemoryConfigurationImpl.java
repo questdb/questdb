@@ -27,21 +27,38 @@ package io.questdb;
 import io.questdb.std.Os;
 
 public class MemoryConfigurationImpl implements MemoryConfiguration {
+    private final long configuredLimitMib;
+    private final long configuredLimitPercent;
     private final long ramUsageLimit;
     private final long totalSystemMemory;
 
-    public MemoryConfigurationImpl(long configuredAllocationLimit) {
+    public MemoryConfigurationImpl(long configuredLimitMib, long configuredLimitPercent) {
+        this.configuredLimitMib = configuredLimitMib;
+        this.configuredLimitPercent = configuredLimitPercent;
         this.totalSystemMemory = Os.getMemorySizeFromMXBean();
         assert totalSystemMemory >= -1 : "Os.getMemorySizeFromMXBean() reported negative memory size";
-        this.ramUsageLimit =
-                (configuredAllocationLimit != -1) ? configuredAllocationLimit
-                        : (totalSystemMemory != -1) ? totalSystemMemory / 10 * 9
-                        : 0;
+        long limitMib = Math.min(Long.MAX_VALUE >> 20, Math.max(configuredLimitMib, 0)) << 20;
+        long limitPercent = (configuredLimitPercent > 0 && configuredLimitPercent <= 100 && totalSystemMemory != -1)
+                ? totalSystemMemory / 100 * configuredLimitPercent
+                : 0;
+        this.ramUsageLimit = (limitMib == 0) ? limitPercent
+                : (limitPercent == 0) ? limitMib
+                : Math.min(limitMib, limitPercent);
     }
 
     @Override
-    public long getRamUsageLimit() {
+    public long getEffectiveRamUsageLimit() {
         return ramUsageLimit;
+    }
+
+    @Override
+    public long getRamUsageLimitMib() {
+        return configuredLimitMib;
+    }
+
+    @Override
+    public long getRamUsageLimitPercent() {
+        return configuredLimitPercent;
     }
 
     @Override

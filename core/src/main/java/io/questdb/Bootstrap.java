@@ -199,7 +199,7 @@ public class Bootstrap {
             metrics = Metrics.disabled();
             log.advisoryW().$("Metrics are disabled, health check endpoint will not consider unhandled errors").$();
         }
-        Unsafe.setRssMemLimit(config.getMemoryConfiguration().getRamUsageLimit());
+        Unsafe.setRssMemLimit(config.getMemoryConfiguration().getEffectiveRamUsageLimit());
 
     }
 
@@ -547,10 +547,16 @@ public class Bootstrap {
             }
         }
         MemoryConfiguration ramConfig = config.getMemoryConfiguration();
+        long ramUsageLimitMib = ramConfig.getRamUsageLimitMib();
+        long ramUsageLimitPercent = ramConfig.getRamUsageLimitPercent();
+        long effectiveRamUsageLimit = ramConfig.getEffectiveRamUsageLimit();
+        log.advisoryW().$(" - ram.usage.limit.mib: ")
+                .$(ramUsageLimitMib != 0 ? String.format("%,d", ramUsageLimitMib) : "0 (no limit)").$();
+        log.advisoryW().$(" - ram.usage.limit.percent: ")
+                .$(ramUsageLimitPercent != 0 ? ramUsageLimitPercent : "0 (no limit)").$();
         log.advisoryW().$(" - system RAM: ").$(toSizePretty(ramConfig.getTotalSystemMemory())).$();
-        long ramUsageLimit = ramConfig.getRamUsageLimit();
-        log.advisoryW().$(" - RAM usage limit: ")
-                .$(ramUsageLimit != 0 ? toSizePretty(ramUsageLimit) : "0 (unlimited)").$();
+        log.advisoryW().$(" - effective RAM usage limit: ")
+                .$(effectiveRamUsageLimit != 0 ? toSizePretty(effectiveRamUsageLimit) : "0 (no limit)").$();
     }
 
     private void verifyFileLimits() {

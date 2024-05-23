@@ -42,7 +42,6 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
-import java.util.function.Predicate;
 
 import static io.questdb.test.tools.TestUtils.*;
 import static java.util.Arrays.asList;
@@ -169,6 +168,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.commit.mode\tQDB_CAIRO_COMMIT_MODE\tnosync\tdefault\tfalse\tfalse\n" +
                                     "cairo.create.as.select.retry.count\tQDB_CAIRO_CREATE_AS_SELECT_RETRY_COUNT\t5\tdefault\tfalse\tfalse\n" +
                                     "cairo.date.locale\tQDB_CAIRO_DATE_LOCALE\ten\tdefault\tfalse\tfalse\n" +
+                                    "cairo.default.sequencer.part.txn.count\tQDB_CAIRO_DEFAULT_SEQUENCER_PART_TXN_COUNT\t0\tdefault\tfalse\tfalse\n" +
                                     "cairo.default.symbol.cache.flag\tQDB_CAIRO_DEFAULT_SYMBOL_CACHE_FLAG\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.default.symbol.capacity\tQDB_CAIRO_DEFAULT_SYMBOL_CAPACITY\t256\tdefault\tfalse\tfalse\n" +
                                     "cairo.detached.mkdir.mode\tQDB_CAIRO_DETACHED_MKDIR_MODE\t509\tdefault\tfalse\tfalse\n" +
@@ -183,6 +183,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.index.value.block.size\tQDB_CAIRO_INDEX_VALUE_BLOCK_SIZE\t256\tdefault\tfalse\tfalse\n" +
                                     "cairo.iouring.enabled\tQDB_CAIRO_IOURING_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.latestby.queue.capacity\tQDB_CAIRO_LATESTBY_QUEUE_CAPACITY\t32\tdefault\tfalse\tfalse\n" +
+                                    "cairo.legacy.string.column.type.default\tQDB_CAIRO_LEGACY_STRING_COLUMN_TYPE_DEFAULT\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.lexer.pool.capacity\tQDB_CAIRO_LEXER_POOL_CAPACITY\t2048\tdefault\tfalse\tfalse\n" +
                                     "cairo.max.crash.files\tQDB_CAIRO_MAX_CRASH_FILES\t100\tdefault\tfalse\tfalse\n" +
                                     "cairo.max.file.name.length\tQDB_CAIRO_MAX_FILE_NAME_LENGTH\t127\tdefault\tfalse\tfalse\n" +
@@ -278,6 +279,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.map.max.resizes\tQDB_CAIRO_SQL_MAP_MAX_RESIZES\t2147483647\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.unordered.map.max.entry.size\tQDB_CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE\t32\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.max.negative.limit\tQDB_CAIRO_SQL_MAX_NEGATIVE_LIMIT\t10000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.max.recompile.attempts\tQDB_CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS\t10\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.max.symbol.not.equals.count\tQDB_CAIRO_SQL_MAX_SYMBOL_NOT_EQUALS_COUNT\t100\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.page.frame.max.rows\tQDB_CAIRO_SQL_PAGE_FRAME_MAX_ROWS\t1000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.page.frame.min.rows\tQDB_CAIRO_SQL_PAGE_FRAME_MIN_ROWS\t100000\tdefault\tfalse\tfalse\n" +
@@ -313,6 +315,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.system.o3.column.memory.size\tQDB_CAIRO_SYSTEM_O3_COLUMN_MEMORY_SIZE\t262144\tdefault\tfalse\tfalse\n" +
                                     "cairo.system.table.prefix\tQDB_CAIRO_SYSTEM_TABLE_PREFIX\tsys.\tdefault\tfalse\tfalse\n" +
                                     "cairo.system.wal.writer.data.append.page.size\tQDB_CAIRO_SYSTEM_WAL_WRITER_DATA_APPEND_PAGE_SIZE\t262144\tdefault\tfalse\tfalse\n" +
+                                    "cairo.system.wal.writer.event.append.page.size\tQDB_CAIRO_SYSTEM_WAL_WRITER_EVENT_APPEND_PAGE_SIZE\t16384\tdefault\tfalse\tfalse\n" +
                                     "cairo.system.writer.data.append.page.size\tQDB_CAIRO_SYSTEM_WRITER_DATA_APPEND_PAGE_SIZE\t262144\tdefault\tfalse\tfalse\n" +
                                     "cairo.table.registry.auto.reload.frequency\tQDB_CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY\t500\tdefault\tfalse\tfalse\n" +
                                     "cairo.table.registry.compaction.threshold\tQDB_CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD\t30\tdefault\tfalse\tfalse\n" +
@@ -336,6 +339,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.wal.txn.notification.queue.capacity\tQDB_CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY\t4096\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.writer.data.append.page.size\tQDB_CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE\t1048576\tdefault\tfalse\tfalse\n" +
                                     "cairo.wal.writer.pool.max.segments\tQDB_CAIRO_WAL_WRITER_POOL_MAX_SEGMENTS\t10\tdefault\tfalse\tfalse\n" +
+                                    "cairo.wal.sequencer.check.interval\tQDB_CAIRO_WAL_SEQUENCER_CHECK_INTERVAL\t10000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.wal.writer.event.append.page.size\tQDB_CAIRO_WAL_WRITER_EVENT_APPEND_PAGE_SIZE\t131072\tdefault\tfalse\tfalse\n" +
                                     "cairo.work.steal.timeout.nanos\tQDB_CAIRO_WORK_STEAL_TIMEOUT_NANOS\t10000\tdefault\tfalse\tfalse\n" +
                                     "cairo.writer.alter.busy.wait.timeout\tQDB_CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT\t500\tdefault\tfalse\tfalse\n" +
                                     "cairo.writer.alter.max.wait.timeout\tQDB_CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT\t30000\tdefault\tfalse\tfalse\n" +
@@ -554,34 +559,21 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "wal.apply.worker.sleep.timeout\tQDB_WAL_APPLY_WORKER_SLEEP_TIMEOUT\t10\tdefault\tfalse\tfalse\n" +
                                     "wal.apply.worker.nap.threshold\tQDB_WAL_APPLY_WORKER_NAP_THRESHOLD\t7000\tdefault\tfalse\tfalse\n" +
                                     "wal.apply.worker.yield.threshold\tQDB_WAL_APPLY_WORKER_YIELD_THRESHOLD\t1000\tdefault\tfalse\tfalse\n" +
-                                    "cairo.sql.max.recompile.attempts\tQDB_CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS\t10\tdefault\tfalse\tfalse\n" +
-                                    "cairo.system.wal.writer.event.append.page.size\tQDB_CAIRO_SYSTEM_WAL_WRITER_EVENT_APPEND_PAGE_SIZE\t16384\tdefault\tfalse\tfalse\n" +
-                                    "cairo.wal.writer.event.append.page.size\tQDB_CAIRO_WAL_WRITER_EVENT_APPEND_PAGE_SIZE\t131072\tdefault\tfalse\tfalse\n" +
-                                    "cairo.default.sequencer.part.txn.count\tQDB_CAIRO_DEFAULT_SEQUENCER_PART_TXN_COUNT\t0\tdefault\tfalse\tfalse\n" +
-                                    "cairo.wal.sequencer.check.interval\tQDB_CAIRO_WAL_SEQUENCER_CHECK_INTERVAL\t10000\tdefault\tfalse\tfalse\n" +
                                     "posthog.enabled\tQDB_POSTHOG_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "posthog.api.key\tQDB_POSTHOG_API_KEY\t\tdefault\tfalse\tfalse\n" +
-                                    "cairo.legacy.string.column.type.default\tQDB_CAIRO_LEGACY_STRING_COLUMN_TYPE_DEFAULT\tfalse\tdefault\tfalse\tfalse\n"
+                                    "ram.usage.limit.mib\tQDB_RAM_USAGE_LIMIT_MIB\t0\tdefault\tfalse\tfalse\n" +
+                                    "ram.usage.limit.percent\tQDB_RAM_USAGE_LIMIT_PERCENT\t90\tdefault\tfalse\tfalse\n"
                             )
                                     .split("\n");
 
-                    // rss.memory.limit is a special case because it has a dynamic default
-                    String rssLimitPrefix = "ram.usage.limit\tQDB_RAM_USAGE_LIMIT\t";
-                    String rssLimitSuffix = "\tdefault\tfalse\tfalse";
-                    Predicate<String> isRssLimitProp = prop ->
-                            prop.startsWith(rssLimitPrefix) && prop.endsWith(rssLimitSuffix);
                     final Set<String> missingProps = new HashSet<>();
                     for (String property : expectedProps) {
-                        if (!actualProps.remove(property) && !isRssLimitProp.test(property)) {
+                        if (!actualProps.remove(property)) {
                             missingProps.add(property);
                         }
                     }
-                    assertTrue("Missing property: " + rssLimitPrefix + "*" + rssLimitSuffix,
-                            actualProps.removeIf(isRssLimitProp));
                     assertTrue(
-                            "Missing properties: " + missingProps
-                                    + "\n"
-                                    + "Extra properties: " + actualProps,
+                            String.format("Missing properties: %s\nExtra properties: %s", missingProps, actualProps),
                             missingProps.isEmpty() && actualProps.isEmpty()
                     );
                 }
