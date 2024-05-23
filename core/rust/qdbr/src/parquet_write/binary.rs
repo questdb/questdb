@@ -40,7 +40,10 @@ pub fn binary_to_page(
     let mut buffer = vec![];
     let mut null_count = 0;
 
-    let lengths = offsets.iter().map(|offset| types::decode::<i64>( &data[*offset as usize..]));
+    let lengths = offsets.iter().map(|offset| {
+        let offset = *offset as usize;
+        types::decode::<i64>( &data[offset..offset + size_of::<i64>()])
+    });
     let nulls_iterator = lengths.clone().map(|len| {
         if len < 0 {
             null_count += 1;
@@ -77,21 +80,29 @@ pub fn binary_to_page(
 }
 
 fn encode_delta(offsets: &[i64], values: &[u8], null_count: usize, buffer: &mut Vec<u8>) {
-    let lengths = offsets.iter().map(|offset| types::decode::<i64>( &values[*offset as usize..]))
-        .filter(|len| *len >= 0);
+    let lengths = offsets.iter().map(|offset| {
+        let offset = *offset as usize;
+        types::decode::<i64>( &values[offset..offset + size_of::<i64>()])
+    }).filter(|len| *len >= 0);
+
     let length = offsets.len() - null_count;
     let lengths = ExactSizedIter::new(lengths, length);
 
     delta_bitpacked::encode(lengths, buffer);
 
     if offsets.len() > 0 {
-        let capacity = (offsets[offsets.len() - 1] - offsets[0]) as usize - (length * size_of::<i64>());
+        let length = offsets.len();
+        let capacity = (offsets[length - 1] - offsets[0]) as usize - (length * size_of::<i64>());
         buffer.reserve(capacity);
     }
+
     for row in 0..offsets.len() {
-        let offset = offsets[row];
-        let len = types::decode::<i64>( &values[offset as usize..]);
-        let data = &values[offset as usize + size_of::<i64>() .. (offset + len) as usize];
-        buffer.extend_from_slice(data);
+        let offset = offsets[row] as usize;
+        let len = types::decode::<i64>( &values[offset..offset + size_of::<i64>()]);
+        if len > 0 {
+            let data = &values[offset + size_of::<i64>()..offset + size_of::<i64>() + len as usize];
+            eprintln!("bin_slice: {:X?}", data);
+            buffer.extend_from_slice(data);
+        }
     }
 }

@@ -1,5 +1,5 @@
 use parquet2::encoding::Encoding;
-use parquet2::page::DataPage;
+use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{build_plain_page, encode_bool_iter};
@@ -21,11 +21,17 @@ fn encode_plain(aux: &[u8], data: &[u8], buffer: &mut Vec<u8>) {
         if !is_null(raw) {
             if is_inlined(raw) {
                 let size = ((raw >> HEADER_FLAGS_WIDTH) & INLINED_LENGTH_MASK) as usize;
-                buffer.extend_from_slice(bytes[1..size].try_into().unwrap());
+                let utf8_slice = &bytes[1..size];
+                let len = (utf8_slice.len() as u32).to_le_bytes();
+                buffer.extend_from_slice(&len);
+                buffer.extend_from_slice(utf8_slice);
             } else {
-                let offset= (u64::from_le_bytes(bytes[8..].try_into().unwrap()) >> 16) as usize;
+                let offset= (u64::from_le_bytes(bytes[8..16].try_into().unwrap()) >> 16) as usize;
                 let size = ((raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK) as usize;
-                buffer.extend_from_slice(data[offset..offset + size].try_into().unwrap());
+                let utf8_slice = &data[offset..offset + size];
+                let len = (utf8_slice.len() as u32).to_le_bytes();
+                buffer.extend_from_slice(&len);
+                buffer.extend_from_slice(utf8_slice);
             }
         }
     })
@@ -46,7 +52,7 @@ pub fn varchar_to_page(
     data: &[u8],
     options: WriteOptions,
     type_: PrimitiveType,
-) -> parquet2::error::Result<DataPage> {
+) -> parquet2::error::Result<Page> {
     let mut buffer = vec![];
     let mut null_count = 0;
 
@@ -75,6 +81,6 @@ pub fn varchar_to_page(
         type_,
         options,
         Encoding::Plain,
-    )
+    ).map(Page::Data)
 }
 

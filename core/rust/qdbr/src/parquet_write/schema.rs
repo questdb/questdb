@@ -30,6 +30,7 @@ pub enum ColumnType {
     Uuid,
     Long128,
     IPv4,
+    Varchar,
 }
 impl TryFrom<i32> for ColumnType {
     type Error = String;
@@ -59,6 +60,7 @@ impl TryFrom<i32> for ColumnType {
             19 => Ok(ColumnType::Uuid),
             24 => Ok(ColumnType::Long128),
             25 => Ok(ColumnType::IPv4),
+            26 => Ok(ColumnType::Varchar),
             _ => Err(format!("unknown column type: {}", v)),
         }
     }
@@ -137,8 +139,7 @@ pub fn column_type_to_parquet_type(
             None,
             None,
         )?),
-        // TODO: add varchar
-        ColumnType::String | ColumnType::Symbol => Ok(ParquetType::try_from_primitive(
+        ColumnType::String | ColumnType::Symbol | ColumnType::Varchar => Ok(ParquetType::try_from_primitive(
             name,
             PhysicalType::ByteArray,
             Repetition::Optional,
@@ -289,6 +290,7 @@ pub fn to_encodings(partition: &Partition) -> Vec<Encoding> {
 fn encoding_map(data_type: ColumnType) -> Encoding {
     match data_type {
         ColumnType::Float | ColumnType::Double => Encoding::Plain,
+        ColumnType::Binary => Encoding::DeltaLengthByteArray,
         // _ => Encoding::DeltaBinaryPacked, //TODO: for tests only
         _ => Encoding::Plain, //TODO: for tests only
         //_ => Encoding::RleDictionary,

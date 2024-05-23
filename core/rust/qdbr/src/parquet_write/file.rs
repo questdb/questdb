@@ -1,7 +1,7 @@
 use crate::parquet_write::schema::{
     to_encodings, to_parquet_schema, Column, ColumnType, Partition,
 };
-use crate::parquet_write::{binary, boolean, fixed_len_bytes, primitive, string, symbol};
+use crate::parquet_write::{binary, boolean, fixed_len_bytes, primitive, string, symbol, varchar};
 use parquet2::compression::CompressionOptions;
 use parquet2::encoding::Encoding;
 use parquet2::metadata::SchemaDescriptor;
@@ -316,6 +316,11 @@ fn chunk_to_page(
             let data = column.primary_data;
             let offsets: &[i64] = unsafe { mem::transmute(column.secondary_data.expect("offsets")) };
             string::string_to_page(&offsets[offset..offset + length], data, options, type_, encoding)
+        }
+        ColumnType::Varchar => {
+            let data = column.primary_data;
+            let aux: &[u8] = column.secondary_data.expect("aux");
+            varchar::varchar_to_page(&aux[offset * 16..(offset + length) * 16], data, options, type_)
         }
         ColumnType::Long128 => {
             //TODO: fix slicing
