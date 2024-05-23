@@ -22,18 +22,28 @@
  *
  ******************************************************************************/
 
-open module io.questdb.test {
-    requires transitive io.questdb;
-    requires static junit;
-    requires transitive jdk.unsupported;
-    requires static org.jetbrains.annotations;
-    requires static java.sql;
-    requires static org.postgresql.jdbc;
-    requires static java.management;
-    requires jdk.management;
+package io.questdb;
 
-    uses io.questdb.griffin.FunctionFactory;
+public interface MemoryConfiguration {
+    /**
+     * Returns the value of the configuration property ram.usage.limit.bytes.
+     */
+    long getRamUsageLimitBytes();
 
-    exports io.questdb.test;
-    exports io.questdb.test.cairo;
+    /**
+     * Returns the value of the configuration property ram.usage.limit.percent.
+     */
+    long getRamUsageLimitPercent();
+
+    /**
+     * Returns the QuestDB-imposed limit on the total memory allocated with any `NATIVE_*`
+     * tag. As a special case, `NATIVE_PATH` is exempted from this limit.
+     */
+    long getResolvedRamUsageLimitBytes();
+
+    /**
+     * Returns the total RAM as reported by `OperatingSystemMXBean`. This takes into account
+     * the limit set on our cgroup (such as in a Docker container), if any.
+     */
+    long getTotalSystemMemory();
 }

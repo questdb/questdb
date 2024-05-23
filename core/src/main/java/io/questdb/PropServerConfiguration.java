@@ -103,6 +103,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int cairoSqlCopyQueueCapacity;
     private final String cairoSqlCopyRoot;
     private final String cairoSqlCopyWorkRoot;
+    private final boolean cairoSqlLegacyOperatorPrecedence;
     private final long cairoTableRegistryAutoReloadFrequency;
     private final int cairoTableRegistryCompactionThreshold;
     private final PropSqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new PropSqlExecutionCircuitBreakerConfiguration();
@@ -206,6 +207,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int maxSqlRecompileAttempts;
     private final int maxSwapFileCount;
     private final int maxUncommittedRows;
+    private final MemoryConfiguration memoryConfiguration;
     private final int metadataStringPoolCapacity;
     private final MetricsConfiguration metricsConfiguration = new PropMetricsConfiguration();
     private final boolean metricsEnabled;
@@ -247,7 +249,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int rollBufferLimit;
     private final int rollBufferSize;
     private final String root;
-    private final long rssMemoryLimit;
     private final long sequencerCheckInterval;
     private final int[] sharedWorkerAffinity;
     private final int sharedWorkerCount;
@@ -394,7 +395,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long writerDataIndexKeyAppendPageSize;
     private final long writerDataIndexValueAppendPageSize;
     private final long writerFileOpenOpts;
-    private final long writerMemoryLimit;
     private final long writerMiscAppendPageSize;
     private final boolean writerMixedIOEnabled;
     private final int writerTickRowsCountMod;
@@ -578,8 +578,10 @@ public class PropServerConfiguration implements ServerConfiguration {
         boolean configValidationStrict = getBoolean(properties, env, PropertyKey.CONFIG_VALIDATION_STRICT, false);
         validateProperties(properties, configValidationStrict);
 
-        this.writerMemoryLimit = getLongSize(properties, env, PropertyKey.WRITER_MEMORY_LIMIT, 0);
-        this.rssMemoryLimit = getLongSize(properties, env, PropertyKey.RSS_MEMORY_LIMIT, 0);
+        this.memoryConfiguration = new MemoryConfigurationImpl(
+                getLongSize(properties, env, PropertyKey.RAM_USAGE_LIMIT_BYTES, 0),
+                getIntPercentage(properties, env, PropertyKey.RAM_USAGE_LIMIT_PERCENT, 90)
+        );
         this.isReadOnlyInstance = getBoolean(properties, env, PropertyKey.READ_ONLY_INSTANCE, false);
         this.cairoTableRegistryAutoReloadFrequency = getLong(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY, 500);
         this.cairoTableRegistryCompactionThreshold = getInt(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD, 30);
@@ -1119,6 +1121,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlWindowTreeKeyPageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_SQL_WINDOW_TREE_PAGE_SIZE, sqlWindowTreeKeyPageSize));
             int sqlWindowTreeKeyMaxPages = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_TREE_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlWindowTreeKeyMaxPages = getInt(properties, env, PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_PAGES, sqlWindowTreeKeyMaxPages);
+            this.cairoSqlLegacyOperatorPrecedence = getBoolean(properties, env, PropertyKey.CAIRO_SQL_LEGACY_OPERATOR_PRECEDENCE, false);
             this.sqlWindowInitialRangeBufferSize = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_INITIAL_RANGE_BUFFER_SIZE, 32);
             this.sqlTxnScoreboardEntryCount = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_O3_TXN_SCOREBOARD_ENTRY_COUNT, 16384));
             this.latestByQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_LATESTBY_QUEUE_CAPACITY, 32));
@@ -1366,6 +1369,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     @Override
+    public MemoryConfiguration getMemoryConfiguration() {
+        return memoryConfiguration;
+    }
+
+    @Override
     public MetricsConfiguration getMetricsConfiguration() {
         return metricsConfiguration;
     }
@@ -1543,6 +1551,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         } catch (NumericException e) {
             throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), value);
         }
+    }
+
+    protected int getIntPercentage(
+            Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, int defaultValue
+    ) throws ServerConfigurationException {
+        int percentage = getInt(properties, env, key, defaultValue);
+        if (percentage < 0 || percentage > 100) {
+            throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), Integer.toString(percentage));
+        }
+        return percentage;
     }
 
     protected int getIntSize(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, int defaultValue) throws ServerConfigurationException {
@@ -1995,6 +2013,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean getCairoSqlLegacyOperatorPrecedence() {
+            return cairoSqlLegacyOperatorPrecedence;
+        }
+
+        @Override
         public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
             return circuitBreakerConfiguration;
         }
@@ -2425,11 +2448,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public @NotNull String getRoot() {
             return root;
-        }
-
-        @Override
-        public long getRssMemoryLimit() {
-            return rssMemoryLimit;
         }
 
         @Override
@@ -2919,11 +2937,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getWriterFileOpenOpts() {
             return writerFileOpenOpts;
-        }
-
-        @Override
-        public long getWriterMemoryLimit() {
-            return writerMemoryLimit;
         }
 
         @Override
