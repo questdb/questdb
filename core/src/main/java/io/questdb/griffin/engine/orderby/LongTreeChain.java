@@ -112,7 +112,7 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
 
     @Override
     public void reopen() {
-        //nothing to do here
+        // nothing to do here
     }
 
     private long appendValue(long value, long nextValueOffset) {

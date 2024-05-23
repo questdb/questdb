@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlParser;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.*;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 
 public class RecordComparatorCompiler {
@@ -60,6 +61,32 @@ public class RecordComparatorCompiler {
      */
     public RecordComparator compile(ColumnTypes columnTypes, @Transient IntList keyColumnIndices) {
         assert keyColumnIndices.size() < SqlParser.MAX_ORDER_BY_COLUMNS;
+
+        // Use non-generated classes for single column comparators to prevent excessive megamorphism.
+        if (columnTypes.getColumnCount() == 1) {
+            final int columnIndex = toRecordColumnIndex(keyColumnIndices.getQuick(0));
+            final boolean asc = keyColumnIndices.getQuick(0) > 0;
+            switch (ColumnType.tagOf(columnTypes.getColumnType(0))) {
+                case ColumnType.BYTE:
+                    return asc ? new SingleByteAscComparator(columnIndex) : new SingleByteDescComparator(columnIndex);
+                case ColumnType.SHORT:
+                    return asc ? new SingleShortAscComparator(columnIndex) : new SingleShortDescComparator(columnIndex);
+                case ColumnType.INT:
+                    return asc ? new SingleIntAscComparator(columnIndex) : new SingleIntDescComparator(columnIndex);
+                case ColumnType.LONG:
+                    return asc ? new SingleLongAscComparator(columnIndex) : new SingleLongDescComparator(columnIndex);
+                case ColumnType.FLOAT:
+                    return asc ? new SingleFloatAscComparator(columnIndex) : new SingleFloatDescComparator(columnIndex);
+                case ColumnType.DOUBLE:
+                    return asc ? new SingleDoubleAscComparator(columnIndex) : new SingleDoubleDescComparator(columnIndex);
+                case ColumnType.VARCHAR:
+                    return asc ? new SingleVarcharAscComparator(columnIndex) : new SingleVarcharDescComparator(columnIndex);
+                case ColumnType.STRING:
+                    return asc ? new SingleStringAscComparator(columnIndex) : new SingleStringDescComparator(columnIndex);
+                case ColumnType.SYMBOL:
+                    return asc ? new SingleSymbolAscComparator(columnIndex) : new SingleSymbolDescComparator(columnIndex);
+            }
+        }
 
         asm.init(RecordComparator.class);
         asm.setupPool();
@@ -93,6 +120,10 @@ public class RecordComparatorCompiler {
         // class attribute count
         asm.putShort(0);
         return asm.newInstance();
+    }
+
+    private static int toRecordColumnIndex(int columnIndex) {
+        return Math.abs(columnIndex) - 1;
     }
 
     private void instrumentCompareMethod(int stackMapTableIndex, int nameIndex, int descIndex, IntList keyColumns, ColumnTypes columnTypes) {
@@ -192,7 +223,7 @@ public class RecordComparatorCompiler {
             asm.aload(1);
             int index = keyColumns.getQuick(i);
             // make sure column index is valid in case of "descending sort" flag
-            int columnIndex = (index > 0 ? index : -index) - 1;
+            int columnIndex = toRecordColumnIndex(index);
             asm.iconst(columnIndex);
             asm.invokeInterface(fieldRecordAccessorIndicesB.getQuick(i), 1);
             asm.putfield(fieldIndices.getQuick(fieldIndex++));
@@ -237,15 +268,7 @@ public class RecordComparatorCompiler {
             String getterNameB = null;
             @SuppressWarnings("rawtypes") Class comparatorClass;
             String comparatorDesc = null;
-            int index = keyColumnIndices.getQuick(i);
-
-            if (index < 0) {
-                index = -index;
-            }
-
-
-            // decrement to get real column index
-            index--;
+            int index = toRecordColumnIndex(keyColumnIndices.getQuick(i));
 
             int columnType = columnTypes.getColumnType(index);
             switch (ColumnType.tagOf(columnType)) {
@@ -400,13 +423,357 @@ public class RecordComparatorCompiler {
 
             fieldRecordAccessorIndicesB.add(methodIndex);
             comparatorAccessorIndices.add(
-                    asm.poolMethod(asm.poolClass(comparatorClass),
+                    asm.poolMethod(
+                            asm.poolClass(comparatorClass),
                             asm.poolNameAndType(
                                     compareMethodIndex,
                                     comparatorDesc == null
                                             ? asm.poolUtf8().putAscii('(').put(fieldType).put(fieldType).putAscii(")I").$()
                                             : asm.poolUtf8(comparatorDesc))
-                    ));
+                    )
+            );
+        }
+    }
+
+    private static class SingleByteAscComparator implements RecordComparator {
+        private final int columnIndex;
+        private byte leftValue;
+
+        private SingleByteAscComparator(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public int compare(Record record) {
+            return Byte.compare(leftValue, record.getByte(columnIndex));
+        }
+
+        @Override
+        public void setLeft(Record record) {
+            leftValue = record.getByte(columnIndex);
+        }
+    }
+
+    private static class SingleByteDescComparator implements RecordComparator {
+        private final int columnIndex;
+        private byte leftValue;
+
+        private SingleByteDescComparator(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public int compare(Record record) {
+            return -Byte.compare(leftValue, record.getByte(columnIndex));
+        }
+
+        @Override
+        public void setLeft(Record record) {
+            leftValue = record.getByte(columnIndex);
+        }
+    }
+
+    private static class SingleDoubleAscComparator implements RecordComparator {
+        private final int columnIndex;
+        private double leftValue;
+
+        private SingleDoubleAscComparator(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public int compare(Record record) {
+            return Numbers.compare(leftValue, record.getDouble(columnIndex));
+        }
+
+        @Override
+        public void setLeft(Record record) {
+            leftValue = record.getDouble(columnIndex);
+        }
+    }
+
+    private static class SingleDoubleDescComparator implements RecordComparator {
+        private final int columnIndex;
+        private double leftValue;
+
+        private SingleDoubleDescComparator(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public int compare(Record record) {
+            return -Numbers.compare(leftValue, record.getDouble(columnIndex));
+        }
+
+        @Override
+        public void setLeft(Record record) {
+            leftValue = record.getDouble(columnIndex);
+        }
+    }
+
+    private static class SingleFloatAscComparator implements RecordComparator {
+        private final int columnIndex;
+        private float leftValue;
+
+        private SingleFloatAscComparator(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public int compare(Record record) {
+            return Numbers.compare(leftValue, record.getFloat(columnIndex));
+        }
+
+        @Override
+        public void setLeft(Record record) {
+            leftValue = record.getFloat(columnIndex);
+        }
+    }
+
+    private static class SingleFloatDescComparator implements RecordComparator {
+        private final int columnIndex;
+        private float leftValue;
+
+        private SingleFloatDescComparator(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public int compare(Record record) {
+            return -Numbers.compare(leftValue, record.getFloat(columnIndex));
+        }
+
+        @Override
+        public void setLeft(Record record) {
+            leftValue = record.getFloat(columnIndex);
+        }
+    }
+
+    private static class SingleIntAscComparator implements RecordComparator {
+        private final int columnIndex;
+        private int leftValue;
+
+        private SingleIntAscComparator(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public int compare(Record record) {
+            return Integer.compare(leftValue, record.getInt(columnIndex));
+        }
+
+        @Override
+        public void setLeft(Record record) {
+            leftValue = record.getInt(columnIndex);
+        }
+    }
+
+    private static class SingleIntDescComparator implements RecordComparator {
+        private final int columnIndex;
+        private int leftValue;
+
+        private SingleIntDescComparator(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public int compare(Record record) {
+            return -Integer.compare(leftValue, record.getInt(columnIndex));
+        }
+
+        @Override
+        public void setLeft(Record record) {
+            leftValue = record.getInt(columnIndex);
+        }
+    }
+
+    private static class SingleLongAscComparator implements RecordComparator {
+        private final int columnIndex;
+        private long leftValue;
+
+        private SingleLongAscComparator(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public int compare(Record record) {
+            return Long.compare(leftValue, record.getLong(columnIndex));
+        }
+
+        @Override
+        public void setLeft(Record record) {
+            leftValue = record.getLong(columnIndex);
+        }
+    }
+
+    private static class SingleLongDescComparator implements RecordComparator {
+        private final int columnIndex;
+        private long leftValue;
+
+        private SingleLongDescComparator(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public int compare(Record record) {
+            return -Long.compare(leftValue, record.getLong(columnIndex));
+        }
+
+        @Override
+        public void setLeft(Record record) {
+            leftValue = record.getLong(columnIndex);
+        }
+    }
+
+    private static class SingleShortAscComparator implements RecordComparator {
+        private final int columnIndex;
+        private short leftValue;
+
+        private SingleShortAscComparator(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public int compare(Record record) {
+            return Short.compare(leftValue, record.getShort(columnIndex));
+        }
+
+        @Override
+        public void setLeft(Record record) {
+            leftValue = record.getShort(columnIndex);
+        }
+    }
+
+    private static class SingleShortDescComparator implements RecordComparator {
+        private final int columnIndex;
+        private short leftValue;
+
+        private SingleShortDescComparator(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public int compare(Record record) {
+            return -Short.compare(leftValue, record.getShort(columnIndex));
+        }
+
+        @Override
+        public void setLeft(Record record) {
+            leftValue = record.getShort(columnIndex);
+        }
+    }
+
+    private static class SingleStringAscComparator implements RecordComparator {
+        private final int columnIndex;
+        private CharSequence leftValue;
+
+        private SingleStringAscComparator(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public int compare(Record record) {
+            return Chars.compare(leftValue, record.getStrA(columnIndex));
+        }
+
+        @Override
+        public void setLeft(Record record) {
+            leftValue = record.getStrB(columnIndex);
+        }
+    }
+
+    private static class SingleStringDescComparator implements RecordComparator {
+        private final int columnIndex;
+        private CharSequence leftValue;
+
+        private SingleStringDescComparator(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public int compare(Record record) {
+            return -Chars.compare(leftValue, record.getStrA(columnIndex));
+        }
+
+        @Override
+        public void setLeft(Record record) {
+            leftValue = record.getStrB(columnIndex);
+        }
+    }
+
+    private static class SingleSymbolAscComparator implements RecordComparator {
+        private final int columnIndex;
+        private CharSequence leftValue;
+
+        private SingleSymbolAscComparator(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public int compare(Record record) {
+            return Chars.compare(leftValue, record.getSymA(columnIndex));
+        }
+
+        @Override
+        public void setLeft(Record record) {
+            leftValue = record.getSymB(columnIndex);
+        }
+    }
+
+    private static class SingleSymbolDescComparator implements RecordComparator {
+        private final int columnIndex;
+        private CharSequence leftValue;
+
+        private SingleSymbolDescComparator(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public int compare(Record record) {
+            return -Chars.compare(leftValue, record.getSymA(columnIndex));
+        }
+
+        @Override
+        public void setLeft(Record record) {
+            leftValue = record.getSymB(columnIndex);
+        }
+    }
+
+    private static class SingleVarcharAscComparator implements RecordComparator {
+        private final int columnIndex;
+        private Utf8Sequence leftValue;
+
+        private SingleVarcharAscComparator(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public int compare(Record record) {
+            return Utf8s.compare(leftValue, record.getVarcharA(columnIndex));
+        }
+
+        @Override
+        public void setLeft(Record record) {
+            leftValue = record.getVarcharB(columnIndex);
+        }
+    }
+
+    private static class SingleVarcharDescComparator implements RecordComparator {
+        private final int columnIndex;
+        private Utf8Sequence leftValue;
+
+        private SingleVarcharDescComparator(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public int compare(Record record) {
+            return -Utf8s.compare(leftValue, record.getVarcharA(columnIndex));
+        }
+
+        @Override
+        public void setLeft(Record record) {
+            leftValue = record.getVarcharB(columnIndex);
         }
     }
 }

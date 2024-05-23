@@ -92,6 +92,40 @@ public class RecordSinkFactory {
             @Transient @Nullable IntList skewIndex,
             @Nullable BitSet writeAsVarchar
     ) {
+        final int functionSize = keyFunctions != null ? keyFunctions.size() : 0;
+        if (functionSize == 0 && columnFilter.getColumnCount() == 1) {
+            int index = columnFilter.getColumnIndex(0);
+            final int factor = columnFilter.getIndexFactor(index);
+            index = (index * factor - 1);
+            final int type = columnTypes.getColumnType(index);
+
+            if (factor >= 0) {
+                final int columnIndex = getSkewedIndex(index, skewIndex);
+                switch (factor * ColumnType.tagOf(type)) {
+                    case ColumnType.BYTE:
+                        return new SingleByteColumnSink(columnIndex);
+                    case ColumnType.SHORT:
+                        return new SingleShortColumnSink(columnIndex);
+                    case ColumnType.INT:
+                        return new SingleIntColumnSink(columnIndex);
+                    case ColumnType.LONG:
+                        return new SingleLongColumnSink(columnIndex);
+                    case ColumnType.VARCHAR:
+                        return new SingleVarcharColumnSink(columnIndex);
+                }
+            }
+        }
+
+        if (functionSize == 1 && columnFilter.getColumnCount() == 0) {
+            final Function func = keyFunctions.getQuick(0);
+            final int type = func.getType();
+
+            switch (ColumnType.tagOf(type)) {
+                case ColumnType.VARCHAR:
+                    return new SingleVarcharFunctionSink(func);
+            }
+        }
+
         asm.init(RecordSink.class);
         asm.setupPool();
         final int thisClassIndex = asm.poolClass(asm.poolUtf8("io/questdb/cairo/sink"));
@@ -173,7 +207,6 @@ public class RecordSinkFactory {
         final int getIndex = asm.poolMethod(ObjList.class, "get", "(I)Ljava/lang/Object;");
 
         final int typeIndex = asm.poolUtf8("Lio/questdb/cairo/sql/Function;");
-        final int functionSize = keyFunctions != null ? keyFunctions.size() : 0;
 
         int firstFieldNameIndex = 0;
         int firstFieldIndex = 0;
@@ -686,5 +719,113 @@ public class RecordSinkFactory {
             return src;
         }
         return skewIndex.getQuick(src);
+    }
+
+    private static class SingleByteColumnSink implements RecordSink {
+        private final int columnIndex;
+
+        private SingleByteColumnSink(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public void copy(Record r, RecordSinkSPI w) {
+            w.putByte(r.getByte(columnIndex));
+        }
+
+        @Override
+        public void setFunctions(ObjList<Function> keyFunctions) {
+            // no-op
+        }
+    }
+
+    private static class SingleIntColumnSink implements RecordSink {
+        private final int columnIndex;
+
+        private SingleIntColumnSink(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public void copy(Record r, RecordSinkSPI w) {
+            w.putInt(r.getInt(columnIndex));
+        }
+
+        @Override
+        public void setFunctions(ObjList<Function> keyFunctions) {
+            // no-op
+        }
+    }
+
+    private static class SingleLongColumnSink implements RecordSink {
+        private final int columnIndex;
+
+        private SingleLongColumnSink(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public void copy(Record r, RecordSinkSPI w) {
+            w.putLong(r.getLong(columnIndex));
+        }
+
+        @Override
+        public void setFunctions(ObjList<Function> keyFunctions) {
+            // no-op
+        }
+    }
+
+    private static class SingleShortColumnSink implements RecordSink {
+        private final int columnIndex;
+
+        private SingleShortColumnSink(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public void copy(Record r, RecordSinkSPI w) {
+            w.putShort(r.getShort(columnIndex));
+        }
+
+        @Override
+        public void setFunctions(ObjList<Function> keyFunctions) {
+            // no-op
+        }
+    }
+
+    private static class SingleVarcharColumnSink implements RecordSink {
+        private final int columnIndex;
+
+        private SingleVarcharColumnSink(int columnIndex) {
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public void copy(Record r, RecordSinkSPI w) {
+            w.putVarchar(r.getVarcharA(columnIndex));
+        }
+
+        @Override
+        public void setFunctions(ObjList<Function> keyFunctions) {
+            // no-op
+        }
+    }
+
+    private static class SingleVarcharFunctionSink implements RecordSink {
+        private final Function func;
+
+        private SingleVarcharFunctionSink(Function func) {
+            this.func = func;
+        }
+
+        @Override
+        public void copy(Record r, RecordSinkSPI w) {
+            w.putVarchar(func.getVarcharA(r));
+        }
+
+        @Override
+        public void setFunctions(ObjList<Function> keyFunctions) {
+            // no-op
+        }
     }
 }
