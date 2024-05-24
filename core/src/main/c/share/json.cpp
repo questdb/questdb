@@ -81,6 +81,8 @@ static simdjson::padded_string_view maybe_copied_string_view(
 // with a lambda that is supposed to return `void`.
 struct token_void {};
 
+using json_value = simdjson::simdjson_result<simdjson::ondemand::value>;
+
 template <typename F>
 auto value_at_path(
         JNIEnv* env,
@@ -90,7 +92,7 @@ auto value_at_path(
         const char *path_chars,
         size_t path_len,
         F&& extractor
-) -> decltype(std::forward<F>(extractor)(simdjson::simdjson_result<simdjson::ondemand::value>{})) {
+) -> decltype(std::forward<F>(extractor)(json_value{})) {
     std::string temp_buffer;
     const simdjson::padded_string_view json_buf = maybe_copied_string_view(
             json_chars, json_len, json_capacity, temp_buffer);
@@ -153,7 +155,7 @@ Java_io_questdb_std_json_Json_queryPathString(
 ) {
     value_at_path(
             env, json_chars, json_len, json_capacity, path_chars, path_len,
-            [env, dest_sink](simdjson::simdjson_result<simdjson::ondemand::value> res) -> token_void {
+            [env, dest_sink](json_value res) -> token_void {
                 auto str_res = res.get_string();
                 if (!bubble_error(env, str_res)) {
                     return {};
@@ -181,7 +183,7 @@ Java_io_questdb_std_json_Json_queryPathBoolean(
 ) {
     return value_at_path(
             env, json_chars, json_len, json_capacity, path_chars, path_len,
-            [env](simdjson::simdjson_result<simdjson::ondemand::value> res) -> jboolean {
+            [env](json_value res) -> jboolean {
                 auto bool_res = res.get_bool();
                 if (!bubble_error(env, bool_res)) {
                     return false;
@@ -202,7 +204,7 @@ Java_io_questdb_std_json_Json_queryPathLong(
 ) {
     return value_at_path(
             env, json_chars, json_len, json_capacity, path_chars, path_len,
-            [env](simdjson::simdjson_result<simdjson::ondemand::value> res) -> jlong {
+            [env](json_value res) -> jlong {
                 auto int_res = res.get_int64();
                 if (!bubble_error(env, int_res)) {
                     return {};
@@ -223,7 +225,7 @@ Java_io_questdb_std_json_Json_queryPathDouble(
 ) {
     return value_at_path(
             env, json_chars, json_len, json_capacity, path_chars, path_len,
-            [env](simdjson::simdjson_result<simdjson::ondemand::value> res) -> jdouble {
+            [env](json_value res) -> jdouble {
                 auto double_res = res.get_double();
                 if (!bubble_error(env, double_res)) {
                     return {};
