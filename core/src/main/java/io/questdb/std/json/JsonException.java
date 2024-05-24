@@ -69,13 +69,13 @@ public class JsonException extends Exception {
         this.code = code;
     }
 
-    private int getCode() {
+    public int getCode() {
         return code;
     }
 
     @Override
     public String getMessage() {
-        if ((code > NUM_ERROR_CODES) || (code < 0)) {
+        if ((code >= NUM_ERROR_CODES) || (code < 0)) {
             return "Unknown error code " + code;
         }
         return messages[code];

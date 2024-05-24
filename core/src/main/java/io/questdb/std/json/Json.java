@@ -74,6 +74,7 @@ public class Json {
                 "  \"city\": \"New York\",\n" +
                 "  \"hasChildren\": false,\n" +
                 "  \"height\": 5.6,\n" +
+                "  \"nothing\": null,\n" +
                 "  \"pets\": [\n" +
                 "    {\"name\": \"Max\", \"species\": \"Dog\"},\n" +
                 "    {\"name\": \"Whiskers\", \"species\": \"Cat\"}\n" +
