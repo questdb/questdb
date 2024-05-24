@@ -130,10 +130,10 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                             src.timestamp("ts")
                                     .col("i", ColumnType.INT)
                                     .col("l", ColumnType.LONG)
-                                .col("vch", ColumnType.VARCHAR),
-                        10000,
-                        "2020-01-01",
-                        11);
+                                    .col("vch", ColumnType.VARCHAR),
+                            10000,
+                            "2020-01-01",
+                            11);
 
                     AbstractCairoTest.create(dst.timestamp("ts")
                             .col("i", ColumnType.INT)
@@ -271,7 +271,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     AbstractCairoTest.create(dst.timestamp("ts")
                             .col("i", ColumnType.INT)
                             .col("l", ColumnType.LONG)
-                        .col("vch", ColumnType.VARCHAR));
+                            .col("vch", ColumnType.VARCHAR));
 
                     String alterCommand = "ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2020-01-01'";
                     try {
@@ -292,7 +292,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     AbstractCairoTest.create(dst.timestamp("ts")
                             .col("i", ColumnType.INT)
                             .col("l", ColumnType.LONG)
-                        .col("vch", ColumnType.VARCHAR));
+                            .col("vch", ColumnType.VARCHAR));
 
                     String alterCommand = "ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2020-01-01'";
 
@@ -317,7 +317,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                             src.col("l", ColumnType.LONG)
                                     .col("i", ColumnType.INT)
                                     .col("vch", ColumnType.VARCHAR)
-                                .timestamp("ts"),
+                                    .timestamp("ts"),
                             10000,
                             "2020-01-01",
                             1);
@@ -546,8 +546,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
         assertMemoryLeak(() -> {
 
                     TableModel src = new TableModel(configuration, testName.getMethodName() + "_src", PartitionBy.DAY);
-                    TableModel dst = new TableModel(configuration, testName.getMethodName() + "_dst", PartitionBy.DAY)
-            ;
+                    TableModel dst = new TableModel(configuration, testName.getMethodName() + "_dst", PartitionBy.DAY);
 
                     TableToken srcTableToken = createPopulateTable(
                             1,
@@ -556,24 +555,24 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                                     .col("l", ColumnType.LONG)
                                     .col("s", ColumnType.SYMBOL).indexed(true, 128)
                                     .col("str", ColumnType.STRING)
-                                .col("vch", ColumnType.VARCHAR),
-                        8,
-                        "2022-08-01",
-                        4
-                );
-                try (TableWriter writer = getWriter(src.getName())) {
-                    writer.removeColumn("s");
-                    writer.removeColumn("str");
-                    writer.removeColumn("i");
-                }
+                                    .col("vch", ColumnType.VARCHAR),
+                            8,
+                            "2022-08-01",
+                            4
+                    );
+                    try (TableWriter writer = getWriter(src.getName())) {
+                        writer.removeColumn("s");
+                        writer.removeColumn("str");
+                        writer.removeColumn("i");
+                    }
 
                     TableToken dstTableToken = AbstractCairoTest.create(dst.timestamp("ts")
-                        .col("i", ColumnType.INT)
-                        .col("l", ColumnType.LONG)
-                        .col("s", ColumnType.SYMBOL).indexed(true, 128)
-                        .col("str", ColumnType.STRING)
-                        .col("vch", ColumnType.VARCHAR)
-                );
+                            .col("i", ColumnType.INT)
+                            .col("l", ColumnType.LONG)
+                            .col("s", ColumnType.SYMBOL).indexed(true, 128)
+                            .col("str", ColumnType.STRING)
+                            .col("vch", ColumnType.VARCHAR)
+                    );
 
                     copyPartitionToAttachable(srcTableToken, "2022-08-02", dstTableToken.getDirName(), "2022-08-02");
                     ddl("ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2022-08-02'", sqlExecutionContext);
@@ -605,10 +604,10 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                                     .col("i", ColumnType.INT)
                                     .col("l", ColumnType.LONG)
                                     .col("s", ColumnType.SYMBOL).indexed(true, 128)
-                                .col("vch", ColumnType.VARCHAR),
-                        partitionRowCount,
-                        "2022-08-01",
-                        4);
+                                    .col("vch", ColumnType.VARCHAR),
+                            partitionRowCount,
+                            "2022-08-01",
+                            4);
 
                     TableToken dstTableToken = AbstractCairoTest.create(dst.timestamp("ts")
                             .col("i", ColumnType.INT)
@@ -631,8 +630,8 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     Assert.assertTrue(Files.exists(path.trimTo(pathLen).concat("s.k").$()));
                     Assert.assertTrue(Files.exists(path.trimTo(pathLen).concat("s.v").$()));
                     Assert.assertTrue(Files.exists(path.trimTo(pathLen).concat("l.d").$()));
-                Assert.assertTrue(Files.exists(path.trimTo(pathLen).concat("vch.d").$()));
-                Assert.assertTrue(Files.exists(path.trimTo(pathLen).concat("vch.i").$()));
+                    Assert.assertTrue(Files.exists(path.trimTo(pathLen).concat("vch.d").$()));
+                    Assert.assertTrue(Files.exists(path.trimTo(pathLen).concat("vch.i").$()));
 
                     engine.clear();
                     assertQuery(
@@ -1057,82 +1056,82 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
         }
 
         assertMemoryLeak(() -> {
-                    TableModel src = new TableModel(configuration, "src47", PartitionBy.DAY);
-                    TableModel dst = new TableModel(configuration, "dst47", PartitionBy.DAY);
+            TableModel src = new TableModel(configuration, "src47", PartitionBy.DAY);
+            TableModel dst = new TableModel(configuration, "dst47", PartitionBy.DAY);
 
-                    int partitionRowCount = 5;
-                    // the srcTable has 5 rows in total:
-                // 2 rows in partition 2020-01-09
-                // 3 rows in partition 2020-01-10
-                TableToken srcTableToken = createPopulateTable(
-                        1,
-                        src.col("l", ColumnType.LONG)
-                                .col("i", ColumnType.INT)
-                                .col("str", ColumnType.STRING)
-                                .col("vch", ColumnType.VARCHAR)
-                                .timestamp("ts"),
-                        partitionRowCount,
-                        "2020-01-09",
-                        2
-                );
+            int partitionRowCount = 5;
+            // the srcTable has 5 rows in total:
+            // 2 rows in partition 2020-01-09
+            // 3 rows in partition 2020-01-10
+            TableToken srcTableToken = createPopulateTable(
+                    1,
+                    src.col("l", ColumnType.LONG)
+                            .col("i", ColumnType.INT)
+                            .col("str", ColumnType.STRING)
+                            .col("vch", ColumnType.VARCHAR)
+                            .timestamp("ts"),
+                    partitionRowCount,
+                    "2020-01-09",
+                    2
+            );
 
-                    // the dstTable has 3 rows in total:
-                // 2 rows in partition 2020-01-09
-                // 1 row in partition 2020-01-10
-                TableToken dstTableToken = createPopulateTable(
-                        1,
-                        dst.col("l", ColumnType.LONG)
-                                .col("i", ColumnType.INT)
-                                .col("str", ColumnType.STRING)
-                                .col("vch", ColumnType.VARCHAR)
-                                .timestamp("ts"),
-                        partitionRowCount - 3,
-                        "2020-01-09",
-                        2
-                );
+            // the dstTable has 3 rows in total:
+            // 2 rows in partition 2020-01-09
+            // 1 row in partition 2020-01-10
+            TableToken dstTableToken = createPopulateTable(
+                    1,
+                    dst.col("l", ColumnType.LONG)
+                            .col("i", ColumnType.INT)
+                            .col("str", ColumnType.STRING)
+                            .col("vch", ColumnType.VARCHAR)
+                            .timestamp("ts"),
+                    partitionRowCount - 3,
+                    "2020-01-09",
+                    2
+            );
 
-                    try (TableReader dstReader = newOffPoolReader(configuration, dst.getTableName())) {
-                        dstReader.openPartition(0);
-                        dstReader.openPartition(1);
-                        dstReader.goPassive();
+            try (TableReader dstReader = newOffPoolReader(configuration, dst.getTableName())) {
+                dstReader.openPartition(0);
+                dstReader.openPartition(1);
+                dstReader.goPassive();
 
-                        try (TableWriter writer = getWriter(dst.getTableName())) {
-                        // remove 2020-01-09 partition from dst table
-                        long timestamp = TimestampFormatUtils.parseTimestamp("2020-01-09T00:00:00.000z");
-                        writer.removePartition(timestamp);
-                        // at this point dst table has only 1 partition: 2020-01-10  and it has 1 row
+                try (TableWriter writer = getWriter(dst.getTableName())) {
+                    // remove 2020-01-09 partition from dst table
+                    long timestamp = TimestampFormatUtils.parseTimestamp("2020-01-09T00:00:00.000z");
+                    writer.removePartition(timestamp);
+                    // at this point dst table has only 1 partition: 2020-01-10  and it has 1 row
 
-                        // copy and attach the 2020-01-09 partition from src table to dst table
-                            copyPartitionToAttachable(srcTableToken, "2020-01-09", dstTableToken.getDirName(), "2020-01-09");
-                            Assert.assertEquals(AttachDetachStatus.OK, writer.attachPartition(timestamp));
-                        }
-
-                        // Go active
-                        Assert.assertTrue(dstReader.reload());
-                        try (TableReader srcReader = getReader(src.getTableName())) {
-                            String tableHeader = "l\ti\tstr\tvch\tts\n";
-                        // check the original src table is not affected
-                        String srcPartition2020_01_09 = "1\t1\t1\t&\uDA1F\uDE98|\uD924\uDE04\t2020-01-09T09:35:59.800000Z\n" +
-                                "2\t2\t2\t\t2020-01-09T19:11:59.600000Z\n";
-                        String srcPartition2020_01_10 = "3\t3\t3\těȞ鼷G\uD991\uDE7E\t2020-01-10T04:47:59.400000Z\n" +
-                                "4\t4\t4\t\t2020-01-10T14:23:59.200000Z\n" +
-                                "5\t5\t5\t͛Ԉ龘и\uDA89\uDFA4~\t2020-01-10T23:59:59.000000Z\n";
-                        String expected = tableHeader + srcPartition2020_01_09 + srcPartition2020_01_10;
-                            assertCursor(expected, srcReader.getCursor(), srcReader.getMetadata(), true);
-
-                        // now check the dst table
-                        // the first 2 rows must be the same as the src table - because we attached the 2020-01-09 partition from src table
-                        // and 3rd line is a partition 2020-01-10 from the original dst table
-                        String dstPartition2020_01_10 = "2\t2\t2\tqK䰭\u008B}ѱʜ\uDB8D\uDE4Eᯤ\\篸\t2020-01-10T23:59:59.000000Z\n";
-                        expected = tableHeader + srcPartition2020_01_09 + dstPartition2020_01_10;
-                        assertCursor(
-                                expected,
-                                dstReader.getCursor(),
-                                dstReader.getMetadata(),
-                                true
-                        );
-                    }
+                    // copy and attach the 2020-01-09 partition from src table to dst table
+                    copyPartitionToAttachable(srcTableToken, "2020-01-09", dstTableToken.getDirName(), "2020-01-09");
+                    Assert.assertEquals(AttachDetachStatus.OK, writer.attachPartition(timestamp));
                 }
+
+                // Go active
+                Assert.assertTrue(dstReader.reload());
+                try (TableReader srcReader = getReader(src.getTableName())) {
+                    String tableHeader = "l\ti\tstr\tvch\tts\n";
+                    // check the original src table is not affected
+                    String srcPartition2020_01_09 = "1\t1\t1\t&\uDA1F\uDE98|\uD924\uDE04\t2020-01-09T09:35:59.800000Z\n" +
+                            "2\t2\t2\t\t2020-01-09T19:11:59.600000Z\n";
+                    String srcPartition2020_01_10 = "3\t3\t3\těȞ鼷G\uD991\uDE7E\t2020-01-10T04:47:59.400000Z\n" +
+                            "4\t4\t4\t\t2020-01-10T14:23:59.200000Z\n" +
+                            "5\t5\t5\t͛Ԉ龘и\uDA89\uDFA4~\t2020-01-10T23:59:59.000000Z\n";
+                    String expected = tableHeader + srcPartition2020_01_09 + srcPartition2020_01_10;
+                    assertCursor(expected, srcReader.getCursor(), srcReader.getMetadata(), true);
+
+                    // now check the dst table
+                    // the first 2 rows must be the same as the src table - because we attached the 2020-01-09 partition from src table
+                    // and 3rd line is a partition 2020-01-10 from the original dst table
+                    String dstPartition2020_01_10 = "2\t2\t2\tqK䰭\u008B}ѱʜ\uDB8D\uDE4Eᯤ\\篸\t2020-01-10T23:59:59.000000Z\n";
+                    expected = tableHeader + srcPartition2020_01_09 + dstPartition2020_01_10;
+                    assertCursor(
+                            expected,
+                            dstReader.getCursor(),
+                            dstReader.getMetadata(),
+                            true
+                    );
+                }
+            }
         });
     }
 

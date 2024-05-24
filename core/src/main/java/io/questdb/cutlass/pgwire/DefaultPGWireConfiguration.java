@@ -168,7 +168,7 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
 
     @Override
     public int getSelectCacheBlockCount() {
-        return 8;
+        return 2;
     }
 
     @Override

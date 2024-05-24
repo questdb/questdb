@@ -48,7 +48,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
-import io.questdb.std.Unsafe;
+import io.questdb.std.Misc;
 import io.questdb.std.str.DirectUtf8Sink;
 import org.jetbrains.annotations.NotNull;
 
@@ -81,11 +81,10 @@ public class ServerMain implements Closeable {
         try {
             final ServerConfiguration config = bootstrap.getConfiguration();
             config.init(engine, freeOnExit);
-            Unsafe.setWriterMemLimit(config.getCairoConfiguration().getWriterMemoryLimit());
             freeOnExit.register(config.getFactoryProvider());
             engine.load();
         } catch (Throwable th) {
-            freeOnExit.close();
+            Misc.free(freeOnExit);
             throw th;
         }
     }
@@ -367,7 +366,7 @@ public class ServerMain implements Closeable {
 
         // http
         freeOnExit.register(httpServer = services().createHttpServer(
-                config.getHttpServerConfiguration(),
+                config,
                 engine,
                 workerPoolManager,
                 metrics
@@ -376,7 +375,6 @@ public class ServerMain implements Closeable {
         // http min
         freeOnExit.register(services().createMinHttpServer(
                 config.getHttpMinServerConfiguration(),
-                engine,
                 workerPoolManager,
                 metrics
         ));

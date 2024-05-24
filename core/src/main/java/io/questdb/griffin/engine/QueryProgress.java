@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Record;
@@ -34,25 +35,76 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
+import io.questdb.std.FlyweightMessageContainer;
 
 // Factory that adds query to registry on getCursor() and removes on cursor close().
-public class RegisteredRecordCursorFactory extends AbstractRecordCursorFactory {
-
+public class QueryProgress extends AbstractRecordCursorFactory {
+    private static final Log LOG = LogFactory.getLog(QueryProgress.class);
     private final RecordCursorFactory base;
     private final RegisteredRecordCursor cursor;
     private final QueryRegistry registry;
-    private final String sql;
+    private final String sqlText;
+    private long beginNanos;
     private SqlExecutionContext executionContext;
-    private long queryId;
+    private boolean failed = false;
+    private long sqlId;
 
-    public RegisteredRecordCursorFactory(QueryRegistry registry, CharSequence sql, RecordCursorFactory base) {
+    public QueryProgress(QueryRegistry registry, CharSequence sqlText, RecordCursorFactory base) {
         super(base.getMetadata());
         this.base = base;
         this.registry = registry;
-        this.sql = Chars.toString(sql);
+        this.sqlText = Chars.toString(sqlText);
         this.cursor = new RegisteredRecordCursor();
+    }
+
+    public static void logEnd(long sqlId, CharSequence sqlText, SqlExecutionContext executionContext, long beginNanos) {
+        LOG.infoW()
+                .$("fin [id=").$(sqlId)
+                .$(", sql=`").$(sqlText).$('`')
+                .$(", principal=").$(executionContext.getSecurityContext().getPrincipal())
+                .$(", cache=").$(executionContext.isCacheHit())
+                .$(", time=").$(executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos)
+                .I$();
+    }
+
+    public static void logError(
+            Throwable e,
+            long sqlId,
+            CharSequence sqlText,
+            SqlExecutionContext executionContext,
+            long beginNanos
+    ) {
+        final int errno = e instanceof CairoException ? ((CairoException) e).getErrno() : 0;
+        final int pos = e instanceof FlyweightMessageContainer ? ((FlyweightMessageContainer) e).getPosition() : 0;
+        LOG.errorW()
+                .$("err")
+                .$(" [id=").$(sqlId)
+                .$(", sql=`").$(sqlText).$('`')
+                .$(", principal=").$(executionContext.getSecurityContext().getPrincipal())
+                .$(", cache=").$(executionContext.isCacheHit())
+                .$(", time=").$(executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos)
+                .$(", msg=").$(e.getMessage())
+                .$(", errno=").$(errno)
+                .$(", pos=").$(pos)
+                .I$();
+    }
+
+    public static void logStart(
+            long sqlId,
+            CharSequence sqlText,
+            SqlExecutionContext executionContext
+    ) {
+        LOG.infoW()
+                .$("exe")
+                .$(" [id=").$(sqlId)
+                .$(", sql=`").$(sqlText).$('`')
+                .$(", principal=").$(executionContext.getSecurityContext().getPrincipal())
+                .$(", cache=").$(executionContext.isCacheHit())
+                .I$();
     }
 
     @Override
@@ -93,17 +145,19 @@ public class RegisteredRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         if (!cursor.isOpen) {
-            queryId = registry.register(sql, executionContext);
-            try {
-                cursor.of(base.getCursor(executionContext));
-            } catch (Throwable t) {
-                registry.unregister(queryId, executionContext);
-                throw t;
-            }
             this.executionContext = executionContext;
-            return cursor;
+            sqlId = registry.register(sqlText, executionContext);
+            beginNanos = executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks();
+            logStart(sqlId, sqlText, executionContext);
+            try {
+                final RecordCursor baseCursor = base.getCursor(executionContext);
+                cursor.of(baseCursor); // this should not fail, it is just variable assigment
+            } catch (Throwable e) {
+                registry.unregister(sqlId, executionContext);
+                logError(e);
+                throw e;
+            }
         }
-
         return cursor;
     }
 
@@ -162,6 +216,16 @@ public class RegisteredRecordCursorFactory extends AbstractRecordCursorFactory {
         return base.usesCompiledFilter();
     }
 
+    private void logError(Throwable e) {
+        logError(
+                e,
+                sqlId,
+                sqlText,
+                executionContext,
+                beginNanos
+        );
+    }
+
     @Override
     protected void _close() {
         cursor.close();
@@ -182,9 +246,12 @@ public class RegisteredRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public void close() {
             if (isOpen) {
-                registry.unregister(queryId, executionContext);
+                registry.unregister(sqlId, executionContext);
                 isOpen = false;
                 base.close();
+                if (!failed) {
+                    logEnd(sqlId, sqlText, executionContext, beginNanos);
+                }
             }
         }
 
@@ -205,7 +272,13 @@ public class RegisteredRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() throws DataUnavailableException {
-            return base.hasNext();
+            try {
+                return base.hasNext();
+            } catch (Throwable e) {
+                failed = true;
+                logError(e);
+                throw e;
+            }
         }
 
         @Override

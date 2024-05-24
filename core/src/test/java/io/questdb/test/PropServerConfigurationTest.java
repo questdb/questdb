@@ -94,8 +94,8 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().getDumpNetworkTraffic());
         Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().allowDeflateBeforeSend());
         Assert.assertTrue(configuration.getHttpServerConfiguration().isQueryCacheEnabled());
-        Assert.assertEquals(4, configuration.getHttpServerConfiguration().getQueryCacheBlockCount());
-        Assert.assertEquals(4, configuration.getHttpServerConfiguration().getQueryCacheRowCount());
+        Assert.assertEquals(8 * configuration.getWorkerPoolConfiguration().getWorkerCount(), configuration.getHttpServerConfiguration().getQueryCacheBlockCount());
+        Assert.assertEquals(2 * configuration.getWorkerPoolConfiguration().getWorkerCount(), configuration.getHttpServerConfiguration().getQueryCacheRowCount());
 
         Assert.assertEquals(10, configuration.getWorkerPoolConfiguration().getYieldThreshold());
         Assert.assertEquals(10000, configuration.getWorkerPoolConfiguration().getSleepThreshold());
@@ -253,6 +253,9 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(256, configuration.getCairoConfiguration().getPageFrameReduceRowIdListCapacity());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getPageFrameReduceColumnListCapacity());
         Assert.assertEquals(100_000, configuration.getCairoConfiguration().getGroupByShardingThreshold());
+        Assert.assertTrue(configuration.getCairoConfiguration().isGroupByPresizeEnabled());
+        Assert.assertEquals(100_000_000, configuration.getCairoConfiguration().getGroupByPresizeMaxSize());
+        Assert.assertEquals(Numbers.SIZE_1GB, configuration.getCairoConfiguration().getGroupByPresizeMaxHeapSize());
         Assert.assertEquals(128 * 1024, configuration.getCairoConfiguration().getGroupByAllocatorDefaultChunkSize());
 
         Assert.assertEquals(SqlJitMode.JIT_MODE_ENABLED, configuration.getCairoConfiguration().getSqlJitMode());
@@ -339,7 +342,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(1023, configuration.getCairoConfiguration().getWriterTickRowsCountMod());
         Assert.assertEquals(ColumnType.DOUBLE, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForFloat());
         Assert.assertEquals(ColumnType.LONG, configuration.getLineTcpReceiverConfiguration().getDefaultColumnTypeForInteger());
-        Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().isUseLegacyStringDefault());
+        Assert.assertFalse(configuration.getLineTcpReceiverConfiguration().isUseLegacyStringDefault());
         Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().getDisconnectOnError());
 
         Assert.assertTrue(configuration.getHttpServerConfiguration().getHttpContextConfiguration().getServerKeepAlive());
@@ -368,8 +371,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(64, configuration.getPGWireConfiguration().getDispatcherConfiguration().getTestConnectionBufferSize());
         Assert.assertEquals(2, configuration.getPGWireConfiguration().getBinParamCountCapacity());
         Assert.assertTrue(configuration.getPGWireConfiguration().isSelectCacheEnabled());
-        Assert.assertEquals(4, configuration.getPGWireConfiguration().getSelectCacheBlockCount());
-        Assert.assertEquals(4, configuration.getPGWireConfiguration().getSelectCacheRowCount());
+        Assert.assertEquals(8 * configuration.getWorkerPoolConfiguration().getWorkerCount(), configuration.getPGWireConfiguration().getSelectCacheBlockCount());
+        Assert.assertEquals(2 * configuration.getWorkerPoolConfiguration().getWorkerCount(), configuration.getPGWireConfiguration().getSelectCacheRowCount());
         Assert.assertTrue(configuration.getPGWireConfiguration().isInsertCacheEnabled());
         Assert.assertEquals(4, configuration.getPGWireConfiguration().getInsertCacheBlockCount());
         Assert.assertEquals(4, configuration.getPGWireConfiguration().getInsertCacheRowCount());
@@ -423,6 +426,7 @@ public class PropServerConfigurationTest {
 
         Assert.assertEquals(20, configuration.getCairoConfiguration().getO3LastPartitionMaxSplits());
         Assert.assertEquals(50 * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getPartitionO3SplitMinSize());
+        Assert.assertFalse(configuration.getCairoConfiguration().getTextConfiguration().isUseLegacyStringDefault());
     }
 
     @Test
@@ -612,6 +616,9 @@ public class PropServerConfigurationTest {
 
         properties.setProperty("cairo.o3.max.lag", "60");
 
+        properties.setProperty("cairo.legacy.string.column.type.default", "false");
+        env.put("QDB_CAIRO_LEGACY_STRING_COLUMN_TYPE_DEFAULT", "true");
+
         PropServerConfiguration configuration = newPropServerConfiguration(root, properties, env, new BuildInformationHolder());
         Assert.assertEquals(1.5, configuration.getCairoConfiguration().getTextConfiguration().getMaxRequiredDelimiterStdDev(), 0.000001);
         Assert.assertEquals(3000, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionStringPoolCapacity());
@@ -623,6 +630,7 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().readOnlySecurityContext());
         Assert.assertEquals(9663676416L, configuration.getCairoConfiguration().getDataAppendPageSize());
         Assert.assertEquals(60_000, configuration.getCairoConfiguration().getO3MaxLag());
+        Assert.assertTrue(configuration.getCairoConfiguration().getTextConfiguration().isUseLegacyStringDefault());
     }
 
     @Test
@@ -1393,6 +1401,9 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(4, configuration.getPageFrameReduceColumnListCapacity());
         Assert.assertEquals(2048, configuration.getGroupByMergeShardQueueCapacity());
         Assert.assertEquals(100, configuration.getGroupByShardingThreshold());
+        Assert.assertFalse(configuration.isGroupByPresizeEnabled());
+        Assert.assertEquals(100_000, configuration.getGroupByPresizeMaxSize());
+        Assert.assertEquals(1024, configuration.getGroupByPresizeMaxHeapSize());
         Assert.assertEquals(4096, configuration.getGroupByAllocatorDefaultChunkSize());
 
         Assert.assertEquals(SqlJitMode.JIT_MODE_FORCE_SCALAR, configuration.getSqlJitMode());

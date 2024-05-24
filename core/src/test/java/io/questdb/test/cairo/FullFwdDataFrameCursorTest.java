@@ -1542,10 +1542,10 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                         writer.commit();
                     }
 
-                if (workerPool != null) {
-                    workerPool.halt();
-                    Misc.free(workerPool);
-                }
+                    if (workerPool != null) {
+                        workerPool.halt();
+                        Misc.free(workerPool);
+                    }
 
                     try (TableReader reader = createTableReader(configuration, "ABC")) {
 
@@ -1651,7 +1651,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     final MyWorkScheduler workScheduler = new MyWorkScheduler();
                     WorkerPool workerPool = new TestWorkerPool(2, metrics)
             ) {
-
                 workerPool.assign(new ColumnIndexerJob(workScheduler));
 
                 try (TableWriter writer = newOffPoolWriter(configuration, "ABC", metrics, workScheduler)) {

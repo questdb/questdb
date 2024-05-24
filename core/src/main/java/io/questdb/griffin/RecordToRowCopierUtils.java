@@ -380,6 +380,7 @@ public class RecordToRowCopierUtils {
                 case ColumnType.BYTE:
                     asm.invokeInterface(rGetByte);
                     switch (toColumnTypeTag) {
+                        case ColumnType.BOOLEAN:
                         case ColumnType.BYTE:
                             asm.invokeInterface(wPutByte, 2);
                             break;

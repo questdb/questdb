@@ -33,7 +33,7 @@ import org.jetbrains.annotations.NotNull;
 import java.util.Objects;
 
 public class QueryColumn implements Mutable, Sinkable {
-    public final static ObjectFactory<QueryColumn> FACTORY = QueryColumn::new;
+    public static final ObjectFactory<QueryColumn> FACTORY = QueryColumn::new;
     private CharSequence alias;
     private ExpressionNode ast;
     private int columnType;

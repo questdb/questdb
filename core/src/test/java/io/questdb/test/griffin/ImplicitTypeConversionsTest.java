@@ -538,16 +538,14 @@ public class ImplicitTypeConversionsTest extends AbstractCairoTest {
     }
 
     private void testInsertCausesException(String valueType, String value, String targetColumnType) throws Exception {
-        try {
-            assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
+            try {
                 ddl("create table tab(x " + targetColumnType + " );");
                 insert("insert into tab values (cast(" + value + " as " + valueType + " ));");
-            });
-
-            Assert.fail("SqlException should be thrown!");
-        } catch (ImplicitCastException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
-        }
+                Assert.fail("SqlException should be thrown!");
+            } catch (ImplicitCastException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
+            }
+        });
     }
-
 }

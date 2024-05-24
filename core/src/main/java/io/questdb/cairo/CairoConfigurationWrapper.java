@@ -111,6 +111,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean getCairoSqlLegacyOperatorPrecedence() {
+        return getDelegate().getCairoSqlLegacyOperatorPrecedence();
+    }
+
+    @Override
     public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
         return getDelegate().getCircuitBreakerConfiguration();
     }
@@ -303,6 +308,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getGroupByPoolCapacity() {
         return getDelegate().getGroupByPoolCapacity();
+    }
+
+    @Override
+    public long getGroupByPresizeMaxHeapSize() {
+        return getDelegate().getGroupByPresizeMaxHeapSize();
+    }
+
+    @Override
+    public long getGroupByPresizeMaxSize() {
+        return getDelegate().getGroupByPresizeMaxSize();
     }
 
     @Override
@@ -546,6 +561,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getSequencerCheckInterval() {
+        return getDelegate().getSequencerCheckInterval();
+    }
+
+    @Override
     public boolean getSimulateCrashEnabled() {
         return getDelegate().getSimulateCrashEnabled();
     }
@@ -751,7 +771,7 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlSmallMapPageSize() {
+    public long getSqlSmallMapPageSize() {
         return getDelegate().getSqlSmallMapPageSize();
     }
 
@@ -1021,13 +1041,13 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getWriterMemoryLimit() {
-        return 0;
+    public int getWriterTickRowsCountMod() {
+        return getDelegate().getWriterTickRowsCountMod();
     }
 
     @Override
-    public int getWriterTickRowsCountMod() {
-        return getDelegate().getWriterTickRowsCountMod();
+    public boolean isGroupByPresizeEnabled() {
+        return getDelegate().isGroupByPresizeEnabled();
     }
 
     @Override

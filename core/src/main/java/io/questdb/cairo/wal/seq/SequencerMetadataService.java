@@ -87,4 +87,9 @@ public class SequencerMetadataService implements MetadataServiceStub {
         metadata.renameTable(toTableName);
         tableToken = metadata.getTableToken();
     }
+
+    @Override
+    public void changeColumnType(CharSequence name, int newType, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential, SecurityContext securityContext) {
+        metadata.changeColumnType(name, newType);
+    }
 }

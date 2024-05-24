@@ -27,9 +27,9 @@ package io.questdb.test.griffin.engine.functions.bin;
 import io.questdb.PropertyKey;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.bin.Base64FunctionFactory;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -38,7 +38,7 @@ public class Base64FunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testInvalidLength() {
         try {
-            assertQuery("", "select base64(rnd_bin(6,6,0), 0)", null);
+            assertQueryNoLeakCheck("", "select base64(rnd_bin(6,6,0), 0)", null);
         } catch (SqlException e) {
             TestUtils.assertContains("maxLength has to be greater than 0", e.getFlyweightMessage());
         }

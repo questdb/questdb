@@ -109,8 +109,8 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
     @Override
     public void of(RecordCursor base, SqlExecutionContext executionContext) {
         if (!isOpen) {
-            chain.reopen();
             isOpen = true;
+            chain.reopen();
         }
 
         this.base = base;

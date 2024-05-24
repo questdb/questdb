@@ -52,6 +52,7 @@ public class CastStrToShortFunctionFactory implements FunctionFactory {
 
         @Override
         public short getShort(Record rec) {
+            // Related code ColumnTypeConverter::convertStrToShort
             CharSequence value = arg.getStrA(rec);
             try {
                 if (value == null) {

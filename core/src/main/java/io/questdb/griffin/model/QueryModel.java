@@ -1293,7 +1293,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.showKind = showKind;
     }
 
-    public void setTableFactory(RecordCursorFactory function) {
+    public void setTableNameFunction(RecordCursorFactory function) {
         this.tableNameFunction = function;
     }
 

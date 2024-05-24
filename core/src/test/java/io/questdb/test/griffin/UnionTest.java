@@ -44,7 +44,7 @@ public class UnionTest extends AbstractCairoTest {
             insert("insert into events2 values ('bobby', 'grp1', 'flash')");
             insert("insert into events2 values ('stewy', 'grp1', 'flash')");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "groupid\tcontact\n" +
                             "grp1\tamy\n" +
                             "grp1\tbobby\n",
@@ -98,7 +98,7 @@ public class UnionTest extends AbstractCairoTest {
             insert("insert into events2 values ('2', 'grp1', 'stand')");
             insert("insert into events2 values ('1', 'grp1', 'flash')");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "contact\teventid\n" +
                             "5\tsit\n",
                     "select contact, eventid from events1 where eventid in ('flash', 'sit')\n" +
@@ -134,7 +134,7 @@ public class UnionTest extends AbstractCairoTest {
                             " FROM long_sequence(20) x)"
             );
 
-            assertQuery("t\ti\n" +
+            assertQueryNoLeakCheck("t\ti\n" +
                             "\t0\n" +
                             "BIKE\t0\n" +
                             "BUS\t0\n" +
@@ -157,7 +157,7 @@ public class UnionTest extends AbstractCairoTest {
             insert("insert into events2 values ('bobby', 'grp1', 'flash')");
             insert("insert into events2 values ('stewy', 'grp1', 'flash')");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "groupid\tcontact\n" +
                             "grp1\tstewy\n",
                     "select groupid, contact from events2 where groupid = 'grp1' and eventid = 'flash'\n" +
@@ -432,23 +432,25 @@ public class UnionTest extends AbstractCairoTest {
                 "#SET# " +
                 "select * from (select 2 from t #CLAUSE2# ) ";
 
-        assertMemoryLeak(() -> ddl("create table t as (select x, 's' || x from long_sequence(1) )"));
+        assertMemoryLeak(() -> {
+            ddl("create table t as (select x, 's' || x from long_sequence(1) )");
 
-        for (String setOperation : Arrays.asList("union    ", "union all", "intersect", "except   ")) {
-            for (int i = 0; i <= 2; i++) {
-                String orderQuery = template.replace("#SET#", setOperation)
-                        .replace("#CLAUSE" + i + "#", "order by x desc")
-                        .replace("#CLAUSE" + (i + 1) % 3 + "#", "")
-                        .replace("#CLAUSE" + (i + 2) % 3 + "#", "");
-                select(orderQuery).close();
+            for (String setOperation : Arrays.asList("union    ", "union all", "intersect", "except   ")) {
+                for (int i = 0; i <= 2; i++) {
+                    String orderQuery = template.replace("#SET#", setOperation)
+                            .replace("#CLAUSE" + i + "#", "order by x desc")
+                            .replace("#CLAUSE" + (i + 1) % 3 + "#", "")
+                            .replace("#CLAUSE" + (i + 2) % 3 + "#", "");
+                    select(orderQuery).close();
 
-                String limitQuery = template.replace("#SET#", setOperation)
-                        .replace("#CLAUSE" + i + "#", "limit 1        ")
-                        .replace("#CLAUSE" + (i + 1) % 3 + "#", "")
-                        .replace("#CLAUSE" + (i + 2) % 3 + "#", "");
-                select(limitQuery).close();
+                    String limitQuery = template.replace("#SET#", setOperation)
+                            .replace("#CLAUSE" + i + "#", "limit 1        ")
+                            .replace("#CLAUSE" + (i + 1) % 3 + "#", "")
+                            .replace("#CLAUSE" + (i + 2) % 3 + "#", "");
+                    select(limitQuery).close();
+                }
             }
-        }
+        });
     }
 
     //test accept limit and order by in last component ?
@@ -839,14 +841,14 @@ public class UnionTest extends AbstractCairoTest {
                     "STRING\tSCOOTER\n" +
                     "STRING\tVAN\n", "select typeof(t), t from (select t from x union all y) order by t");
 
-            assertQuery("typeof\tt\n" +
+            assertQueryNoLeakCheck("typeof\tt\n" +
                             "STRING\tBICYCLE\n" +
                             "STRING\tSCOOTER\n",
                     "select typeof(t), t from (select t from x union all y union y except x) order by t",
                     null,
                     true);
 
-            assertQuery("typeof\tt\n" +
+            assertQueryNoLeakCheck("typeof\tt\n" +
                             "STRING\tCAR\n" +
                             "STRING\tVAN\n" +
                             "STRING\tPLANE\n" +
@@ -859,7 +861,7 @@ public class UnionTest extends AbstractCairoTest {
                     false
             );
 
-            assertQuery("typeof\tt\n" +
+            assertQueryNoLeakCheck("typeof\tt\n" +
                             "STRING\tCAR\n" +
                             "STRING\tVAN\n" +
                             "STRING\tPLANE\n",
@@ -1259,7 +1261,7 @@ public class UnionTest extends AbstractCairoTest {
                     "  from long_sequence(3)\n" +
                     ")");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "sym1\n" +
                             "1\n" +
                             "2\n" +

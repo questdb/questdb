@@ -34,21 +34,23 @@ import org.junit.Test;
 
 import static io.questdb.test.griffin.wal.FuzzRunner.MAX_WAL_APPLY_TIME_PER_TABLE_CEIL;
 
-// These test is designed to produce unstable runs, e.g. random generator is created
-// using current execution time.
-// This improves coverage. To debug failures in CI find the line logging random seeds
-// and change line
-// Rnd rnd = generateRandom(LOG);
-// to
-// Rnd rnd = new Rnd(A, B);
-// where A, B are seeds in the failed run log.
-//
-// When the same timestamp is used in multiple transactions
-// the order of records when executed in parallel WAL writing is not guaranteed.
-// The creates failures in tests that assume that the order of records is preserved.
-// There are already measures to prevent invalid data generation, but it still can happen.
-// In order to verify that the test is not broken we check that there are no duplicate
-// timestamps for the record where the comparison fails.
+/**
+ * These tests are designed to produce unstable runs, e.g. random generator is created
+ * using current execution time.
+ * This improves coverage. To debug failures in CI find the line logging random seeds
+ * and change line
+ * {@code Rnd rnd = generateRandom(LOG);}
+ * to
+ * {@code Rnd rnd = new Rnd(A, B);}
+ * where A, B are seeds in the failed run log.
+ * <p>
+ * When the same timestamp is used in multiple transactions
+ * the order of records when executed in parallel WAL writing is not guaranteed.
+ * The creates failures in tests that assume that the order of records is preserved.
+ * There are already measures to prevent invalid data generation, but it still can happen.
+ * In order to verify that the test is not broken we check that there are no duplicate
+ * timestamps for the record where the comparison fails.
+ */
 public class WalWriterFuzzTest extends AbstractFuzzTest {
     private boolean fsAllowsMixedIO;
 
@@ -64,34 +66,34 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testChunkedSequencerWalTransactionQueries() throws Exception {
-        int chunkSize = TestUtils.generateRandom(LOG).nextInt(100) + 1;
-        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, chunkSize);
-        chunkSize = node1.getConfiguration().getDefaultSeqPartTxnCount();
+        assertMemoryLeak(() -> {
+            int chunkSize = TestUtils.generateRandom(LOG).nextInt(100) + 1;
+            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, chunkSize);
+            chunkSize = node1.getConfiguration().getDefaultSeqPartTxnCount();
 
-        ddl("create table chunk_seq (\n" +
-                "  x long,\n" +
-                "  ts timestamp\n" +
-                ") timestamp(ts) PARTITION by day WAL");
-        insert("insert batch 2 into chunk_seq \n" +
-                "  select x, timestamp_sequence('2024-01-01', 312312) from long_sequence(1000)");
+            ddl("create table chunk_seq (\n" +
+                    "  x long,\n" +
+                    "  ts timestamp\n" +
+                    ") timestamp(ts) PARTITION by day WAL");
+            insert("insert batch 2 into chunk_seq \n" +
+                    "  select x, timestamp_sequence('2024-01-01', 312312) from long_sequence(1000)");
 
+            runWalPurgeJob();
 
-        runWalPurgeJob();
+            int expectedTxnCount = 500;
+            assertSql("count\n" +
+                    expectedTxnCount + "\n", "select count(*) from wal_transactions('chunk_seq')");
 
-        int expectedTxnCount = 500;
-        assertSql("count\n" +
-                expectedTxnCount + "\n", "select count(*) from wal_transactions('chunk_seq')");
+            drainWalQueue();
 
-        drainWalQueue();
+            assertSql("count\n" +
+                    expectedTxnCount + "\n", "select count(*) from wal_transactions('chunk_seq')");
 
-        assertSql("count\n" +
-                expectedTxnCount + "\n", "select count(*) from wal_transactions('chunk_seq')");
+            runWalPurgeJob();
 
-
-        runWalPurgeJob();
-
-        assertSql("count\n" +
-                (expectedTxnCount - (expectedTxnCount - 1) / chunkSize * chunkSize) + "\n", "select count(*) from wal_transactions('chunk_seq')");
+            assertSql("count\n" +
+                    (expectedTxnCount - (expectedTxnCount - 1) / chunkSize * chunkSize) + "\n", "select count(*) from wal_transactions('chunk_seq')");
+        });
     }
 
     @Test
@@ -107,7 +109,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     @Test
     public void testSimpleDataTransaction() throws Exception {
         Rnd rnd = generateRandom(LOG);
-        setFuzzProbabilities(0, 0.2, 0.1, 0, 0, 0, 0, 1.0, 0.01, 0.01, 0.0);
+        setFuzzProbabilities(0, 0.2, 0.1, 0, 0, 0, 0, 1.0, 0.01, 0.01, 0.0, 0);
         setFuzzCounts(rnd.nextBoolean(), rnd.nextInt(10_000_000),
                 rnd.nextInt(1500), 20, 10, 200, 0, 1
         );
@@ -117,7 +119,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     @Test
     public void testWalAddRemoveCommitDropFuzz() throws Exception {
         Rnd rnd = generateRandom(LOG);
-        setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.05, 0.05, 0.05, 1.0, 0.05, 0.01, 1.0);
+        setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.05, 0.05, 0.05, 1.0, 0.05, 0.01, 1.0, 0.01);
         setFuzzCounts(true, 100_000, 500, 20, 1000, 20, 100_000, 5);
         setFuzzProperties(rnd);
         runFuzz(rnd);
@@ -125,7 +127,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testWalAddRemoveCommitFuzzInOrder() throws Exception {
-        setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.05, 0.05, 0.05, 1.0, 0.01, 0.01, 0.0);
+        setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.05, 0.05, 0.05, 1.0, 0.01, 0.01, 0.0, 0.01);
         setFuzzCounts(false, 1_000_000, 500, 20, 1000, 20, 0, 10);
         runFuzz(generateRandom(LOG));
     }
@@ -133,7 +135,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     @Test
     public void testWalAddRemoveCommitFuzzO3() throws Exception {
         Rnd rnd = generateRandom(LOG);
-        setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.05, 0.05, 0.05, 1.0, 0.05, 0.01, 0.0);
+        setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.05, 0.05, 0.05, 1.0, 0.05, 0.01, 0.0, 0.01);
         setFuzzCounts(true, 100_000, 500, 20, 1000, 20, 100_000, 5);
         setFuzzProperties(rnd);
         runFuzz(rnd);
@@ -150,16 +152,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     @Test
     public void testWalMetadataChangeHeavy() throws Exception {
         Rnd rnd = generateRandom(LOG);
-        setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.25, 0.25, 0.25, 1.0, 0.01, 0.01, 0.0);
-        setFuzzCounts(false, 50_000, 100, 20, 1000, 1000, 100, 5);
-        setFuzzProperties(rnd);
-        runFuzz(rnd);
-    }
-
-    @Test
-    public void testWalMetadataChangeHeavyCrashRepro() throws Exception {
-        Rnd rnd = fuzzer.generateRandom(LOG, 605244862282L, 1711936717971L);
-        setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.25, 0.25, 0.25, 1.0, 0.01, 0.01, 0.0);
+        setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.25, 0.25, 0.25, 1.0, 0.01, 0.01, 0.0, 0.25);
         setFuzzCounts(false, 50_000, 100, 20, 1000, 1000, 100, 5);
         setFuzzProperties(rnd);
         runFuzz(rnd);
@@ -184,7 +177,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     public void testWalWriteEqualTimestamp() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_O3_QUICKSORT_ENABLED, true);
         Rnd rnd = generateRandom(LOG);
-        setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1, 0, 0.5, 0.0);
+        setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1, 0, 0.5, 0.0, 0);
         setFuzzCounts(
                 true,
                 5000,
@@ -219,7 +212,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     public void testWalWriteManySmallTransactions() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_O3_QUICKSORT_ENABLED, true);
         Rnd rnd = generateRandom(LOG);
-        setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1, 0, 0.01, 0.0);
+        setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1, 0, 0.01, 0.0, 0);
         setFuzzCounts(
                 true,
                 1000,
@@ -240,7 +233,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         Rnd rnd = generateRandom(LOG);
         setRandomAppendPageSize(rnd);
         int tableCount = 3;
-        setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1, 0.001, 0.01, 0.0);
+        setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1, 0.001, 0.01, 0.0, 0);
         setFuzzCounts(false, 500_000, 5_000, 10, 10, 5500, 0, 1);
         String tableNameBase = getTestName();
         runFuzz(rnd, tableNameBase, tableCount);
@@ -249,7 +242,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     @Test
     public void testWalWriteRollbackHeavy() throws Exception {
         Rnd rnd = generateRandom(LOG);
-        setFuzzProbabilities(0.5, 0.5, 0.1, 0.5, 0.05, 0.05, 0.05, 1.0, 0.01, 0.01, 0.0);
+        setFuzzProbabilities(0.5, 0.5, 0.1, 0.5, 0.05, 0.05, 0.05, 1.0, 0.01, 0.01, 0.0, 0.01);
         setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 1000, 1000, 100, 3);
         runFuzz(rnd);
     }
@@ -257,7 +250,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     @Test
     public void testWalWriteRollbackTruncateHeavy() throws Exception {
         Rnd rnd = generateRandom(LOG);
-        setFuzzProbabilities(0.5, 0.5, 0.1, 0.5, 0.05, 0.05, 0.05, 1.0, 0.15, 0.01, 0.0);
+        setFuzzProbabilities(0.5, 0.5, 0.1, 0.5, 0.05, 0.05, 0.05, 1.0, 0.15, 0.01, 0.0, 0.01);
         setFuzzCounts(rnd.nextBoolean(), 300, 20, 20, 1000, 1000, 100, 3);
         runFuzz(rnd);
     }
@@ -268,7 +261,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, o3MemorySize);
         Assert.assertEquals(o3MemorySize, node1.getConfiguration().getO3ColumnMemorySize());
         Rnd rnd = generateRandom(LOG);
-        setFuzzProbabilities(0, 0.2, 0.1, 0, 0, 0, 0, 1.0, 0.01, 0.01, 0.0);
+        setFuzzProbabilities(0, 0.2, 0.1, 0, 0, 0, 0, 1.0, 0.01, 0.01, 0.0, 0);
         setFuzzCounts(true, 100_000, 10, 10, 10, 10, 50, 1);
         runFuzz(rnd, getTestName(), 1);
     }
@@ -276,7 +269,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     @Test
     public void testWriteO3DataOnlyBig() throws Exception {
         Rnd rnd = generateRandom(LOG);
-        setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1.0, 0.01, 0.01, 0.0);
+        setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1.0, 0.01, 0.01, 0.0, 0);
         setFuzzCounts(true, 1_000_000, 500, 20, 1000, 1000, 100, 20);
         setFuzzProperties(rnd);
         runFuzz(rnd);

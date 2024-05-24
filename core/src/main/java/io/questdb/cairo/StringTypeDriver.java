@@ -36,6 +36,10 @@ import static io.questdb.cairo.ColumnType.LEGACY_VAR_SIZE_AUX_SHL;
 public class StringTypeDriver implements ColumnTypeDriver {
     public static final StringTypeDriver INSTANCE = new StringTypeDriver();
 
+    public static void appendValue(MemoryCMARW dataMem, MemoryCMARW auxMem, CharSequence sink) {
+        auxMem.putLong(dataMem.putStr(sink));
+    }
+
     @Override
     public void appendNull(MemoryA auxMem, MemoryA dataMem) {
         auxMem.putLong(dataMem.putNullStr());
@@ -281,11 +285,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
         dataMem.jumpTo(0);
         auxMem.jumpTo(0);
         auxMem.putLong(0);
-        // Assume var length columns use 28 bytes per value to estimate the record size
-        // if there are no rows in the partition yet.
-        // The record size used to estimate the partition size
-        // to split partition in O3 commit when necessary
-        return TableUtils.ESTIMATED_VAR_COL_SIZE;
+        return Long.BYTES;
     }
 
     @Override

@@ -64,13 +64,13 @@ public class SqlOptimiser implements Mutable {
     private static final int SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES = 0x2;
     private static final int SAMPLE_BY_REWRITE_WRAP_REMOVE_TIMESTAMP = 0x1;
     private static final IntHashSet flexColumnModelTypes = new IntHashSet();
-    //list of join types that don't support all optimisations (e.g. pushing table-specific predicates to both left and right table)
-    private final static IntHashSet joinBarriers;
+    // list of join types that don't support all optimisations (e.g. pushing table-specific predicates to both left and right table)
+    private static final IntHashSet joinBarriers;
     private static final CharSequenceIntHashMap joinOps = new CharSequenceIntHashMap();
     private static final boolean[] joinsRequiringTimestamp = {false, false, false, false, true, true, true};
     private static final IntHashSet limitTypes = new IntHashSet();
     private static final CharSequenceIntHashMap notOps = new CharSequenceIntHashMap();
-    private final static CharSequenceHashSet nullConstants = new CharSequenceHashSet();
+    private static final CharSequenceHashSet nullConstants = new CharSequenceHashSet();
     protected final ObjList<CharSequence> literalCollectorANames = new ObjList<>();
     private final CharacterStore characterStore;
     private final IntList clausesToSteal = new IntList();
@@ -1184,7 +1184,6 @@ public class SqlOptimiser implements Mutable {
 
     private void copyColumnsFromMetadata(QueryModel model, RecordMetadata m, boolean nonLiteral) throws SqlException {
         // column names are not allowed to have a dot
-
         for (int i = 0, k = m.getColumnCount(); i < k; i++) {
             CharSequence columnName = createColumnAlias(m.getColumnName(i), model, nonLiteral);
             QueryColumn column = queryColumnPool.next().of(
@@ -2046,7 +2045,6 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void eraseColumnPrefixInWhereClauses(QueryModel model) throws SqlException {
-
         ObjList<QueryModel> joinModels = model.getJoinModels();
         for (int i = 0, n = joinModels.size(); i < n; i++) {
             QueryModel m = joinModels.getQuick(i);
@@ -2809,11 +2807,12 @@ public class SqlOptimiser implements Mutable {
 
         if (model.isUpdate()) {
             assert lo == 0;
-            try {
-                try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken, model.getMetadataVersion())) {
-                    enumerateColumns(model, metadata);
-                }
+            try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken, model.getMetadataVersion())) {
+                enumerateColumns(model, metadata);
             } catch (CairoException e) {
+                if (e.isOutOfMemory()) {
+                    throw e;
+                }
                 throw SqlException.position(tableNamePosition).put(e);
             }
         } else {
@@ -2822,6 +2821,9 @@ public class SqlOptimiser implements Mutable {
             } catch (EntryLockedException e) {
                 throw SqlException.position(tableNamePosition).put("table is locked: ").put(tableToken.getTableName());
             } catch (CairoException e) {
+                if (e.isOutOfMemory()) {
+                    throw e;
+                }
                 throw SqlException.position(tableNamePosition).put(e);
             }
         }
@@ -3169,11 +3171,11 @@ public class SqlOptimiser implements Mutable {
                     tableFactory = sqlParserCallback.generateShowSqlFactory(model);
                     break;
             }
-            model.setTableFactory(tableFactory);
+            model.setTableNameFunction(tableFactory);
         } else {
             assert model.getTableNameFunction() == null;
             tableFactory = TableUtils.createCursorFunction(functionParser, model, executionContext).getRecordCursorFactory();
-            model.setTableFactory(tableFactory);
+            model.setTableNameFunction(tableFactory);
             tableFactoriesInFlight.add(tableFactory);
         }
         copyColumnsFromMetadata(model, tableFactory.getMetadata(), true);
@@ -3513,8 +3515,8 @@ public class SqlOptimiser implements Mutable {
         }
         count.position = agg.position;
 
-        OperatorExpression mulOp = OperatorExpression.opMap.get("*");
-        ExpressionNode mul = expressionNodePool.next().of(OPERATION, mulOp.token, mulOp.precedence, agg.position);
+        OperatorExpression mulOp = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence()).map.get("*");
+        ExpressionNode mul = expressionNodePool.next().of(OPERATION, mulOp.operator.token, mulOp.precedence, agg.position);
         mul.paramCount = 2;
         mul.lhs = count;
         mul.rhs = constant;
@@ -3839,8 +3841,8 @@ public class SqlOptimiser implements Mutable {
             nullExpr.token = "null";
             nullExpr.precedence = 0;
 
-            OperatorExpression neqOp = OperatorExpression.opMap.get("!=");
-            ExpressionNode node = expressionNodePool.next().of(OPERATION, neqOp.token, neqOp.precedence, 0);
+            OperatorExpression neqOp = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence()).map.get("!=");
+            ExpressionNode node = expressionNodePool.next().of(OPERATION, neqOp.operator.token, neqOp.precedence, 0);
             node.paramCount = 2;
             node.lhs = nullExpr;
             node.rhs = distinctExpr;
@@ -5856,10 +5858,10 @@ public class SqlOptimiser implements Mutable {
             validateWindowFunctions(rewrittenModel, sqlExecutionContext, 0);
             authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
             return rewrittenModel;
-        } catch (Throwable e) {
+        } catch (Throwable th) {
             // at this point models may have functions than need to be freed
             Misc.freeObjListAndClear(tableFactoriesInFlight);
-            throw e;
+            throw th;
         }
     }
 

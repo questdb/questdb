@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
+import io.questdb.log.Log;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
@@ -35,12 +36,10 @@ import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.*;
 
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
@@ -50,7 +49,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
 
     @BeforeClass
     public static void begin() {
-        purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), engine.getSnapshotAgent(), 1);
+        purgeJob = new O3PartitionPurgeJob(engine, engine.getSnapshotAgent(), 1);
     }
 
     @AfterClass
@@ -111,60 +110,63 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
             AtomicInteger done = new AtomicInteger();
             // Open a reader so that writer will not delete partitions easily
             ObjList<TableReader> readers = new ObjList<>(tableCount);
-            for (int i = 0; i < tableCount; i++) {
-                readers.add(getReader("tbl" + i));
-            }
-
-            Thread writeThread = new Thread(() -> {
-                try {
-                    barrier.await();
-                    for (int i = 0; i < 32; i++) {
-                        for (int j = 0; j < tableCount; j++) {
-                            insert("insert into tbl" + j +
-                                    " select 2, '1970-01-10T10' from long_sequence(1) " +
-                                    "union all " +
-                                    "select 1, '1970-01-09T09'  from long_sequence(1)");
-                        }
-                    }
-                    Path.clearThreadLocals();
-                    done.incrementAndGet();
-                } catch (Throwable ex) {
-                    LOG.error().$(ex).$();
-                    done.decrementAndGet();
+            try {
+                for (int i = 0; i < tableCount; i++) {
+                    readers.add(getReader("tbl" + i));
                 }
-            });
 
-            Thread readThread = new Thread(() -> {
-                try {
-                    barrier.await();
-                    while (done.get() == 0) {
-                        for (int i = 0; i < tableCount; i++) {
-                            readers.get(i).openPartition(0);
-                            readers.get(i).reload();
+                Thread writeThread = new Thread(() -> {
+                    try {
+                        barrier.await();
+                        for (int i = 0; i < 32; i++) {
+                            for (int j = 0; j < tableCount; j++) {
+                                insert("insert into tbl" + j +
+                                        " select 2, '1970-01-10T10' from long_sequence(1) " +
+                                        "union all " +
+                                        "select 1, '1970-01-09T09'  from long_sequence(1)");
+                            }
                         }
-                        Os.pause();
                         Path.clearThreadLocals();
+                        done.incrementAndGet();
+                    } catch (Throwable ex) {
+                        LOG.error().$(ex).$();
+                        done.decrementAndGet();
                     }
-                } catch (Throwable ex) {
-                    LOG.error().$(ex).$();
-                    done.addAndGet(-2);
+                });
+
+                Thread readThread = new Thread(() -> {
+                    try {
+                        barrier.await();
+                        while (done.get() == 0) {
+                            for (int i = 0; i < tableCount; i++) {
+                                readers.get(i).openPartition(0);
+                                readers.get(i).reload();
+                            }
+                            Os.pause();
+                            Path.clearThreadLocals();
+                        }
+                    } catch (Throwable ex) {
+                        LOG.error().$(ex).$();
+                        done.addAndGet(-2);
+                    }
+                });
+
+                writeThread.start();
+                readThread.start();
+
+                barrier.await();
+                while (done.get() == 0) {
+                    runPartitionPurgeJobs();
+                    Os.pause();
                 }
-            });
-
-            writeThread.start();
-            readThread.start();
-
-            barrier.await();
-            while (done.get() == 0) {
                 runPartitionPurgeJobs();
-                Os.pause();
-            }
-            runPartitionPurgeJobs();
 
-            Assert.assertEquals(1, done.get());
-            writeThread.join();
-            readThread.join();
-            Misc.freeObjList(readers);
+                Assert.assertEquals(1, done.get());
+                writeThread.join();
+                readThread.join();
+            } finally {
+                Misc.freeObjList(readers);
+            }
         });
     }
 
@@ -613,6 +615,108 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTableRecreatedInBeforePartitionDirDelete() throws Exception {
+        //Windows sometimes fails to drop the table on CI and it's not easily reproducible locally
+        Assume.assumeFalse(Os.isWindows());
+        AtomicBoolean dropTable = new AtomicBoolean();
+        Thread recreateTable = new Thread(() -> {
+            try {
+                drop("drop table tbl");
+                ddl("create table tbl as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY");
+            } catch (Throwable e) {
+                LOG.info().$("Failed to recreate table: ").$(e).$();
+            } finally {
+                Path.clearThreadLocals();
+            }
+        });
+
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean unlinkOrRemove(Path path, Log LOG) {
+                if (dropTable.get() && Utf8s.endsWithAscii(path, "1970-01-10")) {
+                    dropTable.set(false);
+                    recreateTable.start();
+                    Os.sleep(50);
+                }
+                int checkedType = isSoftLink(path) ? Files.DT_LNK : Files.DT_UNKNOWN;
+                return unlinkOrRemove(path, checkedType, LOG);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            ddl("create table tbl as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY");
+
+            // This should lock partition 1970-01-10.1 to not do delete in writer
+            try (TableReader rdr = getReader("tbl")) {
+                rdr.openPartition(0);
+
+                // ooo insert
+                insert("insert into tbl select 4, '1970-01-10T07'");
+            }
+
+            dropTable.set(true);
+            purgeJob.drain(0);
+            recreateTable.join();
+
+            try (TableReader rdr = getReader("tbl")) {
+                rdr.openPartition(0);
+            }
+        });
+    }
+
+    @Test
+    public void testTableRecreatedViaRenameInBeforePartitionDirDelete() throws Exception {
+        //Windows sometimes fails to drop the table on CI and it's not easily reproducible locally
+        Assume.assumeFalse(Os.isWindows());
+        AtomicBoolean dropTable = new AtomicBoolean();
+        Thread recreateTable = new Thread(() -> {
+            try {
+                drop("drop table tbl");
+                ddl("create table tbl1 as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY");
+                ddl("rename table tbl1 to tbl");
+            } catch (Throwable e) {
+                LOG.info().$("Failed to recreate table: ").$(e).$();
+            } finally {
+                Path.clearThreadLocals();
+            }
+        });
+
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean unlinkOrRemove(Path path, Log LOG) {
+                if (dropTable.get() && Utf8s.endsWithAscii(path, "1970-01-10")) {
+                    recreateTable.start();
+                    Os.sleep(50);
+                }
+                int checkedType = isSoftLink(path) ? Files.DT_LNK : Files.DT_UNKNOWN;
+                return unlinkOrRemove(path, checkedType, LOG);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            ddl("create table tbl as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY");
+
+            // This should lock partition 1970-01-10.1 to not do delete in writer
+            try (TableReader rdr = getReader("tbl")) {
+                rdr.openPartition(0);
+
+                // ooo insert
+                insert("insert into tbl select 4, '1970-01-10T07'");
+            }
+
+            dropTable.set(true);
+            purgeJob.drain(0);
+            dropTable.set(false);
+            recreateTable.join();
+
+            try (TableReader rdr = getReader("tbl")) {
+                rdr.openPartition(0);
+            }
+        });
+    }
+
+
+    @Test
     public void testTableWriterDeletePartitionWhenNoReadersOpen() throws Exception {
         String tableName = "tbl";
 
@@ -721,39 +825,44 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
             ddl("create table tbl as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY");
 
             TableReader[] readers = new TableReader[iterations];
-            for (int i = 0; i < iterations; i++) {
-                TableReader rdr = getReader("tbl");
-                readers[i] = rdr;
-
-                // OOO insert
-                insert("insert into tbl select 4, '1970-01-10T09'");
-
-                runPartitionPurgeJobs();
-            }
-
-            // Unwind readers one by one old to new
-            for (int i = start; i >= 0 && i < iterations; i += increment) {
-                TableReader reader = readers[i];
-
-                reader.openPartition(0);
-                reader.close();
-
-                runPartitionPurgeJobs();
-            }
-
-            try (Path path = new Path()) {
-                TableToken tableToken = engine.verifyTableName("tbl");
-                path.concat(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-10");
-                int len = path.size();
-
-                Assert.assertFalse(Utf8s.toString(path.concat("x.d")), Files.exists(path));
+            try {
                 for (int i = 0; i < iterations; i++) {
-                    path.trimTo(len).put(".").put(Integer.toString(i)).concat("x.d").$();
-                    Assert.assertFalse(Utf8s.toString(path), Files.exists(path));
+                    TableReader rdr = getReader("tbl");
+                    readers[i] = rdr;
+
+                    // OOO insert
+                    insert("insert into tbl select 4, '1970-01-10T09'");
+
+                    runPartitionPurgeJobs();
                 }
 
-                path.trimTo(len).put(".").put(Integer.toString(iterations)).concat("x.d").$();
-                Assert.assertTrue(Files.exists(path));
+                // Unwind readers one by one old to new
+                for (int i = start; i >= 0 && i < iterations; i += increment) {
+                    TableReader reader = readers[i];
+
+                    reader.openPartition(0);
+                    reader.close();
+                    readers[i] = null;
+
+                    runPartitionPurgeJobs();
+                }
+
+                try (Path path = new Path()) {
+                    TableToken tableToken = engine.verifyTableName("tbl");
+                    path.concat(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-10");
+                    int len = path.size();
+
+                    Assert.assertFalse(Utf8s.toString(path.concat("x.d")), Files.exists(path));
+                    for (int i = 0; i < iterations; i++) {
+                        path.trimTo(len).put(".").put(Integer.toString(i)).concat("x.d").$();
+                        Assert.assertFalse(Utf8s.toString(path), Files.exists(path));
+                    }
+
+                    path.trimTo(len).put(".").put(Integer.toString(iterations)).concat("x.d").$();
+                    Assert.assertTrue(Files.exists(path));
+                }
+            } finally {
+                Misc.free(readers);
             }
         });
     }
@@ -763,51 +872,57 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
             ddl("create table tbl as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY");
             TableReader[] readers = new TableReader[2 * iterations];
 
-            for (int i = 0; i < iterations; i++) {
-                TableReader rdr = getReader("tbl");
-                readers[2 * i] = rdr;
+            try {
+                for (int i = 0; i < iterations; i++) {
+                    TableReader rdr = getReader("tbl");
+                    readers[2 * i] = rdr;
 
-                // in order insert
-                insert("insert into tbl select 2, '1970-01-10T11'");
+                    // in order insert
+                    insert("insert into tbl select 2, '1970-01-10T11'");
 
-                runPartitionPurgeJobs();
+                    runPartitionPurgeJobs();
 
-                TableReader rdr2 = getReader("tbl");
-                readers[2 * i + 1] = rdr2;
-                // OOO insert
-                insert("insert into tbl select 4, '1970-01-10T09'");
+                    TableReader rdr2 = getReader("tbl");
+                    readers[2 * i + 1] = rdr2;
+                    // OOO insert
+                    insert("insert into tbl select 4, '1970-01-10T09'");
 
-                runPartitionPurgeJobs();
-            }
-
-            // Unwind readers one by in set order
-            for (int i = start; i >= 0 && i < iterations; i += increment) {
-                TableReader reader = readers[2 * i];
-                reader.openPartition(0);
-                reader.close();
-
-                runPartitionPurgeJobs();
-
-                reader = readers[2 * i + 1];
-                reader.openPartition(0);
-                reader.close();
-
-                runPartitionPurgeJobs();
-            }
-
-            try (Path path = new Path()) {
-                TableToken tableToken = engine.verifyTableName("tbl");
-                path.concat(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-10");
-                int len = path.size();
-
-                Assert.assertFalse(Utf8s.toString(path.concat("x.d")), Files.exists(path));
-                for (int i = 0; i < 2 * iterations; i++) {
-                    path.trimTo(len).put(".").put(Integer.toString(i)).concat("x.d").$();
-                    Assert.assertFalse(Utf8s.toString(path), Files.exists(path));
+                    runPartitionPurgeJobs();
                 }
 
-                path.trimTo(len).put(".").put(Integer.toString(2 * iterations)).concat("x.d").$();
-                Assert.assertTrue(Files.exists(path));
+                // Unwind readers one by in set order
+                for (int i = start; i >= 0 && i < iterations; i += increment) {
+                    TableReader reader = readers[2 * i];
+                    reader.openPartition(0);
+                    reader.close();
+                    readers[2 * i] = null;
+
+                    runPartitionPurgeJobs();
+
+                    reader = readers[2 * i + 1];
+                    reader.openPartition(0);
+                    reader.close();
+                    readers[2 * i + 1] = null;
+
+                    runPartitionPurgeJobs();
+                }
+
+                try (Path path = new Path()) {
+                    TableToken tableToken = engine.verifyTableName("tbl");
+                    path.concat(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-10");
+                    int len = path.size();
+
+                    Assert.assertFalse(Utf8s.toString(path.concat("x.d")), Files.exists(path));
+                    for (int i = 0; i < 2 * iterations; i++) {
+                        path.trimTo(len).put(".").put(Integer.toString(i)).concat("x.d").$();
+                        Assert.assertFalse(Utf8s.toString(path), Files.exists(path));
+                    }
+
+                    path.trimTo(len).put(".").put(Integer.toString(2 * iterations)).concat("x.d").$();
+                    Assert.assertTrue(Files.exists(path));
+                }
+            } finally {
+                Misc.free(readers);
             }
         });
     }

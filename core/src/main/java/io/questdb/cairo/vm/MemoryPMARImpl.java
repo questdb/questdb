@@ -73,6 +73,14 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
         close(true);
     }
 
+    @Override
+    public int detachFdClose() {
+        int fd = this.fd;
+        this.fd = -1;
+        close(false);
+        return fd;
+    }
+
     public int getFd() {
         return fd;
     }
@@ -121,7 +129,9 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     }
 
     @Override
-    public void switchTo(int fd, long offset, boolean truncate, byte truncateMode) {
+    public void switchTo(FilesFacade ff, int fd, long extendSegmentSize, long offset, boolean truncate, byte truncateMode) {
+        this.ff = ff;
+        setExtendSegmentSize(extendSegmentSize);
         close(truncate, truncateMode);
         this.fd = fd;
         jumpTo(offset);

@@ -121,48 +121,53 @@ public class UnorderedVarcharMap implements Map, Reopenable {
     ) {
         assert loadFactor > 0 && loadFactor < 1d;
 
-        this.memoryTag = memoryTag;
-        this.loadFactor = loadFactor;
-        this.keyCapacity = (int) (keyCapacity / loadFactor);
-        this.keyCapacity = this.initialKeyCapacity = Math.max(Numbers.ceilPow2(this.keyCapacity), MIN_KEY_CAPACITY);
-        this.maxResizes = maxResizes;
-        mask = this.keyCapacity - 1;
-        free = (int) (this.keyCapacity * loadFactor);
-        nResizes = 0;
+        try {
+            this.memoryTag = memoryTag;
+            this.loadFactor = loadFactor;
+            this.keyCapacity = (int) (keyCapacity / loadFactor);
+            this.keyCapacity = this.initialKeyCapacity = Math.max(Numbers.ceilPow2(this.keyCapacity), MIN_KEY_CAPACITY);
+            this.maxResizes = maxResizes;
+            mask = this.keyCapacity - 1;
+            free = (int) (this.keyCapacity * loadFactor);
+            nResizes = 0;
 
-        long valueOffset = 0;
-        long[] valueOffsets = null;
-        long valueSize = 0;
-        if (valueTypes != null) {
-            int valueColumnCount = valueTypes.getColumnCount();
-            valueOffsets = new long[valueColumnCount];
+            long valueOffset = 0;
+            long[] valueOffsets = null;
+            long valueSize = 0;
+            if (valueTypes != null) {
+                int valueColumnCount = valueTypes.getColumnCount();
+                valueOffsets = new long[valueColumnCount];
 
-            for (int i = 0; i < valueColumnCount; i++) {
-                valueOffsets[i] = valueOffset;
-                final int columnType = valueTypes.getColumnType(i);
-                final int size = ColumnType.sizeOf(columnType);
-                if (size <= 0) {
-                    throw CairoException.nonCritical().put("value type is not supported: ").put(ColumnType.nameOf(columnType));
+                for (int i = 0; i < valueColumnCount; i++) {
+                    valueOffsets[i] = valueOffset;
+                    final int columnType = valueTypes.getColumnType(i);
+                    final int size = ColumnType.sizeOf(columnType);
+                    if (size <= 0) {
+                        throw CairoException.nonCritical().put("value type is not supported: ").put(ColumnType.nameOf(columnType));
+                    }
+                    valueOffset += size;
+                    valueSize += size;
                 }
-                valueOffset += size;
-                valueSize += size;
             }
+
+            this.entrySize = Bytes.align8b(KEY_SIZE + valueSize);
+            final long sizeBytes = entrySize * this.keyCapacity;
+            memStart = Unsafe.malloc(sizeBytes, memoryTag);
+            Vect.memset(memStart, sizeBytes, 0);
+            memLimit = memStart + sizeBytes;
+
+            value = new UnorderedVarcharMapValue(valueSize, valueOffsets);
+            value2 = new UnorderedVarcharMapValue(valueSize, valueOffsets);
+            value3 = new UnorderedVarcharMapValue(valueSize, valueOffsets);
+
+            record = new UnorderedVarcharMapRecord(valueSize, valueOffsets, value, valueTypes);
+            cursor = new UnorderedVarcharMapCursor(record, this);
+            key = new Key();
+            allocator = new GroupByAllocatorArena(allocatorDefaultChunkSize, allocatorMaxChunkSize, false);
+        } catch (Throwable th) {
+            close();
+            throw th;
         }
-
-        this.entrySize = Bytes.align8b(KEY_SIZE + valueSize);
-        final long sizeBytes = entrySize * this.keyCapacity;
-        memStart = Unsafe.malloc(sizeBytes, memoryTag);
-        Vect.memset(memStart, sizeBytes, 0);
-        memLimit = memStart + sizeBytes;
-
-        value = new UnorderedVarcharMapValue(valueSize, valueOffsets);
-        value2 = new UnorderedVarcharMapValue(valueSize, valueOffsets);
-        value3 = new UnorderedVarcharMapValue(valueSize, valueOffsets);
-
-        record = new UnorderedVarcharMapRecord(valueSize, valueOffsets, value, valueTypes);
-        cursor = new UnorderedVarcharMapCursor(record, this);
-        key = new Key();
-        allocator = new GroupByAllocatorArena(allocatorDefaultChunkSize, allocatorMaxChunkSize, false);
     }
 
     // public for testing
@@ -197,7 +202,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             free = 0;
             mapSize = 0;
         }
-        allocator.close();
+        Misc.free(allocator);
     }
 
     @Override
@@ -218,6 +223,11 @@ public class UnorderedVarcharMap implements Map, Reopenable {
     @Override
     public MapRecord getRecord() {
         return record;
+    }
+
+    @Override
+    public boolean isOpen() {
+        return memStart != 0;
     }
 
     @Override
@@ -286,7 +296,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
     }
 
     @Override
-    public void reopen(int keyCapacity, int heapSize) {
+    public void reopen(int keyCapacity, long heapSize) {
         if (memStart == 0) {
             keyCapacity = (int) (keyCapacity / loadFactor);
             initialKeyCapacity = Math.max(Numbers.ceilPow2(keyCapacity), MIN_KEY_CAPACITY);
