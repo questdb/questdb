@@ -36,6 +36,7 @@ public class FuzzTransactionGenerator {
     private static final int MAX_COLUMNS = 200;
 
     public static ObjList<FuzzTransaction> generateSet(
+            long initialRowCount,
             TableMetadata sequencerMetadata,
             TableMetadata tableMetadata,
             Rnd rnd,
@@ -85,6 +86,7 @@ public class FuzzTransactionGenerator {
         if (generateDrop) {
             transactionCount++;
         }
+        long estimatedToalRows = rowCount + initialRowCount;
 
         for (int i = 0; i < transactionCount; i++) {
             if (i == dropIteration) {
@@ -120,7 +122,7 @@ public class FuzzTransactionGenerator {
                 meta = generateAddColumn(transactionList, metaVersion++, waitBarrierVersion++, rnd, meta);
             } else if (transactionType < probabilityOfAddingNewColumn + probabilityOfRemovingColumn + probabilityOfRenamingColumn + probabilityOfTruncate + probabilityOfColumnTypeChange && FuzzChangeColumnTypeOperation.canChangeColumnType(meta)) {
                 // generate column change type
-                meta = FuzzChangeColumnTypeOperation.generateColumnTypeChange(transactionList, metaVersion++, waitBarrierVersion++, rnd, meta);
+                meta = FuzzChangeColumnTypeOperation.generateColumnTypeChange(transactionList, estimatedToalRows, metaVersion++, waitBarrierVersion++, rnd, meta);
             } else {
                 // generate row set
                 int blockRows = rowCount / (transactionCount - i);

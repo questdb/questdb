@@ -50,6 +50,8 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
             ColumnType.STRING, ColumnType.SYMBOL, ColumnType.VARCHAR
     };
 
+    private static final long MAX_TABLE_ROWS_TO_CONVERT_TO_SYMBOL = 60_000;
+
     private final boolean cacheSymbolMap;
     private final String columName;
     private final boolean indexFlag;
@@ -99,12 +101,12 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
         return false;
     }
 
-    public static int changeColumnTypeTo(Rnd rnd, int columnType) {
+    public static int changeColumnTypeTo(Rnd rnd, int columnType, long estimatedTotalRowCount) {
         switch (columnType) {
             case ColumnType.STRING:
             case ColumnType.SYMBOL:
             case ColumnType.VARCHAR:
-                return generateNextType(columnType, varSizeConvertableColumnTypes, rnd);
+                return generateNextType(columnType, varSizeConvertableColumnTypes, rnd, estimatedTotalRowCount < MAX_TABLE_ROWS_TO_CONVERT_TO_SYMBOL);
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
             case ColumnType.SHORT:
@@ -114,13 +116,13 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
             case ColumnType.DATE:
             case ColumnType.TIMESTAMP:
             case ColumnType.DOUBLE:
-                return generateNextType(columnType, numericConvertableColumnTypes, rnd);
+                return generateNextType(columnType, numericConvertableColumnTypes, rnd, estimatedTotalRowCount < MAX_TABLE_ROWS_TO_CONVERT_TO_SYMBOL);
             default:
                 throw new UnsupportedOperationException("Unsupported column type to generate type change: " + columnType);
         }
     }
 
-    public static RecordMetadata generateColumnTypeChange(ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion, Rnd rnd, RecordMetadata tableMetadata) {
+    public static RecordMetadata generateColumnTypeChange(ObjList<FuzzTransaction> transactionList, long estimatedTotalRowCount, int metadataVersion, int waitBarrierVersion, Rnd rnd, RecordMetadata tableMetadata) {
         FuzzTransaction transaction = new FuzzTransaction();
         int startColumnIndex = rnd.nextInt(tableMetadata.getColumnCount());
 
@@ -134,7 +136,7 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
             if (columnIndex != tableMetadata.getTimestampIndex() && canGenerateColumnTypeChange(tableMetadata, columnIndex)) {
                 String columnName = tableMetadata.getColumnName(columnIndex);
                 int columnType = tableMetadata.getColumnType(columnIndex);
-                int newColType = changeColumnTypeTo(rnd, columnType);
+                int newColType = changeColumnTypeTo(rnd, columnType, estimatedTotalRowCount);
 
                 int capacity = 1 << (5 + rnd.nextInt(3));
                 boolean indexFlag = ColumnType.isSymbol(newColType) && (columnType == ColumnType.BOOLEAN || columnType == ColumnType.BYTE);
@@ -186,11 +188,11 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
         return true;
     }
 
-    private static int generateNextType(int columnType, short[] numericConvertableColumnTypes, Rnd rnd) {
+    private static int generateNextType(int columnType, short[] numericConvertableColumnTypes, Rnd rnd, boolean symbolsAllowed) {
         int nextColType = columnType;
         // disallow noop conversion
         // disallow conversions from non-nullable to nullable
-        while (nextColType == columnType || (isNullable(columnType) != isNullable(nextColType))) {
+        while (nextColType == columnType || (isNullable(columnType) != isNullable(nextColType) || (!symbolsAllowed && ColumnType.isSymbol(nextColType)))) {
             nextColType = numericConvertableColumnTypes[rnd.nextInt(numericConvertableColumnTypes.length)];
         }
         return nextColType;
