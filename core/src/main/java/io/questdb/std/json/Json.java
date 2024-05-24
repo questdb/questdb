@@ -25,6 +25,8 @@
 package io.questdb.std.json;
 
 import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
+import io.questdb.std.bytes.NativeByteSink;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.GcUtf8String;
@@ -40,7 +42,9 @@ public class Json {
     private static native double queryPathDouble(long jsonPtr, long jsonLen, long jsonCapacity, long pathPtr, long pathLen) throws JsonException;
 
     public static void queryPathString(DirectUtf8Sink json, DirectUtf8Sequence path, DirectUtf8Sink dest) throws JsonException {
-        queryPathString(json.ptr(), json.size(), json.capacity(), path.ptr(), path.size(), dest.borrowDirectByteSink().ptr());
+        try (NativeByteSink nativeDest = dest.borrowDirectByteSink()) {
+            queryPathString(json.ptr(), json.size(), json.capacity(), path.ptr(), path.size(), nativeDest.ptr());
+        }
     }
 
     public static boolean queryPathBoolean(DirectUtf8Sink json, DirectUtf8Sequence path) throws JsonException {
@@ -65,53 +69,5 @@ public class Json {
         Os.init();
         SIMDJSON_PADDING = getSimdJsonPadding();
         JsonException.init();
-    }
-
-    public static void main(String[] args) throws JsonException {
-        final String jsonStr = "{\n" +
-                "  \"name\": \"John\",\n" +
-                "  \"age\": 30,\n" +
-                "  \"city\": \"New York\",\n" +
-                "  \"hasChildren\": false,\n" +
-                "  \"height\": 5.6,\n" +
-                "  \"nothing\": null,\n" +
-                "  \"pets\": [\n" +
-                "    {\"name\": \"Max\", \"species\": \"Dog\"},\n" +
-                "    {\"name\": \"Whiskers\", \"species\": \"Cat\"}\n" +
-                "  ]\n" +
-                "}";
-        DirectUtf8Sink sink = new DirectUtf8Sink(jsonStr.length());
-
-        System.out.println(jsonStr);
-        sink.put(jsonStr);
-
-        validate(sink);
-
-        String strPath = ".name";
-        DirectUtf8Sink dest = new DirectUtf8Sink(64);
-        queryPathString(sink, new GcUtf8String(strPath), dest);
-        System.out.println(strPath + ": " + dest);
-
-        String booleanPath = ".hasChildren";
-        System.out.println(booleanPath + ": " + queryPathBoolean(sink, new GcUtf8String(booleanPath)));
-
-        String longPath = ".age";
-        System.out.println(longPath + ": " + queryPathLong(sink, new GcUtf8String(longPath)));
-
-        String doublePath = ".height";
-        System.out.println(doublePath + ": " + queryPathDouble(sink, new GcUtf8String(doublePath)));
-
-        dest.clear();
-        String invalidPath = "£$£%£%invalid path!!";
-        try {
-            GcUtf8String str = new GcUtf8String(invalidPath);
-            queryPathString(sink, str, dest);
-        } catch (JsonException e) {
-            System.err.println(e);
-        }
-
-        sink.close();
-        dest.close();
-
     }
 }
