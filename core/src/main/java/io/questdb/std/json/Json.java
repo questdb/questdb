@@ -30,7 +30,7 @@ import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.GcUtf8String;
 
 public class Json {
-    private static final int SIMDJSON_PADDING;
+    public static final int SIMDJSON_PADDING;
 
     private static native void validate(long s, long len, long capacity) throws JsonException;
 
@@ -64,12 +64,11 @@ public class Json {
     static {
         Os.init();
         SIMDJSON_PADDING = getSimdJsonPadding();
+        JsonException.init();
     }
 
-    public static void main(String[] args) {
-        DirectUtf8Sink sink = new DirectUtf8Sink(64);
-        System.err.println(SIMDJSON_PADDING);
-        final String t1 = "{\n" +
+    public static void main(String[] args) throws JsonException {
+        final String jsonStr = "{\n" +
                 "  \"name\": \"John\",\n" +
                 "  \"age\": 30,\n" +
                 "  \"city\": \"New York\",\n" +
@@ -80,12 +79,10 @@ public class Json {
                 "    {\"name\": \"Whiskers\", \"species\": \"Cat\"}\n" +
                 "  ]\n" +
                 "}";
-//        final String t1 = "[\n" +
-//                "  { \"make\": \"Toyota\", \"model\": \"Camry\",  \"year\": 2018, \"tire_pressure\": [ 40.1, 39.9, 37.7, 40.4 ] },\n" +
-//                "  { \"make\": \"Kia\",    \"model\": \"Soul\",   \"year\": 2012, \"tire_pressure\": [ 30.1, 31.0, 28.6, 28.7 ] },\n" +
-//                "  { \"make\": \"Toyota\", \"model\": \"Tercel\", \"year\": 1999, \"tire_pressure\": [ 29.8, 30.0, 30.2, 30.5 ] }\n" +
-//                "]";
-        sink.put(t1);
+        DirectUtf8Sink sink = new DirectUtf8Sink(jsonStr.length());
+
+        System.out.println(jsonStr);
+        sink.put(jsonStr);
 
         validate(sink);
 
@@ -102,6 +99,18 @@ public class Json {
 
         String doublePath = ".height";
         System.out.println(doublePath + ": " + queryPathDouble(sink, new GcUtf8String(doublePath)));
+
+        dest.clear();
+        String invalidPath = "£$£%£%invalid path!!";
+        try {
+            GcUtf8String str = new GcUtf8String(invalidPath);
+            queryPathString(sink, str, dest);
+        } catch (JsonException e) {
+            System.err.println(e);
+        }
+
+        sink.close();
+        dest.close();
 
     }
 }

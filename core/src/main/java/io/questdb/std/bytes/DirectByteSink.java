@@ -124,6 +124,9 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
 
     @Override
     public @NotNull NativeByteSink borrowDirectByteSink() {
+        if (impl == 0) {
+            throw new IllegalStateException("Sink is closed");
+        }
         lastCapacity = capacity();
         return byteSink;
     }
