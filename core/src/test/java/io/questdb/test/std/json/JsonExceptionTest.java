@@ -24,45 +24,36 @@
 
 package io.questdb.test.std.json;
 
-import io.questdb.std.json.JsonException;
+import io.questdb.std.json.JsonError;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class JsonExceptionTest {
     @Test
     public void testSuccess() {
-        JsonException ex = new JsonException(JsonException.SUCCESS);
-        Assert.assertEquals(JsonException.SUCCESS, ex.getCode());
-        Assert.assertEquals("SUCCESS: No error", ex.getMessage());
+        Assert.assertEquals("SUCCESS: No error", JsonError.getMessage(JsonError.SUCCESS));
     }
 
     @Test
     public void testMemAlloc() {
-        JsonException ex = new JsonException(JsonException.MEMALLOC);
-        Assert.assertEquals(JsonException.MEMALLOC, ex.getCode());
-        Assert.assertEquals("MEMALLOC: Error allocating memory, we're most likely out of memory", ex.getMessage());
+        Assert.assertEquals("MEMALLOC: Error allocating memory, we're most likely out of memory", JsonError.getMessage(JsonError.MEMALLOC));
     }
 
     @Test
     public void testNegErrorCode() {
-        JsonException ex = new JsonException(-1);
-        Assert.assertEquals(-1, ex.getCode());
-        Assert.assertEquals("Unknown error code -1", ex.getMessage());
+        Assert.assertEquals("Unknown error code -1", JsonError.getMessage(-1));
     }
 
     @Test
     public void testLastErrorCode() {
-        JsonException ex = new JsonException(JsonException.TRAILING_CONTENT);
-        Assert.assertEquals(JsonException.TRAILING_CONTENT, ex.getCode());
-        Assert.assertEquals("TRAILING_CONTENT: Unexpected trailing content in the JSON input.", ex.getMessage());
+        Assert.assertEquals("TRAILING_CONTENT: Unexpected trailing content in the JSON input.", JsonError.getMessage(JsonError.TRAILING_CONTENT));
     }
 
     @Test
     public void testOnePastLastErrorCode() {
-        final int onePast = JsonException.TRAILING_CONTENT + 1;
-        JsonException ex = new JsonException(onePast);
-        Assert.assertEquals(JsonException.NUM_ERROR_CODES, ex.getCode());
-        Assert.assertEquals("Unknown error code " + onePast, ex.getMessage());
+        final int onePast = JsonError.TRAILING_CONTENT + 1;
+        Assert.assertEquals(JsonError.NUM_ERROR_CODES, onePast);
+        Assert.assertEquals("Unknown error code " + onePast, JsonError.getMessage(onePast));
     }
 
 }

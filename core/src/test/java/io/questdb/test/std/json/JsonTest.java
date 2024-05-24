@@ -24,14 +24,10 @@
 
 package io.questdb.test.std.json;
 
-import io.questdb.std.json.Json;
-import io.questdb.std.json.JsonException;
+import io.questdb.std.json.*;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.GcUtf8String;
-import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.*;
 
 public class JsonTest {
     private static final String testUnicodeChars = "ðãµ¶Āڜ💩🦞";
@@ -41,6 +37,7 @@ public class JsonTest {
             "memory allocation of the JSON parser. For good measure it also includes a few funky unicode characters: " +
             testUnicodeChars);
     private static DirectUtf8Sink json;
+    private static final JsonResult result = new JsonResult();
 
     @BeforeClass
     public static void setUp() {
@@ -66,48 +63,72 @@ public class JsonTest {
         json.close();
     }
 
+    @Before
+    public void before() {
+        result.clear();
+    }
+
     @Test
-    public void testValidate() throws JsonException {
+    public void testValidate() {
         Json.validate(json);
     }
 
     @Test
-    public void testQueryPathString() throws JsonException {
+    public void testQueryPathString() {
         try (DirectUtf8Sink dest = new DirectUtf8Sink(1)) {
-            Json.queryPathString(json, new GcUtf8String(".name"), dest);
+            Json.queryPathString(json, new GcUtf8String(".name"), result, dest);
             Assert.assertEquals("John", dest.toString());
 
             dest.clear();
-            Json.queryPathString(json, new GcUtf8String(".description"), dest);
+            Json.queryPathString(json, new GcUtf8String(".description"), result, dest);
             Assert.assertEquals(description, dest.toString());
         }
     }
 
     @Test
-    public void testQueryPathBoolean() throws JsonException {
-        Assert.assertFalse(Json.queryPathBoolean(json, new GcUtf8String(".hasChildren")));
-        Assert.assertTrue(Json.queryPathBoolean(json, new GcUtf8String(".pets[1].scratches")));
+    public void testQueryPathBoolean() {
+        Assert.assertFalse(Json.queryPathBoolean(json, new GcUtf8String(".hasChildren"), result));
+        Assert.assertTrue(Json.queryPathBoolean(json, new GcUtf8String(".pets[1].scratches"), result));
+        Assert.assertEquals(result.getType(), JsonType.BOOLEAN);
     }
 
     @Test
-    public void testQueryPathLong() throws JsonException {
-        Assert.assertEquals(30, Json.queryPathLong(json, new GcUtf8String(".age")));
+    public void testQueryPathLong() {
+        Assert.assertEquals(30, Json.queryPathLong(json, new GcUtf8String(".age"), result));
+        Assert.assertEquals(result.getType(), JsonType.NUMBER);
+        Assert.assertEquals(result.getNumType(), JsonNumType.SIGNED_INTEGER);
     }
 
     @Test
-    public void testQueryPathDouble() throws JsonException {
-        Assert.assertEquals(5.6, Json.queryPathDouble(json, new GcUtf8String(".height")), 0.0001);
+    public void testQueryPathDouble() {
+        Assert.assertEquals(5.6, Json.queryPathDouble(json, new GcUtf8String(".height"), result), 0.0001);
+        Assert.assertEquals(result.getType(), JsonType.NUMBER);
+        Assert.assertEquals(result.getNumType(), JsonNumType.FLOATING_POINT_NUMBER);
     }
 
     @Test
-    public void testInvalidPath() throws JsonException {
+    public void testInvalidPath() {
         try (DirectUtf8Sink dest = new DirectUtf8Sink(1)) {
-            try {
-                Json.queryPathString(json, new GcUtf8String("£$£%£%invalid path!!"), dest);
-                Assert.fail();
-            } catch (JsonException e) {
-                Assert.assertEquals(e.getCode(), JsonException.INVALID_JSON_POINTER);
-            }
+            Json.queryPathString(json, new GcUtf8String("£$£%£%invalid path!!"), result, dest);
+            Assert.assertEquals(result.getError(), JsonError.INVALID_JSON_POINTER);
+            Assert.assertEquals(result.getType(), JsonType.UNSET);
+            Assert.assertEquals(result.getNumType(), JsonNumType.UNSET);
         }
+    }
+
+    @Test
+    public void testAbsentPath() {
+        final double res = Json.queryPathDouble(json, new GcUtf8String(".nonexistent"), result);
+        Assert.assertTrue(Double.isNaN(res));
+        Assert.assertEquals(result.getType(), JsonType.UNSET);
+        Assert.assertEquals(result.getNumType(), JsonNumType.UNSET);
+    }
+
+    @Test
+    public void testDoubleWhereNull() {
+        final double res = Json.queryPathDouble(json, new GcUtf8String(".nothing"), result);
+        Assert.assertTrue(Double.isNaN(res));
+        Assert.assertEquals(result.getType(), JsonType.NULL);
+        Assert.assertEquals(result.getNumType(), JsonNumType.UNSET);
     }
 }

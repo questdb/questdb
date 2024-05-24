@@ -35,32 +35,39 @@ static_assert(
         "Ensure that the error codes in JsonException are up to date, "
         "then update this expected version static assert.");
 
-static bool bubble_error(JNIEnv* env, simdjson::error_code error) {
-    if (error == simdjson::error_code::SUCCESS) {
-        return true;
-    }
-    const auto exc_class = env->FindClass("io/questdb/std/json/JsonException");
-    if (!exc_class) {
-        return false;
-    }
-    const auto ctor = env->GetMethodID(exc_class, "<init>", "(I)V");
-    if (!ctor) {
-        return false;
-    }
-    const auto int_error = static_cast<jint>(error);
-    jobject exc = env->NewObject(exc_class, ctor, int_error);
-    if (!exc) {
-        return false;
-    }
-    const auto as_throwable = static_cast<jthrowable>(exc);
-    env->Throw(as_throwable);
-    return false;
-}
+// See `JsonResult.java` for the `Unsafe` access to the fields.
+PACK(class json_result {
+public:
+    simdjson::error_code error;
+    simdjson::ondemand::json_type type;
+    simdjson::ondemand::number_type num_type;
 
-template <typename T>
-bool bubble_error(JNIEnv* env, const simdjson::simdjson_result<T>& res) {
-    return bubble_error(env, res.error());
-}
+    void from(simdjson::simdjson_result<simdjson::ondemand::value>& res) {
+        error = res.error();
+        if (error != simdjson::error_code::SUCCESS) {
+            type = static_cast<simdjson::ondemand::json_type>(0);
+            num_type = static_cast<simdjson::ondemand::number_type>(0);
+            return;
+        }
+        type = res.type().value_unsafe();
+        if (type != simdjson::ondemand::json_type::number) {
+            num_type = static_cast<simdjson::ondemand::number_type>(0);
+            return;
+        }
+        num_type = res.get_number_type().value_unsafe();
+    }
+
+    template <typename T>
+    bool set_error(simdjson::simdjson_result<T>& res) {
+        error = res.error();
+        return error == simdjson::error_code::SUCCESS;
+    }
+ });
+
+static_assert(sizeof(simdjson::error_code) == 4, "Unexpected size of simdjson::error_code");
+static_assert(sizeof(simdjson::ondemand::json_type) == 4, "Unexpected size of simdjson::ondemand::json_type");
+static_assert(sizeof(simdjson::ondemand::number_type) == 4, "Unexpected size of simdjson::ondemand::number_type");
+static_assert(sizeof(json_result) == 12, "Unexpected size of json_result");
 
 static simdjson::padded_string_view maybe_copied_string_view(
         const char* s,
@@ -81,16 +88,37 @@ static simdjson::padded_string_view maybe_copied_string_view(
 // with a lambda that is supposed to return `void`.
 struct token_void {};
 
+// A representation of a `null` value.
+// This then casts to the best numeric representation for the type.
+class null_token {
+public:
+    operator token_void() const {
+        return {};
+    }
+
+    operator jboolean() const {
+        return false;
+    }
+
+    operator jlong() const {
+        return std::numeric_limits<jlong>::min();
+    }
+
+    operator jdouble() const {
+        return NAN;
+    }
+};
+
 using json_value = simdjson::simdjson_result<simdjson::ondemand::value>;
 
 template <typename F>
 auto value_at_path(
-        JNIEnv* env,
         const char *json_chars,
         size_t json_len,
         size_t json_capacity,
         const char *path_chars,
         size_t path_len,
+        json_result* result,
         F&& extractor
 ) -> decltype(std::forward<F>(extractor)(json_value{})) {
     std::string temp_buffer;
@@ -100,9 +128,7 @@ auto value_at_path(
     simdjson::ondemand::parser parser;
     auto doc = parser.iterate(json_buf);
     auto res = doc.at_path(path);
-    if (!bubble_error(env, res)) {
-        return {};
-    }
+    result->from(res);
     return std::forward<F>(extractor)(res);
 }
 
@@ -117,7 +143,7 @@ Java_io_questdb_std_json_Json_getSimdJsonPadding(
 }
 
 JNIEXPORT jstring JNICALL
-Java_io_questdb_std_json_JsonException_errorMessage(
+Java_io_questdb_std_json_JsonError_errorMessage(
         JNIEnv* env,
         jclass /*cl*/,
         jint code
@@ -126,7 +152,7 @@ Java_io_questdb_std_json_JsonException_errorMessage(
     return env->NewStringUTF(msg);
 }
 
-JNIEXPORT void JNICALL
+JNIEXPORT jint JNICALL
 Java_io_questdb_std_json_Json_validate(
         JNIEnv* env,
         jclass /*cl*/,
@@ -139,31 +165,32 @@ Java_io_questdb_std_json_Json_validate(
             jsonChars, jsonLen, jsonCapacity, tempBuffer);
     simdjson::dom::parser parser;
     auto dom = parser.parse(jsonBuf);
-    bubble_error(env, dom);
+    return static_cast<jint>(dom.error());
 }
 
 JNIEXPORT void JNICALL
 Java_io_questdb_std_json_Json_queryPathString(
-        JNIEnv* env,
+        JNIEnv* /*env*/,
         jclass /*cl*/,
         const char* json_chars,
         size_t json_len,
         size_t json_capacity,
         const char* path_chars,
         size_t path_len,
+        json_result* result,
         questdb_byte_sink_t* dest_sink
 ) {
     value_at_path(
-            env, json_chars, json_len, json_capacity, path_chars, path_len,
-            [env, dest_sink](json_value res) -> token_void {
+            json_chars, json_len, json_capacity, path_chars, path_len, result,
+            [result, dest_sink](json_value res) -> token_void {
                 auto str_res = res.get_string();
-                if (!bubble_error(env, str_res)) {
-                    return {};
+                if (!result->set_error(str_res)) {
+                    return null_token{};
                 }
                 const auto str = str_res.value_unsafe();
                 const auto dest = questdb_byte_sink_book(dest_sink, str.length());
                 if (dest == nullptr) {
-                    bubble_error(env, simdjson::error_code::MEMALLOC);
+                    result->error = simdjson::error_code::MEMALLOC;
                 }
                 memcpy(dest, str.data(), str.length());
                 dest_sink->ptr += str.length();
@@ -173,20 +200,21 @@ Java_io_questdb_std_json_Json_queryPathString(
 
 JNIEXPORT jboolean JNICALL
 Java_io_questdb_std_json_Json_queryPathBoolean(
-        JNIEnv* env,
+        JNIEnv* /*env*/,
         jclass /*cl*/,
         const char* json_chars,
         size_t json_len,
         size_t json_capacity,
         const char* path_chars,
-        size_t path_len
+        size_t path_len,
+        json_result* result
 ) {
     return value_at_path(
-            env, json_chars, json_len, json_capacity, path_chars, path_len,
-            [env](json_value res) -> jboolean {
+            json_chars, json_len, json_capacity, path_chars, path_len, result,
+            [result](json_value res) -> jboolean {
                 auto bool_res = res.get_bool();
-                if (!bubble_error(env, bool_res)) {
-                    return false;
+                if (!result->set_error(bool_res)) {
+                    return null_token{};
                 }
                 return bool_res.value_unsafe();
             });
@@ -194,20 +222,21 @@ Java_io_questdb_std_json_Json_queryPathBoolean(
 
 JNIEXPORT jlong JNICALL
 Java_io_questdb_std_json_Json_queryPathLong(
-        JNIEnv* env,
+        JNIEnv* /*env*/,
         jclass /*cl*/,
         const char* json_chars,
         size_t json_len,
         size_t json_capacity,
         const char* path_chars,
-        size_t path_len
+        size_t path_len,
+        json_result* result
 ) {
     return value_at_path(
-            env, json_chars, json_len, json_capacity, path_chars, path_len,
-            [env](json_value res) -> jlong {
+            json_chars, json_len, json_capacity, path_chars, path_len, result,
+            [result](json_value res) -> jlong {
                 auto int_res = res.get_int64();
-                if (!bubble_error(env, int_res)) {
-                    return {};
+                if (!result->set_error(int_res)) {
+                    return null_token{};
                 }
                 return int_res.value_unsafe();
             });
@@ -215,20 +244,21 @@ Java_io_questdb_std_json_Json_queryPathLong(
 
 JNIEXPORT jdouble JNICALL
 Java_io_questdb_std_json_Json_queryPathDouble(
-        JNIEnv* env,
+        JNIEnv* /*env*/,
         jclass /*cl*/,
         const char* json_chars,
         size_t json_len,
         size_t json_capacity,
         const char* path_chars,
-        size_t path_len
+        size_t path_len,
+        json_result* result
 ) {
     return value_at_path(
-            env, json_chars, json_len, json_capacity, path_chars, path_len,
-            [env](json_value res) -> jdouble {
+            json_chars, json_len, json_capacity, path_chars, path_len, result,
+            [result](json_value res) -> jdouble {
                 auto double_res = res.get_double();
-                if (!bubble_error(env, double_res)) {
-                    return {};
+                if (!result->set_error(double_res)) {
+                    return null_token{};
                 }
                 return double_res.value_unsafe();
             });

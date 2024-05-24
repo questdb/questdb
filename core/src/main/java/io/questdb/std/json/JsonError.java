@@ -26,7 +26,7 @@ package io.questdb.std.json;
 
 import io.questdb.std.Os;
 
-public class JsonException extends Exception {
+public class JsonError {
     public static final int SUCCESS = 0;
     public static final int CAPACITY = 1;
     public static final int MEMALLOC = 2;
@@ -63,18 +63,7 @@ public class JsonException extends Exception {
 
     private static final String[] messages = new String[NUM_ERROR_CODES];
 
-    private final int code;
-
-    public JsonException(int code) {
-        this.code = code;
-    }
-
-    public int getCode() {
-        return code;
-    }
-
-    @Override
-    public String getMessage() {
+    public static String getMessage(int code) {
         if ((code >= NUM_ERROR_CODES) || (code < 0)) {
             return "Unknown error code " + code;
         }

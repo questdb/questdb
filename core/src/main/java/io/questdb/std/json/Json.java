@@ -25,42 +25,41 @@
 package io.questdb.std.json;
 
 import io.questdb.std.Os;
-import io.questdb.std.Unsafe;
 import io.questdb.std.bytes.NativeByteSink;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8Sink;
-import io.questdb.std.str.GcUtf8String;
 
 public class Json {
     public static final int SIMDJSON_PADDING;
 
-    private static native void validate(long s, long len, long capacity) throws JsonException;
+    private static native int validate(long s, long len, long capacity);
 
-    private static native void queryPathString(long jsonPtr, long jsonLen, long jsonCapacity, long pathPtr, long pathLen, long dest) throws JsonException;
-    private static native boolean queryPathBoolean(long jsonPtr, long jsonLen, long jsonCapacity, long pathPtr, long pathLen) throws JsonException;
-    private static native long queryPathLong(long jsonPtr, long jsonLen, long jsonCapacity, long pathPtr, long pathLen) throws JsonException;
-    private static native double queryPathDouble(long jsonPtr, long jsonLen, long jsonCapacity, long pathPtr, long pathLen) throws JsonException;
+    private static native void queryPathString(long jsonPtr, long jsonLen, long jsonCapacity, long pathPtr, long pathLen, long resultPtr, long dest);
+    private static native boolean queryPathBoolean(long jsonPtr, long jsonLen, long jsonCapacity, long pathPtr, long pathLen, long resultPtr);
+    private static native long queryPathLong(long jsonPtr, long jsonLen, long jsonCapacity, long pathPtr, long pathLen, long resultPtr);
+    private static native double queryPathDouble(long jsonPtr, long jsonLen, long jsonCapacity, long pathPtr, long pathLen, long resultPtr);
 
-    public static void queryPathString(DirectUtf8Sink json, DirectUtf8Sequence path, DirectUtf8Sink dest) throws JsonException {
+    public static void queryPathString(DirectUtf8Sink json, DirectUtf8Sequence path, JsonResult result, DirectUtf8Sink dest) {
         try (NativeByteSink nativeDest = dest.borrowDirectByteSink()) {
-            queryPathString(json.ptr(), json.size(), json.capacity(), path.ptr(), path.size(), nativeDest.ptr());
+            queryPathString(json.ptr(), json.size(), json.capacity(), path.ptr(), path.size(), result.ptr(), nativeDest.ptr());
         }
     }
 
-    public static boolean queryPathBoolean(DirectUtf8Sink json, DirectUtf8Sequence path) throws JsonException {
-        return queryPathBoolean(json.ptr(), json.size(), json.capacity(), path.ptr(), path.size());
+    public static boolean queryPathBoolean(DirectUtf8Sink json, DirectUtf8Sequence path, JsonResult result) {
+        return queryPathBoolean(json.ptr(), json.size(), json.capacity(), path.ptr(), path.size(), result.ptr());
     }
 
-    public static long queryPathLong(DirectUtf8Sink json, DirectUtf8Sequence path) throws JsonException {
-        return queryPathLong(json.ptr(), json.size(), json.capacity(), path.ptr(), path.size());
+    public static long queryPathLong(DirectUtf8Sink json, DirectUtf8Sequence path, JsonResult result) {
+        return queryPathLong(json.ptr(), json.size(), json.capacity(), path.ptr(), path.size(), result.ptr());
     }
 
-    public static double queryPathDouble(DirectUtf8Sink json, DirectUtf8Sequence path) throws JsonException {
-        return queryPathDouble(json.ptr(), json.size(), json.capacity(), path.ptr(), path.size());
+    public static double queryPathDouble(DirectUtf8Sink json, DirectUtf8Sequence path, JsonResult result) {
+        return queryPathDouble(json.ptr(), json.size(), json.capacity(), path.ptr(), path.size(), result.ptr());
     }
 
-    public static void validate(DirectUtf8Sink json) throws JsonException{
-        validate(json.ptr(), json.size(), json.capacity());
+    /** Validate the document and return a error code from the `JsonError` class's constants. */
+    public static int validate(DirectUtf8Sink json) {
+        return validate(json.ptr(), json.size(), json.capacity());
     }
 
     private native static int getSimdJsonPadding();
@@ -68,6 +67,6 @@ public class Json {
     static {
         Os.init();
         SIMDJSON_PADDING = getSimdJsonPadding();
-        JsonException.init();
+        JsonError.init();
     }
 }
