@@ -448,9 +448,8 @@ public class FuzzRunner {
     }
 
     private static void reloadReader(Rnd reloadRnd, TableReader rdr1, CharSequence rdrId) {
-        reloadPartitions(rdr1);
         if (reloadRnd.nextBoolean()) {
-//            reloadPartitions(rdr1);
+            reloadPartitions(rdr1);
             LOG.info().$("releasing reader txn [rdr=").$(rdrId).$(", table=").$(rdr1.getTableToken()).$(", txn=").$(rdr1.getTxn()).I$();
             rdr1.goPassive();
 
