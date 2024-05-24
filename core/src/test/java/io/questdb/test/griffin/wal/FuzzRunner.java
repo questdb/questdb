@@ -356,6 +356,7 @@ public class FuzzRunner {
             String tableName
     ) {
         return FuzzTransactionGenerator.generateSet(
+                initialRowCount,
                 sequencerMetadata,
                 tableMetadata,
                 rnd,

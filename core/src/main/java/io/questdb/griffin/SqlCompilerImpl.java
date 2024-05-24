@@ -667,6 +667,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         );
                     } else if (SqlKeywords.isTypeKeyword(tok)) {
                         alterTableChangeColumnType(
+                                securityContext,
                                 tableNamePosition,
                                 tableToken,
                                 columnNamePosition,
@@ -838,6 +839,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void alterTableChangeColumnType(
+            SecurityContext securityContext,
             int tableNamePosition,
             TableToken tableToken,
             int columnNamePosition,
@@ -883,6 +885,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(lexer.lastTokenPosition(), "incompatible column type change [existing=")
                     .put(ColumnType.nameOf(existingColumnType)).put(", new=").put(ColumnType.nameOf(newColumnType)).put(']');
         }
+        securityContext.authorizeAlterTableAlterColumnType(tableToken, alterOperationBuilder.getExtraStrInfo());
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
