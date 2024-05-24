@@ -1485,8 +1485,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "                Row forward scan\n" +
                     "                Frame forward scan on: hits\n";
 
-            assertPlan(original, plan);
-            assertPlan(target, plan);
+            assertPlanNoLeakCheck(original, plan);
+            assertPlanNoLeakCheck(target, plan);
         });
     }
 
