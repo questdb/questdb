@@ -48,6 +48,8 @@ public class JsonTest {
                 "  \"hasChildren\": false,\n" +
                 "  \"height\": 5.6,\n" +
                 "  \"nothing\": null,\n" +
+                "  \"u64_val\": 18446744073709551615,\n" +
+                "  \"bignum\": 12345678901234567890123456789012345678901234567890,\n" +
                 "  \"pets\": [\n" +
                 "    {\"name\": \"Max\", \"species\": \"Dog\"},\n" +
                 "    {\"name\": \"Whiskers\", \"species\": \"Cat\", \"scratches\": true}\n" +
@@ -117,7 +119,33 @@ public class JsonTest {
     }
 
     @Test
-    public void testAbsentPath() {
+    public void testStringAbsent() {
+        try (DirectUtf8Sink dest = new DirectUtf8Sink(1)) {
+            Json.queryPathString(json, new GcUtf8String(".nonexistent"), result, dest);
+            Assert.assertEquals("", dest.toString());
+            Assert.assertEquals(result.getType(), JsonType.UNSET);
+            Assert.assertEquals(result.getNumType(), JsonNumType.UNSET);
+        }
+    }
+
+    @Test
+    public void testLongAbsent() {
+        final long res = Json.queryPathLong(json, new GcUtf8String(".nonexistent"), result);
+        Assert.assertEquals(Long.MIN_VALUE, res);
+        Assert.assertEquals(result.getType(), JsonType.UNSET);
+        Assert.assertEquals(result.getNumType(), JsonNumType.UNSET);
+    }
+
+    @Test
+    public void testBooleanAbsent() {
+        final boolean res = Json.queryPathBoolean(json, new GcUtf8String(".nonexistent"), result);
+        Assert.assertFalse(res);
+        Assert.assertEquals(result.getType(), JsonType.UNSET);
+        Assert.assertEquals(result.getNumType(), JsonNumType.UNSET);
+    }
+
+    @Test
+    public void testDoubleAbsent() {
         final double res = Json.queryPathDouble(json, new GcUtf8String(".nonexistent"), result);
         Assert.assertTrue(Double.isNaN(res));
         Assert.assertEquals(result.getType(), JsonType.UNSET);
@@ -125,10 +153,54 @@ public class JsonTest {
     }
 
     @Test
-    public void testDoubleWhereNull() {
+    public void testStringNull() {
+        try (DirectUtf8Sink dest = new DirectUtf8Sink(1)) {
+            Json.queryPathString(json, new GcUtf8String(".nothing"), result, dest);
+            Assert.assertEquals("", dest.toString());
+            Assert.assertEquals(result.getType(), JsonType.NULL);
+            Assert.assertEquals(result.getNumType(), JsonNumType.UNSET);
+        }
+    }
+
+    @Test
+    public void testLongNull() {
+        final long res = Json.queryPathLong(json, new GcUtf8String(".nothing"), result);
+        Assert.assertEquals(Long.MIN_VALUE, res);
+        Assert.assertEquals(result.getType(), JsonType.NULL);
+        Assert.assertEquals(result.getNumType(), JsonNumType.UNSET);
+    }
+
+    @Test
+    public void testBooleanNull() {
+        final boolean res = Json.queryPathBoolean(json, new GcUtf8String(".nothing"), result);
+        Assert.assertFalse(res);
+        Assert.assertEquals(result.getType(), JsonType.NULL);
+        Assert.assertEquals(result.getNumType(), JsonNumType.UNSET);
+    }
+
+    @Test
+    public void testDoubleNull() {
         final double res = Json.queryPathDouble(json, new GcUtf8String(".nothing"), result);
         Assert.assertTrue(Double.isNaN(res));
         Assert.assertEquals(result.getType(), JsonType.NULL);
         Assert.assertEquals(result.getNumType(), JsonNumType.UNSET);
+    }
+
+    @Test
+    public void testQueryPathLongU64() {
+        final long res = Json.queryPathLong(json, new GcUtf8String(".u64_val"), result);
+        Assert.assertEquals(Long.MIN_VALUE, res);
+        Assert.assertEquals(result.getError(), JsonError.INCORRECT_TYPE);
+        Assert.assertEquals(result.getType(), JsonType.NUMBER);
+        Assert.assertEquals(result.getNumType(), JsonNumType.UNSIGNED_INTEGER);
+    }
+
+    @Test
+    public void testQueryPathLongBignum() {
+        final long res = Json.queryPathLong(json, new GcUtf8String(".bignum"), result);
+        Assert.assertEquals(Long.MIN_VALUE, res);
+        Assert.assertEquals(result.getError(), JsonError.INCORRECT_TYPE);
+        Assert.assertEquals(result.getType(), JsonType.NUMBER);
+        Assert.assertEquals(result.getNumType(), JsonNumType.BIG_INTEGER);
     }
 }
