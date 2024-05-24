@@ -27,7 +27,7 @@ mod parquet_write;
 pub extern crate jni;
 
 use jni::sys::jlong;
-use jni::{JNIEnv, objects::JClass};
+use jni::{objects::JClass, JNIEnv};
 
 // Static size eq assertion: Ensures we can write pointers in place of jlong in our signatures.
 const _: fn() = || {

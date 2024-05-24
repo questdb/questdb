@@ -1,22 +1,14 @@
+mod binary;
 mod boolean;
 pub(crate) mod file;
+mod fixed_len_bytes;
+mod jni;
 mod primitive;
 mod schema;
-mod binary;
 mod string;
-mod fixed_len_bytes;
-mod varchar;
 mod symbol;
-mod jni;
 mod util;
-
-use parquet2::encoding::Encoding;
-use parquet2::metadata::Descriptor;
-use parquet2::page::{DataPage, DataPageHeader, DataPageHeaderV1, DataPageHeaderV2, Page};
-use parquet2::schema::types::PrimitiveType;
-use parquet2::statistics::{ParquetStatistics, PrimitiveStatistics, serialize_statistics};
-use parquet2::types::NativeType;
-use parquet2::write::DynIter;
+mod varchar;
 
 pub trait Nullable {
     fn is_null(&self) -> bool;
@@ -63,164 +55,22 @@ impl Nullable for f64 {
     }
 }
 
-pub fn column_chunk_to_pages(
-    column_type: PrimitiveType,
-    slice: &[i32],
-    data_pagesize_limit: Option<usize>,
-    _encoding: Encoding,
-) -> DynIter<'_, parquet2::error::Result<Page>> {
-    let number_of_rows = slice.len();
-    let max_page_size = data_pagesize_limit.unwrap_or(10);
-    let max_page_size = max_page_size.min(2usize.pow(31) - 2usize.pow(25));
-    let rows_per_page = (max_page_size / (std::mem::size_of::<i32>() + 1)).max(1);
-
-    let rows = (0..number_of_rows)
-        .step_by(rows_per_page)
-        .map(move |offset| {
-            let length = if offset + rows_per_page > number_of_rows {
-                number_of_rows - offset
-            } else {
-                rows_per_page
-            };
-            (offset, length)
-        });
-
-    let pages = rows.map(move |(offset, length)| {
-        Ok(slice_to_page(
-            column_type.clone(),
-            &slice[offset..offset + length],
-        ))
-    });
-
-    DynIter::new(pages)
-}
-
-pub fn slice_to_page(column_type: PrimitiveType, chunk: &[i32]) -> Page {
-    let mut values = vec![];
-    let mut null_count = 0;
-    let mut max = i32::MIN;
-    let mut min = i32::MAX;
-    let nulls_iter = chunk.iter().map(|value| {
-        max = max.max(*value);
-        min = min.min(*value);
-        if i32::MIN == *value {
-            null_count += 1;
-            false
-        } else {
-            // encode() values here
-            values.extend_from_slice(value.to_le_bytes().as_ref());
-            true
-        }
-    });
-
-    let mut buffer = vec![];
-    // encode_iter(&mut buffer, nulls_iter, Version::V1).expect("nulls encoding");
-    let _definition_levels_byte_length = buffer.len();
-
-    buffer.extend_from_slice(&values);
-
-    let statistics = if true {
-        Some(serialize_statistics(&PrimitiveStatistics::<i32> {
-            primitive_type: column_type.clone(),
-            null_count: Some(null_count as i64),
-            distinct_count: None,
-            min_value: Some(min),
-            max_value: Some(max),
-        }))
-    } else {
-        None
-    };
-
-    Page::Data(build_page_v1(
-        buffer,
-        chunk.len(),
-        chunk.len(),
-        statistics,
-        column_type.clone(),
-        Encoding::Plain,
-    ))
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn build_page_v1(
-    buffer: Vec<u8>,
-    num_values: usize,
-    num_rows: usize,
-    statistics: Option<ParquetStatistics>,
-    primitive_type: PrimitiveType,
-    encoding: Encoding,
-) -> DataPage {
-    let header = DataPageHeader::V1(DataPageHeaderV1 {
-        num_values: num_values as i32,
-        encoding: encoding.into(),
-        definition_level_encoding: Encoding::Rle.into(),
-        repetition_level_encoding: Encoding::Rle.into(),
-        statistics,
-    });
-
-    DataPage::new(
-        header,
-        buffer,
-        Descriptor {
-            primitive_type,
-            max_def_level: 0,
-            max_rep_level: 0,
-        },
-        Some(num_rows),
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn _build_page_v2(
-    buffer: Vec<u8>,
-    num_values: usize,
-    num_rows: usize,
-    null_count: usize,
-    repetition_levels_byte_length: usize,
-    definition_levels_byte_length: usize,
-    statistics: Option<ParquetStatistics>,
-    primitive_type: PrimitiveType,
-    encoding: Encoding,
-) -> DataPage {
-    let header = DataPageHeader::V2(DataPageHeaderV2 {
-        num_values: num_values as i32,
-        encoding: encoding.into(),
-        num_nulls: null_count as i32,
-        num_rows: num_rows as i32,
-        definition_levels_byte_length: definition_levels_byte_length as i32,
-        repetition_levels_byte_length: repetition_levels_byte_length as i32,
-        is_compressed: Some(false),
-        statistics,
-    });
-
-    DataPage::new(
-        header,
-        buffer,
-        Descriptor {
-            primitive_type,
-            max_def_level: 0,
-            max_rep_level: 0,
-        },
-        Some(num_rows),
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use crate::parquet_write::file::ParquetWriter;
     use crate::parquet_write::schema::{ColumnImpl, Partition};
+    use arrow::array::Array;
     use bytes::Bytes;
     use num_traits::Float;
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
     use parquet2::deserialize::{HybridEncoded, HybridRleIter};
     use parquet2::encoding::{hybrid_rle, uleb128};
+    use parquet2::page::CompressedPage;
+    use parquet2::types;
     use std::io::Cursor;
     use std::mem::size_of;
     use std::ptr::null;
     use std::sync::Arc;
-    use arrow::array::Array;
-    use parquet2::page::CompressedPage;
-    use parquet2::types;
 
     #[test]
     fn test_write_parquet_with_fixed_sized_columns() {
@@ -231,12 +81,28 @@ mod tests {
         let expected2 = vec![Some(0.5f32), Some(0.001), None, Some(3.14)];
 
         let col1_w = Arc::new(
-            ColumnImpl::from_raw_data("col1", 5, col1.len(), col1.as_ptr() as *const u8, col1.len() * size_of::<i32>(),  null(), 0)
-                .unwrap(),
+            ColumnImpl::from_raw_data(
+                "col1",
+                5,
+                col1.len(),
+                col1.as_ptr() as *const u8,
+                col1.len() * size_of::<i32>(),
+                null(),
+                0,
+            )
+            .unwrap(),
         );
         let col2_w = Arc::new(
-            ColumnImpl::from_raw_data("col2", 9, col2.len(), col2.as_ptr() as *const u8, col2.len() * size_of::<f32>(), null(), 0)
-                .unwrap(),
+            ColumnImpl::from_raw_data(
+                "col2",
+                9,
+                col2.len(),
+                col2.as_ptr() as *const u8,
+                col2.len() * size_of::<f32>(),
+                null(),
+                0,
+            )
+            .unwrap(),
         );
 
         let partition = Partition {
@@ -283,8 +149,16 @@ mod tests {
         let page_size_bytes = 256usize;
         let col1: Vec<i64> = (0..row_count).into_iter().map(|v| v as i64).collect();
         let col1_w = Arc::new(
-            ColumnImpl::from_raw_data("col1", 6, col1.len(), col1.as_ptr() as *const u8, col1.len() * size_of::<i64>(), null(), 0)
-                .unwrap(),
+            ColumnImpl::from_raw_data(
+                "col1",
+                6,
+                col1.len(),
+                col1.as_ptr() as *const u8,
+                col1.len() * size_of::<i64>(),
+                null(),
+                0,
+            )
+            .unwrap(),
         );
 
         let partition = Partition {
@@ -331,7 +205,9 @@ mod tests {
         assert_eq!(row_group_size, meta.row_groups[0].num_rows());
 
         let chunk_meta = &meta.row_groups[0].columns()[0];
-        let pages = parquet2::read::get_page_iterator(chunk_meta, reader, None, vec![], page_size_bytes).expect("pages iter");
+        let pages =
+            parquet2::read::get_page_iterator(chunk_meta, reader, None, vec![], page_size_bytes)
+                .expect("pages iter");
         for page in pages {
             let page = page.expect("page");
             match page {
@@ -372,7 +248,11 @@ mod tests {
 
     #[test]
     fn decode_len() {
-       let data =  [1u8, 0, 0, 0, 65, 0, 1, 0, 0, 0, 67, 0, 1, 0, 0, 0, 67, 0, 1, 0, 0, 0, 65, 0, 1, 0, 0, 0, 67, 0, 1, 0, 0, 0, 65, 0, 1, 0, 0, 0, 65, 0, 1, 0, 0, 0, 65, 0, 1, 0, 0, 0, 66, 0, 1, 0, 0, 0, 65, 0];
+        let data = [
+            1u8, 0, 0, 0, 65, 0, 1, 0, 0, 0, 67, 0, 1, 0, 0, 0, 67, 0, 1, 0, 0, 0, 65, 0, 1, 0, 0,
+            0, 67, 0, 1, 0, 0, 0, 65, 0, 1, 0, 0, 0, 65, 0, 1, 0, 0, 0, 65, 0, 1, 0, 0, 0, 66, 0,
+            1, 0, 0, 0, 65, 0,
+        ];
         let len = types::decode::<i32>(&data[0..4]);
         assert_eq!(len, 1);
     }

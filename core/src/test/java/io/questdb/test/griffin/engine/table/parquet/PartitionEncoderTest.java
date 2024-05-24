@@ -38,12 +38,13 @@ public class PartitionEncoderTest extends AbstractCairoTest {
     @Test
     public void testSmoke() throws Exception {
         assertMemoryLeak(() -> {
-            final long rows = 10;
+            final long rows = 1001;
             ddl("create table x as (select" +
                     " x id," +
                     " rnd_boolean() a_boolean," +
                     " rnd_byte() a_byte," +
                     " rnd_short() a_short," +
+                    " rnd_char() a_char," +
                     " rnd_int() an_int," +
                     " rnd_long() a_long," +
                     " rnd_float() a_float," +
@@ -56,10 +57,14 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                     " rnd_str('hello', 'world', '!') a_string," +
                     " rnd_bin() a_bin," +
                     " rnd_varchar('ганьба','слава','добрий','вечір') a_varchar," +
+                    " rnd_ipv4() a_ip," +
+                    " rnd_uuid4() a_uuid," +
+                    " rnd_long256() a_long256," +
+                    " to_long128(rnd_long(), rnd_long()) a_long128," +
                     " cast(timestamp_sequence(600000000000, 700) as date) a_date," +
                     " timestamp_sequence(500000000000, 600) a_ts," +
                     " timestamp_sequence(400000000000, 500) designated_ts" +
-                    " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by day");
+                    " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month");
 
             try (
                     Path path = new Path();

@@ -1,6 +1,6 @@
 use crate::parquet_write::file::WriteOptions;
-use crate::parquet_write::Nullable;
 use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter, MaxMin};
+use crate::parquet_write::Nullable;
 use num_traits::Bounded;
 use parquet2::encoding::delta_bitpacked::encode;
 use parquet2::encoding::Encoding;
@@ -153,7 +153,11 @@ where
     let buffer = encode_fn(slice, is_nullable, null_count, buffer);
 
     let statistics = if options.write_statistics {
-        Some(build_statistics(Some(null_count as i64), statistics, type_.clone()))
+        Some(build_statistics(
+            Some(null_count as i64),
+            statistics,
+            type_.clone(),
+        ))
     } else {
         None
     };

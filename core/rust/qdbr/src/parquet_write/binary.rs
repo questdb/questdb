@@ -22,13 +22,13 @@
  *
  ******************************************************************************/
 
-use std::mem::size_of;
+use crate::parquet_write::file::WriteOptions;
+use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter};
 use parquet2::encoding::{delta_bitpacked, Encoding};
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
 use parquet2::types;
-use crate::parquet_write::file::WriteOptions;
-use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter};
+use std::mem::{size_of, size_of_val};
 
 pub fn binary_to_page(
     offsets: &[i64],
@@ -42,7 +42,7 @@ pub fn binary_to_page(
 
     let lengths = offsets.iter().map(|offset| {
         let offset = *offset as usize;
-        types::decode::<i64>( &data[offset..offset + size_of::<i64>()])
+        types::decode::<i64>(&data[offset..offset + size_of::<i64>()])
     });
     let nulls_iterator = lengths.clone().map(|len| {
         if len < 0 {
@@ -51,7 +51,7 @@ pub fn binary_to_page(
         } else {
             true
         }
-    }) ;
+    });
 
     encode_bool_iter(&mut buffer, nulls_iterator, options.version)?;
 
@@ -76,29 +76,39 @@ pub fn binary_to_page(
         type_,
         options,
         encoding,
-    ).map(Page::Data)
+    )
+    .map(Page::Data)
 }
 
 fn encode_delta(offsets: &[i64], values: &[u8], null_count: usize, buffer: &mut Vec<u8>) {
-    let lengths = offsets.iter().map(|offset| {
-        let offset = *offset as usize;
-        types::decode::<i64>( &values[offset..offset + size_of::<i64>()])
-    }).filter(|len| *len >= 0);
+    let lengths = offsets
+        .iter()
+        .map(|offset| {
+            let offset = *offset as usize;
+            types::decode::<i64>(&values[offset..offset + size_of::<i64>()])
+        })
+        .filter(|len| *len >= 0);
 
     let length = offsets.len() - null_count;
     let lengths = ExactSizedIter::new(lengths, length);
 
     delta_bitpacked::encode(lengths, buffer);
 
-    if offsets.len() > 0 {
+    if offsets.len() < 2 {
+        // TODO: fix offsets + 1
+        return;
+    }
+    if offsets.len() > 1 {
         let length = offsets.len();
-        let capacity = (offsets[length - 1] - offsets[0]) as usize - (length * size_of::<i64>());
+        let data_size = (offsets[length - 1] - offsets[0]) as usize;
+        let len_size = size_of_val(offsets);
+        let capacity = data_size - len_size;
         buffer.reserve(capacity);
     }
 
-    for row in 0..offsets.len() {
-        let offset = offsets[row] as usize;
-        let len = types::decode::<i64>( &values[offset..offset + size_of::<i64>()]);
+    for offset in offsets {
+        let offset = *offset as usize;
+        let len = types::decode::<i64>(&values[offset..offset + size_of::<i64>()]);
         if len > 0 {
             let data = &values[offset + size_of::<i64>()..offset + size_of::<i64>() + len as usize];
             buffer.extend_from_slice(data);

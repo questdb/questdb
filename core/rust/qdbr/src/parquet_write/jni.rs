@@ -1,19 +1,23 @@
+use crate::parquet_write::file::ParquetWriter;
+use crate::parquet_write::schema::{ColumnImpl, Partition};
+use anyhow::Context;
+use jni::objects::JClass;
+use jni::sys::{jint, jlong};
+use jni::JNIEnv;
 use std::fs::File;
 use std::path::Path;
 use std::slice;
 use std::sync::Arc;
-use anyhow::Context;
-use jni::JNIEnv;
-use jni::objects::JClass;
-use jni::sys::{jint, jlong};
-use crate::parquet_write::file::ParquetWriter;
-use crate::parquet_write::schema::{ColumnImpl, Partition};
 
-fn read_utf8_encoded_string_list<'a>(count: usize, strings_sink: *const u8, strings_len: usize, lengths: *const i32) -> Vec<&'a str> {
+fn read_utf8_encoded_string_list<'a>(
+    count: usize,
+    strings_sink: *const u8,
+    strings_len: usize,
+    lengths: *const i32,
+) -> Vec<&'a str> {
     let mut strings: Vec<&str> = Vec::new();
-    let mut utf8_sink = unsafe {
-        std::str::from_utf8_unchecked(slice::from_raw_parts(strings_sink, strings_len))
-    };
+    let mut utf8_sink =
+        unsafe { std::str::from_utf8_unchecked(slice::from_raw_parts(strings_sink, strings_len)) };
 
     let lengths = unsafe { slice::from_raw_parts(lengths, count) };
     for len in lengths {
@@ -51,16 +55,20 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             col_count,
             col_names,
             col_names_len as usize,
-            col_name_lengths_ptr
+            col_name_lengths_ptr,
         );
         let col_types = unsafe { slice::from_raw_parts(col_types_ptr, col_count) };
         let _col_ids = unsafe { slice::from_raw_parts(col_ids_ptr, col_count) };
 
-        let primary_col_addrs_slice = unsafe { slice::from_raw_parts(primary_col_addrs_ptr, col_count) };
-        let primary_col_sizes_slice = unsafe { slice::from_raw_parts(primary_col_sizes_ptr, col_count) };
+        let primary_col_addrs_slice =
+            unsafe { slice::from_raw_parts(primary_col_addrs_ptr, col_count) };
+        let primary_col_sizes_slice =
+            unsafe { slice::from_raw_parts(primary_col_sizes_ptr, col_count) };
 
-        let secondary_col_addrs_slice = unsafe { slice::from_raw_parts(secondary_col_addrs_ptr, col_count) };
-        let secondary_col_sizes_slice = unsafe { slice::from_raw_parts(secondary_col_sizes_ptr, col_count) };
+        let secondary_col_addrs_slice =
+            unsafe { slice::from_raw_parts(secondary_col_addrs_ptr, col_count) };
+        let secondary_col_sizes_slice =
+            unsafe { slice::from_raw_parts(secondary_col_sizes_ptr, col_count) };
 
         let dest_path = unsafe {
             std::str::from_utf8_unchecked(slice::from_raw_parts(dest_path, dest_path_len as usize))
@@ -88,7 +96,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                 primary_col_addr,
                 primary_col_size as usize,
                 secondary_col_addr,
-                secondary_col_size as usize
+                secondary_col_size as usize,
             )?;
 
             columns.push(Arc::new(column));
@@ -107,7 +115,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         })?;
 
         // FIXME: statistics is a global option (not a column-wise), should be implemented for all types
-        ParquetWriter::new(&mut file).with_statistics(false).finish(partition).map(|_| ()).context("")
+        ParquetWriter::new(&mut file)
+            .with_statistics(false)
+            .finish(partition)
+            .map(|_| ())
+            .context("")
     };
 
     match encode() {

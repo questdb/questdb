@@ -1,13 +1,13 @@
-use std::collections::HashMap;
-use std::{mem};
-use parquet2::encoding::Encoding;
-use parquet2::encoding::hybrid_rle::encode_u32;
-use parquet2::page::{Page, DictPage};
-use parquet2::schema::types::PrimitiveType;
-use parquet2::write::DynIter;
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util;
 use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter};
+use parquet2::encoding::hybrid_rle::encode_u32;
+use parquet2::encoding::Encoding;
+use parquet2::page::{DictPage, Page};
+use parquet2::schema::types::PrimitiveType;
+use parquet2::write::DynIter;
+use std::collections::HashMap;
+use std::mem;
 
 fn encode_dict(keys: &[i32], offsets: &[u64], data: &[u8], page: &mut Vec<u8>) -> (Vec<u32>, u32) {
     let mut indices: Vec<u32> = Vec::new();
@@ -18,7 +18,8 @@ fn encode_dict(keys: &[i32], offsets: &[u64], data: &[u8], page: &mut Vec<u8>) -
             let local_key = *keys_to_local.entry(*key).or_insert_with(|| {
                 let offset = offsets[*key as usize] as usize;
                 let size = i32::from_le_bytes(data[offset..offset + 4].try_into().unwrap());
-                let data_slice: &[u16] = unsafe { mem::transmute(&data[offset + 4..offset + 4 + size as usize]) };
+                let data_slice: &[u16] =
+                    unsafe { mem::transmute(&data[offset + 4..offset + 4 + size as usize]) };
                 let value = String::from_utf16(data_slice).expect("utf16 string");
 
                 let local_key = serialised;
@@ -47,7 +48,8 @@ pub fn symbol_to_pages(
     let (keys, max_key) = encode_dict(keys, offsets, data, &mut dict_buffer);
     let mut null_count = 0;
     let nulls_iterator = keys.iter().map(|key| {
-        if *key > 0 { // key == -1, is null encoding
+        if *key > 0 {
+            // key == -1, is null encoding
             true
         } else {
             null_count += 1;

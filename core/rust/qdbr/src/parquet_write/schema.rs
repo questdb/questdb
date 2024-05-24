@@ -139,14 +139,16 @@ pub fn column_type_to_parquet_type(
             None,
             None,
         )?),
-        ColumnType::String | ColumnType::Symbol | ColumnType::Varchar => Ok(ParquetType::try_from_primitive(
-            name,
-            PhysicalType::ByteArray,
-            Repetition::Optional,
-            Some(PrimitiveConvertedType::Utf8),
-            Some(PrimitiveLogicalType::String),
-            None,
-        )?),
+        ColumnType::String | ColumnType::Symbol | ColumnType::Varchar => {
+            Ok(ParquetType::try_from_primitive(
+                name,
+                PhysicalType::ByteArray,
+                Repetition::Optional,
+                Some(PrimitiveConvertedType::Utf8),
+                Some(PrimitiveLogicalType::String),
+                None,
+            )?)
+        }
         ColumnType::Long256 => Ok(ParquetType::try_from_primitive(
             name,
             PhysicalType::FixedLenByteArray(32),
@@ -241,7 +243,7 @@ impl ColumnImpl {
         assert!(row_count > 0);
         let column_type: ColumnType = column_type
             .try_into()
-            .map_err(|err| parquet2::error::Error::InvalidParameter(err))?;
+            .map_err(parquet2::error::Error::InvalidParameter)?;
         assert!(!primary_data_ptr.is_null());
 
         let primary_data = unsafe { from_raw_parts(primary_data_ptr, primary_data_size) };
@@ -293,6 +295,6 @@ fn encoding_map(data_type: ColumnType) -> Encoding {
         ColumnType::Binary => Encoding::DeltaLengthByteArray,
         // _ => Encoding::DeltaBinaryPacked, //TODO: for tests only
         _ => Encoding::Plain, //TODO: for tests only
-        //_ => Encoding::RleDictionary,
+                              //_ => Encoding::RleDictionary,
     }
 }

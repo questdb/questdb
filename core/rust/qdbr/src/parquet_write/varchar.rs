@@ -1,8 +1,8 @@
+use crate::parquet_write::file::WriteOptions;
+use crate::parquet_write::util::{build_plain_page, encode_bool_iter};
 use parquet2::encoding::Encoding;
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
-use crate::parquet_write::file::WriteOptions;
-use crate::parquet_write::util::{build_plain_page, encode_bool_iter};
 
 const HEADER_FLAG_INLINED: u32 = 1 << 0;
 const HEADER_FLAG_ASCII: u32 = 1 << 1;
@@ -26,7 +26,7 @@ fn encode_plain(aux: &[u8], data: &[u8], buffer: &mut Vec<u8>) {
                 buffer.extend_from_slice(&len);
                 buffer.extend_from_slice(utf8_slice);
             } else {
-                let offset= (u64::from_le_bytes(bytes[8..16].try_into().unwrap()) >> 16) as usize;
+                let offset = (u64::from_le_bytes(bytes[8..16].try_into().unwrap()) >> 16) as usize;
                 let size = ((raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK) as usize;
                 let utf8_slice = &data[offset..offset + size];
                 let len = (utf8_slice.len() as u32).to_le_bytes();
@@ -81,6 +81,6 @@ pub fn varchar_to_page(
         type_,
         options,
         Encoding::Plain,
-    ).map(Page::Data)
+    )
+    .map(Page::Data)
 }
-
