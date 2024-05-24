@@ -27,7 +27,7 @@
 
     <groupId>io.questdb</groupId>
     <artifactId>benchmarks</artifactId>
-    <version>7.4.3-SNAPSHOT</version>
+    <version>8.0.0</version>
     <packaging>jar</packaging>
     <name>JMH benchmarks for QuestDB</name>
 
