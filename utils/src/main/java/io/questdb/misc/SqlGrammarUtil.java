@@ -24,7 +24,6 @@
 
 package io.questdb.misc;
 
-
 import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.engine.functions.catalogue.Constants;
@@ -33,6 +32,16 @@ import java.lang.reflect.Field;
 import java.util.*;
 
 public class SqlGrammarUtil {
+
+    private static final Set<String> STATIC_SET = new TreeSet<>(Arrays.asList(
+        "&", "|", "^", "~", "[]", "!=", "!~", "%", "*", "+", "-", ".", "/", "<", "<=",
+        "<>", "<>all", "=", ">", ">="
+    ));
+
+    private static final Set<String> SKIP_SET = new HashSet<>(Arrays.asList(
+        "unknown", "regclass", "regprocedure", "VARARG", "text[]", "CURSOR", "RECORD", "PARAMETER"
+    ));
+
     private static void print(String header, Set<String> names) {
         System.out.printf("%s:%n", header);
         for (String name : names) {
@@ -42,29 +51,23 @@ public class SqlGrammarUtil {
     }
 
     public static void main(String... args) {
-        // static
-        final Set<String> staticSet = new TreeSet<>();
-        Collections.addAll(
-                staticSet,
-                "&", "|", "^", "~", "[]",
-                "!=", "!~", "%", "*", "+",
-                "-", ".", "/", "<", "<=",
-                "<>", "<>all", "=", ">", ">="
-        );
+        print("FUNCTIONS", collectFunctionNames());
+        print("KEYWORDS", collectKeywords());
+        print("TYPES", collectTypes());
+    }
 
-        // function names
-        final Set<String> names = new TreeSet<>();
+    private static Set<String> collectFunctionNames() {
+        Set<String> names = new TreeSet<>();
         for (FunctionFactory factory : ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())) {
             if (factory.getClass().getName().contains("test")) {
                 continue;
             }
             String signature = factory.getSignature();
             String name = signature.substring(0, signature.indexOf('('));
-            if (staticSet.contains(name)) {
+            if (STATIC_SET.contains(name)) {
                 continue;
             }
             names.add(name);
-            // add != counterparts to equality function factories
             if (factory.isBoolean()) {
                 if (name.equals("=")) {
                     names.add("!=");
@@ -76,31 +79,31 @@ public class SqlGrammarUtil {
                 }
             }
         }
-        print("FUNCTIONS", names);
+        return names;
+    }
 
-        // keywords
-        names.clear();
+    private static Set<String> collectKeywords() {
+        Set<String> names = new TreeSet<>();
         try {
             Field field = Constants.class.getDeclaredField("KEYWORDS");
             field.setAccessible(true);
             for (CharSequence keyword : (CharSequence[]) field.get(null)) {
-                names.add((String) keyword);
+                names.add(keyword.toString());
             }
         } catch (NoSuchFieldException | IllegalAccessException e) {
             throw new RuntimeException(e);
         }
-        print("KEYWORDS", names);
+        return names;
+    }
 
-        // types
-        names.clear();
-        final Set<String> skipSet = new HashSet<>();
-        Collections.addAll(skipSet, "unknown", "regclass", "regprocedure", "VARARG", "text[]", "CURSOR", "RECORD", "PARAMETER");
+    private static Set<String> collectTypes() {
+        Set<String> names = new TreeSet<>();
         for (int type = 1; type < ColumnType.NULL; type++) {
             String name = ColumnType.nameOf(type);
-            if (!skipSet.contains(name)) {
+            if (!SKIP_SET.contains(name)) {
                 names.add(name.toLowerCase());
             }
         }
-        print("TYPES", names);
+        return names;
     }
 }
