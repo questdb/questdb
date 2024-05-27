@@ -490,6 +490,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                     break;
                 } else if (cursor == -1) {
                     if (!workStealingStrategy.shouldStealWork(collectedFrameCount)) {
+                        Os.pause();
                         return dispatched;
                     }
                     // start stealing work to unload the queue
