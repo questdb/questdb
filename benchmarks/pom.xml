@@ -22,7 +22,8 @@
   ~
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>io.questdb</groupId>
@@ -31,16 +32,30 @@
     <packaging>jar</packaging>
     <name>JMH benchmarks for QuestDB</name>
 
-    <!--
-       This is the demo/sample template build script for building Java benchmarks with JMH.
-       Edit as needed.
-    -->
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.deploy.skip>true</maven.deploy.skip>
+        <maven.javadoc.skip>true</maven.javadoc.skip>
+        <benchmarks.outputPath>target</benchmarks.outputPath>
+
+        <!-- Dependency versions -->
+        <jmh.version>1.35</jmh.version>
+        <jitwatch.version>1.1.5</jitwatch.version>
+        <log4j.version>2.18.0</log4j.version>
+        <disruptor.version>3.4.4</disruptor.version>
+        <prometheus.version>0.10.0</prometheus.version>
+        <annotations.version>17.0.0</annotations.version>
+        <javac.target>11</javac.target>
+
+        <!-- Uber-JAR name -->
+        <uberjar.name>benchmarks</uberjar.name>
+    </properties>
 
     <dependencies>
         <dependency>
             <groupId>com.chrisnewland</groupId>
             <artifactId>jitwatch</artifactId>
-            <version>1.1.5</version>
+            <version>${jitwatch.version}</version>
         </dependency>
         <dependency>
             <groupId>org.openjdk.jmh</groupId>
@@ -61,52 +76,30 @@
         <dependency>
             <groupId>org.apache.logging.log4j</groupId>
             <artifactId>log4j-core</artifactId>
-            <version>2.18.0</version>
+            <version>${log4j.version}</version>
         </dependency>
         <dependency>
             <groupId>com.lmax</groupId>
             <artifactId>disruptor</artifactId>
-            <version>3.4.4</version>
+            <version>${disruptor.version}</version>
         </dependency>
         <dependency>
             <groupId>io.prometheus</groupId>
             <artifactId>simpleclient</artifactId>
-            <version>0.10.0</version>
+            <version>${prometheus.version}</version>
         </dependency>
         <dependency>
             <groupId>io.prometheus</groupId>
             <artifactId>simpleclient_common</artifactId>
-            <version>0.10.0</version>
+            <version>${prometheus.version}</version>
         </dependency>
         <dependency>
             <groupId>org.jetbrains</groupId>
             <artifactId>annotations</artifactId>
-            <version>17.0.0</version>
+            <version>${annotations.version}</version>
             <scope>compile</scope>
         </dependency>
     </dependencies>
-
-    <properties>
-        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <maven.deploy.skip>true</maven.deploy.skip>
-        <maven.javadoc.skip>true</maven.javadoc.skip>
-        <benchmarks.outputPath>target</benchmarks.outputPath>
-
-        <!--
-            JMH version to use with this project.
-          -->
-        <jmh.version>1.35</jmh.version>
-
-        <!--
-            Java source/target to use for compilation.
-          -->
-        <javac.target>11</javac.target>
-
-        <!--
-            Name of the benchmark Uber-JAR to generate.
-          -->
-        <uberjar.name>benchmarks</uberjar.name>
-    </properties>
 
     <build>
         <directory>${benchmarks.outputPath}</directory>
@@ -146,10 +139,6 @@
                             </transformers>
                             <filters>
                                 <filter>
-                                    <!--
-                                        Shading signed JARs will fail without this.
-                                        http://stackoverflow.com/questions/999489/invalid-signature-file-when-attempting-to-run-a-jar
-                                    -->
                                     <artifact>*:*</artifact>
                                     <excludes>
                                         <exclude>META-INF/*.SF</exclude>
@@ -163,44 +152,44 @@
                 </executions>
             </plugin>
         </plugins>
-
-        <pluginManagement>
-            <plugins>
-                <plugin>
-                    <artifactId>maven-clean-plugin</artifactId>
-                    <version>3.2.0</version>
-                </plugin>
-                <plugin>
-                    <artifactId>maven-deploy-plugin</artifactId>
-                    <version>2.8.2</version>
-                </plugin>
-                <plugin>
-                    <artifactId>maven-install-plugin</artifactId>
-                    <version>2.5.1</version>
-                </plugin>
-                <plugin>
-                    <artifactId>maven-jar-plugin</artifactId>
-                    <version>3.0.1</version>
-                </plugin>
-                <plugin>
-                    <artifactId>maven-javadoc-plugin</artifactId>
-                    <version>3.5.0</version>
-                </plugin>
-                <plugin>
-                    <artifactId>maven-resources-plugin</artifactId>
-                    <version>2.6</version>
-                </plugin>
-                <plugin>
-                    <artifactId>maven-source-plugin</artifactId>
-                    <version>3.0.1</version>
-                </plugin>
-                <plugin>
-                    <artifactId>maven-surefire-plugin</artifactId>
-                    <version>2.17</version>
-                </plugin>
-            </plugins>
-        </pluginManagement>
     </build>
+
+    <pluginManagement>
+        <plugins>
+            <plugin>
+                <artifactId>maven-clean-plugin</artifactId>
+                <version>3.2.0</version>
+            </plugin>
+            <plugin>
+                <artifactId>maven-deploy-plugin</artifactId>
+                <version>2.8.2</version>
+            </plugin>
+            <plugin>
+                <artifactId>maven-install-plugin</artifactId>
+                <version>2.5.1</version>
+            </plugin>
+            <plugin>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.0.1</version>
+            </plugin>
+            <plugin>
+                <artifactId>maven-javadoc-plugin</artifactId>
+                <version>3.5.0</version>
+            </plugin>
+            <plugin>
+                <artifactId>maven-resources-plugin</artifactId>
+                <version>2.6</version>
+            </plugin>
+            <plugin>
+                <artifactId>maven-source-plugin</artifactId>
+                <version>3.0.1</version>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>2.17</version>
+            </plugin>
+        </plugins>
+    </pluginManagement>
 
     <profiles>
         <profile>
@@ -231,7 +220,7 @@
                 <questdb.artifactid>questdb-jdk8</questdb.artifactid>
             </properties>
             <activation>
-                <jdk>(,1.8]</jdk>
+                <jdk>[1.8]</jdk>
             </activation>
             <build>
                 <plugins>
@@ -252,15 +241,15 @@
                         </configuration>
                     </plugin>
                 </plugins>
+                <dependencies>
+                    <dependency>
+                        <groupId>org.jetbrains</groupId>
+                        <artifactId>annotations</artifactId>
+                        <version>16.0.2</version>
+                        <scope>provided</scope>
+                    </dependency>
+                </dependencies>
             </build>
-            <dependencies>
-                <dependency>
-                    <groupId>org.jetbrains</groupId>
-                    <artifactId>annotations</artifactId>
-                    <version>16.0.2</version>
-                    <scope>provided</scope>
-                </dependency>
-            </dependencies>
         </profile>
         <profile>
             <id>java11+</id>
@@ -268,8 +257,9 @@
                 <questdb.artifactid>questdb</questdb.artifactid>
             </properties>
             <activation>
-                <jdk>(1.8,)</jdk>
+                <jdk>[11,)</jdk>
             </activation>
         </profile>
     </profiles>
 </project>
+
