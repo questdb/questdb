@@ -104,3 +104,5 @@ public class SqlGrammarUtil {
         print("TYPES", names);
     }
 }
+
+//Add Analytics funtion [new feature]
