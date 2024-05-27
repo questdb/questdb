@@ -26,9 +26,17 @@ package io.questdb.cairo.sql.async;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
+/**
+ * Defines work stealing behavior of the owner thread for queries processed in parallel,
+ * such as queries with parallel filters (WHERE) and GROUP BY queries.
+ */
 public interface WorkStealingStrategy {
 
     WorkStealingStrategy of(AtomicInteger startedCounter);
 
+    /**
+     * Returns true if the query owner thread should spin instead of
+     * trying to pick up one of the published tasks.
+     */
     boolean shouldStealWork(int finished);
 }

@@ -26,6 +26,10 @@ package io.questdb.cairo.sql.async;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
+/**
+ * Does not allow busy spinning for the query owner thread,
+ * so the thread always tries to process just published tasks.
+ */
 public class AlwaysWorkStealingStrategy implements WorkStealingStrategy {
     public static AlwaysWorkStealingStrategy INSTANCE = new AlwaysWorkStealingStrategy();
 
