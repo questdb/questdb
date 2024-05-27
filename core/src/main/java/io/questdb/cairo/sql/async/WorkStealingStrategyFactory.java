@@ -34,7 +34,7 @@ public class WorkStealingStrategyFactory {
     public static WorkStealingStrategy getInstance(CairoConfiguration configuration, int workerCount) {
         final int noStealingThreshold = configuration.getSqlParallelWorkStealingThreshold();
         if (workerCount >= 2 * noStealingThreshold) {
-            return new AdaptiveWorkStealingStrategy(workerCount, noStealingThreshold);
+            return new AdaptiveWorkStealingStrategy(noStealingThreshold);
         }
         return AlwaysWorkStealingStrategy.INSTANCE;
     }

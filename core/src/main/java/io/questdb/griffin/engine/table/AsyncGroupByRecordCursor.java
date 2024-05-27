@@ -180,8 +180,6 @@ class AsyncGroupByRecordCursor implements RecordCursor {
             frameLimit = frameSequence.getFrameCount() - 1;
         }
 
-        long start = System.nanoTime();
-
         int frameIndex = -1;
         boolean allFramesActive = true;
         try {
@@ -218,9 +216,6 @@ class AsyncGroupByRecordCursor implements RecordCursor {
             }
         }
 
-        System.out.println(">>> aggregation took " + (System.nanoTime() - start) + "ns");
-        start = System.nanoTime();
-
         if (!allFramesActive) {
             throwTimeoutException();
         }
@@ -238,8 +233,6 @@ class AsyncGroupByRecordCursor implements RecordCursor {
             shardedCursor.of(shards);
             mapCursor = shardedCursor;
         }
-
-        System.out.println(">>> merge took " + (System.nanoTime() - start) + "ns");
 
         recordA.of(mapCursor.getRecord());
         recordB.of(mapCursor.getRecordB());

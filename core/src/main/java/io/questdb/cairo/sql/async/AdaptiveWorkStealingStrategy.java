@@ -35,11 +35,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class AdaptiveWorkStealingStrategy implements WorkStealingStrategy {
     private final int noStealingThreshold;
-    private final int workerCount;
     private AtomicInteger startedCounter;
 
-    public AdaptiveWorkStealingStrategy(int workerCount, int noStealingThreshold) {
-        this.workerCount = workerCount;
+    public AdaptiveWorkStealingStrategy(int noStealingThreshold) {
         this.noStealingThreshold = noStealingThreshold;
     }
 
@@ -52,7 +50,7 @@ public class AdaptiveWorkStealingStrategy implements WorkStealingStrategy {
     @Override
     public boolean shouldStealWork(int finishedCount) {
         // Give shared workers a chance to pick up the tasks.
-        for (int i = 0; i < workerCount; i++) {
+        for (int i = 0; i < noStealingThreshold; i++) {
             if (startedCounter.get() - finishedCount >= noStealingThreshold) {
                 // A number of tasks are being processed,
                 // so let's spin while those workers are doing their job.
