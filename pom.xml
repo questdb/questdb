@@ -38,6 +38,18 @@
         <tag>HEAD</tag>
     </scm>
 
+  
+    <dependencyManagement>
+    <dependencies>
+        <dependency>
+            <groupId>org.example</groupId>
+            <artifactId>example-dependency</artifactId>
+            <version>1.0.0</version>
+        </dependency>
+    </dependencies>
+</dependencyManagement>
+
+
     <build>
         <plugins>
             <plugin>
