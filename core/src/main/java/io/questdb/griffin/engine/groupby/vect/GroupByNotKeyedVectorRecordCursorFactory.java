@@ -147,10 +147,11 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                     VectorAggregateTask task = queue.get(cursor);
                     task.entry.run(workerId, subSeq, cursor);
                     reclaimed++;
+                } else {
+                    Os.pause();
                 }
             }
             mergedCount = doneLatch.getCount();
-            Os.pause();
         }
         return reclaimed;
     }
@@ -286,7 +287,6 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                                     break;
                                 }
                                 mergedCount = doneLatch.getCount();
-                                Os.pause();
                             } else {
                                 final VectorAggregateEntry entry = entryPool.next();
                                 entry.of(

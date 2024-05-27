@@ -432,7 +432,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                     break;
                                 }
                                 mergedCount = doneLatch.getCount();
-                                Os.pause();
                             } else {
                                 final VectorAggregateEntry entry = entryPool.next();
                                 if (keyAddress == 0) {

@@ -275,7 +275,6 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                             break;
                         }
                         mergedCount = mergeDoneLatch.getCount();
-                        Os.pause();
                     } else {
                         queue.get(cursor).of(mergeCircuitBreaker, mergeStartedCounter, mergeDoneLatch, atom, i);
                         pubSeq.done(cursor);
@@ -308,7 +307,6 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                     }
                 }
                 mergedCount = mergeDoneLatch.getCount();
-                Os.pause();
             }
         }
 
