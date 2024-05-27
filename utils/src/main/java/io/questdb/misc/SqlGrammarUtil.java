@@ -24,16 +24,38 @@
 
 package io.questdb.misc;
 
-
 import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.engine.functions.catalogue.Constants;
 
-import java.lang.reflect.Field;
 import java.util.*;
 
+/**
+ * Utility class for generating SQL-related grammar elements such as functions, keywords, and data types.
+ */
 public class SqlGrammarUtil {
-    private static void print(String header, Set<String> names) {
+
+    // Static set of operators and symbols
+    private static final Set<String> STATIC_SET = new HashSet<>(Arrays.asList(
+            "&", "|", "^", "~", "[]",
+            "!=", "!~", "%", "*", "+",
+            "-", ".", "/", "<", "<=",
+            "<>", "<>all", "=", ">", ">="
+    ));
+
+    // Set of data types to skip
+    private static final Set<String> SKIP_TYPES = new HashSet<>(Arrays.asList(
+            "unknown", "regclass", "regprocedure", "VARARG", "text[]", "CURSOR", "RECORD", "PARAMETER"
+    ));
+
+    /**
+     * Prints the given header and set of names, with each name enclosed in double quotes and separated by commas.
+     * After printing all names, it prints a separator line.
+     *
+     * @param header The header string to print
+     * @param names  The set of names to print
+     */
+    private static void printNames(String header, Set<String> names) {
         System.out.printf("%s:%n", header);
         for (String name : names) {
             System.out.printf("\"%s\",%n", name);
@@ -42,65 +64,45 @@ public class SqlGrammarUtil {
     }
 
     public static void main(String... args) {
-        // static
-        final Set<String> staticSet = new TreeSet<>();
-        Collections.addAll(
-                staticSet,
-                "&", "|", "^", "~", "[]",
-                "!=", "!~", "%", "*", "+",
-                "-", ".", "/", "<", "<=",
-                "<>", "<>all", "=", ">", ">="
-        );
-
-        // function names
-        final Set<String> names = new TreeSet<>();
+        // Function names
+        Set<String> functionNames = new HashSet<>();
         for (FunctionFactory factory : ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())) {
-            if (factory.getClass().getName().contains("test")) {
-                continue;
-            }
-            String signature = factory.getSignature();
-            String name = signature.substring(0, signature.indexOf('('));
-            if (staticSet.contains(name)) {
-                continue;
-            }
-            names.add(name);
-            // add != counterparts to equality function factories
-            if (factory.isBoolean()) {
-                if (name.equals("=")) {
-                    names.add("!=");
-                    names.add("<>");
-                } else if (name.equals("<")) {
-                    names.add("<=");
-                    names.add(">=");
-                    names.add(">");
+            if (!factory.getClass().getName().contains("test")) {
+                String signature = factory.getSignature();
+                String name = signature.substring(0, signature.indexOf('('));
+                if (!STATIC_SET.contains(name)) {
+                    functionNames.add(name);
+                    // Add inequality function names for equality and comparison functions
+                    if (factory.isBoolean()) {
+                        if (name.equals("=")) {
+                            functionNames.add("!=");
+                            functionNames.add("<>");
+                        } else if (name.equals("<")) {
+                            functionNames.add("<=");
+                            functionNames.add(">=");
+                            functionNames.add(">");
+                        }
+                    }
                 }
             }
         }
-        print("FUNCTIONS", names);
+        printNames("FUNCTIONS", functionNames);
 
-        // keywords
-        names.clear();
-        try {
-            Field field = Constants.class.getDeclaredField("KEYWORDS");
-            field.setAccessible(true);
-            for (CharSequence keyword : (CharSequence[]) field.get(null)) {
-                names.add((String) keyword);
-            }
-        } catch (NoSuchFieldException | IllegalAccessException e) {
-            throw new RuntimeException(e);
+        // Keywords
+        Set<String> keywords = new HashSet<>();
+        for (CharSequence keyword : Constants.KEYWORDS) {
+            keywords.add(keyword.toString());
         }
-        print("KEYWORDS", names);
+        printNames("KEYWORDS", keywords);
 
-        // types
-        names.clear();
-        final Set<String> skipSet = new HashSet<>();
-        Collections.addAll(skipSet, "unknown", "regclass", "regprocedure", "VARARG", "text[]", "CURSOR", "RECORD", "PARAMETER");
+        // Data types
+        Set<String> dataTypes = new HashSet<>();
         for (int type = 1; type < ColumnType.NULL; type++) {
-            String name = ColumnType.nameOf(type);
-            if (!skipSet.contains(name)) {
-                names.add(name.toLowerCase());
+            String name = ColumnType.nameOf(type).toLowerCase();
+            if (!SKIP_TYPES.contains(name)) {
+                dataTypes.add(name);
             }
         }
-        print("TYPES", names);
+        printNames("TYPES", dataTypes);
     }
 }
