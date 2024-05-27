@@ -30,6 +30,11 @@ public interface Job {
     RunStatus RUNNING_STATUS = () -> false;
     RunStatus TERMINATING_STATUS = () -> true;
 
+    /**
+     * Drains the job queue until it is empty.
+     *
+     * @param workerId worker id
+     */
     default void drain(int workerId) {
         while (true) {
             if (!run(workerId)) {
@@ -39,25 +44,33 @@ public interface Job {
     }
 
     /**
-     * Runs and returns true if it should be rescheduled ASAP.
+     * Runs the job and returns true if it should be rescheduled ASAP.
      *
      * @param workerId  worker id
-     * @param runStatus set to 1 when job is running, 2 when it is halting
-     * @return true if job should be rescheduled ASAP
+     * @param runStatus indicates the current status of the job
+     * @return true if the job should be rescheduled ASAP
      */
     boolean run(int workerId, @NotNull RunStatus runStatus);
 
     /**
-     * Runs and returns true if it should be rescheduled ASAP.
+     * Runs the job and returns true if it should be rescheduled ASAP.
      *
      * @param workerId worker id
-     * @return true if job should be rescheduled ASAP
+     * @return true if the job should be rescheduled ASAP
      */
     default boolean run(int workerId) {
         return run(workerId, RUNNING_STATUS);
     }
 
+    /**
+     * Interface representing the status of a running job.
+     */
     interface RunStatus {
+        /**
+         * Checks if the job is in the process of terminating.
+         *
+         * @return true if the job is terminating, false otherwise
+         */
         boolean isTerminating();
     }
 }
