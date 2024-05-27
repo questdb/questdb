@@ -39,15 +39,17 @@ import org.influxdb.dto.Pong;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util*;
+import org.junit.Assert;
+import org.junit.Test;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.compat.InfluxDBUtils.assertRequestErrorContains;
 
 public class InfluxDBClientTest extends AbstractTest {
+
     @Test
     public void testAppendErrors() throws Exception {
         try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
@@ -55,37 +57,32 @@ public class InfluxDBClientTest extends AbstractTest {
         }})) {
             serverMain.start();
             serverMain.getEngine().compile(
-                    "create table ex_tbl(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
-                            "i int, l long, ip ipv4, g geohash(4c), ts timestamp) timestamp(ts) partition by DAY WAL"
+                "create table ex_tbl(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
+                "i int, l long, ip ipv4, g geohash(4c), ts timestamp) timestamp(ts) partition by DAY WAL"
             );
 
             try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
                 List<String> points = new ArrayList<>();
 
-                assertRequestErrorContains(influxDB, points, "ex_tbl b\\\"c=1024 1233456\n", "{" +
-                        "\"code\":\"invalid\"," +
-                        "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
-                        "error in line 1: table: ex_tbl; invalid column name: b\\\"c\",\"line\":1,\"errorId\":");
+                assertRequestErrorContains(influxDB, points, "ex_tbl b\\\"c=1024 1233456\n", 
+                    "{\"code\":\"invalid\",\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
+                    "error in line 1: table: ex_tbl; invalid column name: b\\\"c\",\"line\":1,\"errorId\":");
 
-                assertRequestErrorContains(influxDB, points, "ex_tbl b=1024 1233456\n", "{" +
-                        "\"code\":\"invalid\"," +
-                        "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
-                        "error in line 1: table: ex_tbl, column: b; cast error from protocol type: FLOAT to column type: BYTE\",\"line\":1,\"errorId\":");
+                assertRequestErrorContains(influxDB, points, "ex_tbl b=1024 1233456\n", 
+                    "{\"code\":\"invalid\",\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
+                    "error in line 1: table: ex_tbl, column: b; cast error from protocol type: FLOAT to column type: BYTE\",\"line\":1,\"errorId\":");
 
-                assertRequestErrorContains(influxDB, points, "ex_tbl b=1024i 1233456\n", "{" +
-                        "\"code\":\"invalid\"," +
-                        "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
-                        "error in line 1: table: ex_tbl, column: b; line protocol value: 1024 is out bounds of column type: BYTE\",\"line\":1,\"errorId\":");
+                assertRequestErrorContains(influxDB, points, "ex_tbl b=1024i 1233456\n", 
+                    "{\"code\":\"invalid\",\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
+                    "error in line 1: table: ex_tbl, column: b; line protocol value: 1024 is out bounds of column type: BYTE\",\"line\":1,\"errorId\":");
 
-                assertRequestErrorContains(influxDB, points, "ex_tbl i=1024.2 1233456\n", "{" +
-                        "\"code\":\"invalid\"," +
-                        "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
-                        "error in line 1: table: ex_tbl, column: i; cast error from protocol type: FLOAT to column type: INT\",\"line\":1,\"errorId\":");
+                assertRequestErrorContains(influxDB, points, "ex_tbl i=1024.2 1233456\n", 
+                    "{\"code\":\"invalid\",\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
+                    "error in line 1: table: ex_tbl, column: i; cast error from protocol type: FLOAT to column type: INT\",\"line\":1,\"errorId\":");
 
-                assertRequestErrorContains(influxDB, points, "ex_tbl str=1024.2 1233456\n", "{" +
-                        "\"code\":\"invalid\"," +
-                        "\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
-                        "error in line 1: table: ex_tbl, column: str; cast error from protocol type: FLOAT to column type: STRING\",\"line\":1,\"errorId\":");
+                assertRequestErrorContains(influxDB, points, "ex_tbl str=1024.2 1233456\n", 
+                    "{\"code\":\"invalid\",\"message\":\"failed to parse line protocol:errors encountered on line(s):\\n" +
+                    "error in line 1: table: ex_tbl, column: str; cast error from protocol type: FLOAT to column type: STRING\",\"line\":1,\"errorId\":");
             }
         }
     }
@@ -99,9 +96,10 @@ public class InfluxDBClientTest extends AbstractTest {
         }})) {
             serverMain.start();
             serverMain.getEngine().compile(
-                    "create table wal_low_max_uncomitted(sym symbol, ts timestamp) " +
-                            "timestamp(ts) partition by DAY WAL WITH maxUncommittedRows=100"
+                "create table wal_low_max_uncomitted(sym symbol, ts timestamp) " +
+                "timestamp(ts) partition by DAY WAL WITH maxUncommittedRows=100"
             );
+
             List<String> lines = new ArrayList<>();
             String goodLine = "wal_low_max_uncomitted,sym=aaa\n";
             for (int i = 0; i < count; i++) {
@@ -112,8 +110,8 @@ public class InfluxDBClientTest extends AbstractTest {
             lines.add("wal_low_max_uncomitted i=123i\n");
             try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
                 // Bad line which should roll back the transaction
-                assertRequestErrorContains(influxDB, lines, "ailed to parse line protocol:errors encountered on line(s):" +
-                        "\\nerror in line 10002: Could not parse entire line. Symbol value is missing: bla");
+                assertRequestErrorContains(influxDB, lines, 
+                    "failed to parse line protocol:errors encountered on line(s):\\nerror in line 10002: Could not parse entire line. Symbol value is missing: bla");
             }
 
             serverMain.awaitTable("wal_low_max_uncomitted");
@@ -121,6 +119,17 @@ public class InfluxDBClientTest extends AbstractTest {
             Assert.assertTrue(Chars.equals(sink, "count\n0\n"));
         }
     }
+
+    // Method for asserting request errors
+    private void assertRequestErrorContains(InfluxDB influxDB, List<String> points, String point, String expectedError) {
+        try {
+            influxDB.write(points);
+            Assert.fail("Expected an exception for point: " + point);
+        } catch (Exception e) {
+            Assert.assertTrue(e.getMessage().contains(expectedError));
+        }
+    }
+}
 
     @Test
     public void testCreateTableError() throws Exception {
