@@ -50,10 +50,10 @@ public class AdaptiveWorkStealingStrategy implements WorkStealingStrategy {
     }
 
     @Override
-    public boolean shouldStealWork(int finished) {
+    public boolean shouldStealWork(int finishedCount) {
         // Give shared workers a chance to pick up the tasks.
         for (int i = 0; i < workerCount; i++) {
-            if (startedCounter.get() - finished >= noStealingThreshold) {
+            if (startedCounter.get() - finishedCount >= noStealingThreshold) {
                 // A number of tasks are being processed,
                 // so let's spin while those workers are doing their job.
                 return false;

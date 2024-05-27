@@ -300,6 +300,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                                         pageAddress,
                                         pageSize,
                                         colSizeShr,
+                                        startedCounter,
                                         doneLatch,
                                         null,
                                         null,

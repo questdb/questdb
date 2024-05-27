@@ -38,5 +38,5 @@ public interface WorkStealingStrategy {
      * Returns true if the query owner thread should spin instead of
      * trying to pick up one of the published tasks.
      */
-    boolean shouldStealWork(int finished);
+    boolean shouldStealWork(int finishedCount);
 }

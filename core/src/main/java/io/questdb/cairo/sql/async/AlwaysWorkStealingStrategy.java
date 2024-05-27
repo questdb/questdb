@@ -40,7 +40,7 @@ public class AlwaysWorkStealingStrategy implements WorkStealingStrategy {
     }
 
     @Override
-    public boolean shouldStealWork(int finished) {
+    public boolean shouldStealWork(int finishedCount) {
         return true;
     }
 }
