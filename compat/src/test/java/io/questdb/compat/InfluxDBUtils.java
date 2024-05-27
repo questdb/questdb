@@ -37,6 +37,9 @@ import java.util.List;
 public class InfluxDBUtils {
 
     public static void assertRequestErrorContains(InfluxDB influxDB, List<String> points, String line, String... errors) {
+        if (points == null || line == null || errors == null) {
+            throw new IllegalArgumentException("All arguments must be non-null");
+        }
         points.add(line);
         try {
             influxDB.write(points);
@@ -48,10 +51,15 @@ public class InfluxDBUtils {
                 }
             }
         }
-        points.clear();
+        finally { 
+            points.clear();
+        }
     }
 
     public static void assertRequestOk(InfluxDB influxDB, List<String> points, String line) {
+        if (points == null || line == null) {
+            throw new IllegalArgumentException("All arguments must be non-null");
+        }
         points.add(line);
         influxDB.write(points);
         points.clear();
