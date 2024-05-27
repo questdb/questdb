@@ -1,5 +1,15 @@
 <component name="ProjectCodeStyleConfiguration">
   <state>
     <option name="USE_PER_PROJECT_SETTINGS" value="true" />
+    <option name="RIGHT_MARGIN" value="120" />
+    <option name="TAB_SIZE" value="4" />
+    <option name="INDENT_SIZE" value="4" />
+    <option name="CONTINUATION_INDENT_SIZE" value="8" />
+    <option name="KEEP_INDENTS_ON_EMPTY_LINES" value="true" />
+    <option name="WRAP_WHEN_TYPING_REACHES_RIGHT_MARGIN" value="true" />
+    <option name="ENABLE_JAVADOC_FORMATTING" value="true" />
+    <option name="SPACE_AROUND_ASSIGNMENT_OPERATORS" value="true" />
+    <option name="SPACE_BEFORE_METHOD_PARENTHESES" value="false" />
+    <option name="SPACE_AFTER_METHOD_PARENTHESES" value="false" />
   </state>
 </component>
