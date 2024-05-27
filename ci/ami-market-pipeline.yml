@@ -1,24 +1,45 @@
+# Define the trigger settings
 trigger:
   tags:
     include:
-      - "*"
+      - "*"  # Include all tags
   branches:
     exclude:
-      - "*"
+      - "*"  # Exclude all branches
 
+# Disable PR triggers
 pr: none
 
+# Specify the pool and the VM image to use
 pool:
   vmImage: ubuntu-latest
 
+# Define the steps to run in the pipeline
 steps:
   - script: |
+      # Update the package list
       sudo apt-get update
-      sudo apt-get install awscli
-      cd "$(Build.SourcesDirectory)"/pkg/ami/marketplace
-      make install_aws_plugin
-      make build_release
+      
+      # Install AWS CLI non-interactively
+      sudo apt-get install -y awscli
+      
+      # Navigate to the marketplace directory
+      if cd "$(Build.SourcesDirectory)/pkg/ami/marketplace"; then
+        # Install AWS plugin and build the release
+        if ! make install_aws_plugin; then
+          echo "Failed to install AWS plugin"
+          exit 1
+        fi
+        if ! make build_release; then
+          echo "Failed to build release"
+          exit 1
+        fi
+      else
+        echo "Directory not found: $(Build.SourcesDirectory)/pkg/ami/marketplace"
+        exit 1
+      fi
     env:
+      # Environment variables for AWS credentials
       AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
       AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
       AWS_DEFAULT_REGION: eu-west-1
