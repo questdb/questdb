@@ -83,7 +83,7 @@ public class AbstractTest {
 
     public static Rnd generateRandom(Log log, long s0, long s1) {
         if (log != null) {
-            log.info().$("random seeds: ").$(s0).$("L, ").$(s1).$('L').$();
+            log.info().<span class="math-inline">\("random seeds\: "\)\.</span>(s0).<span class="math-inline">\("L, "\)\.</span>(s1).<span class="math-inline">\('L'\)\.</span>();
         }
         System.out.printf("random seeds: %dL, %dL%n", s0, s1);
         return new Rnd(s0, s1);
@@ -100,33 +100,4 @@ public class AbstractTest {
     public static void setUpStatic() throws Exception {
         // it is necessary to initialise logger before tests start
         // logger doesn't relinquish memory until JVM stops
-        // which causes memory leak detector to fail should logger be
-        // created mid-test
-        LOG.info().$("setup logger").$();
-        root = temp.newFolder("dbRoot").getAbsolutePath();
-    }
-
-    @AfterClass
-    public static void tearDownStatic() {
-        removeTestPath();
-    }
-
-    public void assertSql(CairoEngine engine, CharSequence sql, CharSequence expectedResult) throws SqlException {
-        engine.print(sql, sink);
-        if (!Chars.equals(sink, expectedResult)) {
-            Assert.assertEquals(expectedResult, sink);
-        }
-    }
-
-    @Before
-    public void setUp() {
-        LOG.info().$("Starting test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
-        createTestPath();
-    }
-
-    @After
-    public void tearDown() {
-        LOG.info().$("Finished test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
-        removeTestPath();
-    }
-}
+    
