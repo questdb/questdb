@@ -180,6 +180,8 @@ class AsyncGroupByRecordCursor implements RecordCursor {
             frameLimit = frameSequence.getFrameCount() - 1;
         }
 
+        long start = System.nanoTime();
+
         int frameIndex = -1;
         boolean allFramesActive = true;
         try {
@@ -216,6 +218,9 @@ class AsyncGroupByRecordCursor implements RecordCursor {
             }
         }
 
+        System.out.println(">>> aggregation took " + (System.nanoTime() - start) + "ns");
+        start = System.nanoTime();
+
         if (!allFramesActive) {
             throwTimeoutException();
         }
@@ -233,6 +238,8 @@ class AsyncGroupByRecordCursor implements RecordCursor {
             shardedCursor.of(shards);
             mapCursor = shardedCursor;
         }
+
+        System.out.println(">>> merge took " + (System.nanoTime() - start) + "ns");
 
         recordA.of(mapCursor.getRecord());
         recordB.of(mapCursor.getRecordB());
@@ -294,8 +301,6 @@ class AsyncGroupByRecordCursor implements RecordCursor {
             // aggregation tasks not related to this execution (we work in concurrent environment).
             // To deal with that we need to check our latch.
 
-            mergedCount = mergeDoneLatch.getCount();
-
             while (!mergeDoneLatch.done(queuedCount)) {
                 if (circuitBreaker.checkIfTripped()) {
                     mergeCircuitBreaker.cancel();
@@ -307,11 +312,10 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                         GroupByMergeShardTask task = queue.get(cursor);
                         GroupByMergeShardJob.run(-1, task, subSeq, cursor);
                         reclaimed++;
-                        mergedCount = mergeDoneLatch.getCount();
-                    } else {
-                        Os.pause();
                     }
                 }
+                mergedCount = mergeDoneLatch.getCount();
+                Os.pause();
             }
         }
 

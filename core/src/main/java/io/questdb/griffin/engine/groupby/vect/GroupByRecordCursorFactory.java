@@ -490,11 +490,12 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 // Make sure we're consuming jobs even when we failed. We cannot close "rosti" when there are
                 // tasks in flight.
 
-                reclaimed = GroupByNotKeyedVectorRecordCursorFactory.getRunWhatsLeft(
+                reclaimed = GroupByNotKeyedVectorRecordCursorFactory.runWhatsLeft(
                         bus.getVectorAggregateSubSeq(),
                         queue,
                         queuedCount,
                         reclaimed,
+                        mergedCount,
                         workerId,
                         doneLatch,
                         circuitBreaker,

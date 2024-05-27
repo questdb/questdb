@@ -124,19 +124,18 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
         return base.usesIndex();
     }
 
-    static int getRunWhatsLeft(
+    static int runWhatsLeft(
             MCSequence subSeq,
             RingQueue<VectorAggregateTask> queue,
             int queuedCount,
             int reclaimed,
+            int mergedCount,
             int workerId,
             SOUnboundedCountDownLatch doneLatch,
             SqlExecutionCircuitBreaker circuitBreaker,
             AtomicBooleanCircuitBreaker sharedCB,
             WorkStealingStrategy workStealingStrategy
     ) {
-        int mergedCount = doneLatch.getCount();
-
         while (!doneLatch.done(queuedCount)) {
             if (circuitBreaker.checkIfTripped()) {
                 sharedCB.cancel();
@@ -148,11 +147,10 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                     VectorAggregateTask task = queue.get(cursor);
                     task.entry.run(workerId, subSeq, cursor);
                     reclaimed++;
-                    mergedCount = doneLatch.getCount();
-                } else {
-                    Os.pause();
                 }
             }
+            mergedCount = doneLatch.getCount();
+            Os.pause();
         }
         return reclaimed;
     }
@@ -327,11 +325,12 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                 // how do we get to the end? If we consume our own queue there is chance we will be consuming
                 // aggregation tasks not related to this execution (we work in concurrent environment)
                 // To deal with that we need to have our own checklist.
-                reclaimed = getRunWhatsLeft(
+                reclaimed = runWhatsLeft(
                         bus.getVectorAggregateSubSeq(),
                         queue,
                         queuedCount,
                         reclaimed,
+                        mergedCount,
                         workerId,
                         doneLatch,
                         circuitBreaker,
