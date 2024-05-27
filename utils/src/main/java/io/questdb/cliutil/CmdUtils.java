@@ -30,14 +30,72 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.str.Utf8String;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+
 public class CmdUtils {
+    private static final Log log = LogFactory.getLog("recover-var-index");
+    private static final ExecutorService executor = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
+
     static void runColumnRebuild(RebuildColumnCommandArgs params, RebuildColumnBase ri) {
-        final Log log = LogFactory.getLog("recover-var-index");
+        if (!validateParams(params)) {
+            log.error().$("Invalid parameters provided").$();
+            return;
+        }
+
         ri.of(new Utf8String(params.tablePath));
+        
+        Runnable rebuildTask = () -> {
+            try {
+                log.info().$("Starting rebuild for table: ").$(params.tablePath)
+                        .$(", partition: ").$(params.partition)
+                        .$(", column: ").$(params.column).$();
+                
+                ri.reindex(params.partition, params.column);
+                
+                log.info().$("Successfully rebuilt index for table: ").$(params.tablePath)
+                        .$(", partition: ").$(params.partition)
+                        .$(", column: ").$(params.column).$();
+            } catch (CairoException ex) {
+                log.error().$("Failed to rebuild index for table: ").$(params.tablePath)
+                        .$(", partition: ").$(params.partition)
+                        .$(", column: ").$(params.column).$(" - ")
+                        .$(ex.getFlyweightMessage()).$();
+            } catch (Exception e) {
+                log.error().$("Unexpected error during rebuild: ").$(e.getMessage()).$();
+            }
+        };
+
+        executor.submit(rebuildTask);
+    }
+
+    private static boolean validateParams(RebuildColumnCommandArgs params) {
+        if (params == null || params.tablePath == null || params.partition == null || params.column == null) {
+            return false;
+        }
+        if (!Files.exists(Paths.get(params.tablePath))) {
+            log.error().$("Table path does not exist: ").$(params.tablePath).$();
+            return false;
+        }
+        return true;
+    }
+
+    static void shutdown() {
+        executor.shutdown();
         try {
-            ri.reindex(params.partition, params.column);
-        } catch (CairoException ex) {
-            log.error().$(ex.getFlyweightMessage()).$();
+            if (!executor.awaitTermination(60, TimeUnit.SECONDS)) {
+                executor.shutdownNow();
+                if (!executor.awaitTermination(60, TimeUnit.SECONDS)) {
+                    log.error().$("Executor did not terminate").$();
+                }
+            }
+        } catch (InterruptedException ie) {
+            executor.shutdownNow();
+            Thread.currentThread().interrupt();
         }
     }
 }
