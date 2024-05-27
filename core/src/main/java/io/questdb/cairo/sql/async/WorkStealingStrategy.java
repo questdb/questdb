@@ -32,17 +32,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public interface WorkStealingStrategy {
 
-    /**
-     * Resets the strategy to the given counter. Also resets internal counters,
-     * so additional {@link #reset()} call is not needed.
-     */
     WorkStealingStrategy of(AtomicInteger startedCounter);
-
-    /**
-     * Resets internal pause/sleep counter. Should be called each time
-     * when a task was published.
-     */
-    void reset();
 
     /**
      * Returns true if the query owner thread should spin instead of

@@ -56,7 +56,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 PropertyKey.SHARED_WORKER_COUNT + "=4",
                 PropertyKey.PG_WORKER_COUNT + "=4",
                 PropertyKey.PG_SELECT_CACHE_ENABLED + "=true",
-                PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_TASK_THRESHOLD + "=1",
+                PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD + "=1",
                 PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD + "=100",
                 PropertyKey.DEBUG_ENABLE_TEST_FACTORIES + "=true"
         ));

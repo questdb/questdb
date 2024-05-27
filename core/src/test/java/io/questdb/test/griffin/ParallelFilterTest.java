@@ -139,7 +139,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
         // queue capacity to exhibit various edge cases.
         setProperty(CAIRO_PAGE_FRAME_SHARD_COUNT, 2);
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, PAGE_FRAME_COUNT);
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_TASK_THRESHOLD, 1);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1);
         super.setUp();
     }
 

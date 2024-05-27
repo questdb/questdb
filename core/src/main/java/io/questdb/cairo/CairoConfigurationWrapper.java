@@ -766,13 +766,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getSqlParallelWorkStealingNapThreshold() {
-        return getDelegate().getSqlParallelWorkStealingNapThreshold();
-    }
-
-    @Override
-    public int getSqlParallelWorkStealingTaskThreshold() {
-        return getDelegate().getSqlParallelWorkStealingTaskThreshold();
+    public int getSqlParallelWorkStealingThreshold() {
+        return getDelegate().getSqlParallelWorkStealingThreshold();
     }
 
     @Override

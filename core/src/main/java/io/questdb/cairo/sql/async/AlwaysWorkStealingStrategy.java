@@ -35,12 +35,8 @@ public class AlwaysWorkStealingStrategy implements WorkStealingStrategy {
 
     @Override
     public WorkStealingStrategy of(AtomicInteger startedCounter) {
-        return this;
-    }
-
-    @Override
-    public void reset() {
         // no-op
+        return this;
     }
 
     @Override
