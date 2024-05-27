@@ -1,0 +1,37 @@
+name: Close Old Issues
+on:
+  schedule:
+    - cron: "0 0 * * *"
+
+jobs:
+  close-issues:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Close Old Issues
+        run: |
+          open_issues=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/issues?state=open" \
+            | jq -r '.[] | .number')
+          for issue in $open_issues; do
+            # Get the last updated timestamp of the issue
+            last_updated=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/$issue" \
+              | jq -r '.updated_at')
+            days_since_update=$(( ( $(date +%s) - $(date -d "$last_updated" +%s) ) / 86400 ))
+            if [ $days_since_update -gt 30 ]; then
+              curl -s -X PATCH -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+                -H "Accept: application/vnd.github.v3+json" \
+                -d '{"state":"closed"}' \
+                "https://api.github.com/repos/${{ github.repository }}/issues/$issue"
+              
+              # Add a comment explaining when the issue will be closed
+              curl -s -X POST -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+                -H "Accept: application/vnd.github.v3+json" \
+                -d '{"body":"This issue has been automatically closed because it has been inactive for more than 30 days. If you believe this is still relevant, feel free to reopen it or create a new one. Thank you!"}' \
+                "https://api.github.com/repos/${{ github.repository }}/issues/$issue/comments"
+            fi
+          done

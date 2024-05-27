@@ -1,0 +1,34 @@
+name: Close Stale PRs
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # Runs daily at midnight
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+permissions:
+  pull-requests: write
+  issues: write
+
+jobs:
+  close_stale_prs:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+  
+    steps:
+    - uses: actions/stale@v7
+      with:
+        repo-token: ${{ secrets.GITHUB_TOKEN }}
+        stale-pr-message: 'This PR has been automatically closed due to inactivity from the owner for 15 days.'
+        days-before-pr-stale: 15
+        days-before-pr-close: 0
+        exempt-pr-author: false
+        exempt-pr-labels: ''
+        only-labels: ''
+        operations-per-run: 30
+        remove-stale-when-updated: true
+        debug-only: false
