@@ -30,6 +30,8 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.async.WorkStealingStrategy;
+import io.questdb.cairo.sql.async.WorkStealingStrategyFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -39,6 +41,8 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.tasks.VectorAggregateTask;
+
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
 
@@ -51,7 +55,9 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
     private final ObjectPool<VectorAggregateEntry> entryPool;
     private final PerWorkerLocks perWorkerLocks; // used to protect VAF's internal slots
     private final AtomicBooleanCircuitBreaker sharedCircuitBreaker;
+    private final AtomicInteger startedCounter = new AtomicInteger();
     private final ObjList<VectorAggregateFunction> vafList;
+    private final WorkStealingStrategy workStealingStrategy;
     private final int workerCount;
 
     public GroupByNotKeyedVectorRecordCursorFactory(
@@ -63,13 +69,15 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
     ) {
         super(metadata);
         try {
-            this.entryPool = new ObjectPool<>(VectorAggregateEntry::new, configuration.getGroupByPoolCapacity());
             this.base = base;
+            this.entryPool = new ObjectPool<>(VectorAggregateEntry::new, configuration.getGroupByPoolCapacity());
             this.vafList = new ObjList<>(vafList.size());
             this.vafList.addAll(vafList);
             this.cursor = new GroupByNotKeyedVectorRecordCursor(this.vafList);
             this.perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
             this.sharedCircuitBreaker = new AtomicBooleanCircuitBreaker();
+            this.workStealingStrategy = WorkStealingStrategyFactory.getInstance(configuration, workerCount);
+            this.workStealingStrategy.of(startedCounter);
             this.workerCount = workerCount;
         } catch (Throwable th) {
             close();
@@ -124,20 +132,26 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
             int workerId,
             SOUnboundedCountDownLatch doneLatch,
             SqlExecutionCircuitBreaker circuitBreaker,
-            AtomicBooleanCircuitBreaker sharedCB
+            AtomicBooleanCircuitBreaker sharedCB,
+            WorkStealingStrategy workStealingStrategy
     ) {
+        int mergedCount = doneLatch.getCount();
+
         while (!doneLatch.done(queuedCount)) {
             if (circuitBreaker.checkIfTripped()) {
                 sharedCB.cancel();
             }
 
-            long cursor = subSeq.next();
-            if (cursor > -1) {
-                VectorAggregateTask task = queue.get(cursor);
-                task.entry.run(workerId, subSeq, cursor);
-                reclaimed++;
-            } else {
-                Os.pause();
+            if (workStealingStrategy.shouldStealWork(mergedCount)) {
+                long cursor = subSeq.next();
+                if (cursor > -1) {
+                    VectorAggregateTask task = queue.get(cursor);
+                    task.entry.run(workerId, subSeq, cursor);
+                    reclaimed++;
+                    mergedCount = doneLatch.getCount();
+                } else {
+                    Os.pause();
+                }
             }
         }
         return reclaimed;
@@ -213,11 +227,14 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
             final Sequence pubSeq = bus.getVectorAggregatePubSeq();
 
             sharedCircuitBreaker.reset();
+            startedCounter.set(0);
             entryPool.clear();
+
             int queuedCount = 0;
             int ownCount = 0;
             int reclaimed = 0;
             int total = 0;
+            int mergedCount = 0; // used for work stealing decisions
 
             doneLatch.reset();
 
@@ -249,40 +266,53 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                         final long pageAddress = columnIndex > -1 ? frame.getPageAddress(columnIndex) : 0;
                         final long pageSize = columnIndex > -1 ? frame.getPageSize(columnIndex) : frame.getPageSize(0);
                         final int colSizeShr = columnIndex > -1 ? frame.getColumnShiftBits(columnIndex) : frame.getColumnShiftBits(0);
-                        long seq = pubSeq.next();
-                        if (seq < 0) {
-                            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-                            // acquire the slot and DIY the func
-                            // vaf need to know which column it is hitting in the frame and will need to
-                            // aggregate between frames until done
-                            final int slot = perWorkerLocks.acquireSlot(workerId, circuitBreaker);
-                            try {
-                                vaf.aggregate(pageAddress, pageSize, colSizeShr, slot);
-                                ownCount++;
-                            } finally {
-                                perWorkerLocks.releaseSlot(slot);
+
+                        while (true) {
+                            long cursor = pubSeq.next();
+                            if (cursor < 0) {
+                                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+
+                                // Update last known count, so that we can track progress
+                                // for the in-flight and later published tasks.
+                                mergedCount = doneLatch.getCount();
+
+                                if (workStealingStrategy.shouldStealWork(mergedCount)) {
+                                    // acquire the slot and DIY the func
+                                    // vaf need to know which column it is hitting in the frame and will need to
+                                    // aggregate between frames until done
+                                    final int slot = perWorkerLocks.acquireSlot(workerId, circuitBreaker);
+                                    try {
+                                        vaf.aggregate(pageAddress, pageSize, colSizeShr, slot);
+                                    } finally {
+                                        perWorkerLocks.releaseSlot(slot);
+                                    }
+                                    ownCount++;
+                                    total++;
+                                    break;
+                                }
+                                Os.pause();
+                            } else {
+                                final VectorAggregateEntry entry = entryPool.next();
+                                entry.of(
+                                        vaf,
+                                        null, // null pRosti means that we do not need keyed aggregation
+                                        0,
+                                        pageAddress,
+                                        pageSize,
+                                        colSizeShr,
+                                        doneLatch,
+                                        null,
+                                        null,
+                                        perWorkerLocks,
+                                        sharedCircuitBreaker
+                                );
+                                queue.get(cursor).entry = entry;
+                                pubSeq.done(cursor);
+                                queuedCount++;
+                                total++;
+                                break;
                             }
-                        } else {
-                            final VectorAggregateEntry entry = entryPool.next();
-                            // null pRosti means that we do not need keyed aggregation
-                            queuedCount++;
-                            entry.of(
-                                    vaf,
-                                    null,
-                                    0,
-                                    pageAddress,
-                                    pageSize,
-                                    colSizeShr,
-                                    doneLatch,
-                                    null,
-                                    null,
-                                    perWorkerLocks,
-                                    sharedCircuitBreaker
-                            );
-                            queue.get(seq).entry = entry;
-                            pubSeq.done(seq);
                         }
-                        total++;
                     }
                 }
 
@@ -306,7 +336,8 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                         workerId,
                         doneLatch,
                         circuitBreaker,
-                        sharedCircuitBreaker
+                        sharedCircuitBreaker,
+                        workStealingStrategy
                 );
             }
 

@@ -44,8 +44,9 @@ public class AdaptiveWorkStealingStrategy implements WorkStealingStrategy {
     }
 
     @Override
-    public void of(AtomicInteger startedCounter) {
+    public WorkStealingStrategy of(AtomicInteger startedCounter) {
         this.startedCounter = startedCounter;
+        return this;
     }
 
     @Override

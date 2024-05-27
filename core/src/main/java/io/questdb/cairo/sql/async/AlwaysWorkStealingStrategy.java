@@ -30,8 +30,9 @@ public class AlwaysWorkStealingStrategy implements WorkStealingStrategy {
     public static AlwaysWorkStealingStrategy INSTANCE = new AlwaysWorkStealingStrategy();
 
     @Override
-    public void of(AtomicInteger startedCounter) {
+    public WorkStealingStrategy of(AtomicInteger startedCounter) {
         // no-op
+        return this;
     }
 
     @Override

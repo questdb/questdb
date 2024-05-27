@@ -28,6 +28,8 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.async.WorkStealingStrategy;
+import io.questdb.cairo.sql.async.WorkStealingStrategyFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -63,7 +65,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final PerWorkerLocks perWorkerLocks; // used to protect pRosti and VAF's internal slots
     private final RostiAllocFacade raf;
     private final AtomicBooleanCircuitBreaker sharedCircuitBreaker; // used to signal cancellation to workers
+    private final AtomicInteger startedCounter = new AtomicInteger();
     private final ObjList<VectorAggregateFunction> vafList;
+    private final WorkStealingStrategy workStealingStrategy;
     private final int workerCount;
 
     public GroupByRecordCursorFactory(
@@ -88,9 +92,11 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             // ...
             // functions[n].type == columnTypes[n+1]
 
+            this.base = base;
             perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
             sharedCircuitBreaker = new AtomicBooleanCircuitBreaker();
-            this.base = base;
+            workStealingStrategy = WorkStealingStrategyFactory.getInstance(configuration, workerCount);
+            workStealingStrategy.of(startedCounter);
             // first column is INT or SYMBOL
             pRosti = new long[workerCount];
             final int vafCount = vafList.size();
@@ -356,13 +362,15 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             final MPSequence pubSeq = bus.getVectorAggregatePubSeq();
 
             sharedCircuitBreaker.reset();
+            startedCounter.set(0);
+            doneLatch.reset();
             entryPool.clear();
+
             int queuedCount = 0;
             int ownCount = 0;
             int reclaimed = 0;
             int total = 0;
-
-            doneLatch.reset();
+            int mergedCount = 0; // used for work stealing decisions
 
             final Thread thread = Thread.currentThread();
             final int workerId;
@@ -397,61 +405,74 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         final int columnSizeShr = frame.getColumnShiftBits(pageColIndex);
                         final long valueAddressSize = frame.getPageSize(pageColIndex);
 
-                        long cursor = pubSeq.next();
-                        if (cursor < 0) {
-                            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-                            // acquire the slot and DIY the func
-                            final int slot = perWorkerLocks.acquireSlot(workerId, circuitBreaker);
-                            try {
-                                if (keyAddress == 0) {
-                                    vaf.aggregate(valueAddress, valueAddressSize, columnSizeShr, slot);
-                                } else {
-                                    long oldSize = Rosti.getAllocMemory(pRosti[slot]);
-                                    if (!vaf.aggregate(pRosti[slot], keyAddress, valueAddress, valueAddressSize, columnSizeShr, slot)) {
-                                        oomCounter.incrementAndGet();
+                        while (true) {
+                            long cursor = pubSeq.next();
+                            if (cursor < 0) {
+                                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+
+                                // Update last known count, so that we can track progress
+                                // for the in-flight and later published tasks.
+                                mergedCount = doneLatch.getCount();
+
+                                if (workStealingStrategy.shouldStealWork(mergedCount)) {
+                                    // acquire the slot and DIY the func
+                                    final int slot = perWorkerLocks.acquireSlot(workerId, circuitBreaker);
+                                    try {
+                                        if (keyAddress == 0) {
+                                            vaf.aggregate(valueAddress, valueAddressSize, columnSizeShr, slot);
+                                        } else {
+                                            long oldSize = Rosti.getAllocMemory(pRosti[slot]);
+                                            if (!vaf.aggregate(pRosti[slot], keyAddress, valueAddress, valueAddressSize, columnSizeShr, slot)) {
+                                                oomCounter.incrementAndGet();
+                                            }
+                                            raf.updateMemoryUsage(pRosti[slot], oldSize);
+                                        }
+                                    } finally {
+                                        perWorkerLocks.releaseSlot(slot);
                                     }
-                                    raf.updateMemoryUsage(pRosti[slot], oldSize);
+                                    ownCount++;
+                                    total++;
+                                    break;
                                 }
-                                ownCount++;
-                            } finally {
-                                perWorkerLocks.releaseSlot(slot);
-                            }
-                        } else {
-                            final VectorAggregateEntry entry = entryPool.next();
-                            queuedCount++;
-                            if (keyAddress == 0) {
-                                entry.of(
-                                        vaf,
-                                        null,
-                                        0,
-                                        valueAddress,
-                                        valueAddressSize,
-                                        columnSizeShr,
-                                        doneLatch,
-                                        oomCounter,
-                                        null,
-                                        perWorkerLocks,
-                                        sharedCircuitBreaker
-                                );
+                                Os.pause();
                             } else {
-                                entry.of(
-                                        vaf,
-                                        pRosti,
-                                        keyAddress,
-                                        valueAddress,
-                                        valueAddressSize,
-                                        columnSizeShr,
-                                        doneLatch,
-                                        oomCounter,
-                                        raf,
-                                        perWorkerLocks,
-                                        sharedCircuitBreaker
-                                );
+                                final VectorAggregateEntry entry = entryPool.next();
+                                if (keyAddress == 0) {
+                                    entry.of(
+                                            vaf,
+                                            null,
+                                            0,
+                                            valueAddress,
+                                            valueAddressSize,
+                                            columnSizeShr,
+                                            doneLatch,
+                                            oomCounter,
+                                            null,
+                                            perWorkerLocks,
+                                            sharedCircuitBreaker
+                                    );
+                                } else {
+                                    entry.of(
+                                            vaf,
+                                            pRosti,
+                                            keyAddress,
+                                            valueAddress,
+                                            valueAddressSize,
+                                            columnSizeShr,
+                                            doneLatch,
+                                            oomCounter,
+                                            raf,
+                                            perWorkerLocks,
+                                            sharedCircuitBreaker
+                                    );
+                                }
+                                queue.get(cursor).entry = entry;
+                                pubSeq.done(cursor);
+                                queuedCount++;
+                                total++;
+                                break;
                             }
-                            queue.get(cursor).entry = entry;
-                            pubSeq.done(cursor);
                         }
-                        total++;
                     }
                 }
             } catch (DataUnavailableException e) {
@@ -477,7 +498,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         workerId,
                         doneLatch,
                         circuitBreaker,
-                        sharedCircuitBreaker
+                        sharedCircuitBreaker,
+                        workStealingStrategy
                 );
                 // we can't reallocate rosti until tasks are complete because some other thread could be using it
                 if (sharedCircuitBreaker.checkIfTripped()) {

@@ -28,7 +28,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public interface WorkStealingStrategy {
 
-    void of(AtomicInteger startedCounter);
+    WorkStealingStrategy of(AtomicInteger startedCounter);
 
     boolean shouldStealWork(int finished);
 }
