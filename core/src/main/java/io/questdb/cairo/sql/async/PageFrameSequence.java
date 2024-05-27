@@ -486,11 +486,12 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                             .I$();
                     reducePubSeq.done(cursor);
                     dispatchStartFrameIndex = i + 1;
+                    workStealingStrategy.reset();
                     dispatched = true;
                     break;
                 } else if (cursor == -1) {
                     if (!workStealingStrategy.shouldStealWork(collectedFrameCount)) {
-                        Os.pause();
+                        Os.sleep(1);
                         return dispatched;
                     }
                     // start stealing work to unload the queue

@@ -767,7 +767,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlParallelWorkStealingThreshold() {
+    public long getSqlParallelWorkStealingNapThreshold() {
+        return 10_000;
+    }
+
+    @Override
+    public int getSqlParallelWorkStealingTaskThreshold() {
         return 2;
     }
 

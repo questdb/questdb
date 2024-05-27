@@ -227,6 +227,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
             sharedCircuitBreaker.reset();
             startedCounter.set(0);
             entryPool.clear();
+            workStealingStrategy.reset();
 
             int queuedCount = 0;
             int ownCount = 0;
@@ -307,6 +308,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                                 pubSeq.done(cursor);
                                 queuedCount++;
                                 total++;
+                                workStealingStrategy.reset();
                                 break;
                             }
                         }

@@ -34,17 +34,26 @@ import java.util.concurrent.atomic.AtomicInteger;
  * on large multicore machines.
  */
 public class AdaptiveWorkStealingStrategy implements WorkStealingStrategy {
+    private final long napThreshold;
     private final int noStealingThreshold;
     private AtomicInteger startedCounter;
+    private long ticker;
 
-    public AdaptiveWorkStealingStrategy(int noStealingThreshold) {
+    public AdaptiveWorkStealingStrategy(int noStealingThreshold, long napThreshold) {
         this.noStealingThreshold = noStealingThreshold;
+        this.napThreshold = napThreshold;
     }
 
     @Override
     public WorkStealingStrategy of(AtomicInteger startedCounter) {
         this.startedCounter = startedCounter;
+        ticker = 0;
         return this;
+    }
+
+    @Override
+    public void reset() {
+        ticker = 0;
     }
 
     @Override
@@ -54,6 +63,11 @@ public class AdaptiveWorkStealingStrategy implements WorkStealingStrategy {
             if (startedCounter.get() - finishedCount >= noStealingThreshold) {
                 // A number of tasks are being processed,
                 // so let's spin while those workers are doing their job.
+                if (++ticker < napThreshold) {
+                    Os.pause();
+                } else {
+                    Os.sleep(1);
+                }
                 return false;
             }
             Os.pause();

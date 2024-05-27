@@ -365,6 +365,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             startedCounter.set(0);
             doneLatch.reset();
             entryPool.clear();
+            workStealingStrategy.reset();
 
             int queuedCount = 0;
             int ownCount = 0;
@@ -470,6 +471,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                 pubSeq.done(cursor);
                                 queuedCount++;
                                 total++;
+                                workStealingStrategy.reset();
                                 break;
                             }
                         }
