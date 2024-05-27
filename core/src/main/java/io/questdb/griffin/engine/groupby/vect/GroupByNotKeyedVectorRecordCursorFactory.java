@@ -272,10 +272,6 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                             if (cursor < 0) {
                                 circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
 
-                                // Update last known count, so that we can track progress
-                                // for the in-flight and later published tasks.
-                                mergedCount = doneLatch.getCount();
-
                                 if (workStealingStrategy.shouldStealWork(mergedCount)) {
                                     // acquire the slot and DIY the func
                                     // vaf need to know which column it is hitting in the frame and will need to
@@ -288,8 +284,10 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                                     }
                                     ownCount++;
                                     total++;
+                                    mergedCount = doneLatch.getCount();
                                     break;
                                 }
+                                mergedCount = doneLatch.getCount();
                                 Os.pause();
                             } else {
                                 final VectorAggregateEntry entry = entryPool.next();

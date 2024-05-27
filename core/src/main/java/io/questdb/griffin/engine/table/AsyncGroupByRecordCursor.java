@@ -267,16 +267,14 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                     if (cursor < 0) {
                         circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
 
-                        // Update last known count, so that we can track progress
-                        // for the in-flight and later published tasks.
-                        mergedCount = mergeDoneLatch.getCount();
-
                         if (workStealingStrategy.shouldStealWork(mergedCount)) {
                             atom.mergeShard(-1, i);
                             ownCount++;
                             total++;
+                            mergedCount = mergeDoneLatch.getCount();
                             break;
                         }
+                        mergedCount = mergeDoneLatch.getCount();
                         Os.pause();
                     } else {
                         queue.get(cursor).of(mergeCircuitBreaker, mergeStartedCounter, mergeDoneLatch, atom, i);

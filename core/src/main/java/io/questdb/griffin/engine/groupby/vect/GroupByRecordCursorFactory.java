@@ -410,10 +410,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                             if (cursor < 0) {
                                 circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
 
-                                // Update last known count, so that we can track progress
-                                // for the in-flight and later published tasks.
-                                mergedCount = doneLatch.getCount();
-
                                 if (workStealingStrategy.shouldStealWork(mergedCount)) {
                                     // acquire the slot and DIY the func
                                     final int slot = perWorkerLocks.acquireSlot(workerId, circuitBreaker);
@@ -432,8 +428,10 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                     }
                                     ownCount++;
                                     total++;
+                                    mergedCount = doneLatch.getCount();
                                     break;
                                 }
+                                mergedCount = doneLatch.getCount();
                                 Os.pause();
                             } else {
                                 final VectorAggregateEntry entry = entryPool.next();
