@@ -29,7 +29,7 @@
     <artifactId>utils</artifactId>
     <version>7.1.4-SNAPSHOT</version>
 
-    <name>Command line utils for QuestDB</name>
+    <name>Command line utils for QuestDB</swetha>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
