@@ -1,5 +1,3 @@
-trigger: none
-
 variables:
   OS_MAPPING: none
   Windows_NT-X86: windows
@@ -12,17 +10,17 @@ stages:
   - stage: BuildBinaries
     displayName: "Building C++ binaries"
     jobs:
-      - job: RunOn
-        displayName: "on"
+      - job: BuildAndUpload
+        displayName: "Build and Upload Binaries"
         strategy:
           matrix:
-            linux:
+            linux_x64:
               imageName: "ubuntu-20.04"
               poolName: "Azure Pipelines"
               os: Linux
               jdk: "1.11"
               generator: "CodeBlocks - Unix Makefiles"
-            mac:
+            macos_x64:
               imageName: "macos-latest"
               poolName: "Azure Pipelines"
               os: macOS
@@ -30,121 +28,65 @@ stages:
               generator: "CodeBlocks - Unix Makefiles"
 
         pool:
-          name: $(poolName)
-          vmImage: $(imageName)
+          name: ${{ matrix.poolName }}
+          vmImage: ${{ matrix.imageName }}
+
         timeoutInMinutes: 60
+
         steps:
           - checkout: self
             fetchDepth: 1
             lfs: false
             submodules: false
+
           - bash: sudo sysctl -w fs.file-max=500000
             condition: eq(variables['Agent.OS'], 'Linux')
             displayName: "Increase file count on Linux"
 
           - bash: |
-              echo "##vso[task.setvariable variable=OS_MAPPING]$(Linux-X64)"
-              sudo apt-get update -y
-              sudo apt-get install -y nasm g++-10-aarch64-linux-gnu gcc-10-aarch64-linux-gnu gcc-mingw-w64 g++-mingw-w64
-            condition:
-              and(eq(variables['Agent.OS'], 'Linux'),
-              eq(variables['Agent.OSArchitecture'], 'x64'))
-            displayName: "Install NASM for Linux x64"
-          - bash: |
-              echo "##vso[task.setvariable variable=OS_MAPPING]$(Darwin-X64)"
-              brew install nasm
-            displayName: "Install NASM Mac"
-            condition: eq(variables['Agent.OS'], 'Darwin')
+              if [ "${{ variables.Agent.OS }}" == "Linux" ] && [ "${{ variables.Agent.OSArchitecture }}" == "x64" ]; then
+                echo "##vso[task.setvariable variable=OS_MAPPING]linux"
+                sudo apt-get update -y
+                sudo apt-get install -y nasm g++-10-aarch64-linux-gnu gcc-10-aarch64-linux-gnu gcc-mingw-w64 g++-mingw-w64
+              elif [ "${{ variables.Agent.OS }}" == "Darwin" ]; then
+                echo "##vso[task.setvariable variable=OS_MAPPING]osx"
+                brew install nasm
+              fi
+            displayName: "Install NASM and other dependencies"
 
           - task: CMake@1
             inputs:
               workingDirectory: core
-              cmakeArgs:
-                -G "$(generator)" -DCMAKE_BUILD_TYPE=Release -B
-                cmake-build-release -S.
-            displayName: "Genearting Makefiles for: $(generator)"
+              cmakeArgs: -G "${{ matrix.generator }}" -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S .
+            displayName: "Generate Makefiles"
 
           - task: CMake@1
             inputs:
               workingDirectory: core
               cmakeArgs: --build cmake-build-release --config Release
-            displayName: "Build source-code $(Agent.OS)"
+            displayName: "Build source code"
 
-          - task: CMake@1
-            inputs:
-              workingDirectory: core
-              cmakeArgs:
-                -DCMAKE_TOOLCHAIN_FILE=./src/main/c/toolchains/linux-arm64.cmake
-                -DARM_TOOLCHAIN_PATH=/usr/bin/
-                -DCMAKE_EXECUTABLE_SUFFIX=-10 -DCMAKE_CROSSCOMPILING=True
-                -DCMAKE_BUILD_TYPE=Release -B cmake-build-release-arm64
-            displayName: "CMAKE Linux arm"
-            condition: eq(variables['Agent.OS'], 'Linux')
-
-          - task: CMake@1
-            inputs:
-              workingDirectory: core
-              cmakeArgs: --build cmake-build-release-arm64 --config Release
-            displayName: "Build source-code $(Agent.OS) for ARM Linux"
-            condition: eq(variables['Agent.OS'], 'Linux')
-
-          - bash:
-              curl
-              https://raw.githubusercontent.com/AdoptOpenJDK/openjdk-jdk11/master/src/java.base/windows/native/include/jni_md.h
-              > $JAVA_HOME/include/jni_md.h
-            condition: eq(variables['Agent.OS'], 'Linux')
-            displayName: "Download windows jni_md.h from JDK 11"
-
-          - task: CMake@1
-            inputs:
-              workingDirectory: core
-              cmakeArgs:
-                -DCMAKE_TOOLCHAIN_FILE=./src/main/c/toolchains/windows-x86_64.cmake
-                -DCMAKE_CROSSCOMPILING=True -DCMAKE_BUILD_TYPE=Release -B
-                cmake-build-release-win64
-            displayName: "CMake for Windows"
-            condition: eq(variables['Agent.OS'], 'Linux')
-
-          - task: CMake@1
-            inputs:
-              workingDirectory: core
-              cmakeArgs: --build cmake-build-release-win64 --config Release
-            displayName: "Build source-code $(Agent.OS) for Windows"
+          - bash: |
+              if [ "${{ variables.Agent.OS }}" == "Linux" ]; then
+                cmake -DCMAKE_TOOLCHAIN_FILE=./src/main/c/toolchains/linux-arm64.cmake -DARM_TOOLCHAIN_PATH=/usr/bin/ -DCMAKE_EXECUTABLE_SUFFIX=-10 -DCMAKE_CROSSCOMPILING=True -DCMAKE_BUILD_TYPE=Release -B cmake-build-release-arm64
+                cmake --build cmake-build-release-arm64 --config Release
+              fi
+            displayName: "Build for ARM Linux"
             condition: eq(variables['Agent.OS'], 'Linux')
 
           - bash: |
-              x86_64-w64-mingw32-objdump -p core/src/main/resources/io/questdb/bin/windows/libquestdb.dll | grep libstdc++
-              if [ $? -eq 0 ]; then echo "Failure: C++ runtime dependency detected"; exit 1; fi
-            condition: eq(variables['Agent.OS'], 'Linux')
-            displayName: "Check C++ runtime dependency"
+              if [ "${{ variables.Agent.OS }}" == "Linux" ]; then
+                curl https://raw.githubusercontent.com/AdoptOpenJDK/openjdk-jdk11/master/src/java.base/windows/native/include/jni_md.h > $JAVA_HOME/include/jni_md.h
+                cmake -DCMAKE_TOOLCHAIN_FILE=./src/main/c/toolchains/windows-x86_64.cmake -DCMAKE_CROSSCOMPILING=True -DCMAKE_BUILD_TYPE=Release -B cmake-build-release-win64
+                cmake --build cmake-build-release-win64 --config Release
 
-          - task: S3Upload@1
-            inputs:
-              awsCredentials: "ondemand-dev"
-              regionName: "eu-west-1"
-              bucketName: "questdb-releases"
-              sourceFolder: "core/src/main/resources/io/questdb/bin/$(OS_MAPPING)/"
-              globExpressions: |
-                *.so
-                *.dylib 
-                *.dll
-              targetFolder: "releases/c_binaries/$(Build.BuildId)/$(OS_MAPPING)"
-              filesAcl: "bucket-owner-full-control"
-            displayName: "Upload binaries to S3 $(Agent.OS)"
-
-          - task: S3Upload@1
-            inputs:
-              awsCredentials: "ondemand-dev"
-              regionName: "eu-west-1"
-              bucketName: "questdb-releases"
-              sourceFolder: "core/src/main/resources/io/questdb/bin/windows/"
-              globExpressions: |
-                *.so
-                *.dylib 
-                *.dll
-              targetFolder: "releases/c_binaries/$(Build.BuildId)/windows"
-              filesAcl: "bucket-owner-full-control"
-            displayName: "Upload binaries to S3 for cross-compiled windows"
+                x86_64-w64-mingw32-objdump -p core/src/main/resources/io/questdb/bin/windows/libquestdb.dll | grep libstdc++
+                if [ $? -eq 0 ]; then
+                  echo "Failure: C++ runtime dependency detected"
+                  exit 1
+                fi
+              fi
+            displayName: "Build for Windows and check dependencies"
             condition: eq(variables['Agent.OS'], 'Linux')
 
           - task: S3Upload@1
@@ -152,17 +94,25 @@ stages:
               awsCredentials: "ondemand-dev"
               regionName: "eu-west-1"
               bucketName: "questdb-releases"
-              sourceFolder: "core/src/main/resources/io/questdb/bin/armlinux/"
+              sourceFolder: "core/src/main/resources/io/questdb/bin/${{ variables.OS_MAPPING }}/"
               globExpressions: |
                 *.so
                 *.dylib 
                 *.dll
-              targetFolder: "releases/c_binaries/$(Build.BuildId)/armlinux"
+              targetFolder: "releases/c_binaries/$(Build.BuildId)/${{ variables.OS_MAPPING }}"
               filesAcl: "bucket-owner-full-control"
-            displayName: "Upload binaries to S3 for cross-compiled armlinux"
+            displayName: "Upload binaries to S3"
+
+          - bash: |
+              if [ "${{ variables.Agent.OS }}" == "Linux" ]; then
+                aws s3 cp core/src/main/resources/io/questdb/bin/windows/ s3://questdb-releases/releases/c_binaries/$(Build.BuildId)/windows/ --recursive --acl bucket-owner-full-control
+                aws s3 cp core/src/main/resources/io/questdb/bin/armlinux/ s3://questdb-releases/releases/c_binaries/$(Build.BuildId)/armlinux/ --recursive --acl bucket-owner-full-control
+              fi
+            displayName: "Upload cross-compiled binaries to S3"
             condition: eq(variables['Agent.OS'], 'Linux')
 
           - task: PublishBuildArtifacts@1
             inputs:
               pathToPublish: ./core/src/main/resources/io/questdb/bin
-            displayName: "Publish c++ artifacts"
+              artifactName: "c++-artifacts"
+            displayName: "Publish C++ artifacts"
