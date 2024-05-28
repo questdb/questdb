@@ -148,21 +148,24 @@
                 </executions>
             </plugin>
             <!-- remove web console package on "clean" -->
-            <plugin>
-                <artifactId>maven-clean-plugin</artifactId>
-                <version>3.2.0</version>
-                <configuration>
-                    <filesets>
-                        <fileset>
-                            <directory>src/main/resources/io/questdb/site/</directory>
-                            <includes>
-                                <include>public.zip</include>
-                            </includes>
-                            <followSymlinks>false</followSymlinks>
-                        </fileset>
-                    </filesets>
-                </configuration>
-            </plugin>
+<plugin>
+    <groupId>org.apache.maven.plugins</groupId>
+    <artifactId>maven-clean-plugin</artifactId>
+    <version>3.3.1</version> <!-- Updated version -->
+    <configuration>
+        <filesets>
+            <fileset>
+                <directory>src/main/resources/io/questdb/site/</directory>
+                <includes>
+                    <include>public.zip</include>
+                </includes>
+                <followSymlinks>false</followSymlinks>
+            </fileset>
+        </filesets>
+        <verbose>true</verbose> <!-- Added verbosity for better logging -->
+    </configuration>
+</plugin>
+
             <!-- disable stock deploy plugin -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
