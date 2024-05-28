@@ -21,6 +21,10 @@
   ~  limitations under the License.
   ~
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
+<!-- Add to the appropriate location in your HTML file -->
+<input type="datetime-local" id="start-time">
+<input type="datetime-local" id="end-time">
+<button onclick="startReplay()">Start Replay</button>
 
 <assembly>
     <id>web-console</id>
