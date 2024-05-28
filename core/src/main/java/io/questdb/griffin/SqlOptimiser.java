@@ -4572,10 +4572,6 @@ public class SqlOptimiser implements Mutable {
 
                     timestampOnly = false;
                 }
-                if ((wrapAction & SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES) != 0) {
-                    // column alias indexes have shifted because of the removal of duplicate timestamp columns
-                    model.updateColumnAliasIndexes();
-                }
 
                 int timestampPos = model.getColumnAliasIndex(timestampAlias);
 
