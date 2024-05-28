@@ -62,6 +62,7 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.EVENT_INDEX_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
+import static io.questdb.std.Files.SEPARATOR;
 import static io.questdb.test.tools.TestUtils.assertEventually;
 
 public class WalTableFailureTest extends AbstractCairoTest {
@@ -1231,6 +1232,11 @@ public class WalTableFailureTest extends AbstractCairoTest {
             private int attempt = 0;
 
             @Override
+            public int errno() {
+                return 999;
+            }
+
+            @Override
             public int openRW(LPSZ name, long opts) {
                 if (Utf8s.containsAscii(name, "x.d.1") && attempt++ == 0) {
                     return -1;
@@ -1256,7 +1262,8 @@ public class WalTableFailureTest extends AbstractCairoTest {
             assertSql("x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableToken.getTableName());
 
             assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorCode\terrorTag\terrorMessage\n" +
-                    tableToken.getTableName() + "\ttrue\t1\t0\t4\t35\t\tcould not open read-write [file=" + root + "/" + tableToken.getTableName() + "~1/2022-02-24/x.d.1]\n", "wal_tables()");
+                    tableToken.getTableName() + "\ttrue\t1\t0\t4\t999\t\tcould not open read-write [file=" + root + SEPARATOR +
+                    tableToken.getTableName() + "~1" + SEPARATOR + "2022-02-24" + SEPARATOR + "x.d.1]\n", "wal_tables()");
 
             compile("alter table " + tableToken.getTableName() + " resume wal");
             compile("alter table " + tableToken.getTableName() + " resume wal from transaction 0"); // ignored
