@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 
 import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.vm.api.MemoryR;
 
 /**
  * Gets the properties of a symbol map, whether symbols in a table are
@@ -33,6 +34,10 @@ import io.questdb.cairo.sql.StaticSymbolTable;
  */
 public interface SymbolMapReader extends StaticSymbolTable {
     int getSymbolCapacity();
+
+    MemoryR getSymbolOffsetsColumn();
+
+    MemoryR getSymbolValuesColumn();
 
     /**
      * @return true if symbol table is cached, otherwise false.
