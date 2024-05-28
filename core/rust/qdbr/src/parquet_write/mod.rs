@@ -89,6 +89,8 @@ mod tests {
                 col1.len() * size_of::<i32>(),
                 null(),
                 0,
+                null(),
+                0,
             )
             .unwrap(),
         );
@@ -99,6 +101,8 @@ mod tests {
                 col2.len(),
                 col2.as_ptr() as *const u8,
                 col2.len() * size_of::<f32>(),
+                null(),
+                0,
                 null(),
                 0,
             )
@@ -155,6 +159,8 @@ mod tests {
                 col1.len(),
                 col1.as_ptr() as *const u8,
                 col1.len() * size_of::<i64>(),
+                null(),
+                0,
                 null(),
                 0,
             )

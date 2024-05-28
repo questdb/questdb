@@ -1,11 +1,12 @@
+use std::slice;
+use std::sync::Arc;
+
 use parquet2::encoding::Encoding;
 use parquet2::metadata::SchemaDescriptor;
+use parquet2::schema::Repetition;
 use parquet2::schema::types::{
     IntegerType, ParquetType, PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType, TimeUnit,
 };
-use parquet2::schema::Repetition;
-use std::slice::from_raw_parts;
-use std::sync::Arc;
 
 #[derive(Debug, Copy, Clone)]
 pub enum ColumnType {
@@ -32,6 +33,7 @@ pub enum ColumnType {
     IPv4,
     Varchar,
 }
+
 impl TryFrom<i32> for ColumnType {
     type Error = String;
 
@@ -65,6 +67,7 @@ impl TryFrom<i32> for ColumnType {
         }
     }
 }
+
 pub fn column_type_to_parquet_type(
     column_name: &str,
     column_type: ColumnType,
@@ -239,6 +242,8 @@ impl ColumnImpl {
         primary_data_size: usize,
         secondary_data_ptr: *const u8,
         secondary_data_size: usize,
+        symbol_offsets_ptr: *const u64,
+        symbol_offsets_size: usize,
     ) -> parquet2::error::Result<Self> {
         assert!(row_count > 0);
         let column_type: ColumnType = column_type
@@ -246,11 +251,16 @@ impl ColumnImpl {
             .map_err(parquet2::error::Error::InvalidParameter)?;
         assert!(!primary_data_ptr.is_null());
 
-        let primary_data = unsafe { from_raw_parts(primary_data_ptr, primary_data_size) };
+        let primary_data = unsafe { slice::from_raw_parts(primary_data_ptr, primary_data_size) };
         let secondary_data = if secondary_data_ptr.is_null() {
             None
         } else {
-            Some(unsafe { from_raw_parts(secondary_data_ptr, secondary_data_size) })
+            Some(unsafe { slice::from_raw_parts(secondary_data_ptr, secondary_data_size) })
+        };
+        let symbol_offsets = if symbol_offsets_ptr.is_null() {
+            None
+        } else {
+            Some(unsafe { slice::from_raw_parts(symbol_offsets_ptr, symbol_offsets_size) })
         };
 
         Ok(ColumnImpl {
@@ -259,7 +269,7 @@ impl ColumnImpl {
             row_count,
             primary_data,
             secondary_data,
-            symbol_offsets: None, // TODO: fix symbols
+            symbol_offsets,
         })
     }
 }

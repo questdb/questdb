@@ -45,6 +45,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     primary_col_sizes_ptr: *const i64,
     secondary_col_addrs_ptr: *const *const u8,
     secondary_col_sizes_ptr: *const i64,
+    symbol_offsets_addrs_ptr: *const *const u64,
+    symbol_offsets_sizes_ptr: *const i64,
     row_count: jlong,
     dest_path: *const u8,
     dest_path_len: i32,
@@ -70,6 +72,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         let secondary_col_sizes_slice =
             unsafe { slice::from_raw_parts(secondary_col_sizes_ptr, col_count) };
 
+        let symbol_offsets_addrs_slice =
+            unsafe { slice::from_raw_parts(symbol_offsets_addrs_ptr, col_count) };
+        let symbol_offsets_sizes_slice =
+            unsafe { slice::from_raw_parts(symbol_offsets_sizes_ptr, col_count) };
+
         let dest_path = unsafe {
             std::str::from_utf8_unchecked(slice::from_raw_parts(dest_path, dest_path_len as usize))
         };
@@ -89,6 +96,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             let secondary_col_addr = secondary_col_addrs_slice[i];
             let secondary_col_size = secondary_col_sizes_slice[i];
 
+            let symbol_offsets_addr = symbol_offsets_addrs_slice[i];
+            let symbol_offsets_size = symbol_offsets_sizes_slice[i];
+
             let column = ColumnImpl::from_raw_data(
                 col_name,
                 col_type,
@@ -97,6 +107,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                 primary_col_size as usize,
                 secondary_col_addr,
                 secondary_col_size as usize,
+                symbol_offsets_addr,
+                symbol_offsets_size as usize,
             )?;
 
             columns.push(Arc::new(column));
