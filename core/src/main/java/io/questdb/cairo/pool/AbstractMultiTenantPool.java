@@ -51,7 +51,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
     private final Log LOG = LogFactory.getLog(this.getClass());
     private final ConcurrentHashMap<Entry<T>> entries = new ConcurrentHashMap<>();
     private final int maxEntries;
-    private final int maxSegments;
+    protected final int maxSegments;
 
     public AbstractMultiTenantPool(CairoConfiguration configuration, int maxSegments, long inactiveTtlMillis) {
         super(configuration, inactiveTtlMillis);
@@ -392,6 +392,10 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
             return false;
         }
         throw CairoException.critical(0).put("double close [table=").put(tableToken.getDirName()).put(", index=").put(index).put(']');
+    }
+
+    public interface UnsafePollOrCallback<T> {
+        void poll(T tenant);
     }
 
     public static final class Entry<T> {

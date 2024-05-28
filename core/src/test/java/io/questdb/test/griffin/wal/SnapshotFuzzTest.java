@@ -42,7 +42,7 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testSnapshotEjectedWalApply() throws Exception {
-        Rnd rnd = generateRandom(LOG, 2194465525059L, 1716494986502L);
+        Rnd rnd = generateRandom(LOG);
         fuzzer.setFuzzProbabilities(
                 0,
                 0,
