@@ -554,7 +554,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             LOG.critical().$("job failed, table suspended [table=").utf8(tableToken.getDirName())
                     .$(", error=").$(ex)
                     .I$();
-            handleWalApplyFailure(tableToken, new WalError(-1, null, ex.getMessage()));
+            handleWalApplyFailure(tableToken, new WalError(-1, Tag.OTHER, ex.getMessage()));
         }
     }
 
