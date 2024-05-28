@@ -1232,7 +1232,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             testWalTableSuspendResumeStatusTable("1\tCD\t2022-02-24T00:00:00.000000Z\tFG\n", "table3", 39, Tag.DISK_FULL.name());
             testWalTableSuspendResumeStatusTable("1\tCD\t2022-02-24T00:00:00.000000Z\tFG\n", "table4", 112, Tag.DISK_FULL.name());
             testWalTableSuspendResumeStatusTable("1\tAB\t2022-02-24T00:00:00.000000Z\tDE\n", "table5", 4, Tag.TOO_MANY_OPEN_FILES.name());
-            testWalTableSuspendResumeStatusTable("1\tCD\t2022-02-24T00:00:00.000000Z\tFG\n", "table6", 8, Tag.OUT_OF_MEMORY.name());
+            testWalTableSuspendResumeStatusTable("1\tBC\t2022-02-24T00:00:00.000000Z\tDE\n", "table6", 8, Tag.OUT_OF_MEMORY.name());
         } else {
             testWalTableSuspendResumeStatusTable("1\tCD\t2022-02-24T00:00:00.000000Z\tFG\n", "table3", 28, Tag.DISK_FULL.name());
             testWalTableSuspendResumeStatusTable("1\tCD\t2022-02-24T00:00:00.000000Z\tFG\n", "table4", 24, Tag.TOO_MANY_OPEN_FILES.name());
