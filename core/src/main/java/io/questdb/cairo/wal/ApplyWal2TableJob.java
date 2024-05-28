@@ -28,6 +28,7 @@ import io.questdb.Telemetry;
 import io.questdb.TelemetryOrigin;
 import io.questdb.TelemetrySystemEvent;
 import io.questdb.cairo.*;
+import io.questdb.cairo.wal.WalError.Tag;
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
@@ -377,9 +378,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         TelemetryWalTask.store(walTelemetry, event, tableToken.getTableId(), walId, seqTxn, rowCount, physicalRowCount, latencyUs);
     }
 
-    private void handleWalApplyFailure(TableToken tableToken, int errorCode, CharSequence errorMessage) {
+    private void handleWalApplyFailure(TableToken tableToken, WalError walError) {
         try {
-            engine.getTableSequencerAPI().suspendTable(tableToken, errorCode, errorMessage);
+            engine.getTableSequencerAPI().suspendTable(tableToken, walError);
         } catch (CairoException e) {
             LOG.critical().$("could not suspend table [table=").$(tableToken.getTableName()).$(", error=").$(e.getFlyweightMessage()).I$();
         }
@@ -544,14 +545,16 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         .$(", error=").$(ex.getFlyweightMessage())
                         .$(", errno=").$(ex.getErrno())
                         .I$();
-                handleWalApplyFailure(tableToken, ex.getErrno(), ex.getFlyweightMessage());
+                handleWalApplyFailure(tableToken, ex.isOutOfMemory()
+                        ? new WalError(ex.getErrno(), Tag.FAILED_MEMORY_ALLOCATION, ex.getFlyweightMessage())
+                        : new WalError(ex.getErrno(), ex.getFlyweightMessage()));
             }
         } catch (Throwable ex) {
             telemetryFacade.store(TelemetrySystemEvent.WAL_APPLY_SUSPEND, TelemetryOrigin.WAL_APPLY);
             LOG.critical().$("job failed, table suspended [table=").utf8(tableToken.getDirName())
                     .$(", error=").$(ex)
                     .I$();
-            handleWalApplyFailure(tableToken, -1, ex.getMessage());
+            handleWalApplyFailure(tableToken, new WalError(-1, null, ex.getMessage()));
         }
     }
 

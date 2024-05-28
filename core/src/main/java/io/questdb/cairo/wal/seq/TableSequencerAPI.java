@@ -26,6 +26,7 @@ package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.PoolClosedException;
+import io.questdb.cairo.wal.WalError;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -432,11 +433,11 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public void suspendTable(final TableToken tableToken, int errorCode, CharSequence errorMessage) {
+    public void suspendTable(final TableToken tableToken, WalError walError) {
         try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             try {
                 sequencer.suspendTable();
-                getSeqTxnTracker(tableToken).setSuspended(errorCode, errorMessage);
+                getSeqTxnTracker(tableToken).setSuspended(walError);
             } finally {
                 sequencer.unlockWrite();
             }

@@ -114,9 +114,9 @@ public class SeqTxnTracker {
         return (stxn < 1 || writerTxn == (newSeqTxn - 1)) && suspendedState >= 0;
     }
 
-    public void setSuspended(int errorCode, CharSequence errorMessage) {
+    public void setSuspended(WalError walError) {
         this.suspendedState = -1;
-        this.walError = new WalError(errorCode, errorMessage);
+        this.walError = walError;
     }
 
     public void setUnsuspended() {

@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.wal.WalError;
-import io.questdb.cairo.wal.WalErrorTag;
+import io.questdb.cairo.wal.WalError.Tag;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.griffin.FunctionFactory;
@@ -261,7 +261,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
 
                         final SeqTxnTracker seqTxnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
                         final WalError walError = seqTxnTracker.getWalError();
-                        final WalErrorTag walErrorTag = walError.getErrorTag();
+                        final Tag walErrorTag = walError.getErrorTag();
                         errorCode = walError.getErrorCode();
                         errorTag = walErrorTag != null ? walErrorTag.name() : "";
                         errorMessage = walError.getErrorMessage();
