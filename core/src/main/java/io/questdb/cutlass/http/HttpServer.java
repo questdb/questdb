@@ -21,6 +21,30 @@
  *  limitations under the License.
  *
  ******************************************************************************/
+import javax.ws.rs.GET;
+import javax.ws.rs.Path;
+import javax.ws.rs.Produces;
+import javax.ws.rs.QueryParam;
+import javax.ws.rs.core.MediaType;
+import javax.ws.rs.core.Response;
+
+@Path("/replay")
+public class ReplayEndpoint {
+
+    @GET
+    @Produces(MediaType.APPLICATION_JSON)
+    public Response replayData(@QueryParam("start") String start, @QueryParam("end") String end) {
+        // Fetch data between start and end timestamps
+        // Simulated data fetch and stream logic
+        String dataStream = fetchHistoricalData(start, end);
+        return Response.ok(dataStream).build();
+    }
+
+    private String fetchHistoricalData(String start, String end) {
+        // Implement data fetching logic here
+        return "[]"; // Placeholder
+    }
+}
 
 package io.questdb.cutlass.http;
 
