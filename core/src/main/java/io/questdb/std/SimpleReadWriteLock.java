@@ -30,6 +30,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
 
 /**
@@ -50,16 +51,16 @@ public class SimpleReadWriteLock implements ReadWriteLock {
     private final WriteLock writeLock = new WriteLock();
 
     @Override
-    public @NotNull CloseableLock readLock() {
+    public Lock readLock() {
         return readLock;
     }
 
     @Override
-    public @NotNull CloseableLock writeLock() {
+    public Lock writeLock() {
         return writeLock;
     }
 
-    private class ReadLock implements CloseableLock {
+    private class ReadLock implements Lock {
         @Override
         public void lock() {
             while (nReaders.incrementAndGet() >= MAX_READERS) {
@@ -74,7 +75,7 @@ public class SimpleReadWriteLock implements ReadWriteLock {
         }
 
         @Override
-        public @NotNull Condition newCondition() {
+        public Condition newCondition() {
             throw new UnsupportedOperationException();
         }
 
@@ -94,7 +95,7 @@ public class SimpleReadWriteLock implements ReadWriteLock {
         }
     }
 
-    private class WriteLock implements CloseableLock {
+    private class WriteLock implements Lock {
         @Override
         public void lock() {
             while (!lock.compareAndSet(false, true)) {
@@ -112,7 +113,7 @@ public class SimpleReadWriteLock implements ReadWriteLock {
         }
 
         @Override
-        public @NotNull Condition newCondition() {
+        public Condition newCondition() {
             throw new UnsupportedOperationException();
         }
 
