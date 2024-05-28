@@ -2378,7 +2378,6 @@ public class SqlOptimiser implements Mutable {
         // check if we are merging a.x = b.x to a.y = b.y
         // or a.x = b.x to a.x = b.y, e.g. one of columns in the same table
         for (int i = 0, n = b.aNames.size(); i < n; i++) {
-
             CharSequence ban = b.aNames.getQuick(i);
             int bai = b.aIndexes.getQuick(i);
             ExpressionNode bao = b.aNodes.getQuick(i);
@@ -4824,7 +4823,7 @@ public class SqlOptimiser implements Mutable {
                 CharSequence alias = null;
                 int originalNodePosition = -1;
 
-                //group by select clause alias
+                // group by select clause alias
                 if (node.type == LITERAL) {
                     // If literal is select clause alias then use its AST //sym1 -> ccy x -> a
                     // NOTE: this is merely a shortcut and doesn't mean that alias exists at group by stage !
