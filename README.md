@@ -169,8 +169,10 @@ requests or feedback. To get started with contributing:
 ✨ As a sign of our gratitude, we also send **QuestDB swag** to our
 contributors. [Claim your swag](https://questdb.io/community).
 
-A big thanks goes to the following wonderful people who have contributed to
-QuestDB: ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
+<hr>
+<p align="center" class = CONTRIBUTORS; >A big thanks goes to the following wonderful people who have contributed to
+QuestDB: ([emoji key](https://allcontributors.org/docs/en/emoji-key)):</p>
+<hr>
 
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
 <!-- prettier-ignore-start -->
