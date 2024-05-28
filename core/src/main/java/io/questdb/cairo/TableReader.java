@@ -923,11 +923,12 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private void openSymbolMaps() {
         final int columnCount = metadata.getColumnCount();
+        // ensure symbolMapReaders has capacity for columnCount entries
         symbolMapReaders.setPos(columnCount);
         for (int i = 0; i < columnCount; i++) {
             if (ColumnType.isSymbol(metadata.getColumnType(i))) {
-                // symbol map index array is sparse
-                symbolMapReaders.extendAndSet(i, newSymbolMapReader(metadata.getDenseSymbolIndex(i), i));
+                // symbolMapReaders is sparse
+                symbolMapReaders.set(i, newSymbolMapReader(metadata.getDenseSymbolIndex(i), i));
             }
         }
     }
