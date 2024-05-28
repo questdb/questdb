@@ -37,6 +37,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.std.Files.SEPARATOR;
+
 public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
@@ -67,6 +69,11 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
             private int attempt = 0;
 
             @Override
+            public int errno() {
+                return 888;
+            }
+
+            @Override
             public int openRW(LPSZ name, long opts) {
                 if (Utf8s.containsAscii(name, "x.d.1") && attempt++ == 0) {
                     return -1;
@@ -95,7 +102,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("D")));
 
             assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorCode\terrorTag\terrorMessage\n" +
-                    "B\ttrue\t1\t0\t3\t35\t\tcould not open read-write [file=" + root + "/B~2/2022-12-05/x.d.1]\n" +
+                    "B\ttrue\t1\t0\t3\t888\t\tcould not open read-write [file=" + root + SEPARATOR + "B~2" + SEPARATOR + "2022-12-05" + SEPARATOR + "x.d.1]\n" +
                     "C\tfalse\t2\t0\t2\tnull\t\t\n" +
                     "D\tfalse\t1\t0\t1\tnull\t\t\n", "wal_tables() order by name");
 
