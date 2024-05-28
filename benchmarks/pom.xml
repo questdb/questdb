@@ -253,14 +253,15 @@
                     </plugin>
                 </plugins>
             </build>
-            <dependencies>
-                <dependency>
-                    <groupId>org.jetbrains</groupId>
-                    <artifactId>annotations</artifactId>
-                    <version>16.0.2</version>
-                    <scope>provided</scope>
-                </dependency>
-            </dependencies>
+           <dependencies>
+    <dependency>
+        <groupId>org.jetbrains</groupId>
+        <artifactId>annotations</artifactId>
+        <version>24.0.1</version> <!-- Updated version -->
+        <scope>provided</scope>
+    </dependency>
+</dependencies>
+
         </profile>
         <profile>
             <id>java11+</id>
