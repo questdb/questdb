@@ -675,6 +675,9 @@ public class SqlOptimiser implements Mutable {
      * @return all order by advice appears in model columns list
      */
     private boolean allAdviceIsForThisTable(QueryModel model, ObjList<ExpressionNode> orderByAdvice) {
+        if (orderByAdvice.size() < 1) {
+            return false;
+        }
         CharSequence alias;
         LowerCaseCharSequenceObjHashMap<QueryColumn> columnMap = model.getAliasToColumnMap();
         for (int i = 0, n = orderByAdvice.size(); i < n; i++) {
@@ -3457,6 +3460,10 @@ public class SqlOptimiser implements Mutable {
                 setAndCopyAdvice(jm1, orderByAdvice, orderByMnemonic, orderByDirectionAdvice);
             }
             optimiseOrderBy(jm1, orderByMnemonic);
+            // allow jm2 to propagate its own advice
+            if (jm2 != null) {
+                optimiseOrderBy(jm2, orderByMnemonic);
+            }
             return;
         }
         // if the order by advice is for more than one table, don't propagate it, as a sort will be needed anyway
@@ -3473,6 +3480,7 @@ public class SqlOptimiser implements Mutable {
         }
         // order by advice is pushable, so now we copy it and strip the table prefix
         advice = duplicateAdviceAndTakeSuffix();
+
         // if there's a join, we need to handle it differently.
         if (jm2 != null) {
             final int joinType = jm2.getJoinType();
