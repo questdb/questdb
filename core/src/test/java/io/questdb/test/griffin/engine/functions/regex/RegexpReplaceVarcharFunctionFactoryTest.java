@@ -34,9 +34,17 @@ import org.junit.Test;
 public class RegexpReplaceVarcharFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
+    public void testNonExistingGroupIndex() throws Exception {
+        assertFailure(
+                "No group 11",
+                "select regexp_replace('abc'::varchar, '^https?://(?:www\\.)?([^/]+)/.*$', '$11')"
+        );
+    }
+
+    @Test
     public void testNullRegex() throws Exception {
         assertFailure(
-                " NULL regex",
+                "NULL regex",
                 "select regexp_replace('abc'::varchar, null, 'def')"
         );
     }
@@ -44,7 +52,7 @@ public class RegexpReplaceVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNullReplacement() throws Exception {
         assertFailure(
-                " NULL replacement",
+                "NULL replacement",
                 "select regexp_replace('abc'::varchar, 'a', null)"
         );
     }
@@ -52,7 +60,7 @@ public class RegexpReplaceVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testRegexSyntaxError() throws Exception {
         assertFailure(
-                " Dangling meta character '*'",
+                "Dangling meta character '*'",
                 "select regexp_replace('a b c'::varchar, 'XJ**', ' ')"
         );
     }
@@ -60,16 +68,43 @@ public class RegexpReplaceVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSimple() throws Exception {
         assertMemoryLeak(() -> {
-            final String expected = "regexp_replace\n" +
-                    "example1.com\n" +
-                    "http://example3.com\n" +
-                    "example2.com\n" +
-                    "\n" +
-                    "example2.com\n";
             ddl("create table x as (select rnd_varchar('https://example1.com/abc','https://example2.com/def','http://example3.com',null) url from long_sequence(5))");
+
             assertSql(
-                    expected,
+                    "regexp_replace\n" +
+                            "https://foobar1.com/abc\n" +
+                            "http://foobar3.com\n" +
+                            "https://foobar2.com/def\n" +
+                            "\n" +
+                            "https://foobar2.com/def\n",
+                    "select regexp_replace(url, 'example', 'foobar') from x"
+            );
+        });
+    }
+
+    @Test
+    public void testSingleGroup() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as (select rnd_varchar('https://example1.com/abc','https://example2.com/def','http://example3.com',null) url from long_sequence(5))");
+
+            assertSql(
+                    "regexp_replace\n" +
+                            "example1.com\n" +
+                            "http://example3.com\n" +
+                            "example2.com\n" +
+                            "\n" +
+                            "example2.com\n",
                     "select regexp_replace(url, '^https?://(?:www\\.)?([^/]+)/.*$', '$1') from x"
+            );
+
+            assertSql(
+                    "regexp_replace\n" +
+                            "https://example1.com/abc\n" +
+                            "http://example3.com\n" +
+                            "https://example2.com/def\n" +
+                            "\n" +
+                            "https://example2.com/def\n",
+                    "select regexp_replace(url, '^https?://(?:www\\.)?([^/]+)/.*$', '$0') from x"
             );
         });
     }
@@ -78,7 +113,7 @@ public class RegexpReplaceVarcharFunctionFactoryTest extends AbstractCairoTest {
     public void testWhenChainedCallsExceedsMaxLengthExceptionIsThrown() throws Exception {
         assertFailure(
                 "[-1] breached memory limit set for regexp_replace(SSS) [maxLength=1048576]",
-                "select regexp_replace(regexp_replace(regexp_replace(regexp_replace( 'aaaaaaaaaaaaaaaaaaaa'::varchar, 'a', 'aaaaaaaaaaaaaaaaaaaa'), 'a', 'aaaaaaaaaaaaaaaaaaaa'), 'a', 'aaaaaaaaaaaaaaaaaaaa'), 'a', 'aaaaaaaaaaaaaaaaaaaa')"
+                "select regexp_replace(regexp_replace(regexp_replace(regexp_replace('aaaaaaaaaaaaaaaaaaaa'::varchar, 'a', 'aaaaaaaaaaaaaaaaaaaa'), 'a', 'aaaaaaaaaaaaaaaaaaaa'), 'a', 'aaaaaaaaaaaaaaaaaaaa'), 'a', 'aaaaaaaaaaaaaaaaaaaa')"
         );
     }
 
