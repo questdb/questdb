@@ -58,6 +58,8 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 PropertyKey.PG_SELECT_CACHE_ENABLED + "=true",
                 PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD + "=1",
                 PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD + "=100",
+                // JIT doesn't support ARM, and we want exec plans to be the same.
+                PropertyKey.CAIRO_SQL_JIT_MODE + "=off",
                 PropertyKey.DEBUG_ENABLE_TEST_FACTORIES + "=true"
         ));
         dbPath.parent().$();
@@ -135,7 +137,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                         ") timestamp (ts) PARTITION BY DAY",
                 "SELECT * FROM tab WHERE key = 'k3' LIMIT 10",
                 "QUERY PLAN[VARCHAR]\n" +
-                        "Async JIT Filter workers: 4\n" +
+                        "Async Filter workers: 4\n" +
                         "  limit: 10\n" +
                         "  filter: key='k3'\n" +
                         "    DataFrame\n" +
