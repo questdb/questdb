@@ -52,7 +52,6 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
     private final ObjList<DirectLongList> partitionList;
     private final DatabaseSnapshotAgent snapshotAgent;
     private final ObjList<TxReader> txnReaders;
-    private final ObjList<TxnScoreboard> txnScoreboards;
 
     public O3PartitionPurgeJob(CairoEngine engine, DatabaseSnapshotAgent snapshotAgent, int workerCount) {
         super(engine.getMessageBus().getO3PurgeDiscoveryQueue(), engine.getMessageBus().getO3PurgeDiscoverySubSeq());
@@ -62,13 +61,11 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             this.configuration = engine.getMessageBus().getConfiguration();
             this.fileNameSinks = new Utf8StringSink[workerCount];
             this.partitionList = new ObjList<>(workerCount);
-            this.txnScoreboards = new ObjList<>(workerCount);
             this.txnReaders = new ObjList<>(workerCount);
 
             for (int i = 0; i < workerCount; i++) {
                 fileNameSinks[i] = new Utf8StringSink();
                 partitionList.add(new DirectLongList(configuration.getPartitionPurgeListCapacity() * 2L, MemoryTag.NATIVE_O3));
-                txnScoreboards.add(new TxnScoreboard(configuration.getFilesFacade(), configuration.getTxnScoreboardEntryCount()));
                 txnReaders.add(new TxReader(configuration.getFilesFacade()));
             }
         } catch (Throwable th) {
@@ -82,7 +79,6 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         if (halted.compareAndSet(false, true)) {
             Misc.freeObjList(partitionList);
             Misc.freeObjList(txnReaders);
-            Misc.freeObjList(txnScoreboards);
         }
     }
 
@@ -135,7 +131,6 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             DirectLongList partitionList,
             CharSequence root,
             TableToken tableToken,
-            TxnScoreboard txnScoreboard,
             TxReader txReader,
             int partitionBy
     ) {
@@ -170,7 +165,6 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
 
         int tableRootLen = path.size();
         try {
-            txnScoreboard.ofRO(path);
             txReader.ofRO(path.trimTo(tableRootLen).concat(TXN_FILE_NAME).$(), partitionBy);
             TableUtils.safeReadTxn(txReader, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
 
@@ -185,7 +179,6 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                                 path,
                                 tableRootLen,
                                 txReader,
-                                txnScoreboard,
                                 partitionTimestamp,
                                 partitionBy,
                                 partitionList,
@@ -205,7 +198,6 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                         path,
                         tableRootLen,
                         txReader,
-                        txnScoreboard,
                         partitionTimestamp,
                         partitionBy,
                         partitionList,
@@ -228,7 +220,6 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             LOG.error().$(ex.getFlyweightMessage()).$();
         } finally {
             txReader.clear();
-            txnScoreboard.clear();
         }
         LOG.info().$("processed [table=").$(tableToken).I$();
     }
@@ -239,7 +230,6 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             Path path,
             int tableRootLen,
             TxReader txReader,
-            TxnScoreboard txnScoreboard,
             long partitionTimestamp,
             int partitionBy,
             DirectLongList partitionList,
@@ -254,7 +244,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
 
             // If last committed transaction number is 4, TableWriter can write partition with ending .4 and .3
             // If the version on disk is .2 (nameTxn == 3) can remove it if the lastTxn > 3, e.g. when nameTxn < lastTxn
-            boolean rangeUnlocked = nameTxn < lastTxn && txnScoreboard.isRangeAvailable(nameTxn, lastTxn);
+            boolean rangeUnlocked = nameTxn < lastTxn && !engine.isPartitionVersionUsed(tableToken, partitionTimestamp, nameTxn - 1);
 
             path.trimTo(tableRootLen);
             TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, nameTxn - 1);
@@ -279,7 +269,6 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             Path path,
             int tableRootLen,
             TxReader txReader,
-            TxnScoreboard txnScoreboard,
             long partitionTimestamp,
             int partitionBy,
             DirectLongList partitionList,
@@ -294,7 +283,6 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                     path,
                     tableRootLen,
                     txReader,
-                    txnScoreboard,
                     partitionTimestamp,
                     partitionBy,
                     partitionList,
@@ -308,7 +296,6 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                     path,
                     tableRootLen,
                     txReader,
-                    txnScoreboard,
                     partitionTimestamp,
                     partitionBy,
                     partitionList,
@@ -324,7 +311,6 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             Path path,
             int tableRootLen,
             TxReader txReader,
-            TxnScoreboard txnScoreboard,
             long partitionTimestamp,
             int partitionBy,
             DirectLongList partitionList,
@@ -342,7 +328,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 long previousNameVersion = partitionList.get(i - 2);
 
                 boolean rangeUnlocked = previousNameVersion < nextNameVersion
-                        && txnScoreboard.isRangeAvailable(previousNameVersion, nextNameVersion);
+                        && !engine.isPartitionVersionUsed(tableToken, partitionTimestamp, previousNameVersion - 1);
 
                 path.trimTo(tableRootLen);
                 TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, previousNameVersion - 1);
@@ -398,7 +384,6 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 partitionList.get(workerId),
                 configuration.getRoot(),
                 task.getTableToken(),
-                txnScoreboards.get(workerId),
                 txnReaders.get(workerId),
                 task.getPartitionBy()
         );

@@ -175,7 +175,9 @@ public class TableReader implements Closeable, SymbolTableSource {
             freeSymbolMapReaders();
             freeBitmapIndexCache();
             Misc.free(metadata);
-            Misc.free(txFile);
+            synchronized (txFile) {
+                Misc.free(txFile);
+            }
             Misc.free(todoMem);
             freeColumns();
             freeTempMem();
@@ -492,6 +494,16 @@ public class TableReader implements Closeable, SymbolTableSource {
         return rowCount;
     }
 
+    public boolean unsafePollUsedPartitions(long partitionTimestamp, long nameVersion) {
+        synchronized (txFile) {
+            if (txFile.isOpen()) {
+                long partitionNameVersion = txFile.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp, -2);
+                return nameVersion == partitionNameVersion;
+            }
+        }
+        return false;
+    }
+
     public void updateTableToken(TableToken tableToken) {
         this.tableToken = tableToken;
         this.metadata.updateTableToken(tableToken);
@@ -549,18 +561,22 @@ public class TableReader implements Closeable, SymbolTableSource {
     private void checkSchedulePurgeO3Partitions() {
         long txnLocks = txnScoreboard.getActiveReaderCount(txn);
         long partitionTableVersion = txFile.getPartitionTableVersion();
-        if (txnLocks == 0 && txFile.unsafeLoadAll() && txFile.getPartitionTableVersion() > partitionTableVersion) {
-            // Last lock for this txn is released and this is not latest txn number
-            // Schedule a job to clean up partition versions this reader may hold
-            if (TableUtils.schedulePurgeO3Partitions(messageBus, tableToken, partitionBy)) {
-                return;
-            }
+        if (txnLocks == 0) {
+            synchronized (txFile) {
+                if (txFile.unsafeLoadAll() && txFile.getPartitionTableVersion() > partitionTableVersion) {
+                    // Last lock for this txn is released and this is not latest txn number
+                    // Schedule a job to clean up partition versions this reader may hold
+                    if (TableUtils.schedulePurgeO3Partitions(messageBus, tableToken, partitionBy)) {
+                        return;
+                    }
 
-            LOG.error()
-                    .$("could not queue purge partition task, queue is full [")
-                    .$("dirName=").utf8(tableToken.getDirName())
-                    .$(", txn=").$(txn)
-                    .$(']').$();
+                    LOG.error()
+                            .$("could not queue purge partition task, queue is full [")
+                            .$("dirName=").utf8(tableToken.getDirName())
+                            .$(", txn=").$(txn)
+                            .$(']').$();
+                }
+            }
         }
     }
 
@@ -870,7 +886,6 @@ public class TableReader implements Closeable, SymbolTableSource {
                             .$("open partition ").$(path)
                             .$(" [rowCount=").$(partitionSize)
                             .$(", partitionIndex=").$(partitionIndex)
-                            .$(", partitionCount=").$(partitionCount)
                             .I$();
 
                     openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), partitionSize);
@@ -949,34 +964,36 @@ public class TableReader implements Closeable, SymbolTableSource {
     private void readTxnSlow(long deadline) {
         int count = 0;
 
-        while (true) {
-            if (txFile.unsafeLoadAll()) {
-                // good, very stable, congrats
-                long txn = txFile.getTxn();
-                releaseTxn();
-                this.txn = txn;
+        synchronized (txFile) {
+            while (true) {
+                if (txFile.unsafeLoadAll()) {
+                    // good, very stable, congrats
+                    long txn = txFile.getTxn();
+                    releaseTxn();
+                    this.txn = txn;
 
-                if (acquireTxn()) {
-                    this.rowCount = txFile.getFixedRowCount() + txFile.getTransientRowCount();
-                    LOG.debug()
-                            .$("new transaction [txn=").$(txn)
-                            .$(", transientRowCount=").$(txFile.getTransientRowCount())
-                            .$(", fixedRowCount=").$(txFile.getFixedRowCount())
-                            .$(", maxTimestamp=").$ts(txFile.getMaxTimestamp())
-                            .$(", attempts=").$(count)
-                            .$(", thread=").$(Thread.currentThread().getName())
-                            .I$();
-                    break;
+                    if (acquireTxn()) {
+                        this.rowCount = txFile.getFixedRowCount() + txFile.getTransientRowCount();
+                        LOG.debug()
+                                .$("new transaction [txn=").$(txn)
+                                .$(", transientRowCount=").$(txFile.getTransientRowCount())
+                                .$(", fixedRowCount=").$(txFile.getFixedRowCount())
+                                .$(", maxTimestamp=").$ts(txFile.getMaxTimestamp())
+                                .$(", attempts=").$(count)
+                                .$(", thread=").$(Thread.currentThread().getName())
+                                .I$();
+                        break;
+                    }
                 }
+                // This is unlucky, sequences have changed while we were reading transaction data
+                // We must discard and try again
+                count++;
+                if (clock.getTicks() > deadline) {
+                    LOG.error().$("tx read timeout [timeout=").$(configuration.getSpinLockTimeout()).$("ms]").$();
+                    throw CairoException.critical(0).put("Transaction read timeout");
+                }
+                Os.pause();
             }
-            // This is unlucky, sequences have changed while we were reading transaction data
-            // We must discard and try again
-            count++;
-            if (clock.getTicks() > deadline) {
-                LOG.error().$("tx read timeout [timeout=").$(configuration.getSpinLockTimeout()).$("ms]").$();
-                throw CairoException.critical(0).put("Transaction read timeout");
-            }
-            Os.pause();
         }
     }
 
@@ -1138,51 +1155,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         return columnVersionReader.getVersion() == columnVersion;
     }
 
-    private boolean reloadMetadata(int txnMetadataVersion, long deadline, boolean reshuffleColumns) {
-        // create transition index, which will help us reuse already open resources
-        if (txnMetadataVersion == metadata.getMetadataVersion()) {
-            return true;
-        }
-
-        while (true) {
-            try {
-                if (!metadata.prepareTransition(txnMetadataVersion)) {
-                    if (clock.getTicks() < deadline) {
-                        return false;
-                    }
-                    LOG.error().$("metadata read timeout [timeout=").$(configuration.getSpinLockTimeout()).utf8("ms, table=").$(tableToken.getTableName()).I$();
-                    throw CairoException.critical(0).put("Metadata read timeout [table=").put(tableToken.getTableName()).put(']');
-                }
-            } catch (CairoException ex) {
-                // This is temporary solution until we can get multiple version of metadata not overwriting each other
-                TableUtils.handleMetadataLoadException(tableToken.getTableName(), deadline, ex, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
-                continue;
-            }
-
-            assert !reshuffleColumns || metadata.getColumnCount() == this.columnCount;
-            TableReaderMetadataTransitionIndex transitionIndex = metadata.applyTransition();
-            if (reshuffleColumns) {
-                final int columnCount = metadata.getColumnCount();
-
-                int columnCountShl = getColumnBits(columnCount);
-                // when a column is added we cannot easily reshuffle columns in-place
-                // the reason is that we'd have to create gaps in columns list between
-                // partitions. It is possible in theory, but this could be an algo for
-                // another day.
-                if (columnCountShl > this.columnCountShl) {
-                    createNewColumnList(columnCount, transitionIndex, columnCountShl);
-                } else {
-                    reshuffleColumns(columnCount, transitionIndex);
-                }
-                // rearrange symbol map reader list
-                reshuffleSymbolMapReaders(transitionIndex, columnCount);
-                this.columnCount = columnCount;
-                reloadSymbolMapCounts();
-            }
-            return true;
-        }
-    }
-
     /**
      * Updates boundaries of all columns in partition.
      *
@@ -1225,6 +1197,51 @@ public class TableReader implements Closeable, SymbolTableSource {
             }
         } finally {
             path.trimTo(rootLen);
+        }
+    }
+
+    private boolean reloadMetadata(int txnMetadataVersion, long deadline, boolean reshuffleColumns) {
+        // create transition index, which will help us reuse already open resources
+        if (txnMetadataVersion == metadata.getMetadataVersion()) {
+            return true;
+        }
+
+        while (true) {
+            try {
+                if (!metadata.prepareTransition(txnMetadataVersion)) {
+                    if (clock.getTicks() < deadline) {
+                        return false;
+                    }
+                    LOG.error().$("metadata read timeout [timeout=").$(configuration.getSpinLockTimeout()).utf8("ms, table=").$(tableToken.getTableName()).I$();
+                    throw CairoException.critical(0).put("Metadata read timeout [table=").put(tableToken.getTableName()).put(']');
+                }
+            } catch (CairoException ex) {
+                // This is temporary solution until we can get multiple version of metadata not overwriting each other
+                TableUtils.handleMetadataLoadException(tableToken.getTableName(), deadline, ex, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
+                continue;
+            }
+
+            assert !reshuffleColumns || metadata.getColumnCount() == this.columnCount;
+            TableReaderMetadataTransitionIndex transitionIndex = metadata.applyTransition();
+            if (reshuffleColumns) {
+                final int columnCount = metadata.getColumnCount();
+
+                int columnCountShl = getColumnBits(columnCount);
+                // when a column is added we cannot easily reshuffle columns in-place
+                // the reason is that we'd have to create gaps in columns list between
+                // partitions. It is possible in theory, but this could be an algo for
+                // another day.
+                if (columnCountShl > this.columnCountShl) {
+                    createNewColumnList(columnCount, transitionIndex, columnCountShl);
+                } else {
+                    reshuffleColumns(columnCount, transitionIndex);
+                }
+                // rearrange symbol map reader list
+                reshuffleSymbolMapReaders(transitionIndex, columnCount);
+                this.columnCount = columnCount;
+                reloadSymbolMapCounts();
+            }
+            return true;
         }
     }
 

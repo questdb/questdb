@@ -477,6 +477,10 @@ public class TxReader implements Closeable, Mutable {
         seqTxn = -1L;
     }
 
+    public boolean isOpen() {
+        return txn != -1;
+    }
+
     private int getInt(long readOffset) {
         assert readOffset + Integer.BYTES <= size : "offset " + readOffset + ", size " + size + ", txn=" + txn;
         return roTxMemBase.getInt(baseOffset + readOffset);
