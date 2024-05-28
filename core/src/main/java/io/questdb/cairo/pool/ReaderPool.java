@@ -73,7 +73,7 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
                     if (reader == null) {
                         continue;
                     }
-                    if (reader.unsafePollUsedPartitions(partitionTimestamp, nameVersion)) {
+                    if (reader.isPartitionVersionUsed(partitionTimestamp, nameVersion)) {
                         return true;
                     }
                 }

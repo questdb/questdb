@@ -67,7 +67,9 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final MemoryMR todoMem = Vm.getMRInstance();
     private final TxReader txFile;
-    private final Object txFileLock = new Object();
+    // Read access to txFile can be done from any thread by method isPartitionVersionUsed
+    // To not allow txFile reload while it's read by, the writing access has to be locked
+    private final SimpleReadWriteLock txFileLock = new SimpleReadWriteLock();
     private final TxnScoreboard txnScoreboard;
     private ObjList<BitmapIndexReader> bitmapIndexes;
     private int columnCount;
@@ -176,7 +178,10 @@ public class TableReader implements Closeable, SymbolTableSource {
             freeSymbolMapReaders();
             freeBitmapIndexCache();
             Misc.free(metadata);
-            synchronized (txFileLock) {
+            // This changes the content of txFile, so we have to acquire write lock
+            // so that a reading is not done in non-owner thred using isPartitionVersionUsed() method
+            // concurrently
+            try (CloseableLock ignore = txFileLock.writeLock()) {
                 Misc.free(txFile);
             }
             Misc.free(todoMem);
@@ -376,6 +381,18 @@ public class TableReader implements Closeable, SymbolTableSource {
         return tempMem8b != 0L;
     }
 
+    public boolean isPartitionVersionUsed(long partitionTimestamp, long nameVersion) {
+        // This method can be invoked by not a reader owner
+        // but arbitrary thread, so we have to acquire read lock
+        try (CloseableLock ignore = txFileLock.readLock()) {
+            if (txFile.isOpen()) {
+                long partitionNameVersion = txFile.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp, -2);
+                return nameVersion == partitionNameVersion;
+            }
+        }
+        return false;
+    }
+
     @Override
     public StaticSymbolTable newSymbolTable(int columnIndex) {
         return getSymbolMapReader(columnIndex).newSymbolTableView();
@@ -495,16 +512,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         return rowCount;
     }
 
-    public boolean unsafePollUsedPartitions(long partitionTimestamp, long nameVersion) {
-        synchronized (txFileLock) {
-            if (txFile.isOpen()) {
-                long partitionNameVersion = txFile.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp, -2);
-                return nameVersion == partitionNameVersion;
-            }
-        }
-        return false;
-    }
-
     public void updateTableToken(TableToken tableToken) {
         this.tableToken = tableToken;
         this.metadata.updateTableToken(tableToken);
@@ -563,7 +570,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         long txnLocks = txnScoreboard.getActiveReaderCount(txn);
         long partitionTableVersion = txFile.getPartitionTableVersion();
         if (txnLocks == 0) {
-            synchronized (txFileLock) {
+            // This changes the content of txFile, so we have to acquire write lock
+            // so that a reading is not done in non-owner thred using isPartitionVersionUsed() method
+            // concurrently
+            try (CloseableLock ignore = txFileLock.writeLock()) {
                 if (txFile.unsafeLoadAll() && txFile.getPartitionTableVersion() > partitionTableVersion) {
                     // Last lock for this txn is released and this is not latest txn number
                     // Schedule a job to clean up partition versions this reader may hold
@@ -965,7 +975,10 @@ public class TableReader implements Closeable, SymbolTableSource {
     private void readTxnSlow(long deadline) {
         int count = 0;
 
-        synchronized (txFileLock) {
+        // This changes the content of txFile, so we have to acquire write lock
+        // so that a reading is not done in non-owner thred using isPartitionVersionUsed() method
+        // concurrently
+        try (CloseableLock ignore = txFileLock.writeLock()) {
             while (true) {
                 if (txFile.unsafeLoadAll()) {
                     // good, very stable, congrats
@@ -1106,10 +1119,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                         LOG.critical().$("Invalid var len column size [column=").$(name).$(", size=").$(dataSize).$(", path=").$(path).I$();
                         throw CairoException.critical(0).put("Invalid column size [column=").put(path).put(", size=").put(dataSize).put(']');
                     }
-                    if (columnRowCount > 0) {
-                        TableUtils.dFile(path.trimTo(plen), name, columnTxn);
-                        openOrCreateMemory(path, columns, primaryIndex, dataMem, dataSize);
-                    }
+                    TableUtils.dFile(path.trimTo(plen), name, columnTxn);
+                    openOrCreateMemory(path, columns, primaryIndex, dataMem, dataSize);
                 } else {
                     TableUtils.dFile(path.trimTo(plen), name, columnTxn);
                     openOrCreateMemory(
