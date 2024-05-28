@@ -26,6 +26,20 @@
 <input type="datetime-local" id="end-time">
 <button onclick="startReplay()">Start Replay</button>
 
+<script>
+function startReplay() {
+    let start = document.getElementById('start-time').value;
+    let end = document.getElementById('end-time').value;
+    fetch(`/replay?start=${start}&end=${end}`)
+        .then(response => response.json())
+        .then(data => {
+            // Display replayed data logic
+            console.log(data);
+        });
+}
+</script>
+
+
 <assembly>
     <id>web-console</id>
     <formats>
