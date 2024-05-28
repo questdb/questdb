@@ -52,9 +52,9 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
                 for (int i = 0; i < 5; i++) {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         println(factory, cursor);
-                        TestUtils.assertEquals("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\n" +
-                                "B\tfalse\t0\t0\t0\n" +
-                                "C\tfalse\t0\t0\t0\n", sink);
+                        TestUtils.assertEquals("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorCode\terrorTag\terrorMessage\n" +
+                                "B\tfalse\t0\t0\t0\tnull\t\t\n" +
+                                "C\tfalse\t0\t0\t0\tnull\t\t\n", sink);
                     }
                 }
             }
@@ -94,10 +94,10 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("C")));
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("D")));
 
-            assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\n" +
-                    "B\ttrue\t1\t0\t3\n" +
-                    "C\tfalse\t2\t0\t2\n" +
-                    "D\tfalse\t1\t0\t1\n", "wal_tables() order by name");
+            assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorCode\terrorTag\terrorMessage\n" +
+                    "B\ttrue\t1\t0\t3\t35\t\tcould not open read-write [file=" + root + "/B~2/2022-12-05/x.d.1]\n" +
+                    "C\tfalse\t2\t0\t2\tnull\t\t\n" +
+                    "D\tfalse\t1\t0\t1\tnull\t\t\n", "wal_tables() order by name");
 
             assertSql("name\tsuspended\twriterTxn\n" +
                     "B\ttrue\t1\n" +

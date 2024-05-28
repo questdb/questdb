@@ -24,24 +24,30 @@
 
 package io.questdb.cairo.wal.seq;
 
+import io.questdb.cairo.wal.WalError;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.TestOnly;
 
 public class SeqTxnTracker {
-    private static final long SEQ_TXN_OFFSET;
-    private static final long SUSPENDED_STATE_OFFSET;
-    private static final long WRITER_TXN_OFFSET;
+    private static final long SEQ_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "seqTxn");
+    private static final long SUSPENDED_STATE_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "suspendedState");
+    private static final long WRITER_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "writerTxn");
     @SuppressWarnings("FieldMayBeFinal")
     private volatile long seqTxn = -1;
     // -1 suspended
     // 0 unknown
     // 1 not suspended
     private volatile int suspendedState = 0;
+    private volatile WalError walError = WalError.OK;
     private volatile long writerTxn = -1;
 
     @TestOnly
     public long getSeqTxn() {
         return seqTxn;
+    }
+
+    public WalError getWalError() {
+        return walError;
     }
 
     @TestOnly
@@ -108,17 +114,13 @@ public class SeqTxnTracker {
         return (stxn < 1 || writerTxn == (newSeqTxn - 1)) && suspendedState >= 0;
     }
 
-    public void setSuspended() {
+    public void setSuspended(int errorCode, CharSequence errorMessage) {
         this.suspendedState = -1;
+        this.walError = new WalError(errorCode, errorMessage);
     }
 
     public void setUnsuspended() {
         this.suspendedState = 1;
-    }
-
-    static {
-        SEQ_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "seqTxn");
-        WRITER_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "writerTxn");
-        SUSPENDED_STATE_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "suspendedState");
+        this.walError = WalError.OK;
     }
 }

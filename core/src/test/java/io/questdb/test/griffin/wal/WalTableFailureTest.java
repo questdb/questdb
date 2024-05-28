@@ -1114,7 +1114,8 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     "1111\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
                     "1\tAB\t2022-02-24T01:00:00.000000Z\tEF\n" +
                     "2\tAB\t2022-02-24T02:00:00.000000Z\tEF\n", tableToken.getTableName());
-            assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\n" + tableToken.getTableName() + "\tfalse\t4\t0\t4\n", "wal_tables()");
+            assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorCode\terrorTag\terrorMessage\n" +
+                    tableToken.getTableName() + "\tfalse\t4\t0\t4\tnull\t\t\n", "wal_tables()");
         });
     }
 
@@ -1215,7 +1216,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wal from txn -10", "invalid value [value=-]");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wal from txn 10AA", "invalid value [value=10AA]");
 
-            engine.getTableSequencerAPI().suspendTable(tableToken);
+            engine.getTableSequencerAPI().suspendTable(tableToken, 999, "wal apply error");
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
             assertAlterTableTypeFail(
                     "alter table " + tableToken.getTableName() + "ererer resume wal from txn 2",
@@ -1254,7 +1255,8 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             assertSql("x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableToken.getTableName());
 
-            assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\n" + tableToken.getTableName() + "\ttrue\t1\t0\t4\n", "wal_tables()");
+            assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorCode\terrorTag\terrorMessage\n" +
+                    tableToken.getTableName() + "\ttrue\t1\t0\t4\t35\t\tcould not open read-write [file=" + root + "/" + tableToken.getTableName() + "~1/2022-02-24/x.d.1]\n", "wal_tables()");
 
             compile("alter table " + tableToken.getTableName() + " resume wal");
             compile("alter table " + tableToken.getTableName() + " resume wal from transaction 0"); // ignored
@@ -1263,7 +1265,8 @@ public class WalTableFailureTest extends AbstractCairoTest {
             engine.releaseInactive(); // release writer from the pool
             drainWalQueue();
             assertSql("x\tsym\tts\tsym2\n1111\tXXX\t2022-02-24T00:00:00.000000Z\tYYY\n", tableToken.getTableName());
-            assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\n" + tableToken.getTableName() + "\tfalse\t4\t0\t4\n", "wal_tables()");
+            assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorCode\terrorTag\terrorMessage\n" +
+                    tableToken.getTableName() + "\tfalse\t4\t0\t4\tnull\t\t\n", "wal_tables()");
         });
     }
 
