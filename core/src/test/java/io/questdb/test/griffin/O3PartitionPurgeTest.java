@@ -29,6 +29,7 @@ import io.questdb.cairo.*;
 import io.questdb.log.Log;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
@@ -394,6 +395,61 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
 
                 path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-09.0").concat("x.d").$();
                 Assert.assertFalse(Utf8s.toString(path), Files.exists(path));
+            }
+        });
+    }
+
+    @Test
+    public void testRollbackWithActiveReaders() throws Exception {
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int openRW(LPSZ name, long opts) {
+                if (Utf8s.containsAscii(name, "1970-01-09.3")) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            try (Path path = new Path()) {
+                ddl("create table tbl as (select x, cast('1970-01-10T10' as timestamp) ts from long_sequence(1)) timestamp(ts) partition by DAY");
+                TableToken tableToken = engine.verifyTableName("tbl");
+
+
+                // In order inserts partition 1970-01-09
+                insert("insert into tbl select 4, '1970-01-09T10'");
+                insert("insert into tbl select 4, '1970-01-09T10'");
+
+                // Simulate a rolled back commit, add a directory with name 1970-01-09.2
+                try {
+                    insert("insert into tbl select 4, '1970-01-09T09'");
+                    Assert.fail("expected file open error");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.getMessage().contains("failed and will be rolled back"));
+                }
+                path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-09.3").$();
+                Assert.assertTrue(Utf8s.toString(path), Files.exists(path));
+
+                insert("insert into tbl select 4, '1970-01-09T10'");
+
+                try (TableReader rdr = getReader("tbl")) {
+
+                    // Make in order insert to bump txn number
+                    insert("insert into tbl select 4, '1970-01-09T10'");
+
+                    // OOO inserts partition 1970-01-09
+                    insert("insert into tbl select 5, '1970-01-09T09'");
+                    insert("insert into tbl select 5, '1970-01-09T08'");
+
+                    path.of(engine.getConfiguration().getRoot()).concat(tableToken).concat("1970-01-09.5").concat("x.d").$();
+                    Assert.assertTrue(Utf8s.toString(path), Files.exists(path));
+
+                    runPartitionPurgeJobs();
+
+                    // This should not fail
+                    rdr.openPartition(0);
+                }
             }
         });
     }
