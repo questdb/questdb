@@ -196,13 +196,13 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
                 txWriter.resetLagAppliedRows();
             }
 
-            if (PartitionBy.isPartitioned(tableMetadata.getPartitionBy())) {
-                // Remove non-attached partitions
-                LOG.debug().$("purging non attached partitions [path=").$(tablePath.$()).I$();
-                partitionCleanPath = tablePath;
-                this.partitionDirFmt = PartitionBy.getPartitionDirFormatMethod(tableMetadata.getPartitionBy());
-                ff.iterateDir(tablePath.$(), removePartitionDirsNotAttached);
-            }
+//            if (PartitionBy.isPartitioned(tableMetadata.getPartitionBy())) {
+//                // Remove non-attached partitions
+//                LOG.debug().$("purging non attached partitions [path=").$(tablePath.$()).I$();
+//                partitionCleanPath = tablePath;
+//                this.partitionDirFmt = PartitionBy.getPartitionDirFormatMethod(tableMetadata.getPartitionBy());
+//                ff.iterateDir(tablePath.$(), removePartitionDirsNotAttached);
+//            }
 
         } finally {
             tablePath.trimTo(pathTableLen);
