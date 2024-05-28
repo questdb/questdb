@@ -24,9 +24,7 @@
 
 package io.questdb.griffin.engine.table.parquet;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.*;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectUtf8Sink;
@@ -34,14 +32,16 @@ import io.questdb.std.str.Path;
 
 public class PartitionEncoder implements QuietCloseable {
     private DirectLongList columnAddrs = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
-    private DirectLongList columnSizes = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
     private DirectIntList columnIds = new DirectIntList(16, MemoryTag.NATIVE_DEFAULT);
     private DirectIntList columnNameLengths = new DirectIntList(16, MemoryTag.NATIVE_DEFAULT);
     private DirectUtf8Sink columnNames = new DirectUtf8Sink(32);
     private DirectLongList columnSecondaryAddrs = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
     private DirectLongList columnSecondarySizes = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
+    private DirectLongList columnSizes = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
     private DirectLongList columnTops = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
     private DirectIntList columnTypes = new DirectIntList(16, MemoryTag.NATIVE_DEFAULT);
+    private DirectLongList symbolOffsetsAddrs = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
+    private DirectLongList symbolOffsetsSizes = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
 
     @Override
     public void close() {
@@ -54,6 +54,8 @@ public class PartitionEncoder implements QuietCloseable {
         columnSizes = Misc.free(columnSizes);
         columnSecondaryAddrs = Misc.free(columnSecondaryAddrs);
         columnSecondarySizes = Misc.free(columnSecondarySizes);
+        symbolOffsetsAddrs = Misc.free(symbolOffsetsAddrs);
+        symbolOffsetsSizes = Misc.free(symbolOffsetsSizes);
     }
 
     public void encode(TableReader tableReader, int partitionIndex, Path destPath) {
@@ -78,10 +80,26 @@ public class PartitionEncoder implements QuietCloseable {
             columnAddrs.add(primaryMem.addressOf(0));
             columnSizes.add(primaryMem.size());
 
-            // offsets/aux for variable length columns
-            final MemoryR secondaryMem = tableReader.getColumn(primaryIndex + 1);
-            columnSecondaryAddrs.add(secondaryMem != null ? secondaryMem.addressOf(0) : 0);
-            columnSecondarySizes.add(secondaryMem != null ? secondaryMem.size() : 0);
+            if (ColumnType.isVarSize(columnType)) {
+                final MemoryR secondaryMem = tableReader.getColumn(primaryIndex + 1);
+                columnSecondaryAddrs.add(secondaryMem.addressOf(0));
+                columnSecondarySizes.add(secondaryMem.size());
+                symbolOffsetsAddrs.add(0);
+                symbolOffsetsSizes.add(0);
+            } else if (ColumnType.isSymbol(columnType)) {
+                SymbolMapReader symbolMapReader = tableReader.getSymbolMapReader(i);
+                final MemoryR symbolValuesMem = symbolMapReader.getSymbolValuesColumn();
+                final MemoryR symbolOffsetsMem = symbolMapReader.getSymbolOffsetsColumn();
+                columnSecondaryAddrs.add(symbolValuesMem.addressOf(0));
+                columnSecondarySizes.add(symbolValuesMem.size());
+                symbolOffsetsAddrs.add(symbolOffsetsMem.addressOf(0));
+                symbolOffsetsSizes.add(symbolOffsetsMem.size() / Long.BYTES);
+            } else {
+                columnSecondaryAddrs.add(0);
+                columnSecondarySizes.add(0);
+                symbolOffsetsAddrs.add(0);
+                symbolOffsetsSizes.add(0);
+            }
         }
 
         try {
@@ -98,6 +116,8 @@ public class PartitionEncoder implements QuietCloseable {
                     columnSizes.getAddress(),
                     columnSecondaryAddrs.getAddress(),
                     columnSecondarySizes.getAddress(),
+                    symbolOffsetsAddrs.getAddress(),
+                    symbolOffsetsSizes.getAddress(),
                     partitionSize,
                     destPath.ptr(),
                     destPath.size()
@@ -125,6 +145,8 @@ public class PartitionEncoder implements QuietCloseable {
             long columnSizesPtr,
             long columnSecondaryAddrsPtr,
             long columnSecondarySizesPtr,
+            long symbolOffsetsAddrsPtr,
+            long symbolOffsetsSizesPtr,
             long rowCount,
             long destPathPtr,
             int destPathLength
@@ -140,6 +162,8 @@ public class PartitionEncoder implements QuietCloseable {
         columnSizes.clear();
         columnSecondaryAddrs.clear();
         columnSecondarySizes.clear();
+        symbolOffsetsAddrs.clear();
+        symbolOffsetsSizes.clear();
     }
 
     static {
