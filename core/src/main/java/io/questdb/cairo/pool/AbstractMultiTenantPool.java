@@ -51,7 +51,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
     private final Log LOG = LogFactory.getLog(this.getClass());
     private final ConcurrentHashMap<Entry<T>> entries = new ConcurrentHashMap<>();
     private final int maxEntries;
-    protected final int maxSegments;
+    private final int maxSegments;
 
     public AbstractMultiTenantPool(CairoConfiguration configuration, int maxSegments, long inactiveTtlMillis) {
         super(configuration, inactiveTtlMillis);
@@ -257,6 +257,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
             entry.assignTenant(index, null);
         }
     }
+
     private Entry<T> getEntry(TableToken token) {
         checkClosed();
 
@@ -394,10 +395,6 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         throw CairoException.critical(0).put("double close [table=").put(tableToken.getDirName()).put(", index=").put(index).put(']');
     }
 
-    public interface UnsafePollOrCallback<T> {
-        void poll(T tenant);
-    }
-
     public static final class Entry<T> {
         private final long[] allocations = new long[ENTRY_SIZE];
         private final int index;
@@ -433,10 +430,5 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         public T getTenant(int pos) {
             return tenants[pos];
         }
-
-        public boolean isItemLocked(int i) {
-            return Unsafe.arrayGetVolatile(allocations, i) != UNLOCKED;
-        }
     }
 }
-

@@ -175,9 +175,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             freeSymbolMapReaders();
             freeBitmapIndexCache();
             Misc.free(metadata);
-            synchronized (txFile) {
-                Misc.free(txFile);
-            }
+            Misc.free(txFile);
             Misc.free(todoMem);
             freeColumns();
             freeTempMem();
@@ -494,16 +492,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         return rowCount;
     }
 
-    public boolean unsafePollUsedPartitions(long partitionTimestamp, long nameVersion) {
-        synchronized (txFile) {
-            if (txFile.isOpen()) {
-                long partitionNameVersion = txFile.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp, -2);
-                return nameVersion == partitionNameVersion;
-            }
-        }
-        return false;
-    }
-
     public void updateTableToken(TableToken tableToken) {
         this.tableToken = tableToken;
         this.metadata.updateTableToken(tableToken);
@@ -561,22 +549,18 @@ public class TableReader implements Closeable, SymbolTableSource {
     private void checkSchedulePurgeO3Partitions() {
         long txnLocks = txnScoreboard.getActiveReaderCount(txn);
         long partitionTableVersion = txFile.getPartitionTableVersion();
-        if (txnLocks == 0) {
-            synchronized (txFile) {
-                if (txFile.unsafeLoadAll() && txFile.getPartitionTableVersion() > partitionTableVersion) {
-                    // Last lock for this txn is released and this is not latest txn number
-                    // Schedule a job to clean up partition versions this reader may hold
-                    if (TableUtils.schedulePurgeO3Partitions(messageBus, tableToken, partitionBy)) {
-                        return;
-                    }
-
-                    LOG.error()
-                            .$("could not queue purge partition task, queue is full [")
-                            .$("dirName=").utf8(tableToken.getDirName())
-                            .$(", txn=").$(txn)
-                            .$(']').$();
-                }
+        if (txnLocks == 0 && txFile.unsafeLoadAll() && txFile.getPartitionTableVersion() > partitionTableVersion) {
+            // Last lock for this txn is released and this is not latest txn number
+            // Schedule a job to clean up partition versions this reader may hold
+            if (TableUtils.schedulePurgeO3Partitions(messageBus, tableToken, partitionBy)) {
+                return;
             }
+
+            LOG.error()
+                    .$("could not queue purge partition task, queue is full [")
+                    .$("dirName=").utf8(tableToken.getDirName())
+                    .$(", txn=").$(txn)
+                    .$(']').$();
         }
     }
 
@@ -886,6 +870,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                             .$("open partition ").$(path)
                             .$(" [rowCount=").$(partitionSize)
                             .$(", partitionIndex=").$(partitionIndex)
+                            .$(", partitionCount=").$(partitionCount)
                             .I$();
 
                     openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), partitionSize);
@@ -964,36 +949,34 @@ public class TableReader implements Closeable, SymbolTableSource {
     private void readTxnSlow(long deadline) {
         int count = 0;
 
-        synchronized (txFile) {
-            while (true) {
-                if (txFile.unsafeLoadAll()) {
-                    // good, very stable, congrats
-                    long txn = txFile.getTxn();
-                    releaseTxn();
-                    this.txn = txn;
+        while (true) {
+            if (txFile.unsafeLoadAll()) {
+                // good, very stable, congrats
+                long txn = txFile.getTxn();
+                releaseTxn();
+                this.txn = txn;
 
-                    if (acquireTxn()) {
-                        this.rowCount = txFile.getFixedRowCount() + txFile.getTransientRowCount();
-                        LOG.debug()
-                                .$("new transaction [txn=").$(txn)
-                                .$(", transientRowCount=").$(txFile.getTransientRowCount())
-                                .$(", fixedRowCount=").$(txFile.getFixedRowCount())
-                                .$(", maxTimestamp=").$ts(txFile.getMaxTimestamp())
-                                .$(", attempts=").$(count)
-                                .$(", thread=").$(Thread.currentThread().getName())
-                                .I$();
-                        break;
-                    }
+                if (acquireTxn()) {
+                    this.rowCount = txFile.getFixedRowCount() + txFile.getTransientRowCount();
+                    LOG.debug()
+                            .$("new transaction [txn=").$(txn)
+                            .$(", transientRowCount=").$(txFile.getTransientRowCount())
+                            .$(", fixedRowCount=").$(txFile.getFixedRowCount())
+                            .$(", maxTimestamp=").$ts(txFile.getMaxTimestamp())
+                            .$(", attempts=").$(count)
+                            .$(", thread=").$(Thread.currentThread().getName())
+                            .I$();
+                    break;
                 }
-                // This is unlucky, sequences have changed while we were reading transaction data
-                // We must discard and try again
-                count++;
-                if (clock.getTicks() > deadline) {
-                    LOG.error().$("tx read timeout [timeout=").$(configuration.getSpinLockTimeout()).$("ms]").$();
-                    throw CairoException.critical(0).put("Transaction read timeout");
-                }
-                Os.pause();
             }
+            // This is unlucky, sequences have changed while we were reading transaction data
+            // We must discard and try again
+            count++;
+            if (clock.getTicks() > deadline) {
+                LOG.error().$("tx read timeout [timeout=").$(configuration.getSpinLockTimeout()).$("ms]").$();
+                throw CairoException.critical(0).put("Transaction read timeout");
+            }
+            Os.pause();
         }
     }
 
@@ -1155,51 +1138,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         return columnVersionReader.getVersion() == columnVersion;
     }
 
-    /**
-     * Updates boundaries of all columns in partition.
-     *
-     * @param partitionIndex index of partition
-     * @param rowCount       number of rows in partition
-     */
-    private void reloadGrowPartition(int partitionIndex, long rowCount, long openPartitionNameTxn) {
-        Path path = pathGenPartitioned(partitionIndex, openPartitionNameTxn);
-        try {
-            int columnBase = getColumnBase(partitionIndex);
-            for (int i = 0; i < columnCount; i++) {
-                final int index = getPrimaryColumnIndex(columnBase, i);
-                final MemoryMR mem1 = columns.getQuick(index);
-                if (mem1 instanceof NullMemoryMR || (mem1 != null && !mem1.isOpen())) {
-                    reloadColumnAt(
-                            partitionIndex,
-                            path,
-                            columns,
-                            columnTops,
-                            bitmapIndexes,
-                            columnBase,
-                            i,
-                            rowCount
-                    );
-                } else {
-                    growColumn(
-                            mem1,
-                            columns.getQuick(index + 1),
-                            metadata.getColumnType(i),
-                            rowCount - getColumnTop(columnBase, i)
-                    );
-                }
-
-                // reload symbol map
-                SymbolMapReader reader = symbolMapReaders.getQuick(i);
-                if (reader == null) {
-                    continue;
-                }
-                reader.updateSymbolCount(txFile.getSymbolValueCount(metadata.getDenseSymbolIndex(i)));
-            }
-        } finally {
-            path.trimTo(rootLen);
-        }
-    }
-
     private boolean reloadMetadata(int txnMetadataVersion, long deadline, boolean reshuffleColumns) {
         // create transition index, which will help us reuse already open resources
         if (txnMetadataVersion == metadata.getMetadataVersion()) {
@@ -1242,6 +1180,51 @@ public class TableReader implements Closeable, SymbolTableSource {
                 reloadSymbolMapCounts();
             }
             return true;
+        }
+    }
+
+    /**
+     * Updates boundaries of all columns in partition.
+     *
+     * @param partitionIndex index of partition
+     * @param rowCount       number of rows in partition
+     */
+    private void reloadGrowPartition(int partitionIndex, long rowCount, long openPartitionNameTxn) {
+        Path path = pathGenPartitioned(partitionIndex, openPartitionNameTxn);
+        try {
+            int columnBase = getColumnBase(partitionIndex);
+            for (int i = 0; i < columnCount; i++) {
+                final int index = getPrimaryColumnIndex(columnBase, i);
+                final MemoryMR mem1 = columns.getQuick(index);
+                if (mem1 instanceof NullMemoryMR || (mem1 != null && !mem1.isOpen())) {
+                    reloadColumnAt(
+                            partitionIndex,
+                            path,
+                            columns,
+                            columnTops,
+                            bitmapIndexes,
+                            columnBase,
+                            i,
+                            rowCount
+                    );
+                } else {
+                    growColumn(
+                            mem1,
+                            columns.getQuick(index + 1),
+                            metadata.getColumnType(i),
+                            rowCount - getColumnTop(columnBase, i)
+                    );
+                }
+
+                // reload symbol map
+                SymbolMapReader reader = symbolMapReaders.getQuick(i);
+                if (reader == null) {
+                    continue;
+                }
+                reader.updateSymbolCount(txFile.getSymbolValueCount(metadata.getDenseSymbolIndex(i)));
+            }
+        } finally {
+            path.trimTo(rootLen);
         }
     }
 

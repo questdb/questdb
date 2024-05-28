@@ -492,10 +492,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return metrics;
     }
 
-    public boolean isPartitionVersionUsed(TableToken tableToken, long partitionTimestamp, long partitionNameVersion) {
-        return readerPool.isPartitionVersionUsed(tableToken, partitionTimestamp, partitionNameVersion);
-    }
-
     @TestOnly
     public PoolListener getPoolListener() {
         return this.writerPool.getPoolListener();

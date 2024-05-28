@@ -25,8 +25,9 @@
 package io.questdb.cairo.pool;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.*;
-import io.questdb.cairo.pool.ex.PoolClosedException;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
 import org.jetbrains.annotations.TestOnly;
 
 public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
@@ -58,29 +59,6 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
     @FunctionalInterface
     public interface ReaderListener {
         void onOpenPartition(TableToken tableToken, int partitionIndex);
-    }
-
-    public boolean isPartitionVersionUsed(TableToken tableToken, long partitionTimestamp, long nameVersion) {
-        if (isClosed()) {
-            throw PoolClosedException.INSTANCE;
-        }
-
-        AbstractMultiTenantPool.Entry<ReaderPool.R> rEntry = entries().get(tableToken.getDirName());
-        while (rEntry != null) {
-            for (int i = 0; i < ReaderPool.ENTRY_SIZE; i++) {
-                if (rEntry.isItemLocked(i)) {
-                    ReaderPool.R reader = rEntry.getTenant(i);
-                    if (reader == null) {
-                        continue;
-                    }
-                    if (reader.unsafePollUsedPartitions(partitionTimestamp, nameVersion)) {
-                        return true;
-                    }
-                }
-            }
-            rEntry = rEntry.getNext();
-        }
-        return false;
     }
 
     public static class R extends TableReader implements PoolTenant<R> {

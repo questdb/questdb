@@ -37,12 +37,8 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.std.*;
-import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8StringSink;
-import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -68,14 +64,9 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
     private final Path path = new Path(); // protected with #lock
     private final SymbolMapUtil symbolMapUtil = new SymbolMapUtil();
     private final GrowOnlyTableNameRegistryStore tableNameRegistryStore; // protected with #lock
-    private final Utf8StringSink utf8Sink = new Utf8StringSink();
     private ColumnVersionReader columnVersionReader = null;
-    private Path partitionCleanPath;
-    private DateFormat partitionDirFmt;
-    private int pathTableLen;
     private TableReaderMetadata tableMetadata = null;
     private TxWriter txWriter = null;
-    private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private SimpleWaitingLock walPurgeJobRunLock = null; // used as a suspend/resume handler for the WalPurgeJob
 
     DatabaseSnapshotAgentImpl(CairoEngine engine) {
@@ -163,7 +154,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
     }
 
     private void rebuildTableFiles(Path tablePath, AtomicInteger recoveredSymbolFiles) {
-        pathTableLen = tablePath.size();
+        int pathTableLen = tablePath.size();
         try {
             if (tableMetadata == null) {
                 tableMetadata = new TableReaderMetadata(configuration);
@@ -196,60 +187,8 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
                 txWriter.resetLagAppliedRows();
             }
 
-//            if (PartitionBy.isPartitioned(tableMetadata.getPartitionBy())) {
-//                // Remove non-attached partitions
-//                LOG.debug().$("purging non attached partitions [path=").$(tablePath.$()).I$();
-//                partitionCleanPath = tablePath;
-//                this.partitionDirFmt = PartitionBy.getPartitionDirFormatMethod(tableMetadata.getPartitionBy());
-//                ff.iterateDir(tablePath.$(), removePartitionDirsNotAttached);
-//            }
-
         } finally {
             tablePath.trimTo(pathTableLen);
-        }
-    }
-
-    private void removePartitionDirsNotAttached(long pUtf8NameZ, int type) {
-        // Do not remove detached partitions, they are probably about to be attached
-        // Do not remove wal and sequencer directories either
-        int checkedType = ff.typeDirOrSoftLinkDirNoDots(partitionCleanPath, pathTableLen, pUtf8NameZ, type, utf8Sink);
-        if (checkedType != Files.DT_UNKNOWN &&
-                !CairoKeywords.isDetachedDirMarker(pUtf8NameZ) &&
-                !CairoKeywords.isWal(pUtf8NameZ) &&
-                !CairoKeywords.isTxnSeq(pUtf8NameZ) &&
-                !CairoKeywords.isSeq(pUtf8NameZ) &&
-                !Utf8s.endsWithAscii(utf8Sink, configuration.getAttachPartitionSuffix())
-        ) {
-            try {
-                long txn;
-                int txnSep = Utf8s.indexOfAscii(utf8Sink, '.');
-                if (txnSep < 0) {
-                    txnSep = utf8Sink.size();
-                    txn = -1;
-                } else {
-                    txn = Numbers.parseLong(utf8Sink, txnSep + 1, utf8Sink.size());
-                }
-                long dirTimestamp = partitionDirFmt.parse(utf8Sink.asAsciiCharSequence(), 0, txnSep, DateFormatUtils.EN_LOCALE);
-                if (txWriter.getPartitionNameTxnByPartitionTimestamp(dirTimestamp) == txn) {
-                    return;
-                }
-                if (!ff.unlinkOrRemove(partitionCleanPath, LOG)) {
-                    LOG.info()
-                            .$("failed to purge unused partition version [path=").$(partitionCleanPath)
-                            .$(", errno=").$(ff.errno()).I$();
-                } else {
-                    LOG.info().$("purged unused partition version [path=").$(partitionCleanPath).I$();
-                }
-                partitionCleanPath.trimTo(pathTableLen).$();
-            } catch (NumericException ignore) {
-                // not a date?
-                // ignore exception and leave the directory
-                partitionCleanPath.trimTo(pathTableLen);
-                partitionCleanPath.concat(pUtf8NameZ).$();
-                LOG.error().$("invalid partition directory inside table folder: ").$(path).$();
-            } finally {
-                partitionCleanPath.trimTo(pathTableLen);
-            }
         }
     }
 

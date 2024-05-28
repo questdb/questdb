@@ -150,7 +150,6 @@ public class WalTableFailureTest extends AbstractCairoTest {
         });
     }
 
-
     @Test
     public void testAlterTableSetTypeSqlSyntaxErrors() throws Exception {
         assertMemoryLeak(ff, () -> {
