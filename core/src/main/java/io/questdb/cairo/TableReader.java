@@ -67,6 +67,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final MemoryMR todoMem = Vm.getMRInstance();
     private final TxReader txFile;
+    private final Object txFileLock = new Object();
     private final TxnScoreboard txnScoreboard;
     private ObjList<BitmapIndexReader> bitmapIndexes;
     private int columnCount;
@@ -175,7 +176,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             freeSymbolMapReaders();
             freeBitmapIndexCache();
             Misc.free(metadata);
-            synchronized (txFile) {
+            synchronized (txFileLock) {
                 Misc.free(txFile);
             }
             Misc.free(todoMem);
@@ -495,7 +496,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     public boolean unsafePollUsedPartitions(long partitionTimestamp, long nameVersion) {
-        synchronized (txFile) {
+        synchronized (txFileLock) {
             if (txFile.isOpen()) {
                 long partitionNameVersion = txFile.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp, -2);
                 return nameVersion == partitionNameVersion;
@@ -562,7 +563,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         long txnLocks = txnScoreboard.getActiveReaderCount(txn);
         long partitionTableVersion = txFile.getPartitionTableVersion();
         if (txnLocks == 0) {
-            synchronized (txFile) {
+            synchronized (txFileLock) {
                 if (txFile.unsafeLoadAll() && txFile.getPartitionTableVersion() > partitionTableVersion) {
                     // Last lock for this txn is released and this is not latest txn number
                     // Schedule a job to clean up partition versions this reader may hold
@@ -964,7 +965,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private void readTxnSlow(long deadline) {
         int count = 0;
 
-        synchronized (txFile) {
+        synchronized (txFileLock) {
             while (true) {
                 if (txFile.unsafeLoadAll()) {
                     // good, very stable, congrats
