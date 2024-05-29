@@ -40,14 +40,17 @@
 
     <build>
         <plugins>
+            <!-- Updated maven-deploy-plugin to the latest stable version -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-deploy-plugin</artifactId>
-                <version>2.8.2</version>
+                <version>3.0.0-M1</version>
                 <configuration>
                     <skip>true</skip>
                 </configuration>
             </plugin>
+
+            <!-- Updated JaCoCo plugin configuration with coverage rules -->
             <plugin>
                 <groupId>org.jacoco</groupId>
                 <artifactId>jacoco-maven-plugin</artifactId>
@@ -65,13 +68,29 @@
                         <goals>
                             <goal>report</goal>
                         </goals>
+                        <configuration>
+                            <rules>
+                                <rule>
+                                    <element>BUNDLE</element>
+                                    <limits>
+                                        <limit>
+                                            <counter>INSTRUCTION</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>0.80</minimum>
+                                        </limit>
+                                    </limits>
+                                </rule>
+                            </rules>
+                        </configuration>
                     </execution>
                 </executions>
             </plugin>
+
+            <!-- Updated maven-release-plugin to the latest stable version -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-release-plugin</artifactId>
-                <version>2.5.3</version>
+                <version>3.0.0-M1</version>
                 <configuration>
                     <tagNameFormat>@{project.version}</tagNameFormat>
                     <arguments>-Dmaven.test.skipTests=true -Dmaven.test.skip=true</arguments>
@@ -80,6 +99,7 @@
             </plugin>
         </plugins>
     </build>
+
     <modules>
         <module>core</module>
         <module>benchmarks</module>
