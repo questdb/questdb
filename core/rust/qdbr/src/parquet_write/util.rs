@@ -52,19 +52,13 @@ pub struct ExactSizedIter<T, I: Iterator<Item = T>> {
 
 impl<T, I: Iterator<Item = T> + Clone> Clone for ExactSizedIter<T, I> {
     fn clone(&self) -> Self {
-        Self {
-            iter: self.iter.clone(),
-            remaining: self.remaining,
-        }
+        Self { iter: self.iter.clone(), remaining: self.remaining }
     }
 }
 
 impl<T, I: Iterator<Item = T>> ExactSizedIter<T, I> {
     pub fn new(iter: I, length: usize) -> Self {
-        Self {
-            iter,
-            remaining: length,
-        }
+        Self { iter, remaining: length }
     }
 }
 

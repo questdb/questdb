@@ -109,12 +109,7 @@ impl<W: Write> ParquetWriter<W> {
             file_write_options,
             created_by,
         );
-        Ok(ChunkedWriter {
-            writer,
-            parquet_schema,
-            encodings,
-            options,
-        })
+        Ok(ChunkedWriter { writer, parquet_schema, encodings, options })
     }
 
     /// Write the given `Partition` in the writer `W`. Returns the total size of the file.

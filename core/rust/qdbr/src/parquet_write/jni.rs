@@ -114,10 +114,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             columns.push(Arc::new(column));
         }
 
-        let partition = Partition {
-            table: "test_table".to_string(),
-            columns,
-        };
+        let partition = Partition { table: "test_table".to_string(), columns };
 
         let mut file = File::create(dest_path).with_context(|| {
             format!(
