@@ -109,11 +109,6 @@ elseif (OS_FREEBSD)
 elseif (OS_LINUX)
     MESSAGE("Building for GNU/Linux")
     include_directories($ENV{JAVA_HOME}/include/linux/)
-    if (ARCH_AARCH64)
-        set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/armlinux)
-    else ()
-        set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/linux)
-    endif ()
     set(
             SOURCE_FILES ${SOURCE_FILES}
             src/main/c/share/net.c

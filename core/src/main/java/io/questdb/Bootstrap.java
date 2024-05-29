@@ -63,7 +63,6 @@ public class Bootstrap {
     private static final String LOG_NAME = "server-main";
     private static final String PUBLIC_VERSION_TXT = "version.txt";
     private static final String PUBLIC_ZIP = "/io/questdb/site/public.zip";
-    public final String[] args;
     private final String banner;
     private final BuildInformation buildInformation;
     private final ServerConfiguration config;
@@ -77,7 +76,6 @@ public class Bootstrap {
     }
 
     public Bootstrap(BootstrapConfiguration bootstrapConfiguration, String... args) {
-        this.args = args;
         if (args.length < 2) {
             throw new BootstrapException("Root directory name expected (-d <root-path>)");
         }
@@ -606,14 +604,6 @@ public class Bootstrap {
         } else {
             rec.$hex(fsStatus).$("] -> UNSUPPORTED (SYSTEM COULD BE UNSTABLE)").$();
         }
-    }
-
-    protected String getPublicZipPath() {
-        return PUBLIC_ZIP;
-    }
-
-    protected Class<?> getResourceClass() {
-        return ServerMain.class;
     }
 
     void logBannerAndEndpoints(String schema) {
