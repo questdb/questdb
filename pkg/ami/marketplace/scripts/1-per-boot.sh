@@ -25,10 +25,30 @@
 ################################################################################
 
 if [ ! -f "/var/lib/questdb/conf/server.conf" ]; then
-# setting variables in subshell for cloudinit script
-  { PASS=$(< /dev/urandom tr -dc _A-Z-a-z-0-9 | head -c${1:-32}; echo;); }
-  sed -i "s/PG_PASSWORD_REPLACE/$PASS/g" /var/lib/questdb/conf/server.conf
+  # setting variables in subshell for cloudinit script
+  PASS=$(tr -dc '_A-Z-a-z-0-9' < /dev/urandom | head -c${1:-32}; echo)
+
+  # Check if the configuration file exists before attempting to replace the placeholder
+  if [ -f "/var/lib/questdb/conf/server.conf" ]; then
+    sed -i "s/PG_PASSWORD_REPLACE/$PASS/g" /var/lib/questdb/conf/server.conf
+  else
+    echo "Configuration file /var/lib/questdb/conf/server.conf does not exist."
+    exit 1
+  fi
 fi
 
-systemctl enable questdb
-systemctl start questdb
+# Enable and start QuestDB service
+if systemctl enable questdb; then
+  echo "QuestDB service enabled."
+else
+  echo "Failed to enable QuestDB service."
+  exit 1
+fi
+
+if systemctl start questdb; then
+  echo "QuestDB service started."
+else
+  echo "Failed to start QuestDB service."
+  exit 1
+fi
+
