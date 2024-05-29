@@ -141,7 +141,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                 sharedCB.cancel();
             }
 
-            if (workStealingStrategy.shouldStealWork(mergedCount)) {
+            if (workStealingStrategy.shouldSteal(mergedCount)) {
                 long cursor = subSeq.next();
                 if (cursor > -1) {
                     VectorAggregateTask task = queue.get(cursor);
@@ -271,7 +271,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                             if (cursor < 0) {
                                 circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
 
-                                if (workStealingStrategy.shouldStealWork(mergedCount)) {
+                                if (workStealingStrategy.shouldSteal(mergedCount)) {
                                     // acquire the slot and DIY the func
                                     // vaf need to know which column it is hitting in the frame and will need to
                                     // aggregate between frames until done

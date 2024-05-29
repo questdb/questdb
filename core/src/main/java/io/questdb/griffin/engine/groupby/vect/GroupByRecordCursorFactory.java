@@ -410,7 +410,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                             if (cursor < 0) {
                                 circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
 
-                                if (workStealingStrategy.shouldStealWork(mergedCount)) {
+                                if (workStealingStrategy.shouldSteal(mergedCount)) {
                                     // acquire the slot and DIY the func
                                     final int slot = perWorkerLocks.acquireSlot(workerId, circuitBreaker);
                                     try {

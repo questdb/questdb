@@ -267,7 +267,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                     if (cursor < 0) {
                         circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
 
-                        if (workStealingStrategy.shouldStealWork(mergedCount)) {
+                        if (workStealingStrategy.shouldSteal(mergedCount)) {
                             atom.mergeShard(-1, i);
                             ownCount++;
                             total++;
@@ -298,7 +298,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                     mergeCircuitBreaker.cancel();
                 }
 
-                if (workStealingStrategy.shouldStealWork(mergedCount)) {
+                if (workStealingStrategy.shouldSteal(mergedCount)) {
                     long cursor = subSeq.next();
                     if (cursor > -1) {
                         GroupByMergeShardTask task = queue.get(cursor);
