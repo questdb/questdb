@@ -3643,6 +3643,46 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeftJoinWithNestedAliases() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(
+                    "create table dim_apTemperature as (" +
+                            "  select x::int id," +
+                            "         rnd_str('a','b','c') as category," +
+                            "         rnd_float() aparent_temperature" +
+                            "  from long_sequence(10)" +
+                            ");"
+            );
+            ddl(
+                    "create table fact_table as (" +
+                            "  select x::int id_aparent_temperature," +
+                            "         (x * 120000000)::timestamp data_time," +
+                            "         rnd_float() radiation," +
+                            "         rnd_float() energy_power" +
+                            "  from long_sequence(10)" +
+                            ");"
+            );
+
+            assertQueryNoLeakCheck(
+                    "dim_ap_temperature__category\tfact_table__date_time_day\n" +
+                            "a\t1970-01-01T00:00:00.000000Z\n" +
+                            "b\t1970-01-01T00:00:00.000000Z\n" +
+                            "c\t1970-01-01T00:00:00.000000Z\n",
+                    "SELECT\n" +
+                            "  \"dim_ap_temperature\".category \"dim_ap_temperature__category\",\n" +
+                            "  timestamp_floor('d', to_timezone(\"fact_table\".data_time, 'UTC')) \"fact_table__date_time_day\"\n" +
+                            "FROM\n" +
+                            "  fact_table AS \"fact_table\"\n" +
+                            "  LEFT JOIN dim_apTemperature AS \"dim_ap_temperature\" ON \"fact_table\".id_aparent_temperature = \"dim_ap_temperature\".id\n" +
+                            "LIMIT 3;",
+                    null,
+                    false,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testLtJoinLeftTimestampDescOrder() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table x as (select cast(x as int) i, rnd_symbol('msft','ibm', 'googl') sym, round(rnd_double(0)*100, 3) amt, to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp from long_sequence(10)) timestamp(timestamp)");
