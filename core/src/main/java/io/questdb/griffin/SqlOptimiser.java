@@ -3452,17 +3452,16 @@ public class SqlOptimiser implements Mutable {
         if (jm1 == null) {
             return;
         }
-        // get secondary model
-        QueryModel jm2 = jm1.getJoinModels().getQuiet(1);
+
         // if order by advice has no table prefixes, we preserve original behaviour and pass it on.
         if (!orderByAdviceHasDot) {
             if (allAdviceIsForThisTable(jm1, orderByAdvice)) {
                 setAndCopyAdvice(jm1, orderByAdvice, orderByMnemonic, orderByDirectionAdvice);
             }
             optimiseOrderBy(jm1, orderByMnemonic);
-            // allow jm2 to propagate its own advice
-            if (jm2 != null) {
-                optimiseOrderBy(jm2, orderByMnemonic);
+
+            for (int i = 1, n = jm1.getJoinModels().size(); i < n; i++) {
+                optimiseOrderBy(jm1.getJoinModels().getQuick(i), orderByMnemonic);
             }
             return;
         }
@@ -3470,6 +3469,7 @@ public class SqlOptimiser implements Mutable {
         if (!checkForConsistentPrefix(orderByAdvice)) {
             return;
         }
+
         // if the orderByAdvice prefixes do not match the primary table name, don't propagate it
         final CharSequence adviceToken = orderByAdvice.getQuick(0).token;
         final int dotLoc = Chars.indexOf(adviceToken, '.');
@@ -3480,6 +3480,9 @@ public class SqlOptimiser implements Mutable {
         }
         // order by advice is pushable, so now we copy it and strip the table prefix
         advice = duplicateAdviceAndTakeSuffix();
+
+        // get secondary model
+        QueryModel jm2 = jm1.getJoinModels().getQuiet(1);
 
         // if there's a join, we need to handle it differently.
         if (jm2 != null) {

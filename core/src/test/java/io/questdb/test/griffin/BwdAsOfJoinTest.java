@@ -63,6 +63,63 @@ public class BwdAsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBwdAsOfJoinAliasDuplication() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(
+                    "CREATE TABLE fx_rate (" +
+                            "    ts TIMESTAMP, " +
+                            "    code SYMBOL CAPACITY 128 NOCACHE, " +
+                            "    rate INT" +
+                            ") timestamp(ts)",
+                    sqlExecutionContext
+            );
+            insert("INSERT INTO fx_rate values ('2022-10-05T04:00:00.000000Z', '1001', 10);");
+
+            ddl(
+                    "CREATE TABLE trades (" +
+                            "    ts TIMESTAMP, " +
+                            "    price INT, " +
+                            "    qty INT, " +
+                            "    flag INT, " +
+                            "    fx_rate_code SYMBOL CAPACITY 128 NOCACHE" +
+                            ") timestamp(ts);",
+                    sqlExecutionContext
+            );
+            insert("INSERT INTO trades values ('2022-10-05T08:15:00.000000Z', 100, 500, 0, '1001');");
+            insert("INSERT INTO trades values ('2022-10-05T08:16:00.000000Z', 100, 500, 1, '1001');");
+            insert("INSERT INTO trades values ('2022-10-05T08:16:00.000000Z', 100, 500, 2, '1001');");
+
+            String query =
+                    "SELECT\n" +
+                            "  SUM(CASE WHEN t.flag = 0 THEN 0.9 * (t.price * f.rate) ELSE 0.0 END)," +
+                            "  SUM(CASE WHEN t.flag = 1 THEN 0.7 * (t.price * f.rate) ELSE 0.0 END)," +
+                            "  SUM(CASE WHEN t.flag = 2 THEN 0.2 * (t.price * f.rate) ELSE 0.0 END)" +
+                            "FROM  " +
+                            "  (select * from trades order by ts desc) t " +
+                            "ASOF JOIN (select * from fx_rate order by ts desc) f on f.code = t.fx_rate_code";
+
+            String expected = "SUM\tSUM1\tSUM2\n" +
+                    "900.0\t700.0\t200.0\n";
+
+            assertPlanNoLeakCheck(query, "GroupBy vectorized: false\n" +
+                    "  values: [sum(case([0.9*price*rate,0.0,flag])),sum(case([0.7*price*rate,0.0,flag])),sum(case([0.2*price*rate,0.0,flag]))]\n" +
+                    "    SelectedRecord\n" +
+                    "        AsOf Join Light\n" +
+                    "          condition: f.code=t.fx_rate_code\n" +
+                    "            SelectedRecord\n" +
+                    "                DataFrame\n" +
+                    "                    Row forward scan\n" +
+                    "                    Frame forward scan on: trades\n" +
+                    "            SelectedRecord\n" +
+                    "                DataFrame\n" +
+                    "                    Row forward scan\n" +
+                    "                    Frame forward scan on: fx_rate\n");
+
+            printSqlResult(expected, query, null, false, true);
+        });
+    }
+
+    @Test
     public void testBwdAsOfJoinBasicExample() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -80,6 +137,48 @@ public class BwdAsOfJoinTest extends AbstractCairoTest {
                     "            Frame backward scan on: t1\n");
 
             assertQuery(ORACLE, query, "ts###desc", false, true);
+        });
+    }
+
+    @Test
+    public void testBwdAsOfJoinCombinedWithInnerJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table t1 as (select x as id, cast(x as timestamp) ts from long_sequence(5)) timestamp(ts) partition by day;");
+            ddl("create table t2 as (select x as id, cast(x as timestamp) ts from long_sequence(5)) timestamp(ts) partition by day;");
+            ddl("create table t3 (id long, ts timestamp) timestamp(ts) partition by day;");
+
+            final String query = "SELECT *\n" +
+                    "FROM (\n" +
+                    "  (t1 INNER JOIN t2 ON id) \n" +
+                    "  ASOF JOIN (SELECT * FROM t3 ORDER BY ts DESC) ON id\n" +
+                    "ORDER BY t1.ts DESC" +
+                    ");";
+            final String expected = "id\tts\tid1\tts1\tid2\tts2\n" +
+                    "5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.000005Z\tnull\t\n" +
+                    "4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.000004Z\tnull\t\n" +
+                    "3\t1970-01-01T00:00:00.000003Z\t3\t1970-01-01T00:00:00.000003Z\tnull\t\n" +
+                    "2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\tnull\t\n" +
+                    "1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\tnull\t\n";
+
+            assertPlanNoLeakCheck(query, "SelectedRecord\n" +
+                    "    AsOf Join Light\n" +
+                    "      condition: _xQdbA3.id=t1.id\n" +
+                    "        Hash Join Light\n" +
+                    "          condition: t2.id=t1.id\n" +
+                    "            DataFrame\n" +
+                    "                Row backward scan\n" +
+                    "                Frame backward scan on: t1\n" +
+                    "            Hash\n" +
+                    "                DataFrame\n" +
+                    "                    Row forward scan\n" +
+                    "                    Frame forward scan on: t2\n" +
+                    "        Sort light\n" +
+                    "          keys: [ts desc]\n" +
+                    "            DataFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Frame forward scan on: t3\n");
+
+            printSqlResult(expected, query, "ts###desc", false, true);
         });
     }
 
