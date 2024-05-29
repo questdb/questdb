@@ -436,6 +436,8 @@ public interface CairoConfiguration {
 
     int getSqlPageFrameMinRows();
 
+    int getSqlParallelWorkStealingThreshold();
+
     int getSqlSmallMapKeyCapacity();
 
     long getSqlSmallMapPageSize();
