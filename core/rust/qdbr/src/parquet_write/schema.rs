@@ -1,5 +1,4 @@
 use std::slice;
-use std::sync::Arc;
 
 use parquet2::encoding::Encoding;
 use parquet2::metadata::SchemaDescriptor;

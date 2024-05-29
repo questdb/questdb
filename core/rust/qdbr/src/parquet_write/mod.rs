@@ -64,7 +64,6 @@ mod tests {
     use std::io::Cursor;
     use std::mem::size_of;
     use std::ptr::null;
-    use std::sync::Arc;
 
     use arrow::array::Array;
     use bytes::Bytes;
@@ -76,7 +75,7 @@ mod tests {
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
     use crate::parquet_write::file::ParquetWriter;
-    use crate::parquet_write::schema::{ColumnImpl, Partition};
+    use crate::parquet_write::schema::{Column, Partition};
 
     #[test]
     fn test_write_parquet_with_fixed_sized_columns() {
@@ -86,34 +85,29 @@ mod tests {
         let col2 = vec![0.5f32, 0.001, f32::nan(), 3.14];
         let expected2 = vec![Some(0.5f32), Some(0.001), None, Some(3.14)];
 
-        let col1_w = Arc::new(
-            ColumnImpl::from_raw_data(
-                "col1",
-                5,
-                col1.len(),
-                col1.as_ptr() as *const u8,
-                col1.len() * size_of::<i32>(),
-                null(),
-                0,
-                null(),
-                0,
-            )
-                .unwrap(),
-        );
-        let col2_w = Arc::new(
-            ColumnImpl::from_raw_data(
-                "col2",
-                9,
-                col2.len(),
-                col2.as_ptr() as *const u8,
-                col2.len() * size_of::<f32>(),
-                null(),
-                0,
-                null(),
-                0,
-            )
-                .unwrap(),
-        );
+        let col1_w = Column::from_raw_data(
+            "col1",
+            5,
+            col1.len(),
+            col1.as_ptr() as *const u8,
+            col1.len() * size_of::<i32>(),
+            null(),
+            0,
+            null(),
+            0,
+        ).unwrap();
+
+        let col2_w = Column::from_raw_data(
+            "col2",
+            9,
+            col2.len(),
+            col2.as_ptr() as *const u8,
+            col2.len() * size_of::<f32>(),
+            null(),
+            0,
+            null(),
+            0,
+        ).unwrap();
 
         let partition = Partition {
             table: "test_table".to_string(),
@@ -159,20 +153,17 @@ mod tests {
         let row_group_size = 500usize;
         let page_size_bytes = 256usize;
         let col1: Vec<i64> = (0..row_count).into_iter().map(|v| v as i64).collect();
-        let col1_w = Arc::new(
-            ColumnImpl::from_raw_data(
-                "col1",
-                6,
-                col1.len(),
-                col1.as_ptr() as *const u8,
-                col1.len() * size_of::<i64>(),
-                null(),
-                0,
-                null(),
-                0,
-            )
-                .unwrap(),
-        );
+        let col1_w = Column::from_raw_data(
+            "col1",
+            6,
+            col1.len(),
+            col1.as_ptr() as *const u8,
+            col1.len() * size_of::<i64>(),
+            null(),
+            0,
+            null(),
+            0,
+        ).unwrap();
 
         let partition = Partition {
             table: "test_table".to_string(),
