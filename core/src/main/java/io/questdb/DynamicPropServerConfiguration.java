@@ -178,6 +178,11 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
     }
 
     @Override
+    public MemoryConfiguration getMemoryConfiguration() {
+        return delegate.get().getMemoryConfiguration();
+    }
+
+    @Override
     public MetricsConfiguration getMetricsConfiguration() {
         return delegate.get().getMetricsConfiguration();
     }
@@ -185,6 +190,11 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
     @Override
     public PGWireConfiguration getPGWireConfiguration() {
         return delegate.get().getPGWireConfiguration();
+    }
+
+    @Override
+    public PublicPassthroughConfiguration getPublicPassthroughConfiguration() {
+        return delegate.get().getPublicPassthroughConfiguration();
     }
 
     @Override

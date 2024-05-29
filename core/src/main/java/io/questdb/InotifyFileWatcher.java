@@ -114,7 +114,7 @@ public final class InotifyFileWatcher extends FileWatcher {
             super.close();
 
             this.dirPath.close();
-            // todo: close fileName?
+            this.fileName.close();
 
             if (InotifyAccessor.inotifyRmWatch(this.fd, this.wd) < 0) {
                 System.out.println(this.fd);
