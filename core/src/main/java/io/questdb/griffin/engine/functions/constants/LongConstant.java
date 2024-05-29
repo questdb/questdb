@@ -30,8 +30,8 @@ import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.Numbers;
 
 public class LongConstant extends LongFunction implements ConstantFunction {
-    public final static LongConstant NULL = new LongConstant(Numbers.LONG_NULL);
-    public final static LongConstant ZERO = new LongConstant(0);
+    public static final LongConstant NULL = new LongConstant(Numbers.LONG_NULL);
+    public static final LongConstant ZERO = new LongConstant(0);
     private final long value;
 
     public LongConstant(long value) {

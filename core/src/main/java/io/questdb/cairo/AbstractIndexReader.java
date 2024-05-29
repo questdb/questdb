@@ -37,7 +37,7 @@ import io.questdb.std.str.Path;
 
 public abstract class AbstractIndexReader implements BitmapIndexReader {
     public static final String INDEX_CORRUPT = "cursor could not consistently read index header [corrupt?]";
-    protected final static Log LOG = LogFactory.getLog(BitmapIndexBwdReader.class);
+    protected static final Log LOG = LogFactory.getLog(BitmapIndexBwdReader.class);
     protected final MemoryMR keyMem = Vm.getMRInstance();
     protected final MemoryMR valueMem = Vm.getMRInstance();
     protected int blockCapacity;

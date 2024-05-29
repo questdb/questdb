@@ -66,6 +66,7 @@ public class FuzzRunner {
     protected int partitionCount;
     private double cancelRowsProb;
     private double colRenameProb;
+    private double colTypeChangeProb;
     private double collAddProb;
     private double collRemoveProb;
     private double dataAddProb;
@@ -202,7 +203,7 @@ public class FuzzRunner {
         TableReader rdr1 = getReader(tableName);
         TableReader rdr2 = getReader(tableName);
         try (
-                O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), engine.getSnapshotAgent(), 1)
+                O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, engine.getSnapshotAgent(), 1)
         ) {
             int transactionSize = transactions.size();
             Rnd rnd = new Rnd();
@@ -355,6 +356,7 @@ public class FuzzRunner {
             String tableName
     ) {
         return FuzzTransactionGenerator.generateSet(
+                initialRowCount,
                 sequencerMetadata,
                 tableMetadata,
                 rnd,
@@ -370,6 +372,7 @@ public class FuzzRunner {
                 collAddProb,
                 collRemoveProb,
                 colRenameProb,
+                colTypeChangeProb,
                 dataAddProb,
                 truncateProb,
                 equalTsRowsProb,
@@ -415,7 +418,7 @@ public class FuzzRunner {
         this.parallelWalCount = parallelWalCount;
     }
 
-    public void setFuzzProbabilities(double cancelRowsProb, double notSetProb, double nullSetProb, double rollbackProb, double collAddProb, double collRemoveProb, double colRenameProb, double dataAddProb, double truncateProb, double equalTsRowsProb, double tableDropProb) {
+    public void setFuzzProbabilities(double cancelRowsProb, double notSetProb, double nullSetProb, double rollbackProb, double collAddProb, double collRemoveProb, double colRenameProb, double dataAddProb, double truncateProb, double equalTsRowsProb, double tableDropProb, double colTypeChangeProb) {
         this.cancelRowsProb = cancelRowsProb;
         this.notSetProb = notSetProb;
         this.nullSetProb = nullSetProb;
@@ -423,6 +426,7 @@ public class FuzzRunner {
         this.collAddProb = collAddProb;
         this.collRemoveProb = collRemoveProb;
         this.colRenameProb = colRenameProb;
+        this.colTypeChangeProb = colTypeChangeProb;
         this.dataAddProb = dataAddProb;
         this.truncateProb = truncateProb;
         this.equalTsRowsProb = equalTsRowsProb;
@@ -594,7 +598,7 @@ public class FuzzRunner {
 
     private void drainWalQueue(Rnd applyRnd, String tableName) {
         try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1);
-             O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), engine.getSnapshotAgent(), 1);
+             O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, engine.getSnapshotAgent(), 1);
              TableReader rdr1 = getReaderHandleTableDropped(tableName);
              TableReader rdr2 = getReaderHandleTableDropped(tableName)
         ) {
@@ -672,7 +676,7 @@ public class FuzzRunner {
     private void runPurgePartitionJob(AtomicInteger done, AtomicInteger forceReaderReload, ConcurrentLinkedQueue<Throwable> errors, Rnd runRnd, String tableNameBase, int tableCount, boolean multiTable) {
         ObjList<TableReader> readers = new ObjList<>();
         try {
-            try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), engine.getSnapshotAgent(), 1)) {
+            try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, engine.getSnapshotAgent(), 1)) {
                 int forceReloadNum = forceReaderReload.get();
                 for (int i = 0; i < tableCount; i++) {
                     String tableNameWal = multiTable ? getWalParallelApplyTableName(tableNameBase, i) : tableNameBase;
@@ -837,6 +841,7 @@ public class FuzzRunner {
                         rnd.nextDouble(),
                         rnd.nextDouble(),
                         0.1 * rnd.nextDouble(), 0.01,
+                        rnd.nextDouble(),
                         rnd.nextDouble()
                 );
             }

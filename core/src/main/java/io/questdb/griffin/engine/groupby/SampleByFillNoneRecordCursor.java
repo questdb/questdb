@@ -108,8 +108,8 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
     public void of(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {
         super.of(base, executionContext);
         if (!isOpen) {
-            map.reopen();
             isOpen = true;
+            map.reopen();
         }
         rowId = 0;
         isHasNextPending = false;

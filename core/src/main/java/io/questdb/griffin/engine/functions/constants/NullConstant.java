@@ -255,11 +255,6 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
     }
 
     @Override
-    public boolean isRuntimeConstant() {
-        return true;
-    }
-
-    @Override
     public void toPlan(PlanSink sink) {
         sink.val("null");
     }

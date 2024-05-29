@@ -46,21 +46,23 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testExpression() throws Exception {
-        final String expected = "a\tcount_distinct\n" +
-                "a\t3\n" +
-                "b\t3\n" +
-                "c\t3\n";
-        assertQuery(
-                expected,
-                "select a, count_distinct(concat(s, s)) from x order by a",
-                "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_str('aaa','bbb','ccc') s from long_sequence(20)))",
-                null,
-                true,
-                true
-        );
-        // self-concatenation shouldn't affect the number of distinct values,
-        // so the result should stay the same
-        assertSql(expected, "select a, count_distinct(s) from x order by a");
+        assertMemoryLeak(() -> {
+            final String expected = "a\tcount_distinct\n" +
+                    "a\t3\n" +
+                    "b\t3\n" +
+                    "c\t3\n";
+            assertQueryNoLeakCheck(
+                    expected,
+                    "select a, count_distinct(concat(s, s)) from x order by a",
+                    "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_str('aaa','bbb','ccc') s from long_sequence(20)))",
+                    null,
+                    true,
+                    true
+            );
+            // self-concatenation shouldn't affect the number of distinct values,
+            // so the result should stay the same
+            assertSql(expected, "select a, count_distinct(s) from x order by a");
+        });
     }
 
     @Test

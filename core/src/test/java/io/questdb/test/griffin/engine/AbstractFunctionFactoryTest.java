@@ -49,7 +49,6 @@ import org.junit.Assert;
 import java.util.Arrays;
 
 public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTest {
-
     public static final double DELTA = 0.000000000000001;
 
     private static int toByteRefs = 0;
@@ -103,8 +102,9 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         final StringSink expression1 = new StringSink();
         final StringSink expression2 = new StringSink();
 
-        final boolean setOperation = OperatorExpression.getOperatorType(name) == OperatorExpression.SET;
-        final boolean operator = OperatorExpression.isOperator(name);
+        OperatorRegistry registry = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence());
+        final boolean setOperation = registry.getOperatorType(name) == OperatorExpression.SET;
+        final boolean operator = registry.isOperator(name);
 
         if (operator && !setOperation) {
             switch (argCount) {
@@ -436,7 +436,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
 
     protected void assertFailure(CharSequence expectedMsg, CharSequence sql) {
         try {
-            assertException(sql);
+            assertExceptionNoLeakCheck(sql);
         } catch (Exception e) {
             TestUtils.assertEquals(expectedMsg, e.getMessage());
         }
@@ -544,7 +544,6 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         public Invocation andInit(SqlExecutionContext context) throws SqlException {
             function1.init(null, context);
             function2.init(null, context);
-
             return this;
         }
 

@@ -61,10 +61,15 @@ public class VacuumColumnVersions implements Closeable {
     private final FindVisitor visitTablePartition = this::visitTablePartition;
 
     public VacuumColumnVersions(CairoEngine engine) {
-        this.engine = engine;
-        this.purgeExecution = new ColumnPurgeOperator(engine.getConfiguration());
-        this.tableFiles = new DirectLongList(COLUMN_VERSION_LIST_CAPACITY, MemoryTag.NATIVE_SQL_COMPILER);
-        this.ff = engine.getConfiguration().getFilesFacade();
+        try {
+            this.engine = engine;
+            this.purgeExecution = new ColumnPurgeOperator(engine.getConfiguration());
+            this.tableFiles = new DirectLongList(COLUMN_VERSION_LIST_CAPACITY, MemoryTag.NATIVE_SQL_COMPILER);
+            this.ff = engine.getConfiguration().getFilesFacade();
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override

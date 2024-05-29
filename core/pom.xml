@@ -22,7 +22,7 @@
   ~
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
-<project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://maven.apache.org/POM/4.0.0"
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <name>QuestDB</name>
@@ -37,12 +37,12 @@
         <argLine>-ea -Dfile.encoding=UTF-8</argLine>
         <test.exclude>None</test.exclude>
         <test.include>%regex[.*[^o].class]</test.include><!-- exclude module-info.class-->
-        <web.console.version>0.3.3</web.console.version>
+        <web.console.version>0.4.2</web.console.version>
         <qdbr.path>rust/qdbr</qdbr.path>
         <qdbr.release>false</qdbr.release>
     </properties>
 
-    <version>7.4.3-SNAPSHOT</version>
+    <version>8.0.0-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
     <artifactId>questdb</artifactId>
     <packaging>jar</packaging>
@@ -443,7 +443,7 @@
                                 </goals>
                                 <configuration>
                                     <descriptors>
-                                        <descriptor>src/main/assembly/binaries.xml</descriptor>
+                                        <descriptor>src/main/assembly/no-jre.xml</descriptor>
                                     </descriptors>
                                     <finalName>questdb</finalName>
                                 </configuration>
@@ -511,7 +511,7 @@
             <properties>
                 <archive.name>${project.version}-rt-windows-amd64</archive.name>
                 <runtime.name>questdb-${project.version}-rt-windows-amd64</runtime.name>
-                <runtime.assembly>src/main/assembly/windows-runtime.xml</runtime.assembly>
+                <runtime.assembly>src/main/assembly/rt-win.xml</runtime.assembly>
             </properties>
         </profile>
         <profile>
@@ -525,7 +525,8 @@
             <properties>
                 <archive.name>${project.version}-rt-linux-amd64</archive.name>
                 <runtime.name>questdb-${project.version}-rt-linux-amd64</runtime.name>
-                <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
+                <runtime.assembly>src/main/assembly/rt-unix.xml</runtime.assembly>
+                <jemalloc.so>linux-amd64/libjemalloc.so</jemalloc.so>
             </properties>
         </profile>
         <profile>
@@ -539,7 +540,8 @@
             <properties>
                 <archive.name>${project.version}-rt-freebsd-amd64</archive.name>
                 <runtime.name>questdb-${project.version}-rt-freebsd-amd64</runtime.name>
-                <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
+                <runtime.assembly>src/main/assembly/rt-unix.xml</runtime.assembly>
+                <jemalloc.so>freebsd-amd64/libjemalloc.so</jemalloc.so>
             </properties>
         </profile>
         <profile>
@@ -553,7 +555,8 @@
             <properties>
                 <archive.name>${project.version}-rt-linux-aarch64</archive.name>
                 <runtime.name>questdb-${project.version}-rt-linux-aarch64</runtime.name>
-                <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
+                <runtime.assembly>src/main/assembly/rt-unix.xml</runtime.assembly>
+                <jemalloc.so>linux-aarch64/libjemalloc.so</jemalloc.so>
             </properties>
         </profile>
         <profile>
@@ -561,12 +564,29 @@
             <activation>
                 <os>
                     <family>Mac</family>
+                    <arch>amd64</arch>
                 </os>
             </activation>
             <properties>
                 <archive.name>${project.version}-rt-osx-amd64</archive.name>
                 <runtime.name>questdb-${project.version}-rt-osx-amd64</runtime.name>
-                <runtime.assembly>src/main/assembly/linux-runtime.xml</runtime.assembly>
+                <runtime.assembly>src/main/assembly/rt-unix.xml</runtime.assembly>
+                <jemalloc.so>darwin-amd64/libjemalloc.dylib</jemalloc.so>
+            </properties>
+        </profile>
+        <profile>
+            <id>platform-osx-aarch64</id>
+            <activation>
+                <os>
+                    <family>Mac</family>
+                    <arch>aarch64</arch>
+                </os>
+            </activation>
+            <properties>
+                <archive.name>${project.version}-rt-osx-aarch64</archive.name>
+                <runtime.name>questdb-${project.version}-rt-osx-aarch64</runtime.name>
+                <runtime.assembly>src/main/assembly/rt-unix.xml</runtime.assembly>
+                <jemalloc.so>darwin-aarch64/libjemalloc.dylib</jemalloc.so>
             </properties>
         </profile>
         <profile>

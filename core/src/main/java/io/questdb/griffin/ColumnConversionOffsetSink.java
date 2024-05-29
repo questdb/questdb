@@ -22,22 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.cutlass.pgwire;
+package io.questdb.griffin;
 
-import io.questdb.cutlass.pgwire.TypesAndSelect;
-import io.questdb.std.WeakSelfReturningObjectPool;
-import org.junit.Test;
+public interface ColumnConversionOffsetSink {
+    void setDestSizes(long primarySize, long auxSize);
 
-public class TypesAndSelectTest {
-    @Test
-    public void testReturnToPoolCausesStackOverflow() {
-        WeakSelfReturningObjectPool<TypesAndSelect> typesAndSelectPool = new WeakSelfReturningObjectPool<>(TypesAndSelect::new, 1);
-        TypesAndSelect i1 = typesAndSelectPool.pop();
-        TypesAndSelect i2 = typesAndSelectPool.pop();
-        TypesAndSelect i3 = typesAndSelectPool.pop();
-
-        i1.close();
-        i2.close();
-        i3.close();
-    }
+    void setSrcOffsets(long primaryOffset, long auxOffset);
 }

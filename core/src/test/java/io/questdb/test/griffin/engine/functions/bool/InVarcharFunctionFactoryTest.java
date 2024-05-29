@@ -35,7 +35,7 @@ public class InVarcharFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testBadConstant() {
-        assertFailure(12, "VARCHAR constant expected", utf8("xv"), utf8("an"), 10);
+        assertFailure(12, "cannot compare VARCHAR with type INT", utf8("xv"), utf8("an"), 10);
     }
 
     @Test
@@ -56,6 +56,11 @@ public class InVarcharFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testTwoArgsOneChar() throws SqlException {
         call(utf8("xy"), utf8("xy"), utf8("yz"), utf8("l")).andAssert(true);
+    }
+
+    @Test
+    public void testWithNulls() throws SqlException {
+        call(null, "xy", null).andAssert(true);
     }
 
     @Test

@@ -35,25 +35,31 @@ public class SimulateCrashFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testCrashDisabled() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "simulate_crash\n" +
-                        "false\n", "select simulate_crash('0')"
-        ));
+        assertMemoryLeak(() -> {
+            assertSql(
+                    "simulate_crash\n" +
+                            "false\n",
+                    "select simulate_crash('0')"
+            );
 
-        assertMemoryLeak(() -> assertSql(
-                "simulate_crash\n" +
-                        "false\n", "select simulate_crash('D')"
-        ));
+            assertSql(
+                    "simulate_crash\n" +
+                            "false\n",
+                    "select simulate_crash('D')"
+            );
 
-        assertMemoryLeak(() -> assertSql(
-                "simulate_crash\n" +
-                        "false\n", "select simulate_crash('C')"
-        ));
+            assertSql(
+                    "simulate_crash\n" +
+                            "false\n",
+                    "select simulate_crash('C')"
+            );
 
-        assertMemoryLeak(() -> assertSql(
-                "simulate_crash\n" +
-                        "false\n", "select simulate_crash('M')"
-        ));
+            assertSql(
+                    "simulate_crash\n" +
+                            "false\n",
+                    "select simulate_crash('M')"
+            );
+        });
     }
 
     @Test
@@ -63,40 +69,36 @@ public class SimulateCrashFunctionTest extends AbstractCairoTest {
         // select simulate_crash('0'), This is total crash, don't simulate it
 
         assertMemoryLeak(() -> {
-                    //noinspection CatchMayIgnoreException
-                    try {
-                        assertSql(
-                                "simulate_crash\n" +
-                                        "false\n", "select simulate_crash('C')");
-                        Assert.fail();
-                    } catch (CairoError e) {
-                    }
-                }
-        );
+            try {
+                assertSql(
+                        "simulate_crash\n" +
+                                "false\n",
+                        "select simulate_crash('C')"
+                );
+                Assert.fail();
+            } catch (CairoError ignore) {
+            }
 
-        // This is total crash, don't use it
-        assertMemoryLeak(() -> {
-                    //noinspection CatchMayIgnoreException
-                    try {
-                        assertSql(
-                                "simulate_crash\n" +
-                                        "false\n", "select simulate_crash('M')");
-                        Assert.fail();
-                    } catch (OutOfMemoryError e) {
-                    }
-                }
-        );
+            // This is total crash, don't use it
+            try {
+                assertSql(
+                        "simulate_crash\n" +
+                                "false\n",
+                        "select simulate_crash('M')"
+                );
+                Assert.fail();
+            } catch (OutOfMemoryError ignore) {
+            }
 
-        assertMemoryLeak(() -> {
-                    //noinspection CatchMayIgnoreException
-                    try {
-                        assertSql(
-                                "simulate_crash\n" +
-                                        "false\n", "select simulate_crash('D')");
-                        Assert.fail();
-                    } catch (CairoException e) {
-                    }
-                }
-        );
+            try {
+                assertSql(
+                        "simulate_crash\n" +
+                                "false\n",
+                        "select simulate_crash('D')"
+                );
+                Assert.fail();
+            } catch (CairoException ignore) {
+            }
+        });
     }
 }

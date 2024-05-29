@@ -22,23 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.griffin;
 
-import io.questdb.cairo.SecurityContext;
-import io.questdb.log.Log;
-import io.questdb.log.LogRecord;
+public final class ConvertersNative {
+    public static native long fixedToFixed(long srcMem, long srcType, long dstMem, long dstType, long rowCount);
 
-public final class DefaultQueryLogger implements QueryLogger {
-    public static final DefaultQueryLogger INSTANCE = new DefaultQueryLogger();
-
-    private DefaultQueryLogger() {
-    }
-
-    @Override
-    public LogRecord logQuery(Log logger, int fd, CharSequence query, SecurityContext securityContext, String logText) {
-        return logger.info().$(logText)
-                .$(" [fd=").$(fd)
-                .$(", thread=").$(Thread.currentThread().getId())
-                .$(", q=").utf8(query);
+    public static final class ConversionError {
+        public static final short NONE = 0;
+        public static final short UNSUPPORTED_CAST = 1;
     }
 }
+
+

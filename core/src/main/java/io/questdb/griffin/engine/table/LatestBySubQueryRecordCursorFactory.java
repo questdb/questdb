@@ -34,6 +34,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -58,30 +59,35 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
             @NotNull IntList columnIndexes
     ) {
         super(metadata, dataFrameCursorFactory, configuration);
-        // this instance is shared between factory and cursor
-        // factory will be resolving symbols for cursor and if successful
-        // symbol keys will be added to this hash set
-        symbolKeys = new IntHashSet();
-        this.indexed = indexed;
-        DataFrameRecordCursor cursor;
-        if (indexed) {
-            if (filter != null) {
-                cursor = new LatestByValuesIndexedFilteredRecordCursor(columnIndex, rows, symbolKeys, null, filter, columnIndexes);
+        try {
+            // this instance is shared between factory and cursor
+            // factory will be resolving symbols for cursor and if successful
+            // symbol keys will be added to this hash set
+            symbolKeys = new IntHashSet();
+            this.indexed = indexed;
+            DataFrameRecordCursor cursor;
+            if (indexed) {
+                if (filter != null) {
+                    cursor = new LatestByValuesIndexedFilteredRecordCursor(columnIndex, rows, symbolKeys, null, filter, columnIndexes);
+                } else {
+                    cursor = new LatestByValuesIndexedRecordCursor(columnIndex, symbolKeys, null, rows, columnIndexes);
+                }
             } else {
-                cursor = new LatestByValuesIndexedRecordCursor(columnIndex, symbolKeys, null, rows, columnIndexes);
+                if (filter != null) {
+                    cursor = new LatestByValuesFilteredRecordCursor(columnIndex, rows, symbolKeys, null, filter, columnIndexes);
+                } else {
+                    cursor = new LatestByValuesRecordCursor(columnIndex, rows, symbolKeys, null, columnIndexes);
+                }
             }
-        } else {
-            if (filter != null) {
-                cursor = new LatestByValuesFilteredRecordCursor(columnIndex, rows, symbolKeys, null, filter, columnIndexes);
-            } else {
-                cursor = new LatestByValuesRecordCursor(columnIndex, rows, symbolKeys, null, columnIndexes);
-            }
+            this.cursor = new DataFrameRecordCursorWrapper(cursor);
+            this.recordCursorFactory = recordCursorFactory;
+            this.filter = filter;
+            this.columnIndex = columnIndex;
+            this.func = func;
+        } catch (Throwable th) {
+            close();
+            throw th;
         }
-        this.cursor = new DataFrameRecordCursorWrapper(cursor);
-        this.recordCursorFactory = recordCursorFactory;
-        this.filter = filter;
-        this.columnIndex = columnIndex;
-        this.func = func;
     }
 
     @Override
@@ -105,7 +111,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
     @Override
     protected void _close() {
         super._close();
-        recordCursorFactory.close();
+        Misc.free(recordCursorFactory);
         Misc.free(filter);
     }
 
@@ -219,8 +225,9 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         private void buildSymbolKeys() {
             final StaticSymbolTable symbolTable = delegate.getSymbolTable(columnIndex);
             final Record record = baseCursor.getRecord();
+            StringSink sink = Misc.getThreadLocalSink();
             while (baseCursor.hasNext()) {
-                int symbolKey = symbolTable.keyOf(func.get(record, 0));
+                int symbolKey = symbolTable.keyOf(func.get(record, 0, sink));
                 if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
                     symbolKeys.add(TableUtils.toIndexKey(symbolKey));
                 }

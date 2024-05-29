@@ -80,21 +80,26 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                 LOG,
                 metrics.line().connectionCountGauge()
         );
-        this.configuration = configuration;
-        nf = configuration.getNetworkFacade();
-        disconnectOnError = configuration.getDisconnectOnError();
-        this.scheduler = scheduler;
-        this.metrics = metrics;
-        this.milliClock = configuration.getMillisecondClock();
-        parser = new LineTcpParser(configuration.isStringAsTagSupported(), configuration.isSymbolAsFieldSupported());
-        this.authenticator = configuration.getFactoryProvider().getLineAuthenticatorFactory().getLineTCPAuthenticator();
-        clear();
-        this.checkIdleInterval = configuration.getMaintenanceInterval();
-        this.commitInterval = configuration.getCommitInterval();
-        long now = milliClock.getTicks();
-        this.nextCheckIdleTime = now + checkIdleInterval;
-        this.nextCommitTime = now + commitInterval;
-        this.idleTimeout = configuration.getWriterIdleTimeout();
+        try {
+            this.configuration = configuration;
+            nf = configuration.getNetworkFacade();
+            disconnectOnError = configuration.getDisconnectOnError();
+            this.scheduler = scheduler;
+            this.metrics = metrics;
+            this.milliClock = configuration.getMillisecondClock();
+            parser = new LineTcpParser();
+            this.authenticator = configuration.getFactoryProvider().getLineAuthenticatorFactory().getLineTCPAuthenticator();
+            clear();
+            this.checkIdleInterval = configuration.getMaintenanceInterval();
+            this.commitInterval = configuration.getCommitInterval();
+            long now = milliClock.getTicks();
+            this.nextCheckIdleTime = now + checkIdleInterval;
+            this.nextCommitTime = now + commitInterval;
+            this.idleTimeout = configuration.getWriterIdleTimeout();
+        } catch (Throwable t) {
+            close();
+            throw t;
+        }
     }
 
     public void checkIdle(long millis) {

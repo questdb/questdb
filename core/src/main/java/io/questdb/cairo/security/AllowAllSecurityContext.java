@@ -54,6 +54,10 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeAlterTableAlterColumnType(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+    }
+
+    @Override
     public void authorizeAlterTableAttachPartition(TableToken tableToken) {
     }
 

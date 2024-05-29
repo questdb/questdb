@@ -24,6 +24,7 @@
 
 package io.questdb.std;
 
+import com.sun.management.OperatingSystemMXBean;
 import io.questdb.std.ex.FatalError;
 import io.questdb.std.ex.KerberosException;
 import io.questdb.std.str.Path;
@@ -33,17 +34,21 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.management.ManagementFactory;
 import java.util.concurrent.locks.LockSupport;
 
 public final class Os {
-    public static final int FREEBSD = 5;
-    public static final int LINUX_AMD64 = 2;
-    public static final int LINUX_ARM64 = 4;
-    public static final int OSX_AMD64 = 1;
-    public static final int OSX_ARM64 = 6;
+    public static final int ARCH_AARCH64 = 1;
+    public static final int ARCH_AMD64 = 2;
+    public static final int DARWIN = 1;
+    public static final int FREEBSD = 4;
+    public static final int LINUX = 2;
     public static final long PARK_NANOS_MAX = 5 * 1_000_000_000L;
     public static final int WINDOWS = 3;
     public static final int _32Bit = -2;
+    public static final int arch;
+    public static final String archName;
+    public static final String name;
     public static final int type;
 
     private Os() {
@@ -92,6 +97,8 @@ public final class Os {
         return Unsafe.getUnsafe().getInt(forkExecT + 4);
     }
 
+    public static native void free(long mem);
+
     public static byte[] generateKerberosToken(CharSequence spn) throws KerberosException {
         // We use Path as a LPSZ sink here.
         try (Path sink = new Path().of(spn).$()) {
@@ -117,6 +124,21 @@ public final class Os {
 
     public static native int getEnvironmentType();
 
+    /**
+     * Uses the com.sun.management.OperatingSystemMXBean to get the memory size.
+     * This report takes into account the limit set through cgroups (e.g., inside
+     * a Docker container).
+     * <p>
+     * If the MXBean doesn't exist, returns -1.
+     */
+    public static long getMemorySizeFromMXBean() {
+        OperatingSystemMXBean bean = ManagementFactory.getPlatformMXBean(OperatingSystemMXBean.class);
+        if (bean == null) {
+            return -1;
+        }
+        return bean.getTotalPhysicalMemorySize();
+    }
+
     public static native int getPid();
 
     /**
@@ -135,11 +157,11 @@ public final class Os {
     }
 
     public static boolean isLinux() {
-        return type == LINUX_AMD64 || type == LINUX_ARM64;
+        return type == LINUX;
     }
 
     public static boolean isOSX() {
-        return type == OSX_AMD64 || type == OSX_ARM64;
+        return type == DARWIN;
     }
 
     public static boolean isPosix() {
@@ -152,15 +174,11 @@ public final class Os {
         return type == Os.WINDOWS;
     }
 
+    public static native long malloc(long size);
+
     public static void park() {
         LockSupport.parkNanos(Os.PARK_NANOS_MAX);
     }
-
-    public static native long malloc(long size);
-
-    public static native long realloc(long mem, long size);
-
-    public static native void free(long mem);
 
     public static void pause() {
         try {
@@ -168,6 +186,8 @@ public final class Os {
         } catch (InterruptedException ignore) {
         }
     }
+
+    public static native long realloc(long mem, long size);
 
     public static int setCurrentThreadAffinity(int cpu) {
         if (cpu == -1) {
@@ -240,58 +260,75 @@ public final class Os {
     private static native int setCurrentThreadAffinity0(int cpu);
 
     static {
+        if ("aarch64".equals(System.getProperty("os.arch"))) {
+            arch = ARCH_AARCH64;
+            archName = "aarch64";
+        } else {
+            arch = ARCH_AMD64;
+            archName = "amd64";
+        }
+
         if ("64".equals(System.getProperty("sun.arch.data.model"))) {
             String osName = System.getProperty("os.name");
-            String libRoot;
-            String libExt = ".so";
+            String outputLibExt;
+
             if (osName.contains("Linux")) {
-                if ("aarch64".equals(System.getProperty("os.arch"))) {
-                    type = LINUX_ARM64;
-                    libRoot = "/io/questdb/bin/armlinux/";
-                } else {
-                    type = LINUX_AMD64;
-                    libRoot = "/io/questdb/bin/linux/";
-                }
+                name = "linux";
+                outputLibExt = ".so";
+                type = LINUX;
             } else if (osName.contains("Mac")) {
-                libExt = ".dylib";
-                if ("aarch64".equals(System.getProperty("os.arch"))) {
-                    type = OSX_ARM64;
-                    libRoot = "/io/questdb/bin/armosx/";
-                } else {
-                    type = OSX_AMD64; // darwin
-                    libRoot = "/io/questdb/bin/osx/";
-                }
+                name = "darwin";
+                outputLibExt = ".dylib";
+                type = DARWIN;
             } else if (osName.contains("Windows")) {
+                name = "windows";
+                outputLibExt = ".dll";
                 type = WINDOWS;
-                libRoot = "/io/questdb/bin/windows/";
-                libExt = ".dll";
             } else if (osName.contains("FreeBSD")) {
+                name = "freebsd";
+                outputLibExt = ".so";
                 type = FREEBSD; // darwin is based on FreeBSD, so things that work for OSX will probably work for FreeBSD
-                libRoot = "/io/questdb/bin/freebsd/";
             } else {
                 throw new Error("Unsupported OS: " + osName);
             }
 
-            // C/C++ library
-            loadLib(libRoot + "libquestdb" + libExt);
+            String prdLibRoot = "/io/questdb/bin/" + name + '-' + archName + '/';
+            String devCXXLibRoot = "/io/questdb/bin-local/";
+            String cxxLibName = "libquestdb" + outputLibExt;
+            String devCXXLib = devCXXLibRoot + cxxLibName;
+
+            // try dev CXX lib first
+            InputStream libCXXStream = Os.class.getResourceAsStream(devCXXLib);
+            if (libCXXStream == null) {
+                loadLib(prdLibRoot + cxxLibName);
+            } else {
+                System.err.println("Loading DEV CXX library: " + devCXXLib);
+                loadLib(devCXXLib, libCXXStream);
+            }
+
             // Rust library is loaded conditionally to allow for convenience
             // of the development environments that target Rust source code
             // The library file is missing "lib" prefix on Windows
-            final String devLib;
+            String devRustLibRoot = "/io/questdb/rust/";
+            final String rustLibName;
             if (type == WINDOWS) {
-                devLib = "/io/questdb/rust/questdbr" + libExt;
+                rustLibName = "questdbr" + outputLibExt;
             } else {
-                devLib = "/io/questdb/rust/libquestdbr" + libExt;
+                rustLibName = "libquestdbr" + outputLibExt;
             }
-            InputStream libStream = Os.class.getResourceAsStream(devLib);
-            if (libStream == null) {
-                loadLib(libRoot + "libquestdbr" + libExt);
+
+            final String devRustLib = devRustLibRoot + rustLibName;
+
+            InputStream libRustStream = Os.class.getResourceAsStream(devRustLib);
+            if (libRustStream == null) {
+                loadLib(prdLibRoot + rustLibName);
             } else {
-                loadLib(devLib, libStream);
+                loadLib(devRustLib, libRustStream);
             }
             initRust();
         } else {
             type = _32Bit;
+            name = System.getProperty("os.name");
         }
     }
 }

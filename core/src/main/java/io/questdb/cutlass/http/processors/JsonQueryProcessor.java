@@ -25,7 +25,6 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.Metrics;
-import io.questdb.QueryLogger;
 import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
@@ -63,8 +62,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private final int maxSqlRecompileAttempts;
     private final Metrics metrics;
     private final NanosecondClock nanosecondClock;
-    private final Path path = new Path();
-    private final QueryLogger queryLogger;
+    private final Path path;
     private final byte requiredAuthType;
     private final SqlExecutionContextImpl sqlExecutionContext;
 
@@ -95,48 +93,53 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             CairoEngine engine,
             SqlExecutionContextImpl sqlExecutionContext
     ) {
-        this.configuration = configuration;
-        this.engine = engine;
-        queryLogger = engine.getConfiguration().getQueryLogger();
-        requiredAuthType = configuration.getRequiredAuthType();
-        final QueryExecutor sendConfirmation = this::updateMetricsAndSendConfirmation;
-        this.queryExecutors.extendAndSet(CompiledQuery.SELECT, this::executeNewSelect);
-        this.queryExecutors.extendAndSet(CompiledQuery.INSERT, this::executeInsert);
-        this.queryExecutors.extendAndSet(CompiledQuery.TRUNCATE, sendConfirmation);
-        this.queryExecutors.extendAndSet(CompiledQuery.ALTER, this::executeAlterTable);
-        this.queryExecutors.extendAndSet(CompiledQuery.SET, sendConfirmation);
-        this.queryExecutors.extendAndSet(CompiledQuery.DROP, sendConfirmation);
-        this.queryExecutors.extendAndSet(CompiledQuery.PSEUDO_SELECT, this::executePseudoSelect);
-        this.queryExecutors.extendAndSet(CompiledQuery.CREATE_TABLE, sendConfirmation);
-        this.queryExecutors.extendAndSet(CompiledQuery.INSERT_AS_SELECT, sendConfirmation);
-        this.queryExecutors.extendAndSet(CompiledQuery.COPY_REMOTE, JsonQueryProcessor::cannotCopyRemote);
-        this.queryExecutors.extendAndSet(CompiledQuery.RENAME_TABLE, sendConfirmation);
-        this.queryExecutors.extendAndSet(CompiledQuery.REPAIR, sendConfirmation);
-        this.queryExecutors.extendAndSet(CompiledQuery.BACKUP_TABLE, sendConfirmation);
-        this.queryExecutors.extendAndSet(CompiledQuery.UPDATE, this::executeUpdate);
-        this.queryExecutors.extendAndSet(CompiledQuery.VACUUM, sendConfirmation);
-        this.queryExecutors.extendAndSet(CompiledQuery.BEGIN, sendConfirmation);
-        this.queryExecutors.extendAndSet(CompiledQuery.COMMIT, sendConfirmation);
-        this.queryExecutors.extendAndSet(CompiledQuery.ROLLBACK, sendConfirmation);
-        this.queryExecutors.extendAndSet(CompiledQuery.CREATE_TABLE_AS_SELECT, sendConfirmation);
-        this.queryExecutors.extendAndSet(CompiledQuery.SNAPSHOT_DB_PREPARE, sendConfirmation);
-        this.queryExecutors.extendAndSet(CompiledQuery.SNAPSHOT_DB_COMPLETE, sendConfirmation);
-        this.queryExecutors.extendAndSet(CompiledQuery.DEALLOCATE, sendConfirmation);
-        this.queryExecutors.extendAndSet(CompiledQuery.EXPLAIN, this::executeExplain);
-        this.queryExecutors.extendAndSet(CompiledQuery.TABLE_RESUME, sendConfirmation);
-        this.queryExecutors.extendAndSet(CompiledQuery.TABLE_SET_TYPE, sendConfirmation);
-        this.queryExecutors.extendAndSet(CompiledQuery.CREATE_USER, sendConfirmation);
-        this.queryExecutors.extendAndSet(CompiledQuery.ALTER_USER, sendConfirmation);
-        this.queryExecutors.extendAndSet(CompiledQuery.CANCEL_QUERY, sendConfirmation);
-        // Query types start with 1 instead of 0, so we have to add 1 to the expected size.
-        assert this.queryExecutors.size() == (CompiledQuery.TYPES_COUNT + 1);
-        this.sqlExecutionContext = sqlExecutionContext;
-        this.nanosecondClock = configuration.getNanosecondClock();
-        this.maxSqlRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
-        this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB3);
-        this.metrics = engine.getMetrics();
-        this.asyncWriterStartTimeout = engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout();
-        this.asyncCommandTimeout = engine.getConfiguration().getWriterAsyncCommandMaxTimeout();
+        try {
+            this.configuration = configuration;
+            this.path = new Path();
+            this.engine = engine;
+            requiredAuthType = configuration.getRequiredAuthType();
+            final QueryExecutor sendConfirmation = this::updateMetricsAndSendConfirmation;
+            this.queryExecutors.extendAndSet(CompiledQuery.SELECT, this::executeNewSelect);
+            this.queryExecutors.extendAndSet(CompiledQuery.INSERT, this::executeInsert);
+            this.queryExecutors.extendAndSet(CompiledQuery.TRUNCATE, sendConfirmation);
+            this.queryExecutors.extendAndSet(CompiledQuery.ALTER, this::executeAlterTable);
+            this.queryExecutors.extendAndSet(CompiledQuery.SET, sendConfirmation);
+            this.queryExecutors.extendAndSet(CompiledQuery.DROP, sendConfirmation);
+            this.queryExecutors.extendAndSet(CompiledQuery.PSEUDO_SELECT, this::executePseudoSelect);
+            this.queryExecutors.extendAndSet(CompiledQuery.CREATE_TABLE, sendConfirmation);
+            this.queryExecutors.extendAndSet(CompiledQuery.INSERT_AS_SELECT, sendConfirmation);
+            this.queryExecutors.extendAndSet(CompiledQuery.COPY_REMOTE, JsonQueryProcessor::cannotCopyRemote);
+            this.queryExecutors.extendAndSet(CompiledQuery.RENAME_TABLE, sendConfirmation);
+            this.queryExecutors.extendAndSet(CompiledQuery.REPAIR, sendConfirmation);
+            this.queryExecutors.extendAndSet(CompiledQuery.BACKUP_TABLE, sendConfirmation);
+            this.queryExecutors.extendAndSet(CompiledQuery.UPDATE, this::executeUpdate);
+            this.queryExecutors.extendAndSet(CompiledQuery.VACUUM, sendConfirmation);
+            this.queryExecutors.extendAndSet(CompiledQuery.BEGIN, sendConfirmation);
+            this.queryExecutors.extendAndSet(CompiledQuery.COMMIT, sendConfirmation);
+            this.queryExecutors.extendAndSet(CompiledQuery.ROLLBACK, sendConfirmation);
+            this.queryExecutors.extendAndSet(CompiledQuery.CREATE_TABLE_AS_SELECT, sendConfirmation);
+            this.queryExecutors.extendAndSet(CompiledQuery.SNAPSHOT_DB_PREPARE, sendConfirmation);
+            this.queryExecutors.extendAndSet(CompiledQuery.SNAPSHOT_DB_COMPLETE, sendConfirmation);
+            this.queryExecutors.extendAndSet(CompiledQuery.DEALLOCATE, sendConfirmation);
+            this.queryExecutors.extendAndSet(CompiledQuery.EXPLAIN, this::executeExplain);
+            this.queryExecutors.extendAndSet(CompiledQuery.TABLE_RESUME, sendConfirmation);
+            this.queryExecutors.extendAndSet(CompiledQuery.TABLE_SET_TYPE, sendConfirmation);
+            this.queryExecutors.extendAndSet(CompiledQuery.CREATE_USER, sendConfirmation);
+            this.queryExecutors.extendAndSet(CompiledQuery.ALTER_USER, sendConfirmation);
+            this.queryExecutors.extendAndSet(CompiledQuery.CANCEL_QUERY, sendConfirmation);
+            // Query types start with 1 instead of 0, so we have to add 1 to the expected size.
+            assert this.queryExecutors.size() == (CompiledQuery.TYPES_COUNT + 1);
+            this.sqlExecutionContext = sqlExecutionContext;
+            this.nanosecondClock = configuration.getNanosecondClock();
+            this.maxSqlRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
+            this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB3);
+            this.metrics = engine.getMetrics();
+            this.asyncWriterStartTimeout = engine.getConfiguration().getWriterAsyncCommandBusyWaitTimeout();
+            this.asyncCommandTimeout = engine.getConfiguration().getWriterAsyncCommandMaxTimeout();
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override
@@ -175,14 +178,9 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             final RecordCursorFactory factory = context.getSelectCache().poll(state.getQuery());
             if (factory != null) {
                 // queries with sensitive info are not cached, doLog = true
-                queryLogger.logExecQuery(LOG, true, context.getFd(), state.getQuery(), context.getSecurityContext());
                 try {
                     sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT, TelemetryOrigin.HTTP_JSON);
-                    executeCachedSelect(
-                            state,
-                            factory,
-                            configuration.getKeepAliveHeader()
-                    );
+                    executeCachedSelect(state, factory);
                 } catch (TableReferenceOutOfDateException e) {
                     LOG.info().$(e.getFlyweightMessage()).$();
                     Misc.free(factory);
@@ -219,8 +217,14 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             // re-throw the exception
             throw e;
         } catch (Throwable e) {
-            internalError(context.getChunkedResponse(), context.getLastRequestBytesSent(), e.getMessage(),
-                    500, e, state, context.getMetrics()
+            internalError(
+                    context.getChunkedResponse(),
+                    context.getLastRequestBytesSent(),
+                    e.getMessage(),
+                    500,
+                    e,
+                    state,
+                    context.getMetrics()
             );
             readyForNextRequest(context);
         }
@@ -407,6 +411,20 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         readyForNextRequest(context);
     }
 
+    private static void sendInsertConfirmation(
+            JsonQueryProcessorState state,
+            CharSequence keepAliveHeader
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        final HttpConnectionContext context = state.getHttpConnectionContext();
+        final HttpChunkedResponse response = context.getChunkedResponse();
+        header(response, context, keepAliveHeader, 200);
+        response.put('{')
+                .putAsciiQuoted("dml").putAscii(':').putAsciiQuoted("OK")
+                .put('}');
+        response.sendChunk(true);
+        readyForNextRequest(context);
+    }
+
     private static void sendUpdateConfirmation(
             JsonQueryProcessorState state,
             CharSequence keepAliveHeader,
@@ -416,7 +434,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final HttpChunkedResponse response = context.getChunkedResponse();
         header(response, context, keepAliveHeader, 200);
         response.put('{')
-                .putAsciiQuoted("ddl").putAscii(':').putAsciiQuoted("OK").putAscii(',')
+                .putAsciiQuoted("dml").putAscii(':').putAsciiQuoted("OK").putAscii(',')
                 .putAsciiQuoted("updated").putAscii(':').put(updateRecords)
                 .put('}');
         response.sendChunk(true);
@@ -429,7 +447,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             FlyweightMessageContainer container,
             CharSequence keepAliveHeader
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        state.logSqlError(container);
         sendException(
                 response,
                 state.getHttpConnectionContext(),
@@ -499,14 +516,10 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         sendConfirmation(state, keepAliveHeader);
     }
 
-    private void executeCachedSelect(
-            JsonQueryProcessorState state,
-            RecordCursorFactory factory,
-            CharSequence keepAliveHeader
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
+    private void executeCachedSelect(JsonQueryProcessorState state, RecordCursorFactory factory) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
         state.setCompilerNanos(0);
-        state.logExecuteCached();
-        executeSelect(state, factory, keepAliveHeader);
+        sqlExecutionContext.setCacheHit(true);
+        executeSelect(state, factory);
     }
 
     //same as for select new but disallows caching of explain plans
@@ -516,7 +529,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             CharSequence keepAliveHeader
     )
             throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
-        state.logExecuteNew();
         final RecordCursorFactory factory = cq.getRecordCursorFactory();
         final HttpConnectionContext context = state.getHttpConnectionContext();
         try {
@@ -539,7 +551,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         cq.getInsertOperation().execute(sqlExecutionContext).await();
         metrics.jsonQuery().markComplete();
-        sendConfirmation(state, keepAliveHeader);
+        sendInsertConfirmation(state, keepAliveHeader);
     }
 
     private void executeNewSelect(
@@ -547,12 +559,10 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             CompiledQuery cq,
             CharSequence keepAliveHeader
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
-        state.logExecuteNew();
         final RecordCursorFactory factory = cq.getRecordCursorFactory();
         executeSelect(
                 state,
-                factory,
-                keepAliveHeader
+                factory
         );
     }
 
@@ -577,11 +587,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         }
     }
 
-    private void executeSelect(
-            JsonQueryProcessorState state,
-            RecordCursorFactory factory,
-            CharSequence keepAliveHeader
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
+    private void executeSelect(JsonQueryProcessorState state, RecordCursorFactory factory) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
         final HttpConnectionContext context = state.getHttpConnectionContext();
         try {
             if (state.of(factory, sqlExecutionContext)) {
@@ -617,9 +623,9 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             metrics.jsonQuery().markComplete();
             sendUpdateConfirmation(state, keepAliveHeader, updatedCount);
         } catch (CairoException e) {
-            // close e.g. when query has been cancelled
-            if (e.isInterruption()) {
-                cq.getUpdateOperation().close();
+            // close e.g. when query has been cancelled, or we got an OOM
+            if (e.isInterruption() || e.isOutOfMemory()) {
+                Misc.free(cq.getUpdateOperation());
             }
             throw e;
         } finally {

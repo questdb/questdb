@@ -27,6 +27,7 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.vm.MemoryCMORImpl;
 import io.questdb.cairo.vm.MemoryCMRImpl;
 import io.questdb.cairo.vm.MemoryPMARImpl;
 import io.questdb.cairo.vm.Vm;
@@ -200,6 +201,64 @@ public class CairoMemoryTest extends AbstractTest {
                         CairoConfiguration.O_NONE
                 )
         );
+    }
+
+    @Test
+    public void testCMARWImplLeavesFdsOpenOnDetachFdClose() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            long used = Unsafe.getMemUsed();
+            try (Path path = new Path().of(temp.newFile().getAbsolutePath()).$()) {
+                MemoryCMARW mem = Vm.getCMARWInstance(
+                        FF,
+                        path,
+                        2 * FF.getPageSize(),
+                        -1,
+                        MemoryTag.MMAP_DEFAULT,
+                        CairoConfiguration.O_NONE
+                );
+                for (int i = 0; i < N; i++) {
+                    mem.putLong(i);
+                }
+                Assert.assertEquals(8L * N, mem.getAppendOffset());
+                int fd = mem.getFd();
+                mem.detachFdClose();
+
+                MemoryCMORImpl memR = new MemoryCMORImpl();
+                memR.ofOffset(FF, fd, null, 0, 8 * N, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
+                for (int i = 0; i < N; i++) {
+                    Assert.assertEquals(i, memR.getLong(i * 8));
+                }
+                memR.detachFdClose();
+
+                FF.close(fd);
+            }
+            Assert.assertEquals(used, Unsafe.getMemUsed());
+        });
+    }
+
+    @Test
+    public void testPMARImplLeavesFdsOpenOnDetachFdClose() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            long used = Unsafe.getMemUsed();
+            try (Path path = new Path().of(temp.newFile().getAbsolutePath()).$()) {
+                MemoryPMARImpl mem = new MemoryPMARImpl(FF, path, 2 * FF.getPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
+                for (int i = 0; i < N; i++) {
+                    mem.putLong(i);
+                }
+                int fd = mem.getFd();
+                mem.detachFdClose();
+
+                MemoryCMORImpl memR = new MemoryCMORImpl();
+                memR.ofOffset(FF, fd, null, 0, 8 * N, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
+                for (int i = 0; i < N; i++) {
+                    Assert.assertEquals(i, memR.getLong(i * 8));
+                }
+                memR.detachFdClose();
+
+                FF.close(fd);
+            }
+            Assert.assertEquals(used, Unsafe.getMemUsed());
+        });
     }
 
     @Test

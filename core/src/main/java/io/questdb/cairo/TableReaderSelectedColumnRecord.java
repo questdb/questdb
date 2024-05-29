@@ -362,10 +362,8 @@ public class TableReaderSelectedColumnRecord implements Record {
                 rowNum,
                 TableReader.getPrimaryColumnIndex(columnBase, col)
         );
-        return VarcharTypeDriver.getValue(
-                rowNum,
-                reader.getColumn(absoluteColumnIndex),
-                reader.getColumn(absoluteColumnIndex + 1),
+        return VarcharTypeDriver.getSplitValue(
+                reader.getColumn(absoluteColumnIndex + 1), reader.getColumn(absoluteColumnIndex), rowNum,
                 ab
         );
     }

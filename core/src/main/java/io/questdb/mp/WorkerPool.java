@@ -45,6 +45,7 @@ public class WorkerPool implements Closeable {
     private final boolean haltOnError;
     private final SOCountDownLatch halted;
     private final Metrics metrics;
+    private final long napThreshold;
     private final String poolName;
     private final AtomicBoolean running = new AtomicBoolean();
     private final long sleepMs;
@@ -74,6 +75,7 @@ public class WorkerPool implements Closeable {
         this.daemons = configuration.isDaemonPool();
         this.poolName = configuration.getPoolName();
         this.yieldThreshold = configuration.getYieldThreshold();
+        this.napThreshold = configuration.getNapThreshold();
         this.sleepThreshold = configuration.getSleepThreshold();
         this.sleepMs = configuration.getSleepTimeout();
         this.metrics = metrics;
@@ -181,6 +183,7 @@ public class WorkerPool implements Closeable {
                         ex -> Misc.freeObjListAndClear(threadLocalCleaners.getQuick(index)),
                         haltOnError,
                         yieldThreshold,
+                        napThreshold,
                         sleepThreshold,
                         sleepMs,
                         metrics,

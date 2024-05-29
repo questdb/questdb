@@ -39,7 +39,12 @@ public class UnionAllRecordCursorFactory extends AbstractSetRecordCursorFactory 
             ObjList<Function> castFunctionsB
     ) {
         super(metadata, factoryA, factoryB, castFunctionsA, castFunctionsB);
-        this.cursor = new UnionAllRecordCursor(castFunctionsA, castFunctionsB);
+        try {
+            this.cursor = new UnionAllRecordCursor(castFunctionsA, castFunctionsB);
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override

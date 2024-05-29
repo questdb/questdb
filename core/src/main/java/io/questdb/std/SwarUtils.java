@@ -50,8 +50,8 @@ public final class SwarUtils {
     /**
      * Returns non-zero result in case if the input contains a zero byte.
      * <p>
-     * Each zero byte of the input is replaced with 0x80 in the output.
-     * Each non-zero byte is replaced with zero byte.
+     * First zero byte will be replaced with 0x80 while all preceding bytes (non-zero) - with zero values
+     * Note, that markZeroBytes gives no guarantees about output bytes following after position of the least significant zero byte from the arg w
      */
     public static long markZeroBytes(long w) {
         return ((w - 0x0101010101010101L) & ~(w) & 0x8080808080808080L);

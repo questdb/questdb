@@ -278,7 +278,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
             try {
                 // !!! test depends on thread scheduling
                 // should return the expected result or fail with a CairoException
-                assertQuery(compiler,
+                assertQueryNoLeakCheck(compiler,
                         "sum\n3354.3807411307785\n",
                         sql,
                         null,
@@ -357,7 +357,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
             }
 
             sqlExecutionContext.getBindVariableService().setLong(0, 3);
-            assertQuery(compiler,
+            assertQueryNoLeakCheck(compiler,
                     "a\tt\n" +
                             "0.34574819315105954\t1970-01-01T15:03:20.500000Z\n" +
                             "0.34574734261660356\t1970-01-02T02:14:37.600000Z\n" +
@@ -371,7 +371,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
             // greater
             sqlExecutionContext.getBindVariableService().setLong(0, 5);
-            assertQuery(compiler,
+            assertQueryNoLeakCheck(compiler,
                     "a\tt\n" +
                             "0.34574819315105954\t1970-01-01T15:03:20.500000Z\n" +
                             "0.34574734261660356\t1970-01-02T02:14:37.600000Z\n" +
@@ -386,7 +386,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
             // lower
             sqlExecutionContext.getBindVariableService().setLong(0, 2);
-            assertQuery(compiler,
+            assertQueryNoLeakCheck(compiler,
                     "a\tt\n" +
                             "0.34574819315105954\t1970-01-01T15:03:20.500000Z\n" +
                             "0.34574734261660356\t1970-01-02T02:14:37.600000Z\n",
@@ -399,7 +399,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
             // negative
             sqlExecutionContext.getBindVariableService().setLong(0, -2);
-            assertQuery(compiler,
+            assertQueryNoLeakCheck(compiler,
                     "a\tt\n" +
                             "0.34574784156471083\t1970-01-02T08:17:06.600000Z\n" +
                             "0.34574958643398823\t1970-01-02T20:31:57.900000Z\n",
@@ -424,7 +424,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                 Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, f.getBaseFactory().getClass());
             }
 
-            assertQuery(compiler,
+            assertQueryNoLeakCheck(compiler,
                     "a\tt\n" +
                             "0.34574819315105954\t1970-01-01T15:03:20.500000Z\n" +
                             "0.34574734261660356\t1970-01-02T02:14:37.600000Z\n" +
@@ -488,7 +488,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                 Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, f.getBaseFactory().getClass());
             }
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     compiler,
                     "a\tt\n" +
                             "0.34574819315105954\t1970-01-01T15:03:20.500000Z\n" +
@@ -510,7 +510,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
             compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
             final String sql = "select sum(a) from (x where a > 0.345747032 and a < 0.34575 limit 5)";
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     compiler,
                     "sum\n" +
                             "1.382992963766362\n",
@@ -573,7 +573,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
             bindVariableService.clear();
             bindVariableService.setStr(0, "C");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     compiler,
                     "s\tt\n" +
                             "C\t1970-01-01T00:00:20.300000Z\n" +
@@ -717,7 +717,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     Assert.assertEquals(expectedFactoryClass, f.getBaseFactory().getClass());
                 }
 
-                assertQuery(
+                assertQueryNoLeakCheck(
                         compiler,
                         "a\tt\n" +
                                 "0.34574819315105954\t1970-01-01T15:03:20.500000Z\n" +
@@ -779,7 +779,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
             bindVariableService.clear();
             bindVariableService.setStr(0, "C");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     compiler,
                     "s\tt\n" +
                             "C\t1970-01-01T00:00:20.300000Z\n" +
@@ -1015,6 +1015,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public boolean isCacheHit() {
+            return sqlExecutionContext.isCacheHit();
+        }
+
+        @Override
         public boolean isColumnPreTouchEnabled() {
             return sqlExecutionContext.isColumnPreTouchEnabled();
         }
@@ -1042,6 +1047,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public void pushTimestampRequiredFlag(boolean flag) {
             sqlExecutionContext.pushTimestampRequiredFlag(flag);
+        }
+
+        @Override
+        public void setCacheHit(boolean value) {
+            sqlExecutionContext.setCacheHit(value);
         }
 
         @Override

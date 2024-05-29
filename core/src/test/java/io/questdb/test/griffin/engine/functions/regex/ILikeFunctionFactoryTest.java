@@ -26,7 +26,6 @@ package io.questdb.test.griffin.engine.functions.regex;
 
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -554,7 +553,7 @@ public class ILikeFunctionFactoryTest extends AbstractCairoTest {
         });
     }
 
-    private void assertLike(String expected, String query, boolean expectSize) throws SqlException {
+    private void assertLike(String expected, String query, boolean expectSize) throws Exception {
         assertQuery(expected, query, null, true, expectSize);
     }
 }

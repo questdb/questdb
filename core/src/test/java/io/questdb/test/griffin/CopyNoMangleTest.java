@@ -54,7 +54,7 @@ public class CopyNoMangleTest extends AbstractCairoTest {
                 sqlExecutionContext
         );
 
-        CopyTest.CopyRunnable test = () -> assertQuery(
+        CopyTest.CopyRunnable test = () -> assertQueryNoLeakCheck(
                 "message\ncould not remove import work directory because it points to one of main directories\n",
                 "select left(message, 83) message from " + configuration.getSystemTableNamePrefix() + "text_import_log limit -1",
                 null,

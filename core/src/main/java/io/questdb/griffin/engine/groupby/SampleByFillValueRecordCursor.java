@@ -127,8 +127,8 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
     @Override
     public void reopen() {
         if (!isOpen) {
-            map.reopen();
             isOpen = true;
+            map.reopen();
         }
     }
 

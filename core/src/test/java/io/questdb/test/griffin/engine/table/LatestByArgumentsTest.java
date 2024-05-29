@@ -25,12 +25,14 @@
 package io.questdb.test.griffin.engine.table;
 
 import io.questdb.griffin.engine.table.LatestByArguments;
+import io.questdb.log.LogFactory;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
 
 public class LatestByArgumentsTest {
+
     @Test
     public void testLatestByArguments() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -82,5 +84,11 @@ public class LatestByArgumentsTest {
             }
             LatestByArguments.releaseMemoryArray(baseAddress, elements);
         });
+    }
+
+    static {
+        // log is needed to greedily allocate logger infra and
+        // exclude it from leak detector
+        LogFactory.getLog(LatestByArgumentsTest.class);
     }
 }

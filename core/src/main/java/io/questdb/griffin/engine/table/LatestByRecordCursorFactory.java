@@ -77,8 +77,14 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        cursor.of(base.getCursor(executionContext), recordSink, rowIndexes, rowIndexesInitialCapacity, executionContext.getCircuitBreaker());
-        return cursor;
+        final RecordCursor baseCursor = base.getCursor(executionContext);
+        try {
+            cursor.of(baseCursor, recordSink, rowIndexes, rowIndexesInitialCapacity, executionContext.getCircuitBreaker());
+            return cursor;
+        } catch (Throwable th) {
+            baseCursor.close();
+            throw th;
+        }
     }
 
     @Override
@@ -104,9 +110,9 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        rowIndexes.close();
-        cursor.close();
-        base.close();
+        Misc.free(rowIndexes);
+        Misc.free(cursor);
+        Misc.free(base);
     }
 
     private static class LatestByRecordCursor implements NoRandomAccessRecordCursor {

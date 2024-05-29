@@ -53,7 +53,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     protected static final int OPM_ID = 4;
     protected static final int OPM_COLUMN_COUNT = OPM_ID + 1;
     protected static final int OPM_OPERATION = 2;
-    private final static String[] DISCONNECT_SOURCES;
+    private static final String[] DISCONNECT_SOURCES;
     protected final Log LOG;
     protected final int activeConnectionLimit;
     protected final MillisecondClock clock;
