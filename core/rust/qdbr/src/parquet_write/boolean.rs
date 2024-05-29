@@ -48,7 +48,6 @@ pub fn slice_to_page(
         slice.len(),
         0,
         0,
-        0,
         statistics,
         type_,
         options,

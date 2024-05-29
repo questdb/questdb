@@ -80,7 +80,6 @@ pub fn symbol_to_pages(
         length,
         length,
         null_count,
-        0,
         definition_levels_byte_length,
         None,
         type_,

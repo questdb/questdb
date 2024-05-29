@@ -168,7 +168,6 @@ pub fn slice_to_page<T, P, F: Fn(&[T], bool, usize, Vec<u8>) -> Vec<u8>>(
         slice.len(),
         slice.len(),
         null_count,
-        0,
         definition_levels_byte_length,
         statistics,
         type_,

@@ -74,7 +74,6 @@ pub fn string_to_page(
         offsets.len(),
         offsets.len(),
         null_count,
-        0,
         definition_levels_byte_length,
         None, // do we really want a binary statistics?
         type_,

@@ -78,7 +78,6 @@ pub fn varchar_to_page(
         length,
         length,
         null_count,
-        0,
         definition_levels_byte_length,
         None, // do we really want a varchar statistics?
         type_,

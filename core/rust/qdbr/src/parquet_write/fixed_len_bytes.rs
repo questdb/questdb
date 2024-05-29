@@ -41,7 +41,6 @@ pub fn bytes_to_page<const N: usize>(
         length,
         length,
         null_count,
-        0,
         definition_levels_byte_length,
         None, // do we really want a binary statistics?
         type_,
