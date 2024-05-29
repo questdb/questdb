@@ -6,19 +6,19 @@ import org.jetbrains.annotations.NotNull;
 public class WalError {
     public static final WalError OK = new WalError(Tag.OTHER, "");
 
-    private final CharSequence errorMessage;
+    private final String errorMessage;
     private final Tag errorTag;
 
-    public WalError(int errorCode, @NotNull CharSequence errorMessage) {
+    public WalError(int errorCode, @NotNull String errorMessage) {
         this(Tag.resolveTag(errorCode), errorMessage);
     }
 
-    public WalError(@NotNull Tag errorTag, @NotNull CharSequence errorMessage) {
+    public WalError(@NotNull Tag errorTag, @NotNull String errorMessage) {
         this.errorTag = errorTag;
         this.errorMessage = errorMessage;
     }
 
-    public CharSequence getErrorMessage() {
+    public String getErrorMessage() {
         return errorMessage;
     }
 

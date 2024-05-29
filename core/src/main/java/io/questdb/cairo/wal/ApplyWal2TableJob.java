@@ -546,8 +546,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         .$(", errno=").$(ex.getErrno())
                         .I$();
                 handleWalApplyFailure(tableToken, ex.isOutOfMemory()
-                        ? new WalError(Tag.FAILED_MEMORY_ALLOCATION, ex.getFlyweightMessage())
-                        : new WalError(ex.getErrno(), ex.getFlyweightMessage()));
+                        ? new WalError(Tag.FAILED_MEMORY_ALLOCATION, ex.getFlyweightMessage().toString())
+                        : new WalError(ex.getErrno(), ex.getFlyweightMessage().toString()));
             }
         } catch (Throwable ex) {
             telemetryFacade.store(TelemetrySystemEvent.WAL_APPLY_SUSPEND, TelemetryOrigin.WAL_APPLY);
