@@ -315,6 +315,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlParallelFilterEnabled;
     private final boolean sqlParallelFilterPreTouchEnabled;
     private final boolean sqlParallelGroupByEnabled;
+    private final int sqlParallelWorkStealingThreshold;
     private final int sqlQueryRegistryPoolSize;
     private final int sqlRenameTableModelPoolCapacity;
     private final boolean sqlSampleByDefaultAlignment;
@@ -1293,6 +1294,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             boolean defaultParallelSqlEnabled = sharedWorkerCount >= 4;
             this.sqlParallelFilterEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelGroupByEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, defaultParallelSqlEnabled);
+            this.sqlParallelWorkStealingThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 16);
             this.metricsEnabled = getBoolean(properties, env, PropertyKey.METRICS_ENABLED, false);
             this.writerAsyncCommandBusyWaitTimeout = getLong(properties, env, PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 500);
             this.writerAsyncCommandMaxWaitTimeout = getLong(properties, env, PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT, 30_000);
@@ -2663,6 +2665,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlPageFrameMinRows() {
             return sqlPageFrameMinRows;
+        }
+
+        @Override
+        public int getSqlParallelWorkStealingThreshold() {
+            return sqlParallelWorkStealingThreshold;
         }
 
         @Override
