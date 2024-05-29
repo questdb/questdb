@@ -84,6 +84,8 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        assert masterFactory.getScanDirection() == SCAN_DIRECTION_FORWARD
+                && slaveFactory.getScanDirection() == SCAN_DIRECTION_FORWARD;
         RecordCursor master = masterFactory.getCursor(executionContext);
         RecordCursor slave = null;
         try {

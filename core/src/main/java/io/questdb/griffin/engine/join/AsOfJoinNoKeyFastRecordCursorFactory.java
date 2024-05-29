@@ -60,6 +60,8 @@ public class AsOfJoinNoKeyFastRecordCursorFactory extends AbstractJoinRecordCurs
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        assert masterFactory.getScanDirection() == SCAN_DIRECTION_FORWARD
+                && slaveFactory.getScanDirection() == SCAN_DIRECTION_FORWARD;
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
         TimeFrameRecordCursor slaveCursor = null;
         try {

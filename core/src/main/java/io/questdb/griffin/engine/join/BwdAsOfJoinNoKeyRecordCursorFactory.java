@@ -56,6 +56,8 @@ public class BwdAsOfJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCurso
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        assert masterFactory.getScanDirection() == SCAN_DIRECTION_BACKWARD
+                && slaveFactory.getScanDirection() == SCAN_DIRECTION_BACKWARD;
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
         RecordCursor slaveCursor = null;
         try {
