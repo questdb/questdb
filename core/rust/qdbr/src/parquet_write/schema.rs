@@ -3,10 +3,12 @@ use std::sync::Arc;
 
 use parquet2::encoding::Encoding;
 use parquet2::metadata::SchemaDescriptor;
+use parquet2::schema::Repetition;
 use parquet2::schema::types::{
     IntegerType, ParquetType, PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType, TimeUnit,
 };
-use parquet2::schema::Repetition;
+
+use crate::parquet_write::{ParquetError, ParquetResult};
 
 #[derive(Debug, Copy, Clone)]
 pub enum ColumnType {
@@ -71,7 +73,7 @@ impl TryFrom<i32> for ColumnType {
 pub fn column_type_to_parquet_type(
     column_name: &str,
     column_type: ColumnType,
-) -> parquet2::error::Result<ParquetType> {
+) -> ParquetResult<ParquetType> {
     let name = column_name.to_string();
 
     match column_type {
@@ -244,11 +246,11 @@ impl ColumnImpl {
         secondary_data_size: usize,
         symbol_offsets_ptr: *const u64,
         symbol_offsets_size: usize,
-    ) -> parquet2::error::Result<Self> {
+    ) -> ParquetResult<Self> {
         assert!(row_count > 0);
         let column_type: ColumnType = column_type
             .try_into()
-            .map_err(parquet2::error::Error::InvalidParameter)?;
+            .map_err(ParquetError::InvalidParameter)?;
         assert!(!primary_data_ptr.is_null());
 
         let primary_data = unsafe { slice::from_raw_parts(primary_data_ptr, primary_data_size) };
@@ -279,12 +281,12 @@ pub struct Partition {
     pub columns: Vec<Column>,
 }
 
-pub fn to_parquet_schema(partition: &Partition) -> parquet2::error::Result<SchemaDescriptor> {
+pub fn to_parquet_schema(partition: &Partition) -> ParquetResult<SchemaDescriptor> {
     let parquet_types = partition
         .columns
         .iter()
         .map(|c| column_type_to_parquet_type(&c.name, c.data_type))
-        .collect::<parquet2::error::Result<Vec<_>>>()?;
+        .collect::<ParquetResult<Vec<_>>>()?;
     Ok(SchemaDescriptor::new(
         partition.table.clone(),
         parquet_types,
@@ -306,6 +308,6 @@ fn encoding_map(data_type: ColumnType) -> Encoding {
         ColumnType::Binary => Encoding::DeltaLengthByteArray,
         // _ => Encoding::DeltaBinaryPacked, //TODO: for tests only
         _ => Encoding::Plain, //TODO: for tests only
-                              //_ => Encoding::RleDictionary,
+        //_ => Encoding::RleDictionary,
     }
 }

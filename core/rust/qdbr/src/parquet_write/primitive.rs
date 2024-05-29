@@ -1,14 +1,15 @@
-use crate::parquet_write::file::WriteOptions;
-use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter, MaxMin};
-use crate::parquet_write::Nullable;
 use num_traits::Bounded;
 use parquet2::encoding::delta_bitpacked::encode;
 use parquet2::encoding::Encoding;
 use parquet2::page::{DataPage, Page};
-use parquet2::schema::types::PrimitiveType;
 use parquet2::schema::Repetition;
-use parquet2::statistics::{serialize_statistics, ParquetStatistics, PrimitiveStatistics};
+use parquet2::schema::types::PrimitiveType;
+use parquet2::statistics::{ParquetStatistics, PrimitiveStatistics, serialize_statistics};
 use parquet2::types::NativeType;
+
+use crate::parquet_write::{Nullable, ParquetError, ParquetResult};
+use crate::parquet_write::file::WriteOptions;
+use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter, MaxMin};
 
 fn encode_plain<T, P>(
     slice: &[T],
@@ -16,9 +17,9 @@ fn encode_plain<T, P>(
     null_count: usize,
     mut buffer: Vec<u8>,
 ) -> Vec<u8>
-where
-    P: NativeType,
-    T: num_traits::AsPrimitive<P> + Nullable,
+    where
+        P: NativeType,
+        T: num_traits::AsPrimitive<P> + Nullable,
 {
     if is_nullable {
         buffer.reserve(std::mem::size_of::<P>() * (slice.len() - null_count));
@@ -44,10 +45,10 @@ fn encode_delta<T, P>(
     null_count: usize,
     mut buffer: Vec<u8>,
 ) -> Vec<u8>
-where
-    P: NativeType,
-    T: num_traits::AsPrimitive<P> + Nullable,
-    P: num_traits::AsPrimitive<i64>,
+    where
+        P: NativeType,
+        T: num_traits::AsPrimitive<P> + Nullable,
+        P: num_traits::AsPrimitive<i64>,
 {
     if is_nullable {
         // append the non-null values
@@ -75,10 +76,10 @@ pub fn float_slice_to_page_plain<T, P>(
     slice: &[T],
     options: WriteOptions,
     type_: PrimitiveType,
-) -> parquet2::error::Result<Page>
-where
-    P: NativeType + Bounded,
-    T: num_traits::AsPrimitive<P> + Nullable + num_traits::Float + Bounded,
+) -> ParquetResult<Page>
+    where
+        P: NativeType + Bounded,
+        T: num_traits::AsPrimitive<P> + Nullable + num_traits::Float + Bounded,
 {
     let is_nullable = type_.field_info.repetition == Repetition::Optional;
     slice_to_page(
@@ -89,7 +90,7 @@ where
         Encoding::Plain,
         encode_plain,
     )
-    .map(Page::Data)
+        .map(Page::Data)
 }
 
 pub fn int_slice_to_page<T, P>(
@@ -97,11 +98,11 @@ pub fn int_slice_to_page<T, P>(
     options: WriteOptions,
     type_: PrimitiveType,
     encoding: Encoding,
-) -> parquet2::error::Result<Page>
-where
-    P: NativeType + Bounded,
-    T: num_traits::AsPrimitive<P> + Bounded + Nullable,
-    P: num_traits::AsPrimitive<i64>,
+) -> ParquetResult<Page>
+    where
+        P: NativeType + Bounded,
+        T: num_traits::AsPrimitive<P> + Bounded + Nullable,
+        P: num_traits::AsPrimitive<i64>,
 {
     let is_nullable = type_.field_info.repetition == Repetition::Optional;
     match encoding {
@@ -111,12 +112,12 @@ where
         Encoding::DeltaBinaryPacked => {
             slice_to_page(slice, is_nullable, options, type_, encoding, encode_delta)
         }
-        other => Err(parquet2::error::Error::OutOfSpec(format!(
+        other => Err(ParquetError::OutOfSpec(format!(
             "Encoding integer as {:?}",
             other
         )))?,
     }
-    .map(Page::Data)
+        .map(Page::Data)
 }
 
 pub fn slice_to_page<T, P, F: Fn(&[T], bool, usize, Vec<u8>) -> Vec<u8>>(
@@ -126,10 +127,10 @@ pub fn slice_to_page<T, P, F: Fn(&[T], bool, usize, Vec<u8>) -> Vec<u8>>(
     type_: PrimitiveType,
     encoding: Encoding,
     encode_fn: F,
-) -> parquet2::error::Result<DataPage>
-where
-    P: NativeType + Bounded,
-    T: num_traits::AsPrimitive<P> + Nullable + Bounded,
+) -> ParquetResult<DataPage>
+    where
+        P: NativeType + Bounded,
+        T: num_traits::AsPrimitive<P> + Nullable + Bounded,
 {
     let mut buffer = vec![];
     let mut null_count = 0;
@@ -181,8 +182,8 @@ fn build_statistics<P>(
     statistics: MaxMin<P>,
     primitive_type: PrimitiveType,
 ) -> ParquetStatistics
-where
-    P: NativeType + Bounded,
+    where
+        P: NativeType + Bounded,
 {
     let (max, min) = statistics.get_current_values();
     let statistics = &PrimitiveStatistics::<P> {

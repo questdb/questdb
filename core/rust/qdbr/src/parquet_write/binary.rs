@@ -22,13 +22,16 @@
  *
  ******************************************************************************/
 
-use crate::parquet_write::file::WriteOptions;
-use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter};
+use std::mem::{size_of, size_of_val};
+
 use parquet2::encoding::{delta_bitpacked, Encoding};
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
 use parquet2::types;
-use std::mem::{size_of, size_of_val};
+
+use crate::parquet_write::{ParquetError, ParquetResult};
+use crate::parquet_write::file::WriteOptions;
+use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter};
 
 pub fn binary_to_page(
     offsets: &[i64],
@@ -36,7 +39,7 @@ pub fn binary_to_page(
     options: WriteOptions,
     type_: PrimitiveType,
     encoding: Encoding,
-) -> parquet2::error::Result<Page> {
+) -> ParquetResult<Page> {
     let mut buffer = vec![];
     let mut null_count = 0;
 
@@ -59,7 +62,7 @@ pub fn binary_to_page(
 
     match encoding {
         Encoding::DeltaLengthByteArray => encode_delta(offsets, data, null_count, &mut buffer),
-        other => Err(parquet2::error::Error::OutOfSpec(format!(
+        other => Err(ParquetError::OutOfSpec(format!(
             "Encoding binary as {:?}",
             other
         )))?,
@@ -77,7 +80,7 @@ pub fn binary_to_page(
         options,
         encoding,
     )
-    .map(Page::Data)
+        .map(Page::Data)
 }
 
 fn encode_delta(offsets: &[i64], values: &[u8], null_count: usize, buffer: &mut Vec<u8>) {

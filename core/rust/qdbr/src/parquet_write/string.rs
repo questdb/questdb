@@ -22,13 +22,16 @@
  *
  ******************************************************************************/
 
-use crate::parquet_write::file::WriteOptions;
-use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter};
+use std::mem::{size_of, transmute};
+
 use parquet2::encoding::{delta_bitpacked, Encoding};
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
 use parquet2::types;
-use std::mem::{size_of, transmute};
+
+use crate::parquet_write::{ParquetError, ParquetResult};
+use crate::parquet_write::file::WriteOptions;
+use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter};
 
 pub fn string_to_page(
     offsets: &[i64],
@@ -36,7 +39,7 @@ pub fn string_to_page(
     options: WriteOptions,
     type_: PrimitiveType,
     encoding: Encoding,
-) -> parquet2::error::Result<Page> {
+) -> ParquetResult<Page> {
     let mut buffer = vec![];
     let mut null_count = 0;
 
@@ -60,7 +63,7 @@ pub fn string_to_page(
     match encoding {
         Encoding::Plain => encode_plain(offsets, data, null_count, &mut buffer),
         Encoding::DeltaLengthByteArray => encode_delta(offsets, data, null_count, &mut buffer),
-        other => Err(parquet2::error::Error::OutOfSpec(format!(
+        other => Err(ParquetError::OutOfSpec(format!(
             "Encoding string as {:?}",
             other
         )))?,
@@ -78,10 +81,10 @@ pub fn string_to_page(
         options,
         encoding,
     )
-    .map(Page::Data)
+        .map(Page::Data)
 }
 
-fn encode_non_null_values<'a, I: Iterator<Item = &'a [u8]>>(iter: I, buffer: &mut Vec<u8>) {
+fn encode_non_null_values<'a, I: Iterator<Item=&'a [u8]>>(iter: I, buffer: &mut Vec<u8>) {
     iter.for_each(|x| {
         let data: &[u16] = unsafe { transmute(x) };
         let utf8 = String::from_utf16(data).expect("utf16 string");

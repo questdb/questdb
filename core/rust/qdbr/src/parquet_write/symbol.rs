@@ -1,13 +1,15 @@
-use crate::parquet_write::file::WriteOptions;
-use crate::parquet_write::util;
-use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter};
-use parquet2::encoding::hybrid_rle::encode_u32;
+use std::collections::HashMap;
+use std::mem;
+
 use parquet2::encoding::Encoding;
+use parquet2::encoding::hybrid_rle::encode_u32;
 use parquet2::page::{DictPage, Page};
 use parquet2::schema::types::PrimitiveType;
 use parquet2::write::DynIter;
-use std::collections::HashMap;
-use std::mem;
+
+use crate::parquet_write::{ParquetResult, util};
+use crate::parquet_write::file::WriteOptions;
+use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter};
 
 fn encode_dict(keys: &[i32], offsets: &[u64], data: &[u8], page: &mut Vec<u8>) -> (Vec<u32>, u32) {
     let mut indices: Vec<u32> = Vec::new();
@@ -41,7 +43,7 @@ pub fn symbol_to_pages(
     data: &[u8],
     options: WriteOptions,
     type_: PrimitiveType,
-) -> parquet2::error::Result<DynIter<'static, parquet2::error::Result<Page>>> {
+) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
     let offsets = &offsets[8..]; // ignore the header of (64 bytes or 8 u64s)
 
     let mut dict_buffer = vec![];

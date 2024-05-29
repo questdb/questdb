@@ -1,8 +1,10 @@
-use crate::parquet_write::file::WriteOptions;
-use crate::parquet_write::util::{build_plain_page, encode_bool_iter};
 use parquet2::encoding::Encoding;
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
+
+use crate::parquet_write::file::WriteOptions;
+use crate::parquet_write::ParquetResult;
+use crate::parquet_write::util::{build_plain_page, encode_bool_iter};
 
 fn encode_plain<const N: usize>(data: &[[u8; N]], buffer: &mut Vec<u8>) {
     // append the non-null values
@@ -16,7 +18,7 @@ pub fn bytes_to_page<const N: usize>(
     data: &[[u8; N]],
     options: WriteOptions,
     type_: PrimitiveType,
-) -> parquet2::error::Result<Page> {
+) -> ParquetResult<Page> {
     let mut buffer = vec![];
     let mut null_count = 0;
 
@@ -46,5 +48,5 @@ pub fn bytes_to_page<const N: usize>(
         options,
         Encoding::Plain,
     )
-    .map(Page::Data)
+        .map(Page::Data)
 }

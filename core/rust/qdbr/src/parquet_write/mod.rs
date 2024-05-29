@@ -10,6 +10,9 @@ mod symbol;
 mod util;
 mod varchar;
 
+pub(crate) type ParquetResult<T> = parquet2::error::Result<T>;
+pub(crate) type ParquetError = parquet2::error::Error;
+
 pub trait Nullable {
     fn is_null(&self) -> bool;
 }
@@ -37,6 +40,7 @@ impl Nullable for i32 {
         *self == i32::MIN
     }
 }
+
 impl Nullable for i64 {
     fn is_null(&self) -> bool {
         *self == i64::MIN
@@ -57,20 +61,22 @@ impl Nullable for f64 {
 
 #[cfg(test)]
 mod tests {
-    use crate::parquet_write::file::ParquetWriter;
-    use crate::parquet_write::schema::{ColumnImpl, Partition};
-    use arrow::array::Array;
-    use bytes::Bytes;
-    use num_traits::Float;
-    use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
-    use parquet2::deserialize::{HybridEncoded, HybridRleIter};
-    use parquet2::encoding::{hybrid_rle, uleb128};
-    use parquet2::page::CompressedPage;
-    use parquet2::types;
     use std::io::Cursor;
     use std::mem::size_of;
     use std::ptr::null;
     use std::sync::Arc;
+
+    use arrow::array::Array;
+    use bytes::Bytes;
+    use num_traits::Float;
+    use parquet2::deserialize::{HybridEncoded, HybridRleIter};
+    use parquet2::encoding::{hybrid_rle, uleb128};
+    use parquet2::page::CompressedPage;
+    use parquet2::types;
+    use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+
+    use crate::parquet_write::file::ParquetWriter;
+    use crate::parquet_write::schema::{ColumnImpl, Partition};
 
     #[test]
     fn test_write_parquet_with_fixed_sized_columns() {
@@ -92,7 +98,7 @@ mod tests {
                 null(),
                 0,
             )
-            .unwrap(),
+                .unwrap(),
         );
         let col2_w = Arc::new(
             ColumnImpl::from_raw_data(
@@ -106,7 +112,7 @@ mod tests {
                 null(),
                 0,
             )
-            .unwrap(),
+                .unwrap(),
         );
 
         let partition = Partition {
@@ -145,6 +151,7 @@ mod tests {
             }
         }
     }
+
     #[test]
     fn test_write_parquet_row_group_size_data_page_size() {
         let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
@@ -164,7 +171,7 @@ mod tests {
                 null(),
                 0,
             )
-            .unwrap(),
+                .unwrap(),
         );
 
         let partition = Partition {
