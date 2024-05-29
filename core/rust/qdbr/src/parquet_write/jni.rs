@@ -1,21 +1,22 @@
-use crate::parquet_write::file::ParquetWriter;
-use crate::parquet_write::schema::{ColumnImpl, Partition};
-use anyhow::Context;
-use jni::objects::JClass;
-use jni::sys::{jint, jlong};
-use jni::JNIEnv;
 use std::fs::File;
 use std::path::Path;
 use std::slice;
-use std::sync::Arc;
 
-fn read_utf8_encoded_string_list<'a>(
+use anyhow::Context;
+use jni::JNIEnv;
+use jni::objects::JClass;
+use jni::sys::{jint, jlong};
+
+use crate::parquet_write::file::ParquetWriter;
+use crate::parquet_write::schema::{Column, Partition};
+
+fn read_utf8_encoded_string_list(
     count: usize,
     strings_sink: *const u8,
     strings_len: usize,
     lengths: *const i32,
-) -> Vec<&'a str> {
-    let mut strings: Vec<&str> = Vec::new();
+) -> Vec<&'static str> {
+    let mut strings= Vec::new();
     let mut utf8_sink =
         unsafe { std::str::from_utf8_unchecked(slice::from_raw_parts(strings_sink, strings_len)) };
 
@@ -99,7 +100,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             let symbol_offsets_addr = symbol_offsets_addrs_slice[i];
             let symbol_offsets_size = symbol_offsets_sizes_slice[i];
 
-            let column = ColumnImpl::from_raw_data(
+            let column = Column::from_raw_data(
                 col_name,
                 col_type,
                 row_count,
@@ -111,7 +112,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                 symbol_offsets_size as usize,
             )?;
 
-            columns.push(Arc::new(column));
+            columns.push(column);
         }
 
         let partition = Partition { table: "test_table".to_string(), columns };

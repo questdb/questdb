@@ -187,7 +187,7 @@ fn create_row_group(
               -> ParquetResult<DynStreamingIterator<CompressedPage, ParquetError>>
             {
                 let encoded_column = column_chunk_to_pages(
-                    column.clone(),
+                    *column,
                     column_type.clone(),
                     offset,
                     length,
@@ -255,7 +255,7 @@ fn column_chunk_to_pages(
 
     let pages = rows.map(move |(offset, length)| {
         chunk_to_page(
-            column.clone(),
+            column,
             offset,
             length,
             primitive_type.clone(),

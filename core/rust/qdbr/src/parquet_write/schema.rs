@@ -223,9 +223,9 @@ pub fn column_type_to_parquet_type(
     }
 }
 
-#[derive(Debug)]
-pub struct ColumnImpl {
-    pub name: String,
+#[derive(Clone, Copy, Debug)]
+pub struct Column {
+    pub name: &'static str,
     pub data_type: ColumnType,
     pub row_count: usize,
     pub primary_data: &'static [u8],
@@ -233,11 +233,9 @@ pub struct ColumnImpl {
     pub symbol_offsets: Option<&'static [u64]>,
 }
 
-pub type Column = Arc<ColumnImpl>;
-
-impl ColumnImpl {
+impl Column {
     pub fn from_raw_data(
-        name: &str,
+        name: &'static str,
         column_type: i32,
         row_count: usize,
         primary_data_ptr: *const u8,
@@ -265,8 +263,8 @@ impl ColumnImpl {
             Some(unsafe { slice::from_raw_parts(symbol_offsets_ptr, symbol_offsets_size) })
         };
 
-        Ok(ColumnImpl {
-            name: name.to_string(),
+        Ok(Column {
+            name,
             data_type: column_type,
             row_count,
             primary_data,
