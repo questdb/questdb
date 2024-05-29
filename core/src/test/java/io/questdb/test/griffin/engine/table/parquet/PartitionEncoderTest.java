@@ -49,7 +49,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                     " rnd_long() a_long," +
                     " rnd_float() a_float," +
                     " rnd_double() a_double," +
-//                    " rnd_symbol('a','b','c') a_symbol," +
+                    " rnd_symbol('a','b','c') a_symbol," +
                     " rnd_geohash(4) a_geo_byte," +
                     " rnd_geohash(8) a_geo_short," +
                     " rnd_geohash(16) a_geo_int," +
