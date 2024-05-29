@@ -23,11 +23,12 @@ core/cmake-build-debug-coverage
 core/cmake-build-release
 core/cmake-build-minsizerel
 core/CMakeCache.txt
-**/.project
+core/.project
 **/.settings
 **/.classpath
 **/build
 **/CMakeFiles
 .envrc
 .vscode
-core/rust/qdbr/target
+core/rust/qdbr/target/*
+
