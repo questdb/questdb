@@ -427,7 +427,6 @@ public class SqlOptimiser implements Mutable {
             QueryModel outerVirtualModel,
             QueryModel distinctModel
     ) throws SqlException {
-
         // Adds what intended to be a function (rather than a literal) to the
         // inner virtual model. It is possible that the function will have
         // the same alias as the existing table columns. We will "temporarily"
