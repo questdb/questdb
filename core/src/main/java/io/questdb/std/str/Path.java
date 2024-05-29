@@ -454,7 +454,7 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
 
     protected final void ensureSeparator() {
         if (tailPtr > headPtr && Unsafe.getUnsafe().getByte(tailPtr - 1) != Files.SEPARATOR) {
-            Unsafe.getUnsafe().putByte(tailPtr++, (byte) Files.SEPARATOR);
+            putByte0((byte) Files.SEPARATOR);
         }
     }
 }
