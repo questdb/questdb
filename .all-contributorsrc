@@ -24,7 +24,7 @@
       "contributions": [
         "code",
         "ideas",
-        "userTesting"
+        "user testing"
       ]
     },
     {
@@ -34,7 +34,7 @@
       "profile": "https://github.com/ideoma",
       "contributions": [
         "code",
-        "userTesting",
+        "user testing",
         "test"
       ]
     },
@@ -45,7 +45,7 @@
       "profile": "https://github.com/tonytamwk",
       "contributions": [
         "code",
-        "userTesting"
+        "user testing"
       ]
     },
     {
@@ -104,7 +104,7 @@
       "profile": "http://solanav.github.io",
       "contributions": [
         "code",
-        "doc"
+        "documentation"
       ]
     },
     {
@@ -146,6 +146,7 @@
         "blog"
       ]
     },
+
     {
       "login": "upsidedownsmile",
       "name": "Tiago Martins",
