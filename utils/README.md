@@ -12,7 +12,7 @@ io.questdb.cliutil.TxSerializer -d <txn_path> | -s <json_path> <txn_path>
 ```
 
 - `-d` option prints contents of `_txn` file to std output in JSON format
-- `-s` option transforms existing JSON file into binary \_txn format
+- `-s` option transforms existing JSON file into binary `\_txn` format
 
 #### Examples
 
