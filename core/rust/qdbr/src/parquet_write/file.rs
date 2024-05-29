@@ -114,7 +114,7 @@ impl<W: Write> ParquetWriter<W> {
         Ok(ChunkedWriter { writer, parquet_schema, encodings, options })
     }
 
-    /// Write the given `Partition` in the writer `W`. Returns the total size of the file.
+    /// Write the given `Partition` with the writer `W`. Returns the total size of the file.
     pub fn finish(self, partition: Partition) -> ParquetResult<u64> {
         let mut chunked = self.chunked(&partition)?;
         chunked.write_chunk(partition)?;
@@ -277,7 +277,7 @@ fn chunk_to_page(
 ) -> ParquetResult<Page> {
     match column.data_type {
         ColumnType::Boolean => {
-            let chunk: &[u8] = unsafe { mem::transmute(column.primary_data) };
+            let chunk = column.primary_data;
             boolean::slice_to_page(&chunk[offset..offset + length], options, type_)
         }
         ColumnType::Byte | ColumnType::GeoByte => {
