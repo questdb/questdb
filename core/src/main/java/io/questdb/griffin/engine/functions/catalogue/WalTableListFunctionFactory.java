@@ -49,7 +49,6 @@ public class WalTableListFunctionFactory implements FunctionFactory {
     private static final Log LOG = LogFactory.getLog(WalTableListFunctionFactory.class);
     private static final RecordMetadata METADATA;
     private static final String SIGNATURE = "wal_tables()";
-    private static final int errorCodeColumn;
     private static final int errorMessageColumn;
     private static final int errorTagColumn;
     private static final int nameColumn;
@@ -177,7 +176,6 @@ public class WalTableListFunctionFactory implements FunctionFactory {
             }
 
             public class TableListRecord implements Record {
-                private int errorCode;
                 private CharSequence errorMessage;
                 private String errorTag;
                 private long sequencerTxn;
@@ -192,14 +190,6 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                         return suspendedFlag;
                     }
                     return false;
-                }
-
-                @Override
-                public int getInt(int col) {
-                    if (col == errorCodeColumn) {
-                        return errorCode;
-                    }
-                    return Numbers.INT_NULL;
                 }
 
                 @Override
@@ -260,7 +250,6 @@ public class WalTableListFunctionFactory implements FunctionFactory {
 
                         final SeqTxnTracker seqTxnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
                         final WalError walError = seqTxnTracker.getWalError();
-                        errorCode = walError.getErrorCode();
                         errorTag = walError.getErrorTag().text();
                         errorMessage = walError.getErrorMessage();
 
@@ -301,8 +290,6 @@ public class WalTableListFunctionFactory implements FunctionFactory {
         writerLagTxnCountColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("sequencerTxn", ColumnType.LONG));
         sequencerTxnColumn = metadata.getColumnCount() - 1;
-        metadata.add(new TableColumnMetadata("errorCode", ColumnType.INT));
-        errorCodeColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("errorTag", ColumnType.STRING));
         errorTagColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("errorMessage", ColumnType.STRING));

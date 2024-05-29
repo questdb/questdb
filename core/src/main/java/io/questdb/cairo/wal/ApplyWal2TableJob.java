@@ -546,7 +546,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         .$(", errno=").$(ex.getErrno())
                         .I$();
                 handleWalApplyFailure(tableToken, ex.isOutOfMemory()
-                        ? new WalError(ex.getErrno(), Tag.FAILED_MEMORY_ALLOCATION, ex.getFlyweightMessage())
+                        ? new WalError(Tag.FAILED_MEMORY_ALLOCATION, ex.getFlyweightMessage())
                         : new WalError(ex.getErrno(), ex.getFlyweightMessage()));
             }
         } catch (Throwable ex) {
@@ -554,7 +554,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             LOG.critical().$("job failed, table suspended [table=").utf8(tableToken.getDirName())
                     .$(", error=").$(ex)
                     .I$();
-            handleWalApplyFailure(tableToken, new WalError(-1, Tag.OTHER, ex.getMessage()));
+            handleWalApplyFailure(tableToken, new WalError(Tag.OTHER, ex.getMessage()));
         }
     }
 

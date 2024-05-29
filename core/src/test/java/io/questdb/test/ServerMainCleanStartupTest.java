@@ -87,9 +87,9 @@ public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
                         sqlExecutionContext,
                         "select * from wal_tables order by 1",
                         sink,
-                        "name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorCode\terrorTag\terrorMessage\n" +
-                                "x\tfalse\t0\t0\t0\tnull\t\t\n" +
-                                "y\tfalse\t2\t0\t2\tnull\t\t\n"
+                        "name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\n" +
+                                "x\tfalse\t0\t0\t0\t\t\n" +
+                                "y\tfalse\t2\t0\t2\t\t\n"
                 );
 
 

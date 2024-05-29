@@ -1,28 +1,21 @@
 package io.questdb.cairo.wal;
 
-import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import org.jetbrains.annotations.NotNull;
 
 public class WalError {
-    public static final WalError OK = new WalError(Numbers.INT_NULL, Tag.OTHER, "");
+    public static final WalError OK = new WalError(Tag.OTHER, "");
 
-    private final int errorCode;
     private final CharSequence errorMessage;
     private final Tag errorTag;
 
     public WalError(int errorCode, @NotNull CharSequence errorMessage) {
-        this(errorCode, Tag.resolveTag(errorCode), errorMessage);
+        this(Tag.resolveTag(errorCode), errorMessage);
     }
 
-    public WalError(int errorCode, @NotNull Tag errorTag, @NotNull CharSequence errorMessage) {
-        this.errorCode = errorCode;
+    public WalError(@NotNull Tag errorTag, @NotNull CharSequence errorMessage) {
         this.errorTag = errorTag;
         this.errorMessage = errorMessage;
-    }
-
-    public int getErrorCode() {
-        return errorCode;
     }
 
     public CharSequence getErrorMessage() {
