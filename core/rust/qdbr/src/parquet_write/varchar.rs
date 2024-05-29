@@ -13,23 +13,24 @@ const HEADER_FLAG_NULL: u32 = 1 << 2;
 const HEADER_FLAGS_WIDTH: u32 = 4;
 const INLINED_LENGTH_MASK: u32 = (1 << 4) - 1;
 
+const FULLY_INLINED_STRING_OFFSET: usize = 1;
 const LENGTH_LIMIT_BYTES: u32 = 1 << 28;
 const DATA_LENGTH_MASK: u32 = LENGTH_LIMIT_BYTES - 1;
 
 fn encode_plain(aux: &[u8], data: &[u8], buffer: &mut Vec<u8>) {
     // append the non-null values
     aux.chunks(16).for_each(|bytes| {
-        let raw = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
-        if !is_null(raw) {
-            if is_inlined(raw) {
-                let size = ((raw >> HEADER_FLAGS_WIDTH) & INLINED_LENGTH_MASK) as usize;
-                let utf8_slice = &bytes[1..size];
+        let header_raw = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
+        if !is_null(header_raw) {
+            if is_inlined(header_raw) {
+                let size = ((header_raw >> HEADER_FLAGS_WIDTH) & INLINED_LENGTH_MASK) as usize;
+                let utf8_slice = &bytes[FULLY_INLINED_STRING_OFFSET..size];
                 let len = (utf8_slice.len() as u32).to_le_bytes();
                 buffer.extend_from_slice(&len);
                 buffer.extend_from_slice(utf8_slice);
             } else {
                 let offset = (u64::from_le_bytes(bytes[8..16].try_into().unwrap()) >> 16) as usize;
-                let size = ((raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK) as usize;
+                let size = ((header_raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK) as usize;
                 let utf8_slice = &data[offset..offset + size];
                 let len = (utf8_slice.len() as u32).to_le_bytes();
                 buffer.extend_from_slice(&len);
