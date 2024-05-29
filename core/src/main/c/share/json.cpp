@@ -84,6 +84,54 @@ static simdjson::padded_string_view maybe_copied_string_view(
     return simdjson::padded_string_view(temp_buffer);
 }
 
+constexpr std::byte BYTE_0x80 = std::byte(0x80); // 10000000
+constexpr std::byte BYTE_0xC0 = std::byte(0xC0); // 11000000
+constexpr std::byte BYTE_0xE0 = std::byte(0xE0); // 11100000
+constexpr std::byte BYTE_0xF0 = std::byte(0xF0); // 11110000
+constexpr std::byte BYTE_0xF8 = std::byte(0xF8); // 11111000
+
+static size_t utf8_char_size(std::byte first_byte) {
+    size_t char_size = 0;
+    if (first_byte < BYTE_0x80) {
+        char_size = 1; // 1-byte character (ASCII)
+    } else if ((first_byte & BYTE_0xE0) == BYTE_0xC0) {
+        char_size = 2; // 2-byte character
+    } else if ((first_byte & BYTE_0xF0) == BYTE_0xE0) {
+        char_size = 3; // 3-byte character
+    } else if ((first_byte & BYTE_0xF8) == BYTE_0xF0) {
+        char_size = 4; // 4-byte character
+    }
+    return char_size;
+}
+
+std::byte* utf8_find_last_char_start(std::byte* end) {
+    std::byte* last_utf8_start = end - 1;
+    while ((*last_utf8_start & BYTE_0xC0) == BYTE_0x80) {
+        --last_utf8_start;
+    }
+    return last_utf8_start;
+}
+
+// Copy `src` to `dest` up to `max_dest_len` bytes.
+// If `src` is longer than `max_dest_len`, copy up to the last UTF-8 character that fits.
+// This function guarantees that there are no broken UTF-8 characters in the output.
+static void trimmed_utf8_copy(questdb_byte_sink_t& dest, std::string_view src, size_t max_dest_len) {
+    if (max_dest_len == 0) {
+        return;
+    }
+    const auto copy_len = std::min(src.length(), max_dest_len);
+    std::memcpy(dest.ptr, src.data(), copy_len);
+    std::byte* end_ptr = dest.ptr + copy_len;
+    if (max_dest_len < src.length()) {
+        std::byte *last_utf8_start = utf8_find_last_char_start(end_ptr);
+        const size_t char_size = utf8_char_size(*last_utf8_start);
+        if (end_ptr < last_utf8_start + char_size) {
+            end_ptr = last_utf8_start;
+        }
+    }
+    dest.ptr = end_ptr;
+}
+
 // To make the compiler happy when compiling `value_at_path`
 // with a lambda that is supposed to return `void`.
 struct token_void {};
@@ -178,22 +226,22 @@ Java_io_questdb_std_json_Json_queryPathString(
         const char* path_chars,
         size_t path_len,
         json_result* result,
-        questdb_byte_sink_t* dest_sink
+        questdb_byte_sink_t* dest_sink,
+        int32_t max_size
 ) {
     value_at_path(
             json_chars, json_len, json_capacity, path_chars, path_len, result,
-            [result, dest_sink](json_value res) -> token_void {
+            [result, dest_sink, max_size](json_value res) -> token_void {
                 auto str_res = res.get_string();
                 if (!result->set_error(str_res)) {
+                    std::cerr << "Java_io_questdb_std_json_Json_queryPathString :: err: " << result->error << std::endl;
                     return null_token{};
                 }
                 const auto str = str_res.value_unsafe();
-                const auto dest = questdb_byte_sink_book(dest_sink, str.length());
-                if (dest == nullptr) {
-                    result->error = simdjson::error_code::MEMALLOC;
-                }
-                memcpy(dest, str.data(), str.length());
-                dest_sink->ptr += str.length();
+                std::cerr << "Java_io_questdb_std_json_Json_queryPathString :: res: [" << str << "]" << std::endl;
+                const auto dest = dest_sink->ptr;
+                const auto max_size_st = static_cast<size_t>(max_size);
+                trimmed_utf8_copy(*dest_sink, str, max_size_st);
                 return {};
             });
 }

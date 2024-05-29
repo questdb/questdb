@@ -34,14 +34,14 @@ public class Json {
 
     private static native int validate(long s, long len, long capacity);
 
-    private static native void queryPathString(long jsonPtr, long jsonLen, long jsonCapacity, long pathPtr, long pathLen, long resultPtr, long dest);
+    private static native void queryPathString(long jsonPtr, long jsonLen, long jsonCapacity, long pathPtr, long pathLen, long resultPtr, long destPtr, int maxSize);
     private static native boolean queryPathBoolean(long jsonPtr, long jsonLen, long jsonCapacity, long pathPtr, long pathLen, long resultPtr);
     private static native long queryPathLong(long jsonPtr, long jsonLen, long jsonCapacity, long pathPtr, long pathLen, long resultPtr);
     private static native double queryPathDouble(long jsonPtr, long jsonLen, long jsonCapacity, long pathPtr, long pathLen, long resultPtr);
 
-    public static void queryPathString(DirectUtf8Sink json, DirectUtf8Sequence path, JsonResult result, DirectUtf8Sink dest) {
+    public static void queryPathString(DirectUtf8Sink json, DirectUtf8Sequence path, JsonResult result, DirectUtf8Sink dest, int maxSize) {
         try (NativeByteSink nativeDest = dest.borrowDirectByteSink()) {
-            queryPathString(json.ptr(), json.size(), json.capacity(), path.ptr(), path.size(), result.ptr(), nativeDest.ptr());
+            queryPathString(json.ptr(), json.size(), json.capacity(), path.ptr(), path.size(), result.ptr(), nativeDest.ptr(), maxSize);
         }
     }
 

@@ -63,6 +63,11 @@ public class JsonResult implements QuietCloseable {
         }
     }
 
+    /** Is not an error (e.g. NO_SUCH_FIELD) and is not a null */
+    public boolean hasValue() {
+        return getError() == JsonError.SUCCESS;
+    }
+
     public long ptr() {
         return impl;
     }

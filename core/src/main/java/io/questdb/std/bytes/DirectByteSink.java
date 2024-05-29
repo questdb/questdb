@@ -93,6 +93,20 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         setImplPtr(getImplPtr() + written);
     }
 
+    @Override
+    public @NotNull NativeByteSink borrowDirectByteSink() {
+        if (impl == 0) {
+            throw new IllegalStateException("Sink is closed");
+        }
+        lastCapacity = capacity();
+        return byteSink;
+    }
+
+    @TestOnly
+    public long capacity() {
+        return getImplHi() - getImplLo();
+    }
+
     /**
      * Low-level access to ensure that at least `required` bytes are available for writing.
      * Returns the address of the first writable byte.
@@ -120,20 +134,6 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
             Unsafe.recordMemAlloc(newCapacity - initCapacity, memoryTag());
         }
         return p;
-    }
-
-    @Override
-    public @NotNull NativeByteSink borrowDirectByteSink() {
-        if (impl == 0) {
-            throw new IllegalStateException("Sink is closed");
-        }
-        lastCapacity = capacity();
-        return byteSink;
-    }
-
-    @TestOnly
-    public long capacity() {
-        return getImplHi() - getImplLo();
     }
 
     @Override
@@ -201,6 +201,20 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         Vect.memcpy(dest, lo, len);
         advance(len);
         return this;
+    }
+
+    /**
+     * Ensure that the buffer has at least `minCapacity`.
+     * <p>
+     * After this call, `capacity() >= minCapacity` is guaranteed.
+     */
+    public void reserve(long minCapacity) {
+        final long cap = capacity();
+        if (minCapacity > cap) {
+            final long spare = cap - size();
+            final long additionalRequired = minCapacity - spare;
+            checkCapacity(additionalRequired);
+        }
     }
 
     /**

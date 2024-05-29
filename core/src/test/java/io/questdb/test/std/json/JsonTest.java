@@ -33,29 +33,29 @@ public class JsonTest {
     private static final String testUnicodeChars = "ðãµ¶Āڜ💩🦞";
     private static final String description = (
             "Hello, I'm John. I live in New York. I have a dog named Max and a cat named Whiskers. " +
-            "This is a purposely long description that exceeds a page (64 bytes) so that it can stress the " +
-            "memory allocation of the JSON parser. For good measure it also includes a few funky unicode characters: " +
+            "This is a purposely long description so that it can stress the `maxLen` logic during string handling. " +
+            "For good measure it also includes a few funky unicode characters: " +
             testUnicodeChars);
+    public static final String jsonStr = "{\n" +
+            "  \"name\": \"John\",\n" +
+            "  \"age\": 30,\n" +
+            "  \"city\": \"New York\",\n" +
+            "  \"hasChildren\": false,\n" +
+            "  \"height\": 5.6,\n" +
+            "  \"nothing\": null,\n" +
+            "  \"u64_val\": 18446744073709551615,\n" +
+            "  \"bignum\": 12345678901234567890123456789012345678901234567890,\n" +
+            "  \"pets\": [\n" +
+            "    {\"name\": \"Max\", \"species\": \"Dog\"},\n" +
+            "    {\"name\": \"Whiskers\", \"species\": \"Cat\", \"scratches\": true}\n" +
+            "  ],\n" +
+            "  \"description\": \"" + description + "\"\n" +
+            "}";
     private static DirectUtf8Sink json;
     private static final JsonResult result = new JsonResult();
 
     @BeforeClass
     public static void setUp() {
-        final String jsonStr = "{\n" +
-                "  \"name\": \"John\",\n" +
-                "  \"age\": 30,\n" +
-                "  \"city\": \"New York\",\n" +
-                "  \"hasChildren\": false,\n" +
-                "  \"height\": 5.6,\n" +
-                "  \"nothing\": null,\n" +
-                "  \"u64_val\": 18446744073709551615,\n" +
-                "  \"bignum\": 12345678901234567890123456789012345678901234567890,\n" +
-                "  \"pets\": [\n" +
-                "    {\"name\": \"Max\", \"species\": \"Dog\"},\n" +
-                "    {\"name\": \"Whiskers\", \"species\": \"Cat\", \"scratches\": true}\n" +
-                "  ],\n" +
-                "  \"description\": \"" + description + "\"\n" +
-                "}";
         json = new DirectUtf8Sink(jsonStr.length() + Json.SIMDJSON_PADDING);
         json.put(jsonStr);
     }
@@ -77,13 +77,25 @@ public class JsonTest {
 
     @Test
     public void testQueryPathString() {
-        try (DirectUtf8Sink dest = new DirectUtf8Sink(1)) {
-            Json.queryPathString(json, new GcUtf8String(".name"), result, dest);
+        try (DirectUtf8Sink dest = new DirectUtf8Sink(100)) {
+            Json.queryPathString(json, new GcUtf8String(".name"), result, dest, 100);
             Assert.assertEquals("John", dest.toString());
 
+            GcUtf8String descriptionPath = new GcUtf8String(".description");
             dest.clear();
-            Json.queryPathString(json, new GcUtf8String(".description"), result, dest);
-            Assert.assertEquals(description, dest.toString());
+            Json.queryPathString(json, descriptionPath, result, dest, 100);
+            Assert.assertEquals(description.substring(0, 100), dest.toString());
+
+            // The maxLen == 272 chops one of the unicode characters and unless
+            // the copy is handled with utf-8-aware logic it would produce a string
+            // with an invalid utf-8 sequence.
+            dest.clear();
+            Json.queryPathString(json, descriptionPath, result, dest, 272);
+            // The string is expected to be truncated at the last valid utf-8 sequence: 270 instead of 272.
+            Assert.assertEquals(dest.size(), 270);
+
+            // This ends up decoding just fine as UTF-8 and is shorter than the maxLen.
+            Assert.assertEquals(description.substring(0, 262), dest.toString());
         }
     }
 
@@ -110,8 +122,8 @@ public class JsonTest {
 
     @Test
     public void testInvalidPath() {
-        try (DirectUtf8Sink dest = new DirectUtf8Sink(1)) {
-            Json.queryPathString(json, new GcUtf8String("£$£%£%invalid path!!"), result, dest);
+        try (DirectUtf8Sink dest = new DirectUtf8Sink(100)) {
+            Json.queryPathString(json, new GcUtf8String("£$£%£%invalid path!!"), result, dest, 100);
             Assert.assertEquals(result.getError(), JsonError.INVALID_JSON_POINTER);
             Assert.assertEquals(result.getType(), JsonType.UNSET);
             Assert.assertEquals(result.getNumType(), JsonNumType.UNSET);
@@ -120,8 +132,8 @@ public class JsonTest {
 
     @Test
     public void testStringAbsent() {
-        try (DirectUtf8Sink dest = new DirectUtf8Sink(1)) {
-            Json.queryPathString(json, new GcUtf8String(".nonexistent"), result, dest);
+        try (DirectUtf8Sink dest = new DirectUtf8Sink(100)) {
+            Json.queryPathString(json, new GcUtf8String(".nonexistent"), result, dest, 100);
             Assert.assertEquals("", dest.toString());
             Assert.assertEquals(result.getType(), JsonType.UNSET);
             Assert.assertEquals(result.getNumType(), JsonNumType.UNSET);
@@ -154,8 +166,8 @@ public class JsonTest {
 
     @Test
     public void testStringNull() {
-        try (DirectUtf8Sink dest = new DirectUtf8Sink(1)) {
-            Json.queryPathString(json, new GcUtf8String(".nothing"), result, dest);
+        try (DirectUtf8Sink dest = new DirectUtf8Sink(100)) {
+            Json.queryPathString(json, new GcUtf8String(".nothing"), result, dest, 100);
             Assert.assertEquals("", dest.toString());
             Assert.assertEquals(result.getType(), JsonType.NULL);
             Assert.assertEquals(result.getNumType(), JsonNumType.UNSET);
