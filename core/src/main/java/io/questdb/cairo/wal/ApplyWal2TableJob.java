@@ -28,7 +28,6 @@ import io.questdb.Telemetry;
 import io.questdb.TelemetryOrigin;
 import io.questdb.TelemetrySystemEvent;
 import io.questdb.cairo.*;
-import io.questdb.cairo.wal.WalError.Tag;
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
@@ -54,6 +53,7 @@ import java.io.Closeable;
 import static io.questdb.TelemetrySystemEvent.*;
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
 import static io.questdb.cairo.pool.AbstractMultiTenantPool.NO_LOCK_REASON;
+import static io.questdb.cairo.wal.WalErrorTag.*;
 import static io.questdb.cairo.wal.WalTxnType.*;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.tasks.TableWriterTask.CMD_ALTER_TABLE;
@@ -378,9 +378,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         TelemetryWalTask.store(walTelemetry, event, tableToken.getTableId(), walId, seqTxn, rowCount, physicalRowCount, latencyUs);
     }
 
-    private void handleWalApplyFailure(TableToken tableToken, WalError walError) {
+    private void handleWalApplyFailure(TableToken tableToken, WalErrorTag errorTag, String errorMessage) {
         try {
-            engine.getTableSequencerAPI().suspendTable(tableToken, walError);
+            engine.getTableSequencerAPI().suspendTable(tableToken, errorTag, errorMessage);
         } catch (CairoException e) {
             LOG.critical().$("could not suspend table [table=").$(tableToken.getTableName()).$(", error=").$(e.getFlyweightMessage()).I$();
         }
@@ -546,15 +546,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         .$(", errno=").$(ex.getErrno())
                         .I$();
                 handleWalApplyFailure(tableToken, ex.isOutOfMemory()
-                        ? new WalError(Tag.FAILED_MEMORY_ALLOCATION, ex.getFlyweightMessage().toString())
-                        : new WalError(ex.getErrno(), ex.getFlyweightMessage().toString()));
+                        ? FAILED_MEMORY_ALLOCATION : resolveTag(ex.getErrno()), ex.getFlyweightMessage().toString());
             }
         } catch (Throwable ex) {
             telemetryFacade.store(TelemetrySystemEvent.WAL_APPLY_SUSPEND, TelemetryOrigin.WAL_APPLY);
             LOG.critical().$("job failed, table suspended [table=").utf8(tableToken.getDirName())
                     .$(", error=").$(ex)
                     .I$();
-            handleWalApplyFailure(tableToken, new WalError(Tag.OTHER, ex.getMessage()));
+            handleWalApplyFailure(tableToken, OTHER, ex.getMessage());
         }
     }
 

@@ -24,7 +24,7 @@
 
 package io.questdb.cairo.wal.seq;
 
-import io.questdb.cairo.wal.WalError;
+import io.questdb.cairo.wal.WalErrorTag;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.TestOnly;
 
@@ -32,22 +32,27 @@ public class SeqTxnTracker {
     private static final long SEQ_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "seqTxn");
     private static final long SUSPENDED_STATE_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "suspendedState");
     private static final long WRITER_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "writerTxn");
+    private volatile String errorMessage = "";
+    private volatile WalErrorTag errorTag = WalErrorTag.OTHER;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile long seqTxn = -1;
     // -1 suspended
     // 0 unknown
     // 1 not suspended
     private volatile int suspendedState = 0;
-    private volatile WalError walError = WalError.OK;
     private volatile long writerTxn = -1;
+
+    public String getErrorMessage() {
+        return errorMessage;
+    }
+
+    public WalErrorTag getErrorTag() {
+        return errorTag;
+    }
 
     @TestOnly
     public long getSeqTxn() {
         return seqTxn;
-    }
-
-    public WalError getWalError() {
-        return walError;
     }
 
     @TestOnly
@@ -114,13 +119,21 @@ public class SeqTxnTracker {
         return (stxn < 1 || writerTxn == (newSeqTxn - 1)) && suspendedState >= 0;
     }
 
-    public void setSuspended(WalError walError) {
+    public void setSuspended(WalErrorTag errorTag, String errorMessage) {
+        this.errorTag = errorTag;
+        this.errorMessage = errorMessage;
+
+        // should be the last one to be set
+        // to make sure error details are available for read when the table is suspended
         this.suspendedState = -1;
-        this.walError = walError;
     }
 
     public void setUnsuspended() {
+        // should be the first one to be set
+        // no error details should be read when table is not suspended
         this.suspendedState = 1;
-        this.walError = WalError.OK;
+
+        this.errorTag = WalErrorTag.OTHER;
+        this.errorMessage = "";
     }
 }

@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.wal.WalError;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.griffin.FunctionFactory;
@@ -176,7 +175,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
             }
 
             public class TableListRecord implements Record {
-                private CharSequence errorMessage;
+                private String errorMessage;
                 private String errorTag;
                 private long sequencerTxn;
                 private boolean suspendedFlag;
@@ -248,10 +247,16 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                             ff.close(txnFd);
                         }
 
-                        final SeqTxnTracker seqTxnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
-                        final WalError walError = seqTxnTracker.getWalError();
-                        errorTag = walError.getErrorTag().text();
-                        errorMessage = walError.getErrorMessage();
+                        if (suspendedFlag) {
+                            // only read error details from seqTxnTracker if the table is suspended
+                            // when the table is not suspended, it is not guaranteed that error details are immediately cleared
+                            final SeqTxnTracker seqTxnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+                            errorTag = seqTxnTracker.getErrorTag().text();
+                            errorMessage = seqTxnTracker.getErrorMessage();
+                        } else {
+                            errorTag = "";
+                            errorMessage = "";
+                        }
 
                         rootPath.concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
                         if (!ff.exists(rootPath)) {

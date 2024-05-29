@@ -30,8 +30,10 @@ import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.cairo.wal.*;
-import io.questdb.cairo.wal.WalError.Tag;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.CheckWalTransactionsJob;
+import io.questdb.cairo.wal.MetadataService;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -58,6 +60,7 @@ import java.util.function.Function;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
+import static io.questdb.cairo.wal.WalErrorTag.*;
 import static io.questdb.cairo.wal.WalUtils.EVENT_INDEX_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 import static io.questdb.std.Files.SEPARATOR;
@@ -1215,7 +1218,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wal from txn -10", "invalid value [value=-]");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wal from txn 10AA", "invalid value [value=10AA]");
 
-            engine.getTableSequencerAPI().suspendTable(tableToken, new WalError(Tag.OTHER, "wal apply error"));
+            engine.getTableSequencerAPI().suspendTable(tableToken, OTHER, "wal apply error");
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
             assertAlterTableTypeFail(
                     "alter table " + tableToken.getTableName() + "ererer resume wal from txn 2",
@@ -1226,17 +1229,17 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
     @Test
     public void testWalTableSuspendResumeStatusTable() throws Exception {
-        testWalTableSuspendResumeStatusTable("1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", "table1", 999, Tag.OTHER.text());
-        testWalTableSuspendResumeStatusTable("1\tBC\t2022-02-24T00:00:00.000000Z\tFG\n", "table2", -1, Tag.FAILED_MEMORY_ALLOCATION.text());
+        testWalTableSuspendResumeStatusTable("1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", "table1", 999, OTHER.text());
+        testWalTableSuspendResumeStatusTable("1\tBC\t2022-02-24T00:00:00.000000Z\tFG\n", "table2", -1, FAILED_MEMORY_ALLOCATION.text());
         if (Os.isWindows()) {
-            testWalTableSuspendResumeStatusTable("1\tCD\t2022-02-24T00:00:00.000000Z\tFG\n", "table3", 39, Tag.DISK_FULL.text());
-            testWalTableSuspendResumeStatusTable("1\tCD\t2022-02-24T00:00:00.000000Z\tFG\n", "table4", 112, Tag.DISK_FULL.text());
-            testWalTableSuspendResumeStatusTable("1\tAB\t2022-02-24T00:00:00.000000Z\tDE\n", "table5", 4, Tag.TOO_MANY_OPEN_FILES.text());
-            testWalTableSuspendResumeStatusTable("1\tBC\t2022-02-24T00:00:00.000000Z\tDE\n", "table6", 8, Tag.OUT_OF_MEMORY.text());
+            testWalTableSuspendResumeStatusTable("1\tCD\t2022-02-24T00:00:00.000000Z\tFG\n", "table3", 39, DISK_FULL.text());
+            testWalTableSuspendResumeStatusTable("1\tCD\t2022-02-24T00:00:00.000000Z\tFG\n", "table4", 112, DISK_FULL.text());
+            testWalTableSuspendResumeStatusTable("1\tAB\t2022-02-24T00:00:00.000000Z\tDE\n", "table5", 4, TOO_MANY_OPEN_FILES.text());
+            testWalTableSuspendResumeStatusTable("1\tBC\t2022-02-24T00:00:00.000000Z\tDE\n", "table6", 8, OUT_OF_MEMORY.text());
         } else {
-            testWalTableSuspendResumeStatusTable("1\tCD\t2022-02-24T00:00:00.000000Z\tFG\n", "table3", 28, Tag.DISK_FULL.text());
-            testWalTableSuspendResumeStatusTable("1\tCD\t2022-02-24T00:00:00.000000Z\tFG\n", "table4", 24, Tag.TOO_MANY_OPEN_FILES.text());
-            testWalTableSuspendResumeStatusTable("1\tAB\t2022-02-24T00:00:00.000000Z\tDE\n", "table5", 12, Tag.OUT_OF_MEMORY.text());
+            testWalTableSuspendResumeStatusTable("1\tCD\t2022-02-24T00:00:00.000000Z\tFG\n", "table3", 28, DISK_FULL.text());
+            testWalTableSuspendResumeStatusTable("1\tCD\t2022-02-24T00:00:00.000000Z\tFG\n", "table4", 24, TOO_MANY_OPEN_FILES.text());
+            testWalTableSuspendResumeStatusTable("1\tAB\t2022-02-24T00:00:00.000000Z\tDE\n", "table5", 12, OUT_OF_MEMORY.text());
         }
     }
 
