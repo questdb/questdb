@@ -894,7 +894,8 @@ public class WalTableFailureTest extends AbstractCairoTest {
             drainWalQueue();
             assertSql("x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableToken.getTableName());
 
-            compile("alter table " + tableToken.getTableName() + " suspend wal with 28, 'test error message'");
+            compile("alter table " + tableToken.getTableName() + " suspend wal with "
+                    + (Os.isWindows() ? 112 : 28) + ", 'test error message'");
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
             assertSql(
                     "name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\n" +
