@@ -127,14 +127,11 @@ class JsonPathFunc extends VarcharFunction implements BinaryFunction {
         }
         state.initJsonSink(json);
         Json.queryPath(state.jsonSink, path, state.jsonResult, state.destSink, maxSize);
-        if (state.jsonResult.isNull()) {
-            return null;
-        }
-        if (strict) {
-            state.jsonResult.throwIfError(functionName, path);
-        }
         if (state.jsonResult.hasValue()) {
             return state.destSink;
+        }
+        else if (strict && !state.jsonResult.isNull()) {
+            state.jsonResult.throwIfError(functionName, path);
         }
         return null;
     }
