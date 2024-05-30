@@ -15,6 +15,10 @@ public enum WalErrorTag {
         this.text = text;
     }
 
+    public static WalErrorTag resolveTag(int code) {
+        return Os.isWindows() ? windows(code) : linux(code);
+    }
+
     public String text() {
         return text;
     }
@@ -30,10 +34,6 @@ public enum WalErrorTag {
             default:
                 return OTHER;
         }
-    }
-
-    static WalErrorTag resolveTag(int code) {
-        return Os.isWindows() ? windows(code) : linux(code);
     }
 
     static WalErrorTag windows(int code) {

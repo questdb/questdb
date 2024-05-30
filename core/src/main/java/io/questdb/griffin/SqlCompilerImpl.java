@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.WalErrorTag;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriterMetadata;
 import io.questdb.griffin.engine.QueryProgress;
@@ -718,7 +719,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     throw SqlException.$(lexer.lastTokenPosition(), "'wal' expected");
                 }
 
-                tok = SqlUtil.fetchNext(lexer); // optional from part
+                tok = SqlUtil.fetchNext(lexer); // optional FROM part
                 long fromTxn = -1;
                 if (tok != null && !Chars.equals(tok, ';')) {
                     if (SqlKeywords.isFromKeyword(tok)) {
@@ -741,6 +742,42 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
                 securityContext.authorizeResumeWal(tableToken);
                 alterTableResume(tableNamePosition, tableToken, fromTxn, executionContext);
+            } else if (SqlKeywords.isSuspendKeyword(tok)) {
+                tok = expectToken(lexer, "'wal'");
+                if (!SqlKeywords.isWalKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'wal' expected");
+                }
+
+                tok = SqlUtil.fetchNext(lexer); // optional WITH part
+                int errorCode = -1;
+                String errorMessage = "";
+                if (tok != null && !Chars.equals(tok, ';')) {
+                    if (SqlKeywords.isWithKeyword(tok)) {
+                        final CharSequence errorCodeValue = expectToken(lexer, "error code");
+                        try {
+                            errorCode = Numbers.parseInt(errorCodeValue);
+                        } catch (NumericException e) {
+                            throw SqlException.$(lexer.lastTokenPosition(), "invalid value [value=").put(errorCodeValue).put(']');
+                        }
+                        final CharSequence comma = expectToken(lexer, "','");
+                        if (!Chars.equals(comma, ',')) {
+                            throw SqlException.position(lexer.getPosition()).put("',' expected");
+                        }
+                        tok = expectToken(lexer, "error message").toString();
+                        errorMessage = GenericLexer.unquote(tok).toString();
+                        tok = SqlUtil.fetchNext(lexer);
+                        if (tok != null && !Chars.equals(tok, ';')) {
+                            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [token=").put(tok).put(']');
+                        }
+                    } else {
+                        throw SqlException.$(lexer.lastTokenPosition(), "'with' expected");
+                    }
+                }
+                if (!engine.isWalTable(tableToken)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), tableToken.getTableName()).put(" is not a WAL table.");
+                }
+                securityContext.authorizeSuspendWal(tableToken);
+                alterTableSuspend(tableNamePosition, tableToken, errorCode, errorMessage, executionContext);
             } else if (SqlKeywords.isSquashKeyword(tok)) {
                 securityContext.authorizeAlterTableDropPartition(tableToken);
                 tok = expectToken(lexer, "'partitions'");
@@ -1293,7 +1330,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private void alterTableResume(int tableNamePosition, TableToken tableToken, long resumeFromTxn, SqlExecutionContext executionContext) {
         try {
-
             engine.getTableSequencerAPI().resumeTable(tableToken, resumeFromTxn);
             executionContext.storeTelemetry(TelemetrySystemEvent.WAL_APPLY_RESUME, TelemetryOrigin.WAL_APPLY);
             compiledQuery.ofTableResume();
@@ -1351,6 +1387,21 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.position(pos)
                     .put(e.getFlyweightMessage())
                     .put("[errno=").put(e.getErrno()).put(']');
+        }
+    }
+
+    private void alterTableSuspend(int tableNamePosition, TableToken tableToken, int errorCode, String errorMessage, SqlExecutionContext executionContext) {
+        try {
+            engine.getTableSequencerAPI().suspendTable(tableToken, WalErrorTag.resolveTag(errorCode), errorMessage);
+            executionContext.storeTelemetry(TelemetrySystemEvent.WAL_APPLY_SUSPEND, TelemetryOrigin.WAL_APPLY);
+            compiledQuery.ofTableSuspend();
+        } catch (CairoException ex) {
+            LOG.critical().$("table suspend failed [table=").$(tableToken)
+                    .$(", error=").$(ex.getFlyweightMessage())
+                    .$(", errno=").$(ex.getErrno())
+                    .I$();
+            ex.position(tableNamePosition);
+            throw ex;
         }
     }
 

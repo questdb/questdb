@@ -130,6 +130,10 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeSuspendWal(TableToken tableToken) {
+    }
+
+    @Override
     public void authorizeTableBackup(ObjHashSet<TableToken> tableTokens) {
     }
 

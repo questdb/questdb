@@ -859,6 +859,81 @@ public class WalTableFailureTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSuspendNonWalTable() throws Exception {
+        assertMemoryLeak(() -> {
+            final String nonWalTable = "tab1";
+            createStandardNonWalTable(nonWalTable);
+
+            assertAlterTableTypeFail("alter table " + nonWalTable + " suspend wal", nonWalTable + " is not a WAL table");
+        });
+    }
+
+    @Test
+    public void testSuspendWal() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableToken tableToken = createStandardWalTable(testName.getMethodName());
+
+            drainWalQueue();
+            assertSql("x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableToken.getTableName());
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertSql(
+                    "name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\n" +
+                            tableToken.getTableName() + "\tfalse\t1\t0\t1\t\t\n",
+                    "wal_tables()"
+            );
+
+            compile("alter table " + tableToken.getTableName() + " suspend wal");
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertSql(
+                    "name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\n" +
+                            tableToken.getTableName() + "\ttrue\t1\t0\t1\t\t\n",
+                    "wal_tables()"
+            );
+
+            compile("update " + tableToken.getTableName() + " set x = 1111;");
+            drainWalQueue();
+            assertSql("x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableToken.getTableName());
+
+            compile("alter table " + tableToken.getTableName() + " suspend wal with 28, 'test error message'");
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertSql(
+                    "name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\n" +
+                            tableToken.getTableName() + "\ttrue\t1\t0\t2\tDISK FULL\ttest error message\n",
+                    "wal_tables()"
+            );
+
+            compile("alter table " + tableToken.getTableName() + " resume wal;");
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertSql(
+                    "name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\n" +
+                            tableToken.getTableName() + "\tfalse\t1\t0\t2\t\t\n",
+                    "wal_tables()"
+            );
+
+            drainWalQueue();
+            assertSql("x\tsym\tts\tsym2\n1111\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableToken.getTableName());
+        });
+    }
+
+    @Test
+    public void testSuspendWalFailure() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableToken tableToken = createStandardWalTable(testName.getMethodName());
+
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspen wal", "'add', 'alter', 'attach', 'detach', 'drop', 'resume', 'rename', 'set' or 'squash' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wall", "'wal' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wal witj", "'with' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wal with", "error code expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wal with 24a", "invalid value [value=24a]");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wal with 24", "',' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wal with 24 'test error'", "',' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wal with 24,", "error message expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wal with 24, 'test error' hoppa", "unexpected token [token=hoppa]");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wal with 24, test error", "unexpected token [token=error]");
+        });
+    }
+
+    @Test
     public void testTableWriterDirectAddColumnStopsWal() throws Exception {
         assertMemoryLeak(() -> {
             TableToken tableName = createStandardWalTable(testName.getMethodName());
