@@ -30,8 +30,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.nio.channels.AsynchronousServerSocketChannel;
-
 public class FunctionParserErrorTest extends AbstractCairoTest {
 
     @Test
