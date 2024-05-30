@@ -41,7 +41,7 @@
         <qdbr.release>false</qdbr.release>
     </properties>
 
-    <version>8.0.0-SNAPSHOT</version>
+    <version>8.0.1-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
     <artifactId>questdb</artifactId>
     <packaging>jar</packaging>
@@ -539,8 +539,7 @@
             <properties>
                 <archive.name>${project.version}-rt-freebsd-amd64</archive.name>
                 <runtime.name>questdb-${project.version}-rt-freebsd-amd64</runtime.name>
-                <runtime.assembly>src/main/assembly/rt-unix.xml</runtime.assembly>
-                <jemalloc.so>freebsd-amd64/libjemalloc.so</jemalloc.so>
+                <runtime.assembly>src/main/assembly/rt-freebsd.xml</runtime.assembly>
             </properties>
         </profile>
         <profile>
