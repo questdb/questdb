@@ -3656,7 +3656,7 @@ public class JoinTest extends AbstractCairoTest {
             ddl(
                     "create table fact_table as (" +
                             "  select x::int id_aparent_temperature," +
-                            "         (x * 120000000)::timestamp data_time," +
+                            "         (x * 120000000)::timestamp date_time," +
                             "         rnd_float() radiation," +
                             "         rnd_float() energy_power" +
                             "  from long_sequence(10)" +
@@ -3670,7 +3670,7 @@ public class JoinTest extends AbstractCairoTest {
                             "c\t1970-01-01T00:00:00.000000Z\n",
                     "SELECT\n" +
                             "  \"dim_ap_temperature\".category \"dim_ap_temperature__category\",\n" +
-                            "  timestamp_floor('d', to_timezone(\"fact_table\".data_time, 'UTC')) \"fact_table__date_time_day\"\n" +
+                            "  timestamp_floor('d', to_timezone(\"fact_table\".date_time, 'UTC')) \"fact_table__date_time_day\"\n" +
                             "FROM\n" +
                             "  fact_table AS \"fact_table\"\n" +
                             "  LEFT JOIN dim_apTemperature AS \"dim_ap_temperature\" ON \"fact_table\".id_aparent_temperature = \"dim_ap_temperature\".id\n" +

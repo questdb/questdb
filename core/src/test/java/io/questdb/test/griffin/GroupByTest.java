@@ -1418,7 +1418,7 @@ public class GroupByTest extends AbstractCairoTest {
             ddl(
                     "create table fact_table as (" +
                             "  select x::int id_aparent_temperature," +
-                            "         (x * 120000000)::timestamp data_time," +
+                            "         (x * 120000000)::timestamp date_time," +
                             "         rnd_float() radiation," +
                             "         rnd_float() energy_power" +
                             "  from long_sequence(10)" +
@@ -1436,7 +1436,7 @@ public class GroupByTest extends AbstractCairoTest {
                     expectedResult,
                     "SELECT\n" +
                             "  \"dim_ap_temperature\".category \"dim_ap_temperature__category\",\n" +
-                            "  timestamp_floor('d', to_timezone(\"fact_table\".data_time, 'UTC')) \"fact_table__date_time_day\",\n" +
+                            "  timestamp_floor('d', to_timezone(\"fact_table\".date_time, 'UTC')) \"fact_table__date_time_day\",\n" +
                             "  avg(\"fact_table\".radiation) \"fact_table__avg_radiation\",\n" +
                             "  avg(\"fact_table\".energy_power) \"fact_table__energy_power\"\n" +
                             "FROM\n" +
@@ -1459,7 +1459,7 @@ public class GroupByTest extends AbstractCairoTest {
                     expectedResult,
                     "SELECT\n" +
                             "  \"dim_ap_temperature\".category \"dim_ap_temperature__category\",\n" +
-                            "  timestamp_floor('d', to_timezone(\"fact_table\".data_time, 'UTC')) \"fact_table__date_time_day\",\n" +
+                            "  timestamp_floor('d', to_timezone(\"fact_table\".date_time, 'UTC')) \"fact_table__date_time_day\",\n" +
                             "  avg(\"fact_table\".radiation) \"fact_table__avg_radiation\",\n" +
                             "  avg(\"fact_table\".energy_power) \"fact_table__energy_power\"\n" +
                             "FROM\n" +

@@ -1686,7 +1686,6 @@ public class SqlOptimiser implements Mutable {
             @Nullable QueryModel innerModel,
             QueryModel validatingModel
     ) throws SqlException {
-
         final LowerCaseCharSequenceObjHashMap<CharSequence> map = translatingModel.getColumnNameToAliasMap();
         int index = map.keyIndex(node.token);
         final CharSequence alias;
@@ -5069,6 +5068,7 @@ public class SqlOptimiser implements Mutable {
                         continue;
                     }
 
+                    // TODO: the problem is here
                     addMissingTablePrefixes(qc.getAst(), baseModel);
                     final int beforeSplit = groupByModel.getBottomUpColumns().size();
                     // if there is explicit GROUP BY clause then we've to replace matching expressions with aliases in outer virtual model
