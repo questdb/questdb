@@ -34,25 +34,37 @@ public class Json {
 
     private static native int validate(long s, long len, long capacity);
 
+    private static native void queryPath(long jsonPtr, long jsonLen, long jsonCapacity, long pathPtr, long pathLen, long resultPtr, long destPtr, int maxSize);
     private static native void queryPathString(long jsonPtr, long jsonLen, long jsonCapacity, long pathPtr, long pathLen, long resultPtr, long destPtr, int maxSize);
     private static native boolean queryPathBoolean(long jsonPtr, long jsonLen, long jsonCapacity, long pathPtr, long pathLen, long resultPtr);
     private static native long queryPathLong(long jsonPtr, long jsonLen, long jsonCapacity, long pathPtr, long pathLen, long resultPtr);
     private static native double queryPathDouble(long jsonPtr, long jsonLen, long jsonCapacity, long pathPtr, long pathLen, long resultPtr);
 
+    /** Get a path and force the result to a string, regardless of the type. */
+    public static void queryPath(DirectUtf8Sink json, DirectUtf8Sequence path, JsonResult result, DirectUtf8Sink dest, int maxSize) {
+        try (NativeByteSink nativeDest = dest.borrowDirectByteSink()) {
+            queryPath(json.ptr(), json.size(), json.capacity(), path.ptr(), path.size(), result.ptr(), nativeDest.ptr(), maxSize);
+        }
+    }
+
+    /** Extract a string path. If it's not a string it will error. */
     public static void queryPathString(DirectUtf8Sink json, DirectUtf8Sequence path, JsonResult result, DirectUtf8Sink dest, int maxSize) {
         try (NativeByteSink nativeDest = dest.borrowDirectByteSink()) {
             queryPathString(json.ptr(), json.size(), json.capacity(), path.ptr(), path.size(), result.ptr(), nativeDest.ptr(), maxSize);
         }
     }
 
+    /** Extract a boolean path. If it's not a boolean it will error. */
     public static boolean queryPathBoolean(DirectUtf8Sink json, DirectUtf8Sequence path, JsonResult result) {
         return queryPathBoolean(json.ptr(), json.size(), json.capacity(), path.ptr(), path.size(), result.ptr());
     }
 
+    /** Extract a long path. If it's not a long it will error. */
     public static long queryPathLong(DirectUtf8Sink json, DirectUtf8Sequence path, JsonResult result) {
         return queryPathLong(json.ptr(), json.size(), json.capacity(), path.ptr(), path.size(), result.ptr());
     }
 
+    /** Extract a double path. If it's not a double it will error. */
     public static double queryPathDouble(DirectUtf8Sink json, DirectUtf8Sequence path, JsonResult result) {
         return queryPathDouble(json.ptr(), json.size(), json.capacity(), path.ptr(), path.size(), result.ptr());
     }

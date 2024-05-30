@@ -49,7 +49,7 @@ public class JsonPathVarcharFunctionFactoryTest extends AbstractFunctionFactoryT
 
     @Test
     public void testEmptyPath() throws SqlException {
-        call(utf8("{\"path\": 1}"), utf8("")).andAssertUtf8(null);
+        call(utf8("{\"path\": 1}"), utf8("")).andAssertUtf8("{\"path\": 1}");
     }
 
     @Test
@@ -60,6 +60,14 @@ public class JsonPathVarcharFunctionFactoryTest extends AbstractFunctionFactoryT
     @Test
     public void testLargeJson() throws SqlException {
         call(utf8(JsonTest.jsonStr), utf8(".name")).andAssertUtf8("John");
+    }
+
+    @Test
+    public void testRawExtraction() throws SqlException {
+        call(utf8("{\"path\": 123}"), utf8(".path")).andAssertUtf8("123");
+        call(utf8("{\"path\": [1, 2,  3, {\"x\": true}, 4.5, null]}"), utf8(".path")).andAssertUtf8("[1, 2,  3, {\"x\": true}, 4.5, null]");
+        call(utf8("{\"path\": {\"x\": true}}"), utf8(".path")).andAssertUtf8("{\"x\": true}");
+        call(utf8("{\"path\": {\"x\": true}}"), utf8(".path.x")).andAssertUtf8("true");
     }
 
     @Override

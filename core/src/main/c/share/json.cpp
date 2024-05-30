@@ -217,6 +217,54 @@ Java_io_questdb_std_json_Json_validate(
 }
 
 JNIEXPORT void JNICALL
+Java_io_questdb_std_json_Json_queryPath(
+        JNIEnv* /*env*/,
+        jclass /*cl*/,
+        const char* json_chars,
+        size_t json_len,
+        size_t json_capacity,
+        const char* path_chars,
+        size_t path_len,
+        json_result* result,
+        questdb_byte_sink_t* dest_sink,
+        int32_t max_size
+) {
+    value_at_path(
+            json_chars, json_len, json_capacity, path_chars, path_len, result,
+            [result, dest_sink, max_size](json_value res) -> token_void {
+                if (res.error() != simdjson::error_code::SUCCESS) {
+                    return null_token{};
+                }
+                switch (result->type) {
+                    case simdjson::ondemand::json_type::string:
+                        {
+                            auto str_res = res.get_string();
+                            const auto str = str_res.value_unsafe();
+                            const auto max_size_st = static_cast<size_t>(max_size);
+                            trimmed_utf8_copy(*dest_sink, str, max_size_st);
+                        }
+                        return {};
+                    case simdjson::ondemand::json_type::array:
+                    case simdjson::ondemand::json_type::object:
+                    case simdjson::ondemand::json_type::number:
+                    case simdjson::ondemand::json_type::boolean:
+                        {
+                            const auto max_size_st = static_cast<size_t>(max_size);
+                            auto raw_res = res.raw_json();
+                            if (!result->set_error(raw_res)) {
+                                return null_token{};
+                            }
+                            auto raw = raw_res.value_unsafe();
+                            trimmed_utf8_copy(*dest_sink, raw, max_size_st);
+                        }
+                        return {};
+                    case simdjson::ondemand::json_type::null:
+                        return null_token{};
+                }
+            });
+}
+
+JNIEXPORT void JNICALL
 Java_io_questdb_std_json_Json_queryPathString(
         JNIEnv* /*env*/,
         jclass /*cl*/,
@@ -234,12 +282,9 @@ Java_io_questdb_std_json_Json_queryPathString(
             [result, dest_sink, max_size](json_value res) -> token_void {
                 auto str_res = res.get_string();
                 if (!result->set_error(str_res)) {
-                    std::cerr << "Java_io_questdb_std_json_Json_queryPathString :: err: " << result->error << std::endl;
                     return null_token{};
                 }
                 const auto str = str_res.value_unsafe();
-                std::cerr << "Java_io_questdb_std_json_Json_queryPathString :: res: [" << str << "]" << std::endl;
-                const auto dest = dest_sink->ptr;
                 const auto max_size_st = static_cast<size_t>(max_size);
                 trimmed_utf8_copy(*dest_sink, str, max_size_st);
                 return {};

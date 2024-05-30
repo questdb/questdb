@@ -40,7 +40,7 @@ import io.questdb.std.str.*;
 import org.jetbrains.annotations.Nullable;
 
 public class JsonPathVarcharFunctionFactory implements FunctionFactory {
-    private static final String SIGNATURE = "json_path(ØØ)";
+    private static final String SIGNATURE = "json_path(Øø)";
 
     @Override
     public String getSignature() {
@@ -174,11 +174,20 @@ public class JsonPathVarcharFunctionFactory implements FunctionFactory {
                 state.destSink.clear();
             }
             state.initSrcSinks(json, path);
-            Json.queryPathString(state.jsonSink, state.pathSink, state.jsonResult, state.destSink, maxSize);
+            Json.queryPath(state.jsonSink, state.pathSink, state.jsonResult, state.destSink, maxSize);
             if (state.jsonResult.hasValue()) {
                 return state.destSink;
             }
             return null;
+        }
+
+        @Override
+        public void close() {
+            copied.close();
+            a.close();
+            b.close();
+            json.close();
+            path.close();
         }
     }
 }
