@@ -9,7 +9,7 @@ use parquet2::schema::types::{
 
 use crate::parquet_write::{ParquetError, ParquetResult};
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum ColumnType {
     Boolean,
     Byte,

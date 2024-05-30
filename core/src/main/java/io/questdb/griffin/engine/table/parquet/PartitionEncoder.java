@@ -30,6 +30,8 @@ import io.questdb.std.*;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Path;
 
+import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
+
 public class PartitionEncoder implements QuietCloseable {
     private DirectLongList columnAddrs = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
     private DirectIntList columnIds = new DirectIntList(16, MemoryTag.NATIVE_DEFAULT);
@@ -68,37 +70,39 @@ public class PartitionEncoder implements QuietCloseable {
         for (int i = 0; i < columnCount; i++) {
             final String columnName = metadata.getColumnName(i);
             final int columnType = metadata.getColumnType(i);
-            columnNames.put(columnName);
-            columnNameLengths.add(columnName.length());
-            columnTypes.add(columnType);
-            columnIds.add(metadata.getColumnMetadata(i).getWriterIndex());
-            final long colTop = Math.min(tableReader.getColumnTop(columnBase, i), partitionSize);
-            columnTops.add(colTop);
-            final int primaryIndex = TableReader.getPrimaryColumnIndex(columnBase, i);
+            if (columnType > 0) {
+                columnNames.put(columnName);
+                columnNameLengths.add(columnName.length());
+                columnTypes.add(columnType);
+                columnIds.add(metadata.getColumnMetadata(i).getWriterIndex());
+                final long colTop = Math.min(tableReader.getColumnTop(columnBase, i), partitionSize);
+                columnTops.add(colTop);
+                final int primaryIndex = TableReader.getPrimaryColumnIndex(columnBase, i);
 
-            final MemoryR primaryMem = tableReader.getColumn(primaryIndex);
-            columnAddrs.add(primaryMem.addressOf(0));
-            columnSizes.add(primaryMem.size());
+                final MemoryR primaryMem = tableReader.getColumn(primaryIndex);
+                columnAddrs.add(primaryMem.addressOf(0));
+                columnSizes.add(primaryMem.size());
 
-            if (ColumnType.isVarSize(columnType)) {
-                final MemoryR secondaryMem = tableReader.getColumn(primaryIndex + 1);
-                columnSecondaryAddrs.add(secondaryMem.addressOf(0));
-                columnSecondarySizes.add(secondaryMem.size());
-                symbolOffsetsAddrs.add(0);
-                symbolOffsetsSizes.add(0);
-            } else if (ColumnType.isSymbol(columnType)) {
-                SymbolMapReader symbolMapReader = tableReader.getSymbolMapReader(i);
-                final MemoryR symbolValuesMem = symbolMapReader.getSymbolValuesColumn();
-                final MemoryR symbolOffsetsMem = symbolMapReader.getSymbolOffsetsColumn();
-                columnSecondaryAddrs.add(symbolValuesMem.addressOf(0));
-                columnSecondarySizes.add(symbolValuesMem.size());
-                symbolOffsetsAddrs.add(symbolOffsetsMem.addressOf(0));
-                symbolOffsetsSizes.add(symbolOffsetsMem.size() / Long.BYTES);
-            } else {
-                columnSecondaryAddrs.add(0);
-                columnSecondarySizes.add(0);
-                symbolOffsetsAddrs.add(0);
-                symbolOffsetsSizes.add(0);
+                if (ColumnType.isVarSize(columnType)) {
+                    final MemoryR secondaryMem = tableReader.getColumn(primaryIndex + 1);
+                    columnSecondaryAddrs.add(secondaryMem.addressOf(0));
+                    columnSecondarySizes.add(secondaryMem.size());
+                    symbolOffsetsAddrs.add(0);
+                    symbolOffsetsSizes.add(0);
+                } else if (ColumnType.isSymbol(columnType)) {
+                    SymbolMapReader symbolMapReader = tableReader.getSymbolMapReader(i);
+                    final MemoryR symbolValuesMem = symbolMapReader.getSymbolValuesColumn();
+                    final MemoryR symbolOffsetsMem = symbolMapReader.getSymbolOffsetsColumn();
+                    columnSecondaryAddrs.add(symbolValuesMem.addressOf(0));
+                    columnSecondarySizes.add(symbolValuesMem.size());
+                    symbolOffsetsAddrs.add(symbolOffsetsMem.addressOf(HEADER_SIZE)); // 8 longs header
+                    symbolOffsetsSizes.add(symbolMapReader.getSymbolCount());
+                } else {
+                    columnSecondaryAddrs.add(0);
+                    columnSecondarySizes.add(0);
+                    symbolOffsetsAddrs.add(0);
+                    symbolOffsetsSizes.add(0);
+                }
             }
         }
 
@@ -125,6 +129,7 @@ public class PartitionEncoder implements QuietCloseable {
         } catch (Throwable th) {
             throw CairoException.critical(0).put("Could not encode partition: [table=").put(tableReader.getTableToken().getTableName())
                     .put(", partitionIndex=").put(partitionIndex)
+                    .put(", exception=").put(th.getClass().getSimpleName())
                     .put(", msg=").put(th.getMessage())
                     .put(']');
         } finally {

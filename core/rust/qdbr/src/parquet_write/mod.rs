@@ -61,21 +61,100 @@ impl Nullable for f64 {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
-    use std::mem::size_of;
-    use std::ptr::null;
-
+    use std::fs::File;
+    use crate::parquet_write::file::ParquetWriter;
+    use crate::parquet_write::schema::{Column, ColumnType, Partition};
     use arrow::array::Array;
     use bytes::Bytes;
-    use num_traits::Float;
+    use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
     use parquet2::deserialize::{HybridEncoded, HybridRleIter};
     use parquet2::encoding::{hybrid_rle, uleb128};
     use parquet2::page::CompressedPage;
     use parquet2::types;
-    use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+    use std::io::{Cursor, Write};
+    use std::mem;
+    use std::mem::size_of;
+    use std::ptr::null;
+    use std::sync::Arc;
+    use arrow::datatypes::ToByteSlice;
+    use num_traits::Float;
 
-    use crate::parquet_write::file::ParquetWriter;
-    use crate::parquet_write::schema::{Column, Partition};
+    #[test]
+    fn test_write_parquet_with_symbol_column() {
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let col1 = vec![0, 1, i32::MIN, 2];
+        let (col_chars, offsets) = serialize_as_symbols(vec!["foo", "bar", "baz"]);
+
+        assert_eq!(ColumnType::Symbol, ColumnType::try_from(12).expect("fail"));
+        let col1_w =
+            Column::from_raw_data(
+                "col1",
+                12,
+                col1.len(),
+                col1.as_ptr() as *const u8,
+                col1.len() * size_of::<i32>(),
+                col_chars.as_ptr(),
+                col_chars.len(),
+                offsets.as_ptr(),
+                offsets.len(),
+            ).unwrap();
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: [col1_w].to_vec(),
+        };
+
+        let parquet_writer = ParquetWriter::new(&mut buf)
+            .with_statistics(false);
+        parquet_writer
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let bytes: Bytes = buf.into_inner().into();
+        let parquet_reader = ParquetRecordBatchReaderBuilder::try_new(bytes.clone())
+            .expect("reader")
+            .with_batch_size(8192)
+            .build()
+            .expect("builder");
+
+        for batch in parquet_reader {
+            if let Ok(batch) = batch {
+                let symbol_array = batch
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<arrow::array::StringArray>()
+                    .expect("Failed to downcast");
+                let collected: Vec<_> = symbol_array.iter().collect();
+                let expected = vec![Some("foo"), Some("bar"), None, Some("baz")];
+                assert_eq!(collected, expected);
+            }
+        }
+
+        let mut file = File::create("/Users/alpel/temp/db/x.parquet").expect("file create failed");
+        file.write_all(bytes.to_byte_slice()).expect("file write failed");
+    }
+
+    fn serialize_as_symbols(symbol_chars: Vec<&str>) -> (Vec<u8>, Vec<u64>) {
+        let mut chars = vec![];
+        let mut offsets = vec![];
+
+        for s in symbol_chars {
+            let sym_chars: Vec<_> = s.encode_utf16().collect();
+            let len = sym_chars.len();
+            offsets.push(chars.len() as u64);
+            chars.extend_from_slice(&(len as u32).to_le_bytes());
+            let encoded: &[u8] = unsafe {
+                std::slice::from_raw_parts(
+                    sym_chars.as_ptr() as *const u8,
+                    sym_chars.len() * mem::size_of::<u16>(),
+                )
+            };
+            chars.extend_from_slice(encoded);
+        }
+
+        (chars, offsets)
+    }
 
     #[test]
     fn test_write_parquet_with_fixed_sized_columns() {

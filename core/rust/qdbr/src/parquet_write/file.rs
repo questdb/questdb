@@ -232,8 +232,8 @@ fn column_chunk_to_pages(
             mem::transmute(&column.primary_data[chunk_offset..chunk_offset + chunk_length])
         };
         let offsets = column.symbol_offsets.expect("symbol offsets");
-        let data = column.secondary_data.expect("symbol data");
-        return symbol::symbol_to_pages(keys, offsets, data, options, primitive_type);
+        let data = column.secondary_data.unwrap_or(&[]); // Can be no values
+        return symbol::symbol_to_pages(keys, offsets, data, options, primitive_type, &column);
     }
 
     let number_of_rows = chunk_length;
