@@ -93,6 +93,8 @@ public interface CairoConfiguration {
     @NotNull
     BuildInformation getBuildInformation();
 
+    boolean getCairoSqlLegacyOperatorPrecedence();
+
     @NotNull
     SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
 
@@ -300,10 +302,6 @@ public interface CairoConfiguration {
 
     int getPartitionPurgeListCapacity();
 
-    default QueryLogger getQueryLogger() {
-        return DefaultQueryLogger.INSTANCE;
-    }
-
     int getQueryRegistryPoolSize();
 
     @NotNull
@@ -340,6 +338,8 @@ public interface CairoConfiguration {
     boolean getSampleByDefaultAlignmentCalendar();
 
     int getSampleByIndexSearchPageSize();
+
+    long getSequencerCheckInterval();
 
     boolean getSimulateCrashEnabled();
 
@@ -436,6 +436,8 @@ public interface CairoConfiguration {
 
     int getSqlPageFrameMinRows();
 
+    int getSqlParallelWorkStealingThreshold();
+
     int getSqlSmallMapKeyCapacity();
 
     long getSqlSmallMapPageSize();
@@ -520,8 +522,6 @@ public interface CairoConfiguration {
 
     long getWalPurgeInterval();
 
-    long getSequencerCheckInterval();
-
     default int getWalPurgeWaitBeforeDelete() {
         return 0;
     }
@@ -565,8 +565,6 @@ public interface CairoConfiguration {
     long getWriterCommandQueueSlotSize();
 
     long getWriterFileOpenOpts();
-
-    long getWriterMemoryLimit();
 
     int getWriterTickRowsCountMod();
 

@@ -25,7 +25,7 @@
 package io.questdb.mp;
 
 final class AlertedException extends RuntimeException {
-    public final static AlertedException INSTANCE = new AlertedException();
+    public static final AlertedException INSTANCE = new AlertedException();
 
     private AlertedException() {
     }

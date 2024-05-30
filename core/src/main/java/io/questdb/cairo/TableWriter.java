@@ -270,10 +270,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
         this.tableToken = tableToken;
         this.o3QuickSortEnabled = configuration.isO3QuickSortEnabled();
-        this.path = new Path().of(root).concat(tableToken);
-        this.other = new Path().of(root).concat(tableToken);
-        this.rootLen = path.size();
         try {
+            this.path = new Path().of(root).concat(tableToken);
+            this.other = new Path().of(root).concat(tableToken);
+            this.rootLen = path.size();
             if (lock) {
                 lock();
             } else {
@@ -4400,8 +4400,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             Misc.free(o3TimestampMemCpy);
             Misc.free(ownMessageBus);
             if (tempMem16b != 0) {
-                Unsafe.free(tempMem16b, 16, MemoryTag.NATIVE_TABLE_WRITER);
-                tempMem16b = 0;
+                tempMem16b = Unsafe.free(tempMem16b, 16, MemoryTag.NATIVE_TABLE_WRITER);
             }
             LOG.info().$("closed '").utf8(tableToken.getTableName()).$('\'').$();
         }
@@ -5996,21 +5995,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 .$();
                         continue;
                     }
-
-                    o3PartitionUpdRemaining.incrementAndGet();
                     final O3Basket o3Basket = o3BasketPool.next();
                     o3Basket.checkCapacity(configuration, columnCount, indexCount);
-
                     AtomicInteger columnCounter = o3ColumnCounters.next();
-
-                    // async partition processing set this counter to the column count
-                    // and then manages issues if publishing of column tasks fails
-                    // mid-column-count.
-                    latchCount++;
 
                     // To collect column top values and partition updates
                     // from o3 partition tasks add them to pre-allocated continuous block of memory
                     long partitionUpdateSinkAddr = o3PartitionUpdateSink.allocateBlock();
+
+                    o3PartitionUpdRemaining.incrementAndGet();
+                    // async partition processing set this counter to the column count
+                    // and then manages issues if publishing of column tasks fails
+                    // mid-column-count.
+                    latchCount++;
                     // Set column top memory to -1, no need to initialize partition update memory, it always set by O3 partition tasks
                     Vect.memset(partitionUpdateSinkAddr + (long) PARTITION_SINK_SIZE_LONGS * Long.BYTES, (long) metadata.getColumnCount() * Long.BYTES, -1);
                     Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr, partitionTimestamp);
@@ -6187,13 +6184,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void processPartitionRemoveCandidates0(int n) {
         boolean anyReadersBeforeCommittedTxn = checkScoreboardHasReadersBeforeLastCommittedTxn();
         // This flag will determine to schedule O3PartitionPurgeJob at the end or all done already.
-        boolean scheduleAsyncPurge = anyReadersBeforeCommittedTxn;
+        boolean scheduleAsyncPurge = false;
+        long lastCommittedTxn = this.getTxn();
 
-        if (!anyReadersBeforeCommittedTxn) {
-            for (int i = 0; i < n; i += 2) {
-                try {
-                    final long timestamp = partitionRemoveCandidates.getQuick(i);
-                    final long txn = partitionRemoveCandidates.getQuick(i + 1);
+        for (int i = 0; i < n; i += 2) {
+            try {
+                final long timestamp = partitionRemoveCandidates.getQuick(i);
+                final long txn = partitionRemoveCandidates.getQuick(i + 1);
+                // txn >= lastCommittedTxn means there are some versions found in the table directory
+                // that are not attached to the table most likely as result of a rollback
+                if (!anyReadersBeforeCommittedTxn || txn >= lastCommittedTxn) {
                     setPathForPartition(
                             other,
                             partitionBy,
@@ -6207,9 +6207,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 .$(", errno=").$(ff.errno()).I$();
                         scheduleAsyncPurge = true;
                     }
-                } finally {
-                    other.trimTo(rootLen);
+                } else {
+                    scheduleAsyncPurge = true;
                 }
+            } finally {
+                other.trimTo(rootLen);
             }
         }
 
@@ -6740,12 +6742,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     txn = Numbers.parseLong(utf8Sink, txnSep + 1, utf8Sink.size());
                 }
                 long dirTimestamp = partitionDirFmt.parse(utf8Sink.asAsciiCharSequence(), 0, txnSep, DateFormatUtils.EN_LOCALE);
-                if (txn <= txWriter.txn &&
-                        (txWriter.attachedPartitionsContains(dirTimestamp) || txWriter.isActivePartition(dirTimestamp))) {
-                    return;
+                if (txn != txWriter.getPartitionNameTxnByPartitionTimestamp(dirTimestamp, -2)) {
+                    partitionRemoveCandidates.add(dirTimestamp, txn);
                 }
-                partitionRemoveCandidates.add(dirTimestamp, txn);
-                path.trimTo(rootLen).$();
             } catch (NumericException ignore) {
                 // not a date?
                 // ignore exception and leave the directory
@@ -7090,11 +7089,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (columnType > 0) { // Not deleted
                 final long pos = size - getColumnTop(columnIndex);
                 if (ColumnType.isVarSize(columnType)) {
-                    dataSizeBytes = ColumnType.getDriver(columnType).setAppendPosition(
+                    ColumnTypeDriver driver = ColumnType.getDriver(columnType);
+                    dataSizeBytes = driver.setAppendPosition(
                             pos,
                             auxMem,
                             dataMem
-                    );
+                    ) - driver.getMinAuxVectorSize();
                 } else {
                     dataSizeBytes = pos << ColumnType.pow2SizeOf(columnType);
                     if (doubleAllocate) {

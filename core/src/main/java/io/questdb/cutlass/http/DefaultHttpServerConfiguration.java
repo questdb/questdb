@@ -137,12 +137,12 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
 
     @Override
     public int getQueryCacheBlockCount() {
-        return 4;
+        return 2;
     }
 
     @Override
     public int getQueryCacheRowCount() {
-        return 4;
+        return 8;
     }
 
     @Override

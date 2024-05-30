@@ -103,7 +103,24 @@ public class SqlParser {
         this.traversalAlgo = traversalAlgo;
         this.characterStore = characterStore;
         this.optimiser = optimiser;
-        this.expressionParser = new ExpressionParser(expressionNodePool, this, characterStore);
+        boolean tempCairoSqlLegacyOperatorPrecedence = configuration.getCairoSqlLegacyOperatorPrecedence();
+        if (tempCairoSqlLegacyOperatorPrecedence) {
+            this.expressionParser = new ExpressionParser(
+                    OperatorExpression.getLegacyRegistry(),
+                    OperatorExpression.getRegistry(),
+                    expressionNodePool,
+                    this,
+                    characterStore
+            );
+        } else {
+            this.expressionParser = new ExpressionParser(
+                    OperatorExpression.getRegistry(),
+                    null,
+                    expressionNodePool,
+                    this,
+                    characterStore
+            );
+        }
         this.digit = 1;
         this.column = "column";
     }

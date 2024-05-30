@@ -29,6 +29,7 @@ io.questdb.griffin.engine.functions.activity.QueryActivityFunctionFactory
 
 io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory
 io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory
+io.questdb.griffin.engine.functions.test.TestOwnerCountingFunctionFactory
 io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory
 io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory
 io.questdb.griffin.engine.functions.test.TestSumTDoubleGroupByFunctionFactory
@@ -219,6 +220,7 @@ io.questdb.griffin.engine.functions.rnd.RndSymbolFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndLongCCFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndLongFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndUuidFunctionFactory
+io.questdb.griffin.engine.functions.rnd.RndUUIDCFunctionFactory
 io.questdb.griffin.engine.functions.date.TimestampSequenceFunctionFactory
 io.questdb.griffin.engine.functions.long128.LongsToLong128FunctionFactory
 io.questdb.griffin.engine.functions.long256.LongsToLong256FunctionFactory

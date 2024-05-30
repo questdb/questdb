@@ -22,8 +22,7 @@
   ~
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
-<project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://maven.apache.org/POM/4.0.0"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <name>QuestDB</name>
     <description>QuestDB is high performance SQL time series database</description>
@@ -42,7 +41,7 @@
         <qdbr.release>false</qdbr.release>
     </properties>
 
-    <version>7.4.3-SNAPSHOT</version>
+    <version>8.0.1-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
     <artifactId>questdb</artifactId>
     <packaging>jar</packaging>
@@ -540,8 +539,7 @@
             <properties>
                 <archive.name>${project.version}-rt-freebsd-amd64</archive.name>
                 <runtime.name>questdb-${project.version}-rt-freebsd-amd64</runtime.name>
-                <runtime.assembly>src/main/assembly/rt-unix.xml</runtime.assembly>
-                <jemalloc.so>freebsd-amd64/libjemalloc.so</jemalloc.so>
+                <runtime.assembly>src/main/assembly/rt-freebsd.xml</runtime.assembly>
             </properties>
         </profile>
         <profile>

@@ -24,7 +24,6 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.SqlJitMode;
-import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -320,7 +319,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     "    where workspace = 'a' and method_id = 'd'\n" +
                     "    order by address";
 
-            assertPlan(query, "SelectedRecord\n" +
+            assertPlanNoLeakCheck(query, "SelectedRecord\n" +
                     "    Sort light\n" +
                     "      keys: [address]\n" +
                     "        VirtualRecord\n" +
@@ -361,7 +360,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     "    where workspace = 'a' and method_id = 'd'\n" +
                     "    order by ts, month, method_id";
 
-            assertPlan(query, "SelectedRecord\n" +
+            assertPlanNoLeakCheck(query, "SelectedRecord\n" +
                     "    Sort light\n" +
                     "      keys: [ts, month, method_id]\n" +
                     "        VirtualRecord\n" +
@@ -402,7 +401,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     "    where t1.workspace = 'a' and t1.method_id = 'd'\n" +
                     "    order by t2.ts desc";
 
-            assertPlan(query, "SelectedRecord\n" +
+            assertPlanNoLeakCheck(query, "SelectedRecord\n" +
                     "    Sort\n" +
                     "      keys: [ts desc]\n" +
                     "        VirtualRecord\n" +
@@ -460,7 +459,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     "and vendor_id in ('A1', 'A2') " +
                     "order by a.mta_tax;";
 
-            assertPlan(query, "SelectedRecord\n" +
+            assertPlanNoLeakCheck(query, "SelectedRecord\n" +
                     "    Sort light\n" +
                     "      keys: [mta_tax]\n" +
                     "        SelectedRecord\n" +
@@ -504,7 +503,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     "and b.vendor_id in ('A1', 'A2') " +
                     "order by b.mta_tax;";
 
-            assertPlan(query, "SelectedRecord\n" +
+            assertPlanNoLeakCheck(query, "SelectedRecord\n" +
                     "    Sort\n" +
                     "      keys: [mta_tax]\n" +
                     "        SelectedRecord\n" +
@@ -543,7 +542,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     ") timestamp (ts) PARTITION BY DAY");
             insert("insert into tab values (0, 'c', 1), (0, 'b', 2), (0, 'a', 3), (1, 'd', 4), (2, 'e', 5)");
 
-            assertPlan("SELECT key " +
+            assertPlanNoLeakCheck("SELECT key " +
                             "FROM tab " +
                             "WHERE key IS NOT NULL " +
                             "ORDER BY ts, key " +
@@ -811,7 +810,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
         }
     }
 
-    private void assertLimitQueries(String result, String query, String expectedTimestamp) throws SqlException {
+    private void assertLimitQueries(String result, String query, String expectedTimestamp) throws Exception {
         int firstLineStart = result.indexOf('\n') + 1;
         String header = result.substring(0, firstLineStart);
 
@@ -833,9 +832,13 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
 
                 String expected = header + result.substring(loIdx, hiIdx);
 
-                assertQuery(expected,
+                assertQuery(
+                        expected,
                         query + " " + lo + ", " + hi,
-                        expectedTimestamp, true, true);
+                        expectedTimestamp,
+                        true,
+                        true
+                );
             }
         }
     }

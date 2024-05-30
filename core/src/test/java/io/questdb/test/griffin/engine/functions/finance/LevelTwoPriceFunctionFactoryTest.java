@@ -26,10 +26,101 @@ package io.questdb.test.griffin.engine.functions.finance;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.engine.functions.finance.LevelTwoPriceFunctionFactory;
+import io.questdb.std.ObjList;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
+import io.questdb.test.tools.BindVariableTestTuple;
 import org.junit.Test;
 
 public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTest {
+
+    @Test
+    public void testBindVarTypeChange() throws Exception {
+        assertQuery("l2price\n" +
+                "9.825714285714286\n", "select l2price(35, 8, 5.2, 23, 9.3, 42, 22.1)");
+
+        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
+        tuples.add(new BindVariableTestTuple(
+                "all doubles",
+                "l2price\n" +
+                        "9.825714285714286\n",
+                bindVariableService -> {
+                    bindVariableService.setDouble(0, 8);
+                    bindVariableService.setDouble(1, 5.2);
+                    bindVariableService.setDouble(2, 23);
+                }
+        ));
+
+        tuples.add(new BindVariableTestTuple(
+                "type change",
+                "l2price\n" +
+                        "9.825714285714286\n",
+                bindVariableService -> {
+                    bindVariableService.setInt(0, 8);
+                    bindVariableService.setDouble(1, 5.2);
+                    bindVariableService.setByte(2, (byte) 23);
+                }
+        ));
+
+        assertSql("select l2price(35, $1, $2, $3, 9.3, 42, 22.1)", tuples);
+    }
+
+    @Test
+    public void testBindVarTypeChangeDoubleAmount() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE 'btc_trades' (\n" +
+                    "  symbol SYMBOL capacity 256 CACHE,\n" +
+                    "  side SYMBOL capacity 256 CACHE,\n" +
+                    "  price DOUBLE,\n" +
+                    "  amount DOUBLE,\n" +
+                    "  timestamp TIMESTAMP\n" +
+                    ") timestamp (timestamp) PARTITION BY DAY WAL DEDUP UPSERT KEYS(symbol, timestamp);");
+
+            insert("INSERT INTO btc_trades (symbol, side, price, amount, timestamp) VALUES\n" +
+                    "('BTC-USD', 'buy', 25738.01, 0.00192304, '2023-09-05T16:59:45.804537Z'),\n" +
+                    "('BTC-USD', 'buy', 25738.01, 0.00254854, '2023-09-05T16:59:46.639102Z'),\n" +
+                    "('BTC-USD', 'buy', 25738.01, 0.00038735, '2023-09-05T16:59:47.229826Z'),\n" +
+                    "('BTC-USD', 'buy', 25738.01, 0.00739719, '2023-09-05T16:59:48.289720Z'),\n" +
+                    "('BTC-USD', 'buy', 25738.01, 0.00052228, '2023-09-05T16:59:48.829058Z'),\n" +
+                    "('BTC-USD', 'buy', 25738.01, 0.00071191, '2023-09-05T16:59:49.002844Z'),\n" +
+                    "('BTC-USD', 'buy', 25738.76, 0.00367218, '2023-09-05T16:59:51.153025Z'),\n" +
+                    "('BTC-USD', 'buy', 25741.68, 0.05034042, '2023-09-05T16:59:52.260796Z'),\n" +
+                    "('BTC-USD', 'buy', 25740.38, 0.00219286, '2023-09-05T16:59:53.713701Z'),\n" +
+                    "('BTC-USD', 'buy', 25739.75, 0.00037233, '2023-09-05T16:59:56.452825Z'),\n" +
+                    "('BTC-USD', 'buy', 25735.97, 0.00006303, '2023-09-05T16:59:58.095714Z'),\n" +
+                    "('BTC-USD', 'buy', 25735.97, 0.00816829, '2023-09-05T16:59:58.761737Z'),\n" +
+                    "('BTC-USD', 'buy', 25735.97, 0.00816829, '2023-09-05T16:59:58.761737Z'),\n" +
+                    "('BTC-USD', 'buy', 25735.97, 0.00816829, '2023-09-05T16:59:58.761737Z')\n;");
+
+            drainWalQueue();
+
+            assertSql("l2price\n" +
+                    "25740.038313200002\n", "with recent_trades as\n" +
+                    "(\n" +
+                    "    select \n" +
+                    "    FIRST_VALUE(amount) over(partition by symbol order by timestamp rows between 1 preceding and 1 preceding) as amount1,\n" +
+                    "    FIRST_VALUE(amount) over(partition by symbol order by timestamp rows between 2 preceding and 2 preceding) as amount2,\n" +
+                    "    FIRST_VALUE(amount) over(partition by symbol order by timestamp rows between 3 preceding and 3 preceding) as amount3,\n" +
+                    "    FIRST_VALUE(amount) over(partition by symbol order by timestamp rows between 4 preceding and 4 preceding) as amount4,\n" +
+                    "    FIRST_VALUE(amount) over(partition by symbol order by timestamp rows between 5 preceding and 5 preceding) as amount5,\n" +
+                    "    FIRST_VALUE(amount) over(partition by symbol order by timestamp rows between 6 preceding and 6 preceding) as amount6,\n" +
+                    "    FIRST_VALUE(amount) over(partition by symbol order by timestamp rows between 6 preceding and 6 preceding) as amount7,\n" +
+                    "    FIRST_VALUE(price) over(partition by symbol order by timestamp rows between 1 preceding and 1 preceding) as price1,\n" +
+                    "    FIRST_VALUE(price) over(partition by symbol order by timestamp rows between 2 preceding and 2 preceding) as price2,\n" +
+                    "    FIRST_VALUE(price) over(partition by symbol order by timestamp rows between 3 preceding and 3 preceding) as price3,\n" +
+                    "    FIRST_VALUE(price) over(partition by symbol order by timestamp rows between 4 preceding and 4 preceding) as price4,\n" +
+                    "    FIRST_VALUE(price) over(partition by symbol order by timestamp rows between 5 preceding and 5 preceding) as price5,\n" +
+                    "     FIRST_VALUE(price) over(partition by symbol order by timestamp rows between 6 preceding and 6 preceding) as price6,\n" +
+                    "     FIRST_VALUE(price) over(partition by symbol order by timestamp rows between 6 preceding and 6 preceding) as price7\n" +
+                    "    from btc_trades\n" +
+                    "    where side = 'buy'\n" +
+                    "    limit -12\n" +
+                    ")\n" +
+                    "select l2price(0.0015, amount1, price1, amount2, price2, amount3, price3, \n" +
+                    "amount4, price4, amount5, price5, amount6, price6) from recent_trades\n" +
+                    "limit -1;");
+
+        });
+    }
 
     @Test
     public void testInconvertibleTypes() throws Exception {
@@ -58,8 +149,6 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
 
     /**
      * l2price should return null for the price if it encounters an order with null values.
-     *
-     * @throws Exception
      */
     @Test
     public void testLevelTwoPriceIncludingNullValue() throws Exception {
@@ -126,7 +215,8 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
                     "from long_sequence(10))");
             drainWalQueue();
 
-            assertPlan("select avg(l2price(14, ask_size, ask_value)) " +
+            assertPlanNoLeakCheck(
+                    "select avg(l2price(14, ask_size, ask_value)) " +
                             "- avg(l2price(14, bid_size, bid_value))" +
                             " as spread from x",
                     "VirtualRecord\n" +
@@ -136,18 +226,22 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
                             "      filter: null\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
-                            "            Frame forward scan on: x\n");
+                            "            Frame forward scan on: x\n"
+            );
 
-            assertPlan("select l2price(14, ask_size, ask_value) " +
+            assertPlanNoLeakCheck(
+                    "select l2price(14, ask_size, ask_value) " +
                             "- l2price(14, bid_size, bid_value)" +
                             " as spread from x",
                     "VirtualRecord\n" +
                             "  functions: [l2price([14,ask_size,ask_value])-l2price([14,bid_size,bid_value])]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: x\n");
+                            "        Frame forward scan on: x\n"
+            );
 
-            assertQuery("spread\n" +
+            assertQuery(
+                    "spread\n" +
                             "-0.0745689117121191\n" +
                             "-0.33476968200189616\n" +
                             "-0.2517202513378337\n" +
@@ -160,7 +254,8 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
                             "0.214176258308453\n",
                     "select l2price(14, ask_size, ask_value) " +
                             "- l2price(14, bid_size, bid_value)" +
-                            " as spread from x");
+                            " as spread from x"
+            );
         });
     }
 
@@ -168,6 +263,4 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
     protected FunctionFactory getFunctionFactory() {
         return new LevelTwoPriceFunctionFactory();
     }
-
-
 }

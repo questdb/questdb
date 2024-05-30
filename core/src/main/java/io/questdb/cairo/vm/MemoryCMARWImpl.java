@@ -105,6 +105,8 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
             try {
                 if (closeFdOnClose) {
                     Vm.bestEffortClose(ff, LOG, fd, truncateSize, truncateMode);
+                } else {
+                    Vm.bestEffortTruncate(ff, LOG, fd, truncateSize, truncateMode);
                 }
             } finally {
                 fd = -1;

@@ -695,7 +695,7 @@ public class ClickBenchTest extends AbstractCairoTest {
 
             for (TestCase testCase : TEST_CASES) {
                 LOG.info().$("verifying exec plan for ").$(testCase.name).$();
-                assertPlan(testCase.query, testCase.expectedPlan);
+                assertPlanNoLeakCheck(testCase.query, testCase.expectedPlan);
             }
         });
     }

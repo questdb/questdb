@@ -176,10 +176,10 @@ public class AbstractFuzzTest extends AbstractCairoTest {
 
     protected void runFuzz(Rnd rnd) throws Exception {
         assertMemoryLeak(() -> {
-            WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
-            sharedWorkerPool.start(LOG);
-
             try {
+                WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
+                sharedWorkerPool.start(LOG);
+
                 int size = rnd.nextInt(16 * 1024 * 1024);
                 node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, size);
                 setZeroWalPurgeInterval();
@@ -192,10 +192,10 @@ public class AbstractFuzzTest extends AbstractCairoTest {
 
     protected void runFuzz(Rnd rnd, String tableNameBase, int tableCount) throws Exception {
         assertMemoryLeak(() -> {
-            WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
-            sharedWorkerPool.start(LOG);
-
             try {
+                WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
+                sharedWorkerPool.start(LOG);
+
                 setZeroWalPurgeInterval();
                 fuzzer.runFuzz(rnd, tableNameBase, tableCount, false, false);
             } finally {

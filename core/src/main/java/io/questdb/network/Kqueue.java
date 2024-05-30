@@ -45,16 +45,21 @@ public final class Kqueue implements Closeable {
     private long writeAddress;
 
     public Kqueue(KqueueFacade kqf, int capacity) {
-        this.kqf = kqf;
-        this.capacity = capacity;
-        this.bufferSize = KqueueAccessor.SIZEOF_KEVENT * capacity;
-        this.changeList = this.writeAddress = Unsafe.calloc(bufferSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
-        this.eventList = this.readAddress = Unsafe.calloc(bufferSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
-        this.kq = kqf.kqueue();
-        if (kq < 0) {
-            throw NetworkError.instance(kqf.getNetworkFacade().errno(), "could not create kqueue");
+        try {
+            this.kqf = kqf;
+            this.capacity = capacity;
+            this.bufferSize = KqueueAccessor.SIZEOF_KEVENT * capacity;
+            this.changeList = this.writeAddress = Unsafe.calloc(bufferSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
+            this.eventList = this.readAddress = Unsafe.calloc(bufferSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
+            this.kq = kqf.kqueue();
+            if (kq < 0) {
+                throw NetworkError.instance(kqf.getNetworkFacade().errno(), "could not create kqueue");
+            }
+            Files.bumpFileCount(this.kq);
+        } catch (Throwable t) {
+            close();
+            throw t;
         }
-        Files.bumpFileCount(this.kq);
     }
 
     @Override

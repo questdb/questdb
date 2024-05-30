@@ -46,6 +46,8 @@ public interface SecurityContext extends Mutable {
 
     void authorizeAlterTableAlterColumnCache(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
+    void authorizeAlterTableAlterColumnType(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
+
     void authorizeAlterTableAttachPartition(TableToken tableToken);
 
     void authorizeAlterTableDedupDisable(TableToken tableToken);

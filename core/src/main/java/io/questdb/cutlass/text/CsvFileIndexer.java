@@ -78,8 +78,6 @@ public class CsvFileIndexer implements Closeable, Mutable {
     final private ObjList<IndexOutputFile> outputFileDenseList = new ObjList<>();
     // maps partitionFloors to output file descriptors
     final private LongObjHashMap<IndexOutputFile> outputFileLookupMap = new LongObjHashMap<>();
-    // work dir path
-    private final Path path;
     // timestamp field of current line
     final private DirectUtf8String timestampField;
     // used for timestamp parsing
@@ -119,6 +117,8 @@ public class CsvFileIndexer implements Closeable, Mutable {
     private DateFormat partitionDirFormatMethod;
     // used to map timestamp to output file
     private PartitionBy.PartitionFloorMethod partitionFloorMethod;
+    // work dir path
+    private Path path;
     private boolean rollBufferUnusable = false;
     private long sortBufferLength;
     private long sortBufferPtr;
@@ -130,79 +130,81 @@ public class CsvFileIndexer implements Closeable, Mutable {
     private boolean useFieldRollBuf = false;
 
     public CsvFileIndexer(CairoConfiguration configuration) {
-        this.configuration = configuration;
-        final TextConfiguration textConfiguration = configuration.getTextConfiguration();
-        int utf8SinkSize = textConfiguration.getUtf8SinkSize();
-        this.utf16Sink = new DirectUtf16Sink(utf8SinkSize);
-        this.utf8Sink = new DirectUtf8Sink(utf8SinkSize);
-        this.typeManager = new TypeManager(textConfiguration, utf16Sink, utf8Sink);
-        this.ff = configuration.getFilesFacade();
-        this.dirMode = configuration.getMkDirMode();
-        this.inputRoot = configuration.getSqlCopyInputRoot();
-        this.maxIndexChunkSize = configuration.getSqlCopyMaxIndexChunkSize();
-        this.fieldRollBufLen = MAX_TIMESTAMP_LENGTH;
-        this.fieldRollBufPtr = Unsafe.malloc(fieldRollBufLen, MemoryTag.NATIVE_IMPORT);
-        this.fieldRollBufCur = fieldRollBufPtr;
-        this.timestampField = new DirectUtf8String();
-        this.failOnTsError = false;
-        this.path = new Path();
-        this.sortBufferPtr = -1;
-        this.sortBufferLength = 0;
+        try {
+            this.configuration = configuration;
+            final TextConfiguration textConfiguration = configuration.getTextConfiguration();
+            int utf8SinkSize = textConfiguration.getUtf8SinkSize();
+            this.utf16Sink = new DirectUtf16Sink(utf8SinkSize);
+            this.utf8Sink = new DirectUtf8Sink(utf8SinkSize);
+            this.typeManager = new TypeManager(textConfiguration, utf16Sink, utf8Sink);
+            this.ff = configuration.getFilesFacade();
+            this.dirMode = configuration.getMkDirMode();
+            this.inputRoot = configuration.getSqlCopyInputRoot();
+            this.maxIndexChunkSize = configuration.getSqlCopyMaxIndexChunkSize();
+            this.fieldRollBufLen = MAX_TIMESTAMP_LENGTH;
+            this.fieldRollBufPtr = Unsafe.malloc(fieldRollBufLen, MemoryTag.NATIVE_IMPORT);
+            this.fieldRollBufCur = fieldRollBufPtr;
+            this.timestampField = new DirectUtf8String();
+            this.failOnTsError = false;
+            this.path = new Path();
+            this.sortBufferPtr = -1;
+            this.sortBufferLength = 0;
+        } catch (Throwable t) {
+            close();
+            throw t;
+        }
     }
 
     @Override
     public final void clear() {
-        this.fieldLo = 0;
-        this.eol = false;
-        this.fieldIndex = 0;
-        this.inQuote = false;
-        this.delayedOutQuote = false;
-        this.lineNumber = 0;
-        this.lineCount = 0;
-        this.fieldRollBufCur = fieldRollBufPtr;
-        this.useFieldRollBuf = false;
-        this.rollBufferUnusable = false;
-        this.header = false;
-        this.errorCount = 0;
-        this.offset = -1;
-        this.timestampField.clear();
-        this.lastQuotePos = -1;
-        this.timestampValue = Long.MIN_VALUE;
+        fieldLo = 0;
+        eol = false;
+        fieldIndex = 0;
+        inQuote = false;
+        delayedOutQuote = false;
+        lineNumber = 0;
+        lineCount = 0;
+        fieldRollBufCur = fieldRollBufPtr;
+        useFieldRollBuf = false;
+        rollBufferUnusable = false;
+        header = false;
+        errorCount = 0;
+        offset = -1;
+        Misc.clear(timestampField);
+        lastQuotePos = -1;
+        timestampValue = Long.MIN_VALUE;
 
-        this.inputFileName = null;
-        this.importRoot = null;
-        this.timestampAdapter = null;
-        this.timestampIndex = -1;
-        this.partitionFloorMethod = null;
-        this.partitionDirFormatMethod = null;
-        this.columnDelimiter = -1;
-        this.columnDelimiterMask = 0;
+        inputFileName = null;
+        importRoot = null;
+        timestampAdapter = null;
+        timestampIndex = -1;
+        partitionFloorMethod = null;
+        partitionDirFormatMethod = null;
+        columnDelimiter = -1;
+        columnDelimiterMask = 0;
 
         closeOutputFiles();
         closeSortBuffer();
 
-        if (ff.close(fd)) {
+        if (ff != null && ff.close(fd)) {
             fd = -1;
         }
 
-        this.failOnTsError = false;
-        this.path.trimTo(0);
-        this.circuitBreaker = null;
-        this.cancelled = false;
+        failOnTsError = false;
+        if (path != null) {
+            path.trimTo(0);
+        }
+        circuitBreaker = null;
+        cancelled = false;
     }
 
     @Override
     public void close() {
-        if (fieldRollBufPtr != 0) {
-            Unsafe.free(fieldRollBufPtr, fieldRollBufLen, MemoryTag.NATIVE_IMPORT);
-            fieldRollBufPtr = 0;
-        }
-
-        this.path.close();
-        this.typeManager.clear();
-        this.utf16Sink.close();
-        this.utf8Sink.close();
-
+        fieldRollBufPtr = Unsafe.free(fieldRollBufPtr, fieldRollBufLen, MemoryTag.NATIVE_IMPORT);
+        path = Misc.free(path);
+        Misc.clear(typeManager);
+        Misc.free(utf16Sink);
+        Misc.free(utf8Sink);
         clear();
     }
 
@@ -399,7 +401,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
     private void closeOutputFiles() {
         Misc.freeObjListAndClear(outputFileDenseList);
-        this.outputFileLookupMap.clear();
+        Misc.clear(outputFileLookupMap);
     }
 
     private void closeSortBuffer() {

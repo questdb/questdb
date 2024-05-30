@@ -33,7 +33,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
-//This plan is actually filter-less Nested Loop  
+// This exec plan is filter-less Nested Loop
 public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final CrossJoinRecordCursor cursor;
 
@@ -45,6 +45,11 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
     ) {
         super(metadata, null, masterFactory, slaveFactory);
         this.cursor = new CrossJoinRecordCursor(columnSplit);
+    }
+
+    @Override
+    public boolean followedOrderByAdvice() {
+        return masterFactory.followedOrderByAdvice();
     }
 
     @Override
@@ -60,11 +65,6 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
             Misc.free(slaveCursor);
             throw ex;
         }
-    }
-
-    @Override
-    public boolean followedOrderByAdvice() {
-        return masterFactory.followedOrderByAdvice();
     }
 
     @Override
@@ -91,9 +91,9 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
 
     @Override
     protected void _close() {
-        ((JoinRecordMetadata) getMetadata()).close();
-        masterFactory.close();
-        slaveFactory.close();
+        Misc.freeIfCloseable(getMetadata());
+        Misc.free(masterFactory);
+        Misc.free(slaveFactory);
     }
 
     private static class CrossJoinRecordCursor extends AbstractJoinCursor {

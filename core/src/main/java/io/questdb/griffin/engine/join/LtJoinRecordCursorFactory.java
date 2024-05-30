@@ -62,22 +62,32 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
             ColumnFilter masterTableKeyColumns
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
-        Map joinKeyMap = MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes);
-        this.masterKeySink = masterKeySink;
-        this.slaveKeySink = slaveKeySink;
-        int slaveWrappedOverMaster = slaveColumnTypes.getColumnCount() - masterTableKeyColumns.getColumnCount();
-        this.cursor = new LtJoinRecordCursor(
-                columnSplit,
-                joinKeyMap,
-                NullRecordFactory.getInstance(slaveColumnTypes),
-                masterFactory.getMetadata().getTimestampIndex(),
-                slaveFactory.getMetadata().getTimestampIndex(),
-                slaveValueSink,
-                masterTableKeyColumns,
-                slaveWrappedOverMaster,
-                columnIndex
-        );
-        this.slaveColumnIndex = columnIndex;
+        try {
+            this.masterKeySink = masterKeySink;
+            this.slaveKeySink = slaveKeySink;
+            Map joinKeyMap = MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes);
+            int slaveWrappedOverMaster = slaveColumnTypes.getColumnCount() - masterTableKeyColumns.getColumnCount();
+            this.cursor = new LtJoinRecordCursor(
+                    columnSplit,
+                    joinKeyMap,
+                    NullRecordFactory.getInstance(slaveColumnTypes),
+                    masterFactory.getMetadata().getTimestampIndex(),
+                    slaveFactory.getMetadata().getTimestampIndex(),
+                    slaveValueSink,
+                    masterTableKeyColumns,
+                    slaveWrappedOverMaster,
+                    columnIndex
+            );
+            this.slaveColumnIndex = columnIndex;
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
+    }
+
+    @Override
+    public boolean followedOrderByAdvice() {
+        return masterFactory.followedOrderByAdvice();
     }
 
     @Override
@@ -93,11 +103,6 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
             Misc.free(masterCursor);
             throw e;
         }
-    }
-
-    @Override
-    public boolean followedOrderByAdvice() {
-        return masterFactory.followedOrderByAdvice();
     }
 
     @Override
@@ -120,10 +125,10 @@ public class LtJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
 
     @Override
     protected void _close() {
-        ((JoinRecordMetadata) getMetadata()).close();
-        masterFactory.close();
-        slaveFactory.close();
-        cursor.close();
+        Misc.freeIfCloseable(getMetadata());
+        Misc.free(masterFactory);
+        Misc.free(slaveFactory);
+        Misc.free(cursor);
     }
 
     private class LtJoinRecordCursor extends AbstractSymbolWrapOverCursor {
