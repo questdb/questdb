@@ -44,6 +44,14 @@ final class RegexUtils {
         if (regex == null) {
             throw SqlException.$(position, "NULL regex");
         }
+        return createMatcher(regex, position);
+    }
+
+    @NotNull
+    public static Matcher createMatcher(CharSequence regex, int position) throws SqlException {
+        if (regex == null) {
+            throw SqlException.$(position, "NULL regex");
+        }
         try {
             return Pattern.compile(Chars.toString(regex)).matcher("");
         } catch (PatternSyntaxException e) {
