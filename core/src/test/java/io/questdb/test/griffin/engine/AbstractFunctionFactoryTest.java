@@ -359,8 +359,10 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                 if (value == null) {
                     sink.put("null");
                 } else {
+                    // escape single quotes
+                    final String escaped = ((Utf8Sequence) value).toString().replace("'", "''");
                     sink.put('\'');
-                    sink.put((Utf8Sequence) value);
+                    sink.put(escaped);
                     sink.put('\'');
                 }
                 break;
