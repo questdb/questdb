@@ -677,8 +677,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     if (argIdx != 1 || !Chars.equals("cast", node.token)) {
                         int overloadDistance = ColumnType.overloadDistance(argTypeTag, sigArgType); // NULL to any is 0
 
-                        if (argTypeTag == ColumnType.STRING &&
-                                sigArgTypeTag == ColumnType.CHAR) {
+                        if (argTypeTag == ColumnType.STRING && sigArgTypeTag == ColumnType.CHAR) {
                             if (arg.isConstant()) {
                                 // string longer than 1 char can't be cast to char implicitly
                                 if (arg.getStrLen(null) > 1) {
@@ -691,49 +690,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         }
 
                         sigArgTypeScore += overloadDistance;
-                        // Overload with cast to higher precision
                         overloadPossible = overloadDistance != ColumnType.OVERLOAD_NONE;
-
-                        // Overload when arg is double NaN to func which accepts INT, LONG
-                        overloadPossible |= argTypeTag == ColumnType.DOUBLE &&
-                                arg.isConstant() &&
-                                Numbers.isNull(arg.getDouble(null)) &&
-                                (sigArgTypeTag == ColumnType.LONG || sigArgTypeTag == ColumnType.INT);
-
-                        // Implicit cast from CHAR to STRING
-                        overloadPossible |= argTypeTag == ColumnType.CHAR &&
-                                sigArgTypeTag == ColumnType.STRING;
-
-                        // Implicit cast from CHAR to VARCHAR
-                        overloadPossible |= argTypeTag == ColumnType.CHAR &&
-                                sigArgTypeTag == ColumnType.VARCHAR;
-
-                        // Implicit cast from STRING to TIMESTAMP
-                        overloadPossible |= argTypeTag == ColumnType.STRING && arg.isConstant() &&
-                                sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
-
-                        // Implicit cast from STRING to DATE
-                        overloadPossible |= argTypeTag == ColumnType.STRING && arg.isConstant() &&
-                                sigArgTypeTag == ColumnType.DATE && !factory.isGroupBy();
-
-                        // Implicit cast from STRING to GEOHASH
-                        overloadPossible |= argTypeTag == ColumnType.STRING &&
-                                sigArgTypeTag == ColumnType.GEOHASH && !factory.isGroupBy();
-
-                        // Implicit cast from SYMBOL to TIMESTAMP
-                        overloadPossible |= argTypeTag == ColumnType.SYMBOL && arg.isConstant() &&
-                                sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
-
-                        // Implicit cast from VARCHAR to TIMESTAMP
-                        overloadPossible |= argTypeTag == ColumnType.VARCHAR && arg.isConstant() && sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
-
-                        // Implicit cast from VARCHAR to STRING
-                        overloadPossible |= argTypeTag == ColumnType.VARCHAR && arg.isConstant() && sigArgTypeTag == ColumnType.STRING && !factory.isGroupBy();
-
-                        // Implicit cast from VARCHAR to CHAR
-                        overloadPossible |= argTypeTag == ColumnType.VARCHAR &&
-                                sigArgTypeTag == ColumnType.CHAR;
-
                         overloadPossible |= arg.isUndefined();
                     }
                     // can we use overload mechanism?
