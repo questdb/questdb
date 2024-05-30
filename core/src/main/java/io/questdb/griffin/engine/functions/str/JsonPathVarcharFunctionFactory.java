@@ -54,17 +54,22 @@ public class JsonPathVarcharFunctionFactory implements FunctionFactory {
     ) {
         final Function json = args.getQuick(0);
         final Function path = args.getQuick(1);
+
+        // Note: path is always a constant. We copy it just once to malloc'ed memory.
+        Utf8Sequence pathSeq = path.getVarcharA(null);
+        DirectUtf8Sink pathSink = new DirectUtf8Sink(pathSeq.size());
+        pathSink.put(pathSeq);
+
         final int maxSize = configuration.getStrFunctionMaxBufferLength();
-        return new Func(json, path, maxSize);
+        return new Func(json, path, pathSink, maxSize);
     }
 
     private static class SupportingState implements QuietCloseable {
         public DirectUtf8Sink destSink = null;
         public DirectUtf8Sink jsonSink = null;
-        public DirectUtf8Sink pathSink = null;
         public JsonResult jsonResult = new JsonResult();
 
-        private void initSrcSinks(Utf8Sequence json, Utf8Sequence path) {
+        private void initJsonSink(Utf8Sequence json) {
             if (jsonSink == null) {
                 jsonSink = new DirectUtf8Sink(json.size() + Json.SIMDJSON_PADDING);
             }
@@ -72,29 +77,20 @@ public class JsonPathVarcharFunctionFactory implements FunctionFactory {
                 jsonSink.clear();
                 jsonSink.reserve(json.size() + Json.SIMDJSON_PADDING);
             }
-            if (pathSink == null) {
-                pathSink = new DirectUtf8Sink(path.size());
-            }
-            else {
-                pathSink.clear();
-                pathSink.reserve(path.size());
-            }
 
-            // TODO: These copies are possibly not necessary. Is there a way to avoid them?
+            // TODO: This copy is possibly not necessary. Is there a way to avoid it?
             jsonSink.put(json);
-            pathSink.put(path);
         }
 
         @Override
         public void close() {
+            // TODO: Should this be done here, considering it might be assigned from the outside?
+            //       When executing from `public void getVarchar(Record rec, Utf8Sink utf8Sink) {`
             if (destSink != null) {
                 destSink.close();
             }
             if (jsonSink != null) {
                 jsonSink.close();
-            }
-            if (pathSink != null) {
-                pathSink.close();
             }
         }
     }
@@ -102,14 +98,16 @@ public class JsonPathVarcharFunctionFactory implements FunctionFactory {
     private static class Func extends VarcharFunction implements BinaryFunction {
         private final Function json;
         private final Function path;
+        private final DirectUtf8Sink pathSink;
         private final SupportingState copied = new SupportingState();
         private final SupportingState a = new SupportingState();
         private final SupportingState b = new SupportingState();
         private final int maxSize;
 
-        public Func(Function json, Function path, int maxSize) {
+        public Func(Function json, Function path, DirectUtf8Sink pathSeq, int maxSize) {
             this.json = json;
             this.path = path;
+            this.pathSink = pathSeq;
             this.maxSize = maxSize;
         }
 
@@ -127,7 +125,7 @@ public class JsonPathVarcharFunctionFactory implements FunctionFactory {
         public void getVarchar(Record rec, Utf8Sink utf8Sink) {
             if (utf8Sink instanceof DirectUtf8Sink) {
                 copied.destSink = (DirectUtf8Sink) utf8Sink;
-                jsonPath(json.getVarcharA(rec), path.getVarcharA(rec), copied, maxSize);
+                jsonPath(json.getVarcharA(rec), pathSink, copied, maxSize);
             } else {
                 // Extra intermediate copy from malloc'd memory to java memory required.
                 // TODO: Should the `utf8Sink` sink be cleared here?
@@ -143,24 +141,24 @@ public class JsonPathVarcharFunctionFactory implements FunctionFactory {
                     copied.destSink.clear();
                     copied.destSink.reserve(curtailedMaxSize);
                 }
-                jsonPath(json.getVarcharA(rec), path.getVarcharA(rec), copied, curtailedMaxSize);
+                jsonPath(json.getVarcharA(rec), pathSink, copied, curtailedMaxSize);
                 utf8Sink.put(copied.destSink);
             }
         }
 
         @Override
         public @Nullable DirectUtf8Sink getVarcharA(Record rec) {
-            return jsonPath(json.getVarcharA(rec), path.getVarcharA(rec), a, maxSize);
+            return jsonPath(json.getVarcharA(rec), pathSink, a, maxSize);
         }
 
         @Override
         public @Nullable DirectUtf8Sink getVarcharB(Record rec) {
-            return jsonPath(json.getVarcharB(rec), path.getVarcharB(rec), b, maxSize);
+            return jsonPath(json.getVarcharB(rec), pathSink, b, maxSize);
         }
 
         private static @Nullable DirectUtf8Sink jsonPath(
                 @Nullable Utf8Sequence json,
-                @Nullable Utf8Sequence path,
+                @Nullable DirectUtf8Sequence path,
                 SupportingState state,
                 int maxSize
         ) {
@@ -173,8 +171,8 @@ public class JsonPathVarcharFunctionFactory implements FunctionFactory {
             else {
                 state.destSink.clear();
             }
-            state.initSrcSinks(json, path);
-            Json.queryPath(state.jsonSink, state.pathSink, state.jsonResult, state.destSink, maxSize);
+            state.initJsonSink(json);
+            Json.queryPath(state.jsonSink, path, state.jsonResult, state.destSink, maxSize);
             if (state.jsonResult.hasValue()) {
                 return state.destSink;
             }
@@ -188,6 +186,7 @@ public class JsonPathVarcharFunctionFactory implements FunctionFactory {
             b.close();
             json.close();
             path.close();
+            pathSink.close();
         }
     }
 }

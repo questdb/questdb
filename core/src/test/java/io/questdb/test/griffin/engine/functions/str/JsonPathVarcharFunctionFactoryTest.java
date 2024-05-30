@@ -29,6 +29,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.str.JsonPathVarcharFunctionFactory;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.test.std.json.JsonTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class JsonPathVarcharFunctionFactoryTest extends AbstractFunctionFactoryTest {
@@ -38,8 +39,8 @@ public class JsonPathVarcharFunctionFactoryTest extends AbstractFunctionFactoryT
     }
 
     @Test
-    public void testNullPath() throws SqlException {
-        call(utf8("{}"), utf8(null)).andAssertUtf8(null);
+    public void testNullPath() {
+        Assert.assertThrows(SqlException.class, () -> call(utf8("{}"), null));
     }
 
     @Test
