@@ -75,8 +75,6 @@ mod tests {
     use std::mem;
     use std::mem::size_of;
     use std::ptr::null;
-    use std::sync::Arc;
-    use arrow::datatypes::ToByteSlice;
     use num_traits::Float;
 
     #[test]
@@ -131,8 +129,8 @@ mod tests {
             }
         }
 
-        let mut file = File::create("/Users/alpel/temp/db/x.parquet").expect("file create failed");
-        file.write_all(bytes.to_byte_slice()).expect("file write failed");
+        // let mut file = File::create("/Users/alpel/temp/db/x.parquet").expect("file create failed");
+        // file.write_all(bytes.to_byte_slice()).expect("file write failed");
     }
 
     fn serialize_as_symbols(symbol_chars: Vec<&str>) -> (Vec<u8>, Vec<u64>) {
