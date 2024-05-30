@@ -138,33 +138,18 @@ class JsonPathFunc extends VarcharFunction implements BinaryFunction {
         return null;
     }
 
-    private static class SupportingState implements QuietCloseable {
+    private static class SupportingState extends JsonPathFuncSupportingState {
         public DirectUtf8Sink destSink = null;
-        public JsonResult jsonResult = new JsonResult();
-        public DirectUtf8Sink jsonSink = null;
 
         @Override
         public void close() {
+            super.close();
+
             // TODO: Should this be done here, considering it might be assigned from the outside?
             //       When executing from `public void getVarchar(Record rec, Utf8Sink utf8Sink) {`
             if (destSink != null) {
                 destSink.close();
             }
-            if (jsonSink != null) {
-                jsonSink.close();
-            }
-        }
-
-        private void initJsonSink(Utf8Sequence json) {
-            if (jsonSink == null) {
-                jsonSink = new DirectUtf8Sink(json.size() + Json.SIMDJSON_PADDING);
-            } else {
-                jsonSink.clear();
-                jsonSink.reserve(json.size() + Json.SIMDJSON_PADDING);
-            }
-
-            // TODO: This copy is possibly not necessary. Is there a way to avoid it?
-            jsonSink.put(json);
         }
     }
 }
