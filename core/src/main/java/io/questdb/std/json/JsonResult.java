@@ -24,9 +24,11 @@
 
 package io.questdb.std.json;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.DirectUtf8Sequence;
 
 public class JsonResult implements QuietCloseable {
     private long impl;
@@ -70,5 +72,18 @@ public class JsonResult implements QuietCloseable {
 
     public long ptr() {
         return impl;
+    }
+
+    public void throwIfError(String culpritFunctionName, DirectUtf8Sequence path) throws CairoException {
+        int error = getError();
+        if (error != JsonError.SUCCESS) {
+            throw CairoException.nonCritical()
+                    .put(culpritFunctionName)
+                    .put("(.., ")
+                    .put('\'')
+                    .put(path)
+                    .put("'): ")
+                    .put(JsonError.getMessage(error));
+        }
     }
 }

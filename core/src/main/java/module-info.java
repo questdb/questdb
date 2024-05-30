@@ -23,6 +23,7 @@
  ******************************************************************************/
 
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.engine.functions.json.JsonPathVarcharFunctionFactory;
 
 open module io.questdb {
     requires transitive jdk.unsupported;
@@ -118,6 +119,7 @@ open module io.questdb {
     exports io.questdb.griffin.engine.groupby.hyperloglog;
     exports io.questdb.griffin.engine.functions.finance;
     exports io.questdb.std.json;
+    exports io.questdb.griffin.engine.functions.json;
 
     provides FunctionFactory with
 
@@ -849,7 +851,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.str.ReplaceVarcharFunctionFactory,
 
             // json_path()
-            io.questdb.griffin.engine.functions.str.JsonPathVarcharFunctionFactory,
+            JsonPathVarcharFunctionFactory,
 
             // regexp_replace()
             io.questdb.griffin.engine.functions.regex.RegexpReplaceStrFunctionFactory,
