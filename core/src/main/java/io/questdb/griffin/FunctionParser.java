@@ -46,8 +46,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayDeque;
 
-import static io.questdb.griffin.SqlKeywords.isNullKeyword;
-import static io.questdb.griffin.SqlKeywords.startsWithGeoHashKeyword;
+import static io.questdb.griffin.SqlKeywords.*;
 
 public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
     private static final Log LOG = LogFactory.getLog(FunctionParser.class);
@@ -429,7 +428,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     private Function createConstant(int position, final CharSequence tok) throws SqlException {
         final int len = tok.length();
 
-        if (isNullKeyword(tok)) {
+        if (isNullKeyword(tok) || isNanKeyword(tok)) {
             return NullConstant.NULL;
         }
 
@@ -556,7 +555,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         // whatever happens to be the first cast function in the traversal order, and force
         // the bind variable to that type. This will then fail when an actual value is bound
         // to the variable, and it's most likely not that arbitrary type.
-        if (Chars.equals("cast", node.token)
+        if (SqlKeywords.isCastKeyword(node.token)
                 && argCount == 2
                 && args.getQuick(0).isUndefined()
                 && args.getQuick(1).isConstant()
@@ -674,7 +673,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     // for all other functions, else, we want to explore possible casting opportunities
                     //
                     // output of a cast() function is always the 2nd argument in a function signature
-                    if (argIdx != 1 || !Chars.equals("cast", node.token)) {
+                    if (argIdx != 1 || !SqlKeywords.isCastKeyword(node.token)) {
                         int overloadDistance = ColumnType.overloadDistance(argTypeTag, sigArgType); // NULL to any is 0
 
                         if (argTypeTag == ColumnType.STRING && sigArgTypeTag == ColumnType.CHAR) {

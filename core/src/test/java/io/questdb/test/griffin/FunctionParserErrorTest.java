@@ -30,6 +30,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.nio.channels.AsynchronousServerSocketChannel;
+
 public class FunctionParserErrorTest extends AbstractCairoTest {
 
     @Test
@@ -48,7 +50,8 @@ public class FunctionParserErrorTest extends AbstractCairoTest {
                 );
                 Assert.fail();
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getMessage(), "unexpected argument for function: between");
+                Assert.assertEquals(153, e.getPosition());
+                TestUtils.assertContains(e.getMessage(), "unexpected argument for function: !=. expected args: (STRING,STRING). actual args: (BOOLEAN,STRING constant)");
             }
 
             runTestQuery();

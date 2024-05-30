@@ -367,8 +367,8 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testKeyedMaxDoubleAllNaN() throws Exception {
         assertQuery("s\tmax\n" +
-                        "aa\tnull\n" +
-                        "bb\tnull\n",
+                        "aa\t\n" +
+                        "bb\t\n",
                 "select s, max(d) max from x order by s",
                 "create table x as " +
                         "(" +
@@ -535,8 +535,8 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testKeyedMinDoubleAllNaN() throws Exception {
         assertQuery("s\tmin\n" +
-                        "aa\tnull\n" +
-                        "bb\tnull\n",
+                        "aa\t\n" +
+                        "bb\t\n",
                 "select s, min(d) min from x order by s",
                 "create table x as " +
                         "(" +

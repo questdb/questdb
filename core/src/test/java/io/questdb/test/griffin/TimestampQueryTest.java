@@ -1303,7 +1303,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     "from long_sequence(48L)");
 
             assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts > 'invalid'");
-            assertTimestampTtFailedQuery("STRING constant expected", "select min(nts), max(nts) from tt where '2020-01-01' in ( NaN)");
+            assertTimestampTtFailedQuery("STRING constant expected", "select min(nts), max(nts) from tt where '2020-01-01' in (0.34)");
         });
     }
 
@@ -1422,16 +1422,17 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     "from long_sequence(48L)");
 
             assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts > cast('invalid' as symbol)");
-            assertTimestampTtFailedQuery("STRING constant expected", "select min(nts), max(nts) from tt where cast('2020-01-01' as symbol) in (NaN)");
+            assertTimestampTtFailedQuery("STRING constant expected", "select min(nts), max(nts) from tt where cast('2020-01-01' as symbol) in (3.14)");
         });
     }
 
     @Test
     public void testTimestampSymbolConversion() throws Exception {
         assertMemoryLeak(() -> {
-            TableModel m = new TableModel(configuration, "tt", PartitionBy.DAY);
-            m.timestamp("dts")
+            TableModel m = new TableModel(configuration, "tt", PartitionBy.DAY)
+                    .timestamp("dts")
                     .col("ts", ColumnType.TIMESTAMP);
+
             createPopulateTable(m, 31, "2021-03-14", 31);
             String expected = "dts\tts\n" +
                     "2021-04-02T23:59:59.354820Z\t2021-04-02T23:59:59.354820Z\n";
@@ -1456,8 +1457,18 @@ public class TimestampQueryTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampSymbolDateAdd() throws Exception {
-        assertQuery("dateadd\n" +
-                "2020-01-02T00:00:00.000000Z\n", "select dateadd('d', 1, cast('2020-01-01' as symbol))", null, null, null, null, true, true, false);
+        assertQuery(
+                "dateadd\n" +
+                "2020-01-02T00:00:00.000000Z\n",
+                "select dateadd('d', 1, cast('2020-01-01' as symbol))",
+                null,
+                null,
+                null,
+                null,
+                true,
+                true,
+                false
+        );
     }
 
     private void assertQueryWithConditions(String query, String expected, String columnName) throws SqlException {

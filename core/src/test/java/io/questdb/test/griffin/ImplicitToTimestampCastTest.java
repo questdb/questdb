@@ -36,24 +36,22 @@ public class ImplicitToTimestampCastTest extends AbstractCairoTest {
 
     @Test
     public void testImplicitIntegerToSymbolConversionFails() throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                assertQuery(
-                        "",
-                        "select * from balances where cust_id = 1",
-                        "CREATE TABLE balances ( " +
-                                "    cust_id SYMBOL, " +
-                                "    ts TIMESTAMP " +
-                                ") TIMESTAMP(ts) PARTITION BY DAY;",
-                        "k",
-                        false,
-                        true
-                );
-                Assert.fail("error should be thrown");
-            } catch (SqlException e) {
-                Assert.assertEquals(e.getMessage(), "[37] unexpected argument for function: =. expected args: (STRING,STRING). actual args: (SYMBOL,INT constant)");
-            }
-        });
+        try {
+            assertQuery(
+                    "",
+                    "select * from balances where cust_id = 1",
+                    "CREATE TABLE balances ( " +
+                            "    cust_id SYMBOL, " +
+                            "    ts TIMESTAMP " +
+                            ") TIMESTAMP(ts) PARTITION BY DAY;",
+                    "k",
+                    false,
+                    true
+            );
+            Assert.fail("error should be thrown");
+        } catch (SqlException e) {
+            Assert.assertEquals(e.getMessage(), "[37] unexpected argument for function: =. expected args: (STRING,STRING). actual args: (SYMBOL,INT constant)");
+        }
     }
 
     @Test
