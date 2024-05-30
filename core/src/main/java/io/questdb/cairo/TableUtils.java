@@ -25,7 +25,6 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
-import io.questdb.TelemetryConfigLogger;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
@@ -203,6 +202,29 @@ public final class TableUtils {
         checkSum = checkSum * 31 + lagRowCount;
         checkSum = checkSum * 31 + lagTxnCount;
         return (int) (checkSum ^ (checkSum >>> 32));
+    }
+
+    public static void changeColumnTypeInMetadata(CharSequence columnName, int newType, LowerCaseCharSequenceIntHashMap columnNameIndexMap, ObjList<TableColumnMetadata> columnMetadata) {
+        int existingIndex = columnNameIndexMap.get(columnName);
+        if (existingIndex < 0) {
+            throw CairoException.nonCritical().put("cannot change type, column '").put(columnName).put("' does not exist");
+        }
+        String columnNameStr = columnMetadata.getQuick(existingIndex).getName();
+        int columnIndex = columnMetadata.size();
+        columnMetadata.add(
+                new TableColumnMetadata(
+                        columnNameStr,
+                        newType,
+                        false,
+                        0,
+                        false,
+                        null,
+                        columnIndex,
+                        false
+                )
+        );
+        columnMetadata.getQuick(existingIndex).markDeleted();
+        columnNameIndexMap.put(columnNameStr, columnIndex);
     }
 
     public static Path charFileName(Path path, CharSequence columnName, long columnNameTxn) {
@@ -617,6 +639,13 @@ public final class TableUtils {
         return type;
     }
 
+    public static int getInt(MemoryMR metaMem, long memSize, long offset) {
+        if (memSize < offset + Integer.BYTES) {
+            throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(offset + Integer.BYTES);
+        }
+        return metaMem.getInt(offset);
+    }
+
     public static int getMaxUncommittedRows(TableRecordMetadata metadata, CairoEngine engine) {
         if (!metadata.isWalEnabled() && metadata instanceof TableWriterMetadata) {
             return ((TableWriterMetadata) metadata).getMaxUncommittedRows();
@@ -778,11 +807,6 @@ public final class TableUtils {
 
     public static boolean isSymbolCached(MemoryMR metaMem, int columnIndex) {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_SYMBOL_CACHE) != 0;
-    }
-
-    public static boolean isSystemTable(@NotNull CharSequence tableName, @NotNull CairoConfiguration configuration) {
-        return Chars.startsWith(tableName, configuration.getSystemTableNamePrefix())
-                || Chars.equals(tableName, TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME);
     }
 
     public static boolean isValidColumnName(CharSequence columnName, int fsFileNameLimit) {
@@ -1324,29 +1348,6 @@ public final class TableUtils {
         columnNameIndexMap.put(newNameStr, columnIndex);
     }
 
-    public static void changeColumnTypeInMetadata(CharSequence columnName, int newType, LowerCaseCharSequenceIntHashMap columnNameIndexMap, ObjList<TableColumnMetadata> columnMetadata) {
-        int existingIndex = columnNameIndexMap.get(columnName);
-        if (existingIndex < 0) {
-            throw CairoException.nonCritical().put("cannot change type, column '").put(columnName).put("' does not exist");
-        }
-        String columnNameStr = columnMetadata.getQuick(existingIndex).getName();
-        int columnIndex = columnMetadata.size();
-        columnMetadata.add(
-                new TableColumnMetadata(
-                        columnNameStr,
-                        newType,
-                        false,
-                        0,
-                        false,
-                        null,
-                        columnIndex,
-                        false
-                )
-        );
-        columnMetadata.getQuick(existingIndex).markDeleted();
-        columnNameIndexMap.put(columnNameStr, columnIndex);
-    }
-
     public static void renameOrFail(FilesFacade ff, Path src, Path dst) {
         if (ff.rename(src, dst) != Files.FILES_RENAME_OK) {
             throw CairoException.critical(ff.errno()).put("could not rename ").put(src).put(" -> ").put(dst);
@@ -1565,11 +1566,72 @@ public final class TableUtils {
         }
     }
 
-    public static int getInt(MemoryMR metaMem, long memSize, long offset) {
-        if (memSize < offset + Integer.BYTES) {
-            throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(offset + Integer.BYTES);
+    public static void validateMeta(
+            MemoryMR metaMem,
+            LowerCaseCharSequenceIntHashMap nameIndex,
+            int expectedVersion
+    ) {
+        try {
+            final long memSize = checkMemSize(metaMem, META_OFFSET_COLUMN_TYPES);
+            validateMetaVersion(metaMem, META_OFFSET_VERSION, expectedVersion);
+            final int columnCount = getColumnCount(metaMem, META_OFFSET_COUNT);
+
+            long offset = getColumnNameOffset(columnCount);
+            if (memSize < offset) {
+                throw validationException(metaMem).put("File is too small, column types are missing ").put(memSize);
+            }
+
+            // validate designated timestamp column
+            final int timestampIndex = getTimestampIndex(metaMem, META_OFFSET_TIMESTAMP_INDEX, columnCount);
+            if (timestampIndex != -1) {
+                final int timestampType = getColumnType(metaMem, timestampIndex);
+                if (!ColumnType.isTimestamp(timestampType)) {
+                    throw validationException(metaMem).put("Timestamp column must be TIMESTAMP, but found ").put(ColumnType.nameOf(timestampType));
+                }
+            }
+
+            // validate column types and index attributes
+            for (int i = 0; i < columnCount; i++) {
+                final int type = Math.abs(getColumnType(metaMem, i));
+                if (ColumnType.sizeOf(type) == -1) {
+                    throw validationException(metaMem).put("Invalid column type ").put(type).put(" at [").put(i).put(']');
+                }
+
+                if (isColumnDedupKey(metaMem, i)) {
+                    if (ColumnType.isVarSize(type)) {
+                        throw validationException(metaMem).put("DEDUPLICATION KEY flag is only supported for fixed size column types").put(" at [").put(i).put(']');
+                    }
+                }
+
+                if (isColumnIndexed(metaMem, i)) {
+                    if (!ColumnType.isSymbol(type)) {
+                        throw validationException(metaMem).put("Index flag is only supported for SYMBOL").put(" at [").put(i).put(']');
+                    }
+
+                    if (getIndexBlockCapacity(metaMem, i) < 2) {
+                        throw validationException(metaMem).put("Invalid index value block capacity ").put(getIndexBlockCapacity(metaMem, i)).put(" at [").put(i).put(']');
+                    }
+                }
+            }
+
+            // validate column names
+            int denseCount = 0;
+            if (nameIndex != null) {
+                for (int i = 0; i < columnCount; i++) {
+                    final CharSequence name = getColumnName(metaMem, memSize, offset, i);
+                    if (getColumnType(metaMem, i) < 0 || nameIndex.put(name, denseCount++)) {
+                        offset += Vm.getStorageLength(name);
+                    } else {
+                        throw validationException(metaMem).put("Duplicate column [name=").put(name).put("] at ").put(i);
+                    }
+                }
+            }
+        } catch (Throwable e) {
+            if (nameIndex != null) {
+                nameIndex.clear();
+            }
+            throw e;
         }
-        return metaMem.getInt(offset);
     }
 
     public static void validateMetaVersion(MemoryMR metaMem, long metaVersionOffset, int expectedVersion) {
@@ -1696,74 +1758,6 @@ public final class TableUtils {
             throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(offset + storageLength);
         }
         return metaMem.getStrA(offset);
-    }
-
-    public static void validateMeta(
-            MemoryMR metaMem,
-            LowerCaseCharSequenceIntHashMap nameIndex,
-            int expectedVersion
-    ) {
-        try {
-            final long memSize = checkMemSize(metaMem, META_OFFSET_COLUMN_TYPES);
-            validateMetaVersion(metaMem, META_OFFSET_VERSION, expectedVersion);
-            final int columnCount = getColumnCount(metaMem, META_OFFSET_COUNT);
-
-            long offset = getColumnNameOffset(columnCount);
-            if (memSize < offset) {
-                throw validationException(metaMem).put("File is too small, column types are missing ").put(memSize);
-            }
-
-            // validate designated timestamp column
-            final int timestampIndex = getTimestampIndex(metaMem, META_OFFSET_TIMESTAMP_INDEX, columnCount);
-            if (timestampIndex != -1) {
-                final int timestampType = getColumnType(metaMem, timestampIndex);
-                if (!ColumnType.isTimestamp(timestampType)) {
-                    throw validationException(metaMem).put("Timestamp column must be TIMESTAMP, but found ").put(ColumnType.nameOf(timestampType));
-                }
-            }
-
-            // validate column types and index attributes
-            for (int i = 0; i < columnCount; i++) {
-                final int type = Math.abs(getColumnType(metaMem, i));
-                if (ColumnType.sizeOf(type) == -1) {
-                    throw validationException(metaMem).put("Invalid column type ").put(type).put(" at [").put(i).put(']');
-                }
-
-                if (isColumnDedupKey(metaMem, i)) {
-                    if (ColumnType.isVarSize(type)) {
-                        throw validationException(metaMem).put("DEDUPLICATION KEY flag is only supported for fixed size column types").put(" at [").put(i).put(']');
-                    }
-                }
-
-                if (isColumnIndexed(metaMem, i)) {
-                    if (!ColumnType.isSymbol(type)) {
-                        throw validationException(metaMem).put("Index flag is only supported for SYMBOL").put(" at [").put(i).put(']');
-                    }
-
-                    if (getIndexBlockCapacity(metaMem, i) < 2) {
-                        throw validationException(metaMem).put("Invalid index value block capacity ").put(getIndexBlockCapacity(metaMem, i)).put(" at [").put(i).put(']');
-                    }
-                }
-            }
-
-            // validate column names
-            int denseCount = 0;
-            if (nameIndex != null) {
-                for (int i = 0; i < columnCount; i++) {
-                    final CharSequence name = getColumnName(metaMem, memSize, offset, i);
-                    if (getColumnType(metaMem, i) < 0 || nameIndex.put(name, denseCount++)) {
-                        offset += Vm.getStorageLength(name);
-                    } else {
-                        throw validationException(metaMem).put("Duplicate column [name=").put(name).put("] at ").put(i);
-                    }
-                }
-            }
-        } catch (Throwable e) {
-            if (nameIndex != null) {
-                nameIndex.clear();
-            }
-            throw e;
-        }
     }
 
     // Utility method for debugging. This method is not used in production.

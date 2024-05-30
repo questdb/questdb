@@ -83,15 +83,14 @@ import static io.questdb.test.tools.TestUtils.drainWalQueue;
 import static org.junit.Assert.assertTrue;
 
 public class IODispatcherTest extends AbstractTest {
-    public static final String JSON_DDL_RESPONSE = "0c\r\n" +
-            "{\"ddl\":\"OK\"}\r\n" +
-            "00\r\n" +
-            "\r\n";
     public static final String INSERT_QUERY_RESPONSE = "0c\r\n" +
             "{\"dml\":\"OK\"}\r\n" +
             "00\r\n" +
             "\r\n";
-
+    public static final String JSON_DDL_RESPONSE = "0c\r\n" +
+            "{\"ddl\":\"OK\"}\r\n" +
+            "00\r\n" +
+            "\r\n";
     private static final RescheduleContext EmptyRescheduleContext = (retry) -> {
     };
     private static final Log LOG = LogFactory.getLog(IODispatcherTest.class);
@@ -8404,7 +8403,7 @@ public class IODispatcherTest extends AbstractTest {
         DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
 
         String telemetry = TelemetryTask.TABLE_NAME;
-        TableToken telemetryTableName = new TableToken(telemetry, telemetry, 0, false, false, false);
+        TableToken telemetryTableName = new TableToken(telemetry, telemetry, 0, false, false, false, true);
         try (TableReader reader = new TableReader(configuration, telemetryTableName)) {
             final StringSink sink = new StringSink();
             sink.clear();
