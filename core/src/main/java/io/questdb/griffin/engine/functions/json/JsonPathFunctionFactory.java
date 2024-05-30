@@ -31,9 +31,8 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectUtf8Sink;
-import io.questdb.std.str.Utf8Sequence;
 
-public class JsonPathVarcharFunctionFactory implements FunctionFactory {
+public class JsonPathFunctionFactory implements FunctionFactory {
     private static final String FUNCTION_NAME = "json_path";
     private static final String SIGNATURE = FUNCTION_NAME + "(Øø)";
 
@@ -49,12 +48,7 @@ public class JsonPathVarcharFunctionFactory implements FunctionFactory {
     ) {
         final Function json = args.getQuick(0);
         final Function path = args.getQuick(1);
-
-        // Note: path is always a constant. We copy it just once to malloc'ed memory.
-        Utf8Sequence pathSeq = path.getVarcharA(null);
-        DirectUtf8Sink pathSink = new DirectUtf8Sink(pathSeq.size());
-        pathSink.put(pathSeq);
-
+        final DirectUtf8Sink pathSink = SupportingState.varcharConstantToDirectUtf8Sink(path);
         final int maxSize = configuration.getStrFunctionMaxBufferLength();
         return new JsonPathFunc(FUNCTION_NAME, json, path, pathSink, maxSize, false);
     }

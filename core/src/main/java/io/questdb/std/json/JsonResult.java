@@ -74,8 +74,12 @@ public class JsonResult implements QuietCloseable {
         return impl;
     }
 
+    public boolean isNull() {
+        return getType() == JsonType.NULL;
+    }
+
     public void throwIfError(String culpritFunctionName, DirectUtf8Sequence path) throws CairoException {
-        int error = getError();
+        final int error = getError();
         if (error != JsonError.SUCCESS) {
             throw CairoException.nonCritical()
                     .put(culpritFunctionName)

@@ -28,9 +28,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.VarcharFunction;
-import io.questdb.std.QuietCloseable;
 import io.questdb.std.json.Json;
-import io.questdb.std.json.JsonResult;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8Sequence;
@@ -38,9 +36,9 @@ import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.Nullable;
 
 class JsonPathFunc extends VarcharFunction implements BinaryFunction {
-    private final SupportingState a = new SupportingState();
-    private final SupportingState b = new SupportingState();
-    private final SupportingState copied = new SupportingState();
+    private final VarcharSupportingState a = new VarcharSupportingState();
+    private final VarcharSupportingState b = new VarcharSupportingState();
+    private final VarcharSupportingState copied = new VarcharSupportingState();
     private final String functionName;
     private final Function json;
     private final int maxSize;
@@ -115,7 +113,7 @@ class JsonPathFunc extends VarcharFunction implements BinaryFunction {
             String functionName,
             @Nullable Utf8Sequence json,
             @Nullable DirectUtf8Sequence path,
-            SupportingState state,
+            VarcharSupportingState state,
             int maxSize,
             boolean strict
     ) {
@@ -129,6 +127,9 @@ class JsonPathFunc extends VarcharFunction implements BinaryFunction {
         }
         state.initJsonSink(json);
         Json.queryPath(state.jsonSink, path, state.jsonResult, state.destSink, maxSize);
+        if (state.jsonResult.isNull()) {
+            return null;
+        }
         if (strict) {
             state.jsonResult.throwIfError(functionName, path);
         }
@@ -138,7 +139,7 @@ class JsonPathFunc extends VarcharFunction implements BinaryFunction {
         return null;
     }
 
-    private static class SupportingState extends JsonPathFuncSupportingState {
+    private static class VarcharSupportingState extends SupportingState {
         public DirectUtf8Sink destSink = null;
 
         @Override

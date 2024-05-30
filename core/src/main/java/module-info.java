@@ -23,7 +23,7 @@
  ******************************************************************************/
 
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.engine.functions.json.JsonPathVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.json.JsonPathFunctionFactory;
 
 open module io.questdb {
     requires transitive jdk.unsupported;
@@ -851,7 +851,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.str.ReplaceVarcharFunctionFactory,
 
             // json_path()
-            JsonPathVarcharFunctionFactory,
+            JsonPathFunctionFactory,
 
             // regexp_replace()
             io.questdb.griffin.engine.functions.regex.RegexpReplaceStrFunctionFactory,

@@ -26,13 +26,13 @@ package io.questdb.test.griffin.engine.functions.json;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.functions.json.JsonPathVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.json.JsonPathFunctionFactory;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.test.std.json.JsonTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class JsonPathVarcharFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class JsonPathFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testNullJson() throws SqlException {
         call(utf8(null), utf8(".path")).andAssertUtf8(null);
@@ -73,6 +73,6 @@ public class JsonPathVarcharFunctionFactoryTest extends AbstractFunctionFactoryT
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new JsonPathVarcharFunctionFactory();
+        return new JsonPathFunctionFactory();
     }
 }

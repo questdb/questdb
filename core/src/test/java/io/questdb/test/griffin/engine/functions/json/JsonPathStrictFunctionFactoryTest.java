@@ -27,13 +27,13 @@ package io.questdb.test.griffin.engine.functions.json;
 import io.questdb.cairo.CairoException;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.functions.json.JsonPathStrictVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.json.JsonPathStrictFunctionFactory;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.test.std.json.JsonTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class JsonPathStrictVarcharFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class JsonPathStrictFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testNullJson() throws SqlException {
         call(utf8(null), utf8(".path")).andAssertUtf8(null);
@@ -75,6 +75,6 @@ public class JsonPathStrictVarcharFunctionFactoryTest extends AbstractFunctionFa
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new JsonPathStrictVarcharFunctionFactory();
+        return new JsonPathStrictFunctionFactory();
     }
 }

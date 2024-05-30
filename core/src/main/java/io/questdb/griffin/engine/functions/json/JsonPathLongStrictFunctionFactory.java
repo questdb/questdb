@@ -24,38 +24,29 @@
 
 package io.questdb.griffin.engine.functions.json;
 
-import io.questdb.std.QuietCloseable;
-import io.questdb.std.json.Json;
-import io.questdb.std.json.JsonResult;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectUtf8Sink;
-import io.questdb.std.str.Utf8Sequence;
 
-abstract class JsonPathFuncSupportingState implements QuietCloseable {
-    public JsonResult jsonResult = new JsonResult();
-    public DirectUtf8Sink jsonSink = null;
+public class JsonPathLongStrictFunctionFactory implements FunctionFactory {
+    private static final String FUNCTION_NAME = "json_path_long_strict";
+    private static final String SIGNATURE = FUNCTION_NAME + "(Øø)";
 
     @Override
-    public void close() {
-        if (jsonSink != null) {
-            jsonSink.close();
-        }
-
-        jsonResult.close();
+    public String getSignature() {
+        return SIGNATURE;
     }
 
-    public void initJsonSink(Utf8Sequence json) {
-        // TODO: This copy is possibly not necessary. Is there a way to avoid it?
-        //       Can we detect when:
-        //         * The data already exists in a malloc'ed memory buffer.
-        //         * Such buffer has at least `Json.SIMDJSON_PADDING` bytes of allocated
-        //           memory past the end of the data.
-        //       If so, we can avoid the copy.
-        if (jsonSink == null) {
-            jsonSink = new DirectUtf8Sink(json.size() + Json.SIMDJSON_PADDING);
-        } else {
-            jsonSink.clear();
-            jsonSink.reserve(json.size() + Json.SIMDJSON_PADDING);
-        }
-        jsonSink.put(json);
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        final Function json = args.getQuick(0);
+        final Function path = args.getQuick(1);
+        final DirectUtf8Sink pathSink = SupportingState.varcharConstantToDirectUtf8Sink(path);
+        return new JsonPathLongFunc(FUNCTION_NAME, json, path, pathSink, true);
     }
 }
