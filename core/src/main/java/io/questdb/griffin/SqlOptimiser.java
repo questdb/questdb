@@ -3717,18 +3717,6 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private ExpressionNode replaceWithTranslatedAlias(@Transient ExpressionNode node, QueryModel translatingModel) {
-        if (node != null && node.type == LITERAL) {
-            final LowerCaseCharSequenceObjHashMap<CharSequence> map = translatingModel.getColumnNameToAliasMap();
-            final int index = map.keyIndex(node.token);
-            if (index < 0) {
-                final CharSequence alias = map.valueAtQuick(index);
-                return nextLiteral(alias, node.position);
-            }
-        }
-        return node;
-    }
-
     private void resolveJoinColumns(QueryModel model) throws SqlException {
         ObjList<QueryModel> joinModels = model.getJoinModels();
         final int size = joinModels.size();
@@ -3788,7 +3776,7 @@ public class SqlOptimiser implements Mutable {
             if (node != null) {
                 if (node.paramCount < 3) {
                     if (node.rhs != null) {
-                        ExpressionNode n = replaceWithTranslatedAlias(node.rhs, translatingModel);
+                        ExpressionNode n = restoredTranslatedAlias(node.rhs, translatingModel);
                         if (node.rhs == n) {
                             sqlNodeStack.push(node.rhs);
                         } else {
@@ -3796,7 +3784,7 @@ public class SqlOptimiser implements Mutable {
                         }
                     }
 
-                    ExpressionNode n = replaceWithTranslatedAlias(node.lhs, translatingModel);
+                    ExpressionNode n = restoredTranslatedAlias(node.lhs, translatingModel);
                     if (n == node.lhs) {
                         node = node.lhs;
                     } else {
@@ -3806,7 +3794,7 @@ public class SqlOptimiser implements Mutable {
                 } else {
                     for (int i = 1, k = node.paramCount; i < k; i++) {
                         ExpressionNode e = node.args.getQuick(i);
-                        ExpressionNode n = replaceWithTranslatedAlias(e, translatingModel);
+                        ExpressionNode n = restoredTranslatedAlias(e, translatingModel);
                         if (e == n) {
                             sqlNodeStack.push(e);
                         } else {
@@ -3815,7 +3803,7 @@ public class SqlOptimiser implements Mutable {
                     }
 
                     ExpressionNode e = node.args.getQuick(0);
-                    ExpressionNode n = replaceWithTranslatedAlias(e, translatingModel);
+                    ExpressionNode n = restoredTranslatedAlias(e, translatingModel);
                     if (e == n) {
                         node = e;
                     } else {
@@ -3827,6 +3815,18 @@ public class SqlOptimiser implements Mutable {
                 node = sqlNodeStack.poll();
             }
         }
+    }
+
+    private ExpressionNode restoredTranslatedAlias(@Transient ExpressionNode node, QueryModel translatingModel) {
+        if (node != null && node.type == LITERAL) {
+            final LowerCaseCharSequenceObjHashMap<CharSequence> map = translatingModel.getColumnNameToAliasMap();
+            final int index = map.keyIndex(node.token);
+            if (index < 0) {
+                final CharSequence alias = map.valueAtQuick(index);
+                return nextLiteral(alias, node.position);
+            }
+        }
+        return node;
     }
 
     // Rewrite:
@@ -5158,7 +5158,7 @@ public class SqlOptimiser implements Mutable {
                         qc.of(qc.getAlias(), node, qc.isIncludeIntoWildcard(), qc.getColumnType());
                     }
                     // in case of group by on joined tables, we could have broken the previously made
-                    // table_name.column_name to alias translation when calling addMissingTablePrefixes,
+                    // table_name.column_name to alias translation when calling addMissingTablePrefixes(),
                     // so we try to restore the aliases
                     restoreTranslation(originalNode, translatingModel);
 
