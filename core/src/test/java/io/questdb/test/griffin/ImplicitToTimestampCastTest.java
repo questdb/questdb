@@ -52,7 +52,7 @@ public class ImplicitToTimestampCastTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testImplicitNonConstSymbolExpressionToTimestampConversionFails() throws Exception {
+    public void testImplicitNonConstSymbolExpressionToTimestampConversion() throws Exception {
         assertMemoryLeak(() -> {
             ddl(
                     "CREATE TABLE balances as (" +
@@ -62,7 +62,7 @@ public class ImplicitToTimestampCastTest extends AbstractCairoTest {
             assertSql(
                     "cust_id\tts\n" +
                             "abc\t2022-03-23T00:00:00.000000Z\n",
-                    "select * from balances where ts = rnd_symbol('2022-03-23')"
+                    "select * from balances where ts = '2022-03-23'::symbol"
             );
         });
     }

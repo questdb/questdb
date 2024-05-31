@@ -33,7 +33,7 @@ import org.junit.Test;
 public class ImplicitToDateCastTest extends AbstractCairoTest {
 
     @Test
-    public void testImplicitNonConstSymbolExpressionToDateConversionFails() throws Exception {
+    public void testImplicitNonConstSymbolExpressionToDateConversion() throws Exception {
         assertMemoryLeak(() -> {
             // we do not want to support general implicit conversion of symbol to date, implicit conversions symbol -> date are reserved for literals
             ddl(
@@ -43,7 +43,7 @@ public class ImplicitToDateCastTest extends AbstractCairoTest {
             );
             assertSql("cust_id\tdate\n" +
                             "abc\t2022-03-23T00:00:00.000Z\n",
-                    "select * from balances where date = rnd_symbol('2022-03-23')"
+                    "select * from balances where date = '2022-03-23'::symbol"
             );
         });
     }
