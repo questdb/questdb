@@ -71,11 +71,6 @@ public class JsonTest {
     }
 
     @Test
-    public void testValidate() {
-        Json.validate(json);
-    }
-
-    @Test
     public void testQueryPathString() {
         try (DirectUtf8Sink dest = new DirectUtf8Sink(100)) {
             Json.queryPathString(json, new GcUtf8String(".name"), result, dest, 100);

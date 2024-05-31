@@ -25,53 +25,50 @@
 package io.questdb.std.json;
 
 import io.questdb.std.Os;
-import io.questdb.std.bytes.NativeByteSink;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8Sink;
 
 public class Json {
     public static final int SIMDJSON_PADDING;
 
-    private static native int validate(long s, long len, long capacity);
-
-    private static native void queryPath(long jsonPtr, long jsonLen, long jsonCapacity, long pathPtr, long pathLen, long resultPtr, long destPtr, int maxSize);
-    private static native void queryPathString(long jsonPtr, long jsonLen, long jsonCapacity, long pathPtr, long pathLen, long resultPtr, long destPtr, int maxSize);
-    private static native boolean queryPathBoolean(long jsonPtr, long jsonLen, long jsonCapacity, long pathPtr, long pathLen, long resultPtr);
-    private static native long queryPathLong(long jsonPtr, long jsonLen, long jsonCapacity, long pathPtr, long pathLen, long resultPtr);
-    private static native double queryPathDouble(long jsonPtr, long jsonLen, long jsonCapacity, long pathPtr, long pathLen, long resultPtr);
+    private static native void queryPath(long jsonPtr, long jsonLen, long jsonTailPadding, long pathPtr, long pathLen, long resultPtr, long destPtr, int maxSize);
+    private static native void queryPathString(long jsonPtr, long jsonLen, long jsonTailPadding, long pathPtr, long pathLen, long resultPtr, long destPtr, int maxSize);
+    private static native boolean queryPathBoolean(long jsonPtr, long jsonLen, long jsonTailPadding, long pathPtr, long pathLen, long resultPtr);
+    private static native long queryPathLong(long jsonPtr, long jsonLen, long jsonTailPadding, long pathPtr, long pathLen, long resultPtr);
+    private static native double queryPathDouble(long jsonPtr, long jsonLen, long jsonTailPadding, long pathPtr, long pathLen, long resultPtr);
 
     /** Get a path and force the result to a string, regardless of the type. */
-    public static void queryPath(DirectUtf8Sink json, DirectUtf8Sequence path, JsonResult result, DirectUtf8Sink dest, int maxSize) {
-        try (NativeByteSink nativeDest = dest.borrowDirectByteSink()) {
-            queryPath(json.ptr(), json.size(), json.capacity(), path.ptr(), path.size(), result.ptr(), nativeDest.ptr(), maxSize);
-        }
+    public static void queryPath(DirectUtf8Sequence json, DirectUtf8Sequence path, JsonResult result, DirectUtf8Sink dest, int maxSize) {
+        assert json.tailPadding() >= SIMDJSON_PADDING;
+        final long nativeByteSinkPtr = dest.borrowDirectByteSink().ptr();
+        assert dest.capacity() - dest.size() >= maxSize;  // Without this guarantee we'd need to close `NativeByteSink.close`.
+        queryPath(json.ptr(), json.size(), json.tailPadding(), path.ptr(), path.size(), result.ptr(), nativeByteSinkPtr, maxSize);
     }
 
     /** Extract a string path. If it's not a string it will error. */
-    public static void queryPathString(DirectUtf8Sink json, DirectUtf8Sequence path, JsonResult result, DirectUtf8Sink dest, int maxSize) {
-        try (NativeByteSink nativeDest = dest.borrowDirectByteSink()) {
-            queryPathString(json.ptr(), json.size(), json.capacity(), path.ptr(), path.size(), result.ptr(), nativeDest.ptr(), maxSize);
-        }
+    public static void queryPathString(DirectUtf8Sequence json, DirectUtf8Sequence path, JsonResult result, DirectUtf8Sink dest, int maxSize) {
+        assert json.tailPadding() >= SIMDJSON_PADDING;
+        final long nativeByteSinkPtr = dest.borrowDirectByteSink().ptr();
+        assert dest.capacity() - dest.size() >= maxSize;  // Without this guarantee we'd need to close `NativeByteSink.close`.
+        queryPathString(json.ptr(), json.size(), json.tailPadding(), path.ptr(), path.size(), result.ptr(), nativeByteSinkPtr, maxSize);
     }
 
     /** Extract a boolean path. If it's not a boolean it will error. */
-    public static boolean queryPathBoolean(DirectUtf8Sink json, DirectUtf8Sequence path, JsonResult result) {
-        return queryPathBoolean(json.ptr(), json.size(), json.capacity(), path.ptr(), path.size(), result.ptr());
+    public static boolean queryPathBoolean(DirectUtf8Sequence json, DirectUtf8Sequence path, JsonResult result) {
+        assert json.tailPadding() >= SIMDJSON_PADDING;
+        return queryPathBoolean(json.ptr(), json.size(), json.tailPadding(), path.ptr(), path.size(), result.ptr());
     }
 
     /** Extract a long path. If it's not a long it will error. */
-    public static long queryPathLong(DirectUtf8Sink json, DirectUtf8Sequence path, JsonResult result) {
-        return queryPathLong(json.ptr(), json.size(), json.capacity(), path.ptr(), path.size(), result.ptr());
+    public static long queryPathLong(DirectUtf8Sequence json, DirectUtf8Sequence path, JsonResult result) {
+        assert json.tailPadding() >= SIMDJSON_PADDING;
+        return queryPathLong(json.ptr(), json.size(), json.tailPadding(), path.ptr(), path.size(), result.ptr());
     }
 
     /** Extract a double path. If it's not a double it will error. */
-    public static double queryPathDouble(DirectUtf8Sink json, DirectUtf8Sequence path, JsonResult result) {
-        return queryPathDouble(json.ptr(), json.size(), json.capacity(), path.ptr(), path.size(), result.ptr());
-    }
-
-    /** Validate the document and return a error code from the `JsonError` class's constants. */
-    public static int validate(DirectUtf8Sink json) {
-        return validate(json.ptr(), json.size(), json.capacity());
+    public static double queryPathDouble(DirectUtf8Sequence json, DirectUtf8Sequence path, JsonResult result) {
+        assert json.tailPadding() >= SIMDJSON_PADDING;
+        return queryPathDouble(json.ptr(), json.size(), json.tailPadding(), path.ptr(), path.size(), result.ptr());
     }
 
     private native static int getSimdJsonPadding();

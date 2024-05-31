@@ -152,6 +152,11 @@ public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, Dire
     }
 
     @Override
+    public long tailPadding() {
+        return sink.tailPadding();
+    }
+
+    @Override
     public @NotNull String toString() {
         return Utf8s.stringFromUtf8Bytes(sink.lo(), sink.hi());
     }

@@ -225,6 +225,11 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         return (int) (getImplPtr() - getImplLo());
     }
 
+    @Override
+    public long tailPadding() {
+        return getImplHi() - getImplPtr();
+    }
+
     private void closeByteSink() {
         final long capacityChange = capacity() - lastCapacity;
         if (capacityChange != 0) {

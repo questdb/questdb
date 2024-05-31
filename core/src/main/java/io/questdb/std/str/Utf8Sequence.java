@@ -25,12 +25,13 @@
 package io.questdb.std.str;
 
 import io.questdb.std.Unsafe;
+import io.questdb.std.bytes.ByteSequence;
 import org.jetbrains.annotations.NotNull;
 
 /**
  * A sequence of UTF-8 bytes.
  */
-public interface Utf8Sequence {
+public interface Utf8Sequence extends ByteSequence {
 
     /**
      * Returns a CharSequence view of the sequence.

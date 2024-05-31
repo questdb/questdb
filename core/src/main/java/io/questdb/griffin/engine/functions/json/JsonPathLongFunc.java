@@ -60,8 +60,7 @@ public class JsonPathLongFunc extends LongFunction implements BinaryFunction {
         if (jsonSeq == null) {
             return Long.MIN_VALUE;
         }
-        state.initJsonSink(jsonSeq);
-        final long res = Json.queryPathLong(state.jsonSink, pathSink, state.jsonResult);
+        final long res = Json.queryPathLong(state.initPaddedJson(jsonSeq), pathSink, state.jsonResult);
         if (strict && !state.jsonResult.isNull()) {
             state.jsonResult.throwIfError(functionName, pathSink);
         }

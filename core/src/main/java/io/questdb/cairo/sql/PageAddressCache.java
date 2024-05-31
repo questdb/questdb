@@ -26,6 +26,7 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.std.*;
 
 public class PageAddressCache implements Mutable {
@@ -37,8 +38,10 @@ public class PageAddressCache implements Mutable {
     private LongList auxPageAddresses = new LongList();
     private int columnCount;
     private LongList pageAddresses = new LongList();
+    private LongList pageLimits = new LongList();
     private LongList pageRowIdOffsets = new LongList();
     private LongList pageSizes = new LongList();
+    private LongList varcharAuxPageLimits = new LongList();
     private int varSizeColumnCount;
 
     public PageAddressCache(CairoConfiguration configuration) {
@@ -50,11 +53,19 @@ public class PageAddressCache implements Mutable {
             return; // The page frame is already cached
         }
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            pageAddresses.add(frame.getPageAddress(columnIndex));
+            final long pageAddress = frame.getPageAddress(columnIndex);
+            pageAddresses.add(pageAddress);
+            pageLimits.add(pageAddress + getPageSize(frameIndex, columnIndex));
             int varSizeColumnIndex = varSizeColumnIndexes.getQuick(columnIndex);
             if (varSizeColumnIndex > -1) {
-                auxPageAddresses.add(frame.getIndexPageAddress(columnIndex));
+                final long auxPageAddress = frame.getIndexPageAddress(columnIndex);
+                auxPageAddresses.add(auxPageAddress);
                 pageSizes.add(frame.getPageSize(columnIndex));
+                final long frameRowCount = frame.getPartitionHi() - frame.getPartitionLo();
+                varcharAuxPageLimits.extendAndSet(
+                        columnCount * frameIndex + columnIndex,
+                        auxPageAddress + VarcharTypeDriver.INSTANCE.getAuxVectorSize(frameRowCount)
+                );
             }
         }
         pageRowIdOffsets.add(Rows.toRowID(frame.getPartitionIndex(), frame.getPartitionLo()));
@@ -65,12 +76,16 @@ public class PageAddressCache implements Mutable {
         varSizeColumnIndexes.clear();
         if (pageAddresses.size() < cacheSizeThreshold) {
             pageAddresses.clear();
+            pageLimits.clear();
             auxPageAddresses.clear();
+            varcharAuxPageLimits.clear();
             pageSizes.clear();
             pageRowIdOffsets.clear();
         } else {
             pageAddresses = new LongList();
+            pageLimits = new LongList();
             auxPageAddresses = new LongList();
+            varcharAuxPageLimits = new LongList();
             pageSizes = new LongList();
             pageRowIdOffsets = new LongList();
         }
@@ -83,6 +98,10 @@ public class PageAddressCache implements Mutable {
         return auxPageAddresses.getQuick(varSizeColumnCount * frameIndex + varSizeColumnIndex);
     }
 
+    public long getVarcharAuxPageLimit(int frameIndex, int columnIndex) {
+        return varcharAuxPageLimits.getQuick(columnCount * frameIndex + columnIndex);
+    }
+
     public int getColumnCount() {
         return columnCount;
     }
@@ -90,6 +109,14 @@ public class PageAddressCache implements Mutable {
     public long getPageAddress(int frameIndex, int columnIndex) {
         assert pageAddresses.size() >= columnCount * (frameIndex + 1);
         return pageAddresses.getQuick(columnCount * frameIndex + columnIndex);
+    }
+
+    /**
+     * Get the end of the addressable memory for the frame/column.
+     * This allows calculating the `tailPadding` for `Utf8SplitString` instances.
+     */
+    public long getPageLimit(int frameIndex, int columnIndex) {
+        return pageLimits.getQuick(columnCount * frameIndex + columnIndex);
     }
 
     public long getPageSize(int frameIndex, int columnIndex) {

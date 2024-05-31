@@ -79,7 +79,7 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
     private static class AttributeCatalogueCursorFactory extends AbstractRecordCursorFactory {
 
         private final AttributeClassCatalogueCursor cursor;
-        private final MemoryMR metaMem = Vm.getMRInstance();
+        private final MemoryMR metaMem = Vm.getCMRInstance();
         private final Path path = new Path();
 
         public AttributeCatalogueCursorFactory(CairoConfiguration configuration, RecordMetadata metadata) {

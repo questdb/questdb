@@ -62,7 +62,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             this.path.of(configuration.getRoot()).concat(tableToken.getDirName()).$();
             this.plen = path.size();
             this.isSoftLink = Files.isSoftLink(path);
-            this.metaMem = Vm.getMRInstance();
+            this.metaMem = Vm.getCMRInstance();
         } catch (Throwable th) {
             close();
             throw th;
@@ -74,7 +74,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
         this.tableToken = null;
-        this.metaMem = Vm.getMRInstance();
+        this.metaMem = Vm.getCMRInstance();
     }
 
     public TableReaderMetadataTransitionIndex applyTransition() {
@@ -363,7 +363,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
 
     public boolean prepareTransition(long txnMetadataVersion) {
         if (transitionMeta == null) {
-            transitionMeta = Vm.getMRInstance();
+            transitionMeta = Vm.getCMRInstance();
         }
 
         transitionMeta.smallFile(ff, path, MemoryTag.NATIVE_TABLE_READER);

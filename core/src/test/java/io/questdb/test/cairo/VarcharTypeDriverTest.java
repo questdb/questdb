@@ -109,10 +109,10 @@ public class VarcharTypeDriverTest extends AbstractTest {
             final int auxLoBase = 3;
             for (int n = auxLoBase; n < 50; n++) {
                 try (
-                        MemoryARW auxMemA = Vm.getARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
-                        MemoryAR dataMemA = Vm.getARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
-                        MemoryARW auxMemB = Vm.getARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
-                        MemoryAR dataMemB = Vm.getARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
+                        MemoryCARW auxMemA = Vm.getCARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                        MemoryCARW dataMemA = Vm.getCARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                        MemoryCARW auxMemB = Vm.getCARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                        MemoryCARW dataMemB = Vm.getCARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
                 ) {
                     final int len = n % 16;
                     final int auxLo = n % auxLoBase;
@@ -169,10 +169,10 @@ public class VarcharTypeDriverTest extends AbstractTest {
             final int auxLoBase = 3;
             for (int n = auxLoBase; n < 50; n++) {
                 try (
-                        MemoryARW auxMemA = Vm.getARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
-                        MemoryAR dataMemA = Vm.getARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
-                        MemoryARW auxMemB = Vm.getARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
-                        MemoryAR dataMemB = Vm.getARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
+                        MemoryCARW auxMemA = Vm.getCARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                        MemoryCARW dataMemA = Vm.getCARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                        MemoryCARW auxMemB = Vm.getCARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                        MemoryCARW dataMemB = Vm.getCARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
                 ) {
                     final int auxLo = n % auxLoBase;
                     final int shift = -42;

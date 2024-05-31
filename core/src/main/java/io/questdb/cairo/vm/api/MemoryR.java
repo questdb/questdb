@@ -89,11 +89,11 @@ public interface MemoryR extends Closeable {
 
     short getShort(long offset);
 
-    default Utf8SplitString getSplitVarcharA(long auxLo, long dataLo, int size, boolean ascii) {
+    default Utf8SplitString getSplitVarcharA(long auxLo, long dataLo, long dataLim, int size, boolean ascii) {
         throw new UnsupportedOperationException();
     }
 
-    default Utf8SplitString getSplitVarcharB(long auxLo, long dataLo, int size, boolean ascii) {
+    default Utf8SplitString getSplitVarcharB(long auxLo, long dataLo, long dataLim, int size, boolean ascii) {
         throw new UnsupportedOperationException();
     }
 

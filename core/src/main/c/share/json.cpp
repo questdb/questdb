@@ -69,21 +69,6 @@ static_assert(sizeof(simdjson::ondemand::json_type) == 4, "Unexpected size of si
 static_assert(sizeof(simdjson::ondemand::number_type) == 4, "Unexpected size of simdjson::ondemand::number_type");
 static_assert(sizeof(json_result) == 12, "Unexpected size of json_result");
 
-static simdjson::padded_string_view maybe_copied_string_view(
-        const char* s,
-        size_t len,
-        size_t capacity,
-        std::string& temp_buffer
-) {
-    const size_t min_required_capacity = len + simdjson::SIMDJSON_PADDING;
-    if (capacity >= min_required_capacity) {
-        return simdjson::padded_string_view(s, len, capacity);
-    }
-    temp_buffer.reserve(min_required_capacity);
-    temp_buffer.append(s, len);
-    return simdjson::padded_string_view(temp_buffer);
-}
-
 constexpr std::byte BYTE_0x80 = std::byte(0x80); // 10000000
 constexpr std::byte BYTE_0xC0 = std::byte(0xC0); // 11000000
 constexpr std::byte BYTE_0xE0 = std::byte(0xE0); // 11100000
@@ -163,15 +148,13 @@ template <typename F>
 auto value_at_path(
         const char *json_chars,
         size_t json_len,
-        size_t json_capacity,
+        size_t tail_padding,
         const char *path_chars,
         size_t path_len,
         json_result* result,
         F&& extractor
 ) -> decltype(std::forward<F>(extractor)(json_value{})) {
-    std::string temp_buffer;
-    const simdjson::padded_string_view json_buf = maybe_copied_string_view(
-            json_chars, json_len, json_capacity, temp_buffer);
+    const simdjson::padded_string_view json_buf{json_chars, json_len, json_len + tail_padding};
     const std::string_view path{path_chars, path_len};
     simdjson::ondemand::parser parser;
     auto doc = parser.iterate(json_buf);
@@ -200,29 +183,13 @@ Java_io_questdb_std_json_JsonError_errorMessage(
     return env->NewStringUTF(msg);
 }
 
-JNIEXPORT jint JNICALL
-Java_io_questdb_std_json_Json_validate(
-        JNIEnv* env,
-        jclass /*cl*/,
-        const char* jsonChars,
-        size_t jsonLen,
-        size_t jsonCapacity
-) {
-    std::string tempBuffer;
-    const simdjson::padded_string_view jsonBuf = maybe_copied_string_view(
-            jsonChars, jsonLen, jsonCapacity, tempBuffer);
-    simdjson::dom::parser parser;
-    auto dom = parser.parse(jsonBuf);
-    return static_cast<jint>(dom.error());
-}
-
 JNIEXPORT void JNICALL
 Java_io_questdb_std_json_Json_queryPath(
         JNIEnv* /*env*/,
         jclass /*cl*/,
         const char* json_chars,
         size_t json_len,
-        size_t json_capacity,
+        size_t tail_padding,
         const char* path_chars,
         size_t path_len,
         json_result* result,
@@ -230,7 +197,7 @@ Java_io_questdb_std_json_Json_queryPath(
         int32_t max_size
 ) {
     value_at_path(
-            json_chars, json_len, json_capacity, path_chars, path_len, result,
+            json_chars, json_len, tail_padding, path_chars, path_len, result,
             [result, dest_sink, max_size](json_value res) -> token_void {
                 if (res.error() != simdjson::error_code::SUCCESS) {
                     return null_token{};
@@ -270,7 +237,7 @@ Java_io_questdb_std_json_Json_queryPathString(
         jclass /*cl*/,
         const char* json_chars,
         size_t json_len,
-        size_t json_capacity,
+        size_t tail_padding,
         const char* path_chars,
         size_t path_len,
         json_result* result,
@@ -278,7 +245,7 @@ Java_io_questdb_std_json_Json_queryPathString(
         int32_t max_size
 ) {
     value_at_path(
-            json_chars, json_len, json_capacity, path_chars, path_len, result,
+            json_chars, json_len, tail_padding, path_chars, path_len, result,
             [result, dest_sink, max_size](json_value res) -> token_void {
                 auto str_res = res.get_string();
                 if (!result->set_error(str_res)) {
@@ -297,13 +264,13 @@ Java_io_questdb_std_json_Json_queryPathBoolean(
         jclass /*cl*/,
         const char* json_chars,
         size_t json_len,
-        size_t json_capacity,
+        size_t tail_padding,
         const char* path_chars,
         size_t path_len,
         json_result* result
 ) {
     return value_at_path(
-            json_chars, json_len, json_capacity, path_chars, path_len, result,
+            json_chars, json_len, tail_padding, path_chars, path_len, result,
             [result](json_value res) -> jboolean {
                 auto bool_res = res.get_bool();
                 if (!result->set_error(bool_res)) {
@@ -319,13 +286,13 @@ Java_io_questdb_std_json_Json_queryPathLong(
         jclass /*cl*/,
         const char* json_chars,
         size_t json_len,
-        size_t json_capacity,
+        size_t tail_padding,
         const char* path_chars,
         size_t path_len,
         json_result* result
 ) {
     return value_at_path(
-            json_chars, json_len, json_capacity, path_chars, path_len, result,
+            json_chars, json_len, tail_padding, path_chars, path_len, result,
             [result](json_value res) -> jlong {
                 auto int_res = res.get_int64();
                 if (!result->set_error(int_res)) {
@@ -341,13 +308,13 @@ Java_io_questdb_std_json_Json_queryPathDouble(
         jclass /*cl*/,
         const char* json_chars,
         size_t json_len,
-        size_t json_capacity,
+        size_t tail_padding,
         const char* path_chars,
         size_t path_len,
         json_result* result
 ) {
     return value_at_path(
-            json_chars, json_len, json_capacity, path_chars, path_len, result,
+            json_chars, json_len, tail_padding, path_chars, path_len, result,
             [result](json_value res) -> jdouble {
                 auto double_res = res.get_double();
                 if (!result->set_error(double_res)) {

@@ -66,6 +66,27 @@ public class JsonPathLongStrictFunctionFactoryTest extends AbstractFunctionFacto
     }
 
     @Test
+    public void testTwo() throws Exception {
+//        assertMemoryLeak(() -> {
+            ddl("create table x as (select '{\"path\": 2}'::varchar as path from long_sequence(10));");
+            assertSql(
+                    "json_path_long_strict\n" +
+                    "2\n" +
+                    "2\n" +
+                    "2\n" +
+                    "2\n" +
+                    "2\n" +
+                    "2\n" +
+                    "2\n" +
+                    "2\n" +
+                    "2\n" +
+                    "2\n",
+                    "select json_path_long_strict(path, '.path') from x"
+            );
+//        });
+    }
+
+    @Test
     public void test10000() throws SqlException {
         call(utf8("{\"path\": 10000}"), utf8(".path")).andAssert(10000L);
     }

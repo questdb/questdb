@@ -25,16 +25,16 @@
 package io.questdb.cairo.vm;
 
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.vm.api.MemoryMR;
+import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8SplitString;
 
-public class NullMemoryMR implements MemoryMR {
+public class NullMemoryCMR implements MemoryCMR {
 
-    public static final NullMemoryMR INSTANCE = new NullMemoryMR();
+    public static final NullMemoryCMR INSTANCE = new NullMemoryCMR();
 
     @Override
     public long addressOf(long offset) {
@@ -167,12 +167,12 @@ public class NullMemoryMR implements MemoryMR {
     }
 
     @Override
-    public Utf8SplitString getSplitVarcharA(long auxLo, long dataLo, int size, boolean ascii) {
+    public Utf8SplitString getSplitVarcharA(long auxLo, long dataLo, long dataLim, int size, boolean ascii) {
         return null;
     }
 
     @Override
-    public Utf8SplitString getSplitVarcharB(long auxLo, long dataLo, int size, boolean ascii) {
+    public Utf8SplitString getSplitVarcharB(long auxLo, long dataLo, long dataLim, int size, boolean ascii) {
         return null;
     }
 
@@ -214,6 +214,11 @@ public class NullMemoryMR implements MemoryMR {
     @Override
     public int pageIndex(long offset) {
         return 0;
+    }
+
+    @Override
+    public long resize(long size) {
+        throw new UnsupportedOperationException();
     }
 
     @Override

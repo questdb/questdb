@@ -27,8 +27,10 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.cairo.vm.NullMemoryMR;
+import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMR;
+import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.log.Log;
@@ -65,14 +67,14 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final TableReaderRecordCursor recordCursor = new TableReaderRecordCursor();
     private final int rootLen;
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
-    private final MemoryMR todoMem = Vm.getMRInstance();
+    private final MemoryMR todoMem = Vm.getCMRInstance();
     private final TxReader txFile;
     private final TxnScoreboard txnScoreboard;
     private ObjList<BitmapIndexReader> bitmapIndexes;
     private int columnCount;
     private int columnCountShl;
     private LongList columnTops;
-    private ObjList<MemoryMR> columns;
+    private ObjList<MemoryCMR> columns;
     private int openPartitionCount;
     private int partitionCount;
     private long rowCount;
@@ -125,8 +127,8 @@ public class TableReader implements Closeable, SymbolTableSource {
             int capacity = getColumnBase(partitionCount);
             columns = new ObjList<>(capacity + 2);
             columns.setPos(capacity + 2);
-            columns.setQuick(0, NullMemoryMR.INSTANCE);
-            columns.setQuick(1, NullMemoryMR.INSTANCE);
+            columns.setQuick(0, NullMemoryCMR.INSTANCE);
+            columns.setQuick(1, NullMemoryCMR.INSTANCE);
             bitmapIndexes = new ObjList<>(capacity + 2);
             bitmapIndexes.setPos(capacity + 2);
 
@@ -217,7 +219,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         return createBitmapIndexReaderAt(index, columnBase, columnIndex, columnNameTxn, direction, partitionTxn);
     }
 
-    public MemoryR getColumn(int absoluteIndex) {
+    public MemoryCR getColumn(int absoluteIndex) {
         return columns.getQuick(absoluteIndex);
     }
 
@@ -635,7 +637,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private void copyColumns(
             int fromBase,
             int fromColumnIndex,
-            ObjList<MemoryMR> toColumns,
+            ObjList<MemoryCMR> toColumns,
             LongList toColumnTops,
             ObjList<BitmapIndexReader> toIndexReaders,
             int toBase,
@@ -658,7 +660,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
 
         MemoryR col = columns.getQuick(globalIndex);
-        if (col instanceof NullMemoryMR) {
+        if (col instanceof NullMemoryCMR) {
             if (direction == BitmapIndexReader.DIR_BACKWARD) {
                 reader = new BitmapIndexBwdNullReader();
                 bitmapIndexes.setQuick(globalIndex, reader);
@@ -698,12 +700,12 @@ public class TableReader implements Closeable, SymbolTableSource {
     private void createNewColumnList(int columnCount, TableReaderMetadataTransitionIndex transitionIndex, int columnCountShl) {
         LOG.debug().$("resizing columns file list [table=").utf8(tableToken.getTableName()).I$();
         int capacity = partitionCount << columnCountShl;
-        final ObjList<MemoryMR> toColumns = new ObjList<>(capacity + 2);
+        final ObjList<MemoryCMR> toColumns = new ObjList<>(capacity + 2);
         final LongList toColumnTops = new LongList(capacity / 2);
         final ObjList<BitmapIndexReader> toIndexReaders = new ObjList<>(capacity);
         toColumns.setPos(capacity + 2);
-        toColumns.setQuick(0, NullMemoryMR.INSTANCE);
-        toColumns.setQuick(1, NullMemoryMR.INSTANCE);
+        toColumns.setQuick(0, NullMemoryCMR.INSTANCE);
+        toColumns.setQuick(1, NullMemoryCMR.INSTANCE);
         toColumnTops.setPos(capacity / 2);
         toIndexReaders.setPos(capacity + 2);
         int iterateCount = Math.max(columnCount, this.columnCount);
@@ -784,7 +786,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         final int columnSlotSize = getColumnBase(1);
 
         final int idx = getPrimaryColumnIndex(columnBase, 0);
-        columns.insert(idx, columnSlotSize, NullMemoryMR.INSTANCE);
+        columns.insert(idx, columnSlotSize, NullMemoryCMR.INSTANCE);
         bitmapIndexes.insert(idx, columnSlotSize, null);
 
         final int topBase = columnBase / 2;
@@ -829,17 +831,17 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     @NotNull
-    private MemoryMR openOrCreateMemory(
+    private MemoryCMR openOrCreateMemory(
             Path path,
-            ObjList<MemoryMR> columns,
+            ObjList<MemoryCMR> columns,
             int primaryIndex,
-            @Nullable MemoryMR mem,
+            @Nullable MemoryCMR mem,
             long columnSize
     ) {
-        if (mem != null && mem != NullMemoryMR.INSTANCE) {
+        if (mem != null && mem != NullMemoryCMR.INSTANCE) {
             mem.of(ff, path, columnSize, columnSize, MemoryTag.MMAP_TABLE_READER);
         } else {
-            mem = Vm.getMRInstance(ff, path, columnSize, MemoryTag.MMAP_TABLE_READER, true);
+            mem = Vm.getCMRInstance(ff, path, columnSize, MemoryTag.MMAP_TABLE_READER, true);
             columns.setQuick(primaryIndex, mem);
         }
         return mem;
@@ -1045,7 +1047,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private void reloadColumnAt(
             int partitionIndex,
             Path path,
-            ObjList<MemoryMR> columns,
+            ObjList<MemoryCMR> columns,
             LongList columnTops,
             ObjList<BitmapIndexReader> indexReaders,
             int columnBase,
@@ -1076,12 +1078,12 @@ public class TableReader implements Closeable, SymbolTableSource {
             if (columnRowCount > 0 && (versionRecordIndex > -1L || columnVersionReader.getColumnTopPartitionTimestamp(writerIndex) <= partitionTimestamp)) {
                 final int columnType = metadata.getColumnType(columnIndex);
 
-                final MemoryMR dataMem = columns.getQuick(primaryIndex);
+                final MemoryCMR dataMem = columns.getQuick(primaryIndex);
                 if (ColumnType.isVarSize(columnType)) {
                     final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
                     long auxSize = columnTypeDriver.getAuxVectorSize(columnRowCount);
                     TableUtils.iFile(path.trimTo(plen), name, columnTxn);
-                    MemoryMR auxMem = columns.getQuick(secondaryIndex);
+                    MemoryCMR auxMem = columns.getQuick(secondaryIndex);
                     auxMem = openOrCreateMemory(path, columns, secondaryIndex, auxMem, auxSize);
                     long dataSize = columnTypeDriver.getDataVectorSizeAt(auxMem.addressOf(0), columnRowCount - 1);
                     if (dataSize < columnTypeDriver.getDataVectorMinEntrySize() || dataSize >= (1L << 40)) {
@@ -1116,8 +1118,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                     Misc.free(indexReaders.getAndSetQuick(secondaryIndex, null));
                 }
             } else {
-                Misc.free(columns.getAndSetQuick(primaryIndex, NullMemoryMR.INSTANCE));
-                Misc.free(columns.getAndSetQuick(secondaryIndex, NullMemoryMR.INSTANCE));
+                Misc.free(columns.getAndSetQuick(primaryIndex, NullMemoryCMR.INSTANCE));
+                Misc.free(columns.getAndSetQuick(secondaryIndex, NullMemoryCMR.INSTANCE));
                 // the appropriate index for NUllColumn will be created lazily when requested
                 // these indexes have state and may not be always required
                 Misc.free(indexReaders.getAndSetQuick(primaryIndex, null));
@@ -1196,7 +1198,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             for (int i = 0; i < columnCount; i++) {
                 final int index = getPrimaryColumnIndex(columnBase, i);
                 final MemoryMR mem1 = columns.getQuick(index);
-                if (mem1 instanceof NullMemoryMR || (mem1 != null && !mem1.isOpen())) {
+                if (mem1 instanceof NullMemoryCMR || (mem1 != null && !mem1.isOpen())) {
                     reloadColumnAt(
                             partitionIndex,
                             path,
@@ -1302,7 +1304,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                                 //    instance and the column from disk
                                 // 2. Column hasn't been altered, and we can skip to next column.
                                 MemoryMR col = columns.getQuick(getPrimaryColumnIndex(base, i));
-                                if (col instanceof NullMemoryMR || (col != null && !col.isOpen())) {
+                                if (col instanceof NullMemoryCMR || (col != null && !col.isOpen())) {
                                     reloadColumnAt(
                                             partitionIndex,
                                             path,

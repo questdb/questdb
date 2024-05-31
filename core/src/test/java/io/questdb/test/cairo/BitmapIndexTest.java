@@ -26,7 +26,7 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RowCursor;
-import io.questdb.cairo.vm.NullMemoryMR;
+import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCMARW;
@@ -1196,7 +1196,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
     @Test
     public void testNullMemDoesNotCauseInfiniteLoops() {
         try {
-            BitmapIndexUtils.searchValueBlock(new NullMemoryMR(), 0L, 63L, 1L);
+            BitmapIndexUtils.searchValueBlock(new NullMemoryCMR(), 0L, 63L, 1L);
             Assert.fail();
         } catch (CairoException e) {
             TestUtils.assertContains("index is corrupt, rowid not found [offset=0, cellCount=63, value=1]", e.getFlyweightMessage());
