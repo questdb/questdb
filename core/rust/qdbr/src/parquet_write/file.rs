@@ -11,9 +11,12 @@ use parquet2::write::{
     WriteOptions as FileWriteOptions,
 };
 
-use crate::parquet_write::{binary, boolean, fixed_len_bytes, ParquetError, ParquetResult, primitive, string, symbol, varchar};
 use crate::parquet_write::schema::{
-    Column, ColumnType, Partition, to_encodings, to_parquet_schema,
+    to_encodings, to_parquet_schema, Column, ColumnType, Partition,
+};
+use crate::parquet_write::{
+    binary, boolean, fixed_len_bytes, primitive, string, symbol, varchar, ParquetError,
+    ParquetResult,
 };
 
 const DEFAULT_PAGE_SIZE: usize = 1024 * 1024;
@@ -48,8 +51,8 @@ pub struct ParquetWriter<W: Write> {
 impl<W: Write> ParquetWriter<W> {
     /// Create a new writer
     pub fn new(writer: W) -> Self
-        where
-            W: Write,
+    where
+        W: Write,
     {
         ParquetWriter {
             writer,
@@ -182,26 +185,29 @@ fn create_row_group(
     encoding: &[Encoding],
     options: WriteOptions,
 ) -> ParquetResult<RowGroupIter<'static, ParquetError>> {
-    let col_to_iter =
-        move |((column, column_type), encoding): ((&Column, &ParquetType), &Encoding)|
-              -> ParquetResult<DynStreamingIterator<CompressedPage, ParquetError>>
-            {
-                let encoded_column = column_chunk_to_pages(
-                    *column,
-                    column_type.clone(),
-                    offset,
-                    length,
-                    options,
-                    *encoding,
-                )
-                    .expect("encoded_column");
+    let col_to_iter = move |((column, column_type), encoding): (
+        (&Column, &ParquetType),
+        &Encoding,
+    )|
+          -> ParquetResult<
+        DynStreamingIterator<CompressedPage, ParquetError>,
+    > {
+        let encoded_column = column_chunk_to_pages(
+            *column,
+            column_type.clone(),
+            offset,
+            length,
+            options,
+            *encoding,
+        )
+        .expect("encoded_column");
 
-                Ok(DynStreamingIterator::new(Compressor::new(
-                    encoded_column,
-                    options.compression,
-                    vec![],
-                )))
-            };
+        Ok(DynStreamingIterator::new(Compressor::new(
+            encoded_column,
+            options.compression,
+            vec![],
+        )))
+    };
 
     let columns = partition
         .columns

@@ -2,10 +2,10 @@ use std::slice;
 
 use parquet2::encoding::Encoding;
 use parquet2::metadata::SchemaDescriptor;
-use parquet2::schema::Repetition;
 use parquet2::schema::types::{
     IntegerType, ParquetType, PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType, TimeUnit,
 };
+use parquet2::schema::Repetition;
 
 use crate::parquet_write::{ParquetError, ParquetResult};
 
@@ -305,6 +305,6 @@ fn encoding_map(data_type: ColumnType) -> Encoding {
         ColumnType::Binary => Encoding::DeltaLengthByteArray,
         // _ => Encoding::DeltaBinaryPacked, //TODO: for tests only
         _ => Encoding::Plain, //TODO: for tests only
-        //_ => Encoding::RleDictionary,
+                              //_ => Encoding::RleDictionary,
     }
 }

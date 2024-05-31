@@ -3,8 +3,8 @@ use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
 
 use crate::parquet_write::file::WriteOptions;
-use crate::parquet_write::ParquetResult;
 use crate::parquet_write::util::{build_plain_page, encode_bool_iter};
+use crate::parquet_write::ParquetResult;
 
 const HEADER_FLAG_INLINED: u32 = 1 << 0;
 const HEADER_FLAG_ASCII: u32 = 1 << 1;
@@ -84,5 +84,5 @@ pub fn varchar_to_page(
         options,
         Encoding::Plain,
     )
-        .map(Page::Data)
+    .map(Page::Data)
 }

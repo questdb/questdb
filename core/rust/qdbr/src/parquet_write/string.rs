@@ -29,9 +29,9 @@ use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
 use parquet2::types;
 
-use crate::parquet_write::{ParquetError, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter};
+use crate::parquet_write::{ParquetError, ParquetResult};
 
 pub fn string_to_page(
     offsets: &[i64],
@@ -80,10 +80,10 @@ pub fn string_to_page(
         options,
         encoding,
     )
-        .map(Page::Data)
+    .map(Page::Data)
 }
 
-fn encode_non_null_values<'a, I: Iterator<Item=&'a [u8]>>(iter: I, buffer: &mut Vec<u8>) {
+fn encode_non_null_values<'a, I: Iterator<Item = &'a [u8]>>(iter: I, buffer: &mut Vec<u8>) {
     iter.for_each(|x| {
         let data: &[u16] = unsafe { transmute(x) };
         let utf8 = String::from_utf16(data).expect("utf16 string");

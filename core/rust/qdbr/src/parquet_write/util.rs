@@ -1,8 +1,8 @@
 use std::{cmp, io};
 
 use parquet2::compression::CompressionOptions;
-use parquet2::encoding::Encoding;
 use parquet2::encoding::hybrid_rle::encode_bool;
+use parquet2::encoding::Encoding;
 use parquet2::metadata::Descriptor;
 use parquet2::page::{DataPage, DataPageHeader, DataPageHeaderV1, DataPageHeaderV2};
 use parquet2::schema::types::PrimitiveType;
@@ -48,24 +48,24 @@ impl<T: Copy + NativeType + num_traits::Bounded> MaxMin<T> {
     }
 }
 
-pub struct ExactSizedIter<T, I: Iterator<Item=T>> {
+pub struct ExactSizedIter<T, I: Iterator<Item = T>> {
     iter: I,
     remaining: usize,
 }
 
-impl<T, I: Iterator<Item=T> + Clone> Clone for ExactSizedIter<T, I> {
+impl<T, I: Iterator<Item = T> + Clone> Clone for ExactSizedIter<T, I> {
     fn clone(&self) -> Self {
         Self { iter: self.iter.clone(), remaining: self.remaining }
     }
 }
 
-impl<T, I: Iterator<Item=T>> ExactSizedIter<T, I> {
+impl<T, I: Iterator<Item = T>> ExactSizedIter<T, I> {
     pub fn new(iter: I, length: usize) -> Self {
         Self { iter, remaining: length }
     }
 }
 
-impl<T, I: Iterator<Item=T>> Iterator for ExactSizedIter<T, I> {
+impl<T, I: Iterator<Item = T>> Iterator for ExactSizedIter<T, I> {
     type Item = T;
 
     #[inline]
@@ -82,7 +82,7 @@ impl<T, I: Iterator<Item=T>> Iterator for ExactSizedIter<T, I> {
     }
 }
 
-fn encode_iter_v1<I: Iterator<Item=bool>>(buffer: &mut Vec<u8>, iter: I) -> io::Result<()> {
+fn encode_iter_v1<I: Iterator<Item = bool>>(buffer: &mut Vec<u8>, iter: I) -> io::Result<()> {
     buffer.extend_from_slice(&[0; 4]);
     let start = buffer.len();
     encode_bool(buffer, iter)?;
@@ -95,11 +95,11 @@ fn encode_iter_v1<I: Iterator<Item=bool>>(buffer: &mut Vec<u8>, iter: I) -> io::
     Ok(())
 }
 
-fn encode_iter_v2<I: Iterator<Item=bool>>(writer: &mut Vec<u8>, iter: I) -> io::Result<()> {
+fn encode_iter_v2<I: Iterator<Item = bool>>(writer: &mut Vec<u8>, iter: I) -> io::Result<()> {
     encode_bool(writer, iter)
 }
 
-pub fn encode_bool_iter<I: Iterator<Item=bool>>(
+pub fn encode_bool_iter<I: Iterator<Item = bool>>(
     writer: &mut Vec<u8>,
     iter: I,
     version: Version,

@@ -3,9 +3,9 @@ use std::path::Path;
 use std::slice;
 
 use anyhow::Context;
-use jni::JNIEnv;
 use jni::objects::JClass;
 use jni::sys::{jint, jlong};
+use jni::JNIEnv;
 
 use crate::parquet_write::file::ParquetWriter;
 use crate::parquet_write::schema::{Column, Partition};
@@ -16,7 +16,7 @@ fn read_utf8_encoded_string_list(
     strings_len: usize,
     lengths: *const i32,
 ) -> Vec<&'static str> {
-    let mut strings= Vec::new();
+    let mut strings = Vec::new();
     let mut utf8_sink =
         unsafe { std::str::from_utf8_unchecked(slice::from_raw_parts(strings_sink, strings_len)) };
 

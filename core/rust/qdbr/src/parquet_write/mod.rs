@@ -61,21 +61,21 @@ impl Nullable for f64 {
 
 #[cfg(test)]
 mod tests {
-    use std::fs::File;
     use crate::parquet_write::file::ParquetWriter;
     use crate::parquet_write::schema::{Column, ColumnType, Partition};
     use arrow::array::Array;
     use bytes::Bytes;
+    use num_traits::Float;
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
     use parquet2::deserialize::{HybridEncoded, HybridRleIter};
     use parquet2::encoding::{hybrid_rle, uleb128};
     use parquet2::page::CompressedPage;
     use parquet2::types;
+    use std::fs::File;
     use std::io::{Cursor, Write};
     use std::mem;
     use std::mem::size_of;
     use std::ptr::null;
-    use num_traits::Float;
 
     #[test]
     fn test_write_parquet_with_symbol_column() {
@@ -84,29 +84,26 @@ mod tests {
         let (col_chars, offsets) = serialize_as_symbols(vec!["foo", "bar", "baz"]);
 
         assert_eq!(ColumnType::Symbol, ColumnType::try_from(12).expect("fail"));
-        let col1_w =
-            Column::from_raw_data(
-                "col1",
-                12,
-                col1.len(),
-                col1.as_ptr() as *const u8,
-                col1.len() * size_of::<i32>(),
-                col_chars.as_ptr(),
-                col_chars.len(),
-                offsets.as_ptr(),
-                offsets.len(),
-            ).unwrap();
+        let col1_w = Column::from_raw_data(
+            "col1",
+            12,
+            col1.len(),
+            col1.as_ptr() as *const u8,
+            col1.len() * size_of::<i32>(),
+            col_chars.as_ptr(),
+            col_chars.len(),
+            offsets.as_ptr(),
+            offsets.len(),
+        )
+        .unwrap();
 
         let partition = Partition {
             table: "test_table".to_string(),
             columns: [col1_w].to_vec(),
         };
 
-        let parquet_writer = ParquetWriter::new(&mut buf)
-            .with_statistics(false);
-        parquet_writer
-            .finish(partition)
-            .expect("parquet writer");
+        let parquet_writer = ParquetWriter::new(&mut buf).with_statistics(false);
+        parquet_writer.finish(partition).expect("parquet writer");
 
         buf.set_position(0);
         let bytes: Bytes = buf.into_inner().into();
@@ -172,7 +169,8 @@ mod tests {
             0,
             null(),
             0,
-        ).unwrap();
+        )
+        .unwrap();
 
         let col2_w = Column::from_raw_data(
             "col2",
@@ -184,7 +182,8 @@ mod tests {
             0,
             null(),
             0,
-        ).unwrap();
+        )
+        .unwrap();
 
         let partition = Partition {
             table: "test_table".to_string(),
@@ -240,7 +239,8 @@ mod tests {
             0,
             null(),
             0,
-        ).unwrap();
+        )
+        .unwrap();
 
         let partition = Partition {
             table: "test_table".to_string(),
