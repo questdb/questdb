@@ -28,8 +28,10 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.log.Log;
@@ -79,6 +81,12 @@ public class FlushQueryCacheFunctionFactory implements FunctionFactory {
                 }
                 Os.pause();
             }
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            executionContext.getSecurityContext().authorizeAdminAction();
+            super.init(symbolTableSource, executionContext);
         }
 
         @Override
