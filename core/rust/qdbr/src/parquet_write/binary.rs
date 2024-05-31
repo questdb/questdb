@@ -112,7 +112,7 @@ fn encode_delta(offsets: &[i64], values: &[u8], null_count: usize, buffer: &mut 
         let last_size = types::decode::<i64>(&values[last_offset..last_offset + size_of_header]);
         let last_size = if last_size > 0 { last_size } else { 0 };
         let capacity = (offsets[row_count - 1] - offsets[0] + last_size) as usize
-            - (row_count * size_of_header);
+            - ((row_count - 1) * size_of_header);
         buffer.reserve(capacity);
     }
 
@@ -123,8 +123,7 @@ fn encode_delta(offsets: &[i64], values: &[u8], null_count: usize, buffer: &mut 
             types::decode::<i64>(&values[offset..offset + size_of_header])
         })
         .filter(|len| *len >= 0);
-    let value_count = row_count - null_count;
-    let lengths = ExactSizedIter::new(lengths, value_count);
+    let lengths = ExactSizedIter::new(lengths, row_count - null_count);
 
     delta_bitpacked::encode(lengths, buffer);
 
