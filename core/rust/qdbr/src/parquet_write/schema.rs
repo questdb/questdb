@@ -193,16 +193,14 @@ pub fn column_type_to_parquet_type(
             Some(PrimitiveLogicalType::Integer(IntegerType::Int64)),
             None,
         )?),
-        ColumnType::Binary => {
-            Ok(ParquetType::try_from_primitive(
-                name,
-                PhysicalType::ByteArray,
-                Repetition::Required, //TODO: check for nullability
-                None,
-                None,
-                None,
-            )?)
-        }
+        ColumnType::Binary => Ok(ParquetType::try_from_primitive(
+            name,
+            PhysicalType::ByteArray,
+            Repetition::Optional,
+            None,
+            None,
+            None,
+        )?),
         ColumnType::Uuid | ColumnType::Long128 => Ok(ParquetType::try_from_primitive(
             name,
             PhysicalType::FixedLenByteArray(16),
@@ -300,11 +298,9 @@ pub fn to_encodings(partition: &Partition) -> Vec<Encoding> {
 
 fn encoding_map(data_type: ColumnType) -> Encoding {
     match data_type {
-        ColumnType::Float | ColumnType::Double => Encoding::Plain,
         ColumnType::Symbol => Encoding::RleDictionary,
         ColumnType::Binary => Encoding::DeltaLengthByteArray,
-        // _ => Encoding::DeltaBinaryPacked, //TODO: for tests only
-        _ => Encoding::Plain, //TODO: for tests only
-                              //_ => Encoding::RleDictionary,
+        // ColumnType::String => Encoding::DeltaLengthByteArray,
+        _ => Encoding::Plain,
     }
 }
