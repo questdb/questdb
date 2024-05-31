@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.StaticSymbolTable;
@@ -36,6 +37,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
@@ -57,15 +59,21 @@ public class EqSymLongFunctionFactory implements FunctionFactory {
     public Function newInstance(
             int position, ObjList<Function> args,
             IntList argPositions, CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext) {
-        // there are optimisation opportunities
-        // 1. when one of args is constant null comparison can boil down to checking
-        //    length of non-constant (must be -1)
-        // 2. when one of arguments is constant, save method call and use a field
+            SqlExecutionContext sqlExecutionContext
+    ) {
 
-        SymbolFunction symFn = (SymbolFunction) args.getQuick(0);
+        Function fn0 = args.getQuick(0);
         Function longFn = args.getQuick(1);
 
+        // we get this because of overload. We may end up handling NULL type instead of symbol
+        if (ColumnType.isNull(fn0.getType())) {
+            if (longFn.isConstant()) {
+                return longFn.getLong(null) == Numbers.LONG_NULL ? BooleanConstant.TRUE : BooleanConstant.FALSE;
+            }
+            return new EqLongNullFunction(longFn);
+        }
+
+        final SymbolFunction symFn = (SymbolFunction) fn0;
         if (longFn.isConstant()) {
             final String constValue = Long.toString(longFn.getLong(null));
             if (symFn.getStaticSymbolTable() != null) {
@@ -76,6 +84,35 @@ public class EqSymLongFunctionFactory implements FunctionFactory {
         }
 
         return new VariableValueFunction(symFn, longFn);
+    }
+
+    private static class ConstValueDynamicSymbolTableFunction extends NegatableBooleanFunction implements UnaryFunction {
+        private final Function arg;
+        private final String constant;
+
+        public ConstValueDynamicSymbolTableFunction(Function arg, String constant) {
+            this.arg = arg;
+            this.constant = constant;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated != Chars.equalsNc(arg.getSymbol(rec), constant);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(arg);
+            if (negated) {
+                sink.val('!');
+            }
+            sink.val("='").val(constant).val('\'');
+        }
     }
 
     private static class ConstValueStaticSymbolTableFunction extends NegatableBooleanFunction implements UnaryFunction {
@@ -116,37 +153,36 @@ public class EqSymLongFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class ConstValueDynamicSymbolTableFunction extends NegatableBooleanFunction implements UnaryFunction {
-        private final Function arg;
-        private final String constant;
+    private static class EqLongNullFunction extends NegatableBooleanFunction implements UnaryFunction {
+        private final Function longFn;
 
-        public ConstValueDynamicSymbolTableFunction(Function arg, String constant) {
-            this.arg = arg;
-            this.constant = constant;
+        public EqLongNullFunction(Function longFn) {
+            this.longFn = longFn;
         }
 
         @Override
         public Function getArg() {
-            return arg;
+            return longFn;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != Chars.equalsNc(arg.getSymbol(rec), constant);
+            return longFn.getLong(rec) != Numbers.LONG_NULL;
         }
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(arg);
+            sink.val(longFn);
             if (negated) {
                 sink.val('!');
             }
-            sink.val("='").val(constant).val('\'');
+            sink.val("=").val("null");
         }
     }
 
     private static class VariableValueFunction extends AbstractEqBinaryFunction {
         private final StringSink sink = new StringSink();
+
         public VariableValueFunction(Function symFn, Function longFn) {
             super(symFn, longFn);
         }
