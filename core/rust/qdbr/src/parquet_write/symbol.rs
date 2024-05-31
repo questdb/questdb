@@ -1,18 +1,23 @@
 use std::collections::HashMap;
 use std::mem;
 
-use parquet2::encoding::Encoding;
 use parquet2::encoding::hybrid_rle::encode_u32;
+use parquet2::encoding::Encoding;
 use parquet2::page::{DictPage, Page};
 use parquet2::schema::types::PrimitiveType;
 use parquet2::write::DynIter;
 
-use crate::parquet_write::{ParquetResult, util};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::schema::Column;
 use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter};
+use crate::parquet_write::{util, ParquetResult};
 
-fn encode_dict(column_vals: &[i32], offsets: &[u64], chars: &[u8], page: &mut Vec<u8>) -> (Vec<u32>, u32) {
+fn encode_dict(
+    column_vals: &[i32],
+    offsets: &[u64],
+    chars: &[u8],
+    page: &mut Vec<u8>,
+) -> (Vec<u32>, u32) {
     let mut indices: Vec<u32> = Vec::new();
     let mut keys_to_local = HashMap::new();
     let mut serialised = 0;
@@ -37,7 +42,7 @@ fn encode_dict(column_vals: &[i32], offsets: &[u64], chars: &[u8], page: &mut Ve
     }
     if serialised == 0 {
         // No symbol value used in the column data block, all were nulls
-        return (indices, 0)
+        return (indices, 0);
     }
     (indices, (serialised - 1) as u32)
 }
@@ -48,11 +53,10 @@ pub fn symbol_to_pages(
     chars: &[u8],
     options: WriteOptions,
     type_: PrimitiveType,
-    column: &Column
+    column: &Column,
 ) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
     let mut dict_buffer = vec![];
-    let (keys, max_key) =
-        encode_dict(column_values, offsets, chars, &mut dict_buffer);
+    let (keys, max_key) = encode_dict(column_values, offsets, chars, &mut dict_buffer);
 
     let mut null_count = 0;
     let nulls_iterator = column_values.iter().map(|key| {
@@ -81,7 +85,11 @@ pub fn symbol_to_pages(
     // followed by the encoded indices.
     encode_u32(&mut data_buffer, keys, num_bits)?;
 
-    let uniq_vals = if dict_buffer.len() > 0 { max_key + 1 } else { 0 };
+    let uniq_vals = if dict_buffer.len() > 0 {
+        max_key + 1
+    } else {
+        0
+    };
     let dict_page = DictPage::new(dict_buffer, uniq_vals as usize, false);
 
     let data_page = build_plain_page(
