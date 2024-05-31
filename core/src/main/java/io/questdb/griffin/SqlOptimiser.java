@@ -5751,7 +5751,6 @@ public class SqlOptimiser implements Mutable {
     ) throws SqlException {
         QueryModel rewrittenModel = model;
         try {
-            System.out.println(">>> 0: " + rewrittenModel.toString0());
             rewrittenModel = bubbleUpOrderByAndLimitFromUnion(rewrittenModel);
             optimiseExpressionModels(rewrittenModel, sqlExecutionContext, sqlParserCallback);
             enumerateTableColumns(rewrittenModel, sqlExecutionContext, sqlParserCallback);
@@ -5760,9 +5759,7 @@ public class SqlOptimiser implements Mutable {
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
             resolveJoinColumns(rewrittenModel);
             optimiseBooleanNot(rewrittenModel);
-            System.out.println(">>> 1: " + rewrittenModel.toString0());
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
-            System.out.println(">>> 2: " + rewrittenModel.toString0());
             optimiseJoins(rewrittenModel);
             rewriteCountDistinct(rewrittenModel);
             rewriteNegativeLimit(rewrittenModel, sqlExecutionContext);
@@ -5778,7 +5775,6 @@ public class SqlOptimiser implements Mutable {
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
             validateWindowFunctions(rewrittenModel, sqlExecutionContext, 0);
             authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
-            System.out.println(">>> 3: " + rewrittenModel.toString0());
             return rewrittenModel;
         } catch (Throwable th) {
             // at this point models may have functions than need to be freed
