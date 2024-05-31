@@ -64,7 +64,7 @@ public abstract class FileWatcher implements QuietCloseable {
                     }
                     this.waitForChange();
                 } while (true);
-            } catch (FileWatcherException exc) {
+            } catch (FileWatcherNativeException exc) {
                 LOG.error().$(exc).$();
             } finally {
                 latch.countDown();
@@ -84,5 +84,5 @@ public abstract class FileWatcher implements QuietCloseable {
         }
     }
 
-    protected abstract void waitForChange() throws FileWatcherException;
+    protected abstract void waitForChange() throws FileWatcherNativeException;
 }

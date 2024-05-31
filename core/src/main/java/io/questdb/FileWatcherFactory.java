@@ -4,11 +4,11 @@ import io.questdb.std.Os;
 
 public class FileWatcherFactory {
 
-    public static FileWatcher getFileWatcher(CharSequence filePath, FileEventCallback callback) throws FileWatcherException {
+    public static FileWatcher getFileWatcher(CharSequence filePath, FileEventCallback callback) throws FileWatcherNativeException {
         if (Os.isOSX() || Os.isFreeBSD()) {
             return new KqueueFileWatcher(filePath, callback);
         } else if (Os.isWindows()) {
-            throw new FileWatcherException("windows is not supported yet");
+            return null;
         } else {
             return new InotifyFileWatcher(filePath, callback);
         }

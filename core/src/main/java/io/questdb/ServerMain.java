@@ -48,10 +48,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Chars;
 import io.questdb.std.Misc;
-import io.questdb.std.str.DirectUtf8Sink;
-import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
@@ -273,6 +270,10 @@ public class ServerMain implements Closeable {
                         configPath.toString(),
                         ((DynamicServerConfiguration) config).getFileEventCallback()
                 );
+                if (fileWatcher == null) {
+                    bootstrap.getLog().advisoryW().$("filewatcher not started because we didn't implement this for windows yet");
+                    return;
+                }
                 fileWatcher.watch();
             } catch (Exception exc) {
                 bootstrap.getLog().errorW().$("Unable to start FileWatcher: ").$(exc).$();

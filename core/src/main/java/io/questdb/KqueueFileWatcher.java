@@ -20,7 +20,7 @@ public class KqueueFileWatcher extends FileWatcher {
     private final int readEndFd;
     private final int writeEndFd;
 
-    public KqueueFileWatcher(CharSequence filePath, FileEventCallback callback) throws FileWatcherException {
+    public KqueueFileWatcher(CharSequence filePath, FileEventCallback callback) throws FileWatcherNativeException {
         super(filePath, callback);
 
         try (Path p = new Path()) {
@@ -67,7 +67,7 @@ public class KqueueFileWatcher extends FileWatcher {
 
         kq = KqueueAccessor.kqueue();
         if (kq < 0) {
-            throw new FileWatcherException("kqueue", kq);
+            throw new FileWatcherNativeException("kqueue");
         }
         Files.bumpFileCount(this.kq);
 
@@ -81,7 +81,7 @@ public class KqueueFileWatcher extends FileWatcher {
                 1
         );
         if (fileRes < 0) {
-            throw new FileWatcherException("keventRegister (fileEvent)", fileRes);
+            throw new FileWatcherNativeException("keventRegister (fileEvent)");
         }
 
         int dirRes = KqueueAccessor.keventRegister(
@@ -90,7 +90,7 @@ public class KqueueFileWatcher extends FileWatcher {
                 1
         );
         if (dirRes < 0) {
-            throw new FileWatcherException("keventRegister (dirEvent)", dirRes);
+            throw new FileWatcherNativeException("keventRegister (dirEvent)");
         }
 
     }
@@ -118,7 +118,7 @@ public class KqueueFileWatcher extends FileWatcher {
 
 
     @Override
-    protected void waitForChange() throws FileWatcherException {
+    protected void waitForChange() throws FileWatcherNativeException {
         // Blocks until there is a change in the watched dir
         int res = KqueueAccessor.keventGetBlocking(
                 kq,
@@ -129,7 +129,7 @@ public class KqueueFileWatcher extends FileWatcher {
             return;
         }
         if (res < 0) {
-            throw new FileWatcherException("kevent", res);
+            throw new FileWatcherNativeException("kevent");
         }
         // For now, we don't filter events down to the file,
         // we trigger on every change in the directory

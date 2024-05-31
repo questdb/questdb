@@ -7,14 +7,12 @@ import io.questdb.network.EpollAccessor;
 import io.questdb.network.EpollFacadeImpl;
 import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 
 import java.nio.file.Paths;
-import java.util.concurrent.atomic.AtomicInteger;
 
 public final class InotifyFileWatcher extends FileWatcher {
 
@@ -32,12 +30,12 @@ public final class InotifyFileWatcher extends FileWatcher {
     private final int wd;
     private final int writeEndFd;
 
-    public InotifyFileWatcher(CharSequence filePath, FileEventCallback callback) throws FileWatcherException {
+    public InotifyFileWatcher(CharSequence filePath, FileEventCallback callback) throws FileWatcherNativeException {
         super(filePath, callback);
 
         this.fd = InotifyAccessor.inotifyInit();
         if (this.fd < 0) {
-            throw new FileWatcherException("inotify_init");
+            throw new FileWatcherNativeException("inotify_init");
         }
         Files.bumpFileCount(this.fd);
 
@@ -52,24 +50,21 @@ public final class InotifyFileWatcher extends FileWatcher {
         );
 
         if (this.wd < 0) {
-            // todo: add errno
-            throw new FileWatcherException("inotify_add_watch");
+            throw new FileWatcherNativeException("inotify_add_watch exited");
         }
 
         if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_ADD, EpollAccessor.EPOLLIN) < 0) {
-            // todo: add errno
-            throw new FileWatcherException("epoll_ctl");
+            throw new FileWatcherNativeException("epoll_ctl");
         }
 
         this.buf = Unsafe.malloc(bufSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
         if (this.buf < 0) {
-            // todo: add errno
-            throw new FileWatcherException("malloc");
+            throw new FileWatcherNativeException("malloc");
         }
 
         long fds = InotifyAccessor.pipe();
         if (fds < 0) {
-            throw new FileWatcherException("pipe2");
+            throw new FileWatcherNativeException("pipe2");
         }
 
         this.readEndFd = (int) (fds >>> 32);
@@ -78,39 +73,23 @@ public final class InotifyFileWatcher extends FileWatcher {
         Files.bumpFileCount(this.writeEndFd);
 
         if (epoll.control(readEndFd, 0, EpollAccessor.EPOLL_CTL_ADD, EpollAccessor.EPOLLIN) < 0) {
-            // todo: add errno
-            throw new FileWatcherException("epoll_ctl");
+            throw new FileWatcherNativeException("epoll_ctl");
         }
 
-    }
-
-    public static void main(String[] args) {
-        Os.init();
-        int maxChanges = 5;
-        AtomicInteger changes = new AtomicInteger(0);
-        try (InotifyFileWatcher n = new InotifyFileWatcher(
-                "/home/steven/tmp/qdbdev/conf/server.conf",
-                changes::incrementAndGet)) {
-
-            n.watch();
-
-            do {
-                Thread.sleep(1);
-            } while (changes.get() < maxChanges);
-        } catch (Throwable thr) {
-            thr.printStackTrace();
-        }
     }
 
     @Override
     public void close() {
 
         if (closed.compareAndSet(false, true)) {
-            // Write to pipe to
+            // Write to pipe to close
             if (InotifyAccessor.writePipe(writeEndFd) < 0) {
-                // todo: handle error
+                // todo: handle error, but continue execution
             }
 
+            // WaitGroup is located in the super class destructor that waits
+            // for the watcher thread to close. We wait for this before cleaning
+            // up any additional resources.
             super.close();
 
             this.dirPath.close();
@@ -118,6 +97,7 @@ public final class InotifyFileWatcher extends FileWatcher {
 
             if (InotifyAccessor.inotifyRmWatch(this.fd, this.wd) < 0) {
                 System.out.println(this.fd);
+                // todo: handle error, but continue execution
             }
 
             epoll.close();
@@ -129,7 +109,6 @@ public final class InotifyFileWatcher extends FileWatcher {
 
             Unsafe.free(this.buf, this.bufSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
 
-
             LOG.info().$("inotify filewatcher closed").$();
         }
 
@@ -137,10 +116,10 @@ public final class InotifyFileWatcher extends FileWatcher {
     }
 
     @Override
-    public void waitForChange() throws FileWatcherException {
+    public void waitForChange() throws FileWatcherNativeException {
         // Thread is parked here until epoll is triggered
         if (epoll.poll(-1) < 0) {
-            throw new FileWatcherException("epoll_wait");
+            throw new FileWatcherNativeException("epoll_wait");
         }
 
         if (closed.get()) {
@@ -150,7 +129,7 @@ public final class InotifyFileWatcher extends FileWatcher {
         // Read the inotify_event into the buffer
         int res = InotifyAccessor.readEvent(fd, buf, bufSize);
         if (res < 0) {
-            throw new FileWatcherException("read");
+            throw new FileWatcherNativeException("read");
         }
 
         // iterate over buffer and check all files that have been modified
@@ -158,8 +137,10 @@ public final class InotifyFileWatcher extends FileWatcher {
         do {
             int len = Unsafe.getUnsafe().getInt(buf + i + InotifyAccessor.getEventFilenameSizeOffset());
             i += InotifyAccessor.getEventFilenameOffset();
-            // I use fileName.size() instead of len because the inotify_event structs have padding. So
-            // basically this will match anything server.conf* ... hacky for now just to see if this thing works
+            // In the below equality statement, we use fileName.size() instead of the event len because inotify_event
+            // structs may include padding at the end of the event data, which we don't want to use for the filename
+            // equality check.
+            // Because of this, we will match on anything with a "server.conf" prefix. It's a bit hacky, but it works...
             if (Utf8s.equals(fileName, buf + i, fileName.size())) {
                 callback.onFileEvent();
                 break;
@@ -170,7 +151,7 @@ public final class InotifyFileWatcher extends FileWatcher {
 
         // Rearm the epoll
         if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_MOD, EpollAccessor.EPOLLIN) < 0) {
-            throw new FileWatcherException("epoll_ctl (mod)");
+            throw new FileWatcherNativeException("epoll_ctl (mod)");
         }
 
     }
