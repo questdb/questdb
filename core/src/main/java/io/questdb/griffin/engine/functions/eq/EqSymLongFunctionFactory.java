@@ -44,6 +44,10 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 
+/**
+ * Equality operator between symbol and long value. Long value is cast to string representation before being
+ * compared to the symbol.
+ */
 public class EqSymLongFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
