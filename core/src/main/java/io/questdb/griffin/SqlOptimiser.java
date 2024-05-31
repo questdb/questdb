@@ -3685,7 +3685,6 @@ public class SqlOptimiser implements Mutable {
                 return expressionNodePool.next().of(LITERAL, prefixedCol, node.precedence, node.position);
             }
         }
-
         return node;
     }
 
@@ -3716,6 +3715,18 @@ public class SqlOptimiser implements Mutable {
             emitLiterals(node, translatingModel, innerVirtualModel, baseModel, true);
             list.setQuick(j, replaceLiteral(node, translatingModel, innerVirtualModel, baseModel, true));
         }
+    }
+
+    private ExpressionNode replaceWithTranslatedAlias(@Transient ExpressionNode node, QueryModel translatingModel) {
+        if (node != null && node.type == LITERAL) {
+            final LowerCaseCharSequenceObjHashMap<CharSequence> map = translatingModel.getColumnNameToAliasMap();
+            final int index = map.keyIndex(node.token);
+            if (index < 0) {
+                final CharSequence alias = map.valueAtQuick(index);
+                return nextLiteral(alias, node.position);
+            }
+        }
+        return node;
     }
 
     private void resolveJoinColumns(QueryModel model) throws SqlException {
@@ -3756,6 +3767,57 @@ public class SqlOptimiser implements Mutable {
         // and union models too
         if (model.getUnionModel() != null) {
             resolveJoinColumns(model.getUnionModel());
+        }
+    }
+
+    private void restoreTranslation(@Transient ExpressionNode node, QueryModel translatingModel) {
+        sqlNodeStack.clear();
+
+        // pre-order iterative tree traversal
+        // see: http://en.wikipedia.org/wiki/Tree_traversal
+
+        while (!sqlNodeStack.isEmpty() || node != null) {
+            if (node != null) {
+                if (node.paramCount < 3) {
+                    if (node.rhs != null) {
+                        ExpressionNode n = replaceWithTranslatedAlias(node.rhs, translatingModel);
+                        if (node.rhs == n) {
+                            sqlNodeStack.push(node.rhs);
+                        } else {
+                            node.rhs = n;
+                        }
+                    }
+
+                    ExpressionNode n = replaceWithTranslatedAlias(node.lhs, translatingModel);
+                    if (n == node.lhs) {
+                        node = node.lhs;
+                    } else {
+                        node.lhs = n;
+                        node = null;
+                    }
+                } else {
+                    for (int i = 1, k = node.paramCount; i < k; i++) {
+                        ExpressionNode e = node.args.getQuick(i);
+                        ExpressionNode n = replaceWithTranslatedAlias(e, translatingModel);
+                        if (e == n) {
+                            sqlNodeStack.push(e);
+                        } else {
+                            node.args.setQuick(i, n);
+                        }
+                    }
+
+                    ExpressionNode e = node.args.getQuick(0);
+                    ExpressionNode n = replaceWithTranslatedAlias(e, translatingModel);
+                    if (e == n) {
+                        node = e;
+                    } else {
+                        node.args.setQuick(0, n);
+                        node = null;
+                    }
+                }
+            } else {
+                node = sqlNodeStack.poll();
+            }
         }
     }
 
@@ -4752,8 +4814,8 @@ public class SqlOptimiser implements Mutable {
 
         // cursor model should have all columns that base model has to properly resolve duplicate names
         cursorModel.getAliasToColumnMap().putAll(baseModel.getAliasToColumnMap());
-        // create virtual columns from select list
 
+        // take a look at the select list
         for (int i = 0, k = columns.size(); i < k; i++) {
             QueryColumn qc = columns.getQuick(i);
             final boolean window = qc.isWindowColumn();
@@ -4824,9 +4886,9 @@ public class SqlOptimiser implements Mutable {
                     // If literal is select clause alias then use its AST //sym1 -> ccy x -> a
                     // NOTE: this is merely a shortcut and doesn't mean that alias exists at group by stage !
                     // while
-                    //   select a as d  from t group by d
+                    //   select a as d from t group by d;
                     // works, the following does not
-                    //  select a as d  from t group by d + d
+                    //   select a as d from t group by d + d;
                     QueryColumn qc = model.getAliasToColumnMap().get(node.token);
                     if (qc != null && (qc.getAst().type != LITERAL || !Chars.equals(node.token, qc.getAst().token))) {
                         originalNodePosition = node.position;
@@ -5068,16 +5130,16 @@ public class SqlOptimiser implements Mutable {
                         continue;
                     }
 
-                    // TODO: the problem is here
                     addMissingTablePrefixes(qc.getAst(), baseModel);
                     final int beforeSplit = groupByModel.getBottomUpColumns().size();
                     // if there is explicit GROUP BY clause then we've to replace matching expressions with aliases in outer virtual model
-                    ExpressionNode en = rewriteGroupBySelectExpression(qc.getAst(), groupByModel, groupByNodes, groupByAliases);
-                    if (qc.getAst() == en) {
+                    final ExpressionNode node = rewriteGroupBySelectExpression(qc.getAst(), groupByModel, groupByNodes, groupByAliases);
+                    final ExpressionNode originalNode = qc.getAst();
+                    if (originalNode == node) {
                         useOuterModel = true;
                     } else {
-                        if (Chars.equalsIgnoreCase(qc.getAst().token, qc.getAlias())) {
-                            int idx = groupByAliases.indexOf(qc.getAst().token);
+                        if (Chars.equalsIgnoreCase(originalNode.token, qc.getAlias())) {
+                            int idx = groupByAliases.indexOf(originalNode.token);
                             if (i != idx) {
                                 useOuterModel = true;
                             }
@@ -5085,8 +5147,10 @@ public class SqlOptimiser implements Mutable {
                         } else {
                             useOuterModel = true;
                         }
-                        qc.of(qc.getAlias(), en, qc.isIncludeIntoWildcard(), qc.getColumnType());
+                        qc.of(qc.getAlias(), node, qc.isIncludeIntoWildcard(), qc.getColumnType());
                     }
+                    // it could be that we've broken previously made translation by calling addMissingTablePrefixes
+                    restoreTranslation(originalNode, translatingModel);
 
                     emitCursors(qc.getAst(), cursorModel, innerVirtualModel, translatingModel, baseModel, sqlExecutionContext, sqlParserCallback);
                     qc = ensureAliasUniqueness(outerVirtualModel, qc);
