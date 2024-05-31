@@ -179,6 +179,7 @@ public class PageFrameReduceTask implements Closeable {
     }
 
     public void setErrorMsg(Throwable th) {
+        th.printStackTrace();
         if (th instanceof FlyweightMessageContainer) {
             errorMsg.put(((FlyweightMessageContainer) th).getFlyweightMessage());
         } else {
