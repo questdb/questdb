@@ -82,12 +82,10 @@ pub fn string_to_page(
 }
 
 fn encode_plain(offsets: &[i64], values: &[u8], null_count: usize, buffer: &mut Vec<u8>) {
-    println!("\n\nstring::encode_plain");
     let size_of_header = size_of::<i32>();
     for offset in offsets {
         let offset = usize::try_from(*offset).expect("invalid offset value in string aux column");
         let len_raw = types::decode::<i32>(&values[offset..offset + size_of_header]);
-        println!("len_raw {len_raw}");
         if len_raw < 0 {
             continue;
         }
@@ -95,13 +93,11 @@ fn encode_plain(offsets: &[i64], values: &[u8], null_count: usize, buffer: &mut 
         let value_tail: &[u16] = unsafe { transmute(&values[offset + size_of_header..]) };
         let value = &value_tail[..len];
         let utf8 = String::from_utf16(value).expect("utf16 string");
-        println!("utf8 {utf8}");
         // BYTE_ARRAY: first 4 bytes denote length in little-endian.
         let encoded_len = (utf8.len() as u32).to_le_bytes();
         buffer.extend_from_slice(&encoded_len);
         buffer.extend_from_slice(utf8.as_bytes());
     }
-    println!("string::encode_plain done\n");
 }
 
 fn encode_delta(offsets: &[i64], values: &[u8], null_count: usize, buffer: &mut Vec<u8>) {
