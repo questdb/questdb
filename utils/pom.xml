@@ -23,41 +23,55 @@
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <!-- Model version for POM -->
     <modelVersion>4.0.0</modelVersion>
-
+<!-- Group ID for the project -->
     <groupId>io.questdb</groupId>
+  <!-- Artifact ID for the project -->
     <artifactId>utils</artifactId>
+   <!-- Version of the project -->
     <version>8.0.1-SNAPSHOT</version>
-
+ <!-- Name of the project -->
     <name>Command line utils for QuestDB</name>
 
     <properties>
+       <!-- Encoding for source files -->
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+       <!-- Skip deployment in Maven -->
         <maven.deploy.skip>true</maven.deploy.skip>
+        <!-- Skip Javadoc generation -->
         <maven.javadoc.skip>true</maven.javadoc.skip>
+     <!-- Java source version -->
         <maven.compiler.source>1.8</maven.compiler.source>
+       <!-- Java target version -->
         <maven.compiler.target>1.8</maven.compiler.target>
+       <!-- Test exclusion pattern -->
         <test.exclude>None</test.exclude>
+      <!-- Test inclusion pattern -->
         <test.include>%regex[.*[^o].class]</test.include><!-- exclude module-info.class-->
     </properties>
 
     <dependencies>
+      <!-- JUnit dependency for testing -->
         <dependency>
             <groupId>junit</groupId>
             <artifactId>junit</artifactId>
             <version>4.13.2</version>
             <scope>test</scope>
         </dependency>
+      <!-- Gson dependency for JSON processing -->
         <dependency>
             <groupId>com.google.code.gson</groupId>
             <artifactId>gson</artifactId>
             <version>2.9.1</version>
         </dependency>
+      <!-- QuestDB dependency -->
         <dependency>
             <groupId>org.questdb</groupId>
             <artifactId>questdb</artifactId>
             <version>${project.version}</version>
         </dependency>
+      <!-- PostgreSQL JDBC driver for testing -->
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
@@ -68,6 +82,7 @@
 
     <build>
         <plugins>
+            <!-- Maven Shade Plugin to create an uber-jar -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
@@ -84,34 +99,42 @@
         </plugins>
         <pluginManagement>
             <plugins>
+               <!-- Maven Clean Plugin to clean up after build -->
                 <plugin>
                     <artifactId>maven-clean-plugin</artifactId>
                     <version>3.2.0</version>
                 </plugin>
+               <!-- Maven Deploy Plugin to handle deployment -->
                 <plugin>
                     <artifactId>maven-deploy-plugin</artifactId>
                     <version>2.8.2</version>
                 </plugin>
+               <!-- Maven Install Plugin to install artifacts into the local repository -->
                 <plugin>
                     <artifactId>maven-install-plugin</artifactId>
                     <version>2.5.1</version>
                 </plugin>
+              <!-- Maven Jar Plugin to create JAR files -->
                 <plugin>
                     <artifactId>maven-jar-plugin</artifactId>
                     <version>3.0.1</version>
                 </plugin>
+               <!-- Maven Javadoc Plugin to generate Javadoc -->
                 <plugin>
                     <artifactId>maven-javadoc-plugin</artifactId>
                     <version>3.5.0</version>
                 </plugin>
+               <!-- Maven Resources Plugin to copy resources -->
                 <plugin>
                     <artifactId>maven-resources-plugin</artifactId>
                     <version>2.6</version>
                 </plugin>
+               <!-- Maven Source Plugin to create source JARs -->
                 <plugin>
                     <artifactId>maven-source-plugin</artifactId>
                     <version>3.0.1</version>
                 </plugin>
+               <!-- Maven Surefire Plugin to run tests -->
                 <plugin>
                     <artifactId>maven-surefire-plugin</artifactId>
                     <version>2.17</version>
@@ -124,6 +147,7 @@
                         </excludes>
                     </configuration>
                 </plugin>
+               <!-- Maven Compiler Plugin to compile Java sources -->
                 <plugin>
                     <artifactId>maven-compiler-plugin</artifactId>
                     <version>3.8.1</version>
@@ -136,6 +160,7 @@
         <profile>
             <id>java8</id>
             <properties>
+                <!-- Properties specific to Java 8 -->
                 <jdk.version>8</jdk.version>
                 <java.enforce.version>1.8.0_242</java.enforce.version>
                 <questdb.artifactid>questdb-jdk8</questdb.artifactid>
@@ -143,10 +168,12 @@
                 <javac.compile.target>1.8</javac.compile.target>
             </properties>
             <activation>
+                <!-- Activate this profile for Java versions <= 1.8 -->
                 <jdk>(,1.8]</jdk>
             </activation>
 
             <dependencies>
+              <!-- JetBrains Annotations for Java 8 -->
                 <dependency>
                     <groupId>org.jetbrains</groupId>
                     <artifactId>annotations</artifactId>
@@ -158,9 +185,11 @@
         <profile>
             <id>java11+</id>
             <properties>
+               <!-- Properties specific to Java 11+ -->
                 <questdb.artifactid>questdb</questdb.artifactid>
             </properties>
             <activation>
+              <!-- Activate this profile for Java versions > 1.8 -->
                 <jdk>(1.8,)</jdk>
             </activation>
         </profile>
