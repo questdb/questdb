@@ -164,6 +164,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.eq.EqStrCharFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqSymStrFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqSymCharFunctionFactory,
+            io.questdb.griffin.engine.functions.eq.EqSymLongFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqCharCharFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqIntStrCFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqTimestampFunctionFactory,

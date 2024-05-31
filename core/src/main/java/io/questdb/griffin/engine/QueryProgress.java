@@ -67,6 +67,7 @@ public class QueryProgress extends AbstractRecordCursorFactory {
                 .$(", sql=`").$(sqlText).$('`')
                 .$(", principal=").$(executionContext.getSecurityContext().getPrincipal())
                 .$(", cache=").$(executionContext.isCacheHit())
+                .$(", jit=").$(executionContext.isJitUsed())
                 .$(", time=").$(executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos)
                 .I$();
     }
@@ -86,6 +87,7 @@ public class QueryProgress extends AbstractRecordCursorFactory {
                 .$(", sql=`").$(sqlText).$('`')
                 .$(", principal=").$(executionContext.getSecurityContext().getPrincipal())
                 .$(", cache=").$(executionContext.isCacheHit())
+                .$(", jit=").$(executionContext.isJitUsed())
                 .$(", time=").$(executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos)
                 .$(", msg=").$(e.getMessage())
                 .$(", errno=").$(errno)
@@ -104,6 +106,7 @@ public class QueryProgress extends AbstractRecordCursorFactory {
                 .$(", sql=`").$(sqlText).$('`')
                 .$(", principal=").$(executionContext.getSecurityContext().getPrincipal())
                 .$(", cache=").$(executionContext.isCacheHit())
+                .$(", jit=").$(executionContext.isJitUsed())
                 .I$();
     }
 

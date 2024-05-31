@@ -36,17 +36,17 @@ public class ImplicitToTimestampCastTest extends AbstractCairoTest {
     public void testImplicitIntegerToSymbolConversion() throws Exception {
         assertMemoryLeak(() -> {
             ddl(
-                    "CREATE TABLE balances as (select rnd_symbol('1','2') cust_id, timestamp_sequence(0, 1000) ts from long_sequence(10)" +
+                    "CREATE TABLE balances as (select rnd_symbol('1','3') cust_id, timestamp_sequence(0, 1000) ts from long_sequence(10)" +
                             ") TIMESTAMP(ts) PARTITION BY DAY;"
             );
             assertSql(
                     "cust_id\tts\n" +
-                            "2\t1970-01-01T00:00:00.002000Z\n" +
-                            "2\t1970-01-01T00:00:00.003000Z\n" +
-                            "2\t1970-01-01T00:00:00.004000Z\n" +
-                            "2\t1970-01-01T00:00:00.005000Z\n" +
-                            "2\t1970-01-01T00:00:00.007000Z\n",
-                    "select * from balances where cust_id = 2"
+                            "3\t1970-01-01T00:00:00.002000Z\n" +
+                            "3\t1970-01-01T00:00:00.003000Z\n" +
+                            "3\t1970-01-01T00:00:00.004000Z\n" +
+                            "3\t1970-01-01T00:00:00.005000Z\n" +
+                            "3\t1970-01-01T00:00:00.007000Z\n",
+                    "select * from balances where cust_id = 3"
             );
         });
     }

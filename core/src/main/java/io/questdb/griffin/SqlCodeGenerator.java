@@ -1708,6 +1708,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final boolean canCompile = factory.supportsPageFrameCursor() && JitUtil.isJitSupported();
             if (useJit && canCompile) {
                 CompiledFilter compiledFilter = null;
+                executionContext.setJitUsed(true);
                 try {
                     int jitOptions;
                     final ObjList<Function> bindVarFunctions = new ObjList<>();
@@ -1723,10 +1724,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
                     final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
 
-                    LOG.info()
-                            .$("JIT enabled for (sub)query [tableName=").utf8(model.getName())
-                            .$(", fd=").$(executionContext.getRequestFd())
-                            .I$();
                     return new AsyncJitFilteredRecordCursorFactory(
                             configuration,
                             executionContext.getMessageBus(),

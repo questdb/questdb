@@ -1025,6 +1025,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public boolean isJitUsed() {
+            return sqlExecutionContext.isJitUsed();
+        }
+
+        @Override
         public boolean isParallelFilterEnabled() {
             return sqlExecutionContext.isParallelFilterEnabled();
         }
@@ -1072,6 +1077,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public void setJitMode(int jitMode) {
             sqlExecutionContext.setJitMode(jitMode);
+        }
+
+        @Override
+        public void setJitUsed(boolean value) {
+            sqlExecutionContext.setJitUsed(value);
         }
 
         @Override

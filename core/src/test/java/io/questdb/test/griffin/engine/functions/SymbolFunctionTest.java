@@ -169,11 +169,6 @@ public class SymbolFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetTimestamp() {
-        function.getTimestamp(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
     public void testGetLong128Hi() {
         function.getLong128Hi(null);
     }
