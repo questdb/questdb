@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
@@ -69,7 +70,8 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
 
         long symbolTimestampEpoch;
         try {
-            symbolTimestampEpoch = IntervalUtils.parseFloorPartialTimestamp(fn0.getSymbol(null));
+            CharSequence value = fn0.getSymbol(null);
+            symbolTimestampEpoch = value != null ? IntervalUtils.parseFloorPartialTimestamp(value) : Numbers.LONG_NULL;
         } catch (NumericException e) {
             throw SqlException.$(argPositions.getQuick(0), "invalid timestamp: ").put(fn0.getSymbol(null));
         }

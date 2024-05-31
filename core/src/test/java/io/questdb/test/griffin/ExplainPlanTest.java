@@ -6349,7 +6349,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Count\n" +
                             "    Async JIT Group By workers: 1\n" +
                             "      keys: [column]\n" +
-                            "      filter: (5<x and null!=x+1)\n" +
+                            "      filter: (5<x and x+1!=null)\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: test\n");
@@ -6359,7 +6359,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Count\n" +
                             "    Async JIT Group By workers: 1\n" +
                             "      keys: [column]\n" +
-                            "      filter: (5<x and null!=x+1)\n" +
+                            "      filter: (5<x and x+1!=null)\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: test\n");
@@ -6373,7 +6373,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Count\n" +
                             "    Async JIT Group By workers: 1\n" +
                             "      keys: [column]\n" +
-                            "      filter: (5<x and null!=x+1)\n" +
+                            "      filter: (5<x and x+1!=null)\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: test\n");
@@ -7080,7 +7080,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Count\n" +
                         "    Async JIT Group By workers: 1\n" +
                         "      keys: [l]\n" +
-                        "      filter: null!=l\n" +
+                        "      filter: l!=null\n" +
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: tab\n"
