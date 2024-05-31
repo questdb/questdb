@@ -167,7 +167,7 @@ public class EqSymLongFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return longFn.getLong(rec) != Numbers.LONG_NULL;
+            return negated == (longFn.getLong(rec) != Numbers.LONG_NULL);
         }
 
         @Override
