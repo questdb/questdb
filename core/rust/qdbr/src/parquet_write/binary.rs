@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-use std::mem::{size_of, size_of_val};
+use std::mem::size_of;
 
 use parquet2::encoding::{delta_bitpacked, Encoding};
 use parquet2::page::Page;
@@ -43,11 +43,9 @@ pub fn binary_to_page(
     let mut buffer = vec![];
     let mut null_count = 0;
 
-    let lengths = offsets.iter().map(|offset| {
+    let nulls_iterator = offsets.iter().map(|offset| {
         let offset = *offset as usize;
-        types::decode::<i64>(&data[offset..offset + size_of::<i64>()])
-    });
-    let nulls_iterator = lengths.clone().map(|len| {
+        let len = types::decode::<i64>(&data[offset..offset + size_of::<i64>()]);
         if len < 0 {
             null_count += 1;
             false
@@ -61,6 +59,7 @@ pub fn binary_to_page(
     let definition_levels_byte_length = buffer.len();
 
     match encoding {
+        Encoding::Plain => encode_plain(offsets, data, null_count, &mut buffer),
         Encoding::DeltaLengthByteArray => encode_delta(offsets, data, null_count, &mut buffer),
         other => Err(ParquetError::OutOfSpec(format!(
             "Encoding binary as {:?}",
@@ -82,38 +81,61 @@ pub fn binary_to_page(
     .map(Page::Data)
 }
 
+fn encode_plain(offsets: &[i64], values: &[u8], null_count: usize, buffer: &mut Vec<u8>) {
+    let size_of_header = size_of::<i64>();
+    for offset in offsets {
+        let offset = usize::try_from(*offset).expect("invalid offset value in binary aux column");
+        let len = types::decode::<i64>(&values[offset..offset + size_of_header]);
+        if len < 0 {
+            continue;
+        }
+        let value_offset = offset + size_of_header;
+        let data = &values[value_offset..value_offset + len as usize];
+        let encoded_len = (len as u32).to_le_bytes();
+        buffer.extend_from_slice(&encoded_len);
+        buffer.extend_from_slice(data);
+    }
+}
+
 fn encode_delta(offsets: &[i64], values: &[u8], null_count: usize, buffer: &mut Vec<u8>) {
+    let size_of_header = size_of::<i64>();
+    let row_count = offsets.len();
+
+    if row_count == 0 {
+        delta_bitpacked::encode(std::iter::empty(), buffer);
+        return;
+    }
+
+    // Reserve buffer capacity for performance reasons only. No effect on correctness.
+    {
+        let last_offset = offsets[row_count - 1] as usize;
+        let last_size = types::decode::<i64>(&values[last_offset..last_offset + size_of_header]);
+        let last_size = if last_size > 0 { last_size } else { 0 };
+        let capacity = (offsets[row_count - 1] - offsets[0] + last_size) as usize
+            - (row_count * size_of_header);
+        buffer.reserve(capacity);
+    }
+
     let lengths = offsets
         .iter()
         .map(|offset| {
             let offset = *offset as usize;
-            types::decode::<i64>(&values[offset..offset + size_of::<i64>()])
+            types::decode::<i64>(&values[offset..offset + size_of_header])
         })
         .filter(|len| *len >= 0);
-
-    let length = offsets.len() - null_count;
-    let lengths = ExactSizedIter::new(lengths, length);
+    let value_count = row_count - null_count;
+    let lengths = ExactSizedIter::new(lengths, value_count);
 
     delta_bitpacked::encode(lengths, buffer);
 
-    if offsets.len() < 2 {
-        // TODO: fix offsets + 1
-        return;
-    }
-    if offsets.len() > 1 {
-        let length = offsets.len();
-        let data_size = (offsets[length - 1] - offsets[0]) as usize;
-        let len_size = size_of_val(offsets);
-        let capacity = data_size - len_size;
-        buffer.reserve(capacity);
-    }
-
     for offset in offsets {
         let offset = *offset as usize;
-        let len = types::decode::<i64>(&values[offset..offset + size_of::<i64>()]);
-        if len > 0 {
-            let data = &values[offset + size_of::<i64>()..offset + size_of::<i64>() + len as usize];
-            buffer.extend_from_slice(data);
+        let len = types::decode::<i64>(&values[offset..offset + size_of_header]);
+        if len < 0 {
+            continue;
         }
+        let value_offset = offset + size_of_header;
+        let data = &values[value_offset..value_offset + len as usize];
+        buffer.extend_from_slice(data);
     }
 }
