@@ -24,11 +24,14 @@
 
 package io.questdb.griffin.engine.functions;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
+import io.questdb.std.NumericException;
 import io.questdb.std.str.*;
 import org.jetbrains.annotations.Nullable;
 
@@ -175,7 +178,12 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
 
     @Override
     public final long getTimestamp(Record rec) {
-        throw new UnsupportedOperationException();
+        final CharSequence value = getSymbol(rec);
+        try {
+            return IntervalUtils.parseFloorPartialTimestamp(value);
+        } catch (NumericException e) {
+            throw CairoException.nonCritical().position(0).put("invalid timestamp: [").put(value).put(']');
+        }
     }
 
     @Override

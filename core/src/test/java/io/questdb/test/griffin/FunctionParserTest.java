@@ -1219,7 +1219,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(0, e.getPosition());
-            TestUtils.assertContains(e.getFlyweightMessage(), "unexpected argument");
+            TestUtils.assertContains(e.getFlyweightMessage(), "bad function factory (NULL), check log");
         }
     }
 
@@ -1507,7 +1507,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testUndefinedBindVariableDefineVarArg() throws SqlException {
+    public void testUndefinedBindVariableDefineVarArg() {
         // not defined
         bindVariableService.clear();
         functions.add(new SwitchFunctionFactory());
