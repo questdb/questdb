@@ -3770,6 +3770,14 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    // Restores table_name.column_name to alias translation
+    // Example:
+    // translating model:
+    //   select fact_table.data_time data_time, ...
+    // original node:
+    //   timestamp_floor('d',to_timezone(fact_table.data_time,'UTC')) timestamp_floor
+    // restored node:
+    //   timestamp_floor('d',to_timezone(data_time,'UTC')) timestamp_floor
     private void restoreTranslation(@Transient ExpressionNode node, QueryModel translatingModel) {
         sqlNodeStack.clear();
 
@@ -5149,7 +5157,9 @@ public class SqlOptimiser implements Mutable {
                         }
                         qc.of(qc.getAlias(), node, qc.isIncludeIntoWildcard(), qc.getColumnType());
                     }
-                    // it could be that we've broken previously made translation by calling addMissingTablePrefixes
+                    // in case of group by on joined tables, we could have broken the previously made
+                    // table_name.column_name to alias translation when calling addMissingTablePrefixes,
+                    // so we try to restore the aliases
                     restoreTranslation(originalNode, translatingModel);
 
                     emitCursors(qc.getAst(), cursorModel, innerVirtualModel, translatingModel, baseModel, sqlExecutionContext, sqlParserCallback);
