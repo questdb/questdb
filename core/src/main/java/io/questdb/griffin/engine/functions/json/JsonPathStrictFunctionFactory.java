@@ -52,5 +52,4 @@ public class JsonPathStrictFunctionFactory implements FunctionFactory {
         final int maxSize = configuration.getStrFunctionMaxBufferLength();
         return new JsonPathFunc(FUNCTION_NAME, json, path, pathSink, maxSize, true);
     }
-
 }

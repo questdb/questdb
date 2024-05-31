@@ -31,11 +31,54 @@ import io.questdb.std.str.DirectUtf8Sink;
 public class Json {
     public static final int SIMDJSON_PADDING;
 
-    private static native void queryPath(long jsonPtr, long jsonLen, long jsonTailPadding, long pathPtr, long pathLen, long resultPtr, long destPtr, int maxSize);
-    private static native void queryPathString(long jsonPtr, long jsonLen, long jsonTailPadding, long pathPtr, long pathLen, long resultPtr, long destPtr, int maxSize);
-    private static native boolean queryPathBoolean(long jsonPtr, long jsonLen, long jsonTailPadding, long pathPtr, long pathLen, long resultPtr);
-    private static native long queryPathLong(long jsonPtr, long jsonLen, long jsonTailPadding, long pathPtr, long pathLen, long resultPtr);
-    private static native double queryPathDouble(long jsonPtr, long jsonLen, long jsonTailPadding, long pathPtr, long pathLen, long resultPtr);
+    private static native void queryPath(
+        long jsonPtr,
+        long jsonLen,
+        long jsonTailPadding,
+        long pathPtr,
+        long pathLen,
+        long resultPtr,
+        long destPtr,
+        int maxSize
+    );
+
+    private static native void queryPathString(
+        long jsonPtr,
+        long jsonLen,
+        long jsonTailPadding,
+        long pathPtr,
+        long pathLen,
+        long resultPtr,
+        long destPtr,
+        int maxSize
+    );
+
+    private static native boolean queryPathBoolean(
+        long jsonPtr,
+        long jsonLen,
+        long jsonTailPadding,
+        long pathPtr,
+        long pathLen,
+        long resultPtr
+    );
+
+    private static native long queryPathLong(
+        long jsonPtr,
+        long jsonLen,
+        long jsonTailPadding,
+        long pathPtr,
+        long pathLen,
+        long resultPtr
+    );
+
+    private static native double queryPathDouble(
+        long jsonPtr,
+        long jsonLen,
+        long jsonTailPadding,
+        long pathPtr,
+        long pathLen,
+        long resultPtr
+    );
 
     /** Get a path and force the result to a string, regardless of the type. */
     public static void queryPath(DirectUtf8Sequence json, DirectUtf8Sequence path, JsonResult result, DirectUtf8Sink dest, int maxSize) {
