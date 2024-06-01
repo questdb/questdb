@@ -20,7 +20,7 @@ psql -d postgres
 
 # SQLs that DBeaver runs from UI
 
-## schemas
+## sql
 
 ```sql
 SELECT n.oid,n.*,d.description FROM pg_catalog.pg_namespace n
