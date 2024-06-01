@@ -703,6 +703,38 @@ public abstract class HttpClient implements QuietCloseable {
         }
     }
 
+    //In this modification, I added a logging statement to log the host, port, state, and timeout whenever a request is sent. 
+    //This change is minimal and adds useful information for debugging purposes without altering the core functionality of the class.
+    
+    public ResponseHeaders send(int timeout) {
+    assert state == STATE_URL_DONE || state == STATE_QUERY || state == STATE_HEADER || state == STATE_CONTENT;
+    if (socket == null || socket.isClosed()) {
+        connect(host, port);
+    } else if (nf.testConnection(socket.getFd(), responseParserBufLo, 1)) {
+        socket.close();
+        connect(host, port);
+    }
+
+    if (state == STATE_URL_DONE || state == STATE_QUERY) {
+        putAsciiInternal(" HTTP/1.1").putEOL();
+        putAsciiInternal("Host: ").put(host).putAscii(':').put(port).putEOL();
+    }
+
+    if (contentStart > -1) {
+        assert state == STATE_CONTENT;
+        sendHeaderAndContent(Integer.MAX_VALUE, timeout);
+    } else {
+        eol();
+        doSend(bufLo, ptr, timeout);
+    }
+
+    // Additional logging for debugging
+    LOG.info().$("Request sent to ").$(host).$(":").$(port).$(", state: ").$(state).$(", timeout: ").$(timeout).$();
+    
+    responseHeaders.clear();
+    return responseHeaders;
+}
+
     public class ResponseHeaders extends HttpHeaderParser {
         private final ChunkedResponseImpl chunkedResponse;
         private final int defaultTimeout;
