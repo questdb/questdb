@@ -179,9 +179,7 @@ docker push questdb/questdb:<software_version>-windows-amd64
 
 ### Create manifest
 
-The purpose of the manifest is to simplify image usage for end users. Hopefully
-when they install `questdb/questdb`, Docker Hub will still figure out the
-appropriate image for their target platform.
+The manifest simplifies image usage for end users by allowing Docker Hub to automatically select the appropriate image for their target platform when they install questdb/questdb. This ensures compatibility, improves the user experience, and consolidates multiple platform-specific images under a single tag.
 
 ```bash
 docker manifest create questdb/questdb:<software_version> questdb/questdb:<software_version>-linux-arm64 questdb/questdb:<software_version>-linux-amd64 questdb/questdb:<software_version>-windows-amd64
