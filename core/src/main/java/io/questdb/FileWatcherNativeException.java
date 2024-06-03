@@ -7,4 +7,8 @@ public class FileWatcherNativeException extends Exception {
         super(String.format("%s [errno: %d]", msg, Os.errno()));
     }
 
+    public FileWatcherNativeException(String msg, Object... args) {
+        this(String.format(msg, args));
+    }
+
 }

@@ -52,7 +52,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
 
     @Test
     public void TestPgWireCredentialsReloadByDeletingProp() throws Exception {
-        assertMemoryLeak(() ->{
+        assertMemoryLeak(() -> {
             try (FileWriter w = new FileWriter(serverConf)) {
                 w.write("pg.user=steven\n");
                 w.write("pg.password=sklar\n");
@@ -76,13 +76,13 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                     Assert.assertFalse(conn.isClosed());
                 }
             }
-        })
+        });
 
     }
 
     @Test
     public void TestPgWireCredentialsReloadWithChangedProp() throws Exception {
-        assertMemoryLeak(()->{
+        assertMemoryLeak(() -> {
             try (FileWriter w = new FileWriter(serverConf)) {
                 w.write("pg.user=steven\n");
                 w.write("pg.password=sklar\n");
@@ -112,7 +112,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
 
     @Test
     public void TestPgWireCredentialsReloadWithChangedPropAfterRecreatedFile() throws Exception {
-        assertMemoryLeak(()->{
+        assertMemoryLeak(() -> {
             try (ServerMain serverMain = new ServerMain(getBootstrap())) {
                 serverMain.start();
 
@@ -142,7 +142,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
 
     @Test
     public void TestPgWireCredentialsReloadWithNewProp() throws Exception {
-        assertMemoryLeak(()->{
+        assertMemoryLeak(() -> {
             try (ServerMain serverMain = new ServerMain(getBootstrap())) {
                 serverMain.start();
 

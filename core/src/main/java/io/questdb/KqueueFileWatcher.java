@@ -1,6 +1,5 @@
 package io.questdb;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
@@ -26,88 +25,101 @@ public class KqueueFileWatcher extends FileWatcher {
             p.of(filePath).$();
             this.fileFd = Files.openRO(p);
             if (this.fileFd < 0) {
-                throw CairoException.critical(this.fileFd).put("could not open file [path=").put(filePath).put(']');
+                throw new FileWatcherNativeException("could not open file [path=%s]", filePath);
             }
 
             this.dirFd = Files.openRO(p.parent().$());
             if (this.dirFd < 0) {
-                throw CairoException.critical(this.dirFd).put("could not open dir [path=").put(p.parent()).put(']');
+                throw new FileWatcherNativeException("could not open file [path=%s]", p.parent());
             }
         }
 
-        this.evtFile = KqueueAccessor.evtAlloc(
-                this.fileFd,
-                KqueueAccessor.EVFILT_VNODE,
-                KqueueAccessor.EV_ADD | KqueueAccessor.EV_CLEAR,
-                KqueueAccessor.NOTE_DELETE | KqueueAccessor.NOTE_WRITE |
-                        KqueueAccessor.NOTE_ATTRIB | KqueueAccessor.NOTE_EXTEND |
-                        KqueueAccessor.NOTE_LINK | KqueueAccessor.NOTE_RENAME |
-                        KqueueAccessor.NOTE_REVOKE,
-                0
-        );
+        try {
+            this.evtFile = KqueueAccessor.evtAlloc(
+                    this.fileFd,
+                    KqueueAccessor.EVFILT_VNODE,
+                    KqueueAccessor.EV_ADD | KqueueAccessor.EV_CLEAR,
+                    KqueueAccessor.NOTE_DELETE | KqueueAccessor.NOTE_WRITE |
+                            KqueueAccessor.NOTE_ATTRIB | KqueueAccessor.NOTE_EXTEND |
+                            KqueueAccessor.NOTE_LINK | KqueueAccessor.NOTE_RENAME |
+                            KqueueAccessor.NOTE_REVOKE,
+                    0
+            );
 
-        this.evtDir = KqueueAccessor.evtAlloc(
-                this.dirFd,
-                KqueueAccessor.EVFILT_VNODE,
-                KqueueAccessor.EV_ADD | KqueueAccessor.EV_CLEAR,
-                KqueueAccessor.NOTE_DELETE | KqueueAccessor.NOTE_WRITE |
-                        KqueueAccessor.NOTE_ATTRIB | KqueueAccessor.NOTE_EXTEND |
-                        KqueueAccessor.NOTE_LINK | KqueueAccessor.NOTE_RENAME |
-                        KqueueAccessor.NOTE_REVOKE,
-                0
-        );
+            if (this.evtFile == 0) {
+                throw new FileWatcherNativeException("malloc error");
+            }
 
-        long fds = KqueueAccessor.pipe();
-        this.readEndFd = (int) (fds >>> 32);
-        this.writeEndFd = (int) fds;
-        Files.bumpFileCount(this.readEndFd);
-        Files.bumpFileCount(this.writeEndFd);
+            this.evtDir = KqueueAccessor.evtAlloc(
+                    this.dirFd,
+                    KqueueAccessor.EVFILT_VNODE,
+                    KqueueAccessor.EV_ADD | KqueueAccessor.EV_CLEAR,
+                    KqueueAccessor.NOTE_DELETE | KqueueAccessor.NOTE_WRITE |
+                            KqueueAccessor.NOTE_ATTRIB | KqueueAccessor.NOTE_EXTEND |
+                            KqueueAccessor.NOTE_LINK | KqueueAccessor.NOTE_RENAME |
+                            KqueueAccessor.NOTE_REVOKE,
+                    0
+            );
 
-        this.evtPipe = KqueueAccessor.evtAlloc(
-                this.readEndFd,
-                KqueueAccessor.EVFILT_READ,
-                KqueueAccessor.EV_ADD | KqueueAccessor.EV_CLEAR,
-                0,
-                0
-        );
+            if (this.evtDir == 0) {
+                throw new FileWatcherNativeException("malloc error");
+            }
 
-        kq = KqueueAccessor.kqueue();
-        if (kq < 0) {
-            throw new FileWatcherNativeException("kqueue");
+            long fds = KqueueAccessor.pipe();
+            this.readEndFd = (int) (fds >>> 32);
+            this.writeEndFd = (int) fds;
+            Files.bumpFileCount(this.readEndFd);
+            Files.bumpFileCount(this.writeEndFd);
+
+            this.evtPipe = KqueueAccessor.evtAlloc(
+                    this.readEndFd,
+                    KqueueAccessor.EVFILT_READ,
+                    KqueueAccessor.EV_ADD | KqueueAccessor.EV_CLEAR,
+                    0,
+                    0
+            );
+
+            kq = KqueueAccessor.kqueue();
+            if (kq < 0) {
+                throw new FileWatcherNativeException("kqueue");
+            }
+            Files.bumpFileCount(this.kq);
+
+            this.bufferSize = KqueueAccessor.SIZEOF_KEVENT;
+            this.eventList = Unsafe.calloc(bufferSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
+
+            // Register events with queue
+            int fileRes = KqueueAccessor.keventRegister(
+                    kq,
+                    evtFile,
+                    1
+            );
+            if (fileRes < 0) {
+                throw new FileWatcherNativeException("keventRegister (fileEvent)");
+            }
+
+            int dirRes = KqueueAccessor.keventRegister(
+                    kq,
+                    evtDir,
+                    1
+            );
+            if (dirRes < 0) {
+                throw new FileWatcherNativeException("keventRegister (dirEvent)");
+            }
+
+            int pipeRes = KqueueAccessor.keventRegister(
+                    kq,
+                    evtPipe,
+                    1
+            );
+            if (pipeRes < 0) {
+                throw new FileWatcherNativeException("keventRegister (pipeEvent)");
+            }
+
+        } catch (FileWatcherNativeException e) {
+            cleanUp();
+            throw e;
         }
-        Files.bumpFileCount(this.kq);
-
-        this.bufferSize = KqueueAccessor.SIZEOF_KEVENT;
-        this.eventList = Unsafe.calloc(bufferSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
-
-        // Register events with queue
-        int fileRes = KqueueAccessor.keventRegister(
-                kq,
-                evtFile,
-                1
-        );
-        if (fileRes < 0) {
-            throw new FileWatcherNativeException("keventRegister (fileEvent)");
-        }
-
-        int dirRes = KqueueAccessor.keventRegister(
-                kq,
-                evtDir,
-                1
-        );
-        if (dirRes < 0) {
-            throw new FileWatcherNativeException("keventRegister (dirEvent)");
-        }
-
-        int pipeRes = KqueueAccessor.keventRegister(
-                kq,
-                evtPipe,
-                1
-        );
-        if (pipeRes < 0) {
-            throw new FileWatcherNativeException("keventRegister (pipeEvent)");
-        }
-
     }
 
     @Override
@@ -120,18 +132,48 @@ public class KqueueFileWatcher extends FileWatcher {
 
             super.close();
 
-            Files.close(kq);
-            Files.close(fileFd);
-            Files.close(dirFd);
-            Files.close(readEndFd);
-            Files.close(writeEndFd);
-            Unsafe.free(this.eventList, bufferSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
-            KqueueAccessor.evtFree(this.evtFile);
-            KqueueAccessor.evtFree(this.evtDir);
-            KqueueAccessor.evtFree(this.evtPipe);
+            cleanUp();
+
         }
     }
 
+    private void cleanUp() {
+        if (kq > 0) {
+            Files.close(kq);
+        }
+
+        if (fileFd > 0) {
+            Files.close(fileFd);
+        }
+
+        if (dirFd > 0) {
+            Files.close(dirFd);
+        }
+
+        if (readEndFd > 0) {
+            Files.close(readEndFd);
+        }
+
+        if (writeEndFd > 0) {
+            Files.close(writeEndFd);
+        }
+
+        if (this.eventList > 0) {
+            Unsafe.free(this.eventList, bufferSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
+        }
+
+        if (this.evtFile > 0) {
+            KqueueAccessor.evtFree(this.evtFile);
+        }
+
+        if (this.evtDir > 0) {
+            KqueueAccessor.evtFree(this.evtDir);
+        }
+
+        if (this.evtPipe > 0) {
+            KqueueAccessor.evtFree(this.evtPipe);
+        }
+    }
 
     @Override
     protected void waitForChange() throws FileWatcherNativeException {

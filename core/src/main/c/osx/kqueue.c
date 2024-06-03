@@ -163,6 +163,9 @@ JNIEXPORT jint JNICALL Java_io_questdb_KqueueAccessor_keventGetBlocking
 JNIEXPORT jlong JNICALL Java_io_questdb_KqueueAccessor_evtAlloc
     (JNIEnv *e, jclass cl, jlong ident, jint filter, jint flags, jint fflags, jlong data) {
     struct kevent *event = malloc(sizeof(struct kevent));
+    if (!kevent) {
+        return (jlong)0;
+    }
     EV_SET(event, ident, filter, flags, fflags, data, NULL);
     return (jlong)event;
 }
