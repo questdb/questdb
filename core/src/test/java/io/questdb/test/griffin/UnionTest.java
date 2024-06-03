@@ -27,7 +27,6 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.test.AbstractCairoTest;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.Arrays;
@@ -263,8 +262,6 @@ public class UnionTest extends AbstractCairoTest {
     }
 
     @Test
-    @Ignore
-    //TODO: fix; fails on Cannot invoke "io.questdb.griffin.model.QueryColumn.getAst()" because "queryColumn" is null
     public void testNestedSetOperationWithOrderExpressionByAndLimit2() throws Exception {
         assertQuery("x\n0\n2\n",
                 "select * from " +
