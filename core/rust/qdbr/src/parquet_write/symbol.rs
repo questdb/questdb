@@ -52,7 +52,7 @@ pub fn symbol_to_pages(
     let (dict_buffer, keys, max_key) = encode_dict(column_values, offsets, chars);
 
     let mut null_count = 0;
-    let nulls_iterator = column_values.iter().map(|key| {
+    let deflevels_iter = column_values.iter().map(|key| {
         // -1 denotes a null value
         if *key > -1 {
             true
@@ -63,9 +63,8 @@ pub fn symbol_to_pages(
     });
 
     let mut data_buffer = vec![];
-    let length = nulls_iterator.len();
-
-    encode_bool_iter(&mut data_buffer, nulls_iterator, options.version)?;
+    let length = deflevels_iter.len();
+    encode_bool_iter(&mut data_buffer, deflevels_iter, options.version)?;
     let definition_levels_byte_length = data_buffer.len();
 
     let num_bits = util::get_bit_width(max_key as u64);

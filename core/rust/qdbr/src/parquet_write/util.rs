@@ -95,18 +95,18 @@ fn encode_iter_v1<I: Iterator<Item = bool>>(buffer: &mut Vec<u8>, iter: I) -> io
     Ok(())
 }
 
-fn encode_iter_v2<I: Iterator<Item = bool>>(writer: &mut Vec<u8>, iter: I) -> io::Result<()> {
-    encode_bool(writer, iter)
+fn encode_iter_v2<I: Iterator<Item = bool>>(buffer: &mut Vec<u8>, iter: I) -> io::Result<()> {
+    encode_bool(buffer, iter)
 }
 
 pub fn encode_bool_iter<I: Iterator<Item = bool>>(
-    writer: &mut Vec<u8>,
+    buffer: &mut Vec<u8>,
     iter: I,
     version: Version,
 ) -> io::Result<()> {
     match version {
-        Version::V1 => encode_iter_v1(writer, iter),
-        Version::V2 => encode_iter_v2(writer, iter),
+        Version::V1 => encode_iter_v1(buffer, iter),
+        Version::V2 => encode_iter_v2(buffer, iter),
     }
 }
 
