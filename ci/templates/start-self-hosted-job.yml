@@ -72,7 +72,7 @@ jobs:
           payload: |
             {
               "pool": "amd64-zfs",
-              "buildid": "$(System.StageName)$(Build.BuildId)"
+              "buildid": "$(System.StageName)$(Build.BuildId)",
               "instancetype": "c6a.xlarge",
               "ami": "ami-0e93be55518876452",
               "devicename": "/dev/xvdb"
