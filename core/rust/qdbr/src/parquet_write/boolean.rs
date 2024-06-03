@@ -21,7 +21,7 @@ fn encode_plain(iterator: impl Iterator<Item = bool>, buffer: &mut Vec<u8>) -> P
 pub fn slice_to_page(
     slice: &[u8],
     options: WriteOptions,
-    type_: PrimitiveType,
+    primitive_type: PrimitiveType,
 ) -> ParquetResult<Page> {
     let mut buffer = vec![];
     let mut stats = MaxMin::new();
@@ -46,7 +46,7 @@ pub fn slice_to_page(
         0,
         0,
         statistics,
-        type_,
+        primitive_type,
         options,
         Encoding::Plain,
     )

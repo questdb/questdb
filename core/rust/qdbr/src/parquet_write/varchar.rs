@@ -54,7 +54,7 @@ pub fn varchar_to_page(
     aux: &[u8],
     data: &[u8],
     options: WriteOptions,
-    type_: PrimitiveType,
+    primitive_type: PrimitiveType,
 ) -> ParquetResult<Page> {
     let mut buffer = vec![];
     let mut null_count = 0;
@@ -80,7 +80,7 @@ pub fn varchar_to_page(
         null_count,
         definition_levels_byte_length,
         None, // do we really want a varchar statistics?
-        type_,
+        primitive_type,
         options,
         Encoding::Plain,
     )

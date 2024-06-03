@@ -75,7 +75,7 @@ where
 pub fn float_slice_to_page_plain<T, P>(
     slice: &[T],
     options: WriteOptions,
-    type_: PrimitiveType,
+    primitive_type: PrimitiveType,
 ) -> ParquetResult<Page>
 where
     P: NativeType + Bounded,
@@ -86,7 +86,7 @@ where
         slice,
         is_nullable,
         options,
-        type_,
+        primitive_type,
         Encoding::Plain,
         encode_plain,
     )
@@ -96,7 +96,7 @@ where
 pub fn int_slice_to_page<T, P>(
     slice: &[T],
     options: WriteOptions,
-    type_: PrimitiveType,
+    primitive_type: PrimitiveType,
     encoding: Encoding,
 ) -> ParquetResult<Page>
 where
@@ -104,14 +104,24 @@ where
     T: num_traits::AsPrimitive<P> + Bounded + Nullable,
     P: num_traits::AsPrimitive<i64>,
 {
-    let is_nullable = type_.field_info.repetition == Repetition::Optional;
+    let is_nullable = primitive_type.field_info.repetition == Repetition::Optional;
     match encoding {
-        Encoding::Plain => {
-            slice_to_page(slice, is_nullable, options, type_, encoding, encode_plain)
-        }
-        Encoding::DeltaBinaryPacked => {
-            slice_to_page(slice, is_nullable, options, type_, encoding, encode_delta)
-        }
+        Encoding::Plain => slice_to_page(
+            slice,
+            is_nullable,
+            options,
+            primitive_type,
+            encoding,
+            encode_plain,
+        ),
+        Encoding::DeltaBinaryPacked => slice_to_page(
+            slice,
+            is_nullable,
+            options,
+            primitive_type,
+            encoding,
+            encode_delta,
+        ),
         other => Err(ParquetError::OutOfSpec(format!(
             "Encoding integer as {:?}",
             other
@@ -124,7 +134,7 @@ pub fn slice_to_page<T, P, F: Fn(&[T], bool, usize, Vec<u8>) -> Vec<u8>>(
     slice: &[T],
     is_nullable: bool,
     options: WriteOptions,
-    type_: PrimitiveType,
+    primitive_type: PrimitiveType,
     encoding: Encoding,
     encode_fn: F,
 ) -> ParquetResult<DataPage>
@@ -157,7 +167,7 @@ where
         Some(build_statistics(
             Some(null_count as i64),
             statistics,
-            type_.clone(),
+            primitive_type.clone(),
         ))
     } else {
         None
@@ -170,7 +180,7 @@ where
         null_count,
         definition_levels_byte_length,
         statistics,
-        type_,
+        primitive_type,
         options,
         encoding,
     )

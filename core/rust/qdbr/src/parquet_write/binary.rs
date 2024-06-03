@@ -37,7 +37,7 @@ pub fn binary_to_page(
     offsets: &[i64],
     data: &[u8],
     options: WriteOptions,
-    type_: PrimitiveType,
+    primitive_type: PrimitiveType,
     encoding: Encoding,
 ) -> ParquetResult<Page> {
     let mut buffer = vec![];
@@ -74,7 +74,7 @@ pub fn binary_to_page(
         null_count,
         definition_levels_byte_length,
         None, // do we really want a binary statistics?
-        type_,
+        primitive_type,
         options,
         encoding,
     )

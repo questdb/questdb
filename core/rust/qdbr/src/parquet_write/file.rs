@@ -219,13 +219,13 @@ fn create_row_group(
 
 fn column_chunk_to_pages(
     column: Column,
-    type_: ParquetType,
+    parquet_type: ParquetType,
     chunk_offset: usize,
     chunk_length: usize,
     options: WriteOptions,
     encoding: Encoding,
 ) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
-    let primitive_type = match type_ {
+    let primitive_type = match parquet_type {
         ParquetType::PrimitiveType(primitive) => primitive,
         _ => unreachable!("GroupType is not supported"),
     };
@@ -272,7 +272,7 @@ fn chunk_to_page(
     column: Column,
     offset: usize,
     length: usize,
-    type_: PrimitiveType,
+    primitive_type: PrimitiveType,
     options: WriteOptions,
     encoding: Encoding,
 ) -> ParquetResult<Page> {
@@ -369,15 +369,24 @@ fn chunk_to_page(
         }
         ColumnType::Long128 | ColumnType::Uuid => {
             let column: &[[u8; 16]] = unsafe { mem::transmute(column.primary_data) };
-            fixed_len_bytes::bytes_to_page(&column[offset..offset + length], options, type_)
+            fixed_len_bytes::bytes_to_page(
+                &column[lower_bound..upper_bound],
+                column_top,
+                options,
+                primitive_type,
+            )
         }
         ColumnType::Long256 => {
             let column: &[[u8; 32]] = unsafe { mem::transmute(column.primary_data) };
-            fixed_len_bytes::bytes_to_page(&column[offset..offset + length], options, type_)
+            fixed_len_bytes::bytes_to_page(
+                &column[lower_bound..upper_bound],
+                column_top,
+                options,
+                primitive_type,
+            )
         }
         ColumnType::Symbol => {
-            // TODO: JNI, pass SymbolMap raw memory
-            unimplemented!()
+            panic!("Symbol type is encoded in column_chunk_to_pages()")
         }
     }
 }

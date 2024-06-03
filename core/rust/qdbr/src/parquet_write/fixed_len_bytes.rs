@@ -17,7 +17,7 @@ fn encode_plain<const N: usize>(data: &[[u8; N]], buffer: &mut Vec<u8>) {
 pub fn bytes_to_page<const N: usize>(
     data: &[[u8; N]],
     options: WriteOptions,
-    type_: PrimitiveType,
+    primitive_type: PrimitiveType,
 ) -> ParquetResult<Page> {
     let mut buffer = vec![];
     let mut null_count = 0;
@@ -43,7 +43,7 @@ pub fn bytes_to_page<const N: usize>(
         null_count,
         definition_levels_byte_length,
         None, // do we really want a binary statistics?
-        type_,
+        primitive_type,
         options,
         Encoding::Plain,
     )
