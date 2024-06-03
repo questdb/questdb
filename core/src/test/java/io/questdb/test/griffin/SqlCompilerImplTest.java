@@ -129,26 +129,23 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 );
             }
 
-            String unexpectedError = "unexpected argument for function: and. expected args: (BOOLEAN,BOOLEAN). actual args: (INT,INT)";
+            String unexpectedError = "expression type mismatch, expected: BOOLEAN, actual: INT";
             assertFailureNoLeakCheck(
-                    44,
+                    30, // position of the first + operator
                     unexpectedError,
-                    "select * from a " +
-                            "join b on a.i + b.i and a.i - b.i"
+                    "select * from a join b on a.i + b.i and a.i - b.i"
             );
 
             assertFailureNoLeakCheck(
-                    49,
+                    35, // position of the first + operator
                     unexpectedError,
-                    "select * from a " +
-                            "left join b on a.i + b.i and a.i - b.i"
+                    "select * from a left join b on a.i + b.i and a.i - b.i"
             );
 
             assertFailureNoLeakCheck(
-                    60,
+                    46,
                     unexpectedError,
-                    "select * from a " +
-                            "join b on a.ts = b.ts and a.i - b.i and b.i - a.i"
+                    "select * from a join b on a.ts = b.ts and a.i - b.i and b.i - a.i"
             );
         });
     }
@@ -2064,8 +2061,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             assertSql("column\ntrue\n", "select cast(null as string) = null");
             assertSql("column\ntrue\n", "select cast(null as string) <= null");
             assertSql("column\ntrue\n", "select cast(null as string) >= null");
-
-            assertFailureNoLeakCheck(7, "", "select datediff('ma', 0::timestamp, 1::timestamp) ");
+            assertExceptionNoLeakCheck(
+                    "select datediff('ma', 0::timestamp, 1::timestamp) ",
+                    16,
+                    "argument type mismatch for function `datediff` at #1 expected: CHAR, actual: STRING"
+            );
         });
     }
 
@@ -2343,8 +2343,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             assertSql("column\ntrue\n", "select cast(null as string) = null");
             assertSql("column\ntrue\n", "select cast(null as string) <= null");
             assertSql("column\ntrue\n", "select cast(null as string) >= null");
-
-            assertFailureNoLeakCheck(7, "", "select datediff('ma', 0::timestamp, 1::timestamp) ");
+            assertExceptionNoLeakCheck(
+                    "select datediff('ma', 0::timestamp, 1::timestamp) ",
+                    16,
+                    "argument type mismatch for function `datediff` at #1 expected: CHAR, actual: STRING"
+            );
         });
     }
 
@@ -3649,7 +3652,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             assertFailureNoLeakCheck(
                     97,
-                    "unexpected argument for function: SUM. expected args: (DOUBLE). actual args: (INT constant,INT constant)",
+                    "there is no matching function `SUM` with the argument types: (INT, INT)",
                     "SELECT test.time AS ref0, test.symbol AS ref1 FROM test GROUP BY test.time, test.symbol ORDER BY SUM(1, -1)"
             );
         });
@@ -6673,6 +6676,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         );
     }
 
+    // todo: this seems to be always SQLException
     private void assertFailure0(int position, CharSequence expectedMessage, CharSequence sql, Class<?> exception) {
         try {
             assertExceptionNoLeakCheck(sql);

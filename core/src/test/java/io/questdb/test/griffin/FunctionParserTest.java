@@ -1174,7 +1174,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         functions.add(new SysdateFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.BOOLEAN));
-        assertFail(7, "unexpected argument", "a or   sysdate(a)", metadata);
+        assertFail(7, "wrong number of arguments for function `sysdate`; expected: 0, provided: 1", "a or   sysdate(a)", metadata);
     }
 
     @Test
@@ -1243,9 +1243,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             parseFunction("x(a)", metadata, createFunctionParser());
             Assert.fail();
         } catch (SqlException e) {
-            Assert.assertEquals(0, e.getPosition());
-            TestUtils.assertContains(e.getFlyweightMessage(), "unexpected argument");
-            TestUtils.assertContains(e.getFlyweightMessage(), "constant");
+            Assert.assertEquals(2, e.getPosition());
+            TestUtils.assertContains(e.getFlyweightMessage(), "argument type mismatch for function `x` at #1 expected: INT constant, actual: INT");
         }
     }
 

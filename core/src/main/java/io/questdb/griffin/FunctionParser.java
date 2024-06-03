@@ -332,6 +332,30 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     ex.put("wrong number of arguments for function `").put(node.token)
                             .put("`; expected: ").put(descriptor.getSigArgCount())
                             .put(", provided: ").put(args.size());
+                } else if (args.size() == 2) {
+                    // Binary operator; we have overloads we could not use because argument types
+                    // do not match somewhere. Throw type-specific exception, pointing out expression,
+                    // which type does not match the operator's descriptor.
+                    // This is typically works for boolean operators, such as "and" and "or" when
+                    // their arguments are not boolean.
+                    ex.put("expression type mismatch,");
+                    for (int i = 0, n = descriptor.getSigArgCount(); i < n; i++) {
+                        final int mask = descriptor.getArgTypeMask(i);
+                        final int expectedType = FunctionFactoryDescriptor.toType(mask);
+                        final boolean expectedConstant = FunctionFactoryDescriptor.isConstant(mask);
+                        final int actualType = args.getQuick(i).getType();
+                        final boolean actualConstant = args.getQuick(i).isConstant();
+
+                        if (expectedType != actualType || (expectedConstant && !actualConstant)) {
+                            ex.put(" expected: ").put(ColumnType.nameOf(expectedType));
+                            if (expectedType == actualType) {
+                                ex.put(" constant");
+                            }
+                            ex.put(", actual: ").put(ColumnType.nameOf(actualType));
+                            ex.setPosition(argPositions.getQuick(i));
+                            break;
+                        }
+                    }
                 } else {
                     ex.put("argument type mismatch for function `").put(node.token).put('`');
                     for (int i = 0, n = descriptor.getSigArgCount(); i < n; i++) {
@@ -342,7 +366,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         final boolean actualConstant = args.getQuick(i).isConstant();
 
                         if (expectedType != actualType || (expectedConstant && !actualConstant)) {
-                            ex.put("at #").put(i + 1);
+                            ex.put(" at #").put(i + 1);
                             ex.put(" expected: ").put(ColumnType.nameOf(expectedType));
                             if (expectedType == actualType) {
                                 ex.put(" constant");
@@ -376,7 +400,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 }
             }
             ex.put(')');
-            Misc.freeObjList(args);
             return ex;
         }
 
@@ -453,9 +476,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     private static void putArgType(ObjList<Function> args, int i, SqlException ex) {
         Function arg = args.getQuick(i);
         ex.put(ColumnType.nameOf(arg.getType()));
-        if (arg.isConstant()) {
-            ex.put(" constant");
-        }
     }
 
     private Function checkAndCreateFunction(
