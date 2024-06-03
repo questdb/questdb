@@ -39,42 +39,49 @@ public final class InotifyFileWatcher extends FileWatcher {
         }
         Files.bumpFileCount(this.fd);
 
-        this.dirPath.of(filePath).parent().$();
-        this.fileName.put(Paths.get(filePath.toString()).getFileName().toString());
+        try {
+            this.dirPath.of(filePath).parent().$();
+            this.fileName.put(Paths.get(filePath.toString()).getFileName().toString());
 
-        this.wd = InotifyAccessor.inotifyAddWatch(
-                this.fd,
-                this.dirPath.ptr(),
-                InotifyAccessor.IN_CREATE | InotifyAccessor.IN_MODIFY |
-                        InotifyAccessor.IN_MOVED_TO | InotifyAccessor.IN_CLOSE_WRITE
-        );
+            this.wd = InotifyAccessor.inotifyAddWatch(
+                    this.fd,
+                    this.dirPath.ptr(),
+                    InotifyAccessor.IN_CREATE | InotifyAccessor.IN_MODIFY |
+                            InotifyAccessor.IN_MOVED_TO | InotifyAccessor.IN_CLOSE_WRITE
+            );
 
-        if (this.wd < 0) {
-            throw new FileWatcherNativeException("inotify_add_watch exited");
+            if (this.wd < 0) {
+                throw new FileWatcherNativeException("inotify_add_watch exited");
+            }
+
+            if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_ADD, EpollAccessor.EPOLLIN) < 0) {
+                throw new FileWatcherNativeException("epoll_ctl");
+            }
+
+            this.buf = Unsafe.malloc(bufSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
+            if (this.buf < 0) {
+                throw new FileWatcherNativeException("malloc");
+            }
+
+            long fds = InotifyAccessor.pipe();
+            if (fds < 0) {
+                throw new FileWatcherNativeException("pipe2");
+            }
+
+            this.readEndFd = (int) (fds >>> 32);
+            this.writeEndFd = (int) fds;
+            Files.bumpFileCount(this.readEndFd);
+            Files.bumpFileCount(this.writeEndFd);
+
+            if (epoll.control(readEndFd, 0, EpollAccessor.EPOLL_CTL_ADD, EpollAccessor.EPOLLIN) < 0) {
+                throw new FileWatcherNativeException("epoll_ctl");
+            }
+
+        } catch (FileWatcherNativeException e) {
+            cleanUp();
+            throw e;
         }
 
-        if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_ADD, EpollAccessor.EPOLLIN) < 0) {
-            throw new FileWatcherNativeException("epoll_ctl");
-        }
-
-        this.buf = Unsafe.malloc(bufSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
-        if (this.buf < 0) {
-            throw new FileWatcherNativeException("malloc");
-        }
-
-        long fds = InotifyAccessor.pipe();
-        if (fds < 0) {
-            throw new FileWatcherNativeException("pipe2");
-        }
-
-        this.readEndFd = (int) (fds >>> 32);
-        this.writeEndFd = (int) fds;
-        Files.bumpFileCount(this.readEndFd);
-        Files.bumpFileCount(this.writeEndFd);
-
-        if (epoll.control(readEndFd, 0, EpollAccessor.EPOLL_CTL_ADD, EpollAccessor.EPOLLIN) < 0) {
-            throw new FileWatcherNativeException("epoll_ctl");
-        }
 
     }
 
@@ -92,22 +99,7 @@ public final class InotifyFileWatcher extends FileWatcher {
             // up any additional resources.
             super.close();
 
-            this.dirPath.close();
-            this.fileName.close();
-
-            if (InotifyAccessor.inotifyRmWatch(this.fd, this.wd) < 0) {
-                System.out.println(this.fd);
-                // todo: handle error, but continue execution
-            }
-
-            epoll.close();
-
-            Files.close(this.fd);
-            Files.close(this.readEndFd);
-            Files.close(this.writeEndFd);
-
-
-            Unsafe.free(this.buf, this.bufSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
+            cleanUp();
 
             LOG.info().$("inotify filewatcher closed").$();
         }
@@ -153,6 +145,36 @@ public final class InotifyFileWatcher extends FileWatcher {
         if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_MOD, EpollAccessor.EPOLLIN) < 0) {
             throw new FileWatcherNativeException("epoll_ctl (mod)");
         }
+
+    }
+
+    private void cleanUp() {
+        this.dirPath.close();
+        this.fileName.close();
+
+        if (InotifyAccessor.inotifyRmWatch(this.fd, this.wd) < 0) {
+            System.out.println(this.fd);
+            // todo: handle error, but continue execution
+        }
+
+        epoll.close();
+
+        if (this.fd > 0) {
+            Files.close(this.fd);
+        }
+
+        if (this.readEndFd > 0) {
+            Files.close(this.readEndFd);
+        }
+
+        if (this.writeEndFd > 0) {
+            Files.close(this.writeEndFd);
+        }
+
+        if (this.buf > 0) {
+            Unsafe.free(this.buf, this.bufSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
+        }
+
 
     }
 
