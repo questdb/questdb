@@ -8,7 +8,6 @@ use parquet2::schema::types::PrimitiveType;
 use parquet2::write::DynIter;
 
 use crate::parquet_write::file::WriteOptions;
-use crate::parquet_write::schema::Column;
 use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter};
 use crate::parquet_write::{util, ParquetResult};
 
@@ -53,7 +52,6 @@ pub fn symbol_to_pages(
     chars: &[u8],
     options: WriteOptions,
     type_: PrimitiveType,
-    column: &Column,
 ) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
     let mut dict_buffer = vec![];
     let (keys, max_key) = encode_dict(column_values, offsets, chars, &mut dict_buffer);

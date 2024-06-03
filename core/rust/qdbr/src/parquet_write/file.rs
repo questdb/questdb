@@ -235,7 +235,7 @@ fn column_chunk_to_pages(
         };
         let offsets = column.symbol_offsets.expect("symbol offsets");
         let data = column.secondary_data.unwrap_or(&[]); // Can be no values
-        return symbol::symbol_to_pages(keys, offsets, data, options, primitive_type, &column);
+        return symbol::symbol_to_pages(keys, offsets, data, options, primitive_type);
     }
 
     let number_of_rows = chunk_length;
