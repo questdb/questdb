@@ -42,4 +42,5 @@ public interface BootstrapConfiguration {
     ServerConfiguration getServerConfiguration(Bootstrap bootstrap) throws Exception;
 
     boolean useSite();
+    
 }

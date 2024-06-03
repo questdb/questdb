@@ -9,24 +9,30 @@ import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
-import java.util.Map;
-import java.util.Properties;
+import java.io.InputStream;
+import java.nio.file.Paths;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Function;
 
 
 public class DynamicPropServerConfiguration implements DynamicServerConfiguration {
 
+    private static final Log LOG = LogFactory.getLog(DynamicPropServerConfiguration.class);
     private final BuildInformation buildInformation;
+    private final java.nio.file.Path confPath;
     private final AtomicReference<PropServerConfiguration> delegate;
     private final @Nullable Map<String, String> env;
     private final FilesFacade filesFacade;
@@ -34,8 +40,17 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
     private final boolean loadAdditionalConfigurations;
     private final Log log;
     private final MicrosecondClock microsecondClock;
+    private final Properties properties;
+    private final Set<PropertyKey> reloadableProps = new HashSet<>(List.of(
+            PropertyKey.PG_USER,
+            PropertyKey.PG_PASSWORD,
+            PropertyKey.PG_RO_USER_ENABLED,
+            PropertyKey.PG_RO_USER,
+            PropertyKey.PG_RO_PASSWORD
+    ));
     private final String root;
-    private FileEventCallback fileEventCallback;
+    private Runnable afterConfigReloaded;
+    private long lastModified;
 
     public DynamicPropServerConfiguration(
             String root,
@@ -47,8 +62,9 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
             MicrosecondClock microsecondClock,
             FactoryProviderFactory fpf,
             boolean loadAdditionalConfigurations
-    ) throws ServerConfigurationException, JsonException, IOException {
+    ) throws ServerConfigurationException, JsonException {
         this.root = root;
+        this.properties = properties;
         this.env = env;
         this.log = log;
         this.buildInformation = buildInformation;
@@ -69,7 +85,15 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
                 loadAdditionalConfigurations
         );
         this.delegate = new AtomicReference<>(serverConfig);
-        this.fileEventCallback = new ConfigReloader(this);
+
+        this.confPath = Paths.get(this.getCairoConfiguration().getConfRoot().toString(), Bootstrap.CONFIG_FILE);
+
+        try (Path p = new Path()) {
+            // todo: what happens if file doesn't exist?
+            p.of(this.confPath.toString()).$();
+            this.lastModified = Files.getLastModified(p);
+        }
+
     }
 
     public DynamicPropServerConfiguration(
@@ -81,7 +105,7 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
             FilesFacade filesFacade,
             MicrosecondClock microsecondClock,
             FactoryProviderFactory fpf
-    ) throws ServerConfigurationException, JsonException, IOException {
+    ) throws ServerConfigurationException, JsonException {
         this(
                 root,
                 properties,
@@ -101,7 +125,7 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
             @Nullable Map<String, String> env,
             Log log,
             final BuildInformation buildInformation
-    ) throws ServerConfigurationException, JsonException, IOException {
+    ) throws ServerConfigurationException, JsonException {
         this(
                 root,
                 properties,
@@ -125,8 +149,8 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
             MicrosecondClock microsecondClock,
             FactoryProviderFactory fpf,
             boolean loadAdditionalConfigurations,
-            Function<DynamicPropServerConfiguration, FileEventCallback> fileEventCallbackFunction
-    ) throws ServerConfigurationException, JsonException, IOException {
+            Runnable afterConfigFileChanged
+    ) throws ServerConfigurationException, JsonException {
         this(
                 root,
                 properties,
@@ -138,8 +162,7 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
                 fpf,
                 loadAdditionalConfigurations
         );
-
-        this.fileEventCallback = fileEventCallbackFunction.apply(this);
+        this.afterConfigReloaded = afterConfigFileChanged;
     }
 
     @Override
@@ -150,11 +173,6 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
     @Override
     public FactoryProvider getFactoryProvider() {
         return delegate.get().getFactoryProvider();
-    }
-
-    @Override
-    public FileEventCallback getFileEventCallback() {
-        return this.fileEventCallback;
     }
 
     @Override
@@ -217,6 +235,71 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
         return delegate.get().isLineTcpEnabled();
     }
 
+    @Override
+    public void onFileEvent() {
+        try (Path p = new Path()) {
+            p.of(this.confPath.toString()).$();
+
+            // Check that the file has been modified since the last trigger
+            long newLastModified = Files.getLastModified(p);
+            if (newLastModified > this.lastModified) {
+                // If it has, update the cached value
+                this.lastModified = newLastModified;
+
+                // Then load the config properties
+                Properties newProperties = new Properties();
+                try (InputStream is = java.nio.file.Files.newInputStream(this.confPath)) {
+                    newProperties.load(is);
+                } catch (IOException exc) {
+                    LOG.error().$(exc).$();
+                }
+
+
+                if (!newProperties.equals(this.properties)) {
+                    // Compare the new and existing properties
+                    AtomicBoolean changed = new AtomicBoolean(false);
+                    newProperties.forEach((k, v) -> {
+                        String key = (String) k;
+                        String oldVal = properties.getProperty(key);
+                        if (oldVal == null || !oldVal.equals(newProperties.getProperty(key))) {
+                            Optional<PropertyKey> prop = PropertyKey.getByString(key);
+                            if (prop.isEmpty()) {
+                                return;
+                            }
+
+                            if (reloadableProps.contains(prop.get())) {
+                                LOG.info().$("loaded new value of ").$(k).$();
+                                this.properties.setProperty(key, (String) v);
+                                changed.set(true);
+                            } else {
+                                LOG.advisory().$("property ").$(k).$(" was modified in the config file but cannot be reloaded. ignoring new value").$();
+                            }
+                        }
+                    });
+
+
+                    // Check for any old reloadable properties that have been removed in the new config
+                    properties.forEach((k, v) -> {
+                        if (!newProperties.containsKey(k)) {
+                            this.properties.remove(k);
+                            changed.set(true);
+                        }
+                    });
+
+                    // If they are different, reload the config in place
+                    if (changed.get()) {
+                        this.reload(this.properties);
+                        LOG.info().$("config reloaded!").$();
+                        if (this.afterConfigReloaded != null) {
+                            afterConfigReloaded.run();
+                        }
+                    }
+
+                }
+            }
+        }
+    }
+
     public void reload(Properties properties) {
         PropServerConfiguration newConfig;
         try {
@@ -238,4 +321,5 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
 
         delegate.set(newConfig);
     }
+
 }

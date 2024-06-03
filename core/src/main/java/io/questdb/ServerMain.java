@@ -268,7 +268,7 @@ public class ServerMain implements Closeable {
                 Path configPath = Path.of(cairoConfig.getConfRoot().toString(), Bootstrap.CONFIG_FILE);
                 fileWatcher = FileWatcherFactory.getFileWatcher(
                         configPath.toString(),
-                        ((DynamicServerConfiguration) config).getFileEventCallback()
+                        (DynamicServerConfiguration) config
                 );
                 if (fileWatcher == null) {
                     bootstrap.getLog().advisoryW().$("filewatcher not started because we didn't implement this for windows yet");

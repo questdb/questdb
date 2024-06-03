@@ -34,7 +34,6 @@ import org.postgresql.util.PSQLException;
 
 import java.io.File;
 import java.io.FileWriter;
-import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -189,7 +188,12 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                             bootstrap.getMicrosecondClock(),
                             FactoryProviderFactoryImpl.INSTANCE,
                             true,
-                            SynchronizedConfigReloader::new
+                            new Runnable() {
+                                @Override
+                                public void run() {
+                                    latch.countDown();
+                                }
+                            }
                     );
                 } catch (Exception exc) {
                     Assert.fail(exc.getMessage());
@@ -219,30 +223,5 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
         properties.setProperty("password", pass);
         final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", 8812);
         return DriverManager.getConnection(url, properties);
-    }
-
-    private class SynchronizedConfigReloader implements FileEventCallback {
-        private ConfigReloader delegate;
-
-        public SynchronizedConfigReloader(DynamicServerConfiguration config) {
-            try {
-                delegate = new ConfigReloader(config);
-            } catch (IOException exc) {
-                Assert.fail(exc.getMessage());
-            }
-
-        }
-
-        @Override
-        public void onFileEvent() {
-            if (delegate == null) {
-                Assert.fail();
-            }
-
-            delegate.onFileEvent();
-            latch.countDown();
-
-        }
-
     }
 }
