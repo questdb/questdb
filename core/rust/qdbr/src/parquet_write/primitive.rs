@@ -136,7 +136,7 @@ where
     let mut null_count = 0;
     let mut statistics = MaxMin::new();
     if is_nullable {
-        let nulls_iterator = slice.iter().map(|v| {
+        let deflevels_iter = slice.iter().map(|v| {
             let value = *v;
             if value.is_null() {
                 null_count += 1;
@@ -147,7 +147,7 @@ where
                 true
             }
         });
-        encode_bool_iter(&mut buffer, nulls_iterator, options.version)?;
+        encode_bool_iter(&mut buffer, deflevels_iter, options.version)?;
     };
 
     let definition_levels_byte_length = buffer.len();

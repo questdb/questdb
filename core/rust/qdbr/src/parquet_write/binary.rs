@@ -43,7 +43,7 @@ pub fn binary_to_page(
     let mut buffer = vec![];
     let mut null_count = 0;
 
-    let nulls_iterator = offsets.iter().map(|offset| {
+    let deflevels_iter = offsets.iter().map(|offset| {
         let offset = *offset as usize;
         let len = types::decode::<i64>(&data[offset..offset + size_of::<i64>()]);
         if len < 0 {
@@ -54,7 +54,7 @@ pub fn binary_to_page(
         }
     });
 
-    encode_bool_iter(&mut buffer, nulls_iterator, options.version)?;
+    encode_bool_iter(&mut buffer, deflevels_iter, options.version)?;
 
     let definition_levels_byte_length = buffer.len();
 

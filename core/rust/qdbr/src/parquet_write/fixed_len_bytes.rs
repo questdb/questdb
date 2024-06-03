@@ -22,7 +22,7 @@ pub fn bytes_to_page<const N: usize>(
     let mut buffer = vec![];
     let mut null_count = 0;
 
-    let nulls_iterator = data.iter().map(|bytes| {
+    let deflevels_iter = data.iter().map(|bytes| {
         // TODO: null
         if false {
             null_count += 1;
@@ -32,8 +32,8 @@ pub fn bytes_to_page<const N: usize>(
         }
     });
 
-    let length = nulls_iterator.len();
-    encode_bool_iter(&mut buffer, nulls_iterator, options.version)?;
+    let length = deflevels_iter.len();
+    encode_bool_iter(&mut buffer, deflevels_iter, options.version)?;
     let definition_levels_byte_length = buffer.len();
     encode_plain(data, &mut buffer);
     build_plain_page(

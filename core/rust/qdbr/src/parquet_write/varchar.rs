@@ -59,7 +59,7 @@ pub fn varchar_to_page(
     let mut buffer = vec![];
     let mut null_count = 0;
 
-    let nulls_iterator = aux.chunks(16).map(|bytes| {
+    let deflevels_iter = aux.chunks(16).map(|bytes| {
         let raw = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
         if is_null(raw) {
             null_count += 1;
@@ -69,8 +69,8 @@ pub fn varchar_to_page(
         }
     });
 
-    let length = nulls_iterator.len();
-    encode_bool_iter(&mut buffer, nulls_iterator, options.version)?;
+    let length = deflevels_iter.len();
+    encode_bool_iter(&mut buffer, deflevels_iter, options.version)?;
     let definition_levels_byte_length = buffer.len();
     encode_plain(aux, data, &mut buffer);
     build_plain_page(
