@@ -74,9 +74,9 @@ pub fn symbol_to_pages(
     let non_null_len = column_values.len() - null_count;
     let keys = ExactSizedIter::new(keys.into_iter(), non_null_len);
     // num_bits as a single byte
-    data_buffer.push(num_bits as u8);
+    data_buffer.push(num_bits);
     // followed by the encoded indices.
-    encode_u32(&mut data_buffer, keys, num_bits)?;
+    encode_u32(&mut data_buffer, keys, num_bits as u32)?;
 
     let uniq_vals = if dict_buffer.len() > 0 {
         max_key + 1

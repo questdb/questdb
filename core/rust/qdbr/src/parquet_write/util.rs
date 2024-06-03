@@ -111,8 +111,8 @@ pub fn encode_bool_iter<I: Iterator<Item = bool>>(
 }
 
 #[inline]
-pub fn get_bit_width(max: u64) -> u32 {
-    64 - max.leading_zeros()
+pub fn get_bit_width(max: u64) -> u8 {
+    (64 - max.leading_zeros()) as u8
 }
 
 #[allow(clippy::too_many_arguments)]
