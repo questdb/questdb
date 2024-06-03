@@ -54,7 +54,6 @@ public class UnionTest extends AbstractCairoTest {
                     true
             );
         });
-
     }
 
     @Test
