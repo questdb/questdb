@@ -53,8 +53,8 @@ pub fn symbol_to_pages(
 
     let mut null_count = 0;
     let nulls_iterator = column_values.iter().map(|key| {
+        // -1 denotes a null value
         if *key > -1 {
-            // key == -1, is null encoding
             true
         } else {
             null_count += 1;
