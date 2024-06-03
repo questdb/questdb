@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use num_traits::Bounded;
 use parquet2::encoding::delta_bitpacked::encode;
 use parquet2::encoding::Encoding;
@@ -11,7 +13,7 @@ use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter, MaxMin};
 use crate::parquet_write::{Nullable, ParquetError, ParquetResult};
 
-fn encode_plain<T: From<i8>, P>(
+fn encode_plain<T: From<i8> + Debug, P>(
     slice: &[T],
     column_top: usize,
     is_nullable: bool,
@@ -84,7 +86,7 @@ where
 }
 
 // floats encoding
-pub fn float_slice_to_page_plain<T: From<i8>, P>(
+pub fn float_slice_to_page_plain<T: From<i8> + Debug, P>(
     slice: &[T],
     column_top: usize,
     options: WriteOptions,
@@ -116,7 +118,7 @@ pub fn int_slice_to_page<T: From<i8>, P>(
 ) -> ParquetResult<Page>
 where
     P: NativeType + Bounded,
-    T: num_traits::AsPrimitive<P> + Bounded + Nullable,
+    T: num_traits::AsPrimitive<P> + Bounded + Nullable + Debug,
     P: num_traits::AsPrimitive<i64>,
 {
     let is_nullable = primitive_type.field_info.repetition == Repetition::Optional;
@@ -158,7 +160,7 @@ pub fn slice_to_page<T, P, F: Fn(&[T], usize, bool, usize, Vec<u8>) -> Vec<u8>>(
 ) -> ParquetResult<DataPage>
 where
     P: NativeType + Bounded,
-    T: num_traits::AsPrimitive<P> + Nullable + Bounded,
+    T: num_traits::AsPrimitive<P> + Nullable + Bounded + Debug,
 {
     let mut buffer = vec![];
     let mut null_count = 0;
@@ -187,7 +189,7 @@ where
 
     let statistics = if options.write_statistics {
         Some(build_statistics(
-            Some((null_count + column_top) as i64),
+            Some((column_top + null_count) as i64),
             statistics,
             primitive_type.clone(),
         ))
@@ -199,7 +201,7 @@ where
         buffer,
         slice.len(),
         slice.len(),
-        null_count,
+        column_top + null_count,
         definition_levels_byte_length,
         statistics,
         primitive_type,

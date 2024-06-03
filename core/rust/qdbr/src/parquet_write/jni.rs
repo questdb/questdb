@@ -102,7 +102,6 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             let symbol_offsets_addr = symbol_offsets_addrs_slice[i];
             let symbol_offsets_size = symbol_offsets_sizes_slice[i];
 
-            println!("Column::from_raw_data for {col_name}");
             let column = Column::from_raw_data(
                 col_name,
                 col_type,
