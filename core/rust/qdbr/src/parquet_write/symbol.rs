@@ -68,15 +68,14 @@ pub fn symbol_to_pages(
     let definition_levels_byte_length = data_buffer.len();
 
     let (dict_buffer, keys, max_key) = encode_dict(column_values, offsets, chars);
-    let num_bits = util::get_bit_width(max_key as u64);
+    let bits_per_key = util::get_bit_width(max_key as u64);
 
-    // print!("column:{}, keys: {}, offsets: {}, null_count: {}\n", column.name, keys.len(), offsets.len(), null_count);
     let non_null_len = column_values.len() - null_count;
     let keys = ExactSizedIter::new(keys.into_iter(), non_null_len);
-    // num_bits as a single byte
-    data_buffer.push(num_bits);
-    // followed by the encoded indices.
-    encode_u32(&mut data_buffer, keys, num_bits as u32)?;
+    // bits_per_key as a single byte...
+    data_buffer.push(bits_per_key);
+    // followed by the encoded keys.
+    encode_u32(&mut data_buffer, keys, bits_per_key as u32)?;
 
     let data_page = build_plain_page(
         data_buffer,
