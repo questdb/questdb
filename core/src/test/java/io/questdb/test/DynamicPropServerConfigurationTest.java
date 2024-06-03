@@ -42,6 +42,8 @@ import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.Properties;
 
+import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
+
 public class DynamicPropServerConfigurationTest extends AbstractTest {
 
     SOCountDownLatch latch;
@@ -50,110 +52,119 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
 
     @Test
     public void TestPgWireCredentialsReloadByDeletingProp() throws Exception {
-        try (FileWriter w = new FileWriter(serverConf)) {
-            w.write("pg.user=steven\n");
-            w.write("pg.password=sklar\n");
-        }
-
-        try (ServerMain serverMain = new ServerMain(getBootstrap())) {
-            serverMain.start();
-
-            try (Connection conn = getConnection("steven", "sklar")) {
-                Assert.assertFalse(conn.isClosed());
+        assertMemoryLeak(() ->{
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("pg.user=steven\n");
+                w.write("pg.password=sklar\n");
             }
 
-            // Overwrite file to remove props
-            try (FileWriter w = new FileWriter(serverConf, false)) {
-                w.write("\n");
-            }
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
 
-            latch.await();
+                try (Connection conn = getConnection("steven", "sklar")) {
+                    Assert.assertFalse(conn.isClosed());
+                }
 
-            try (Connection conn = getConnection("admin", "quest")) {
-                Assert.assertFalse(conn.isClosed());
+                // Overwrite file to remove props
+                try (FileWriter w = new FileWriter(serverConf, false)) {
+                    w.write("\n");
+                }
+
+                latch.await();
+
+                try (Connection conn = getConnection("admin", "quest")) {
+                    Assert.assertFalse(conn.isClosed());
+                }
             }
-        }
+        })
+
     }
 
     @Test
     public void TestPgWireCredentialsReloadWithChangedProp() throws Exception {
-        try (FileWriter w = new FileWriter(serverConf)) {
-            w.write("pg.user=steven\n");
-            w.write("pg.password=sklar\n");
-        }
-
-        try (ServerMain serverMain = new ServerMain(getBootstrap())) {
-            serverMain.start();
-
-            try (Connection conn = getConnection("steven", "sklar")) {
-                Assert.assertFalse(conn.isClosed());
-            }
-
+        assertMemoryLeak(()->{
             try (FileWriter w = new FileWriter(serverConf)) {
-                w.write("pg.user=nevets\n");
-                w.write("pg.password=ralks\n");
+                w.write("pg.user=steven\n");
+                w.write("pg.password=sklar\n");
             }
 
-            latch.await();
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
 
-            try (Connection conn = getConnection("nevets", "ralks")) {
-                Assert.assertFalse(conn.isClosed());
+                try (Connection conn = getConnection("steven", "sklar")) {
+                    Assert.assertFalse(conn.isClosed());
+                }
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("pg.user=nevets\n");
+                    w.write("pg.password=ralks\n");
+                }
+
+                latch.await();
+
+                try (Connection conn = getConnection("nevets", "ralks")) {
+                    Assert.assertFalse(conn.isClosed());
+                }
+                Assert.assertThrows(PSQLException.class, () -> getConnection("admin", "quest"));
             }
-            Assert.assertThrows(PSQLException.class, () -> getConnection("admin", "quest"));
-        }
+        });
     }
 
     @Test
     public void TestPgWireCredentialsReloadWithChangedPropAfterRecreatedFile() throws Exception {
+        assertMemoryLeak(()->{
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
 
-        try (ServerMain serverMain = new ServerMain(getBootstrap())) {
-            serverMain.start();
+                try (Connection conn = getConnection("admin", "quest")) {
+                    Assert.assertFalse(conn.isClosed());
+                }
 
-            try (Connection conn = getConnection("admin", "quest")) {
-                Assert.assertFalse(conn.isClosed());
+                Assert.assertTrue(serverConf.delete());
+                Assert.assertTrue(serverConf.createNewFile());
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("pg.user=steven\n");
+                    w.write("pg.password=sklar\n");
+                }
+
+                latch.await();
+
+                try (Connection conn = getConnection("steven", "sklar")) {
+                    Assert.assertFalse(conn.isClosed());
+                }
+
+                Assert.assertThrows(PSQLException.class, () -> getConnection("admin", "quest"));
             }
+        });
 
-            Assert.assertTrue(serverConf.delete());
-            Assert.assertTrue(serverConf.createNewFile());
-
-            try (FileWriter w = new FileWriter(serverConf)) {
-                w.write("pg.user=steven\n");
-                w.write("pg.password=sklar\n");
-            }
-
-            latch.await();
-
-            try (Connection conn = getConnection("steven", "sklar")) {
-                Assert.assertFalse(conn.isClosed());
-            }
-
-            Assert.assertThrows(PSQLException.class, () -> getConnection("admin", "quest"));
-        }
     }
 
     @Test
     public void TestPgWireCredentialsReloadWithNewProp() throws Exception {
-        try (ServerMain serverMain = new ServerMain(getBootstrap())) {
-            serverMain.start();
+        assertMemoryLeak(()->{
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
 
-            try (Connection conn = getConnection("admin", "quest")) {
-                Assert.assertFalse(conn.isClosed());
+                try (Connection conn = getConnection("admin", "quest")) {
+                    Assert.assertFalse(conn.isClosed());
+                }
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("pg.user=steven\n");
+                    w.write("pg.password=sklar\n");
+                }
+
+                latch.await();
+
+                try (Connection conn = getConnection("steven", "sklar")) {
+                    Assert.assertFalse(conn.isClosed());
+                }
+
+                Assert.assertThrows(PSQLException.class, () -> getConnection("admin", "quest"));
+
             }
-
-            try (FileWriter w = new FileWriter(serverConf)) {
-                w.write("pg.user=steven\n");
-                w.write("pg.password=sklar\n");
-            }
-
-            latch.await();
-
-            try (Connection conn = getConnection("steven", "sklar")) {
-                Assert.assertFalse(conn.isClosed());
-            }
-
-            Assert.assertThrows(PSQLException.class, () -> getConnection("admin", "quest"));
-
-        }
+        });
     }
 
     public Bootstrap getBootstrap() {
