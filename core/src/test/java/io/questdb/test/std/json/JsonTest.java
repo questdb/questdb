@@ -29,6 +29,8 @@ import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.GcUtf8String;
 import org.junit.*;
 
+import java.nio.charset.StandardCharsets;
+
 public class JsonTest {
     private static final String testUnicodeChars = "ðãµ¶Āڜ💩🦞";
     private static final String description = (
@@ -52,17 +54,20 @@ public class JsonTest {
             "  \"description\": \"" + description + "\"\n" +
             "}";
     private static DirectUtf8Sink json;
+    private static Json parser;
     private static final JsonResult result = new JsonResult();
 
     @BeforeClass
     public static void setUp() {
-        json = new DirectUtf8Sink(jsonStr.length() + Json.SIMDJSON_PADDING);
+        json = new DirectUtf8Sink(jsonStr.getBytes(StandardCharsets.UTF_8).length + Json.SIMDJSON_PADDING);
         json.put(jsonStr);
+        parser = new Json();
     }
 
     @AfterClass
     public static void tearDown() {
         json.close();
+        parser.close();
     }
 
     @Before
@@ -72,20 +77,20 @@ public class JsonTest {
 
     @Test
     public void testQueryPathString() {
-        try (DirectUtf8Sink dest = new DirectUtf8Sink(100)) {
-            Json.queryPathString(json, new GcUtf8String(".name"), result, dest, 100);
+        try (DirectUtf8Sink dest = new DirectUtf8Sink(1000)) {
+            parser.queryPathString(json, new GcUtf8String(".name"), result, dest, 100);
             Assert.assertEquals("John", dest.toString());
 
             GcUtf8String descriptionPath = new GcUtf8String(".description");
             dest.clear();
-            Json.queryPathString(json, descriptionPath, result, dest, 100);
+            parser.queryPathString(json, descriptionPath, result, dest, 100);
             Assert.assertEquals(description.substring(0, 100), dest.toString());
 
             // The maxLen == 272 chops one of the unicode characters and unless
             // the copy is handled with utf-8-aware logic it would produce a string
             // with an invalid utf-8 sequence.
             dest.clear();
-            Json.queryPathString(json, descriptionPath, result, dest, 272);
+            parser.queryPathString(json, descriptionPath, result, dest, 272);
             // The string is expected to be truncated at the last valid utf-8 sequence: 270 instead of 272.
             Assert.assertEquals(dest.size(), 270);
 
@@ -96,118 +101,118 @@ public class JsonTest {
 
     @Test
     public void testQueryPathBoolean() {
-        Assert.assertFalse(Json.queryPathBoolean(json, new GcUtf8String(".hasChildren"), result));
-        Assert.assertTrue(Json.queryPathBoolean(json, new GcUtf8String(".pets[1].scratches"), result));
+        Assert.assertFalse(parser.queryPathBoolean(json, new GcUtf8String(".hasChildren"), result));
+        Assert.assertTrue(parser.queryPathBoolean(json, new GcUtf8String(".pets[1].scratches"), result));
         Assert.assertEquals(result.getType(), JsonType.BOOLEAN);
     }
 
     @Test
     public void testQueryPathLong() {
-        Assert.assertEquals(30, Json.queryPathLong(json, new GcUtf8String(".age"), result));
+        Assert.assertEquals(30, parser.queryPathLong(json, new GcUtf8String(".age"), result));
         Assert.assertEquals(result.getType(), JsonType.NUMBER);
-        Assert.assertEquals(result.getNumType(), JsonNumType.SIGNED_INTEGER);
+    }
+
+    @Test
+    public void testConvertPathToPointer() {
+        try (DirectUtf8Sink dest = new DirectUtf8Sink(100)) {
+            Json.convertJsonPathToPointer(new GcUtf8String(".name[0]"), dest);
+            Assert.assertEquals("/name/0", dest.toString());
+        }
+    }
+
+    @Test
+    public void testQueryPointerLong() {
+        Assert.assertEquals(30, parser.queryPointerLong(json, new GcUtf8String("/age"), result));
     }
 
     @Test
     public void testQueryPathDouble() {
-        Assert.assertEquals(5.6, Json.queryPathDouble(json, new GcUtf8String(".height"), result), 0.0001);
+        Assert.assertEquals(5.6, parser.queryPathDouble(json, new GcUtf8String(".height"), result), 0.0001);
         Assert.assertEquals(result.getType(), JsonType.NUMBER);
-        Assert.assertEquals(result.getNumType(), JsonNumType.FLOATING_POINT_NUMBER);
     }
 
     @Test
     public void testInvalidPath() {
         try (DirectUtf8Sink dest = new DirectUtf8Sink(100)) {
-            Json.queryPathString(json, new GcUtf8String("£$£%£%invalid path!!"), result, dest, 100);
+            parser.queryPathString(json, new GcUtf8String("£$£%£%invalid path!!"), result, dest, 100);
             Assert.assertEquals(result.getError(), JsonError.INVALID_JSON_POINTER);
             Assert.assertEquals(result.getType(), JsonType.UNSET);
-            Assert.assertEquals(result.getNumType(), JsonNumType.UNSET);
         }
     }
 
     @Test
     public void testStringAbsent() {
         try (DirectUtf8Sink dest = new DirectUtf8Sink(100)) {
-            Json.queryPathString(json, new GcUtf8String(".nonexistent"), result, dest, 100);
+            parser.queryPathString(json, new GcUtf8String(".nonexistent"), result, dest, 100);
             Assert.assertEquals("", dest.toString());
             Assert.assertEquals(result.getType(), JsonType.UNSET);
-            Assert.assertEquals(result.getNumType(), JsonNumType.UNSET);
         }
     }
 
     @Test
     public void testLongAbsent() {
-        final long res = Json.queryPathLong(json, new GcUtf8String(".nonexistent"), result);
+        final long res = parser.queryPathLong(json, new GcUtf8String(".nonexistent"), result);
         Assert.assertEquals(Long.MIN_VALUE, res);
         Assert.assertEquals(result.getType(), JsonType.UNSET);
-        Assert.assertEquals(result.getNumType(), JsonNumType.UNSET);
     }
 
     @Test
     public void testBooleanAbsent() {
-        final boolean res = Json.queryPathBoolean(json, new GcUtf8String(".nonexistent"), result);
+        final boolean res = parser.queryPathBoolean(json, new GcUtf8String(".nonexistent"), result);
         Assert.assertFalse(res);
         Assert.assertEquals(result.getType(), JsonType.UNSET);
-        Assert.assertEquals(result.getNumType(), JsonNumType.UNSET);
     }
 
     @Test
     public void testDoubleAbsent() {
-        final double res = Json.queryPathDouble(json, new GcUtf8String(".nonexistent"), result);
+        final double res = parser.queryPathDouble(json, new GcUtf8String(".nonexistent"), result);
         Assert.assertTrue(Double.isNaN(res));
         Assert.assertEquals(result.getType(), JsonType.UNSET);
-        Assert.assertEquals(result.getNumType(), JsonNumType.UNSET);
     }
 
     @Test
     public void testStringNull() {
         try (DirectUtf8Sink dest = new DirectUtf8Sink(100)) {
-            Json.queryPathString(json, new GcUtf8String(".nothing"), result, dest, 100);
+            parser.queryPathString(json, new GcUtf8String(".nothing"), result, dest, 100);
             Assert.assertEquals("", dest.toString());
             Assert.assertEquals(result.getType(), JsonType.NULL);
-            Assert.assertEquals(result.getNumType(), JsonNumType.UNSET);
         }
     }
 
     @Test
     public void testLongNull() {
-        final long res = Json.queryPathLong(json, new GcUtf8String(".nothing"), result);
+        final long res = parser.queryPathLong(json, new GcUtf8String(".nothing"), result);
         Assert.assertEquals(Long.MIN_VALUE, res);
         Assert.assertEquals(result.getType(), JsonType.NULL);
-        Assert.assertEquals(result.getNumType(), JsonNumType.UNSET);
     }
 
     @Test
     public void testBooleanNull() {
-        final boolean res = Json.queryPathBoolean(json, new GcUtf8String(".nothing"), result);
+        final boolean res = parser.queryPathBoolean(json, new GcUtf8String(".nothing"), result);
         Assert.assertFalse(res);
         Assert.assertEquals(result.getType(), JsonType.NULL);
-        Assert.assertEquals(result.getNumType(), JsonNumType.UNSET);
     }
 
     @Test
     public void testDoubleNull() {
-        final double res = Json.queryPathDouble(json, new GcUtf8String(".nothing"), result);
+        final double res = parser.queryPathDouble(json, new GcUtf8String(".nothing"), result);
         Assert.assertTrue(Double.isNaN(res));
         Assert.assertEquals(result.getType(), JsonType.NULL);
-        Assert.assertEquals(result.getNumType(), JsonNumType.UNSET);
     }
 
     @Test
     public void testQueryPathLongU64() {
-        final long res = Json.queryPathLong(json, new GcUtf8String(".u64_val"), result);
+        final long res = parser.queryPathLong(json, new GcUtf8String(".u64_val"), result);
         Assert.assertEquals(Long.MIN_VALUE, res);
         Assert.assertEquals(result.getError(), JsonError.INCORRECT_TYPE);
         Assert.assertEquals(result.getType(), JsonType.NUMBER);
-        Assert.assertEquals(result.getNumType(), JsonNumType.UNSIGNED_INTEGER);
     }
 
     @Test
     public void testQueryPathLongBignum() {
-        final long res = Json.queryPathLong(json, new GcUtf8String(".bignum"), result);
+        final long res = parser.queryPathLong(json, new GcUtf8String(".bignum"), result);
         Assert.assertEquals(Long.MIN_VALUE, res);
         Assert.assertEquals(result.getError(), JsonError.INCORRECT_TYPE);
         Assert.assertEquals(result.getType(), JsonType.NUMBER);
-        Assert.assertEquals(result.getNumType(), JsonNumType.BIG_INTEGER);
     }
 }

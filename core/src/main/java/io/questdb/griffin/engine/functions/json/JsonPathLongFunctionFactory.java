@@ -46,7 +46,7 @@ public class JsonPathLongFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         final Function json = args.getQuick(0);
         final Function path = args.getQuick(1);
-        final DirectUtf8Sink pathSink = SupportingState.varcharConstantToDirectUtf8Sink(path);
-        return new JsonPathLongFunc(FUNCTION_NAME, json, path, pathSink, false);
+        final DirectUtf8Sink pointer = SupportingState.varcharConstantToJsonPointer(path);
+        return new JsonPathLongFunc(FUNCTION_NAME, json, path, pointer, false);
     }
 }

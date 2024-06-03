@@ -28,13 +28,27 @@ import io.questdb.cairo.CairoException;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Utf8Sequence;
 
 public class JsonResult implements QuietCloseable {
-    private long impl;
+    private static final int JSON_RESULT_STRUCT_SIZE = 12;
+    private static final int JSON_RESULT_STRUCT_TYPE_OFFSET = 4;
+    private final long impl;
 
     public JsonResult() {
-        this.impl = Unsafe.calloc(12, MemoryTag.NATIVE_DEFAULT);
+        this.impl = Unsafe.calloc(JSON_RESULT_STRUCT_SIZE, MemoryTag.NATIVE_DEFAULT);
+    }
+
+    public void clear() {
+        Unsafe.getUnsafe().putInt(impl, 0);
+        Unsafe.getUnsafe().putInt(impl + JSON_RESULT_STRUCT_TYPE_OFFSET, 0);
+    }
+
+    @Override
+    public void close() {
+        if (impl != 0) {
+            Unsafe.free(impl, JSON_RESULT_STRUCT_SIZE, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     // See constants in `JsonError` for possible values.
@@ -44,41 +58,25 @@ public class JsonResult implements QuietCloseable {
 
     // See constants in `JsonType` for possible values.
     public int getType() {
-        return Unsafe.getUnsafe().getInt(impl + 4);
+        return Unsafe.getUnsafe().getInt(impl + JSON_RESULT_STRUCT_TYPE_OFFSET);
     }
 
-    // See constants in `JsonNumType` for possible values.
-    public int getNumType() {
-        return Unsafe.getUnsafe().getInt(impl + 8);
-    }
-
-    public void clear() {
-        Unsafe.getUnsafe().putInt(impl, 0);
-        Unsafe.getUnsafe().putInt(impl + 4, 0);
-        Unsafe.getUnsafe().putInt(impl + 8, 0);
-    }
-
-    @Override
-    public void close() {
-        if (impl != 0) {
-            Unsafe.free(impl, 12, MemoryTag.NATIVE_DEFAULT);
-        }
-    }
-
-    /** Is not an error (e.g. NO_SUCH_FIELD) and is not a null */
+    /**
+     * Is not an error (e.g. NO_SUCH_FIELD) and is not a null
+     */
     public boolean hasValue() {
         return getError() == JsonError.SUCCESS;
-    }
-
-    public long ptr() {
-        return impl;
     }
 
     public boolean isNull() {
         return getType() == JsonType.NULL;
     }
 
-    public void throwIfError(String culpritFunctionName, DirectUtf8Sequence path) throws CairoException {
+    public long ptr() {
+        return impl;
+    }
+
+    public void throwIfError(String culpritFunctionName, Utf8Sequence path) throws CairoException {
         final int error = getError();
         if (error != JsonError.SUCCESS) {
             throw CairoException.nonCritical()

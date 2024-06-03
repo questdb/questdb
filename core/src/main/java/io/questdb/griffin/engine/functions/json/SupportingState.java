@@ -34,21 +34,27 @@ import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
 class SupportingState implements QuietCloseable {
+    public Json parser = new Json();
     public JsonResult jsonResult = new JsonResult();
     private DirectUtf8Sink jsonSink = null;
     public DirectUtf8Sequence jsonSeq = null;
 
-    public static @NotNull DirectUtf8Sink varcharConstantToDirectUtf8Sink(Function fn) {
+    public static @NotNull DirectUtf8Sink varcharConstantToJsonPointer(Function fn) {
         assert fn.isConstant();
         final Utf8Sequence seq = fn.getVarcharA(null);
         assert seq != null;
-        final DirectUtf8Sink sink = new DirectUtf8Sink(seq.size());
-        sink.put(seq);
-        return sink;
+        try (DirectUtf8Sink path = new DirectUtf8Sink(seq.size())) {
+            path.put(seq);
+            final DirectUtf8Sink pointer = new DirectUtf8Sink(seq.size());
+            Json.convertJsonPathToPointer(path, pointer);
+            return pointer;
+        }
     }
 
     @Override
     public void close() {
+        parser.close();
+
         if (jsonSink != null) {
             jsonSink.close();
         }

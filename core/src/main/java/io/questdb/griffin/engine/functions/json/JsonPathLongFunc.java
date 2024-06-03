@@ -28,7 +28,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
-import io.questdb.std.json.Json;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8Sequence;
 
@@ -37,14 +36,14 @@ public class JsonPathLongFunc extends LongFunction implements BinaryFunction {
     private final Function json;
     private final Function path;
     private final SupportingState state;
-    private final DirectUtf8Sink pathSink;
+    private final DirectUtf8Sink pointer;
     private final boolean strict;
 
-    public JsonPathLongFunc(String functionName, Function json, Function path, DirectUtf8Sink pathSink, boolean strict) {
+    public JsonPathLongFunc(String functionName, Function json, Function path, DirectUtf8Sink pointer, boolean strict) {
         this.functionName = functionName;
         this.json = json;
         this.path = path;
-        this.pathSink = pathSink;
+        this.pointer = pointer;
         this.strict = strict;
         this.state = new SupportingState();
     }
@@ -60,9 +59,9 @@ public class JsonPathLongFunc extends LongFunction implements BinaryFunction {
         if (jsonSeq == null) {
             return Long.MIN_VALUE;
         }
-        final long res = Json.queryPathLong(state.initPaddedJson(jsonSeq), pathSink, state.jsonResult);
+        final long res = state.parser.queryPointerLong(state.initPaddedJson(jsonSeq), pointer, state.jsonResult);
         if (strict && !state.jsonResult.isNull()) {
-            state.jsonResult.throwIfError(functionName, pathSink);
+            state.jsonResult.throwIfError(functionName, path.getVarcharA(null));
         }
         return res;
     }

@@ -33,7 +33,10 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+
+import java.util.Objects;
 
 class JsonPathFunc extends VarcharFunction implements BinaryFunction {
     private final VarcharSupportingState a = new VarcharSupportingState();
@@ -43,14 +46,14 @@ class JsonPathFunc extends VarcharFunction implements BinaryFunction {
     private final Function json;
     private final int maxSize;
     private final Function path;
-    private final DirectUtf8Sink pathSink;
+    private final DirectUtf8Sink pointer;
     private final boolean strict;
 
-    public JsonPathFunc(String functionName, Function json, Function path, DirectUtf8Sink pathSeq, int maxSize, boolean strict) {
+    public JsonPathFunc(String functionName, Function json, Function path, DirectUtf8Sink pointer, int maxSize, boolean strict) {
         this.functionName = functionName;
         this.json = json;
         this.path = path;
-        this.pathSink = pathSeq;
+        this.pointer = pointer;
         this.maxSize = maxSize;
         this.strict = strict;
     }
@@ -62,7 +65,7 @@ class JsonPathFunc extends VarcharFunction implements BinaryFunction {
         b.close();
         json.close();
         path.close();
-        pathSink.close();
+        pointer.close();
     }
 
     @Override
@@ -79,7 +82,7 @@ class JsonPathFunc extends VarcharFunction implements BinaryFunction {
     public void getVarchar(Record rec, Utf8Sink utf8Sink) {
         if (utf8Sink instanceof DirectUtf8Sink) {
             copied.destSink = (DirectUtf8Sink) utf8Sink;
-            jsonPath(functionName, json.getVarcharA(rec), pathSink, copied, maxSize, strict);
+            jsonPointer(functionName, json.getVarcharA(rec), pointer, Objects.requireNonNull(path.getVarcharA(null)), copied, maxSize, strict);
         } else {
             // Extra intermediate copy from malloc'd memory to java memory required.
             // TODO: Should the `utf8Sink` sink be cleared here?
@@ -94,30 +97,31 @@ class JsonPathFunc extends VarcharFunction implements BinaryFunction {
                 copied.destSink.clear();
                 copied.destSink.reserve(curtailedMaxSize);
             }
-            jsonPath(functionName, json.getVarcharA(rec), pathSink, copied, curtailedMaxSize, strict);
+            jsonPointer(functionName, json.getVarcharA(rec), pointer, Objects.requireNonNull(path.getVarcharA(null)), copied, curtailedMaxSize, strict);
             utf8Sink.put(copied.destSink);
         }
     }
 
     @Override
     public @Nullable DirectUtf8Sink getVarcharA(Record rec) {
-        return jsonPath(functionName, json.getVarcharA(rec), pathSink, a, maxSize, strict);
+        return jsonPointer(functionName, json.getVarcharA(rec), pointer, Objects.requireNonNull(path.getVarcharA(null)), a, maxSize, strict);
     }
 
     @Override
     public @Nullable DirectUtf8Sink getVarcharB(Record rec) {
-        return jsonPath(functionName, json.getVarcharB(rec), pathSink, b, maxSize, strict);
+        return jsonPointer(functionName, json.getVarcharB(rec), pointer, Objects.requireNonNull(path.getVarcharB(null)), b, maxSize, strict);
     }
 
-    private static @Nullable DirectUtf8Sink jsonPath(
+    private static @Nullable DirectUtf8Sink jsonPointer(
             String functionName,
             @Nullable Utf8Sequence json,
-            @Nullable DirectUtf8Sequence path,
+            @NotNull DirectUtf8Sequence pointer,
+            @NotNull Utf8Sequence path,
             VarcharSupportingState state,
             int maxSize,
             boolean strict
     ) {
-        if (json == null || path == null) {
+        if (json == null) {
             return null;
         }
         if (state.destSink == null) {
@@ -125,7 +129,7 @@ class JsonPathFunc extends VarcharFunction implements BinaryFunction {
         } else {
             state.destSink.clear();
         }
-        Json.queryPath(state.initPaddedJson(json), path, state.jsonResult, state.destSink, maxSize);
+        state.parser.queryPointer(state.initPaddedJson(json), pointer, state.jsonResult, state.destSink, maxSize);
         if (state.jsonResult.hasValue()) {
             return state.destSink;
         }
