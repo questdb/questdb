@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::mem;
+use std::mem::{self, size_of};
 
 use parquet2::encoding::hybrid_rle::encode_u32;
 use parquet2::encoding::Encoding;
@@ -13,33 +13,36 @@ use crate::parquet_write::{util, ParquetResult};
 
 fn encode_dict(column_vals: &[i32], offsets: &[u64], chars: &[u8]) -> (Vec<u8>, Vec<u32>, u32) {
     let mut dict_buffer = vec![];
-    let mut indices: Vec<u32> = Vec::new();
+    let mut local_keys: Vec<u32> = Vec::new();
     let mut keys_to_local = HashMap::new();
-    let mut serialised = 0;
+    let mut serialized_count = 0;
     for column_value in column_vals {
-        if *column_value > -1 {
-            let local_key = *keys_to_local.entry(*column_value).or_insert_with(|| {
-                let offset = offsets[*column_value as usize] as usize;
-                let size = i32::from_le_bytes(chars[offset..offset + 4].try_into().unwrap());
-                let data_slice: &[u16] =
-                    unsafe { mem::transmute(&chars[offset + 4..offset + 4 + size as usize]) };
-                let value = String::from_utf16(data_slice).expect("utf16 string");
-
-                let local_key = serialised;
-                dict_buffer.reserve(4 + value.len());
-                dict_buffer.extend_from_slice(&(value.len() as u32).to_le_bytes());
-                dict_buffer.extend_from_slice(value.as_bytes());
-                serialised += 1;
-                local_key
-            });
-            indices.push(local_key);
+        if *column_value <= -1 {
+            continue;
         }
+        let u32_size = size_of::<u32>();
+        let local_key = *keys_to_local.entry(*column_value).or_insert_with(|| {
+            let offset = offsets[*column_value as usize] as usize;
+            let (size_header, data_tail) = chars[offset..].split_at(u32_size);
+            let data_size = i32::from_le_bytes(size_header.try_into().unwrap()) as usize;
+            let data_u8 = &data_tail[..data_size];
+            let data_u16: &[u16] = unsafe { mem::transmute(data_u8) };
+            let value = String::from_utf16(data_u16).expect("utf16 string");
+
+            let local_key = serialized_count;
+            dict_buffer.reserve(u32_size + value.len());
+            dict_buffer.extend_from_slice(&(value.len() as u32).to_le_bytes());
+            dict_buffer.extend_from_slice(value.as_bytes());
+            serialized_count += 1;
+            local_key
+        });
+        local_keys.push(local_key);
     }
-    if serialised == 0 {
+    if serialized_count == 0 {
         // No symbol value used in the column data block, all were nulls
-        return (dict_buffer, indices, 0);
+        return (dict_buffer, local_keys, 0);
     }
-    (dict_buffer, indices, (serialised - 1) as u32)
+    (dict_buffer, local_keys, (serialized_count - 1) as u32)
 }
 
 pub fn symbol_to_pages(
@@ -75,13 +78,6 @@ pub fn symbol_to_pages(
     // followed by the encoded indices.
     encode_u32(&mut data_buffer, keys, num_bits as u32)?;
 
-    let uniq_vals = if dict_buffer.len() > 0 {
-        max_key + 1
-    } else {
-        0
-    };
-    let dict_page = DictPage::new(dict_buffer, uniq_vals as usize, false);
-
     let data_page = build_plain_page(
         data_buffer,
         length,
@@ -93,6 +89,13 @@ pub fn symbol_to_pages(
         options,
         Encoding::RleDictionary,
     )?;
+
+    let uniq_vals = if dict_buffer.len() > 0 {
+        max_key + 1
+    } else {
+        0
+    };
+    let dict_page = DictPage::new(dict_buffer, uniq_vals as usize, false);
 
     Ok(DynIter::new(
         [Page::Dict(dict_page), Page::Data(data_page)]
