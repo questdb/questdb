@@ -38,10 +38,11 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
      */
     long getUpdateRowId(long rowIndex);
 
-    @Nullable PageFrame next();
+    @Nullable
+    PageFrame next();
 
     /**
-     * @return size of page in bytes
+     * @return size of page in rows
      */
     long size();
 
