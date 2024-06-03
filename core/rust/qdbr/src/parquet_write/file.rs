@@ -5,7 +5,7 @@ use parquet2::compression::CompressionOptions;
 use parquet2::encoding::Encoding;
 use parquet2::metadata::SchemaDescriptor;
 use parquet2::page::{CompressedPage, Page};
-use parquet2::schema::types::{ParquetType, PrimitiveType};
+use parquet2::schema::types::{ParquetType, PhysicalType, PrimitiveType};
 use parquet2::write::{
     Compressor, DynIter, DynStreamingIterator, FileWriter, RowGroupIter, Version,
     WriteOptions as FileWriteOptions,
@@ -92,7 +92,7 @@ impl<W: Write> ParquetWriter<W> {
         WriteOptions {
             write_statistics: self.statistics,
             compression: self.compression,
-            version: Version::V2,
+            version: Version::V1,
             row_group_size: self.row_group_size,
             data_page_size: self.data_page_size,
         }
@@ -240,10 +240,8 @@ fn column_chunk_to_pages(
     }
 
     let number_of_rows = chunk_length;
-    // let max_page_size = options.data_page_size.unwrap_or(DEFAULT_PAGE_SIZE);
-    // let max_page_size = max_page_size.min(2usize.pow(31) - 2usize.pow(25));
-    // let rows_per_page = (max_page_size / (std::mem::size_of::<T>() + 1)).max(1);
-    let rows_per_page = 10; //TODO: estimate chunk byte size
+    let max_page_size = options.data_page_size.unwrap_or(DEFAULT_PAGE_SIZE);
+    let rows_per_page = max_page_size / bytes_per_type(primitive_type.physical_type);
 
     let rows = (0..number_of_rows)
         .step_by(rows_per_page)
@@ -381,5 +379,15 @@ fn chunk_to_page(
             // TODO: JNI, pass SymbolMap raw memory
             unimplemented!()
         }
+    }
+}
+
+fn bytes_per_type(primitive_type: PhysicalType) -> usize {
+    match primitive_type {
+        PhysicalType::Boolean => 1,
+        PhysicalType::Int32 => 4,
+        PhysicalType::Int96 => 12,
+        PhysicalType::Float => 4,
+        _ => 8,
     }
 }
