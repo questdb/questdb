@@ -173,6 +173,7 @@ impl<W: Write> ChunkedWriter<W> {
     }
 }
 
+// TODO: we need to include designated timestamp column into sorting_columns.
 fn create_row_group(
     partition: &Partition,
     offset: usize,
