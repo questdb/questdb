@@ -8,6 +8,15 @@ jobs:
         - Agent.Name -equals arm64-$(System.StageName)$(Build.BuildId)
     dependsOn:
       - StartArmAgent
+  - job: linux_x64_zfs
+    displayName: "on linux-x64-zfs"
+    pool:
+      name: "amd64-zfs"
+      vmImage:
+      demands:
+        - Agent.Name -equals amd64-zfs-$(System.StageName)$(Build.BuildId)
+    dependsOn:
+      - StartX64ZfsAgent
 
     timeoutInMinutes: 60
     condition: eq(variables['System.PullRequest.IsFork'], 'false')
