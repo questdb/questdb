@@ -25,54 +25,43 @@
 package io.questdb.test.std;
 
 import io.questdb.std.DebouncingRunnable;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.time.Duration;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class DebouncingRunnableTest {
 
     @Test
-    public void testDebouncingRunnable() {
+    public void testDebouncingRunnable() throws Exception {
         AtomicInteger callCount = new AtomicInteger();
 
         Runnable runnable = callCount::incrementAndGet;
 
-        StatefulTestMicroClock clock = new StatefulTestMicroClock(1);
-        long debouncePeriod = 1000 * 5;
+        DebouncingRunnable debouncingRunnable = new DebouncingRunnable(runnable, Duration.ofSeconds(2));
 
-        DebouncingRunnable debouncingRunnable = new DebouncingRunnable(runnable, debouncePeriod, clock);
+        // Runnable will wait until duration has passed
         debouncingRunnable.run();
+        Assert.assertEquals(0, callCount.get());
+
+        // Even if we call it again, we will still wait
+        debouncingRunnable.run();
+        Assert.assertEquals(0, callCount.get());
+
+        // Now lets wait the full duration. Since time has passed, we should have made the call
+        Thread.sleep(Duration.ofMillis(2500).toMillis());
         Assert.assertEquals(1, callCount.get());
 
+        // Let's run it again to see that call count does not immediately increase, and we wait the duration
+        // to see that the second call was made
         debouncingRunnable.run();
         Assert.assertEquals(1, callCount.get());
-
-        debouncingRunnable.run();
-        Assert.assertEquals(1, callCount.get());
-
-        clock.getTicks();
-        clock.getTicks();
-        clock.getTicks();
-
-        debouncingRunnable.run();
+        Thread.sleep(Duration.ofMillis(2500).toMillis());
         Assert.assertEquals(2, callCount.get());
 
+
     }
 
-    public class StatefulTestMicroClock implements MicrosecondClock {
-        private final long increment;
-        private long micros;
 
-        public StatefulTestMicroClock(long increment) {
-            this.increment = increment * 1000;
-        }
-
-        @Override
-        public long getTicks() {
-            this.micros += this.increment;
-            return this.micros;
-        }
-    }
 }

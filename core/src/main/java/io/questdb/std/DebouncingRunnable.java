@@ -24,26 +24,43 @@
 
 package io.questdb.std;
 
-import io.questdb.std.datetime.microtime.MicrosecondClock;
+import java.time.Duration;
 
 public class DebouncingRunnable implements Runnable {
-    private final MicrosecondClock clock;
-    private final long microsecondPeriod;
+    private final Duration debouncePeriod;
     private final Runnable runnable;
-    private long lastCall;
+    private Thread thread;
 
 
-    public DebouncingRunnable(Runnable runnable, long microsecondPeriod, MicrosecondClock clock) {
+    public DebouncingRunnable(Runnable runnable, Duration debouncePeriod) {
+        this.debouncePeriod = debouncePeriod;
         this.runnable = runnable;
-        this.microsecondPeriod = microsecondPeriod;
-        this.clock = clock;
+        this.reset();
+
     }
 
     public void run() {
-        if (lastCall == 0 || (lastCall + this.microsecondPeriod) < clock.getTicks()) {
-            this.runnable.run();
-            this.lastCall = clock.getTicks();
+        switch (thread.getState()) {
+            case NEW:
+                thread.start();
+                break;
+            case TERMINATED:
+                this.reset();
+                thread.start();
+                break;
         }
+
+    }
+
+    private void reset() {
+        this.thread = new Thread(() -> {
+            try {
+                Thread.sleep(this.debouncePeriod.toMillis());
+                runnable.run();
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+        });
     }
 
 
