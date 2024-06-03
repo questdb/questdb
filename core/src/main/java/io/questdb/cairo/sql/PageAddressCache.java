@@ -119,10 +119,6 @@ public class PageAddressCache implements Mutable {
     }
 
     public long getPageSize(int frameIndex, int columnIndex) {
-        System.err.println("getPageSize :: (A) " +
-                "pageSizes.size(): " + pageSizes.size() +
-                ", varSizeColumnCount:" + varSizeColumnCount +
-                ", columnCount: " + columnCount);
         assert pageSizes.size() >= varSizeColumnCount * (frameIndex + 1);
         int varSizeColumnIndex = varSizeColumnIndexes.getQuick(columnIndex);
         assert varSizeColumnIndex > -1;
