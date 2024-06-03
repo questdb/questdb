@@ -11,12 +11,8 @@ use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter};
 use crate::parquet_write::{util, ParquetResult};
 
-fn encode_dict(
-    column_vals: &[i32],
-    offsets: &[u64],
-    chars: &[u8],
-    page: &mut Vec<u8>,
-) -> (Vec<u32>, u32) {
+fn encode_dict(column_vals: &[i32], offsets: &[u64], chars: &[u8]) -> (Vec<u8>, Vec<u32>, u32) {
+    let mut dict_buffer = vec![];
     let mut indices: Vec<u32> = Vec::new();
     let mut keys_to_local = HashMap::new();
     let mut serialised = 0;
@@ -30,9 +26,9 @@ fn encode_dict(
                 let value = String::from_utf16(data_slice).expect("utf16 string");
 
                 let local_key = serialised;
-                page.reserve(4 + value.len());
-                page.extend_from_slice(&(value.len() as u32).to_le_bytes());
-                page.extend_from_slice(value.as_bytes());
+                dict_buffer.reserve(4 + value.len());
+                dict_buffer.extend_from_slice(&(value.len() as u32).to_le_bytes());
+                dict_buffer.extend_from_slice(value.as_bytes());
                 serialised += 1;
                 local_key
             });
@@ -41,9 +37,9 @@ fn encode_dict(
     }
     if serialised == 0 {
         // No symbol value used in the column data block, all were nulls
-        return (indices, 0);
+        return (dict_buffer, indices, 0);
     }
-    (indices, (serialised - 1) as u32)
+    (dict_buffer, indices, (serialised - 1) as u32)
 }
 
 pub fn symbol_to_pages(
@@ -53,8 +49,7 @@ pub fn symbol_to_pages(
     options: WriteOptions,
     type_: PrimitiveType,
 ) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
-    let mut dict_buffer = vec![];
-    let (keys, max_key) = encode_dict(column_values, offsets, chars, &mut dict_buffer);
+    let (dict_buffer, keys, max_key) = encode_dict(column_values, offsets, chars);
 
     let mut null_count = 0;
     let nulls_iterator = column_values.iter().map(|key| {
