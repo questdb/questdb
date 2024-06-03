@@ -41,7 +41,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     col_types_ptr: *const i32,
     col_ids_ptr: *const i32,
     _timestamp_index: jint,
-    _col_tops_ptr: *const i64,
+    col_tops_ptr: *const i64,
     primary_col_addrs_ptr: *const *const u8,
     primary_col_sizes_ptr: *const i64,
     secondary_col_addrs_ptr: *const *const u8,
@@ -61,6 +61,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             col_name_lengths_ptr,
         );
         let col_types = unsafe { slice::from_raw_parts(col_types_ptr, col_count) };
+        let col_tops = unsafe { slice::from_raw_parts(col_tops_ptr, col_count) };
         let _col_ids = unsafe { slice::from_raw_parts(col_ids_ptr, col_count) };
 
         let primary_col_addrs_slice =
@@ -90,6 +91,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         for i in 0..col_count {
             let col_name = col_names[i];
             let col_type = col_types[i];
+            let col_top = col_tops[i];
 
             let primary_col_addr = primary_col_addrs_slice[i];
             let primary_col_size = primary_col_sizes_slice[i];
@@ -100,9 +102,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             let symbol_offsets_addr = symbol_offsets_addrs_slice[i];
             let symbol_offsets_size = symbol_offsets_sizes_slice[i];
 
+            println!("Column::from_raw_data for {col_name}");
             let column = Column::from_raw_data(
                 col_name,
                 col_type,
+                col_top,
                 row_count,
                 primary_col_addr,
                 primary_col_size as usize,

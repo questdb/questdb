@@ -1,3 +1,5 @@
+use std::mem::size_of;
+
 use parquet2::encoding::Encoding;
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
@@ -53,19 +55,27 @@ fn is_inlined(raw: u32) -> bool {
 pub fn varchar_to_page(
     aux: &[u8],
     data: &[u8],
+    column_top: usize,
     options: WriteOptions,
     primitive_type: PrimitiveType,
 ) -> ParquetResult<Page> {
+    let aux_entry_size = 16;
     let mut buffer = vec![];
     let mut null_count = 0;
 
-    let deflevels_iter = aux.chunks(16).map(|bytes| {
-        let raw = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
-        if is_null(raw) {
+    let deflevels_iter = (0..column_top + aux.len() / aux_entry_size).map(|i| {
+        if i < column_top {
             null_count += 1;
             false
         } else {
-            true
+            let bytes = &aux[aux_entry_size * (i - column_top)..][..aux_entry_size];
+            let raw = u32::from_le_bytes(bytes[0..size_of::<u32>()].try_into().unwrap());
+            if is_null(raw) {
+                null_count += 1;
+                false
+            } else {
+                true
+            }
         }
     });
 

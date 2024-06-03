@@ -136,6 +136,7 @@ mod tests {
         Column::from_raw_data(
             name,
             col_type as i32,
+            0,
             row_count,
             buff.as_ptr(),
             buff.len(),
@@ -222,6 +223,7 @@ mod tests {
         let col1_w = Column::from_raw_data(
             "col1",
             12,
+            0,
             col1.len(),
             col1.as_ptr() as *const u8,
             col1.len() * size_of::<i32>(),
@@ -281,6 +283,7 @@ mod tests {
         let col1_w = Column::from_raw_data(
             "col1",
             5,
+            0,
             col1.len(),
             col1.as_ptr() as *const u8,
             col1.len() * size_of::<i32>(),
@@ -294,6 +297,7 @@ mod tests {
         let col2_w = Column::from_raw_data(
             "col2",
             9,
+            0,
             col2.len(),
             col2.as_ptr() as *const u8,
             col2.len() * size_of::<f32>(),
@@ -351,6 +355,7 @@ mod tests {
         let col1_w = Column::from_raw_data(
             "col1",
             6,
+            0,
             col1.len(),
             col1.as_ptr() as *const u8,
             col1.len() * size_of::<i64>(),

@@ -166,7 +166,7 @@ impl<W: Write> ChunkedWriter<W> {
         Ok(())
     }
 
-    /// Writes the footer of the parquet file. Returns the total size of the file.
+    /// Write the footer of the parquet file. Returns the total size of the file.
     pub fn finish(&mut self) -> ParquetResult<u64> {
         let size = self.writer.end(None)?;
         Ok(size)
@@ -276,61 +276,83 @@ fn chunk_to_page(
     options: WriteOptions,
     encoding: Encoding,
 ) -> ParquetResult<Page> {
+    let column_top = column.column_top;
+    let lower_bound = if offset < column_top {
+        0
+    } else {
+        offset - column_top
+    };
+    let upper_bound = if offset + length < column_top {
+        0
+    } else {
+        offset + length - column_top
+    };
     match column.data_type {
         ColumnType::Boolean => {
             let column = column.primary_data;
-            boolean::slice_to_page(&column[offset..offset + length], options, type_)
+            boolean::slice_to_page(
+                &column[lower_bound..upper_bound],
+                column_top,
+                options,
+                primitive_type,
+            )
         }
         ColumnType::Byte | ColumnType::GeoByte => {
             let column: &[i8] = unsafe { mem::transmute(column.primary_data) };
             primitive::int_slice_to_page::<i8, i32>(
-                &column[offset..offset + length],
+                &column[lower_bound..upper_bound],
+                column_top,
                 options,
-                type_,
+                primitive_type,
                 encoding,
             )
         }
         ColumnType::Short | ColumnType::Char | ColumnType::GeoShort => {
             let column: &[i16] = unsafe { mem::transmute(column.primary_data) };
             primitive::int_slice_to_page::<i16, i32>(
-                &column[offset..offset + length],
+                &column[lower_bound..upper_bound],
+                column_top,
                 options,
-                type_,
+                primitive_type,
                 encoding,
             )
         }
         ColumnType::Int | ColumnType::GeoInt | ColumnType::IPv4 => {
             let column: &[i32] = unsafe { mem::transmute(column.primary_data) };
             primitive::int_slice_to_page::<i32, i32>(
-                &column[offset..offset + length],
+                &column[lower_bound..upper_bound],
+                column_top,
                 options,
-                type_,
+                primitive_type,
                 encoding,
             )
         }
         ColumnType::Long | ColumnType::GeoLong | ColumnType::Date | ColumnType::Timestamp => {
             let column: &[i64] = unsafe { mem::transmute(column.primary_data) };
             primitive::int_slice_to_page::<i64, i64>(
-                &column[offset..offset + length],
+                &column[lower_bound..upper_bound],
+                column_top,
                 options,
-                type_,
+                primitive_type,
                 encoding,
             )
         }
         ColumnType::Float => {
             let column: &[f32] = unsafe { mem::transmute(column.primary_data) };
             primitive::float_slice_to_page_plain::<f32, f32>(
-                &column[offset..offset + length],
+                &column[lower_bound..upper_bound],
+                column_top,
                 options,
-                type_,
+                primitive_type,
             )
         }
         ColumnType::Double => {
             let column: &[f64] = unsafe { mem::transmute(column.primary_data) };
             primitive::float_slice_to_page_plain::<f64, f64>(
-                &column[offset..offset + length],
+                &column[lower_bound..upper_bound],
+                column_top,
                 options,
-                type_,
+                primitive_type,
             )
         }
         ColumnType::Binary => {
@@ -338,10 +360,11 @@ fn chunk_to_page(
             let offsets: &[i64] =
                 unsafe { mem::transmute(column.secondary_data.expect("offsets")) };
             binary::binary_to_page(
-                &offsets[offset..offset + length],
+                &offsets[lower_bound..upper_bound],
                 data,
+                column_top,
                 options,
-                type_,
+                primitive_type,
                 encoding,
             )
         }
@@ -350,10 +373,11 @@ fn chunk_to_page(
             let offsets: &[i64] =
                 unsafe { mem::transmute(column.secondary_data.expect("offsets")) };
             string::string_to_page(
-                &offsets[offset..offset + length],
+                &offsets[lower_bound..upper_bound],
                 data,
+                column_top,
                 options,
-                type_,
+                primitive_type,
                 encoding,
             )
         }
@@ -361,10 +385,11 @@ fn chunk_to_page(
             let data = column.primary_data;
             let aux: &[u8] = column.secondary_data.expect("aux");
             varchar::varchar_to_page(
-                &aux[offset * 16..(offset + length) * 16],
+                &aux[lower_bound * 16..upper_bound * 16],
                 data,
+                column_top,
                 options,
-                type_,
+                primitive_type,
             )
         }
         ColumnType::Long128 | ColumnType::Uuid => {

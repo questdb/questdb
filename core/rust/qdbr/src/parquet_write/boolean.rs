@@ -20,15 +20,21 @@ fn encode_plain(iterator: impl Iterator<Item = bool>, buffer: &mut Vec<u8>) -> P
 
 pub fn slice_to_page(
     slice: &[u8],
+    column_top: usize,
     options: WriteOptions,
     primitive_type: PrimitiveType,
 ) -> ParquetResult<Page> {
     let mut buffer = vec![];
     let mut stats = MaxMin::new();
     encode_plain(
-        slice.iter().map(|x| {
-            stats.update(*x as i32);
-            *x != 0
+        (0..column_top + slice.len()).map(|i| {
+            let x = if i < column_top {
+                0
+            } else {
+                slice[i - column_top]
+            };
+            stats.update(x as i32);
+            x != 0
         }),
         &mut buffer,
     )?;

@@ -11,8 +11,9 @@ use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter, MaxMin};
 use crate::parquet_write::{Nullable, ParquetError, ParquetResult};
 
-fn encode_plain<T, P>(
+fn encode_plain<T: From<i8>, P>(
     slice: &[T],
+    column_top: usize,
     is_nullable: bool,
     null_count: usize,
     mut buffer: Vec<u8>,
@@ -29,18 +30,24 @@ where
             buffer.extend_from_slice(parquet_native.to_le_bytes().as_ref())
         }
     } else {
-        buffer.reserve(std::mem::size_of::<P>() * slice.len());
+        buffer.reserve(std::mem::size_of::<P>() * (column_top + slice.len()));
         // append all values
-        slice.iter().for_each(|x| {
+        for i in 0..column_top + slice.len() {
+            let x = if i < column_top {
+                T::from(0i8)
+            } else {
+                slice[i - column_top]
+            };
             let parquet_native: P = x.as_();
             buffer.extend_from_slice(parquet_native.to_le_bytes().as_ref())
-        });
+        }
     }
     buffer
 }
 
-fn encode_delta<T, P>(
+fn encode_delta<T: From<i8>, P>(
     slice: &[T],
+    column_top: usize,
     is_nullable: bool,
     null_count: usize,
     mut buffer: Vec<u8>,
@@ -61,7 +68,12 @@ where
         encode(iterator, &mut buffer)
     } else {
         // append all values
-        let iterator = slice.iter().map(|x| {
+        let iterator = (0..column_top + slice.len()).map(|i| {
+            let x = if i < column_top {
+                T::from(0i8)
+            } else {
+                slice[i - column_top]
+            };
             let parquet_native: P = x.as_();
             let integer: i64 = parquet_native.as_();
             integer
@@ -72,8 +84,9 @@ where
 }
 
 // floats encoding
-pub fn float_slice_to_page_plain<T, P>(
+pub fn float_slice_to_page_plain<T: From<i8>, P>(
     slice: &[T],
+    column_top: usize,
     options: WriteOptions,
     primitive_type: PrimitiveType,
 ) -> ParquetResult<Page>
@@ -81,9 +94,10 @@ where
     P: NativeType + Bounded,
     T: num_traits::AsPrimitive<P> + Nullable + num_traits::Float + Bounded,
 {
-    let is_nullable = type_.field_info.repetition == Repetition::Optional;
+    let is_nullable = primitive_type.field_info.repetition == Repetition::Optional;
     slice_to_page(
         slice,
+        column_top,
         is_nullable,
         options,
         primitive_type,
@@ -93,8 +107,9 @@ where
     .map(Page::Data)
 }
 
-pub fn int_slice_to_page<T, P>(
+pub fn int_slice_to_page<T: From<i8>, P>(
     slice: &[T],
+    column_top: usize,
     options: WriteOptions,
     primitive_type: PrimitiveType,
     encoding: Encoding,
@@ -108,6 +123,7 @@ where
     match encoding {
         Encoding::Plain => slice_to_page(
             slice,
+            column_top,
             is_nullable,
             options,
             primitive_type,
@@ -116,6 +132,7 @@ where
         ),
         Encoding::DeltaBinaryPacked => slice_to_page(
             slice,
+            column_top,
             is_nullable,
             options,
             primitive_type,
@@ -130,8 +147,9 @@ where
     .map(Page::Data)
 }
 
-pub fn slice_to_page<T, P, F: Fn(&[T], bool, usize, Vec<u8>) -> Vec<u8>>(
+pub fn slice_to_page<T, P, F: Fn(&[T], usize, bool, usize, Vec<u8>) -> Vec<u8>>(
     slice: &[T],
+    column_top: usize,
     is_nullable: bool,
     options: WriteOptions,
     primitive_type: PrimitiveType,
@@ -146,26 +164,30 @@ where
     let mut null_count = 0;
     let mut statistics = MaxMin::new();
     if is_nullable {
-        let deflevels_iter = slice.iter().map(|v| {
-            let value = *v;
-            if value.is_null() {
-                null_count += 1;
+        let deflevels_iter = (0..column_top + slice.len()).map(|i| {
+            if i < column_top {
                 false
             } else {
-                let v: P = value.as_();
-                statistics.update(v);
-                true
+                let value = slice[i - column_top];
+                if value.is_null() {
+                    null_count += 1;
+                    false
+                } else {
+                    let v: P = value.as_();
+                    statistics.update(v);
+                    true
+                }
             }
         });
         encode_bool_iter(&mut buffer, deflevels_iter, options.version)?;
     };
 
     let definition_levels_byte_length = buffer.len();
-    let buffer = encode_fn(slice, is_nullable, null_count, buffer);
+    let buffer = encode_fn(slice, column_top, is_nullable, null_count, buffer);
 
     let statistics = if options.write_statistics {
         Some(build_statistics(
-            Some(null_count as i64),
+            Some((null_count + column_top) as i64),
             statistics,
             primitive_type.clone(),
         ))
