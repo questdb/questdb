@@ -26,7 +26,6 @@ package io.questdb.test.griffin.engine.table.parquet;
 
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -41,9 +40,9 @@ public class PartitionEncoderTest extends AbstractCairoTest {
 
     @Test
     @Ignore
-    public void testEncodeExternal() {
-        String root = "/Users/alpel/temp/db";
-        final QuestDBTestNode node2 = newNode(2, root);
+    public void testEncodeExternal() throws Exception {
+        final String root2 = temp.newFolder("dbRoot2").getAbsolutePath();
+        final QuestDBTestNode node2 = newNode(2, root2);
         nodes.remove(node2);
 
         try (
@@ -51,7 +50,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                 PartitionEncoder partitionEncoder = new PartitionEncoder();
                 TableReader reader = node2.getEngine().getReader("request_logs_conv")
         ) {
-            path.of(root).concat("x.parquet").$();
+            path.of(root2).concat("x.parquet").$();
             long start = System.nanoTime();
             partitionEncoder.encode(reader, 0, path);
             LOG.info().$("Took: ").$((System.nanoTime() - start) / 1_000_000).$("ms").$();
@@ -59,9 +58,9 @@ public class PartitionEncoderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testEncodeRandom() throws SqlException {
-        String root = "/Users/alpel/temp/db";
-        final QuestDBTestNode node2 = newNode(2, root);
+    public void testEncodeRandom() throws Exception {
+        final String root2 = temp.newFolder("dbRoot2").getAbsolutePath();
+        final QuestDBTestNode node2 = newNode(2, root2);
         node2.initGriffin();
         nodes.remove(node2);
 
@@ -69,7 +68,6 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                 Path path = new Path();
                 PartitionEncoder partitionEncoder = new PartitionEncoder()
         ) {
-
             TableToken xToken = node2.getEngine().getTableTokenIfExists("x");
             if (xToken != null) {
                 node2.getEngine().drop("drop table x", node2.getSqlExecutionContext());
@@ -105,7 +103,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                     node2.getSqlExecutionContext());
 
             TableReader reader = node2.getEngine().getReader("x");
-            path.of(root).concat("x.parquet").$();
+            path.of(root2).concat("x.parquet").$();
             long start = System.nanoTime();
             partitionEncoder.encode(reader, 0, path);
             LOG.info().$("Took: ").$((System.nanoTime() - start) / 1_000_000).$("ms").$();
