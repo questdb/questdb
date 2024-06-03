@@ -6,15 +6,13 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
-import java.util.concurrent.atomic.AtomicBoolean;
-
 public class KqueueFileWatcher extends FileWatcher {
     private final int bufferSize;
-    private final AtomicBoolean closed = new AtomicBoolean();
     private final int dirFd;
     private final long eventList;
     private final long evtDir;
     private final long evtFile;
+    private final long evtPipe;
     private final int fileFd;
     private final int kq;
     private final int readEndFd;
@@ -65,6 +63,14 @@ public class KqueueFileWatcher extends FileWatcher {
         Files.bumpFileCount(this.readEndFd);
         Files.bumpFileCount(this.writeEndFd);
 
+        this.evtPipe = KqueueAccessor.evtAlloc(
+                this.readEndFd,
+                KqueueAccessor.EVFILT_READ,
+                KqueueAccessor.EV_ADD | KqueueAccessor.EV_CLEAR,
+                0,
+                0
+        );
+
         kq = KqueueAccessor.kqueue();
         if (kq < 0) {
             throw new FileWatcherNativeException("kqueue");
@@ -93,6 +99,15 @@ public class KqueueFileWatcher extends FileWatcher {
             throw new FileWatcherNativeException("keventRegister (dirEvent)");
         }
 
+        int pipeRes = KqueueAccessor.keventRegister(
+                kq,
+                evtPipe,
+                1
+        );
+        if (pipeRes < 0) {
+            throw new FileWatcherNativeException("keventRegister (pipeEvent)");
+        }
+
     }
 
     @Override
@@ -113,6 +128,7 @@ public class KqueueFileWatcher extends FileWatcher {
             Unsafe.free(this.eventList, bufferSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
             KqueueAccessor.evtFree(this.evtFile);
             KqueueAccessor.evtFree(this.evtDir);
+            KqueueAccessor.evtFree(this.evtPipe);
         }
     }
 
