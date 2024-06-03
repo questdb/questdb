@@ -57,10 +57,11 @@ public class PageAddressCache implements Mutable {
             pageAddresses.add(pageAddress);
             int varSizeColumnIndex = varSizeColumnIndexes.getQuick(columnIndex);
             if (varSizeColumnIndex > -1) {
-                pageLimits.add(pageAddress + getPageSize(frameIndex, columnIndex));
                 final long auxPageAddress = frame.getIndexPageAddress(columnIndex);
                 auxPageAddresses.add(auxPageAddress);
-                pageSizes.add(frame.getPageSize(columnIndex));
+                final long pageSize = frame.getPageSize(columnIndex);
+                pageSizes.add(pageSize);
+                pageLimits.add(pageAddress + pageSize);
                 final long frameRowCount = frame.getPartitionHi() - frame.getPartitionLo();
                 varcharAuxPageLimits.extendAndSet(
                         columnCount * frameIndex + columnIndex,
@@ -118,6 +119,10 @@ public class PageAddressCache implements Mutable {
     }
 
     public long getPageSize(int frameIndex, int columnIndex) {
+        System.err.println("getPageSize :: (A) " +
+                "pageSizes.size(): " + pageSizes.size() +
+                ", varSizeColumnCount:" + varSizeColumnCount +
+                ", columnCount: " + columnCount);
         assert pageSizes.size() >= varSizeColumnCount * (frameIndex + 1);
         int varSizeColumnIndex = varSizeColumnIndexes.getQuick(columnIndex);
         assert varSizeColumnIndex > -1;
