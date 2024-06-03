@@ -192,6 +192,6 @@ public class KqueueFileWatcher extends FileWatcher {
         // For now, we don't filter events down to the file,
         // we trigger on every change in the directory
         // todo: implement kqueue file filter
-        callback.onFileEvent();
+        runnable.run();
     }
 }

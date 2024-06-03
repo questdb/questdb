@@ -134,7 +134,7 @@ public final class InotifyFileWatcher extends FileWatcher {
             // equality check.
             // Because of this, we will match on anything with a "server.conf" prefix. It's a bit hacky, but it works...
             if (Utf8s.equals(fileName, buf + i, fileName.size())) {
-                callback.onFileEvent();
+                runnable.run();
                 break;
             }
             i += len;
