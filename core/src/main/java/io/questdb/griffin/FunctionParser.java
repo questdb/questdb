@@ -319,16 +319,52 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         positionStack.push(node.position);
     }
 
-    private static SqlException invalidArgument(ExpressionNode node, ObjList<Function> args, FunctionFactoryDescriptor descriptor) {
+    private static SqlException invalidArgument(
+            ExpressionNode node,
+            @Nullable ObjList<Function> args,
+            @Transient IntList argPositions,
+            FunctionFactoryDescriptor descriptor
+    ) {
         SqlException ex = SqlException.position(node.position);
-        ex.put("unexpected argument for function: ");
-        ex.put(node.token);
-        ex.put(". expected args: ");
-        ex.put('(');
         if (descriptor != null) {
+            if (args != null) {
+                if (args.size() != descriptor.getSigArgCount()) {
+                    ex.put("wrong number of arguments for function `").put(node.token)
+                            .put("`; expected: ").put(descriptor.getSigArgCount())
+                            .put(", provided: ").put(args.size());
+                } else {
+                    ex.put("argument type mismatch for function `").put(node.token).put('`');
+                    for (int i = 0, n = descriptor.getSigArgCount(); i < n; i++) {
+                        final int mask = descriptor.getArgTypeMask(i);
+                        final int expectedType = FunctionFactoryDescriptor.toType(mask);
+                        final boolean expectedConstant = FunctionFactoryDescriptor.isConstant(mask);
+                        final int actualType = args.getQuick(i).getType();
+                        final boolean actualConstant = args.getQuick(i).isConstant();
+
+                        if (expectedType != actualType || (expectedConstant && !actualConstant)) {
+                            ex.put("at #").put(i + 1);
+                            ex.put(" expected: ").put(ColumnType.nameOf(expectedType));
+                            if (expectedType == actualType) {
+                                ex.put(" constant");
+                            }
+                            ex.put(", actual: ").put(ColumnType.nameOf(actualType));
+                            ex.setPosition(argPositions.getQuick(i));
+                            break;
+                        }
+                    }
+                }
+                Misc.freeObjList(args);
+                return ex;
+            }
+
+            ex.put("function `");
+            ex.put(node.token);
+            ex.put("` requires arguments: ");
+            ex.put(node.token);
+            ex.put('(');
             for (int i = 0, n = descriptor.getSigArgCount(); i < n; i++) {
                 if (i > 0) {
-                    ex.put(',');
+                    ex.put(", ");
                 }
                 final int mask = descriptor.getArgTypeMask(i);
                 ex.put(ColumnType.nameOf(FunctionFactoryDescriptor.toType(mask)));
@@ -339,22 +375,50 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     ex.put(" constant");
                 }
             }
+            ex.put(')');
+            Misc.freeObjList(args);
+            return ex;
         }
-        ex.put("). actual args: ");
-        ex.put('(');
-        if (args != null) {
-            for (int i = 0, n = args.size(); i < n; i++) {
-                if (i > 0) {
-                    ex.put(',');
+
+        OperatorExpression op = OperatorExpression.getRegistry().getOperatorDefinition(node.token);
+        if (op == null) {
+            // function, not an operator,  is  not found
+            if (args != null) {
+                ex.put("there is no matching function `").put(node.token).put("` with the argument types: (");
+                for (int i = 0, n = args.size(); i < n; i++) {
+                    if (i > 0) {
+                        ex.put(", ");
+                    }
+                    putArgType(args, i, ex);
                 }
-                Function arg = args.getQuick(i);
-                ex.put(ColumnType.nameOf(arg.getType()));
-                if (arg.isConstant()) {
-                    ex.put(" constant");
-                }
+                ex.put(')');
+            } else {
+                ex.put("function `").put(node.token).put("` requires arguments");
             }
+            Misc.freeObjList(args);
+            return ex;
         }
-        ex.put(')');
+
+        if (args != null && args.size() == 2) {
+            // binary operator not found
+            // function, not an operator,  is  not found
+            ex.put("there is no matching operator`").put(node.token).put("` with the argument types: ");
+            putArgType(args, 0, ex);
+            ex.put(' ');
+            ex.put(node.token);
+            ex.put(' ');
+            putArgType(args, 1, ex);
+            Misc.freeObjList(args);
+            return ex;
+        }
+
+
+        assert args != null;
+
+        // Unary operator with the specific argument types not found.
+        // function, not an operator,  is  not found
+        ex.put("there is no matching operator `").put(node.token).put("` with the argument type: ");
+        putArgType(args, 0, ex);
         Misc.freeObjList(args);
         return ex;
     }
@@ -383,6 +447,14 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             return DateFormatUtils.parseDate(str);
         } catch (NumericException e) {
             throw SqlException.invalidDate(str, position);
+        }
+    }
+
+    private static void putArgType(ObjList<Function> args, int i, SqlException ex) {
+        Function arg = args.getQuick(i);
+        ex.put(ColumnType.nameOf(arg.getType()));
+        if (arg.isConstant()) {
+            ex.put(" constant");
         }
     }
 
@@ -618,9 +690,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 return checkAndCreateFunction(factory, args, argPositions, node, configuration);
             }
 
-            if (candidateDescriptor == null) {
-                candidateDescriptor = descriptor;
-            }
+//            if (candidateDescriptor == null) {
+//                candidateDescriptor = descriptor;
+//            }
 
             // otherwise, is number of arguments the same?
             if (sigArgCount == argCount || (sigVarArg && argCount >= sigArgCount)) {
@@ -767,7 +839,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
         if (candidate == null) {
             // no signature match
-            throw invalidArgument(node, args, candidateDescriptor);
+            if (overload.size() == 1) {
+                // there is only one possible signature, lets help the user out
+                // with a useful error message
+                candidateDescriptor = overload.getQuick(0);
+            }
+            throw invalidArgument(node, args, argPositions, candidateDescriptor);
         }
 
         if (candidateSigVarArgConst) {
