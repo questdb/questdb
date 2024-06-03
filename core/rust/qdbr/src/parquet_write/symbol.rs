@@ -49,8 +49,6 @@ pub fn symbol_to_pages(
     options: WriteOptions,
     type_: PrimitiveType,
 ) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
-    let (dict_buffer, keys, max_key) = encode_dict(column_values, offsets, chars);
-
     let mut null_count = 0;
     let deflevels_iter = column_values.iter().map(|key| {
         // -1 denotes a null value
@@ -61,12 +59,12 @@ pub fn symbol_to_pages(
             false
         }
     });
-
     let mut data_buffer = vec![];
     let length = deflevels_iter.len();
     encode_bool_iter(&mut data_buffer, deflevels_iter, options.version)?;
     let definition_levels_byte_length = data_buffer.len();
 
+    let (dict_buffer, keys, max_key) = encode_dict(column_values, offsets, chars);
     let num_bits = util::get_bit_width(max_key as u64);
 
     // print!("column:{}, keys: {}, offsets: {}, null_count: {}\n", column.name, keys.len(), offsets.len(), null_count);
