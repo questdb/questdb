@@ -144,10 +144,10 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testQueryIdToCancelMustBeNonNegativeInteger() throws Exception {
         assertMemoryLeak(() -> {
-            assertExceptionNoLeakCheck("select cancel_query()", 7, "unexpected argument for function: cancel_query");
+            assertExceptionNoLeakCheck("select cancel_query()", 7, "function `cancel_query` requires arguments: cancel_query(LONG)");
             assertExceptionNoLeakCheck("select cancel_query(null)", 20, "non-negative integer literal expected as query id");
             assertExceptionNoLeakCheck("select cancel_query(-1)", 20, "non-negative integer literal expected as query id");
-            assertExceptionNoLeakCheck("select cancel_query(12.01f)", 7, "unexpected argument for function: cancel_query. expected args: (LONG). actual args: (FLOAT constant)");
+            assertExceptionNoLeakCheck("select cancel_query(12.01f)", 20, "argument type mismatch for function `cancel_query` at #1 expected: LONG, actual: FLOAT");
         });
     }
 
@@ -197,10 +197,10 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
                     }
 
                     // readonly user can't cancel any commands
-                    assertExceptionNoLeakCheck0("select cancel_query(" + queryId + ")", 7, "Write permission denied", readOnlyUserContext);
+                    assertExceptionNoLeakCheck0("select cancel_query(" + queryId + ")", "Write permission denied", readOnlyUserContext);
 
                     // regular user can't cancel other user's commands
-                    assertExceptionNoLeakCheck0("select cancel_query(" + queryId + ")", 7, "Access denied for bob [built-in admin user required]", regularUserContext);
+                    assertExceptionNoLeakCheck0("select cancel_query(" + queryId + ")", "Access denied for bob [built-in admin user required]", regularUserContext);
 
                     ddl("cancel query " + queryId, adminUserContext2);
                 }
@@ -215,7 +215,11 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
         });
     }
 
-    private static void assertExceptionNoLeakCheck0(CharSequence sql, int errorPos, CharSequence contains, SqlExecutionContext sqlExecutionContext) throws Exception {
+    private static void assertExceptionNoLeakCheck0(
+            CharSequence sql,
+            CharSequence contains,
+            SqlExecutionContext sqlExecutionContext
+    ) throws Exception {
         try {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(false);
@@ -232,9 +236,7 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
         } catch (Throwable e) {
             if (e instanceof FlyweightMessageContainer) {
                 TestUtils.assertContains(((FlyweightMessageContainer) e).getFlyweightMessage(), contains);
-                if (errorPos > -1) {
-                    Assert.assertEquals(errorPos, ((FlyweightMessageContainer) e).getPosition());
-                }
+                Assert.assertEquals(7, ((FlyweightMessageContainer) e).getPosition());
             } else {
                 throw e;
             }
