@@ -24,18 +24,7 @@
 
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
-
-    <groupId>io.questdb</groupId>
-    <artifactId>benchmarks</artifactId>
-    <version>8.0.1-SNAPSHOT</version>
-    <packaging>jar</packaging>
-    <name>JMH benchmarks for QuestDB</name>
-
-    <!--
-       This is the demo/sample template build script for building Java benchmarks with JMH.
-       Edit as needed.
-    -->
-
+    
     <dependencies>
         <dependency>
             <groupId>com.chrisnewland</groupId>
@@ -61,27 +50,27 @@
         <dependency>
             <groupId>org.apache.logging.log4j</groupId>
             <artifactId>log4j-core</artifactId>
-            <version>2.18.0</version>
+            <version>2.20.0</version> <!-- Updated version -->
         </dependency>
         <dependency>
             <groupId>com.lmax</groupId>
             <artifactId>disruptor</artifactId>
-            <version>3.4.4</version>
+            <version>3.4.5</version> <!-- Updated version -->
         </dependency>
         <dependency>
             <groupId>io.prometheus</groupId>
             <artifactId>simpleclient</artifactId>
-            <version>0.10.0</version>
+            <version>0.16.0</version> <!-- Updated version -->
         </dependency>
         <dependency>
             <groupId>io.prometheus</groupId>
             <artifactId>simpleclient_common</artifactId>
-            <version>0.10.0</version>
+            <version>0.16.0</version> <!-- Updated version -->
         </dependency>
         <dependency>
             <groupId>org.jetbrains</groupId>
             <artifactId>annotations</artifactId>
-            <version>17.0.0</version>
+            <version>23.0.0</version> <!-- Updated version -->
             <scope>compile</scope>
         </dependency>
     </dependencies>
@@ -92,19 +81,13 @@
         <maven.javadoc.skip>true</maven.javadoc.skip>
         <benchmarks.outputPath>target</benchmarks.outputPath>
 
-        <!--
-            JMH version to use with this project.
-          -->
+        <!-- JMH version to use with this project. -->
         <jmh.version>1.35</jmh.version>
 
-        <!--
-            Java source/target to use for compilation.
-          -->
+        <!-- Java source/target to use for compilation. -->
         <javac.target>11</javac.target>
 
-        <!--
-            Name of the benchmark Uber-JAR to generate.
-          -->
+        <!-- Name of the benchmark Uber-JAR to generate. -->
         <uberjar.name>benchmarks</uberjar.name>
     </properties>
 
@@ -114,7 +97,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.8.1</version>
+                <version>3.10.1</version> <!-- Updated version -->
                 <configuration>
                     <source>11</source>
                     <target>${javac.target}</target>
@@ -130,7 +113,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
-                <version>2.2</version>
+                <version>3.3.0</version> <!-- Updated version -->
                 <executions>
                     <execution>
                         <phase>package</phase>
@@ -146,10 +129,7 @@
                             </transformers>
                             <filters>
                                 <filter>
-                                    <!--
-                                        Shading signed JARs will fail without this.
-                                        http://stackoverflow.com/questions/999489/invalid-signature-file-when-attempting-to-run-a-jar
-                                    -->
+                                    <!-- Shading signed JARs will fail without this. -->
                                     <artifact>*:*</artifact>
                                     <excludes>
                                         <exclude>META-INF/*.SF</exclude>
@@ -188,15 +168,15 @@
                 </plugin>
                 <plugin>
                     <artifactId>maven-resources-plugin</artifactId>
-                    <version>2.6</version>
+                    <version>3.2.0</version> <!-- Updated version -->
                 </plugin>
                 <plugin>
                     <artifactId>maven-source-plugin</artifactId>
-                    <version>3.0.1</version>
+                    <version>3.2.0</version> <!-- Updated version -->
                 </plugin>
                 <plugin>
                     <artifactId>maven-surefire-plugin</artifactId>
-                    <version>2.17</version>
+                    <version>3.0.0-M7</version> <!-- Updated version -->
                 </plugin>
             </plugins>
         </pluginManagement>
@@ -238,7 +218,7 @@
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-compiler-plugin</artifactId>
-                        <version>3.8.1</version>
+                        <version>3.10.1</version> <!-- Updated version -->
                         <configuration>
                             <fork>true</fork>
                             <source>1.8</source>
