@@ -51,6 +51,7 @@ import io.questdb.griffin.engine.functions.lt.LtIPv4StrFunctionFactory;
 import io.questdb.griffin.engine.functions.lt.LtStrIPv4FunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndIPv4CCFunctionFactory;
+import io.questdb.griffin.engine.functions.rnd.RndSymbolListFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory;
 import io.questdb.griffin.engine.table.DataFrameRecordCursorFactory;
 import io.questdb.griffin.model.WindowColumn;
@@ -2262,9 +2263,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                     FunctionFactoryDescriptor descriptor = value.get(i);
                     FunctionFactory factory = descriptor.getFactory();
-                    if (factory instanceof InUuidFunctionFactory) {
-                        System.out.println("ok");
-                    }
                     int sigArgCount = descriptor.getSigArgCount();
 
                     sink.clear();
@@ -2340,6 +2338,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     args.add(new FloatConstant(12f));
                                 } else if (factory instanceof ExtractFromTimestampFunctionFactory && sigArgType == ColumnType.STRING) {
                                     args.add(new StrConstant("day"));
+                                } else if (factory instanceof RndSymbolListFunctionFactory) {
+                                    args.add(new StrConstant("a"));
+                                    args.add(new StrConstant("b"));
+                                    args.add(new StrConstant("c"));
+                                    args.add(new StrConstant("d"));
                                 } else if (factory instanceof TimestampCeilFunctionFactory) {
                                     args.add(new StrConstant("d"));
                                 } else if (sigArgType == ColumnType.STRING && isArray) {
@@ -2379,6 +2382,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 } else if (factory instanceof RndIPv4CCFunctionFactory) {
                                     args.add(new StrConstant("4.12.22.11/12"));
                                     args.add(new IntConstant(2));
+                                } else if (isEqSymTimestampFactory(factory)) {
+                                    continue FUNCTIONS;
                                 } else if (factory instanceof InUuidFunctionFactory && p == 1) {
                                     // this factory requires valid UUID string, otherwise it will fail
                                     args.add(new StrConstant("11111111-1111-1111-1111-111111111111"));
@@ -10431,6 +10436,24 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 sqlExecutionContext.setJitMode(jitMode);
             }
         });
+    }
+
+    private static boolean isEqSymTimestampFactory(FunctionFactory factory) {
+        if (factory instanceof EqSymTimestampFunctionFactory) {
+            return true;
+        }
+        if (factory instanceof SwappingArgsFunctionFactory) {
+            return ((SwappingArgsFunctionFactory) factory).getDelegate() instanceof EqSymTimestampFunctionFactory;
+        }
+
+        if (factory instanceof NegatingFunctionFactory) {
+            if (((NegatingFunctionFactory) factory).getDelegate() instanceof SwappingArgsFunctionFactory) {
+                return ((SwappingArgsFunctionFactory) ((NegatingFunctionFactory) factory).getDelegate()).getDelegate() instanceof EqSymTimestampFunctionFactory;
+            }
+            return ((NegatingFunctionFactory) factory).getDelegate() instanceof EqSymTimestampFunctionFactory;
+        }
+
+        return false;
     }
 
     private static boolean isIPv4StrFactory(FunctionFactory factory) {

@@ -5216,7 +5216,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query1,
                     "SelectedRecord\n" +
-                            "    Filter filter: (T2.created=null or 0<T2.created::long)\n" +
+                            "    Filter filter: (null=T2.created or 0<T2.created::long)\n" +
                             "        Nested Loop Left Join\n" +
                             "          filter: T1.created<T2.created\n" +
                             "            Limit lo: 1\n" +
@@ -5368,7 +5368,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query3,
                     "SelectedRecord\n" +
-                            "    Filter filter: T4.created=null\n" +
+                            "    Filter filter: null=T4.created\n" +
                             "        Nested Loop Left Join\n" +
                             "          filter: T3.created<T4.created\n" +
                             "            Hash Outer Join Light\n" +
