@@ -41,8 +41,8 @@ public class PageAddressCache implements Mutable {
     private LongList pageLimits = new LongList();
     private LongList pageRowIdOffsets = new LongList();
     private LongList pageSizes = new LongList();
-    private LongList varcharAuxPageLimits = new LongList();
     private int varSizeColumnCount;
+    private LongList varcharAuxPageLimits = new LongList();
 
     public PageAddressCache(CairoConfiguration configuration) {
         cacheSizeThreshold = configuration.getSqlJitPageAddressCacheThreshold() / Long.BYTES;
@@ -55,9 +55,9 @@ public class PageAddressCache implements Mutable {
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             final long pageAddress = frame.getPageAddress(columnIndex);
             pageAddresses.add(pageAddress);
-            pageLimits.add(pageAddress + getPageSize(frameIndex, columnIndex));
             int varSizeColumnIndex = varSizeColumnIndexes.getQuick(columnIndex);
             if (varSizeColumnIndex > -1) {
+                pageLimits.add(pageAddress + getPageSize(frameIndex, columnIndex));
                 final long auxPageAddress = frame.getIndexPageAddress(columnIndex);
                 auxPageAddresses.add(auxPageAddress);
                 pageSizes.add(frame.getPageSize(columnIndex));
@@ -98,10 +98,6 @@ public class PageAddressCache implements Mutable {
         return auxPageAddresses.getQuick(varSizeColumnCount * frameIndex + varSizeColumnIndex);
     }
 
-    public long getVarcharAuxPageLimit(int frameIndex, int columnIndex) {
-        return varcharAuxPageLimits.getQuick(columnCount * frameIndex + columnIndex);
-    }
-
     public int getColumnCount() {
         return columnCount;
     }
@@ -116,7 +112,9 @@ public class PageAddressCache implements Mutable {
      * This allows calculating the `tailPadding` for `Utf8SplitString` instances.
      */
     public long getPageLimit(int frameIndex, int columnIndex) {
-        return pageLimits.getQuick(columnCount * frameIndex + columnIndex);
+        final long limit = pageLimits.getQuick(columnCount * frameIndex + columnIndex);
+        assert limit > 0;
+        return limit;
     }
 
     public long getPageSize(int frameIndex, int columnIndex) {
@@ -124,6 +122,12 @@ public class PageAddressCache implements Mutable {
         int varSizeColumnIndex = varSizeColumnIndexes.getQuick(columnIndex);
         assert varSizeColumnIndex > -1;
         return pageSizes.getQuick(varSizeColumnCount * frameIndex + varSizeColumnIndex);
+    }
+
+    public long getVarcharAuxPageLimit(int frameIndex, int columnIndex) {
+        final long limit = varcharAuxPageLimits.getQuick(columnCount * frameIndex + columnIndex);
+        assert limit > 0;
+        return limit;
     }
 
     public boolean hasColumnTops(int frameIndex) {
