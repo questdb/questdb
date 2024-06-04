@@ -50,12 +50,12 @@ public abstract class FileWatcher implements QuietCloseable {
             @NotNull FileEventCallback callback
 
     ) {
-        this.runnable = new DebouncingRunnable(callback::onFileEvent, debouncePeriod);
-
-        this.filePath = filePath;
-        if (Chars.empty(this.filePath)) {
+        if (Chars.empty(filePath)) {
             throw new IllegalArgumentException("filePath is null or empty");
         }
+
+        this.runnable = new DebouncingRunnable(callback::onFileEvent, debouncePeriod);
+        this.filePath = filePath;
 
         reloadThread = new Thread(() -> {
             try {
