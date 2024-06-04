@@ -11,7 +11,9 @@
     "i18n/README.zh-hk.md",
     "i18n/README.tr-tr.md",
     "i18n/README.hn-in.md",
-    "i18n/README.vi-vn.md"
+    "i18n/README.vi-vn.md",
+    "i18n/README.fr-fr.md"
+
   ],
   "imageSize": 100,
   "commit": false,
@@ -75,6 +77,15 @@
       "contributions": [
         "code",
         "platform"
+      ]
+    },
+    {
+      "login": "manishgautam30",
+      "name": "Manish Gautam",
+      "avatar_url": "https://avatars.githubusercontent.com/u/53870664?v=4",
+      "profile": "https://github.com/manishgautam30/",
+      "contributions": [
+        "doc"
       ]
     },
     {

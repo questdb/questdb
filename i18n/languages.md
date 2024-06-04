@@ -12,3 +12,4 @@
 - [Turkish / Türkçe](./README.tr-tr.md)
 - [Hindi / हिंदी](./README.hn-in.md)
 - [Vietnamese / Tiếng Việt](./README.vi-vn.md)
+- [French / français](./README.fr-fr.md)
