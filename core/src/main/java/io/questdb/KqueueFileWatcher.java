@@ -21,11 +21,13 @@ public class KqueueFileWatcher extends FileWatcher {
         super(filePath, callback);
 
         try (Path p = new Path()) {
+
             p.of(filePath).$();
             this.fileFd = Files.openRO(p);
             if (this.fileFd < 0) {
                 throw new FileWatcherNativeException("could not open file [path=%s]", filePath);
             }
+
             this.dirFd = Files.openRO(p.parent().$());
             if (this.dirFd < 0) {
                 Files.close(this.fileFd);
@@ -115,8 +117,9 @@ public class KqueueFileWatcher extends FileWatcher {
                 throw new FileWatcherNativeException("keventRegister (pipeEvent)");
             }
 
-        } finally {
+        } catch (FileWatcherNativeException e) {
             cleanUp();
+            throw e;
         }
     }
 
