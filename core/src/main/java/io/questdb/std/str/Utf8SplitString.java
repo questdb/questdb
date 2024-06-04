@@ -93,6 +93,9 @@ public class Utf8SplitString implements DirectUtf8Sequence, Mutable {
      * @return this
      */
     public Utf8SplitString of(long prefixLo, long dataLo, long dataLim, int size, boolean ascii) {
+        if (dataLim < (dataLo + size)) {
+            throw new IllegalArgumentException("dataLim < dataLo + size");
+        }
         assert dataLim >= (dataLo + size);
         this.prefixLo = prefixLo;
         this.dataLo = dataLo;
