@@ -188,7 +188,7 @@ public class KqueueFileWatcher extends FileWatcher {
             return;
         }
         if (res < 0) {
-            throw new FileWatcherNativeException("kevent");
+            throw new FileWatcherNativeException("error in keventGetBlocking");
         }
         // For now, we don't filter events down to the file,
         // we trigger on every change in the directory
