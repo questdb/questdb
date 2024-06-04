@@ -245,12 +245,16 @@ impl Column {
         symbol_offsets_size: usize,
     ) -> ParquetResult<Self> {
         assert!(row_count > 0);
+        assert!(!primary_data_ptr.is_null() || primary_data_size == 0);
         let column_type: ColumnType = column_type
             .try_into()
             .map_err(ParquetError::InvalidParameter)?;
-        assert!(!primary_data_ptr.is_null());
 
-        let primary_data = unsafe { slice::from_raw_parts(primary_data_ptr, primary_data_size) };
+        let primary_data = if primary_data_size > 0 {
+            unsafe { slice::from_raw_parts(primary_data_ptr, primary_data_size) }
+        } else {
+            &[]
+        };
         let secondary_data = if secondary_data_ptr.is_null() {
             None
         } else {
