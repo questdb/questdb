@@ -181,6 +181,8 @@ JNIEXPORT jlong JNICALL Java_io_questdb_KqueueAccessor_pipe
     }
     res = fcntl(fds[0], F_SETFL, O_NONBLOCK);
     if (res < 0) {
+        close(fds[0]);
+        close(fds[1]);
         return res;
     }
     return (jlong) fds[0] << 32 | (jlong) fds[1];
