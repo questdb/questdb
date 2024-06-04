@@ -22,6 +22,7 @@
  *
  ******************************************************************************/
 
+mod parquet_read;
 mod parquet_write;
 
 pub extern crate jni;
