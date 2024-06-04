@@ -63,13 +63,13 @@ public abstract class FileWatcher implements QuietCloseable {
                     if (closed.get()) {
                         return;
                     }
-                    this.waitForChange();
+                    waitForChange();
                 } while (true);
             } catch (FileWatcherNativeException exc) {
                 LOG.error().$(exc).$();
             } finally {
                 latch.countDown();
-                LOG.info().$("filewatcher thread closed").$();
+                LOG.info().$("filewatcher poller thread closed").$();
             }
         });
     }
