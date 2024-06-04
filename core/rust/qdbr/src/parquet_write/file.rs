@@ -135,8 +135,6 @@ pub struct ChunkedWriter<W: Write> {
 impl<W: Write> ChunkedWriter<W> {
     /// Write a chunk to the parquet writer.
     pub fn write_chunk(&mut self, partition: Partition) -> ParquetResult<()> {
-        let schema = to_parquet_schema(&partition)?;
-        let encodings = to_encodings(&partition);
         let row_group_size = self
             .options
             .row_group_size
@@ -152,13 +150,14 @@ impl<W: Write> ChunkedWriter<W> {
                 };
                 (offset, length)
             });
+        let schema = &self.parquet_schema;
         for (offset, length) in row_group_range {
             let row_group = create_row_group(
                 &partition,
                 offset,
                 length,
                 schema.fields(),
-                &encodings,
+                &self.encodings,
                 self.options,
             );
             self.writer.write(row_group?)?;
