@@ -74,7 +74,7 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                 path.of(root).concat("x.parquet").$();
                 partitionEncoder.encode(reader, 0, path);
 
-                PartitionDecoder.Metadata metadata = partitionDecoder.describe(path);
+                PartitionDecoder.Metadata metadata = partitionDecoder.readMetadata(path);
                 Assert.assertEquals(24, metadata.columnCount());
                 Assert.assertEquals(rows, metadata.rowCount());
                 Assert.assertEquals(1, metadata.rowGroupCount());

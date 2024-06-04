@@ -6,7 +6,7 @@ use jni::JNIEnv;
 use parquet2::read::read_metadata;
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_describe(
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_readMetadata(
     mut env: JNIEnv,
     _class: JClass,
     src_path: *const u8,
@@ -14,7 +14,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     // [col_count: jint, row_count: jint, row_group_count: jint]
     descr_ptr: *mut i32,
 ) {
-    let describe = || -> anyhow::Result<()> {
+    let read = || -> anyhow::Result<()> {
         let src_path = unsafe {
             std::str::from_utf8_unchecked(slice::from_raw_parts(src_path, src_path_len as usize))
         };
@@ -36,7 +36,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
         return Ok(());
     };
 
-    match describe() {
+    match read() {
         Ok(_) => (),
         Err(err) => {
             if let Some(jni_err) = err.downcast_ref::<jni::errors::Error>() {
@@ -45,13 +45,13 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
                         // Already thrown.
                     }
                     _ => {
-                        let msg = format!("Failed to describe partition: {:?}", jni_err);
+                        let msg = format!("Failed to read partition metadata: {:?}", jni_err);
                         env.throw_new("java/lang/RuntimeException", msg)
                             .expect("failed to throw exception");
                     }
                 }
             } else {
-                let msg = format!("Failed to describe partition: {:?}", err);
+                let msg = format!("Failed to read partition metadata: {:?}", err);
                 env.throw_new("java/lang/RuntimeException", msg)
                     .expect("failed to throw exception");
             }

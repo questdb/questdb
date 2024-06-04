@@ -45,9 +45,9 @@ public class PartitionDecoder implements QuietCloseable {
         descrAddr = Unsafe.free(descrAddr, DESCR_SIZE, MemoryTag.NATIVE_DEFAULT);
     }
 
-    public Metadata describe(Path srcPath) {
+    public Metadata readMetadata(Path srcPath) {
         try {
-            describe(
+            readMetadata(
                     srcPath.ptr(),
                     srcPath.size(),
                     descrAddr
@@ -61,7 +61,7 @@ public class PartitionDecoder implements QuietCloseable {
         return metadata;
     }
 
-    private static native void describe(
+    private static native void readMetadata(
             long srcPathPtr,
             int srcPathLength,
             long columnNamesPtr
