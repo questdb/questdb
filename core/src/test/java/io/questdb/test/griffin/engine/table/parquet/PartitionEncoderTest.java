@@ -48,7 +48,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
         try (
                 Path path = new Path();
                 PartitionEncoder partitionEncoder = new PartitionEncoder();
-                TableReader reader = node2.getEngine().getReader("request_logs_conv")
+                TableReader reader = node2.getEngine().getReader("request_logs")
         ) {
             path.of(root2).concat("x.parquet").$();
             long start = System.nanoTime();

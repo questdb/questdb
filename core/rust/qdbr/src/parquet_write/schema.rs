@@ -225,6 +225,7 @@ pub struct Column {
     pub name: &'static str,
     pub data_type: ColumnType,
     pub row_count: usize,
+    pub column_top: usize,
     pub primary_data: &'static [u8],
     pub secondary_data: Option<&'static [u8]>,
     pub symbol_offsets: Option<&'static [u64]>,
@@ -234,6 +235,7 @@ impl Column {
     pub fn from_raw_data(
         name: &'static str,
         column_type: i32,
+        column_top: i64,
         row_count: usize,
         primary_data_ptr: *const u8,
         primary_data_size: usize,
@@ -263,6 +265,7 @@ impl Column {
         Ok(Column {
             name,
             data_type: column_type,
+            column_top: column_top as usize,
             row_count,
             primary_data,
             secondary_data,

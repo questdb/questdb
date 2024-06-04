@@ -50,7 +50,7 @@ pub fn symbol_to_pages(
     offsets: &[u64],
     chars: &[u8],
     options: WriteOptions,
-    type_: PrimitiveType,
+    primitive_type: PrimitiveType,
 ) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
     let mut null_count = 0;
     let deflevels_iter = column_values.iter().map(|key| {
@@ -84,7 +84,7 @@ pub fn symbol_to_pages(
         null_count,
         definition_levels_byte_length,
         None,
-        type_,
+        primitive_type,
         options,
         Encoding::RleDictionary,
     )?;

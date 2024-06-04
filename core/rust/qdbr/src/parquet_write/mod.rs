@@ -64,6 +64,7 @@ mod tests {
     use crate::parquet_write::file::ParquetWriter;
     use crate::parquet_write::schema::{Column, ColumnType, Partition};
     use arrow::array::Array;
+    use arrow::datatypes::ToByteSlice;
     use bytes::Bytes;
     use num_traits::Float;
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
@@ -76,34 +77,86 @@ mod tests {
     use std::mem;
     use std::mem::size_of;
     use std::ptr::null;
+    use std::time::Instant;
+
+    #[test]
+    fn test_write_parquet_1m_rows() {
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let row_count = 2_000_000;
+        let fix_col_count = 30;
+        let mut columns = Vec::new();
+
+        for i in 0..fix_col_count {
+            let column_name = format!("col{}", i);
+            let static_str: &'static str = Box::leak(column_name.into_boxed_str());
+            let col1 = create_fix_column(row_count, ColumnType::Long, size_of::<i32>(), static_str);
+            columns.push(col1);
+        }
+
+        let partition = Partition { table: "test_table".to_string(), columns: columns };
+
+        println!("start writing");
+        // Measure the start time
+        let start = Instant::now();
+        let parquet_writer = ParquetWriter::new(&mut buf)
+            .with_statistics(false)
+            .with_row_group_size(Some(1048576))
+            .with_data_page_size(Some(1048576))
+            .finish(partition)
+            .expect("parquet writer");
+
+        // Measure the end time
+        let duration = start.elapsed();
+        println!("finished writing in: {:?}", duration);
+
+        buf.set_position(0);
+        let bytes: Bytes = buf.into_inner().into();
+
+        save_to_file(bytes);
+    }
+
+    fn create_fix_column(
+        row_count: usize,
+        col_type: ColumnType,
+        value_size: usize,
+        name: &'static str,
+    ) -> Column {
+        let mut buff = vec![0u8; row_count * value_size];
+        for i in 0..row_count {
+            let value = i as i32;
+            let offset = i * value_size;
+            buff[offset..offset + size_of::<i32>()].copy_from_slice(&value.to_le_bytes());
+        }
+        let col_type_i32 = col_type as i32 + 1;
+        assert_eq!(
+            col_type,
+            ColumnType::try_from(col_type_i32).expect("invalid colum type")
+        );
+
+        Column::from_raw_data(
+            name,
+            col_type as i32,
+            0,
+            row_count,
+            buff.as_ptr(),
+            buff.len(),
+            null(),
+            0,
+            null(),
+            0,
+        )
+        .unwrap()
+    }
 
     #[test]
     fn test_write_parquet_with_symbol_column() {
         let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
-        let col1 = vec![0, 1, i32::MIN, 2];
-        let (col_chars, offsets) = serialize_as_symbols(vec!["foo", "bar", "baz"]);
+        let col1 = vec![0, 1, i32::MIN, 2, 4];
+        let (col_chars, offsets) =
+            serialize_as_symbols(vec!["foo", "bar", "baz", "notused", "plus"]);
 
-        assert_eq!(ColumnType::Symbol, ColumnType::try_from(12).expect("fail"));
-        let col1_w = Column::from_raw_data(
-            "col1",
-            12,
-            col1.len(),
-            col1.as_ptr() as *const u8,
-            col1.len() * size_of::<i32>(),
-            col_chars.as_ptr(),
-            col_chars.len(),
-            offsets.as_ptr(),
-            offsets.len(),
-        )
-        .unwrap();
-
-        let partition = Partition {
-            table: "test_table".to_string(),
-            columns: [col1_w].to_vec(),
-        };
-
-        let parquet_writer = ParquetWriter::new(&mut buf).with_statistics(false);
-        parquet_writer.finish(partition).expect("parquet writer");
+        serialize_to_parquet(&mut buf, col1, col_chars, offsets);
+        let expected = vec![Some("foo"), Some("bar"), None, Some("baz"), Some("plus")];
 
         buf.set_position(0);
         let bytes: Bytes = buf.into_inner().into();
@@ -121,13 +174,81 @@ mod tests {
                     .downcast_ref::<arrow::array::StringArray>()
                     .expect("Failed to downcast");
                 let collected: Vec<_> = symbol_array.iter().collect();
-                let expected = vec![Some("foo"), Some("bar"), None, Some("baz")];
                 assert_eq!(collected, expected);
             }
         }
 
-        // let mut file = File::create("/Users/alpel/temp/db/x.parquet").expect("file create failed");
-        // file.write_all(bytes.to_byte_slice()).expect("file write failed");
+        save_to_file(bytes);
+    }
+
+    #[test]
+    fn test_write_parquet_with_symbol_column_all_values_nulls() {
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let col1 = vec![i32::MIN, i32::MIN, i32::MIN, i32::MIN, i32::MIN];
+        let (col_chars, offsets) = serialize_as_symbols(vec![]);
+
+        serialize_to_parquet(&mut buf, col1, col_chars, offsets);
+
+        buf.set_position(0);
+        let bytes: Bytes = buf.into_inner().into();
+        let parquet_reader = ParquetRecordBatchReaderBuilder::try_new(bytes.clone())
+            .expect("reader")
+            .with_batch_size(8192)
+            .build()
+            .expect("builder");
+
+        for batch in parquet_reader {
+            if let Ok(batch) = batch {
+                let symbol_array = batch
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<arrow::array::StringArray>()
+                    .expect("Failed to downcast");
+                let collected: Vec<_> = symbol_array.iter().collect();
+                let expected = vec![None, None, None, None, None];
+                assert_eq!(collected, expected);
+            }
+        }
+
+        save_to_file(bytes);
+    }
+
+    fn serialize_to_parquet(
+        mut buf: &mut Cursor<Vec<u8>>,
+        col1: Vec<i32>,
+        col_chars: Vec<u8>,
+        offsets: Vec<u64>,
+    ) {
+        assert_eq!(ColumnType::Symbol, ColumnType::try_from(12).expect("fail"));
+        let col1_w = Column::from_raw_data(
+            "col1",
+            12,
+            0,
+            col1.len(),
+            col1.as_ptr() as *const u8,
+            col1.len() * size_of::<i32>(),
+            col_chars.as_ptr(),
+            col_chars.len(),
+            offsets.as_ptr(),
+            offsets.len(),
+        )
+        .unwrap();
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: [col1_w].to_vec(),
+        };
+
+        let parquet_writer = ParquetWriter::new(&mut buf)
+            .with_statistics(false)
+            .finish(partition)
+            .expect("parquet writer");
+    }
+
+    fn save_to_file(bytes: Bytes) {
+        let mut file = File::create("/Users/alpel/temp/db/x.parquet").expect("file create failed");
+        file.write_all(bytes.to_byte_slice())
+            .expect("file write failed");
     }
 
     fn serialize_as_symbols(symbol_chars: Vec<&str>) -> (Vec<u8>, Vec<u64>) {
@@ -162,6 +283,7 @@ mod tests {
         let col1_w = Column::from_raw_data(
             "col1",
             5,
+            0,
             col1.len(),
             col1.as_ptr() as *const u8,
             col1.len() * size_of::<i32>(),
@@ -175,6 +297,7 @@ mod tests {
         let col2_w = Column::from_raw_data(
             "col2",
             9,
+            0,
             col2.len(),
             col2.as_ptr() as *const u8,
             col2.len() * size_of::<f32>(),
@@ -232,6 +355,7 @@ mod tests {
         let col1_w = Column::from_raw_data(
             "col1",
             6,
+            0,
             col1.len(),
             col1.as_ptr() as *const u8,
             col1.len() * size_of::<i64>(),

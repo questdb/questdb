@@ -36,22 +36,26 @@ use crate::parquet_write::{ParquetError, ParquetResult};
 pub fn string_to_page(
     offsets: &[i64],
     data: &[u8],
+    column_top: usize,
     options: WriteOptions,
-    type_: PrimitiveType,
+    primitive_type: PrimitiveType,
     encoding: Encoding,
 ) -> ParquetResult<Page> {
     let mut buffer = vec![];
     let mut null_count = 0;
 
-    let deflevels_iter = offsets.iter().map(|offset| {
-        let offset = *offset as usize;
-        let len = types::decode::<i32>(&data[offset..offset + size_of::<i32>()]);
-        if len < 0 {
-            null_count += 1;
-            false
+    let deflevels_iter = (0..column_top + offsets.len()).map(|i| {
+        let len = if i < column_top {
+            -1
         } else {
-            true
-        }
+            let offset = offsets[i - column_top] as usize;
+            let len = types::decode::<i32>(&data[offset..offset + size_of::<i32>()]);
+            if len < 0 {
+                null_count += 1;
+            }
+            len
+        };
+        len >= 0
     });
 
     encode_bool_iter(&mut buffer, deflevels_iter, options.version)?;
@@ -67,14 +71,15 @@ pub fn string_to_page(
         )))?,
     }
 
+    let num_rows = column_top + offsets.len();
     build_plain_page(
         buffer,
-        offsets.len(),
-        offsets.len(),
+        num_rows,
+        num_rows,
         null_count,
         definition_levels_byte_length,
-        None, // do we really want a binary statistics?
-        type_,
+        None, //TODO: add statistics
+        primitive_type,
         options,
         encoding,
     )

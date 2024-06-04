@@ -5,7 +5,7 @@ use parquet2::compression::CompressionOptions;
 use parquet2::encoding::Encoding;
 use parquet2::metadata::SchemaDescriptor;
 use parquet2::page::{CompressedPage, Page};
-use parquet2::schema::types::{ParquetType, PrimitiveType};
+use parquet2::schema::types::{ParquetType, PhysicalType, PrimitiveType};
 use parquet2::write::{
     Compressor, DynIter, DynStreamingIterator, FileWriter, RowGroupIter, Version,
     WriteOptions as FileWriteOptions,
@@ -92,7 +92,7 @@ impl<W: Write> ParquetWriter<W> {
         WriteOptions {
             write_statistics: self.statistics,
             compression: self.compression,
-            version: Version::V2,
+            version: Version::V1,
             row_group_size: self.row_group_size,
             data_page_size: self.data_page_size,
         }
@@ -166,7 +166,7 @@ impl<W: Write> ChunkedWriter<W> {
         Ok(())
     }
 
-    /// Writes the footer of the parquet file. Returns the total size of the file.
+    /// Write the footer of the parquet file. Returns the total size of the file.
     pub fn finish(&mut self) -> ParquetResult<u64> {
         let size = self.writer.end(None)?;
         Ok(size)
@@ -219,13 +219,13 @@ fn create_row_group(
 
 fn column_chunk_to_pages(
     column: Column,
-    type_: ParquetType,
+    parquet_type: ParquetType,
     chunk_offset: usize,
     chunk_length: usize,
     options: WriteOptions,
     encoding: Encoding,
 ) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
-    let primitive_type = match type_ {
+    let primitive_type = match parquet_type {
         ParquetType::PrimitiveType(primitive) => primitive,
         _ => unreachable!("GroupType is not supported"),
     };
@@ -240,10 +240,8 @@ fn column_chunk_to_pages(
     }
 
     let number_of_rows = chunk_length;
-    // let max_page_size = options.data_page_size.unwrap_or(DEFAULT_PAGE_SIZE);
-    // let max_page_size = max_page_size.min(2usize.pow(31) - 2usize.pow(25));
-    // let rows_per_page = (max_page_size / (std::mem::size_of::<T>() + 1)).max(1);
-    let rows_per_page = 10; //TODO: estimate chunk byte size
+    let max_page_size = options.data_page_size.unwrap_or(DEFAULT_PAGE_SIZE);
+    let rows_per_page = max_page_size / bytes_per_type(primitive_type.physical_type);
 
     let rows = (0..number_of_rows)
         .step_by(rows_per_page)
@@ -274,65 +272,87 @@ fn chunk_to_page(
     column: Column,
     offset: usize,
     length: usize,
-    type_: PrimitiveType,
+    primitive_type: PrimitiveType,
     options: WriteOptions,
     encoding: Encoding,
 ) -> ParquetResult<Page> {
+    let column_top = column.column_top;
+    let lower_bound = if offset < column_top {
+        0
+    } else {
+        offset - column_top
+    };
+    let upper_bound = if offset + length < column_top {
+        0
+    } else {
+        offset + length - column_top
+    };
     match column.data_type {
         ColumnType::Boolean => {
             let column = column.primary_data;
-            boolean::slice_to_page(&column[offset..offset + length], options, type_)
+            boolean::slice_to_page(
+                &column[lower_bound..upper_bound],
+                column_top,
+                options,
+                primitive_type,
+            )
         }
         ColumnType::Byte | ColumnType::GeoByte => {
             let column: &[i8] = unsafe { mem::transmute(column.primary_data) };
             primitive::int_slice_to_page::<i8, i32>(
-                &column[offset..offset + length],
+                &column[lower_bound..upper_bound],
+                column_top,
                 options,
-                type_,
+                primitive_type,
                 encoding,
             )
         }
         ColumnType::Short | ColumnType::Char | ColumnType::GeoShort => {
             let column: &[i16] = unsafe { mem::transmute(column.primary_data) };
             primitive::int_slice_to_page::<i16, i32>(
-                &column[offset..offset + length],
+                &column[lower_bound..upper_bound],
+                column_top,
                 options,
-                type_,
+                primitive_type,
                 encoding,
             )
         }
         ColumnType::Int | ColumnType::GeoInt | ColumnType::IPv4 => {
             let column: &[i32] = unsafe { mem::transmute(column.primary_data) };
             primitive::int_slice_to_page::<i32, i32>(
-                &column[offset..offset + length],
+                &column[lower_bound..upper_bound],
+                column_top,
                 options,
-                type_,
+                primitive_type,
                 encoding,
             )
         }
         ColumnType::Long | ColumnType::GeoLong | ColumnType::Date | ColumnType::Timestamp => {
             let column: &[i64] = unsafe { mem::transmute(column.primary_data) };
             primitive::int_slice_to_page::<i64, i64>(
-                &column[offset..offset + length],
+                &column[lower_bound..upper_bound],
+                column_top,
                 options,
-                type_,
+                primitive_type,
                 encoding,
             )
         }
         ColumnType::Float => {
             let column: &[f32] = unsafe { mem::transmute(column.primary_data) };
             primitive::float_slice_to_page_plain::<f32, f32>(
-                &column[offset..offset + length],
+                &column[lower_bound..upper_bound],
+                column_top,
                 options,
-                type_,
+                primitive_type,
             )
         }
         ColumnType::Double => {
             let column: &[f64] = unsafe { mem::transmute(column.primary_data) };
             primitive::float_slice_to_page_plain::<f64, f64>(
-                &column[offset..offset + length],
+                &column[lower_bound..upper_bound],
+                column_top,
                 options,
-                type_,
+                primitive_type,
             )
         }
         ColumnType::Binary => {
@@ -340,10 +360,11 @@ fn chunk_to_page(
             let offsets: &[i64] =
                 unsafe { mem::transmute(column.secondary_data.expect("offsets")) };
             binary::binary_to_page(
-                &offsets[offset..offset + length],
+                &offsets[lower_bound..upper_bound],
                 data,
+                column_top,
                 options,
-                type_,
+                primitive_type,
                 encoding,
             )
         }
@@ -352,10 +373,11 @@ fn chunk_to_page(
             let offsets: &[i64] =
                 unsafe { mem::transmute(column.secondary_data.expect("offsets")) };
             string::string_to_page(
-                &offsets[offset..offset + length],
+                &offsets[lower_bound..upper_bound],
                 data,
+                column_top,
                 options,
-                type_,
+                primitive_type,
                 encoding,
             )
         }
@@ -363,23 +385,43 @@ fn chunk_to_page(
             let data = column.primary_data;
             let aux: &[u8] = column.secondary_data.expect("aux");
             varchar::varchar_to_page(
-                &aux[offset * 16..(offset + length) * 16],
+                &aux[lower_bound * 16..upper_bound * 16],
                 data,
+                column_top,
                 options,
-                type_,
+                primitive_type,
             )
         }
         ColumnType::Long128 | ColumnType::Uuid => {
             let column: &[[u8; 16]] = unsafe { mem::transmute(column.primary_data) };
-            fixed_len_bytes::bytes_to_page(&column[offset..offset + length], options, type_)
+            fixed_len_bytes::bytes_to_page(
+                &column[lower_bound..upper_bound],
+                column_top,
+                options,
+                primitive_type,
+            )
         }
         ColumnType::Long256 => {
             let column: &[[u8; 32]] = unsafe { mem::transmute(column.primary_data) };
-            fixed_len_bytes::bytes_to_page(&column[offset..offset + length], options, type_)
+            fixed_len_bytes::bytes_to_page(
+                &column[lower_bound..upper_bound],
+                column_top,
+                options,
+                primitive_type,
+            )
         }
         ColumnType::Symbol => {
-            // TODO: JNI, pass SymbolMap raw memory
-            unimplemented!()
+            panic!("Symbol type is encoded in column_chunk_to_pages()")
         }
+    }
+}
+
+fn bytes_per_type(primitive_type: PhysicalType) -> usize {
+    match primitive_type {
+        PhysicalType::Boolean => 1,
+        PhysicalType::Int32 => 4,
+        PhysicalType::Int96 => 12,
+        PhysicalType::Float => 4,
+        _ => 8,
     }
 }

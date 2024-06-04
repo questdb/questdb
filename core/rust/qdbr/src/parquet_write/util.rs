@@ -123,7 +123,7 @@ pub fn build_plain_page(
     null_count: usize,
     definition_levels_byte_length: usize,
     statistics: Option<ParquetStatistics>,
-    type_: PrimitiveType,
+    primitive_type: PrimitiveType,
     options: WriteOptions,
     encoding: Encoding,
 ) -> ParquetResult<DataPage> {
@@ -149,11 +149,7 @@ pub fn build_plain_page(
     Ok(DataPage::new(
         header,
         buffer,
-        Descriptor {
-            primitive_type: type_,
-            max_def_level: 0,
-            max_rep_level: 0,
-        },
+        Descriptor { primitive_type, max_def_level: 0, max_rep_level: 0 },
         Some(num_rows),
     ))
 }
