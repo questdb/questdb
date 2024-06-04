@@ -71,12 +71,10 @@ pub fn string_to_page(
         )))?,
     }
 
-    let num_rows = column_top + offsets.len();
     build_plain_page(
         buffer,
-        num_rows,
-        num_rows,
-        null_count,
+        column_top + offsets.len(),
+        column_top + null_count,
         definition_levels_byte_length,
         None, //TODO: add statistics
         primitive_type,

@@ -45,11 +45,9 @@ pub fn slice_to_page(
         None
     };
 
-    let num_rows = column_top + slice.len();
     util::build_plain_page(
         buffer,
-        num_rows,
-        num_rows,
+        column_top + slice.len(),
         0,
         0,
         statistics,

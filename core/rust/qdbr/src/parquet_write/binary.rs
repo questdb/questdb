@@ -71,11 +71,9 @@ pub fn binary_to_page(
         )))?,
     }
 
-    let num_rows = column_top + offsets.len();
     build_plain_page(
         buffer,
-        num_rows,
-        num_rows,
+        column_top + offsets.len(),
         null_count,
         definition_levels_byte_length,
         None, //TODO: add statistics

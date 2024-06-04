@@ -39,8 +39,7 @@ pub fn bytes_to_page<const N: usize>(
     encode_plain(data, &mut buffer);
     build_plain_page(
         buffer,
-        length,
-        length,
+        column_top + data.len(),
         null_count,
         definition_levels_byte_length,
         None, // TODO: add statistics

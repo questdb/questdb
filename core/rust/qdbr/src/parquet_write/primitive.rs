@@ -197,11 +197,9 @@ where
         None
     };
 
-    let num_rows = column_top + slice.len();
     build_plain_page(
         buffer,
-        num_rows,
-        num_rows,
+        column_top + slice.len(),
         column_top + null_count,
         definition_levels_byte_length,
         statistics,

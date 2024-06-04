@@ -118,7 +118,6 @@ pub fn get_bit_width(max: u64) -> u8 {
 #[allow(clippy::too_many_arguments)]
 pub fn build_plain_page(
     buffer: Vec<u8>,
-    num_values: usize,
     num_rows: usize,
     null_count: usize,
     definition_levels_byte_length: usize,
@@ -129,14 +128,14 @@ pub fn build_plain_page(
 ) -> ParquetResult<DataPage> {
     let header = match options.version {
         Version::V1 => DataPageHeader::V1(DataPageHeaderV1 {
-            num_values: num_values as i32,
+            num_values: num_rows as i32,
             encoding: encoding.into(),
             definition_level_encoding: Encoding::Rle.into(),
             repetition_level_encoding: Encoding::Rle.into(),
             statistics,
         }),
         Version::V2 => DataPageHeader::V2(DataPageHeaderV2 {
-            num_values: num_values as i32,
+            num_values: num_rows as i32,
             encoding: encoding.into(),
             num_nulls: null_count as i32,
             num_rows: num_rows as i32,
