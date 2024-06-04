@@ -29,6 +29,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include "jni.h"
+#include "../share/sysutil.h"
 
 JNIEXPORT jshort JNICALL Java_io_questdb_KqueueAccessor_getEvfiltRead
         (JNIEnv *e, jclass cl) {
@@ -150,14 +151,9 @@ JNIEXPORT jint JNICALL Java_io_questdb_KqueueAccessor_keventRegister
 
 JNIEXPORT jint JNICALL Java_io_questdb_KqueueAccessor_keventGetBlocking
         (JNIEnv *e, jclass cl, jint kq, jlong eventList, jint nEvents) {
-    return (jint) kevent(
-            kq,
-            NULL,
-            0,
-            (struct kevent *) eventList,
-            nEvents,
-            NULL
-    );
+    int res;
+    RESTARTABLE(kevent(kq, NULL, 0, (struct kevent *) eventList, nEvents, NULL), res);
+    return (jint) res;
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_KqueueAccessor_evtAlloc
