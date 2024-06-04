@@ -45,10 +45,11 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     private final DefaultHttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration();
     private final DefaultLineTcpReceiverConfiguration lineTcpReceiverConfiguration = new DefaultLineTcpReceiverConfiguration();
     private final DefaultLineUdpReceiverConfiguration lineUdpReceiverConfiguration = new DefaultLineUdpReceiverConfiguration();
+    private final DefaultMemoryConfiguration memoryConfiguration = new DefaultMemoryConfiguration();
     private final DefaultMetricsConfiguration metricsConfiguration = new DefaultMetricsConfiguration();
     private final DefaultPGWireConfiguration pgWireConfiguration = new DefaultPGWireConfiguration();
-    private final WorkerPoolConfiguration walApplyPoolConfiguration = new DefaultWalApplyWorkerPoolConfiguration();
     private final PublicPassthroughConfiguration publicPassthroughConfiguration = new DefaultPublicPassthroughConfiguration();
+    private final WorkerPoolConfiguration walApplyPoolConfiguration = new DefaultWalApplyWorkerPoolConfiguration();
 
     public DefaultServerConfiguration(CharSequence root) {
         this.cairoConfiguration = new DefaultCairoConfiguration(root);
@@ -85,6 +86,11 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     }
 
     @Override
+    public MemoryConfiguration getMemoryConfiguration() {
+        return memoryConfiguration;
+    }
+
+    @Override
     public MetricsConfiguration getMetricsConfiguration() {
         return metricsConfiguration;
     }
@@ -92,6 +98,11 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     @Override
     public PGWireConfiguration getPGWireConfiguration() {
         return pgWireConfiguration;
+    }
+
+    @Override
+    public PublicPassthroughConfiguration getPublicPassthroughConfiguration() {
+        return publicPassthroughConfiguration;
     }
 
     @Override
@@ -103,7 +114,4 @@ public class DefaultServerConfiguration implements ServerConfiguration {
     public WorkerPoolConfiguration getWorkerPoolConfiguration() {
         return httpServerConfiguration;
     }
-
-    @Override
-    public PublicPassthroughConfiguration getPublicPassthroughConfiguration() { return publicPassthroughConfiguration; }
 }

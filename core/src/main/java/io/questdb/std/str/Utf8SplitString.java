@@ -34,7 +34,7 @@ import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_MASK;
 /**
  * An immutable flyweight for a UTF-8 string stored in a VARCHAR column. It may be
  * stored in two formats:
- * <br/>
+ * <br>
  * - fully inlined into the auxiliary vector (if up to 9 bytes). In this case, dataLo == prefixLo.
  * - fully stored in the data vector, plus the first 6 bytes in the auxiliary vector
  */

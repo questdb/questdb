@@ -22,22 +22,26 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.cutlass.pgwire;
+package io.questdb;
 
-import io.questdb.cutlass.pgwire.TypesAndSelect;
-import io.questdb.std.WeakSelfReturningObjectPool;
-import org.junit.Test;
+public class DefaultMemoryConfiguration implements MemoryConfiguration {
+    @Override
+    public long getRamUsageLimitBytes() {
+        return 0;
+    }
 
-public class TypesAndSelectTest {
-    @Test
-    public void testReturnToPoolCausesStackOverflow() {
-        WeakSelfReturningObjectPool<TypesAndSelect> typesAndSelectPool = new WeakSelfReturningObjectPool<>(TypesAndSelect::new, 1);
-        TypesAndSelect i1 = typesAndSelectPool.pop();
-        TypesAndSelect i2 = typesAndSelectPool.pop();
-        TypesAndSelect i3 = typesAndSelectPool.pop();
+    @Override
+    public long getRamUsageLimitPercent() {
+        return 0;
+    }
 
-        i1.close();
-        i2.close();
-        i3.close();
+    @Override
+    public long getResolvedRamUsageLimitBytes() {
+        return 0;
+    }
+
+    @Override
+    public long getTotalSystemMemory() {
+        return 0;
     }
 }

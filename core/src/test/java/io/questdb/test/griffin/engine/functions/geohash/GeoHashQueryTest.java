@@ -124,7 +124,7 @@ public class GeoHashQueryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table pos(x long)");
             try {
-                assertException("alter table pos add hash geohash");
+                assertExceptionNoLeakCheck("alter table pos add hash geohash");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "missing GEOHASH precision");
                 Assert.assertEquals("alter table pos add hash geohash".length(), e.getPosition());
@@ -137,7 +137,7 @@ public class GeoHashQueryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table pos(x long)");
             try {
-                assertException("alter table pos add hash geohash()");
+                assertExceptionNoLeakCheck("alter table pos add hash geohash()");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "missing GEOHASH precision");
                 Assert.assertEquals("alter table pos add hash geohash(".length(), e.getPosition());
@@ -150,7 +150,7 @@ public class GeoHashQueryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table pos(x long)", sqlExecutionContext);
             try {
-                assertException("alter table pos add hash geohash(11)");
+                assertExceptionNoLeakCheck("alter table pos add hash geohash(11)");
             } catch (SqlException e) {
                 TestUtils.assertContains(
                         e.getFlyweightMessage(),
@@ -166,7 +166,7 @@ public class GeoHashQueryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table pos(x long)");
             try {
-                assertException("alter table pos add hash geohash(11c 1)");
+                assertExceptionNoLeakCheck("alter table pos add hash geohash(11c 1)");
             } catch (SqlException e) {
                 TestUtils.assertContains(
                         e.getFlyweightMessage(),
@@ -182,7 +182,7 @@ public class GeoHashQueryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table pos(x long)");
             try {
-                assertException("alter table pos add hash geohash(11c");
+                assertExceptionNoLeakCheck("alter table pos add hash geohash(11c");
             } catch (SqlException e) {
                 TestUtils.assertContains(
                         e.getFlyweightMessage(),
@@ -505,7 +505,7 @@ public class GeoHashQueryTest extends AbstractCairoTest {
     public void testGeoHashUpcast() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                assertException("select cast(cast('questdb' as geohash(6c)) as geohash(7c)) from long_sequence(1)");
+                assertExceptionNoLeakCheck("select cast(cast('questdb' as geohash(6c)) as geohash(7c)) from long_sequence(1)");
             } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "CAST cannot narrow values from GEOHASH(30b) to GEOHASH(35b)");
             }
@@ -517,7 +517,7 @@ public class GeoHashQueryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table pos(time timestamp, uuid symbol, hash8 geohash(8c))", sqlExecutionContext);
             try {
-                assertException("insert into pos values('2021-05-10T23:59:59.160000Z','YYY','f91t')");
+                assertExceptionNoLeakCheck("insert into pos values('2021-05-10T23:59:59.160000Z','YYY','f91t')");
             } catch (ImplicitCastException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "inconvertible value: `f91t` [STRING -> GEOHASH(8c)]");
             }

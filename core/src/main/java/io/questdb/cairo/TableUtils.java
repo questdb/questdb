@@ -171,7 +171,7 @@ public final class TableUtils {
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
     private static final int EMPTY_TABLE_LAG_CHECKSUM = calculateTxnLagChecksum(0, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, 0);
-    private final static Log LOG = LogFactory.getLog(TableUtils.class);
+    private static final Log LOG = LogFactory.getLog(TableUtils.class);
     private static final int MAX_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(8 * 1024 * 1024);
     private static final int MAX_SYMBOL_CAPACITY = Numbers.ceilPow2(Integer.MAX_VALUE);
     private static final int MAX_SYMBOL_CAPACITY_CACHED = Numbers.ceilPow2(30_000_000);
@@ -292,6 +292,7 @@ public final class TableUtils {
                 executionContext
         );
         if (!ColumnType.isCursor(function.getType())) {
+            Misc.free(function);
             throw SqlException.$(tableNameExpr.position, "function must return CURSOR");
         }
         return function;
@@ -898,7 +899,6 @@ public final class TableUtils {
     }
 
     public static int lock(FilesFacade ff, Path path, boolean verbose) {
-
         // workaround for https://github.com/docker/for-mac/issues/7004
         if (Files.VIRTIO_FS_DETECTED) {
             if (!ff.touch(path)) {

@@ -288,7 +288,7 @@ public class SnapshotTest extends AbstractCairoTest {
                 t.start();
                 latch2.await();
                 configureCircuitBreakerTimeoutOnFirstCheck();
-                assertException("snapshot prepare");
+                assertExceptionNoLeakCheck("snapshot prepare");
             } catch (CairoException ex) {
                 latch1.countDown();
                 t.join();
@@ -370,73 +370,73 @@ public class SnapshotTest extends AbstractCairoTest {
     @Test
     public void testSnapshotPrepareCheckTableMetadataFilesForNonPartitionedTable() throws Exception {
         final String tableName = "test";
-        testSnapshotPrepareCheckTableMetadataFiles(
+        assertMemoryLeak(() -> testSnapshotPrepareCheckTableMetadataFiles(
                 "create table " + tableName + " (a symbol, b double, c long)",
                 null,
                 tableName
-        );
+        ));
     }
 
     @Test
     public void testSnapshotPrepareCheckTableMetadataFilesForNonWalSystemTable() throws Exception {
         final String sysTableName = configuration.getSystemTableNamePrefix() + "test_non_wal";
-        testSnapshotPrepareCheckTableMetadataFiles(
+        assertMemoryLeak(() -> testSnapshotPrepareCheckTableMetadataFiles(
                 "create table '" + sysTableName + "' (a symbol, b double, c long);",
                 null,
                 sysTableName
-        );
+        ));
     }
 
     @Test
     public void testSnapshotPrepareCheckTableMetadataFilesForPartitionedTable() throws Exception {
         final String tableName = "test";
-        testSnapshotPrepareCheckTableMetadataFiles(
+        assertMemoryLeak(() -> testSnapshotPrepareCheckTableMetadataFiles(
                 "create table " + tableName + " as " +
                         " (select x, timestamp_sequence(0, 100000000000) ts from long_sequence(20)) timestamp(ts) partition by day",
                 null,
                 tableName
-        );
+        ));
     }
 
     @Test
     public void testSnapshotPrepareCheckTableMetadataFilesForTableWithDroppedColumns() throws Exception {
         final String tableName = "test";
-        testSnapshotPrepareCheckTableMetadataFiles(
+        assertMemoryLeak(() -> testSnapshotPrepareCheckTableMetadataFiles(
                 "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
                 "alter table " + tableName + " drop column c",
                 tableName
-        );
+        ));
     }
 
     @Test
     public void testSnapshotPrepareCheckTableMetadataFilesForTableWithIndex() throws Exception {
         final String tableName = "test";
-        testSnapshotPrepareCheckTableMetadataFiles(
+        assertMemoryLeak(() -> testSnapshotPrepareCheckTableMetadataFiles(
                 "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
                 null,
                 tableName
-        );
+        ));
     }
 
     @Test
     public void testSnapshotPrepareCheckTableMetadataFilesForWalSystemTable() throws Exception {
         final String sysTableName = configuration.getSystemTableNamePrefix() + "test_wal";
-        testSnapshotPrepareCheckTableMetadataFiles(
+        assertMemoryLeak(() -> testSnapshotPrepareCheckTableMetadataFiles(
                 "create table '" + sysTableName + "' (ts timestamp, a symbol, b double, c long) timestamp(ts) partition by day wal;",
                 null,
                 sysTableName
-        );
+        ));
     }
 
     @Test
     public void testSnapshotPrepareCheckTableMetadataFilesForWithParameters() throws Exception {
         final String tableName = "test";
-        testSnapshotPrepareCheckTableMetadataFiles(
+        assertMemoryLeak(() -> testSnapshotPrepareCheckTableMetadataFiles(
                 "create table " + tableName +
                         " (a symbol, b double, c long, ts timestamp) timestamp(ts) partition by hour with maxUncommittedRows=250000, o3MaxLag = 240s",
                 null,
                 tableName
-        );
+        ));
     }
 
     @Test
@@ -482,20 +482,22 @@ public class SnapshotTest extends AbstractCairoTest {
         path.of(configuration.getRoot()).concat("empty_folder").slash$();
         TestFilesFacadeImpl.INSTANCE.mkdirs(path, configuration.getMkDirMode());
 
-        testSnapshotPrepareCheckTableMetadataFiles(
-                "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
-                null,
-                tableName
-        );
+        assertMemoryLeak(() -> {
+            testSnapshotPrepareCheckTableMetadataFiles(
+                    "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
+                    null,
+                    tableName
+            );
 
-        // Assert snapshot folder exists
-        Assert.assertTrue(TestFilesFacadeImpl.INSTANCE.exists(
-                path.of(configuration.getSnapshotRoot()).slash$())
-        );
-        // But snapshot/db folder does not
-        Assert.assertFalse(TestFilesFacadeImpl.INSTANCE.exists(
-                path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).slash$())
-        );
+            // Assert snapshot folder exists
+            Assert.assertTrue(TestFilesFacadeImpl.INSTANCE.exists(
+                    path.of(configuration.getSnapshotRoot()).slash$()
+            ));
+            // But snapshot/db folder does not
+            Assert.assertFalse(TestFilesFacadeImpl.INSTANCE.exists(
+                    path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).slash$()
+            ));
+        });
     }
 
     @Test
@@ -575,7 +577,7 @@ public class SnapshotTest extends AbstractCairoTest {
             ddl("snapshot prepare");
             Assert.assertTrue(lock.isLocked());
             try {
-                assertException("snapshot prepare");
+                assertExceptionNoLeakCheck("snapshot prepare");
             } catch (SqlException ex) {
                 Assert.assertTrue(lock.isLocked());
                 Assert.assertTrue(ex.getMessage().startsWith("[0] Waiting for SNAPSHOT COMPLETE to be called"));
@@ -1217,40 +1219,38 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     private void testSnapshotPrepareCheckTableMetadataFiles(String ddl, String ddl2, String tableName) throws Exception {
-        assertMemoryLeak(() -> {
-            try (Path path = new Path(); Path copyPath = new Path()) {
-                path.of(configuration.getRoot());
-                copyPath.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
+        try (Path path = new Path(); Path copyPath = new Path()) {
+            path.of(configuration.getRoot());
+            copyPath.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
 
-                compile(ddl);
-                if (ddl2 != null) {
-                    compile(ddl2);
-                }
-
-                ddl("snapshot prepare");
-
-                TableToken tableToken = engine.verifyTableName(tableName);
-                path.concat(tableToken);
-                int tableNameLen = path.size();
-                copyPath.concat(tableToken);
-                int copyTableNameLen = copyPath.size();
-
-                // _meta
-                path.concat(TableUtils.META_FILE_NAME).$();
-                copyPath.concat(TableUtils.META_FILE_NAME).$();
-                TestUtils.assertFileContentsEquals(path, copyPath);
-                // _txn
-                path.trimTo(tableNameLen).concat(TableUtils.TXN_FILE_NAME).$();
-                copyPath.trimTo(copyTableNameLen).concat(TableUtils.TXN_FILE_NAME).$();
-                TestUtils.assertFileContentsEquals(path, copyPath);
-                // _cv
-                path.trimTo(tableNameLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
-                copyPath.trimTo(copyTableNameLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
-                TestUtils.assertFileContentsEquals(path, copyPath);
-
-                ddl("snapshot complete");
+            compile(ddl);
+            if (ddl2 != null) {
+                compile(ddl2);
             }
-        });
+
+            ddl("snapshot prepare");
+
+            TableToken tableToken = engine.verifyTableName(tableName);
+            path.concat(tableToken);
+            int tableNameLen = path.size();
+            copyPath.concat(tableToken);
+            int copyTableNameLen = copyPath.size();
+
+            // _meta
+            path.concat(TableUtils.META_FILE_NAME).$();
+            copyPath.concat(TableUtils.META_FILE_NAME).$();
+            TestUtils.assertFileContentsEquals(path, copyPath);
+            // _txn
+            path.trimTo(tableNameLen).concat(TableUtils.TXN_FILE_NAME).$();
+            copyPath.trimTo(copyTableNameLen).concat(TableUtils.TXN_FILE_NAME).$();
+            TestUtils.assertFileContentsEquals(path, copyPath);
+            // _cv
+            path.trimTo(tableNameLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
+            copyPath.trimTo(copyTableNameLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
+            TestUtils.assertFileContentsEquals(path, copyPath);
+
+            ddl("snapshot complete");
+        }
     }
 
     private static class TestFilesFacade extends TestFilesFacadeImpl {

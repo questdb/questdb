@@ -55,7 +55,6 @@ import java.util.Collection;
 
 @RunWith(Parameterized.class)
 public class InsertTest extends AbstractCairoTest {
-
     private final boolean walEnabled;
 
     public InsertTest(boolean walEnabled) {
@@ -614,7 +613,7 @@ public class InsertTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table balances(cust_id int, ccy symbol, balance double)");
             try {
-                assertException("insert into balances(cust_id, ccy2, balance) values (1, 'GBP', 356.12)", sqlExecutionContext);
+                assertExceptionNoLeakCheck("insert into balances(cust_id, ccy2, balance) values (1, 'GBP', 356.12)", sqlExecutionContext);
             } catch (SqlException e) {
                 Assert.assertEquals(30, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column");
@@ -1175,74 +1174,76 @@ public class InsertTest extends AbstractCairoTest {
     }
 
     private void assertInsertTimestamp(String expected, String ddl2, Class<?> exceptionType, boolean commitInsert) throws Exception {
-        if (commitInsert) {
-            ddl("create table tab(seq long, ts timestamp) timestamp(ts)");
-            try {
-                insert(ddl2);
-                if (exceptionType != null) {
-                    Assert.fail("SqlException expected");
+        assertMemoryLeak(() -> {
+            if (commitInsert) {
+                ddl("create table tab(seq long, ts timestamp) timestamp(ts)");
+                try {
+                    insert(ddl2);
+                    if (exceptionType != null) {
+                        Assert.fail("SqlException expected");
+                    }
+                    assertSql(expected, "tab");
+                } catch (Throwable e) {
+                    if (exceptionType == null) {
+                        throw e;
+                    }
+                    Assert.assertSame(exceptionType, e.getClass());
+                    TestUtils.assertContains(e.getMessage(), expected);
                 }
-                assertSql(expected, "tab");
-            } catch (Throwable e) {
-                if (exceptionType == null) {
-                    throw e;
+            } else {
+                ddl("create table tab(seq long, ts timestamp) timestamp(ts)");
+                try {
+                    ddl(ddl2);
+                    if (exceptionType != null) {
+                        Assert.fail("SqlException expected");
+                    }
+                    assertSql(expected, "tab");
+                } catch (Throwable e) {
+                    if (exceptionType == null) throw e;
+                    Assert.assertSame(exceptionType, e.getClass());
+                    TestUtils.assertContains(e.getMessage(), expected);
                 }
-                Assert.assertSame(exceptionType, e.getClass());
-                TestUtils.assertContains(e.getMessage(), expected);
             }
-        } else {
-            ddl("create table tab(seq long, ts timestamp) timestamp(ts)");
-            try {
-                ddl(ddl2);
-                if (exceptionType != null) {
-                    Assert.fail("SqlException expected");
-                }
-                assertSql(expected, "tab");
-            } catch (Throwable e) {
-                if (exceptionType == null) throw e;
-                Assert.assertSame(exceptionType, e.getClass());
-                TestUtils.assertContains(e.getMessage(), expected);
-            }
-        }
 
-        drop("drop table tab");
+            drop("drop table tab");
 
-        if (commitInsert) {
-            ddl("create table tab(seq long, ts timestamp)");
-            try {
-                insert(ddl2);
-                if (exceptionType != null) {
-                    Assert.fail("SqlException expected");
+            if (commitInsert) {
+                ddl("create table tab(seq long, ts timestamp)");
+                try {
+                    insert(ddl2);
+                    if (exceptionType != null) {
+                        Assert.fail("SqlException expected");
+                    }
+                    assertSql(expected, "tab");
+                } catch (Throwable e) {
+                    if (exceptionType == null) throw e;
+                    Assert.assertSame(exceptionType, e.getClass());
+                    TestUtils.assertContains(e.getMessage(), expected);
                 }
-                assertSql(expected, "tab");
-            } catch (Throwable e) {
-                if (exceptionType == null) throw e;
-                Assert.assertSame(exceptionType, e.getClass());
-                TestUtils.assertContains(e.getMessage(), expected);
-            }
-        } else {
-            ddl("create table tab(seq long, ts timestamp)");
-            try {
-                ddl(ddl2, sqlExecutionContext);
-                if (exceptionType != null) {
-                    Assert.fail("SqlException expected");
+            } else {
+                ddl("create table tab(seq long, ts timestamp)");
+                try {
+                    ddl(ddl2, sqlExecutionContext);
+                    if (exceptionType != null) {
+                        Assert.fail("SqlException expected");
+                    }
+                    assertSql(expected, "tab");
+                } catch (Throwable e) {
+                    e.printStackTrace();
+                    if (exceptionType == null) throw e;
+                    Assert.assertSame(exceptionType, e.getClass());
+                    TestUtils.assertContains(e.getMessage(), expected);
                 }
-                assertSql(expected, "tab");
-            } catch (Throwable e) {
-                e.printStackTrace();
-                if (exceptionType == null) throw e;
-                Assert.assertSame(exceptionType, e.getClass());
-                TestUtils.assertContains(e.getMessage(), expected);
             }
-        }
+        });
     }
 
-    private void assertQueryCheckWal(String expected) throws SqlException {
+    private void assertQueryCheckWal(String expected) throws Exception {
         if (walEnabled) {
             drainWalQueue();
         }
 
-        assertQuery(expected, "dest", "ts", true, true);
+        assertQueryNoLeakCheck(expected, "dest", "ts", true, true);
     }
 
     private void testBindVariableInsert(int partitionBy, TimestampFunction timestampFunction, boolean initBindVariables, boolean columnSet) throws Exception {

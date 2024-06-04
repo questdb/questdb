@@ -68,7 +68,7 @@ public class DistinctIntKeyTest extends AbstractCairoTest {
             );
 
             try {
-                assertException("select DISTINCT i from tab order by 1 LIMIT 3", sqlExecutionContext);
+                assertExceptionNoLeakCheck("select DISTINCT i from tab order by 1 LIMIT 3", sqlExecutionContext);
             } catch (OutOfMemoryError e) {
                 // ignore
             }
@@ -150,7 +150,7 @@ public class DistinctIntKeyTest extends AbstractCairoTest {
             }
 
             try {
-                assertException("select DISTINCT i from tab order by 1 LIMIT 3");
+                assertExceptionNoLeakCheck("select DISTINCT i from tab order by 1 LIMIT 3");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "Partition '2020-02' does not exist in table 'tab' directory");
             }

@@ -75,11 +75,11 @@ jobs:
           testset: "none"
           javadoc_step: ""
           javadoc_profile: ""
-        linux-jdk17:
+        linux-jdk11:
           imageName: "ubuntu-latest"
           poolName: "Azure Pipelines"
           os: Linux
-          jdk: "1.17"
+          jdk: "1.11"
           testset: "none"
           javadoc_step: "javadoc:javadoc"
           javadoc_profile: ",javadoc"

@@ -99,6 +99,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_ENABLED("cairo.sql.parallel.groupby.presize.enabled"),
     CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_SIZE("cairo.sql.parallel.groupby.presize.max.size"),
     CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_HEAP_SIZE("cairo.sql.parallel.groupby.presize.max.heap.size"),
+    CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD("cairo.sql.parallel.work.stealing.threshold"),
     CAIRO_PAGE_FRAME_SHARD_COUNT("cairo.page.frame.shard.count"),
     CAIRO_PAGE_FRAME_TASK_POOL_CAPACITY("cairo.page.frame.task.pool.capacity"),
     CAIRO_SQL_JOIN_METADATA_PAGE_SIZE("cairo.sql.join.metadata.page.size"),
@@ -196,6 +197,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_WINDOW_TREE_PAGE_SIZE("cairo.sql.window.tree.page.size"),
     CAIRO_SQL_ANALYTIC_TREE_MAX_PAGES("cairo.sql.analytic.tree.max.pages"),
     CAIRO_SQL_WINDOW_TREE_MAX_PAGES("cairo.sql.window.tree.max.pages"),
+    CAIRO_SQL_LEGACY_OPERATOR_PRECEDENCE("cairo.sql.legacy.operator.precedence"),
     CAIRO_O3_TXN_SCOREBOARD_ENTRY_COUNT("cairo.o3.txn.scoreboard.entry.count"),
     CAIRO_LATESTBY_QUEUE_CAPACITY("cairo.latestby.queue.capacity"),
     CAIRO_O3_PARTITION_PURGE_LIST_INITIAL_CAPACITY("cairo.o3.partition.purge.list.initial.capacity"),
@@ -465,7 +467,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_O3_LAST_PARTITION_MAX_SPLITS("cairo.o3.last.partition.max.splits"),
     CAIRO_O3_PARTITION_SPLIT_MIN_SIZE("cairo.o3.partition.split.min.size"),
     DEBUG_WAL_PURGE_WAIT_BEFORE_DELETE("debug.wal.purge.wait.before.delete", false, true),
-    WRITER_MEMORY_LIMIT("cairo.writer.memory.limit"),
+    RAM_USAGE_LIMIT_BYTES("ram.usage.limit.bytes"),
+    RAM_USAGE_LIMIT_PERCENT("ram.usage.limit.percent"),
     DEBUG_ALLOW_TABLE_REGISTRY_SHARED_WRITE("debug.allow.table.registry.shared.write", false, true),
     DEBUG_ENABLE_TEST_FACTORIES("debug.enable.test.factories", false, true),
     DEBUG_CAIRO_ALLOW_MIXED_IO("debug.cairo.allow.mixed.io", false, true),
@@ -473,8 +476,6 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_DEFAULT_SEQ_PART_TXN_COUNT("cairo.default.sequencer.part.txn.count"),
     POSTHOG_API_KEY("posthog.api.key"),
     POSTHOG_ENABLED("posthog.enabled");
-
-
 
     private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;
@@ -530,6 +531,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     }
 
     static {
-        nameMapping = Arrays.stream(PropertyKey.values()).collect(Collectors.toMap(PropertyKey::getPropertyPath, k -> k));
+        nameMapping = Arrays
+                .stream(PropertyKey.values())
+                .collect(Collectors.toMap(PropertyKey::getPropertyPath, k -> k));
     }
 }

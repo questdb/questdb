@@ -29,6 +29,62 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 public class LPadRPadFunctionsTest extends AbstractCairoTest {
+
+    @Test
+    public void testAscii() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as (select rnd_varchar('abc','def','ghi') vc from long_sequence(5))");
+            assertSql(
+                    "lpad\trpad\n" +
+                            "  abc\tabc  \n" +
+                            "  abc\tabc  \n" +
+                            "  def\tdef  \n" +
+                            "  ghi\tghi  \n" +
+                            "  ghi\tghi  \n",
+                    "select lpad(vc, 5), rpad(vc, 5) from x order by vc"
+            );
+        });
+    }
+
+    @Test
+    public void testAsciiFill() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as (select rnd_varchar('abc','def','ghi') vc from long_sequence(5))");
+            assertSql(
+                    "lpad\trpad\n" +
+                            "..abc\tabc..\n" +
+                            "..abc\tabc..\n" +
+                            "..def\tdef..\n" +
+                            "..ghi\tghi..\n" +
+                            "..ghi\tghi..\n",
+                    "select lpad(vc, 5, '.'::varchar), rpad(vc, 5, '.'::varchar) from x order by vc"
+            );
+        });
+    }
+
+    @Test
+    public void testAsciiTrim() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as (select rnd_varchar('abc','def','ghi') vc from long_sequence(5))");
+            final String expected = "lpad\trpad\n" +
+                    "ab\tbc\n" +
+                    "ab\tbc\n" +
+                    "de\tef\n" +
+                    "gh\thi\n" +
+                    "gh\thi\n";
+
+            assertSql(
+                    expected,
+                    "select lpad(vc, 2), rpad(vc, 2) from x order by vc"
+            );
+
+            assertSql(
+                    expected,
+                    "select lpad(vc, 2, '.'::varchar), rpad(vc, 2, '.'::varchar) from x order by vc"
+            );
+        });
+    }
+
     @Test
     public void testCheckMaxBuffer() throws Exception {
         final int maxLength = configuration.getStrFunctionMaxBufferLength();
@@ -44,6 +100,33 @@ public class LPadRPadFunctionsTest extends AbstractCairoTest {
         assertException("select lpad('w3r'::varchar, " + (maxLength + 1) + ", 'esource'::varchar)",
                 -1,
                 "breached memory limit set for lpad(ØIØ) [maxLength=1048576, requiredLength=1048577]");
+    }
+
+    @Test
+    public void testFuncFuncGenericCase() throws SqlException {
+        ddl("create table x as (select rnd_varchar('x', 'y', 'z') str, rnd_varchar('abc','def','ghi') fill from long_sequence(5))");
+        assertSql(
+                "lpad\trpad\n" +
+                        "abcabcx\txabcabc\n" +
+                        "ghighiy\tyghighi\n" +
+                        "ghighiz\tzghighi\n" +
+                        "defdefz\tzdefdef\n" +
+                        "defdefx\txdefdef\n",
+                "select lpad(str, 7, fill), rpad(str, 7, fill) from x"
+        );
+    }
+
+    @Test
+    public void testPadNulls() throws SqlException {
+        ddl("create table x as (select null::varchar as vc from long_sequence(10))");
+        assertSql(
+                "count\n10\n",
+                "select count (*) from (select lpad(vc, 20, '.'::varchar), rpad(vc, 20, '.'::varchar) from x order by vc) where lpad = null and rpad = null"
+        );
+        assertSql(
+                "count\n10\n",
+                "select count (*) from (select lpad(vc, 20), rpad(vc, 20) from x order by vc) where lpad = null and rpad = null"
+        );
     }
 
     @Test
@@ -67,116 +150,37 @@ public class LPadRPadFunctionsTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFuncFuncGenericCase() throws SqlException {
-        ddl("create table x as (select rnd_varchar('x', 'y', 'z') str, rnd_varchar('abc','def','ghi') fill from long_sequence(5))");
-        assertSql(
-                "lpad\trpad\n" +
-                        "abcabcx\txabcabc\n" +
-                        "ghighiy\tyghighi\n" +
-                        "ghighiz\tzghighi\n" +
-                        "defdefz\tzdefdef\n" +
-                        "defdefx\txdefdef\n",
-                "select lpad(str, 7, fill), rpad(str, 7, fill) from x"
-        );
+    public void testUtf8() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as (select rnd_varchar('ганьба','слава','добрий','вечір') vc from long_sequence(6))");
+            assertSql(
+                    "lpad\trpad\n" +
+                            "     вечір\tвечір     \n" +
+                            "     вечір\tвечір     \n" +
+                            "    ганьба\tганьба    \n" +
+                            "    добрий\tдобрий    \n" +
+                            "     слава\tслава     \n" +
+                            "     слава\tслава     \n",
+                    "select lpad(vc, 10), rpad(vc, 10) from x order by vc"
+            );
+        });
     }
 
     @Test
-    public void testAscii() throws SqlException {
-        ddl("create table x as (select rnd_varchar('abc','def','ghi') vc from long_sequence(5))");
-        assertSql(
-                "lpad\trpad\n" +
-                        "  abc\tabc  \n" +
-                        "  abc\tabc  \n" +
-                        "  def\tdef  \n" +
-                        "  ghi\tghi  \n" +
-                        "  ghi\tghi  \n",
-                "select lpad(vc, 5), rpad(vc, 5) from x order by vc"
-        );
-    }
-
-    @Test
-    public void testAsciiTrim() throws SqlException {
-        ddl("create table x as (select rnd_varchar('abc','def','ghi') vc from long_sequence(5))");
-        final String expected = "lpad\trpad\n" +
-                "ab\tbc\n" +
-                "ab\tbc\n" +
-                "de\tef\n" +
-                "gh\thi\n" +
-                "gh\thi\n";
-
-        assertSql(
-                expected,
-                "select lpad(vc, 2), rpad(vc, 2) from x order by vc"
-        );
-
-        assertSql(
-                expected,
-                "select lpad(vc, 2, '.'::varchar), rpad(vc, 2, '.'::varchar) from x order by vc"
-        );
-    }
-
-    @Test
-    public void testAsciiFill() throws SqlException {
-        ddl("create table x as (select rnd_varchar('abc','def','ghi') vc from long_sequence(5))");
-        assertSql(
-                "lpad\trpad\n" +
-                        "..abc\tabc..\n" +
-                        "..abc\tabc..\n" +
-                        "..def\tdef..\n" +
-                        "..ghi\tghi..\n" +
-                        "..ghi\tghi..\n",
-                "select lpad(vc, 5, '.'::varchar), rpad(vc, 5, '.'::varchar) from x order by vc"
-        );
-    }
-
-    @Test
-    public void testUtf8() throws SqlException {
-        ddl("create table x as (select rnd_varchar('ганьба','слава','добрий','вечір') vc from long_sequence(6))");
-        assertSql(
-                "lpad\trpad\n" +
-                        "     вечір\tвечір     \n" +
-                        "     вечір\tвечір     \n" +
-                        "    ганьба\tганьба    \n" +
-                        "    добрий\tдобрий    \n" +
-                        "     слава\tслава     \n" +
-                        "     слава\tслава     \n",
-                "select lpad(vc, 10), rpad(vc, 10) from x order by vc"
-        );
-    }
-
-    @Test
-    public void testUtf8Fill() throws SqlException {
-        ddl("create table x as (select rnd_varchar('ганьба','слава','добрий','вечір') vc from long_sequence(6))");
-        assertSql(
-                "lpad\trpad\n" +
-                        ".....вечір\tвечір.....\n" +
-                        ".....вечір\tвечір.....\n" +
-                        "....ганьба\tганьба....\n" +
-                        "....добрий\tдобрий....\n" +
-                        ".....слава\tслава.....\n" +
-                        ".....слава\tслава.....\n",
-                "select lpad(vc, 10, '.'::varchar), rpad(vc, 10, '.'::varchar) from x order by vc"
-        );
-    }
-
-    @Test
-    public void testUtf8Trim() throws SqlException {
-        ddl("create table x as (select rnd_varchar('ганьба','слава','добрий','вечір') vc from long_sequence(6))");
-        final String expected = "lpad\trpad\n" +
-                "вечі\tечір\n" +
-                "вечі\tечір\n" +
-                "гань\tньба\n" +
-                "добр\tбрий\n" +
-                "слав\tлава\n" +
-                "слав\tлава\n";
-        assertSql(
-                expected,
-                "select lpad(vc, 4), rpad(vc, 4) from x order by vc"
-        );
-        assertSql(
-                expected,
-                "select lpad(vc, 4, '.'::varchar), rpad(vc, 4, '.'::varchar) from x order by vc"
-        );
+    public void testUtf8Fill() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as (select rnd_varchar('ганьба','слава','добрий','вечір') vc from long_sequence(6))");
+            assertSql(
+                    "lpad\trpad\n" +
+                            ".....вечір\tвечір.....\n" +
+                            ".....вечір\tвечір.....\n" +
+                            "....ганьба\tганьба....\n" +
+                            "....добрий\tдобрий....\n" +
+                            ".....слава\tслава.....\n" +
+                            ".....слава\tслава.....\n",
+                    "select lpad(vc, 10, '.'::varchar), rpad(vc, 10, '.'::varchar) from x order by vc"
+            );
+        });
     }
 
     @Test
@@ -224,15 +228,24 @@ public class LPadRPadFunctionsTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPadNulls() throws SqlException {
-        ddl("create table x as (select null::varchar as vc from long_sequence(10))");
-        assertSql(
-                "count\n10\n",
-                "select count (*) from (select lpad(vc, 20, '.'::varchar), rpad(vc, 20, '.'::varchar) from x order by vc) where lpad = null and rpad = null"
-        );
-        assertSql(
-                "count\n10\n",
-                "select count (*) from (select lpad(vc, 20), rpad(vc, 20) from x order by vc) where lpad = null and rpad = null"
-        );
+    public void testUtf8Trim() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as (select rnd_varchar('ганьба','слава','добрий','вечір') vc from long_sequence(6))");
+            final String expected = "lpad\trpad\n" +
+                    "вечі\tечір\n" +
+                    "вечі\tечір\n" +
+                    "гань\tньба\n" +
+                    "добр\tбрий\n" +
+                    "слав\tлава\n" +
+                    "слав\tлава\n";
+            assertSql(
+                    expected,
+                    "select lpad(vc, 4), rpad(vc, 4) from x order by vc"
+            );
+            assertSql(
+                    expected,
+                    "select lpad(vc, 4, '.'::varchar), rpad(vc, 4, '.'::varchar) from x order by vc"
+            );
+        });
     }
 }

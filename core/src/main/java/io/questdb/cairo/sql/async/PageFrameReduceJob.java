@@ -155,8 +155,7 @@ public class PageFrameReduceJob implements Job, Closeable {
                     messageBus.getPageFrameReduceSubSeq(shard),
                     record,
                     circuitBreaker,
-                    null // this is correct worker processing tasks rather than PageFrameSequence
-                    // helping to steal work
+                    null // this is correct worker processing tasks rather than PageFrameSequence helping to steal work
             ) || useful;
         }
         return useful;
@@ -194,21 +193,14 @@ public class PageFrameReduceJob implements Job, Closeable {
                     if (th instanceof CairoException) {
                         CairoException e = (CairoException) th;
                         interruptReason = e.getInterruptionReason();
-                        if (e.isCancellation()) {
-                            LOG.error().$(e.getFlyweightMessage()).$();
-                        } else {
-                            LOG.error().$("reduce error [ex=").$(th).I$();
-                        }
-                    } else {
-                        LOG.error().$("reduce error [ex=").$(th).I$();
                     }
                     task.setErrorMsg(th);
                     frameSequence.cancel(interruptReason);
                 } finally {
                     subSeq.done(cursor);
-                    // Reduce counter has to be incremented only when we make
+                    // Reduced counter has to be incremented only when we make
                     // sure that the task is available for consumers.
-                    frameSequence.getReduceCounter().incrementAndGet();
+                    frameSequence.getReduceFinishedCounter().incrementAndGet();
                 }
                 return false;
             } else if (cursor == -1) {
@@ -240,6 +232,7 @@ public class PageFrameReduceJob implements Job, Closeable {
             record.setFrameIndex(task.getFrameIndex());
             assert !frameSequence.done;
             circuitBreaker.setFd(frameSequence.getCircuitBreakerFd());
+            frameSequence.getReduceStartedCounter().incrementAndGet();
             frameSequence.getReducer().reduce(workerId, record, task, circuitBreaker, stealingFrameSequence);
         } else {
             frameSequence.cancel(cbState);

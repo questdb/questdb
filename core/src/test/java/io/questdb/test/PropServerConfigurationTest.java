@@ -94,8 +94,8 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().getDumpNetworkTraffic());
         Assert.assertFalse(configuration.getHttpServerConfiguration().getHttpContextConfiguration().allowDeflateBeforeSend());
         Assert.assertTrue(configuration.getHttpServerConfiguration().isQueryCacheEnabled());
-        Assert.assertEquals(4, configuration.getHttpServerConfiguration().getQueryCacheBlockCount());
-        Assert.assertEquals(4, configuration.getHttpServerConfiguration().getQueryCacheRowCount());
+        Assert.assertEquals(8 * configuration.getWorkerPoolConfiguration().getWorkerCount(), configuration.getHttpServerConfiguration().getQueryCacheBlockCount());
+        Assert.assertEquals(2 * configuration.getWorkerPoolConfiguration().getWorkerCount(), configuration.getHttpServerConfiguration().getQueryCacheRowCount());
 
         Assert.assertEquals(10, configuration.getWorkerPoolConfiguration().getYieldThreshold());
         Assert.assertEquals(10000, configuration.getWorkerPoolConfiguration().getSleepThreshold());
@@ -248,6 +248,7 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.getLineUdpReceiverConfiguration().ownThread());
 
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelFilterPreTouchEnabled());
+        Assert.assertEquals(16, configuration.getCairoConfiguration().getSqlParallelWorkStealingThreshold());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getSqlPageFrameMaxRows());
         Assert.assertEquals(100_000, configuration.getCairoConfiguration().getSqlPageFrameMinRows());
         Assert.assertEquals(256, configuration.getCairoConfiguration().getPageFrameReduceRowIdListCapacity());
@@ -371,8 +372,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(64, configuration.getPGWireConfiguration().getDispatcherConfiguration().getTestConnectionBufferSize());
         Assert.assertEquals(2, configuration.getPGWireConfiguration().getBinParamCountCapacity());
         Assert.assertTrue(configuration.getPGWireConfiguration().isSelectCacheEnabled());
-        Assert.assertEquals(4, configuration.getPGWireConfiguration().getSelectCacheBlockCount());
-        Assert.assertEquals(4, configuration.getPGWireConfiguration().getSelectCacheRowCount());
+        Assert.assertEquals(8 * configuration.getWorkerPoolConfiguration().getWorkerCount(), configuration.getPGWireConfiguration().getSelectCacheBlockCount());
+        Assert.assertEquals(2 * configuration.getWorkerPoolConfiguration().getWorkerCount(), configuration.getPGWireConfiguration().getSelectCacheRowCount());
         Assert.assertTrue(configuration.getPGWireConfiguration().isInsertCacheEnabled());
         Assert.assertEquals(4, configuration.getPGWireConfiguration().getInsertCacheBlockCount());
         Assert.assertEquals(4, configuration.getPGWireConfiguration().getInsertCacheRowCount());
@@ -1393,6 +1394,7 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.isSqlParallelFilterEnabled());
         Assert.assertFalse(configuration.isSqlParallelFilterPreTouchEnabled());
         Assert.assertFalse(configuration.isSqlParallelGroupByEnabled());
+        Assert.assertEquals(32, configuration.getSqlParallelWorkStealingThreshold());
         Assert.assertEquals(1000, configuration.getSqlPageFrameMaxRows());
         Assert.assertEquals(100, configuration.getSqlPageFrameMinRows());
         Assert.assertEquals(128, configuration.getPageFrameReduceShardCount());

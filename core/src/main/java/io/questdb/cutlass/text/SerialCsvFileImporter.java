@@ -55,12 +55,17 @@ public final class SerialCsvFileImporter implements Closeable {
     private CharSequence timestampFormat;
 
     public SerialCsvFileImporter(CairoEngine cairoEngine) {
-        this.configuration = cairoEngine.getConfiguration();
-        this.inputRoot = configuration.getSqlCopyInputRoot();
-        this.inputFilePath = new Path();
-        this.ff = configuration.getFilesFacade();
-        this.textLoader = new TextLoader(cairoEngine);
-        this.cairoEngine = cairoEngine;
+        try {
+            this.configuration = cairoEngine.getConfiguration();
+            this.inputRoot = configuration.getSqlCopyInputRoot();
+            this.inputFilePath = new Path();
+            this.ff = configuration.getFilesFacade();
+            this.textLoader = new TextLoader(cairoEngine);
+            this.cairoEngine = cairoEngine;
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override

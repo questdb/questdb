@@ -59,9 +59,10 @@ public class InStrFunctionFactory implements FunctionFactory {
         if (n == 1) {
             return BooleanConstant.FALSE;
         }
-        ObjList<Function> deferredValues = null;
+        ObjList<Function> deferredValueFunctions = null;
+        IntList deferredValuePositions = null;
 
-        final CharSequenceHashSet set = new CharSequenceHashSet();
+        final CharSequenceHashSet valueSet = new CharSequenceHashSet();
         for (int i = 1; i < n; i++) {
             Function func = args.getQuick(i);
             switch (ColumnType.tagOf(func.getType())) {
@@ -69,44 +70,51 @@ public class InStrFunctionFactory implements FunctionFactory {
                 case ColumnType.STRING:
                 case ColumnType.VARCHAR:
                 case ColumnType.SYMBOL:
-                    if (func.isRuntimeConstant() && !func.isNullConstant()) { // bind variables
-                        if (deferredValues == null) {
-                            deferredValues = new ObjList<>();
+                    // the "undefined" case hinges on the fact it is "runtime constant" and that
+                    // all undefined bind variable would end up being deferred.
+                case ColumnType.UNDEFINED:
+                    if (func.isRuntimeConstant()) { // bind variables
+                        if (deferredValueFunctions == null) {
+                            deferredValueFunctions = new ObjList<>();
+                            deferredValuePositions = new IntList();
                         }
-                        deferredValues.add(func);
+                        deferredValueFunctions.add(func);
+                        deferredValuePositions.add(argPositions.getQuick(i));
                         continue;
                     }
                     CharSequence value = func.getStrA(null);
                     if (value == null) {
-                        set.addNull();
+                        valueSet.addNull();
                     }
-                    set.add(Chars.toString(value));
+                    valueSet.add(Chars.toString(value));
                     break;
                 case ColumnType.CHAR:
-                    set.add(String.valueOf(func.getChar(null)));
+                    valueSet.add(String.valueOf(func.getChar(null)));
                     break;
                 default:
                     throw SqlException.$(argPositions.getQuick(i), "STRING constant expected");
             }
         }
         final Function var = args.getQuick(0);
-        if (var.isConstant() && deferredValues == null) {
-            return BooleanConstant.of(set.contains(var.getStrA(null)));
+        if (var.isConstant() && deferredValueFunctions == null) {
+            return BooleanConstant.of(valueSet.contains(var.getStrA(null)));
         }
-        return new Func(var, set, deferredValues);
+        return new InStrFunction(var, valueSet, deferredValueFunctions, deferredValuePositions);
     }
 
-    private static class Func extends BooleanFunction implements UnaryFunction {
+    private static class InStrFunction extends BooleanFunction implements UnaryFunction {
         private final Function arg;
         private final CharSequenceHashSet deferredSet;
-        private final ObjList<Function> deferredValues;
-        private final CharSequenceHashSet set;
+        private final ObjList<Function> deferredValueFunctions;
+        private final IntList deferredValuePositions;
+        private final CharSequenceHashSet valueSet;
 
-        public Func(Function arg, CharSequenceHashSet set, ObjList<Function> deferredValues) {
+        public InStrFunction(Function arg, CharSequenceHashSet valueSet, ObjList<Function> deferredValueFunctions, IntList deferredValuePositions) {
             this.arg = arg;
-            this.set = set;
-            this.deferredValues = deferredValues;
-            this.deferredSet = deferredValues != null ? new CharSequenceHashSet() : null;
+            this.valueSet = valueSet;
+            this.deferredValueFunctions = deferredValueFunctions;
+            this.deferredSet = deferredValueFunctions != null ? new CharSequenceHashSet() : null;
+            this.deferredValuePositions = deferredValuePositions;
         }
 
         @Override
@@ -117,31 +125,47 @@ public class InStrFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             CharSequence val = arg.getStrA(rec);
-            return set.contains(val)
+            return valueSet.contains(val)
                     || (deferredSet != null && deferredSet.contains(val));
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             arg.init(symbolTableSource, executionContext);
-            if (deferredValues != null) {
+            if (deferredValueFunctions != null) {
                 deferredSet.clear();
-                for (int i = 0, n = deferredValues.size(); i < n; i++) {
-                    Function func = deferredValues.getQuick(i);
+                for (int i = 0, n = deferredValueFunctions.size(); i < n; i++) {
+                    Function func = deferredValueFunctions.getQuick(i);
                     func.init(symbolTableSource, executionContext);
-                    deferredSet.add(func.getStrA(null));
+                    // check the supported types, these types may mutate as bind variables get redefined
+                    switch (func.getType()) {
+                        case ColumnType.STRING:
+                        case ColumnType.CHAR:
+                        case ColumnType.VARCHAR:
+                        case ColumnType.NULL:
+                            deferredSet.add(func.getStrA(null));
+                            break;
+                        default:
+                            throw SqlException.inconvertibleTypes(
+                                    deferredValuePositions.getQuick(i),
+                                    func.getType(),
+                                    ColumnType.nameOf(func.getType()),
+                                    ColumnType.TIMESTAMP,
+                                    ColumnType.nameOf(ColumnType.TIMESTAMP)
+                            );
+                    }
                 }
             }
         }
 
         @Override
         public void toPlan(PlanSink sink) {
-            if (deferredValues != null) {
+            if (deferredValueFunctions != null) {
                 sink.val('(');
             }
-            sink.val(arg).val(" in ").val(set);
-            if (deferredValues != null) {
-                sink.val(" or ").val(arg).val(" in ").val(deferredValues).val(')');
+            sink.val(arg).val(" in ").val(valueSet);
+            if (deferredValueFunctions != null) {
+                sink.val(" or ").val(arg).val(" in ").val(deferredValueFunctions).val(')');
             }
         }
     }
