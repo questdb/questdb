@@ -41,10 +41,11 @@ pub fn binary_to_page(
     primitive_type: PrimitiveType,
     encoding: Encoding,
 ) -> ParquetResult<Page> {
+    let num_rows = column_top + offsets.len();
     let mut buffer = vec![];
     let mut null_count = 0;
 
-    let deflevels_iter = (0..column_top + offsets.len()).map(|i| {
+    let deflevels_iter = (0..num_rows).map(|i| {
         let len = if i < column_top {
             -1
         } else {
@@ -73,7 +74,7 @@ pub fn binary_to_page(
 
     build_plain_page(
         buffer,
-        column_top + offsets.len(),
+        num_rows,
         null_count,
         definition_levels_byte_length,
         None, //TODO: add statistics

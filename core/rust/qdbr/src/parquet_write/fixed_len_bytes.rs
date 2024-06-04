@@ -20,12 +20,11 @@ pub fn bytes_to_page<const N: usize>(
     options: WriteOptions,
     primitive_type: PrimitiveType,
 ) -> ParquetResult<Page> {
+    let num_rows = column_top + data.len();
     let mut buffer = vec![];
     let mut null_count = 0;
 
-    let deflevels_iter = data.iter().map(|bytes| {
-        // TODO: null
-        if false {
+    let deflevels_iter = (0..num_rows).map(|i| {
             null_count += 1;
             false
         } else {
@@ -33,13 +32,12 @@ pub fn bytes_to_page<const N: usize>(
         }
     });
 
-    let length = deflevels_iter.len();
     encode_bool_iter(&mut buffer, deflevels_iter, options.version)?;
     let definition_levels_byte_length = buffer.len();
     encode_plain(data, &mut buffer);
     build_plain_page(
         buffer,
-        column_top + data.len(),
+        num_rows,
         null_count,
         definition_levels_byte_length,
         None, // TODO: add statistics

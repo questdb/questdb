@@ -66,10 +66,11 @@ pub fn varchar_to_page(
     primitive_type: PrimitiveType,
 ) -> ParquetResult<Page> {
     let aux: &[AuxEntryInlined] = unsafe { std::mem::transmute(aux) };
+    let num_rows = column_top + aux.len();
     let mut buffer = vec![];
     let mut null_count = 0;
 
-    let deflevels_iter = (0..column_top + aux.len()).map(|i| {
+    let deflevels_iter = (0..num_rows).map(|i| {
         if i < column_top {
             null_count += 1;
             false
@@ -89,8 +90,7 @@ pub fn varchar_to_page(
     encode_plain(aux, data, &mut buffer);
     build_plain_page(
         buffer,
-        length,
-        length,
+        num_rows,
         null_count,
         definition_levels_byte_length,
         None, // TODO: implement statistics

@@ -162,11 +162,13 @@ where
     P: NativeType + Bounded,
     T: num_traits::AsPrimitive<P> + Nullable + Bounded + Debug,
 {
+    let num_rows = column_top + slice.len();
     let mut buffer = vec![];
     let mut null_count = 0;
     let mut statistics = MaxMin::new();
+
     if is_nullable {
-        let deflevels_iter = (0..column_top + slice.len()).map(|i| {
+        let deflevels_iter = (0..num_rows).map(|i| {
             if i < column_top {
                 false
             } else {
@@ -199,7 +201,7 @@ where
 
     build_plain_page(
         buffer,
-        column_top + slice.len(),
+        num_rows,
         column_top + null_count,
         definition_levels_byte_length,
         statistics,

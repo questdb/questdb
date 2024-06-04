@@ -24,10 +24,12 @@ pub fn slice_to_page(
     options: WriteOptions,
     primitive_type: PrimitiveType,
 ) -> ParquetResult<Page> {
+    let num_rows = column_top + slice.len();
     let mut buffer = vec![];
     let mut stats = MaxMin::new();
+
     encode_plain(
-        (0..column_top + slice.len()).map(|i| {
+        (0..num_rows).map(|i| {
             let x = if i < column_top {
                 0
             } else {
@@ -47,7 +49,7 @@ pub fn slice_to_page(
 
     util::build_plain_page(
         buffer,
-        column_top + slice.len(),
+        num_rows,
         0,
         0,
         statistics,
