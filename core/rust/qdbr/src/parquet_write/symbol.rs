@@ -45,22 +45,29 @@ fn encode_dict(column_vals: &[i32], offsets: &[u64], chars: &[u8]) -> (Vec<u8>, 
     (dict_buffer, local_keys, (serialized_count - 1) as u32)
 }
 
-//TODO: column top
 pub fn symbol_to_pages(
     column_values: &[i32],
     offsets: &[u64],
     chars: &[u8],
+    column_top: usize,
     options: WriteOptions,
     primitive_type: PrimitiveType,
 ) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
+    let num_rows = column_top + column_values.len();
     let mut null_count = 0;
-    let deflevels_iter = column_values.iter().map(|key| {
-        // -1 denotes a null value
-        if *key > -1 {
-            true
-        } else {
-            null_count += 1;
+
+    let deflevels_iter = (0..num_rows).map(|i| {
+        if i < column_top {
             false
+        } else {
+            let key = column_values[i - column_top];
+            // -1 denotes a null value
+            if key > -1 {
+                true
+            } else {
+                null_count += 1;
+                false
+            }
         }
     });
     let mut data_buffer = vec![];
@@ -79,7 +86,7 @@ pub fn symbol_to_pages(
 
     let data_page = build_plain_page(
         data_buffer,
-        column_values.len(),
+        num_rows,
         null_count,
         definition_levels_byte_length,
         None,

@@ -230,12 +230,12 @@ fn column_chunk_to_pages(
     };
 
     if matches!(column.data_type, ColumnType::Symbol) {
-        let keys: &[i32] = unsafe {
-            mem::transmute(&column.primary_data[chunk_offset..chunk_offset + chunk_length])
-        };
+        let keys: &[i32] =
+            unsafe { mem::transmute(&column.primary_data[chunk_offset..][..chunk_length]) };
         let offsets = column.symbol_offsets;
         let data = column.secondary_data;
-        return symbol::symbol_to_pages(keys, offsets, data, options, primitive_type);
+        let column_top = column.column_top;
+        return symbol::symbol_to_pages(keys, offsets, data, column_top, options, primitive_type);
     }
 
     let number_of_rows = chunk_length;
