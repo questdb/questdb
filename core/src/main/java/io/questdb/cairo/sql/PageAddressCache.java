@@ -60,7 +60,6 @@ public class PageAddressCache implements Mutable {
                 final long auxPageAddress = frame.getIndexPageAddress(columnIndex);
                 auxPageAddresses.add(auxPageAddress);
                 final long pageSize = frame.getPageSize(columnIndex);
-                assert pageSize > 0;
                 pageSizes.add(pageSize);
                 pageLimits.add(pageAddress + pageSize);
                 final long frameRowCount = frame.getPartitionHi() - frame.getPartitionLo();
@@ -114,14 +113,7 @@ public class PageAddressCache implements Mutable {
      * This allows calculating the `tailPadding` for `Utf8SplitString` instances.
      */
     public long getPageLimit(int frameIndex, int columnIndex) {
-        final long limit = pageLimits.getQuick(columnCount * frameIndex + columnIndex);
-        if (limit <= 0) {
-            String msg = "Invalid getPageLimit for frameIndex: " + frameIndex + ", columnIndex: " + columnIndex + ", limit: " + limit;
-            System.err.println(msg);
-            throw new AssertionError(msg);
-        }
-        assert limit > 0;
-        return limit;
+        return pageLimits.getQuick(columnCount * frameIndex + columnIndex);
     }
 
     public long getPageSize(int frameIndex, int columnIndex) {
