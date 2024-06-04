@@ -197,10 +197,11 @@ where
         None
     };
 
+    let num_rows = column_top + slice.len();
     build_plain_page(
         buffer,
-        slice.len(),
-        slice.len(),
+        num_rows,
+        num_rows,
         column_top + null_count,
         definition_levels_byte_length,
         statistics,
@@ -221,7 +222,6 @@ where
     let (max, min) = statistics.get_current_values();
     let statistics = &PrimitiveStatistics::<P> {
         primitive_type,
-        // null_count: if null_count == 0 {None} else {Some(null_count as i64)},
         null_count,
         distinct_count: None,
         max_value: max,
