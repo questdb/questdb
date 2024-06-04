@@ -25,6 +25,10 @@ pub fn bytes_to_page<const N: usize>(
     let mut null_count = 0;
 
     let deflevels_iter = (0..num_rows).map(|i| {
+        if i < column_top {
+            false
+        // TODO: detect null value
+        } else if data[i - column_top] != data[i - column_top] {
             null_count += 1;
             false
         } else {
