@@ -73,6 +73,18 @@ public final class Uuid implements Sinkable {
         }
     }
 
+    public static void checkDashesAndLength(Utf8Sequence uuid) throws NumericException {
+        if (uuid.size() != UUID_LENGTH) {
+            throw NumericException.INSTANCE;
+        }
+        if (uuid.byteAt(FIRST_DASH_POS) != '-'
+                || uuid.byteAt(SECOND_DASH_POS) != '-'
+                || uuid.byteAt(THIRD_DASH_POS) != '-'
+                || uuid.byteAt(FOURTH_DASH_POS) != '-') {
+            throw NumericException.INSTANCE;
+        }
+    }
+
     /**
      * Check if UUID is null.
      *
@@ -111,6 +123,17 @@ public final class Uuid implements Sinkable {
         return (hi1 << 32) | (hi2 << 16) | hi3;
     }
 
+    public static long parseHi(Utf8Sequence uuid, int lo) throws NumericException {
+        assert lo >= 0;
+        long hi1;
+        long hi2;
+        long hi3;
+        hi1 = Numbers.parseHexLong(uuid, lo, lo + FIRST_DASH_POS);
+        hi2 = Numbers.parseHexLong(uuid, lo + FIRST_DASH_POS + 1, lo + SECOND_DASH_POS);
+        hi3 = Numbers.parseHexLong(uuid, lo + SECOND_DASH_POS + 1, lo + THIRD_DASH_POS);
+        return (hi1 << 32) | (hi2 << 16) | hi3;
+    }
+
     /**
      * Returns lowest 64 bits of UUID.
      * <p>
@@ -128,6 +151,15 @@ public final class Uuid implements Sinkable {
     }
 
     public static long parseLo(CharSequence uuid, int lo) throws NumericException {
+        assert lo >= 0;
+        long lo1;
+        long lo2;
+        lo1 = Numbers.parseHexLong(uuid, lo + THIRD_DASH_POS + 1, lo + FOURTH_DASH_POS);
+        lo2 = Numbers.parseHexLong(uuid, lo + FOURTH_DASH_POS + 1, lo + UUID_LENGTH);
+        return (lo1 << 48) | lo2;
+    }
+
+    public static long parseLo(Utf8Sequence uuid, int lo) throws NumericException {
         assert lo >= 0;
         long lo1;
         long lo2;

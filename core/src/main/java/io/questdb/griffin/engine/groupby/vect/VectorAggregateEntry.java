@@ -45,14 +45,24 @@ public class VectorAggregateEntry implements Mutable {
     private long[] pRosti;
     private PerWorkerLocks perWorkerLocks;
     private RostiAllocFacade raf;
+    private AtomicInteger startedCounter;
     private long valueAddress;
     private long valueCount;
 
     @Override
     public void clear() {
+        this.keyAddress = 0;
         this.valueAddress = 0;
         this.valueCount = 0;
         this.func = null;
+        this.pRosti = null;
+        this.columnSizeShr = 0;
+        this.startedCounter = null;
+        this.doneLatch = null;
+        this.oomCounter = null;
+        this.raf = null;
+        this.perWorkerLocks = null;
+        this.circuitBreaker = null;
     }
 
     public void run(int workerId, Sequence seq, long cursor) {
@@ -65,11 +75,26 @@ public class VectorAggregateEntry implements Mutable {
         RostiAllocFacade raf = this.raf;
         VectorAggregateFunction func = this.func;
         ExecutionCircuitBreaker circuitBreaker = this.circuitBreaker;
+        AtomicInteger startedCounter = this.startedCounter;
         CountDownLatchSPI doneLatch = this.doneLatch;
         PerWorkerLocks perWorkerLocks = this.perWorkerLocks;
 
         seq.done(cursor);
-        run(workerId, keyAddress, valueAddress, valueCount, columnSizeShr, oomCounter, pRosti, raf, func, perWorkerLocks, circuitBreaker, doneLatch);
+        run(
+                workerId,
+                keyAddress,
+                valueAddress,
+                valueCount,
+                columnSizeShr,
+                oomCounter,
+                pRosti,
+                raf,
+                func,
+                perWorkerLocks,
+                circuitBreaker,
+                startedCounter,
+                doneLatch
+        );
     }
 
     private static void run(
@@ -84,8 +109,11 @@ public class VectorAggregateEntry implements Mutable {
             VectorAggregateFunction func,
             PerWorkerLocks perWorkerLocks,
             ExecutionCircuitBreaker circuitBreaker,
+            AtomicInteger startedCounter,
             CountDownLatchSPI doneLatch
     ) {
+        startedCounter.incrementAndGet();
+
         if (circuitBreaker.checkIfTripped() || (oomCounter != null && oomCounter.get() > 0)) {
             doneLatch.countDown();
             return;
@@ -118,6 +146,7 @@ public class VectorAggregateEntry implements Mutable {
             long valuePageAddress,
             long valuePageCount,
             int columnSizeShr,
+            AtomicInteger startedCounter,
             CountDownLatchSPI doneLatch,
             // oom is not possible when aggregation is not keyed
             @Nullable AtomicInteger oomCounter,
@@ -131,6 +160,7 @@ public class VectorAggregateEntry implements Mutable {
         this.valueCount = valuePageCount;
         this.func = vaf;
         this.columnSizeShr = columnSizeShr;
+        this.startedCounter = startedCounter;
         this.doneLatch = doneLatch;
         this.oomCounter = oomCounter;
         this.raf = raf;

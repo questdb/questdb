@@ -47,7 +47,12 @@ public class MemoryPages implements Closeable, Mutable, Reopenable {
         this.bits = Numbers.msb(this.pageSize);
         this.mask = this.pageSize - 1;
         this.maxPages = maxPages;
-        allocate0(0);
+        try {
+            allocate0(0);
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     public long addressOf(long offset) {

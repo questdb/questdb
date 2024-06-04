@@ -31,6 +31,7 @@ import io.questdb.griffin.*;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
@@ -50,6 +51,7 @@ import org.junit.runners.Parameterized;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
@@ -627,7 +629,7 @@ public class UpdateTest extends AbstractCairoTest {
                 public Rnd getAsyncRandom() {
                     throw new RuntimeException("test error");
                 }
-            }.with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(), null);
+            }.with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext());
 
             testUpdateAsyncMode(
                     tableWriter -> {
@@ -647,7 +649,7 @@ public class UpdateTest extends AbstractCairoTest {
 
     @Test
     public void testUpdateAsyncModeRemoveColumnInMiddle() throws Exception {
-        //this test makes sense for non-WAL tables only, UPDATE cannot go async in TableWriter for WAL tables
+        // this test makes sense for non-WAL tables only, UPDATE cannot go async in TableWriter for WAL tables
         Assume.assumeFalse(walEnabled);
 
         testUpdateAsyncMode(
@@ -3207,16 +3209,17 @@ public class UpdateTest extends AbstractCairoTest {
                             " timestamp(ts)"
             );
 
-            CyclicBarrier barrier = new CyclicBarrier(2);
+            CyclicBarrier lockBarrier = new CyclicBarrier(2);
+            AtomicBoolean updateFlag = new AtomicBoolean();
 
             final Thread th = new Thread(() -> {
-                try {
-                    TableWriter tableWriter = getWriter("up");
-                    barrier.await(); // table is locked
-                    barrier.await(); // update is on writer async cmd queue
+                try (TableWriter tableWriter = getWriter("up")) {
+                    lockBarrier.await(); // table is locked
+                    while (!updateFlag.get()) { // update is on writer async cmd queue
+                        Os.sleep(1);
+                    }
                     writerConsumer.accept(tableWriter);
                     tableWriter.tick();
-                    tableWriter.close();
                 } catch (Exception e) {
                     e.printStackTrace();
                     Assert.fail();
@@ -3224,31 +3227,35 @@ public class UpdateTest extends AbstractCairoTest {
             });
             th.start();
 
-            barrier.await(); // table is locked
+            lockBarrier.await(); // table is locked
 
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                CompiledQuery cq = compiler.compile("UPDATE up SET x = 123 WHERE x > 1 and x < 4", sqlExecutionContext);
-                try (OperationFuture fut = cq.execute(eventSubSequence)) {
-                    Assert.assertEquals(OperationFuture.QUERY_NO_RESPONSE, fut.getStatus());
-                    Assert.assertEquals(0, fut.getAffectedRowsCount());
-                    barrier.await(); // update is on writer async cmd queue
+            try {
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    CompiledQuery cq = compiler.compile("UPDATE up SET x = 123 WHERE x > 1 and x < 4", sqlExecutionContext);
+                    try (OperationFuture fut = cq.execute(eventSubSequence)) {
+                        Assert.assertEquals(OperationFuture.QUERY_NO_RESPONSE, fut.getStatus());
+                        Assert.assertEquals(0, fut.getAffectedRowsCount());
+                        updateFlag.set(true); // update is on writer async cmd queue
 
-                    if (errorMsg == null) {
-                        fut.await(10 * Timestamps.SECOND_MILLIS); // 10 seconds timeout
-                        Assert.assertEquals(OperationFuture.QUERY_COMPLETE, fut.getStatus());
-                        Assert.assertEquals(2, fut.getAffectedRowsCount());
-                    } else {
-                        try {
+                        if (errorMsg == null) {
                             fut.await(10 * Timestamps.SECOND_MILLIS); // 10 seconds timeout
-                            Assert.fail("Expected exception missing");
-                        } catch (TableReferenceOutOfDateException | SqlException e) {
-                            Assert.assertEquals(errorMsg, e.getMessage());
-                            Assert.assertEquals(0, fut.getAffectedRowsCount());
+                            Assert.assertEquals(OperationFuture.QUERY_COMPLETE, fut.getStatus());
+                            Assert.assertEquals(2, fut.getAffectedRowsCount());
+                        } else {
+                            try {
+                                fut.await(10 * Timestamps.SECOND_MILLIS); // 10 seconds timeout
+                                Assert.fail("Expected exception missing");
+                            } catch (TableReferenceOutOfDateException | SqlException e) {
+                                Assert.assertEquals(errorMsg, e.getMessage());
+                                Assert.assertEquals(0, fut.getAffectedRowsCount());
+                            }
                         }
                     }
                 }
+            } finally {
+                updateFlag.set(true);
+                th.join();
             }
-            th.join();
 
             assertSql(expectedData, "up");
         });

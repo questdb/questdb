@@ -144,13 +144,8 @@ public class Table2IlpTest {
                 conf,
                 engine,
                 workerPool,
-                new PGWireServer.PGConnectionContextFactory(
-                        engine,
-                        conf,
-                        registry,
-                        () -> new SqlExecutionContextImpl(engine, workerPool.getWorkerCount(), workerPool.getWorkerCount())
-                ),
-                registry
+                registry,
+                () -> new SqlExecutionContextImpl(engine, workerPool.getWorkerCount(), workerPool.getWorkerCount())
         );
 
         final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {

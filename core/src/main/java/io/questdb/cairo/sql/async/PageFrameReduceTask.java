@@ -55,10 +55,15 @@ public class PageFrameReduceTask implements Closeable {
     private byte type;
 
     public PageFrameReduceTask(CairoConfiguration configuration, int memoryTag) {
-        this.filteredRows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), memoryTag);
-        this.columns = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
-        this.varSizeAux = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
-        this.pageFrameQueueCapacity = configuration.getPageFrameReduceQueueCapacity();
+        try {
+            this.filteredRows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), memoryTag);
+            this.columns = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
+            this.varSizeAux = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
+            this.pageFrameQueueCapacity = configuration.getPageFrameReduceQueueCapacity();
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override
@@ -88,7 +93,7 @@ public class PageFrameReduceTask implements Closeable {
     }
 
     public long getFrameRowCount() {
-        return this.frameSequence.getFrameRowCount(frameIndex);
+        return frameSequence.getFrameRowCount(frameIndex);
     }
 
     public PageFrameSequence<?> getFrameSequence() {
@@ -196,13 +201,6 @@ public class PageFrameReduceTask implements Closeable {
 
     void collected(boolean forceCollect) {
         final long frameCount = frameSequence.getFrameCount();
-        // We have to reset capacity only on max all queue items
-        // What we are avoiding here is resetting capacity on 1000 frames given our queue size
-        // is 32 items. If our particular producer resizes queue items to 10x of the initial size
-        // we let these sizes stick until produce starts to wind down.
-        if (forceCollect || frameIndex >= frameCount - pageFrameQueueCapacity) {
-            resetCapacities();
-        }
 
         // we assume that frame indexes are published in ascending order
         // and when we see the last index, we would free up the remaining resources
@@ -211,5 +209,13 @@ public class PageFrameReduceTask implements Closeable {
         }
 
         frameSequence = null;
+
+        // We have to reset capacity only on max all queue items
+        // What we are avoiding here is resetting capacity on 1000 frames given our queue size
+        // is 32 items. If our particular producer resizes queue items to 10x of the initial size
+        // we let these sizes stick until produce starts to wind down.
+        if (forceCollect || frameIndex >= frameCount - pageFrameQueueCapacity) {
+            resetCapacities();
+        }
     }
 }

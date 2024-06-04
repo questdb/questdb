@@ -68,7 +68,8 @@ class LatestByAllFilteredRecordCursor extends AbstractDescendingRecordListCursor
 
     @Override
     public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
-        if (!isOpen()) {
+        if (!isOpen) {
+            isOpen = true;
             map.reopen();
         }
         super.of(dataFrameCursor, executionContext);

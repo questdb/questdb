@@ -111,6 +111,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean getCairoSqlLegacyOperatorPrecedence() {
+        return getDelegate().getCairoSqlLegacyOperatorPrecedence();
+    }
+
+    @Override
     public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
         return getDelegate().getCircuitBreakerConfiguration();
     }
@@ -556,6 +561,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getSequencerCheckInterval() {
+        return getDelegate().getSequencerCheckInterval();
+    }
+
+    @Override
     public boolean getSimulateCrashEnabled() {
         return getDelegate().getSimulateCrashEnabled();
     }
@@ -753,6 +763,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getSqlPageFrameMinRows() {
         return getDelegate().getSqlPageFrameMinRows();
+    }
+
+    @Override
+    public int getSqlParallelWorkStealingThreshold() {
+        return getDelegate().getSqlParallelWorkStealingThreshold();
     }
 
     @Override
@@ -956,11 +971,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getSequencerCheckInterval() {
-        return getDelegate().getSequencerCheckInterval();
-    }
-
-    @Override
     public int getWalPurgeWaitBeforeDelete() {
         return getDelegate().getWalPurgeWaitBeforeDelete();
     }
@@ -1033,11 +1043,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public long getWriterFileOpenOpts() {
         return getDelegate().getWriterFileOpenOpts();
-    }
-
-    @Override
-    public long getWriterMemoryLimit() {
-        return 0;
     }
 
     @Override

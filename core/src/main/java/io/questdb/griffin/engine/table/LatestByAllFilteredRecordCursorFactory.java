@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -50,11 +51,16 @@ public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecor
             @NotNull IntList columnIndexes
     ) {
         super(metadata, dataFrameCursorFactory, configuration);
-        Map map = MapFactory.createOrderedMap(configuration, columnTypes);
-        if (filter == null) {
-            cursor = new LatestByAllRecordCursor(map, rows, recordSink, columnIndexes);
-        } else {
-            cursor = new LatestByAllFilteredRecordCursor(map, rows, recordSink, filter, columnIndexes);
+        try {
+            Map map = MapFactory.createOrderedMap(configuration, columnTypes);
+            if (filter == null) {
+                cursor = new LatestByAllRecordCursor(map, rows, recordSink, columnIndexes);
+            } else {
+                cursor = new LatestByAllFilteredRecordCursor(map, rows, recordSink, filter, columnIndexes);
+            }
+        } catch (Throwable th) {
+            close();
+            throw th;
         }
     }
 
@@ -72,7 +78,7 @@ public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecor
 
     @Override
     protected void _close() {
-        cursor.close();
         super._close();
+        Misc.free(cursor);
     }
 }

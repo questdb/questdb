@@ -139,9 +139,9 @@ class IntersectCastRecordCursor extends AbstractSetRecordCursor {
 
     void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) {
         if (!isOpen) {
+            isOpen = true;
             mapA.reopen();
             mapB.reopen();
-            isOpen = true;
         }
 
         this.cursorA = cursorA;

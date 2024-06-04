@@ -95,7 +95,6 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
                 0.0
         );
 
-
         partitionCount = 5 + rnd.nextInt(10);
         setFuzzCounts(
                 rnd.nextBoolean(),
@@ -162,17 +161,16 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
 
             copyTableDir(src, merged);
             mergeAllPartitions(merged);
+
+            String limit = "";
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    tableName + limit,
+                    tableNameMerged + limit,
+                    LOG
+            );
+            fuzzer.assertRandomIndexes(tableName, tableNameMerged, rnd);
         });
-
-        String limit = "";
-        TestUtils.assertSqlCursors(
-                engine,
-                sqlExecutionContext,
-                tableName + limit,
-                tableNameMerged + limit,
-                LOG
-        );
-        fuzzer.assertRandomIndexes(tableName, tableNameMerged, rnd);
     }
-
 }

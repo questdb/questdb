@@ -107,15 +107,25 @@ public class DirectUtf16Sink implements MutableUtf16Sink, DirectCharSequence, Cl
     @Override
     public Utf16Sink put(char @NotNull [] chars, int start, int len) {
         int l2 = len * 2;
-
         if (lo + l2 >= hi) {
             resize((int) Math.max(capacity * 2L, (lo - ptr + l2) * 2L));
         }
-
         for (int i = 0; i < len; i++) {
             Unsafe.getUnsafe().putChar(lo + i * 2L, chars[i + start]);
         }
+        this.lo += l2;
+        return this;
+    }
 
+    public Utf16Sink putAscii(@NotNull Utf8Sequence us) {
+        int l = us.size();
+        int l2 = l * 2;
+        if (lo + l2 >= hi) {
+            resize(Math.max(capacity * 2L, (lo - ptr + l2) * 2L));
+        }
+        for (int i = 0; i < l; i++) {
+            Unsafe.getUnsafe().putChar(lo + i * 2L, (char) us.byteAt(i));
+        }
         this.lo += l2;
         return this;
     }
@@ -154,7 +164,6 @@ public class DirectUtf16Sink implements MutableUtf16Sink, DirectCharSequence, Cl
     }
 
     private class FloatingCharSequence extends AbstractCharSequence {
-
         private int len;
         private int startIndex;
 

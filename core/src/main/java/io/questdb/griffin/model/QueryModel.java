@@ -455,58 +455,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         sampleByOffset = null;
     }
 
-    /**
-     * The goal of this method is to dismiss the nested model as
-     * the layer between this and the model the nested is referencing. We do that by copying ASTs from
-     * the nested model onto the current model and also maintaining all the maps in sync.
-     * <p>
-     * The caller is responsible for checking if nested model is suitable for the removal. E.g. it does not
-     * contain arithmetic expressions. Although this method does not validate if nested has arithmetic.
-     *
-     * @param nested model containing columns mapped into the referenced model.
-     */
-    public void mergePartially(QueryModel nested, ObjectPool<QueryColumn> queryColumnPool) {
-        for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
-            QueryColumn thisColumn = bottomUpColumns.getQuick(i);
-            if (thisColumn.getAst().type == ExpressionNode.LITERAL) {
-                QueryColumn thatColumn = nested.getAliasToColumnMap().get(thisColumn.getAst().token);
-
-                // We cannot mutate the column on this model, because columns might be shared between
-                // models. The bottomUpColumns are also referenced by `aliasToColumnMap`. Typically,
-                // `thisColumn` alias should let us lookup, the column's reference
-                QueryColumn col = queryColumnPool.next();
-                col.of(thisColumn.getAlias(), thatColumn.getAst());
-                bottomUpColumns.setQuick(i, col);
-
-                int index = aliasToColumnMap.keyIndex(thisColumn.getAlias());
-                assert index < 0;
-                final CharSequence immutableAlias = aliasToColumnMap.keyAt(index);
-                aliasToColumnMap.putAt(index, immutableAlias, col);
-                // maintain sync between alias and column name
-                aliasToColumnNameMap.put(immutableAlias, thatColumn.getAst().token);
-            }
-        }
-
-        if (nested.getOrderBy().size() > 0) {
-            assert getOrderBy().size() == 0;
-            for (int i = 0, n = nested.getOrderBy().size(); i < n; i++) {
-                addOrderBy(nested.getOrderBy().getQuick(i), nested.getOrderByDirection().getQuick(i));
-            }
-            nested.getOrderBy().clear();
-            nested.getOrderByDirection().clear();
-        }
-
-        // If nested model has limits, the outer model must not have different limits.
-        // We are merging models affecting "select" clause and not the row count.
-        if (nested.limitLo != null || nested.limitHi != null) {
-            limitLo = nested.limitLo;
-            limitHi = nested.limitHi;
-            limitPosition = nested.limitPosition;
-            limitAdviceLo = nested.limitAdviceLo;
-            limitAdviceHi = nested.limitAdviceHi;
-        }
-    }
-
     public boolean containsJoin() {
         QueryModel current = this;
         do {
@@ -1056,6 +1004,58 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return isUpdateModel;
     }
 
+    /**
+     * The goal of this method is to dismiss the nested model as
+     * the layer between this and the model the nested is referencing. We do that by copying ASTs from
+     * the nested model onto the current model and also maintaining all the maps in sync.
+     * <p>
+     * The caller is responsible for checking if nested model is suitable for the removal. E.g. it does not
+     * contain arithmetic expressions. Although this method does not validate if nested has arithmetic.
+     *
+     * @param nested model containing columns mapped into the referenced model.
+     */
+    public void mergePartially(QueryModel nested, ObjectPool<QueryColumn> queryColumnPool) {
+        for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
+            QueryColumn thisColumn = bottomUpColumns.getQuick(i);
+            if (thisColumn.getAst().type == ExpressionNode.LITERAL) {
+                QueryColumn thatColumn = nested.getAliasToColumnMap().get(thisColumn.getAst().token);
+
+                // We cannot mutate the column on this model, because columns might be shared between
+                // models. The bottomUpColumns are also referenced by `aliasToColumnMap`. Typically,
+                // `thisColumn` alias should let us lookup, the column's reference
+                QueryColumn col = queryColumnPool.next();
+                col.of(thisColumn.getAlias(), thatColumn.getAst());
+                bottomUpColumns.setQuick(i, col);
+
+                int index = aliasToColumnMap.keyIndex(thisColumn.getAlias());
+                assert index < 0;
+                final CharSequence immutableAlias = aliasToColumnMap.keyAt(index);
+                aliasToColumnMap.putAt(index, immutableAlias, col);
+                // maintain sync between alias and column name
+                aliasToColumnNameMap.put(immutableAlias, thatColumn.getAst().token);
+            }
+        }
+
+        if (nested.getOrderBy().size() > 0) {
+            assert getOrderBy().size() == 0;
+            for (int i = 0, n = nested.getOrderBy().size(); i < n; i++) {
+                addOrderBy(nested.getOrderBy().getQuick(i), nested.getOrderByDirection().getQuick(i));
+            }
+            nested.getOrderBy().clear();
+            nested.getOrderByDirection().clear();
+        }
+
+        // If nested model has limits, the outer model must not have different limits.
+        // We are merging models affecting "select" clause and not the row count.
+        if (nested.limitLo != null || nested.limitHi != null) {
+            limitLo = nested.limitLo;
+            limitHi = nested.limitHi;
+            limitPosition = nested.limitPosition;
+            limitAdviceLo = nested.limitAdviceLo;
+            limitAdviceHi = nested.limitAdviceHi;
+        }
+    }
+
     public void moveGroupByFrom(QueryModel model) {
         groupBy.addAll(model.groupBy);
         // clear the source
@@ -1292,7 +1292,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.showKind = showKind;
     }
 
-    public void setTableFactory(RecordCursorFactory function) {
+    public void setTableNameFunction(RecordCursorFactory function) {
         this.tableNameFunction = function;
     }
 

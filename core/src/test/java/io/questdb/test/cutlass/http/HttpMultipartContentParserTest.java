@@ -46,9 +46,9 @@ import java.util.concurrent.TimeUnit;
 
 public class HttpMultipartContentParserTest {
 
-    private final static TestHttpMultipartContentListener LISTENER = new TestHttpMultipartContentListener();
-    private final static ObjectPool<DirectUtf8String> pool = new ObjectPool<>(DirectUtf8String::new, 32);
-    private final static StringSink sink = new StringSink();
+    private static final TestHttpMultipartContentListener LISTENER = new TestHttpMultipartContentListener();
+    private static final ObjectPool<DirectUtf8String> pool = new ObjectPool<>(DirectUtf8String::new, 32);
+    private static final StringSink sink = new StringSink();
     @Rule
     public Timeout timeout = Timeout.builder()
             .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)

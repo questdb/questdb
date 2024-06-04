@@ -634,7 +634,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
             insert("insert into events2 values ('1', 1.5, 'flash')");
             insert("insert into events2 values ('2', 1.5, 'stand')");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     // Empty table expected
                     "contact\tgroupid\teventid\n",
                     "events1\n" +
@@ -659,7 +659,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
             insert("insert into events2 values ('1', 1.5, 'flash')");
             insert("insert into events2 values ('2', 1.5, 'stand')");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     // Empty table expected
                     "contact\tgroupid\teventid\n" +
                             "2\t1.600000023841858\tstand\n" +
@@ -684,7 +684,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
             insert("insert into events2 values ('1', 1.5, 'flash')");
             insert("insert into events2 values ('2', 1.5, 'stand')");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     // Empty table expected
                     "contact\tgroupid\teventid\n",
                     "events1\n" +
@@ -709,7 +709,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
             insert("insert into events2 values ('1', 1.5, 'flash')");
             insert("insert into events2 values ('2', 1.5, 'stand')");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     // Empty table expected
                     "contact\tgroupid\teventid\n" +
                             "2\t1.6\tstand\n" +
@@ -1476,7 +1476,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
             insert("insert into events2 values ('1', 1.5, 'flash')");
             insert("insert into events2 values ('2', 1.5, 'stand')");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     // Empty table expected
                     "contact\tgroupid\teventid\n" +
                             "2\t1.5\tstand\n" +
@@ -1503,7 +1503,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
             insert("insert into events2 values ('1', 1.5, 'flash')");
             insert("insert into events2 values ('2', 1.5, 'stand')");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     // Empty table expected
                     "contact\tgroupid\teventid\n" +
                             "2\t1.5\tstand\n" +
@@ -1938,27 +1938,6 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testVarcharVarchar() throws Exception {
-        // we include byte <-> bool cast to make sure
-        // bool <-> bool cast it not thrown away as redundant
-        testUnionAll(
-                "a\tc\n" +
-                        "false\tZ끫\uDB53\uDEDA\n" +
-                        "false\t\"\uDB87\uDFA35\n" +
-                        "false\t톬F\uD9E6\uDECD\n" +
-                        "false\tЃَᯤ\n" +
-                        "false\t篸{\uD9D7\uDFE5\n" +
-                        "76\t핕\u05FA씎鈄\n" +
-                        "21\t\uDB8C\uDD1BȞ鼷G\n" +
-                        "35\t\uD8D1\uDD54ZzV\n" +
-                        "117\tB͛Ԉ龘\n" +
-                        "103\tL➤~2\n",
-                "create table x as (select rnd_boolean() a, rnd_varchar(3,3,1) c from long_sequence(5))",
-                "create table y as (select rnd_byte() b, rnd_varchar(4,4,1) c from long_sequence(5))"
-        );
-    }
-
-    @Test
     public void testStringNull() throws Exception {
         testUnionAll(
                 "a\tc\n" +
@@ -1988,26 +1967,6 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         "\tSWH\n" +
                         "\tRXP\n" +
                         "\tHNR\n"
-        );
-    }
-
-    @Test
-    public void testVarcharNull() throws Exception {
-        testUnionAll(
-                "a\tc\n" +
-                        "衞͛Ԉ\t\n" +
-                        "\uD93C\uDEC1ӍK\t\n" +
-                        "\uD905\uDCD0\\ꔰ\t\n" +
-                        "\u008B}ѱ\t\n" +
-                        "\uD96C\uDF5FƐ㙎\t\n" +
-                        "\t\u1755\uDA1F\uDE98|\n" +
-                        "\t鈄۲ӄ\n" +
-                        "\tȞ鼷G\n" +
-                        "\t\uF644䶓z\n" +
-                        "\t\n",
-                "create table x as (select rnd_varchar(3,3,1) a, null c from long_sequence(5))",
-                "create table y as (select null b, rnd_varchar(3,3,1) c from long_sequence(5))",
-                true
         );
     }
 
@@ -2268,26 +2227,6 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testUuidVarchar() throws Exception {
-        testUnionAll(
-                "a\n" +
-                        "acb025f7-59cf-4bd0-9e9b-e4e331fe36e6\n" +
-                        "8fd449ba-3259-4a2b-9beb-329042090bb3\n" +
-                        "b482cff5-7e9c-4398-ac09-f1b4db297f07\n" +
-                        "dbd7587f-2077-4576-9b4b-ae41862e09cc\n" +
-                        "7ee6a03f-4f93-4fa3-9d6c-b7b4fbf1fa48\n" +
-                        "&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\n" +
-                        "8#3TsZ\n" +
-                        "zV衞͛Ԉ龘и\uDA89\uDFA4~\n" +
-                        "ṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\n" +
-                        "\uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46OF\n",
-                "create table x as (select rnd_uuid4() a from long_sequence(5))",
-                "create table y as (select rnd_varchar() b from long_sequence(5))",
-                true
-        );
-    }
-
-    @Test
     public void testUuidUuid() throws Exception {
         testUnionAll(
                 "a\n" +
@@ -2318,6 +2257,67 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         "c1e63128-5c1a-4288-872b-fc5230158059\n" +
                         "716de3d2-5dcc-4d91-9fa2-397a5d8c84c4\n" +
                         "4b0f595f-143e-4d72-af1a-8266e7921e3b\n"
+        );
+    }
+
+    @Test
+    public void testUuidVarchar() throws Exception {
+        testUnionAll(
+                "a\n" +
+                        "acb025f7-59cf-4bd0-9e9b-e4e331fe36e6\n" +
+                        "8fd449ba-3259-4a2b-9beb-329042090bb3\n" +
+                        "b482cff5-7e9c-4398-ac09-f1b4db297f07\n" +
+                        "dbd7587f-2077-4576-9b4b-ae41862e09cc\n" +
+                        "7ee6a03f-4f93-4fa3-9d6c-b7b4fbf1fa48\n" +
+                        "&\uDA1F\uDE98|\uD924\uDE04۲ӄǈ2L\n" +
+                        "8#3TsZ\n" +
+                        "zV衞͛Ԉ龘и\uDA89\uDFA4~\n" +
+                        "ṟ\u1AD3ڎBH뤻䰭\u008B}ѱ\n" +
+                        "\uDB8D\uDE4Eᯤ\\篸{\uD9D7\uDFE5\uDAE9\uDF46OF\n",
+                "create table x as (select rnd_uuid4() a from long_sequence(5))",
+                "create table y as (select rnd_varchar() b from long_sequence(5))",
+                true
+        );
+    }
+
+    @Test
+    public void testVarcharNull() throws Exception {
+        testUnionAll(
+                "a\tc\n" +
+                        "衞͛Ԉ\t\n" +
+                        "\uD93C\uDEC1ӍK\t\n" +
+                        "\uD905\uDCD0\\ꔰ\t\n" +
+                        "\u008B}ѱ\t\n" +
+                        "\uD96C\uDF5FƐ㙎\t\n" +
+                        "\t\u1755\uDA1F\uDE98|\n" +
+                        "\t鈄۲ӄ\n" +
+                        "\tȞ鼷G\n" +
+                        "\t\uF644䶓z\n" +
+                        "\t\n",
+                "create table x as (select rnd_varchar(3,3,1) a, null c from long_sequence(5))",
+                "create table y as (select null b, rnd_varchar(3,3,1) c from long_sequence(5))",
+                true
+        );
+    }
+
+    @Test
+    public void testVarcharVarchar() throws Exception {
+        // we include byte <-> bool cast to make sure
+        // bool <-> bool cast it not thrown away as redundant
+        testUnionAll(
+                "a\tc\n" +
+                        "false\tZ끫\uDB53\uDEDA\n" +
+                        "false\t\"\uDB87\uDFA35\n" +
+                        "false\t톬F\uD9E6\uDECD\n" +
+                        "false\tЃَᯤ\n" +
+                        "false\t篸{\uD9D7\uDFE5\n" +
+                        "76\t핕\u05FA씎鈄\n" +
+                        "21\t\uDB8C\uDD1BȞ鼷G\n" +
+                        "35\t\uD8D1\uDD54ZzV\n" +
+                        "117\tB͛Ԉ龘\n" +
+                        "103\tL➤~2\n",
+                "create table x as (select rnd_boolean() a, rnd_varchar(3,3,1) c from long_sequence(5))",
+                "create table y as (select rnd_byte() b, rnd_varchar(4,4,1) c from long_sequence(5))"
         );
     }
 

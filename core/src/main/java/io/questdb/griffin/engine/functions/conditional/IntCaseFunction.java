@@ -33,7 +33,7 @@ class IntCaseFunction extends IntFunction implements CaseFunction {
     private final ObjList<Function> args;
     private final CaseFunctionPicker picker;
 
-    public IntCaseFunction(int position, CaseFunctionPicker picker, ObjList<Function> args) {
+    public IntCaseFunction(CaseFunctionPicker picker, ObjList<Function> args) {
         super();
         this.picker = picker;
         this.args = args;

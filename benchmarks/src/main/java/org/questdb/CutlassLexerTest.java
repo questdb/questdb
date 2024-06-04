@@ -44,7 +44,7 @@ import java.util.concurrent.TimeUnit;
 public class CutlassLexerTest {
 
     private static final byte[] bytes = "measurement,tag=value,tag2=value field=10000i,field2=\"str\" 100000\n".getBytes();
-    private final static LineUdpLexer lpLexer = new LineUdpLexer(4096);
+    private static final LineUdpLexer lpLexer = new LineUdpLexer(4096);
     private static final long mem = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
 
     public static void main(String[] args) throws RunnerException {

@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
@@ -43,7 +44,6 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.cairo.CursorPrinter;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -179,8 +179,7 @@ public class UpdateConcurrentTest extends AbstractCairoTest {
 
             for (int k = 0; k < numOfWriters; k++) {
                 Thread writer = new Thread(() -> {
-                    try {
-                        final SqlCompiler updateCompiler = engine.getSqlCompiler();
+                    try (SqlCompiler updateCompiler = engine.getSqlCompiler()) {
                         final SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine);
                         barrier.await();
                         for (int i = 0; i < numOfUpdates; i++) {
@@ -192,12 +191,12 @@ public class UpdateConcurrentTest extends AbstractCairoTest {
                             }
                             current.incrementAndGet();
                         }
-                        updateCompiler.close();
                     } catch (Throwable th) {
                         LOG.error().$("writer error ").$(th).$();
                         exceptions.add(th);
+                    } finally {
+                        Path.clearThreadLocals();
                     }
-                    Path.clearThreadLocals();
                 });
                 threads.add(writer);
                 writer.start();

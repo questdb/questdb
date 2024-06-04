@@ -31,7 +31,7 @@ public final class Zip {
     public static final int Z_STREAM_END = 1;
     public static final long gzipHeader;
     public static final int gzipHeaderLen = 10;
-    private final static int GZIP_MAGIC = 0x8b1f;
+    private static final int GZIP_MAGIC = 0x8b1f;
 
     private Zip() {
     }

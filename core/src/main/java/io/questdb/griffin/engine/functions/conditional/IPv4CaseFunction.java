@@ -34,7 +34,7 @@ public class IPv4CaseFunction extends IPv4Function implements CaseFunction {
     private final ObjList<Function> args;
     private final CaseFunctionPicker picker;
 
-    public IPv4CaseFunction(int position, CaseFunctionPicker picker, ObjList<Function> args) {
+    public IPv4CaseFunction(CaseFunctionPicker picker, ObjList<Function> args) {
         super();
         this.picker = picker;
         this.args = args;

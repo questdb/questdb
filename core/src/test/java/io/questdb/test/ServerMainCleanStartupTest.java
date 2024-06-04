@@ -57,7 +57,7 @@ public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
 
             try (
                     final ServerMain serverMain = new ServerMain(getServerMainArgs());
-                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(serverMain.getEngine(), 1).with(AllowAllSecurityContext.INSTANCE, null)
+                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(serverMain.getEngine(), 1).with(AllowAllSecurityContext.INSTANCE)
             ) {
                 serverMain.start();
                 serverMain.getEngine().compile("create table x (a int, t timestamp) timestamp(t) partition by day wal", sqlExecutionContext);
@@ -108,7 +108,7 @@ public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
             // start a new server; it should not attempt to open new writers
             try (
                     final ServerMain serverMain = new ServerMain(getServerMainArgs());
-                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(serverMain.getEngine(), 1).with(AllowAllSecurityContext.INSTANCE, null)
+                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(serverMain.getEngine(), 1).with(AllowAllSecurityContext.INSTANCE)
             ) {
                 serverMain.start();
 

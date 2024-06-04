@@ -43,7 +43,7 @@ import java.util.concurrent.TimeUnit;
 public class HttpHeaderParserTest {
 
     private static final ObjectPool<DirectUtf8String> pool = new ObjectPool<>(DirectUtf8String.FACTORY, 64);
-    private final static String request = "GET /status?x=1&a=%26b&c&d=x HTTP/1.1\r\n" +
+    private static final String request = "GET /status?x=1&a=%26b&c&d=x HTTP/1.1\r\n" +
             "Host: localhost:9000\r\n" +
             "Connection: keep-alive\r\n" +
             "Cache-Control: max-age=0\r\n" +

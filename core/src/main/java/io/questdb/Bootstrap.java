@@ -53,6 +53,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
+import static io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory.toSizePretty;
+
 public class Bootstrap {
 
     public static final String SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION = "--use-default-log-factory-configuration";
@@ -112,7 +114,10 @@ public class Bootstrap {
         log = LogFactory.getLog(LOG_NAME);
 
         // report copyright and architecture
-        log.advisoryW().$(buildInformation.getSwName()).$(' ').$(buildInformation.getSwVersion()).$(". Copyright (C) 2014-").$(Dates.getYear(System.currentTimeMillis())).$(", all rights reserved.").$();
+        log.advisoryW()
+                .$(buildInformation.getSwName()).$(' ').$(buildInformation.getSwVersion())
+                .$(". Copyright (C) 2014-").$(Dates.getYear(System.currentTimeMillis()))
+                .$(", all rights reserved.").$();
         boolean isOsSupported = true;
         switch (Os.type) {
             case Os.WINDOWS:
@@ -188,14 +193,14 @@ public class Bootstrap {
             log.errorW().$(e).$();
             throw new BootstrapException(e);
         }
-
-        // metrics
         if (config.getMetricsConfiguration().isEnabled()) {
             metrics = Metrics.enabled();
         } else {
             metrics = Metrics.disabled();
             log.advisoryW().$("Metrics are disabled, health check endpoint will not consider unhandled errors").$();
         }
+        Unsafe.setRssMemLimit(config.getMemoryConfiguration().getResolvedRamUsageLimitBytes());
+
     }
 
     public static String[] getServerMainArgs(CharSequence root) {
@@ -505,6 +510,7 @@ public class Bootstrap {
         final boolean pgReadOnly = config.getPGWireConfiguration().readOnlySecurityContext();
         final String pgReadOnlyHint = pgEnabled && pgReadOnly ? " [read-only]" : "";
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
+
         log.advisoryW().$("Config:").$();
         log.advisoryW().$(" - http.enabled : ").$(httpEnabled).$(httpReadOnlyHint).$();
         log.advisoryW().$(" - tcp.enabled  : ").$(config.getLineTcpReceiverConfiguration().isEnabled()).$();
@@ -540,6 +546,17 @@ public class Bootstrap {
                     break;
             }
         }
+        MemoryConfiguration ramConfig = config.getMemoryConfiguration();
+        long ramUsageLimitBytes = ramConfig.getRamUsageLimitBytes();
+        long ramUsageLimitPercent = ramConfig.getRamUsageLimitPercent();
+        long effectiveRamUsageLimit = ramConfig.getResolvedRamUsageLimitBytes();
+        log.advisoryW().$(" - configured ram.usage.limit.bytes: ")
+                .$(ramUsageLimitBytes != 0 ? toSizePretty(ramUsageLimitBytes) : "0 (no limit)").$();
+        log.advisoryW().$(" - configured ram.usage.limit.percent: ")
+                .$(ramUsageLimitPercent != 0 ? ramUsageLimitPercent : "0 (no limit)").$();
+        log.advisoryW().$(" - system RAM: ").$(toSizePretty(ramConfig.getTotalSystemMemory())).$();
+        log.advisoryW().$(" - resolved RAM usage limit: ")
+                .$(effectiveRamUsageLimit != 0 ? toSizePretty(effectiveRamUsageLimit) : "0 (no limit)").$();
     }
 
     private void verifyFileLimits() {

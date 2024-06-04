@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class ApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
@@ -311,29 +312,37 @@ public class ApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCa
         );
     }
 
-    @Test(expected = CairoException.class)
+    @Test
     public void testThrowsOnNegativeValues() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table test (x double)");
             insert("insert into test values (1.0), (-1.0)");
-            assertSql(
-                    "approx_percentile\n" +
-                            "1.0\n",
-                    "select approx_percentile(x, 0.5) from test"
-            );
+            try {
+                assertSql(
+                        "approx_percentile\n" +
+                                "1.0\n",
+                        "select approx_percentile(x, 0.5) from test"
+                );
+                Assert.fail();
+            } catch (CairoException ignore) {
+            }
         });
     }
 
-    @Test(expected = CairoException.class)
+    @Test
     public void testThrowsOnNegativeValuesPacked() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table test (x double)");
             insert("insert into test values (1.0), (-1.0)");
-            assertSql(
-                    "approx_percentile\n" +
-                            "1.0\n",
-                    "select approx_percentile(x, 0.5, 5) from test"
-            );
+            try {
+                assertSql(
+                        "approx_percentile\n" +
+                                "1.0\n",
+                        "select approx_percentile(x, 0.5, 5) from test"
+                );
+                Assert.fail();
+            } catch (CairoException ignore) {
+            }
         });
     }
 }

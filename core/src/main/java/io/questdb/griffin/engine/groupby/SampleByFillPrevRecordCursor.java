@@ -122,8 +122,8 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
     @Override
     public void reopen() {
         if (!isOpen) {
-            map.reopen();
             isOpen = true;
+            map.reopen();
         }
     }
 

@@ -84,8 +84,8 @@ class SortedRecordCursor implements DelegatingRecordCursor {
     @Override
     public void of(RecordCursor base, SqlExecutionContext executionContext) {
         if (!isOpen) {
-            this.chain.reopen();
             this.isOpen = true;
+            this.chain.reopen();
         }
 
         this.base = base;

@@ -22,23 +22,25 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.cairo.sql.async;
 
-import io.questdb.cairo.SecurityContext;
-import io.questdb.log.Log;
-import io.questdb.log.LogRecord;
+import java.util.concurrent.atomic.AtomicInteger;
 
-public final class DefaultQueryLogger implements QueryLogger {
-    public static final DefaultQueryLogger INSTANCE = new DefaultQueryLogger();
+/**
+ * Does not allow busy spinning for the query owner thread,
+ * so the thread always tries to process just published tasks.
+ */
+public class AlwaysWorkStealingStrategy implements WorkStealingStrategy {
+    public static AlwaysWorkStealingStrategy INSTANCE = new AlwaysWorkStealingStrategy();
 
-    private DefaultQueryLogger() {
+    @Override
+    public WorkStealingStrategy of(AtomicInteger startedCounter) {
+        // no-op
+        return this;
     }
 
     @Override
-    public LogRecord logQuery(Log logger, int fd, CharSequence query, SecurityContext securityContext, String logText) {
-        return logger.info().$(logText)
-                .$(" [fd=").$(fd)
-                .$(", thread=").$(Thread.currentThread().getId())
-                .$(", q=").utf8(query);
+    public boolean shouldSteal(int finishedCount) {
+        return true;
     }
 }

@@ -69,6 +69,7 @@ public final class LongLongHashSet implements Mutable, Sinkable {
     private int mask;
     private int size;
     private long[] values;
+    private boolean hasNull = false;
 
     /**
      * Creates a new set with a given capacity, load factor and no entry sentinel value.
@@ -135,6 +136,15 @@ public final class LongLongHashSet implements Mutable, Sinkable {
     public void clear() {
         Arrays.fill(values, noEntryKeyValue);
         size = 0;
+        hasNull = false;
+    }
+
+    public boolean hasNull() {
+        return hasNull;
+    }
+
+    public void addNull() {
+        this.hasNull = true;
     }
 
     /**
