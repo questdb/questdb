@@ -30,6 +30,7 @@ public class KqueueFileWatcher extends FileWatcher {
 
             this.dirFd = Files.openRO(p.parent().$());
             if (this.dirFd < 0) {
+                Files.close(this.fileFd);
                 throw new FileWatcherNativeException("could not open file [path=%s]", p.parent());
             }
         }
