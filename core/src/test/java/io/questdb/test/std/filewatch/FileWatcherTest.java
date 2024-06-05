@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test;
+package io.questdb.test.std.filewatch;
 
 import io.questdb.FileEventCallback;
 import io.questdb.cairo.CairoException;
@@ -31,6 +31,7 @@ import io.questdb.std.Os;
 import io.questdb.std.filewatch.FileWatcher;
 import io.questdb.std.filewatch.FileWatcherFactory;
 import io.questdb.std.str.Utf8String;
+import io.questdb.test.AbstractTest;
 import org.junit.Assert;
 import org.junit.Test;
 

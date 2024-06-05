@@ -32,7 +32,7 @@ import org.jetbrains.annotations.NotNull;
 
 public class FileWatcherFactory {
 
-    public static FileWatcher getFileWatcher(@NotNull Utf8Sequence filePath, FileEventCallback callback) {
+    public static FileWatcher getFileWatcher(@NotNull Utf8Sequence filePath, @NotNull FileEventCallback callback) {
         if (filePath.size() == 0) {
             throw new IllegalArgumentException("file to watch cannot be empty");
         }
