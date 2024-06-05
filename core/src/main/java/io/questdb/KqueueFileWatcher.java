@@ -24,8 +24,10 @@
 
 package io.questdb;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
@@ -42,7 +44,7 @@ public class KqueueFileWatcher extends FileWatcher {
     private final int readEndFd;
     private final int writeEndFd;
 
-    public KqueueFileWatcher(Utf8Sequence filePath, FileEventCallback callback) throws FileWatcherNativeException {
+    public KqueueFileWatcher(Utf8Sequence filePath, FileEventCallback callback) {
         super(callback);
 
         try (Path p = new Path()) {
@@ -50,13 +52,14 @@ public class KqueueFileWatcher extends FileWatcher {
             p.of(filePath).$();
             this.fileFd = Files.openRO(p);
             if (this.fileFd < 0) {
-                throw new FileWatcherNativeException("could not open file [path=%s]", filePath);
+                throw CairoException.critical(Os.errno()).put("could not open file [path=").put(p).put(']');
             }
 
             this.dirFd = Files.openRO(p.parent().$());
             if (this.dirFd < 0) {
+                int errno = Os.errno();
                 Files.close(this.fileFd);
-                throw new FileWatcherNativeException("could not open file [path=%s]", p.parent());
+                throw CairoException.critical(errno).put("could not open directory [path=").put(p).put(']');
             }
         }
 
@@ -73,7 +76,7 @@ public class KqueueFileWatcher extends FileWatcher {
             );
 
             if (this.evtFile == 0) {
-                throw new FileWatcherNativeException("malloc error");
+                throw CairoException.critical(Os.errno()).put("could allocate kevent for file");
             }
 
             this.evtDir = KqueueAccessor.evtAlloc(
@@ -88,7 +91,7 @@ public class KqueueFileWatcher extends FileWatcher {
             );
 
             if (this.evtDir == 0) {
-                throw new FileWatcherNativeException("malloc error");
+                throw CairoException.critical(Os.errno()).put("could allocate kevent for directory");
             }
 
             long fds = KqueueAccessor.pipe();
@@ -107,7 +110,7 @@ public class KqueueFileWatcher extends FileWatcher {
 
             kq = KqueueAccessor.kqueue();
             if (kq < 0) {
-                throw new FileWatcherNativeException("kqueue");
+                throw CairoException.critical(Os.errno()).put("could create kqueue");
             }
             Files.bumpFileCount(this.kq);
 
@@ -121,7 +124,7 @@ public class KqueueFileWatcher extends FileWatcher {
                     1
             );
             if (fileRes < 0) {
-                throw new FileWatcherNativeException("keventRegister (fileEvent)");
+                throw CairoException.critical(Os.errno()).put("could register file events in kqueue");
             }
 
             int dirRes = KqueueAccessor.keventRegister(
@@ -130,7 +133,7 @@ public class KqueueFileWatcher extends FileWatcher {
                     1
             );
             if (dirRes < 0) {
-                throw new FileWatcherNativeException("keventRegister (dirEvent)");
+                throw CairoException.critical(Os.errno()).put("could register directory events in kqueue");
             }
 
             int pipeRes = KqueueAccessor.keventRegister(
@@ -139,10 +142,10 @@ public class KqueueFileWatcher extends FileWatcher {
                     1
             );
             if (pipeRes < 0) {
-                throw new FileWatcherNativeException("keventRegister (pipeEvent)");
+                throw CairoException.critical(Os.errno()).put("could register pipe events in kqueue");
             }
 
-        } catch (FileWatcherNativeException e) {
+        } catch (RuntimeException e) {
             cleanUp();
             throw e;
         }
@@ -202,7 +205,7 @@ public class KqueueFileWatcher extends FileWatcher {
     }
 
     @Override
-    protected void waitForChange() throws FileWatcherNativeException {
+    protected void waitForChange() {
         // Blocks until there is a change in the watched dir
         int res = KqueueAccessor.keventGetBlocking(
                 kq,
@@ -213,7 +216,7 @@ public class KqueueFileWatcher extends FileWatcher {
             return;
         }
         if (res < 0) {
-            throw new FileWatcherNativeException("error in keventGetBlocking");
+            throw CairoException.critical(Os.errno()).put("kevent error");
         }
         // For now, we don't filter events down to the file,
         // we trigger on every change in the directory

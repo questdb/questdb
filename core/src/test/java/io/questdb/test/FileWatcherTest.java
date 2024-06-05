@@ -27,7 +27,7 @@ package io.questdb.test;
 import io.questdb.FileEventCallback;
 import io.questdb.FileWatcher;
 import io.questdb.FileWatcherFactory;
-import io.questdb.FileWatcherNativeException;
+import io.questdb.cairo.CairoException;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Os;
 import io.questdb.std.str.Utf8String;
@@ -102,7 +102,7 @@ public class FileWatcherTest extends AbstractTest {
     @Test
     public void testFileDoesNotExist() throws Exception {
         assertMemoryLeak(() -> Assert.assertThrows(
-                FileWatcherNativeException.class,
+                CairoException.class,
                 () -> FileWatcherFactory.getFileWatcher(
                         new Utf8String("/hello/i/dont/exist"),
                         Assert::fail

@@ -24,15 +24,13 @@
 
 package io.questdb;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.Epoll;
 import io.questdb.network.EpollAccessor;
 import io.questdb.network.EpollFacadeImpl;
-import io.questdb.std.Files;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
@@ -56,12 +54,12 @@ public final class InotifyFileWatcher extends FileWatcher {
     private final int wd;
     private final int writeEndFd;
 
-    public InotifyFileWatcher(Utf8Sequence filePath, FileEventCallback callback) throws FileWatcherNativeException {
+    public InotifyFileWatcher(Utf8Sequence filePath, FileEventCallback callback) {
         super(callback);
 
         this.fd = InotifyAccessor.inotifyInit();
         if (this.fd < 0) {
-            throw new FileWatcherNativeException("inotify_init");
+            throw CairoException.critical(Os.errno()).put("inotify_init error");
         }
         Files.bumpFileCount(this.fd);
 
@@ -77,21 +75,21 @@ public final class InotifyFileWatcher extends FileWatcher {
             );
 
             if (this.wd < 0) {
-                throw new FileWatcherNativeException("inotify_add_watch exited");
+                throw CairoException.critical(Os.errno()).put("inotify_add_watch exited");
             }
 
             if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_ADD, EpollAccessor.EPOLLIN) < 0) {
-                throw new FileWatcherNativeException("epoll_ctl");
+                throw CairoException.critical(Os.errno()).put("epoll_ctl error");
             }
 
             this.buf = Unsafe.malloc(bufSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
             if (this.buf < 0) {
-                throw new FileWatcherNativeException("malloc");
+                throw CairoException.critical(Os.errno()).put("malloc error");
             }
 
             long fds = InotifyAccessor.pipe();
             if (fds < 0) {
-                throw new FileWatcherNativeException("pipe2");
+                throw CairoException.critical(Os.errno()).put("create a pipe error");
             }
 
             this.readEndFd = (int) (fds >>> 32);
@@ -100,10 +98,10 @@ public final class InotifyFileWatcher extends FileWatcher {
             Files.bumpFileCount(this.writeEndFd);
 
             if (epoll.control(readEndFd, 0, EpollAccessor.EPOLL_CTL_ADD, EpollAccessor.EPOLLIN) < 0) {
-                throw new FileWatcherNativeException("epoll_ctl");
+                throw CairoException.critical(Os.errno()).put("epoll_ctl error");
             }
 
-        } catch (FileWatcherNativeException e) {
+        } catch (RuntimeException e) {
             cleanUp();
             throw e;
         }
@@ -130,10 +128,10 @@ public final class InotifyFileWatcher extends FileWatcher {
     }
 
     @Override
-    public void waitForChange() throws FileWatcherNativeException {
+    public void waitForChange() {
         // Thread is parked here until epoll is triggered
         if (epoll.poll(-1) < 0) {
-            throw new FileWatcherNativeException("epoll_wait");
+            throw CairoException.critical(Os.errno()).put("epoll_wait error");
         }
 
         if (closed.get()) {
@@ -143,7 +141,7 @@ public final class InotifyFileWatcher extends FileWatcher {
         // Read the inotify_event into the buffer
         int res = InotifyAccessor.readEvent(fd, buf, bufSize);
         if (res < 0) {
-            throw new FileWatcherNativeException("read");
+            throw CairoException.critical(Os.errno()).put("read error");
         }
 
         // iterate over buffer and check all files that have been modified
@@ -165,7 +163,7 @@ public final class InotifyFileWatcher extends FileWatcher {
 
         // Rearm the epoll
         if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_MOD, EpollAccessor.EPOLLIN) < 0) {
-            throw new FileWatcherNativeException("epoll_ctl (mod)");
+            throw CairoException.critical(Os.errno()).put("epoll_wait error");
         }
 
     }

@@ -29,7 +29,7 @@ import io.questdb.std.str.Utf8Sequence;
 
 public class FileWatcherFactory {
 
-    public static FileWatcher getFileWatcher(Utf8Sequence filePath, FileEventCallback callback) throws FileWatcherNativeException {
+    public static FileWatcher getFileWatcher(Utf8Sequence filePath, FileEventCallback callback) {
         if (Os.isOSX() || Os.isFreeBSD()) {
             return new KqueueFileWatcher(filePath, callback);
         } else if (Os.isWindows()) {
