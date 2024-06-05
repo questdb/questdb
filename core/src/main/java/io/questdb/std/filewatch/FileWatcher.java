@@ -69,7 +69,7 @@ public abstract class FileWatcher implements QuietCloseable {
         latch.await();
     }
 
-    public void watch() {
+    public void start() {
         if (started.compareAndSet(false, true)) {
             reloadThread.start();
         }

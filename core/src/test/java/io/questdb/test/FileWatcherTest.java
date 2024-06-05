@@ -25,11 +25,11 @@
 package io.questdb.test;
 
 import io.questdb.FileEventCallback;
-import io.questdb.std.filewatch.FileWatcher;
-import io.questdb.std.filewatch.FileWatcherFactory;
 import io.questdb.cairo.CairoException;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Os;
+import io.questdb.std.filewatch.FileWatcher;
+import io.questdb.std.filewatch.FileWatcherFactory;
 import io.questdb.std.str.Utf8String;
 import org.junit.Assert;
 import org.junit.Test;
@@ -64,7 +64,7 @@ public class FileWatcherTest extends AbstractTest {
                     )
             ) {
 
-                fw.watch();
+                fw.start();
                 // todo: synchronize the start of the watch here, so we don't write before the watch is set up
                 Thread.sleep(1000);
                 try (PrintWriter writer = new PrintWriter(targetFile.getAbsolutePath(), StandardCharsets.UTF_8)) {
@@ -86,7 +86,7 @@ public class FileWatcherTest extends AbstractTest {
                     new Utf8String(targetFile.getAbsolutePath()),
                     new FileChangedCallback(threadLatch))) {
 
-                fw.watch();
+                fw.start();
                 // todo: synchronize the start of the watch here, so we don't write before the watch is set up
                 Thread.sleep(1000);
                 Assert.assertTrue(targetFile.delete());
