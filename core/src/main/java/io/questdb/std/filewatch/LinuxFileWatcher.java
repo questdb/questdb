@@ -49,7 +49,7 @@ public final class LinuxFileWatcher extends FileWatcher {
             new EpollFacadeImpl(),
             2
     );
-    private final int fd;
+    private final int inotifyFd;
     private final DirectUtf8Sink fileName = new DirectUtf8Sink(0);
     private final int readEndFd;
     private final int wd;
@@ -59,18 +59,18 @@ public final class LinuxFileWatcher extends FileWatcher {
     public LinuxFileWatcher(LinuxAccessorFacade accessorFacade, Utf8Sequence filePath, FileEventCallback callback) {
         super(callback);
         this.accessorFacade = accessorFacade;
-        this.fd = accessorFacade.inotifyInit();
-        if (this.fd < 0) {
-            throw CairoException.critical(Os.errno()).put("inotify_init error");
-        }
-        Files.bumpFileCount(this.fd);
-
         try {
+            this.inotifyFd = accessorFacade.inotifyInit();
+            if (this.inotifyFd < 0) {
+                throw CairoException.critical(Os.errno()).put("inotify_init error");
+            }
+            Files.bumpFileCount(this.inotifyFd);
+
             this.dirPath.of(filePath).parent().$();
             this.fileName.put(Paths.get(filePath.toString()).getFileName().toString());
 
             this.wd = accessorFacade.inotifyAddWatch(
-                    this.fd,
+                    this.inotifyFd,
                     this.dirPath.ptr(),
                     LinuxAccessor.IN_CREATE | LinuxAccessor.IN_MODIFY |
                             LinuxAccessor.IN_MOVED_TO | LinuxAccessor.IN_CLOSE_WRITE
@@ -80,7 +80,7 @@ public final class LinuxFileWatcher extends FileWatcher {
                 throw CairoException.critical(Os.errno()).put("inotify_add_watch exited");
             }
 
-            if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_ADD, EpollAccessor.EPOLLIN) < 0) {
+            if (epoll.control(inotifyFd, 0, EpollAccessor.EPOLL_CTL_ADD, EpollAccessor.EPOLLIN) < 0) {
                 throw CairoException.critical(Os.errno()).put("epoll_ctl error");
             }
 
@@ -111,7 +111,6 @@ public final class LinuxFileWatcher extends FileWatcher {
 
     @Override
     public void close() {
-
         if (closed.compareAndSet(false, true)) {
             // Write to pipe to close
             if (accessorFacade.writePipe(writeEndFd) < 0) {
@@ -141,7 +140,7 @@ public final class LinuxFileWatcher extends FileWatcher {
         }
 
         // Read the inotify_event into the buffer
-        int res = accessorFacade.readEvent(fd, buf, bufSize);
+        int res = accessorFacade.readEvent(inotifyFd, buf, bufSize);
         if (res < 0) {
             throw CairoException.critical(Os.errno()).put("read error");
         }
@@ -164,7 +163,7 @@ public final class LinuxFileWatcher extends FileWatcher {
         while (i < res);
 
         // Rearm the epoll
-        if (epoll.control(fd, 0, EpollAccessor.EPOLL_CTL_MOD, EpollAccessor.EPOLLIN) < 0) {
+        if (epoll.control(inotifyFd, 0, EpollAccessor.EPOLL_CTL_MOD, EpollAccessor.EPOLLIN) < 0) {
             throw CairoException.critical(Os.errno()).put("epoll_wait error");
         }
 
@@ -174,15 +173,15 @@ public final class LinuxFileWatcher extends FileWatcher {
         Misc.free(this.dirPath);
         Misc.free(this.fileName);
 
-        if (accessorFacade.inotifyRmWatch(this.fd, this.wd) < 0) {
-            System.out.println(this.fd);
+        if (accessorFacade.inotifyRmWatch(this.inotifyFd, this.wd) < 0) {
+            System.out.println(this.inotifyFd);
             // todo: handle error, but continue execution
         }
 
         epoll.close();
 
-        if (this.fd > 0) {
-            Files.close(this.fd);
+        if (this.inotifyFd > 0) {
+            Files.close(this.inotifyFd);
         }
 
         if (this.readEndFd > 0) {

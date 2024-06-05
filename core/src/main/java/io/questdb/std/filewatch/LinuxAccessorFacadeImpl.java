@@ -24,8 +24,12 @@
 
 package io.questdb.std.filewatch;
 
-public class LinuxAccessorFacadeImpl implements LinuxAccessorFacade {
+public final class LinuxAccessorFacadeImpl implements LinuxAccessorFacade {
     public static final LinuxAccessorFacadeImpl INSTANCE = new LinuxAccessorFacadeImpl();
+
+    private LinuxAccessorFacadeImpl() {
+
+    }
 
     @Override
     public int inotifyAddWatch(int fd, long pathPtr, int flags) {
