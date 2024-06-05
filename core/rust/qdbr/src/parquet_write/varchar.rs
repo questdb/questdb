@@ -69,7 +69,12 @@ pub fn varchar_to_page(
     primitive_type: PrimitiveType,
 ) -> ParquetResult<Page> {
     let sizeof_entry = mem::size_of::<AuxEntryInlined>();
-    assert!(aux.len() % sizeof_entry == 0);
+    assert!(
+        aux.len() % sizeof_entry == 0,
+        "aux.len() {} % sizeof_entry {} != 0",
+        aux.len(),
+        sizeof_entry
+    );
     let aux: &[AuxEntryInlined] = unsafe {
         slice::from_raw_parts(
             aux.as_ptr() as *const AuxEntryInlined,
