@@ -230,12 +230,12 @@ fn column_chunk_to_pages(
     };
 
     if matches!(column.data_type, ColumnType::Symbol) {
-        let keys: &[i32] = unsafe {
-            mem::transmute(&column.primary_data[chunk_offset..chunk_offset + chunk_length])
-        };
-        let offsets = column.symbol_offsets.expect("symbol offsets");
-        let data = column.secondary_data.unwrap_or(&[]); // Can be no values
-        return symbol::symbol_to_pages(keys, offsets, data, options, primitive_type);
+        let keys: &[i32] =
+            unsafe { mem::transmute(&column.primary_data[chunk_offset..][..chunk_length]) };
+        let offsets = column.symbol_offsets;
+        let data = column.secondary_data;
+        let column_top = column.column_top;
+        return symbol::symbol_to_pages(keys, offsets, data, column_top, options, primitive_type);
     }
 
     let number_of_rows = chunk_length;
@@ -356,8 +356,7 @@ fn chunk_to_page(
         }
         ColumnType::Binary => {
             let data = column.primary_data;
-            let offsets: &[i64] =
-                unsafe { mem::transmute(column.secondary_data.expect("offsets")) };
+            let offsets: &[i64] = unsafe { mem::transmute(column.secondary_data) };
             binary::binary_to_page(
                 &offsets[lower_bound..upper_bound],
                 data,
@@ -369,8 +368,7 @@ fn chunk_to_page(
         }
         ColumnType::String => {
             let data = column.primary_data;
-            let offsets: &[i64] =
-                unsafe { mem::transmute(column.secondary_data.expect("offsets")) };
+            let offsets: &[i64] = unsafe { mem::transmute(column.secondary_data) };
             string::string_to_page(
                 &offsets[lower_bound..upper_bound],
                 data,
@@ -382,7 +380,7 @@ fn chunk_to_page(
         }
         ColumnType::Varchar => {
             let data = column.primary_data;
-            let aux: &[u8] = column.secondary_data.expect("aux");
+            let aux: &[u8] = column.secondary_data;
             varchar::varchar_to_page(
                 &aux[lower_bound * 16..upper_bound * 16],
                 data,

@@ -227,8 +227,8 @@ pub struct Column {
     pub row_count: usize,
     pub column_top: usize,
     pub primary_data: &'static [u8],
-    pub secondary_data: Option<&'static [u8]>,
-    pub symbol_offsets: Option<&'static [u64]>,
+    pub secondary_data: &'static [u8],
+    pub symbol_offsets: &'static [u64],
 }
 
 impl Column {
@@ -244,26 +244,38 @@ impl Column {
         symbol_offsets_ptr: *const u64,
         symbol_offsets_size: usize,
     ) -> ParquetResult<Self> {
-        assert!(row_count > 0);
-        assert!(!primary_data_ptr.is_null() || primary_data_size == 0);
+        assert!(row_count > 0, "row_count == 0");
+        assert!(
+            !primary_data_ptr.is_null() || primary_data_size == 0,
+            "primary_data_ptr inconsistent with primary_data_size"
+        );
+        assert!(
+            !secondary_data_ptr.is_null() || secondary_data_size == 0,
+            "secondary_data_ptr inconsistent with secondary_data_size"
+        );
+        assert!(
+            !symbol_offsets_ptr.is_null() || symbol_offsets_size == 0,
+            "symbol_offsets_ptr inconsistent with symbol_offsets_size"
+        );
+
         let column_type: ColumnType = column_type
             .try_into()
             .map_err(ParquetError::InvalidParameter)?;
 
-        let primary_data = if primary_data_size > 0 {
-            unsafe { slice::from_raw_parts(primary_data_ptr, primary_data_size) }
-        } else {
+        let primary_data = if primary_data_ptr.is_null() {
             &[]
+        } else {
+            unsafe { slice::from_raw_parts(primary_data_ptr, primary_data_size) }
         };
         let secondary_data = if secondary_data_ptr.is_null() {
-            None
+            &[]
         } else {
-            Some(unsafe { slice::from_raw_parts(secondary_data_ptr, secondary_data_size) })
+            unsafe { slice::from_raw_parts(secondary_data_ptr, secondary_data_size) }
         };
         let symbol_offsets = if symbol_offsets_ptr.is_null() {
-            None
+            &[]
         } else {
-            Some(unsafe { slice::from_raw_parts(symbol_offsets_ptr, symbol_offsets_size) })
+            unsafe { slice::from_raw_parts(symbol_offsets_ptr, symbol_offsets_size) }
         };
 
         Ok(Column {
