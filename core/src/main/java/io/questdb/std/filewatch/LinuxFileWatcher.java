@@ -115,7 +115,7 @@ public final class LinuxFileWatcher extends FileWatcher {
         }
 
         if (isClosed()) {
-            System.out.println("hi");
+            return;
         }
 
         // Read the inotify_event into the buffer
