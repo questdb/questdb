@@ -30,6 +30,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.Epoll;
 import io.questdb.network.EpollAccessor;
+import io.questdb.network.EpollFacade;
 import io.questdb.network.EpollFacadeImpl;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectUtf8Sink;
@@ -45,10 +46,7 @@ public final class LinuxFileWatcher extends FileWatcher {
     private final long buf;
     private final int bufSize = LinuxAccessor.getSizeofEvent() + 4096;
     private final Path dirPath = new Path();
-    private final Epoll epoll = new Epoll(
-            new EpollFacadeImpl(),
-            2
-    );
+    private final Epoll epoll;
     private final int inotifyFd;
     private final DirectUtf8Sink fileName = new DirectUtf8Sink(0);
     private final int readEndFd;
@@ -56,9 +54,10 @@ public final class LinuxFileWatcher extends FileWatcher {
     private final int writeEndFd;
     private final LinuxAccessorFacade accessorFacade;
 
-    public LinuxFileWatcher(LinuxAccessorFacade accessorFacade, Utf8Sequence filePath, FileEventCallback callback) {
+    public LinuxFileWatcher(LinuxAccessorFacade accessorFacade, EpollFacade epollFacade, Utf8Sequence filePath, FileEventCallback callback) {
         super(callback);
         this.accessorFacade = accessorFacade;
+        this.epoll = new Epoll(epollFacade, 2);
         try {
             this.inotifyFd = accessorFacade.inotifyInit();
             if (this.inotifyFd < 0) {
@@ -164,7 +163,7 @@ public final class LinuxFileWatcher extends FileWatcher {
 
         // Rearm the epoll
         if (epoll.control(inotifyFd, 0, EpollAccessor.EPOLL_CTL_MOD, EpollAccessor.EPOLLIN) < 0) {
-            throw CairoException.critical(Os.errno()).put("epoll_wait error");
+            throw CairoException.critical(Os.errno()).put("epoll_ctl error");
         }
 
     }

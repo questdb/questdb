@@ -26,6 +26,7 @@ package io.questdb.std.filewatch;
 
 import io.questdb.FileEventCallback;
 import io.questdb.KqueueFileWatcher;
+import io.questdb.network.EpollFacadeImpl;
 import io.questdb.std.Os;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
@@ -41,7 +42,7 @@ public class FileWatcherFactory {
         } else if (Os.isWindows()) {
             return null;
         } else {
-            return new LinuxFileWatcher(LinuxAccessorFacadeImpl.INSTANCE, filePath, callback);
+            return new LinuxFileWatcher(LinuxAccessorFacadeImpl.INSTANCE, EpollFacadeImpl.INSTANCE, filePath, callback);
         }
     }
 }
