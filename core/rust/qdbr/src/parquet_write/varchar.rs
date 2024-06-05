@@ -15,14 +15,14 @@ const HEADER_FLAG_NULL: u8 = 1 << 2;
 
 const HEADER_FLAGS_WIDTH: u32 = 4;
 
-#[repr(C, packed(16))]
+#[repr(C, packed)]
 struct AuxEntryInlined {
     header: u8,
     chars: [u8; 9],
     _offset: [u8; 6],
 }
 
-#[repr(C, packed(16))]
+#[repr(C, packed)]
 struct AuxEntrySplit {
     header: u32,
     chars: [u8; 6],
