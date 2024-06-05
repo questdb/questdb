@@ -27,7 +27,6 @@ package io.questdb;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.Chars;
 import io.questdb.std.DebouncingRunnable;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.NotNull;
@@ -39,23 +38,13 @@ public abstract class FileWatcher implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(FileWatcher.class);
     private static final Duration debouncePeriod = Duration.ofMillis(100);
     protected final AtomicBoolean closed = new AtomicBoolean();
-    protected final CharSequence filePath;
     protected final DebouncingRunnable runnable;
     protected final AtomicBoolean started = new AtomicBoolean();
     private final SOCountDownLatch latch = new SOCountDownLatch(1);
     private final Thread reloadThread;
 
-    public FileWatcher(
-            CharSequence filePath,
-            @NotNull FileEventCallback callback
-
-    ) {
-        if (Chars.empty(filePath)) {
-            throw new IllegalArgumentException("filePath is null or empty");
-        }
-
+    public FileWatcher(@NotNull FileEventCallback callback) {
         this.runnable = new DebouncingRunnable(callback::onFileEvent, debouncePeriod);
-        this.filePath = filePath;
 
         reloadThread = new Thread(() -> {
             try {

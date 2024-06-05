@@ -49,11 +49,11 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Misc;
+import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 import java.io.File;
-import java.nio.file.Path;
 import java.security.PublicKey;
 import java.util.HashMap;
 import java.util.Map;
@@ -265,11 +265,14 @@ public class ServerMain implements Closeable {
 
         if (config instanceof DynamicServerConfiguration) {
             try {
-                Path configPath = Path.of(cairoConfig.getConfRoot().toString(), Bootstrap.CONFIG_FILE);
-                fileWatcher = FileWatcherFactory.getFileWatcher(
-                        configPath.toString(),
-                        (DynamicServerConfiguration) config
-                );
+//                Path configPath = Path.of(cairoConfig.getConfRoot().toString(), Bootstrap.CONFIG_FILE);
+                try (Path path = new Path()) {
+                    path.of(cairoConfig.getConfRoot()).concat(Bootstrap.CONFIG_FILE).$();
+                    fileWatcher = FileWatcherFactory.getFileWatcher(
+                            path,
+                            (DynamicServerConfiguration) config
+                    );
+                }
                 if (fileWatcher == null) {
                     bootstrap.getLog().advisoryW().$("filewatcher not started because we didn't implement this for windows yet");
                     return;

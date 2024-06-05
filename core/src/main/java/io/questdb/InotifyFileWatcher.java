@@ -1,3 +1,27 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2024 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
 package io.questdb;
 
 import io.questdb.log.Log;
@@ -7,9 +31,11 @@ import io.questdb.network.EpollAccessor;
 import io.questdb.network.EpollFacadeImpl;
 import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 
 import java.nio.file.Paths;
@@ -30,8 +56,8 @@ public final class InotifyFileWatcher extends FileWatcher {
     private final int wd;
     private final int writeEndFd;
 
-    public InotifyFileWatcher(CharSequence filePath, FileEventCallback callback) throws FileWatcherNativeException {
-        super(filePath, callback);
+    public InotifyFileWatcher(Utf8Sequence filePath, FileEventCallback callback) throws FileWatcherNativeException {
+        super(callback);
 
         this.fd = InotifyAccessor.inotifyInit();
         if (this.fd < 0) {
@@ -81,8 +107,6 @@ public final class InotifyFileWatcher extends FileWatcher {
             cleanUp();
             throw e;
         }
-
-
     }
 
     @Override
@@ -103,8 +127,6 @@ public final class InotifyFileWatcher extends FileWatcher {
 
             LOG.info().$("inotify filewatcher closed").$();
         }
-
-
     }
 
     @Override
@@ -149,8 +171,8 @@ public final class InotifyFileWatcher extends FileWatcher {
     }
 
     private void cleanUp() {
-        this.dirPath.close();
-        this.fileName.close();
+        Misc.free(this.dirPath);
+        Misc.free(this.fileName);
 
         if (InotifyAccessor.inotifyRmWatch(this.fd, this.wd) < 0) {
             System.out.println(this.fd);
@@ -174,9 +196,6 @@ public final class InotifyFileWatcher extends FileWatcher {
         if (this.buf > 0) {
             Unsafe.free(this.buf, this.bufSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
         }
-
-
     }
-
 }
 
