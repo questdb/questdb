@@ -30,11 +30,11 @@ import io.questdb.std.bytes.NativeByteSink;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8Sink;
 
-public class Json implements QuietCloseable {
+public class JsonParser implements QuietCloseable {
     public static final int SIMDJSON_PADDING;
     private long impl;
 
-    public Json() {
+    public JsonParser() {
         impl = create();
     }
 

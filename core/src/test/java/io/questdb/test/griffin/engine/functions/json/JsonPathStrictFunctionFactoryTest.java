@@ -29,7 +29,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.json.JsonPathStrictFunctionFactory;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
-import io.questdb.test.std.json.JsonTest;
+import io.questdb.test.std.json.JsonParserTest;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -62,7 +62,7 @@ public class JsonPathStrictFunctionFactoryTest extends AbstractFunctionFactoryTe
 
     @Test
     public void testLargeJson() throws SqlException {
-        call(utf8(JsonTest.jsonStr), utf8(".name")).andAssertUtf8("John");
+        call(utf8(JsonParserTest.jsonStr), utf8(".name")).andAssertUtf8("John");
     }
 
     @Test

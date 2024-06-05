@@ -26,7 +26,7 @@ package io.questdb.griffin.engine.functions.json;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.std.QuietCloseable;
-import io.questdb.std.json.Json;
+import io.questdb.std.json.JsonParser;
 import io.questdb.std.json.JsonResult;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8Sink;
@@ -34,7 +34,7 @@ import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
 class SupportingState implements QuietCloseable {
-    public Json parser = new Json();
+    public JsonParser parser = new JsonParser();
     public JsonResult jsonResult = new JsonResult();
     private DirectUtf8Sink jsonSink = null;
     public DirectUtf8Sequence jsonSeq = null;
@@ -46,7 +46,7 @@ class SupportingState implements QuietCloseable {
         try (DirectUtf8Sink path = new DirectUtf8Sink(seq.size())) {
             path.put(seq);
             final DirectUtf8Sink pointer = new DirectUtf8Sink(seq.size());
-            Json.convertJsonPathToPointer(path, pointer);
+            JsonParser.convertJsonPathToPointer(path, pointer);
             return pointer;
         }
     }
@@ -63,15 +63,15 @@ class SupportingState implements QuietCloseable {
     }
 
     public DirectUtf8Sequence initPaddedJson(@NotNull Utf8Sequence json) {
-        if ((json instanceof DirectUtf8Sequence) && ((DirectUtf8Sequence) json).tailPadding() >= Json.SIMDJSON_PADDING) {
+        if ((json instanceof DirectUtf8Sequence) && ((DirectUtf8Sequence) json).tailPadding() >= JsonParser.SIMDJSON_PADDING) {
             jsonSeq = (DirectUtf8Sequence) json;
         }
         else {
             if (jsonSink == null) {
-                jsonSink = new DirectUtf8Sink(json.size() + Json.SIMDJSON_PADDING);
+                jsonSink = new DirectUtf8Sink(json.size() + JsonParser.SIMDJSON_PADDING);
             } else {
                 jsonSink.clear();
-                jsonSink.reserve(json.size() + Json.SIMDJSON_PADDING);
+                jsonSink.reserve(json.size() + JsonParser.SIMDJSON_PADDING);
             }
             jsonSink.put(json);
             jsonSeq = jsonSink;

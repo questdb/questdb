@@ -177,7 +177,7 @@ auto value_at_path(
 extern "C" {
 
 JNIEXPORT jint JNICALL
-Java_io_questdb_std_json_Json_getSimdJsonPadding(
+Java_io_questdb_std_json_JsonParser_getSimdJsonPadding(
         JNIEnv */*env*/,
         jclass /*cl*/
 ) {
@@ -195,7 +195,7 @@ Java_io_questdb_std_json_JsonError_errorMessage(
 }
 
 JNIEXPORT void JNICALL
-Java_io_questdb_std_json_Json_convertJsonPathToPointer(
+Java_io_questdb_std_json_JsonParser_convertJsonPathToPointer(
         JNIEnv* /*env*/,
         jclass /*cl*/,
         const char* json_chars,
@@ -210,7 +210,7 @@ Java_io_questdb_std_json_Json_convertJsonPathToPointer(
 }
 
 JNIEXPORT simdjson::ondemand::parser* JNICALL
-Java_io_questdb_std_json_Json_create(
+Java_io_questdb_std_json_JsonParser_create(
         JNIEnv* /*env*/,
         jclass /*cl*/
 ) {
@@ -218,7 +218,7 @@ Java_io_questdb_std_json_Json_create(
 }
 
 JNIEXPORT void JNICALL
-Java_io_questdb_std_json_Json_destroy(
+Java_io_questdb_std_json_JsonParser_destroy(
         JNIEnv* /*env*/,
         jclass /*cl*/,
         simdjson::ondemand::parser* parser
@@ -227,7 +227,7 @@ Java_io_questdb_std_json_Json_destroy(
 }
 
 JNIEXPORT void JNICALL
-Java_io_questdb_std_json_Json_queryPointer(
+Java_io_questdb_std_json_JsonParser_queryPointer(
         JNIEnv* /*env*/,
         jclass /*cl*/,
         simdjson::ondemand::parser* parser,
@@ -276,7 +276,7 @@ Java_io_questdb_std_json_Json_queryPointer(
 }
 
 JNIEXPORT void JNICALL
-Java_io_questdb_std_json_Json_queryPath(
+Java_io_questdb_std_json_JsonParser_queryPath(
         JNIEnv* /*env*/,
         jclass /*cl*/,
         simdjson::ondemand::parser* parser,
@@ -325,7 +325,7 @@ Java_io_questdb_std_json_Json_queryPath(
 }
 
 JNIEXPORT void JNICALL
-Java_io_questdb_std_json_Json_queryPointerString(
+Java_io_questdb_std_json_JsonParser_queryPointerString(
         JNIEnv* /*env*/,
         jclass /*cl*/,
         simdjson::ondemand::parser* parser,
@@ -356,7 +356,7 @@ Java_io_questdb_std_json_Json_queryPointerString(
 }
 
 JNIEXPORT void JNICALL
-Java_io_questdb_std_json_Json_queryPathString(
+Java_io_questdb_std_json_JsonParser_queryPathString(
         JNIEnv* /*env*/,
         jclass /*cl*/,
         simdjson::ondemand::parser* parser,
@@ -384,7 +384,7 @@ Java_io_questdb_std_json_Json_queryPathString(
 }
 
 JNIEXPORT jboolean JNICALL
-Java_io_questdb_std_json_Json_queryPointerBoolean(
+Java_io_questdb_std_json_JsonParser_queryPointerBoolean(
         JNIEnv* /*env*/,
         jclass /*cl*/,
         simdjson::ondemand::parser* parser,
@@ -407,7 +407,7 @@ Java_io_questdb_std_json_Json_queryPointerBoolean(
 }
 
 JNIEXPORT jboolean JNICALL
-Java_io_questdb_std_json_Json_queryPathBoolean(
+Java_io_questdb_std_json_JsonParser_queryPathBoolean(
         JNIEnv* /*env*/,
         jclass /*cl*/,
         simdjson::ondemand::parser* parser,
@@ -430,7 +430,7 @@ Java_io_questdb_std_json_Json_queryPathBoolean(
 }
 
 JNIEXPORT jlong JNICALL
-Java_io_questdb_std_json_Json_queryPointerLong(
+Java_io_questdb_std_json_JsonParser_queryPointerLong(
         JNIEnv* /*env*/,
         jclass /*cl*/,
         simdjson::ondemand::parser* parser,
@@ -453,7 +453,7 @@ Java_io_questdb_std_json_Json_queryPointerLong(
 }
 
 JNIEXPORT jlong JNICALL
-Java_io_questdb_std_json_Json_queryPathLong(
+Java_io_questdb_std_json_JsonParser_queryPathLong(
         JNIEnv* /*env*/,
         jclass /*cl*/,
         simdjson::ondemand::parser* parser,
@@ -476,7 +476,7 @@ Java_io_questdb_std_json_Json_queryPathLong(
 }
 
 JNIEXPORT jdouble JNICALL
-Java_io_questdb_std_json_Json_queryPointerDouble(
+Java_io_questdb_std_json_JsonParser_queryPointerDouble(
         JNIEnv* /*env*/,
         jclass /*cl*/,
         simdjson::ondemand::parser* parser,
@@ -499,7 +499,7 @@ Java_io_questdb_std_json_Json_queryPointerDouble(
 }
 
 JNIEXPORT jdouble JNICALL
-Java_io_questdb_std_json_Json_queryPathDouble(
+Java_io_questdb_std_json_JsonParser_queryPathDouble(
         JNIEnv* /*env*/,
         jclass /*cl*/,
         simdjson::ondemand::parser* parser,
