@@ -35,8 +35,8 @@ public class JsonPathLongFunc extends LongFunction implements BinaryFunction {
     private final String functionName;
     private final Function json;
     private final Function path;
-    private final SupportingState state;
     private final DirectUtf8Sink pointer;
+    private final SupportingState state;
     private final boolean strict;
 
     public JsonPathLongFunc(String functionName, Function json, Function path, DirectUtf8Sink pointer, boolean strict) {
@@ -46,6 +46,12 @@ public class JsonPathLongFunc extends LongFunction implements BinaryFunction {
         this.pointer = pointer;
         this.strict = strict;
         this.state = new SupportingState();
+    }
+
+    @Override
+    public void close() {
+        state.close();
+        pointer.close();
     }
 
     @Override

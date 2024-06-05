@@ -59,11 +59,9 @@ class JsonPathFunc extends VarcharFunction implements BinaryFunction {
 
     @Override
     public void close() {
-        copied.close();
         a.close();
         b.close();
-        json.close();
-        path.close();
+        copied.close();
         pointer.close();
     }
 

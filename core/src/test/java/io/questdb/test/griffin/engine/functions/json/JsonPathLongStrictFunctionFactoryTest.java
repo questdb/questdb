@@ -67,8 +67,11 @@ public class JsonPathLongStrictFunctionFactoryTest extends AbstractFunctionFacto
 
     @Test
     public void testTwo() throws Exception {
-//        assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             ddl("create table x as (select '{\"path\": 2}'::varchar as path from long_sequence(10));");
+        });
+
+        assertMemoryLeak(() -> {
             assertSql(
                     "json_path_long_strict\n" +
                     "2\n" +
@@ -83,7 +86,7 @@ public class JsonPathLongStrictFunctionFactoryTest extends AbstractFunctionFacto
                     "2\n",
                     "select json_path_long_strict(path, '.path') from x"
             );
-//        });
+        });
     }
 
     @Test

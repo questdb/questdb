@@ -31,9 +31,9 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
 
 public class JsonResult implements QuietCloseable {
-    private static final int JSON_RESULT_STRUCT_SIZE = 12;
+    private static final int JSON_RESULT_STRUCT_SIZE = 8;
     private static final int JSON_RESULT_STRUCT_TYPE_OFFSET = 4;
-    private final long impl;
+    private long impl;
 
     public JsonResult() {
         this.impl = Unsafe.calloc(JSON_RESULT_STRUCT_SIZE, MemoryTag.NATIVE_DEFAULT);
@@ -49,6 +49,7 @@ public class JsonResult implements QuietCloseable {
         if (impl != 0) {
             Unsafe.free(impl, JSON_RESULT_STRUCT_SIZE, MemoryTag.NATIVE_DEFAULT);
         }
+        impl = 0;
     }
 
     // See constants in `JsonError` for possible values.

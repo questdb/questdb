@@ -64,6 +64,8 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         toTimestampRefs = 0;
         toDateRefs = 0;
 
+        final TestUtils.LeakCheck leakCheck = new TestUtils.LeakCheck();
+
         final FunctionFactory functionFactory = getFactory0();
         if (signature == null) {
             signature = functionFactory.getSignature();
@@ -211,6 +213,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
 
         FunctionParser functionParser = new FunctionParser(configuration, new FunctionFactoryCache(configuration, functions));
         return new Invocation(
+                leakCheck,
                 parseFunction(expression1, metadata, functionParser),
                 parseFunction(expression2, metadata, functionParser),
                 new TestRecord(args)
@@ -472,9 +475,11 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
     public static class Invocation {
         private final Function function1;
         private final Function function2;
+        private final TestUtils.LeakCheck leakCheck;
         private final Record record;
 
-        public Invocation(Function function1, Function function2, Record record) {
+        public Invocation(TestUtils.LeakCheck leakCheck, Function function1, Function function2, Record record) {
+            this.leakCheck = leakCheck;
             this.function1 = function1;
             this.function2 = function2;
             this.record = record;
@@ -606,6 +611,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         private void closeFunctions() {
             function1.close();
             function2.close();
+            leakCheck.close();
         }
     }
 
