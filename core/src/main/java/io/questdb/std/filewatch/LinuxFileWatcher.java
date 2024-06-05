@@ -48,6 +48,7 @@ public final class LinuxFileWatcher extends FileWatcher {
     private final Path dirPath = new Path();
     private final Epoll epoll;
     private final DirectUtf8Sink fileName = new DirectUtf8Sink(0);
+    private final int inotifyFd;
     private final int readEndFd;
     private final int wd;
     private final int writeEndFd;
