@@ -90,6 +90,10 @@ public abstract class FileWatcher implements QuietCloseable {
 
     protected abstract void _close();
 
+    protected boolean isClosed() {
+        return closed.get();
+    }
+
     protected abstract void releaseWait();
 
     protected abstract void waitForChange();
