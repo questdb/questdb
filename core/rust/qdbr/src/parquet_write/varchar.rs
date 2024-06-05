@@ -35,14 +35,14 @@ fn encode_plain(aux: &[AuxEntryInlined], data: &[u8], buffer: &mut Vec<u8>) {
         if is_inlined(entry.header) {
             let size = (entry.header >> HEADER_FLAGS_WIDTH) as usize;
             let utf8_slice = &entry.chars[..size];
-            let len = (utf8_slice.len() as u32).to_le_bytes();
+            let len = (size as u32).to_le_bytes();
             buffer.extend_from_slice(&len);
             buffer.extend_from_slice(utf8_slice);
         } else {
             let entry: &AuxEntrySplit = unsafe { mem::transmute(entry) };
             let header = entry.header;
             let size = (header >> HEADER_FLAGS_WIDTH) as usize;
-            let offset = entry.offset_lo as usize + ((entry.offset_hi as usize) << 16);
+            let offset = entry.offset_lo as usize | (entry.offset_hi as usize) << 16;
             let utf8_slice = &data[offset..][..size];
             let len = (size as u32).to_le_bytes();
             buffer.extend_from_slice(&len);
