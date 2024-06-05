@@ -205,7 +205,7 @@ pub fn column_type_to_parquet_type(
         ColumnType::Uuid | ColumnType::Long128 => Ok(ParquetType::try_from_primitive(
             name,
             PhysicalType::FixedLenByteArray(16),
-            Repetition::Required, //TODO: check for nullability
+            Repetition::Optional,
             None,
             None,
             Some(column_id),

@@ -9,7 +9,6 @@ use crate::parquet_write::ParquetResult;
 fn encode_plain<const N: usize>(data: &[[u8; N]], buffer: &mut Vec<u8>, null_value: [u8; N]) {
     for x in data.into_iter().filter(|&&x| x != null_value) {
         buffer.extend_from_slice(x);
-    })
     }
 }
 
@@ -44,7 +43,6 @@ pub fn bytes_to_page<const N: usize>(
 
     encode_bool_iter(&mut buffer, deflevels_iter, options.version)?;
     let definition_levels_byte_length = buffer.len();
-    encode_plain(data, &mut buffer);
     encode_plain(data, &mut buffer, null_value);
     build_plain_page(
         buffer,
