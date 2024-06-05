@@ -57,6 +57,8 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
             return target;
         }
 
+        validateColumnTypes(args, argPositions, true);
+
         final int numberOfPairs = (args.size() - 1) / 2;
         if (numberOfPairs == 0) {
             throw SqlException.position(argPositions.getLast()).put("not enough arguments for l2price");
@@ -79,7 +81,7 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static boolean allowedColumnType(int type) {
+    private static boolean allowedColumnType(int type, boolean allowUndefined) {
         switch (type) {
             case ColumnType.BYTE:
             case ColumnType.SHORT:
@@ -88,14 +90,16 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
             case ColumnType.FLOAT:
             case ColumnType.DOUBLE:
                 return true;
+            case ColumnType.UNDEFINED:
+                return allowUndefined;
             default:
                 return false;
         }
     }
 
-    private static void validateColumnTypes(ObjList<Function> args, IntList argPositions) throws SqlException {
+    private static void validateColumnTypes(ObjList<Function> args, IntList argPositions, boolean allowUndefined) throws SqlException {
         for (int i = 0, n = args.size(); i < n; i++) {
-            if (!allowedColumnType(args.getQuick(i).getType())) {
+            if (!allowedColumnType(args.getQuick(i).getType(), allowUndefined)) {
                 if (!args.getQuick(i).isNullConstant()) {
                     throw SqlException.position(argPositions.getQuick(i))
                             .put("l2price requires arguments of type `DOUBLE`, or convertible to `DOUBLE`, not `")
@@ -128,7 +132,7 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             MultiArgFunction.super.init(symbolTableSource, executionContext);
-            validateColumnTypes(args, argPositions);
+            validateColumnTypes(args, argPositions, false);
         }
     }
 
