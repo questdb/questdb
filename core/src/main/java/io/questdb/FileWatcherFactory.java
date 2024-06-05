@@ -26,10 +26,14 @@ package io.questdb;
 
 import io.questdb.std.Os;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 
 public class FileWatcherFactory {
 
-    public static FileWatcher getFileWatcher(Utf8Sequence filePath, FileEventCallback callback) {
+    public static FileWatcher getFileWatcher(@NotNull Utf8Sequence filePath, FileEventCallback callback) {
+        if (filePath.size() == 0) {
+            throw new IllegalArgumentException("file to watch cannot be empty");
+        }
         if (Os.isOSX() || Os.isFreeBSD()) {
             return new KqueueFileWatcher(filePath, callback);
         } else if (Os.isWindows()) {
