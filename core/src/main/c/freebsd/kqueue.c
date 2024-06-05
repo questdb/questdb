@@ -31,100 +31,100 @@
 #include "jni.h"
 #include "../share/sysutil.h"
 
-JNIEXPORT jshort JNICALL Java_io_questdb_KqueueAccessor_getEvfiltRead
+JNIEXPORT jshort JNICALL Java_io_questdb_std_filewatch_OsxAccessor_getEvfiltRead
         (JNIEnv *e, jclass cl) {
     return EVFILT_READ;
 }
 
-JNIEXPORT jshort JNICALL Java_io_questdb_KqueueAccessor_getEvfiltWrite
+JNIEXPORT jshort JNICALL Java_io_questdb_std_filewatch_OsxAccessor_getEvfiltWrite
         (JNIEnv *e, jclass cl) {
     return EVFILT_WRITE;
 }
 
-JNIEXPORT jshort JNICALL Java_io_questdb_KqueueAccessor_getEvfiltVnode
+JNIEXPORT jshort JNICALL Java_io_questdb_std_filewatch_OsxAccessor_getEvfiltVnode
         (JNIEnv *e, jclass cl) {
     return EVFILT_VNODE;
 }
 
-JNIEXPORT jshort JNICALL Java_io_questdb_KqueueAccessor_getNoteDelete
+JNIEXPORT jshort JNICALL Java_io_questdb_std_filewatch_OsxAccessor_getNoteDelete
         (JNIEnv *e, jclass cl) {
     return NOTE_DELETE;
 }
-JNIEXPORT jshort JNICALL Java_io_questdb_KqueueAccessor_getNoteWrite
+JNIEXPORT jshort JNICALL Java_io_questdb_std_filewatch_OsxAccessor_getNoteWrite
         (JNIEnv *e, jclass cl) {
     return NOTE_WRITE;
 }
-JNIEXPORT jshort JNICALL Java_io_questdb_KqueueAccessor_getNoteExtend
+JNIEXPORT jshort JNICALL Java_io_questdb_std_filewatch_OsxAccessor_getNoteExtend
         (JNIEnv *e, jclass cl) {
     return NOTE_EXTEND;
 }
-JNIEXPORT jshort JNICALL Java_io_questdb_KqueueAccessor_getNoteAttrib
+JNIEXPORT jshort JNICALL Java_io_questdb_std_filewatch_OsxAccessor_getNoteAttrib
         (JNIEnv *e, jclass cl) {
     return NOTE_ATTRIB;
 }
-JNIEXPORT jshort JNICALL Java_io_questdb_KqueueAccessor_getNoteLink
+JNIEXPORT jshort JNICALL Java_io_questdb_std_filewatch_OsxAccessor_getNoteLink
         (JNIEnv *e, jclass cl) {
     return NOTE_LINK;
 }
-JNIEXPORT jshort JNICALL Java_io_questdb_KqueueAccessor_getNoteRename
+JNIEXPORT jshort JNICALL Java_io_questdb_std_filewatch_OsxAccessor_getNoteRename
         (JNIEnv *e, jclass cl) {
     return NOTE_RENAME;
 }
-JNIEXPORT jshort JNICALL Java_io_questdb_KqueueAccessor_getNoteRevoke
+JNIEXPORT jshort JNICALL Java_io_questdb_std_filewatch_OsxAccessor_getNoteRevoke
         (JNIEnv *e, jclass cl) {
     return NOTE_REVOKE;
 }
-JNIEXPORT jshort JNICALL Java_io_questdb_KqueueAccessor_getSizeofKevent
+JNIEXPORT jshort JNICALL Java_io_questdb_std_filewatch_OsxAccessor_getSizeofKevent
         (JNIEnv *e, jclass cl) {
     return (short) sizeof(struct kevent);
 }
 
-JNIEXPORT jshort JNICALL Java_io_questdb_KqueueAccessor_getFdOffset
+JNIEXPORT jshort JNICALL Java_io_questdb_std_filewatch_OsxAccessor_getFdOffset
         (JNIEnv *e, jclass cl) {
     return (short) offsetof(struct kevent, ident);
 }
 
-JNIEXPORT jshort JNICALL Java_io_questdb_KqueueAccessor_getFilterOffset
+JNIEXPORT jshort JNICALL Java_io_questdb_std_filewatch_OsxAccessor_getFilterOffset
         (JNIEnv *e, jclass cl) {
     return (short) offsetof(struct kevent, filter);
 }
 
-JNIEXPORT jshort JNICALL Java_io_questdb_KqueueAccessor_getDataOffset
+JNIEXPORT jshort JNICALL Java_io_questdb_std_filewatch_OsxAccessor_getDataOffset
         (JNIEnv *e, jclass cl) {
     return (short) offsetof(struct kevent, udata);
 }
 
-JNIEXPORT jshort JNICALL Java_io_questdb_KqueueAccessor_getFlagsOffset
+JNIEXPORT jshort JNICALL Java_io_questdb_std_filewatch_OsxAccessor_getFlagsOffset
         (JNIEnv *e, jclass cl) {
     return (short) offsetof(struct kevent, flags);
 }
 
-JNIEXPORT jshort JNICALL Java_io_questdb_KqueueAccessor_getEvAdd
+JNIEXPORT jshort JNICALL Java_io_questdb_std_filewatch_OsxAccessor_getEvAdd
         (JNIEnv *e, jclass cl) {
     return EV_ADD;
 }
 
-JNIEXPORT jshort JNICALL Java_io_questdb_KqueueAccessor_getEvOneshot
+JNIEXPORT jshort JNICALL Java_io_questdb_std_filewatch_OsxAccessor_getEvOneshot
         (JNIEnv *e, jclass cl) {
     return EV_ONESHOT;
 }
 
-JNIEXPORT jshort JNICALL Java_io_questdb_KqueueAccessor_getEvDelete
+JNIEXPORT jshort JNICALL Java_io_questdb_std_filewatch_OsxAccessor_getEvDelete
         (JNIEnv *e, jclass cl) {
     return EV_DELETE;
 }
 
-JNIEXPORT jshort JNICALL Java_io_questdb_KqueueAccessor_getEvClear
+JNIEXPORT jshort JNICALL Java_io_questdb_std_filewatch_OsxAccessor_getEvClear
         (JNIEnv *e, jclass cl) {
     return EV_CLEAR;
 }
 
-JNIEXPORT jint JNICALL Java_io_questdb_KqueueAccessor_kqueue
+JNIEXPORT jint JNICALL Java_io_questdb_std_filewatch_OsxAccessor_kqueue
         (JNIEnv *e, jclass cl) {
     return kqueue();
 }
 
-JNIEXPORT jint JNICALL Java_io_questdb_KqueueAccessor_kevent
+JNIEXPORT jint JNICALL Java_io_questdb_std_filewatch_OsxAccessor_kevent
         (JNIEnv *e, jclass cl, jint kq, jlong changelist, jint nChanges, jlong eventlist, jint nEvents, jint timeout) {
     int tv_sec = timeout / 1000;
     struct timespec _timeout = {tv_sec, (timeout - tv_sec * 1000) * 1000 * 1000};
@@ -137,7 +137,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_KqueueAccessor_kevent
     );
 }
 
-JNIEXPORT jint JNICALL Java_io_questdb_KqueueAccessor_keventRegister
+JNIEXPORT jint JNICALL Java_io_questdb_std_filewatch_OsxAccessor_keventRegister
         (JNIEnv *e, jclass cl, jint kq, jlong changelist, jint nChanges) {
     return (jint) kevent(
             kq,
@@ -149,14 +149,14 @@ JNIEXPORT jint JNICALL Java_io_questdb_KqueueAccessor_keventRegister
     );
 }
 
-JNIEXPORT jint JNICALL Java_io_questdb_KqueueAccessor_keventGetBlocking
+JNIEXPORT jint JNICALL Java_io_questdb_std_filewatch_OsxAccessor_keventGetBlocking
         (JNIEnv *e, jclass cl, jint kq, jlong eventList, jint nEvents) {
     int res;
     RESTARTABLE(kevent(kq, NULL, 0, (struct kevent *) eventList, nEvents, NULL), res);
     return (jint) res;
 }
 
-JNIEXPORT jlong JNICALL Java_io_questdb_KqueueAccessor_evtAlloc
+JNIEXPORT jlong JNICALL Java_io_questdb_std_filewatch_OsxAccessor_evtAlloc
     (JNIEnv *e, jclass cl, jlong ident, jint filter, jint flags, jint fflags, jlong data) {
     struct kevent *event = malloc(sizeof(struct kevent));
     if (!event) {
@@ -166,13 +166,13 @@ JNIEXPORT jlong JNICALL Java_io_questdb_KqueueAccessor_evtAlloc
     return (jlong)event;
 }
 
-JNIEXPORT void JNICALL Java_io_questdb_KqueueAccessor_evtFree
+JNIEXPORT void JNICALL Java_io_questdb_std_filewatch_OsxAccessor_evtFree
         (JNIEnv *e, jclass cl, jlong event) {
     free((void *) event);
 }
 
 
-JNIEXPORT jlong JNICALL Java_io_questdb_KqueueAccessor_pipe
+JNIEXPORT jlong JNICALL Java_io_questdb_std_filewatch_OsxAccessor_pipe
         (JNIEnv *e, jclass cl) {
     int fds[2];
     int res = pipe2(fds, O_NONBLOCK);
@@ -188,7 +188,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_KqueueAccessor_pipe
     return (jlong) fds[0] << 32 | (jlong) fds[1];
 }
 
-JNIEXPORT jint JNICALL Java_io_questdb_KqueueAccessor_readPipe
+JNIEXPORT jint JNICALL Java_io_questdb_std_filewatch_OsxAccessor_readPipe
         (JNIEnv *e, jclass cl, jint fd) {
     char buf[1];
     ssize_t s;
@@ -199,7 +199,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_KqueueAccessor_readPipe
     return (jint) buf[0];
 }
 
-JNIEXPORT jint JNICALL Java_io_questdb_KqueueAccessor_writePipe
+JNIEXPORT jint JNICALL Java_io_questdb_std_filewatch_OsxAccessor_writePipe
         (JNIEnv *e, jclass cl, jint fd) {
     char buf[1];
     ssize_t s;

@@ -24,10 +24,10 @@
 
 package io.questdb.network;
 
-import io.questdb.KqueueAccessor;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.LongMatrix;
 import io.questdb.std.Misc;
+import io.questdb.std.filewatch.OsxAccessor;
 
 public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatcher<C> {
     private static final int EVM_DEADLINE = 1;
@@ -129,8 +129,8 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
             }
         } else {
             final int requestedOp = (int) pending.get(row, OPM_OPERATION);
-            final boolean readyForWrite = kqueue.getFilter() == KqueueAccessor.EVFILT_WRITE;
-            final boolean readyForRead = kqueue.getFilter() == KqueueAccessor.EVFILT_READ;
+            final boolean readyForWrite = kqueue.getFilter() == OsxAccessor.EVFILT_WRITE;
+            final boolean readyForRead = kqueue.getFilter() == OsxAccessor.EVFILT_READ;
 
             if ((requestedOp == IOOperation.WRITE && readyForWrite) || (requestedOp == IOOperation.READ && readyForRead)) {
                 // disarm extra filter in case it was previously set and haven't fired yet
@@ -424,7 +424,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
             LOG.debug().$("poll [n=").$(n).$(']').$();
             for (int i = 0; i < n; i++) {
                 kqueue.setReadOffset(offset);
-                offset += KqueueAccessor.SIZEOF_KEVENT;
+                offset += OsxAccessor.SIZEOF_KEVENT;
                 final int fd = kqueue.getFd();
                 final long id = kqueue.getData();
                 // this is server socket, accept if there aren't too many already
@@ -505,7 +505,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
         public KeventWriter readFD(int fd, long id) {
             kqueue.setWriteOffset(offset);
             kqueue.readFD(fd, id);
-            offset += KqueueAccessor.SIZEOF_KEVENT;
+            offset += OsxAccessor.SIZEOF_KEVENT;
             if (++index > capacity - 1) {
                 register(index);
                 index = offset = 0;
@@ -516,7 +516,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
         public KeventWriter removeReadFD(int fd) {
             kqueue.setWriteOffset(offset);
             kqueue.removeReadFD(fd);
-            offset += KqueueAccessor.SIZEOF_KEVENT;
+            offset += OsxAccessor.SIZEOF_KEVENT;
             if (++index > capacity - 1) {
                 register(index);
                 index = offset = 0;
@@ -527,7 +527,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
         public KeventWriter removeWriteFD(int fd) {
             kqueue.setWriteOffset(offset);
             kqueue.removeWriteFD(fd);
-            offset += KqueueAccessor.SIZEOF_KEVENT;
+            offset += OsxAccessor.SIZEOF_KEVENT;
             if (++index > capacity - 1) {
                 register(index);
                 index = offset = 0;
@@ -543,7 +543,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
         public KeventWriter writeFD(int fd, long id) {
             kqueue.setWriteOffset(offset);
             kqueue.writeFD(fd, id);
-            offset += KqueueAccessor.SIZEOF_KEVENT;
+            offset += OsxAccessor.SIZEOF_KEVENT;
             if (++index > capacity - 1) {
                 register(index);
                 index = offset = 0;

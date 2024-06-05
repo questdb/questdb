@@ -25,7 +25,6 @@
 package io.questdb.std.filewatch;
 
 import io.questdb.FileEventCallback;
-import io.questdb.KqueueFileWatcher;
 import io.questdb.std.Os;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
@@ -37,7 +36,7 @@ public class FileWatcherFactory {
             throw new IllegalArgumentException("file to watch cannot be empty");
         }
         if (Os.isOSX() || Os.isFreeBSD()) {
-            return new KqueueFileWatcher(filePath, callback);
+            return new OsxFileWatcher(filePath, callback);
         } else if (Os.isWindows()) {
             return null;
         } else {

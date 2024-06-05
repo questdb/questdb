@@ -22,18 +22,18 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.std.filewatch;
 
+import io.questdb.FileEventCallback;
 import io.questdb.cairo.CairoException;
 import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
-import io.questdb.std.filewatch.FileWatcher;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 
-public class KqueueFileWatcher extends FileWatcher {
+public class OsxFileWatcher extends FileWatcher {
     private final int bufferSize;
     private final int dirFd;
     private final long eventList;
@@ -45,7 +45,7 @@ public class KqueueFileWatcher extends FileWatcher {
     private final int readEndFd;
     private final int writeEndFd;
 
-    public KqueueFileWatcher(Utf8Sequence filePath, FileEventCallback callback) {
+    public OsxFileWatcher(Utf8Sequence filePath, FileEventCallback callback) {
         super(callback);
 
         try (Path p = new Path()) {
@@ -65,14 +65,14 @@ public class KqueueFileWatcher extends FileWatcher {
         }
 
         try {
-            this.evtFile = KqueueAccessor.evtAlloc(
+            this.evtFile = OsxAccessor.evtAlloc(
                     this.fileFd,
-                    KqueueAccessor.EVFILT_VNODE,
-                    KqueueAccessor.EV_ADD | KqueueAccessor.EV_CLEAR,
-                    KqueueAccessor.NOTE_DELETE | KqueueAccessor.NOTE_WRITE |
-                            KqueueAccessor.NOTE_ATTRIB | KqueueAccessor.NOTE_EXTEND |
-                            KqueueAccessor.NOTE_LINK | KqueueAccessor.NOTE_RENAME |
-                            KqueueAccessor.NOTE_REVOKE,
+                    OsxAccessor.EVFILT_VNODE,
+                    OsxAccessor.EV_ADD | OsxAccessor.EV_CLEAR,
+                    OsxAccessor.NOTE_DELETE | OsxAccessor.NOTE_WRITE |
+                            OsxAccessor.NOTE_ATTRIB | OsxAccessor.NOTE_EXTEND |
+                            OsxAccessor.NOTE_LINK | OsxAccessor.NOTE_RENAME |
+                            OsxAccessor.NOTE_REVOKE,
                     0
             );
 
@@ -80,14 +80,14 @@ public class KqueueFileWatcher extends FileWatcher {
                 throw CairoException.critical(Os.errno()).put("could allocate kevent for file");
             }
 
-            this.evtDir = KqueueAccessor.evtAlloc(
+            this.evtDir = OsxAccessor.evtAlloc(
                     this.dirFd,
-                    KqueueAccessor.EVFILT_VNODE,
-                    KqueueAccessor.EV_ADD | KqueueAccessor.EV_CLEAR,
-                    KqueueAccessor.NOTE_DELETE | KqueueAccessor.NOTE_WRITE |
-                            KqueueAccessor.NOTE_ATTRIB | KqueueAccessor.NOTE_EXTEND |
-                            KqueueAccessor.NOTE_LINK | KqueueAccessor.NOTE_RENAME |
-                            KqueueAccessor.NOTE_REVOKE,
+                    OsxAccessor.EVFILT_VNODE,
+                    OsxAccessor.EV_ADD | OsxAccessor.EV_CLEAR,
+                    OsxAccessor.NOTE_DELETE | OsxAccessor.NOTE_WRITE |
+                            OsxAccessor.NOTE_ATTRIB | OsxAccessor.NOTE_EXTEND |
+                            OsxAccessor.NOTE_LINK | OsxAccessor.NOTE_RENAME |
+                            OsxAccessor.NOTE_REVOKE,
                     0
             );
 
@@ -95,31 +95,31 @@ public class KqueueFileWatcher extends FileWatcher {
                 throw CairoException.critical(Os.errno()).put("could allocate kevent for directory");
             }
 
-            long fds = KqueueAccessor.pipe();
+            long fds = OsxAccessor.pipe();
             this.readEndFd = (int) (fds >>> 32);
             this.writeEndFd = (int) fds;
             Files.bumpFileCount(this.readEndFd);
             Files.bumpFileCount(this.writeEndFd);
 
-            this.evtPipe = KqueueAccessor.evtAlloc(
+            this.evtPipe = OsxAccessor.evtAlloc(
                     this.readEndFd,
-                    KqueueAccessor.EVFILT_READ,
-                    KqueueAccessor.EV_ADD | KqueueAccessor.EV_CLEAR,
+                    OsxAccessor.EVFILT_READ,
+                    OsxAccessor.EV_ADD | OsxAccessor.EV_CLEAR,
                     0,
                     0
             );
 
-            kq = KqueueAccessor.kqueue();
+            kq = OsxAccessor.kqueue();
             if (kq < 0) {
                 throw CairoException.critical(Os.errno()).put("could create kqueue");
             }
             Files.bumpFileCount(this.kq);
 
-            this.bufferSize = KqueueAccessor.SIZEOF_KEVENT;
+            this.bufferSize = OsxAccessor.SIZEOF_KEVENT;
             this.eventList = Unsafe.calloc(bufferSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
 
             // Register events with queue
-            int fileRes = KqueueAccessor.keventRegister(
+            int fileRes = OsxAccessor.keventRegister(
                     kq,
                     evtFile,
                     1
@@ -128,7 +128,7 @@ public class KqueueFileWatcher extends FileWatcher {
                 throw CairoException.critical(Os.errno()).put("could register file events in kqueue");
             }
 
-            int dirRes = KqueueAccessor.keventRegister(
+            int dirRes = OsxAccessor.keventRegister(
                     kq,
                     evtDir,
                     1
@@ -137,7 +137,7 @@ public class KqueueFileWatcher extends FileWatcher {
                 throw CairoException.critical(Os.errno()).put("could register directory events in kqueue");
             }
 
-            int pipeRes = KqueueAccessor.keventRegister(
+            int pipeRes = OsxAccessor.keventRegister(
                     kq,
                     evtPipe,
                     1
@@ -156,7 +156,7 @@ public class KqueueFileWatcher extends FileWatcher {
     public void close() {
         if (closed.compareAndSet(false, true)) {
 
-            if (KqueueAccessor.writePipe(writeEndFd) < 0) {
+            if (OsxAccessor.writePipe(writeEndFd) < 0) {
                 // todo: handle error
             }
 
@@ -193,22 +193,22 @@ public class KqueueFileWatcher extends FileWatcher {
         }
 
         if (this.evtFile > 0) {
-            KqueueAccessor.evtFree(this.evtFile);
+            OsxAccessor.evtFree(this.evtFile);
         }
 
         if (this.evtDir > 0) {
-            KqueueAccessor.evtFree(this.evtDir);
+            OsxAccessor.evtFree(this.evtDir);
         }
 
         if (this.evtPipe > 0) {
-            KqueueAccessor.evtFree(this.evtPipe);
+            OsxAccessor.evtFree(this.evtPipe);
         }
     }
 
     @Override
     protected void waitForChange() {
         // Blocks until there is a change in the watched dir
-        int res = KqueueAccessor.keventGetBlocking(
+        int res = OsxAccessor.keventGetBlocking(
                 kq,
                 eventList,
                 1

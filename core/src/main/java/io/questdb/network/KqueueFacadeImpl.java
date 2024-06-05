@@ -24,7 +24,7 @@
 
 package io.questdb.network;
 
-import io.questdb.KqueueAccessor;
+import io.questdb.std.filewatch.OsxAccessor;
 
 public class KqueueFacadeImpl implements KqueueFacade {
     public static final KqueueFacade INSTANCE = new KqueueFacadeImpl();
@@ -36,26 +36,26 @@ public class KqueueFacadeImpl implements KqueueFacade {
 
     @Override
     public int kevent(int kq, long changeList, int nChanges, long eventList, int nEvents, int timeout) {
-        return KqueueAccessor.kevent(kq, changeList, nChanges, eventList, nEvents, timeout);
+        return OsxAccessor.kevent(kq, changeList, nChanges, eventList, nEvents, timeout);
     }
 
     @Override
     public int kqueue() {
-        return KqueueAccessor.kqueue();
+        return OsxAccessor.kqueue();
     }
 
     @Override
     public long pipe() {
-        return KqueueAccessor.pipe();
+        return OsxAccessor.pipe();
     }
 
     @Override
     public int readPipe(int fd) {
-        return KqueueAccessor.readPipe(fd);
+        return OsxAccessor.readPipe(fd);
     }
 
     @Override
     public int writePipe(int fd) {
-        return KqueueAccessor.writePipe(fd);
+        return OsxAccessor.writePipe(fd);
     }
 }
