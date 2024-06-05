@@ -37,7 +37,6 @@ import org.junit.Test;
 
 import java.io.File;
 import java.io.PrintWriter;
-import java.nio.charset.StandardCharsets;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
@@ -66,7 +65,7 @@ public class FileWatcherTest extends AbstractTest {
             ) {
 
                 fw.start();
-                try (PrintWriter writer = new PrintWriter(targetFile.getAbsolutePath(), StandardCharsets.UTF_8)) {
+                try (PrintWriter writer = new PrintWriter(targetFile.getAbsolutePath())) {
                     writer.println("hello");
                 }
                 threadLatch.await();
@@ -87,7 +86,7 @@ public class FileWatcherTest extends AbstractTest {
 
                 fw.start();
                 Assert.assertTrue(targetFile.delete());
-                try (PrintWriter writer = new PrintWriter(targetFile.getAbsolutePath(), StandardCharsets.UTF_8)) {
+                try (PrintWriter writer = new PrintWriter(targetFile.getAbsolutePath())) {
                     writer.println("hello");
                 }
                 threadLatch.await();
