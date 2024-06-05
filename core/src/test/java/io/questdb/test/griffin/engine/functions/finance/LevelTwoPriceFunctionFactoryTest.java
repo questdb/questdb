@@ -120,31 +120,22 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
                     "limit -1;");
 
             assertFailure(
-                    "[1891] l2price requires arguments of type `DOUBLE`, or convertible to `DOUBLE`, not `STRING`.",
+                    "[869] l2price requires arguments of type `DOUBLE`, or convertible to `DOUBLE`, not `STRING`.",
                     "with recent_trades as\n" +
                             "(\n" +
                             "    select \n" +
                             "    FIRST_VALUE(amount) over(partition by symbol order by timestamp rows between 1 preceding and 1 preceding) as amount1,\n" +
                             "    FIRST_VALUE(amount) over(partition by symbol order by timestamp rows between 2 preceding and 2 preceding) as amount2,\n" +
                             "    FIRST_VALUE(amount) over(partition by symbol order by timestamp rows between 3 preceding and 3 preceding) as amount3,\n" +
-                            "    FIRST_VALUE(amount) over(partition by symbol order by timestamp rows between 4 preceding and 4 preceding) as amount4,\n" +
-                            "    FIRST_VALUE(amount) over(partition by symbol order by timestamp rows between 5 preceding and 5 preceding) as amount5,\n" +
-                            "    FIRST_VALUE(amount) over(partition by symbol order by timestamp rows between 6 preceding and 6 preceding) as amount6,\n" +
-                            "    FIRST_VALUE(amount) over(partition by symbol order by timestamp rows between 6 preceding and 6 preceding) as amount7,\n" +
                             "    FIRST_VALUE(price) over(partition by symbol order by timestamp rows between 1 preceding and 1 preceding) as price1,\n" +
                             "    FIRST_VALUE(price) over(partition by symbol order by timestamp rows between 2 preceding and 2 preceding) as price2,\n" +
-                            "    FIRST_VALUE(price) over(partition by symbol order by timestamp rows between 3 preceding and 3 preceding) as price3,\n" +
-                            "    FIRST_VALUE(price) over(partition by symbol order by timestamp rows between 4 preceding and 4 preceding) as price4,\n" +
-                            "    FIRST_VALUE(price) over(partition by symbol order by timestamp rows between 5 preceding and 5 preceding) as price5,\n" +
-                            "     FIRST_VALUE(price) over(partition by symbol order by timestamp rows between 6 preceding and 6 preceding) as price6,\n" +
-                            "     FIRST_VALUE(price) over(partition by symbol order by timestamp rows between 6 preceding and 6 preceding) as price7\n" +
+                            "    FIRST_VALUE(price) over(partition by symbol order by timestamp rows between 3 preceding and 3 preceding) as price3\n" +
                             "    from btc_trades\n" +
                             "    where side = 'buy'\n" +
                             "    limit -12\n" +
                             ")\n" +
-                            "select l2price(0.0015, amount1, price1, amount2, price2, amount3, price3, \n" +
-                            "amount4, price4, amount5, 'string fail', amount6, price6) from recent_trades\n" +
-                            "limit -1;"
+                            "select l2price(0.0015, amount1, price1, amount2, 'string fail', amount3, price3),\n" +
+                            "l2price(0.0015, amount2, price2) from recent_trades"
             );
         });
     }
