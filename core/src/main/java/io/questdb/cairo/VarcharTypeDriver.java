@@ -252,7 +252,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         boolean isAscii = hasAsciiFlag(raw);
         if (hasInlinedFlag(raw)) {
             long auxLo = auxMem.addressOf(auxOffset + FULLY_INLINED_STRING_OFFSET);
-            long auxLim = auxMem.addressOf(0) + auxMem.size();
+            long auxLim = auxMem.addressHi();
             int size = (raw >> HEADER_FLAGS_WIDTH) & INLINED_LENGTH_MASK;
             assert size <= VARCHAR_MAX_BYTES_FULLY_INLINED;
             return ab == 1
@@ -261,7 +261,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         }
         long auxLo = auxMem.addressOf(auxOffset + INLINED_PREFIX_OFFSET);
         long dataLo = dataMem.addressOf(getDataOffset(auxMem, auxOffset));
-        long dataLim = dataMem.addressOf(0) + dataMem.size();
+        long dataLim = dataMem.addressHi();
         int size = (raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK;
         return ab == 1
                 ? auxMem.getSplitVarcharA(auxLo, dataLo, dataLim, size, isAscii)

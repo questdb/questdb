@@ -37,6 +37,11 @@ public class NullMemoryCMR implements MemoryCMR {
     public static final NullMemoryCMR INSTANCE = new NullMemoryCMR();
 
     @Override
+    public long addressHi() {
+        return 0;
+    }
+
+    @Override
     public long addressOf(long offset) {
         return 0;
     }

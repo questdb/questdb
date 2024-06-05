@@ -29,6 +29,8 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.std.*;
 
+import java.util.concurrent.atomic.AtomicLong;
+
 public class PageAddressCache implements Mutable {
 
     private final long cacheSizeThreshold;
@@ -43,6 +45,8 @@ public class PageAddressCache implements Mutable {
     private LongList pageSizes = new LongList();
     private int varSizeColumnCount;
     private LongList varcharAuxPageLimits = new LongList();
+    private final static AtomicLong ID_GENERATOR = new AtomicLong(0);
+    private final long id = ID_GENERATOR.incrementAndGet();
 
     public PageAddressCache(CairoConfiguration configuration) {
         cacheSizeThreshold = configuration.getSqlJitPageAddressCacheThreshold() / Long.BYTES;
@@ -61,10 +65,11 @@ public class PageAddressCache implements Mutable {
                 auxPageAddresses.add(auxPageAddress);
                 final long pageSize = frame.getPageSize(columnIndex);
                 pageSizes.add(pageSize);
-                pageLimits.add(pageAddress + pageSize);
+                final int columnFrameIndex = columnCount * frameIndex + columnIndex;
+                pageLimits.extendAndSet(columnFrameIndex, pageAddress + pageSize);
                 final long frameRowCount = frame.getPartitionHi() - frame.getPartitionLo();
                 varcharAuxPageLimits.extendAndSet(
-                        columnCount * frameIndex + columnIndex,
+                        columnFrameIndex,
                         auxPageAddress + VarcharTypeDriver.INSTANCE.getAuxVectorSize(frameRowCount)
                 );
             }
