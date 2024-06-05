@@ -1,5 +1,5 @@
 use std::io::Write;
-use std::mem;
+use std::{mem, slice};
 
 use parquet2::compression::CompressionOptions;
 use parquet2::encoding::Encoding;
@@ -18,6 +18,8 @@ use crate::parquet_write::{
     binary, boolean, fixed_len_bytes, primitive, string, symbol, varchar, ParquetError,
     ParquetResult,
 };
+
+use super::util;
 
 const DEFAULT_PAGE_SIZE: usize = 1024 * 1024;
 const DEFAULT_ROW_GROUP_SIZE: usize = 512 * 512;
@@ -297,7 +299,7 @@ fn chunk_to_page(
             )
         }
         ColumnType::Byte | ColumnType::GeoByte => {
-            let column: &[i8] = unsafe { mem::transmute(column.primary_data) };
+            let column: &[i8] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page::<i8, i32>(
                 &column[lower_bound..upper_bound],
                 column_top,
@@ -307,7 +309,7 @@ fn chunk_to_page(
             )
         }
         ColumnType::Short | ColumnType::Char | ColumnType::GeoShort => {
-            let column: &[i16] = unsafe { mem::transmute(column.primary_data) };
+            let column: &[i16] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page::<i16, i32>(
                 &column[lower_bound..upper_bound],
                 column_top,
@@ -317,7 +319,7 @@ fn chunk_to_page(
             )
         }
         ColumnType::Int | ColumnType::GeoInt | ColumnType::IPv4 => {
-            let column: &[i32] = unsafe { mem::transmute(column.primary_data) };
+            let column: &[i32] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page::<i32, i32>(
                 &column[lower_bound..upper_bound],
                 column_top,
@@ -327,7 +329,7 @@ fn chunk_to_page(
             )
         }
         ColumnType::Long | ColumnType::GeoLong | ColumnType::Date | ColumnType::Timestamp => {
-            let column: &[i64] = unsafe { mem::transmute(column.primary_data) };
+            let column: &[i64] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page::<i64, i64>(
                 &column[lower_bound..upper_bound],
                 column_top,
@@ -337,7 +339,7 @@ fn chunk_to_page(
             )
         }
         ColumnType::Float => {
-            let column: &[f32] = unsafe { mem::transmute(column.primary_data) };
+            let column: &[f32] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::float_slice_to_page_plain::<f32, f32>(
                 &column[lower_bound..upper_bound],
                 column_top,
@@ -346,7 +348,7 @@ fn chunk_to_page(
             )
         }
         ColumnType::Double => {
-            let column: &[f64] = unsafe { mem::transmute(column.primary_data) };
+            let column: &[f64] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::float_slice_to_page_plain::<f64, f64>(
                 &column[lower_bound..upper_bound],
                 column_top,
@@ -356,7 +358,7 @@ fn chunk_to_page(
         }
         ColumnType::Binary => {
             let data = column.primary_data;
-            let offsets: &[i64] = unsafe { mem::transmute(column.secondary_data) };
+            let offsets: &[i64] = unsafe { util::transmute_slice(column.secondary_data) };
             binary::binary_to_page(
                 &offsets[lower_bound..upper_bound],
                 data,
@@ -368,7 +370,7 @@ fn chunk_to_page(
         }
         ColumnType::String => {
             let data = column.primary_data;
-            let offsets: &[i64] = unsafe { mem::transmute(column.secondary_data) };
+            let offsets: &[i64] = unsafe { util::transmute_slice(column.secondary_data) };
             string::string_to_page(
                 &offsets[lower_bound..upper_bound],
                 data,
@@ -380,9 +382,9 @@ fn chunk_to_page(
         }
         ColumnType::Varchar => {
             let data = column.primary_data;
-            let aux: &[u8] = column.secondary_data;
+            let aux: &[[u8; 16]] = unsafe { util::transmute_slice(column.secondary_data) };
             varchar::varchar_to_page(
-                &aux[lower_bound * 16..upper_bound * 16],
+                &aux[lower_bound..upper_bound],
                 data,
                 column_top,
                 options,
@@ -390,7 +392,7 @@ fn chunk_to_page(
             )
         }
         ColumnType::Long128 | ColumnType::Uuid => {
-            let column: &[[u8; 16]] = unsafe { mem::transmute(column.primary_data) };
+            let column: &[[u8; 16]] = unsafe { util::transmute_slice(column.primary_data) };
             fixed_len_bytes::bytes_to_page(
                 &column[lower_bound..upper_bound],
                 column_top,
@@ -399,7 +401,7 @@ fn chunk_to_page(
             )
         }
         ColumnType::Long256 => {
-            let column: &[[u8; 32]] = unsafe { mem::transmute(column.primary_data) };
+            let column: &[[u8; 32]] = unsafe { util::transmute_slice(column.primary_data) };
             fixed_len_bytes::bytes_to_page(
                 &column[lower_bound..upper_bound],
                 column_top,

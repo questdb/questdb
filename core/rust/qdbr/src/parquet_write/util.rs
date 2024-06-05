@@ -1,4 +1,4 @@
-use std::{cmp, io};
+use std::{cmp, io, mem, slice};
 
 use parquet2::compression::CompressionOptions;
 use parquet2::encoding::hybrid_rle::encode_bool;
@@ -148,7 +148,18 @@ pub fn build_plain_page(
     Ok(DataPage::new(
         header,
         buffer,
-        Descriptor { primitive_type, max_def_level: 0, max_rep_level: 0 },
+        Descriptor { primitive_type, max_def_level: 1, max_rep_level: 0 },
         Some(num_rows),
     ))
+}
+
+pub unsafe fn transmute_slice<T>(slice: &[u8]) -> &[T] {
+    let sizeof_t = mem::size_of::<T>();
+    assert!(
+        slice.len() % sizeof_t == 0,
+        "slice.len() {} % sizeof_t {} != 0",
+        slice.len(),
+        sizeof_t
+    );
+    slice::from_raw_parts(slice.as_ptr() as *const T, slice.len() / sizeof_t)
 }
