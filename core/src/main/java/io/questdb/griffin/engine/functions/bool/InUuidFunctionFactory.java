@@ -34,6 +34,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.*;
@@ -86,7 +87,7 @@ public final class InUuidFunctionFactory implements FunctionFactory {
         if (constCount == argCount) {
             LongLongHashSet set = makeUUIDHashSet(argCount);
             for (int i = 1; i < n; i++) {
-                addUUIDToSet(args, argPositions, i, set);
+                addUUIDToSet(args.getQuick(i), argPositions.getQuick(i), set);
             }
 
             // eliminate outright constant expressions
@@ -101,15 +102,13 @@ public final class InUuidFunctionFactory implements FunctionFactory {
             }
             return new InUUIDConstFunction(keyFunc, set);
         }
-        return new InUUIDRuntimeConstFunction(args.getQuick(0), args, argPositions, makeUUIDHashSet(argCount));
+
+        final IntList positions = new IntList();
+        positions.addAll(argPositions);
+        return new InUUIDRuntimeConstFunction(args.getQuick(0), new ObjList<>(args), positions, makeUUIDHashSet(argCount));
     }
 
-    private static @NotNull LongLongHashSet makeUUIDHashSet(int argCount) {
-        return new LongLongHashSet(argCount, 0.6, Numbers.LONG_NULL, LongLongHashSet.UUID_STRATEGY);
-    }
-
-    private static void addUUIDToSet(ObjList<Function> args, IntList argPositions, int i, LongLongHashSet set) throws SqlException {
-        Function func = args.getQuick(i);
+    private static void addUUIDToSet(Function func, int argPosition, LongLongHashSet set) throws SqlException {
         switch (ColumnType.tagOf(func.getType())) {
             case ColumnType.VARCHAR:
                 Utf8Sequence value2 = func.getVarcharA(null);
@@ -120,7 +119,7 @@ public final class InUuidFunctionFactory implements FunctionFactory {
                         Uuid.checkDashesAndLength(value2);
                         set.add(Uuid.parseLo(value2, 0), Uuid.parseHi(value2, 0));
                     } catch (NumericException e) {
-                        throw SqlException.$(argPositions.getQuick(i), "invalid UUID value [").put(value2).put(']');
+                        throw SqlException.$(argPosition, "invalid UUID value [").put(value2).put(']');
                     }
                 }
                 break;
@@ -135,7 +134,7 @@ public final class InUuidFunctionFactory implements FunctionFactory {
                         Uuid.checkDashesAndLength(value);
                         set.add(Uuid.parseLo(value), Uuid.parseHi(value));
                     } catch (NumericException e) {
-                        throw SqlException.$(argPositions.getQuick(i), "invalid UUID value [").put(value).put(']');
+                        throw SqlException.$(argPosition, "invalid UUID value [").put(value).put(']');
                     }
                 }
                 break;
@@ -143,19 +142,23 @@ public final class InUuidFunctionFactory implements FunctionFactory {
                 long lo = func.getLong128Lo(null);
                 long hi = func.getLong128Hi(null);
                 if (hi == Numbers.LONG_NULL && lo == Numbers.LONG_NULL) {
-                    throw SqlException.$(argPositions.getQuick(i), "NULL is not allowed in IN list");
+                    throw SqlException.$(argPosition, "NULL is not allowed in IN list");
                 }
                 set.add(lo, hi);
                 break;
             default:
                 throw SqlException.inconvertibleTypes(
-                        argPositions.getQuick(i),
+                        argPosition,
                         func.getType(),
                         ColumnType.nameOf(func.getType()),
                         ColumnType.UUID,
                         ColumnType.nameOf(ColumnType.UUID)
                 );
         }
+    }
+
+    private static @NotNull LongLongHashSet makeUUIDHashSet(int argCount) {
+        return new LongLongHashSet(argCount, 0.6, Numbers.LONG_NULL, LongLongHashSet.UUID_STRATEGY);
     }
 
     private static class InUUIDConstFunction extends BooleanFunction implements UnaryFunction {
@@ -188,17 +191,18 @@ public final class InUuidFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class InUUIDRuntimeConstFunction extends BooleanFunction implements UnaryFunction {
+    private static class InUUIDRuntimeConstFunction extends BooleanFunction implements MultiArgFunction {
         private final Function keyFunc;
         private final LongLongHashSet set;
-        private final ObjList<Function> valueFunctions;
         private final IntList valueFunctionPositions;
+        private final ObjList<Function> valueFunctions;
 
         public InUUIDRuntimeConstFunction(
                 Function keyFunc,
                 ObjList<Function> valueFunctions,
                 IntList valueFunctionPositions,
-                LongLongHashSet set) {
+                LongLongHashSet set
+        ) {
             this.keyFunc = keyFunc;
             this.valueFunctions = valueFunctions;
             this.valueFunctionPositions = valueFunctionPositions;
@@ -206,19 +210,8 @@ public final class InUuidFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            UnaryFunction.super.init(symbolTableSource, executionContext);
-            set.clear();
-            for (int i = 1, n = valueFunctions.size(); i < n; i++) {
-                Function func = valueFunctions.getQuick(i);
-                func.init(symbolTableSource, executionContext);
-                addUUIDToSet(valueFunctions, valueFunctionPositions, i, set);
-            }
-        }
-
-        @Override
-        public Function getArg() {
-            return keyFunc;
+        public ObjList<Function> getArgs() {
+            return valueFunctions;
         }
 
         @Override
@@ -232,9 +225,17 @@ public final class InUuidFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            MultiArgFunction.super.init(symbolTableSource, executionContext);
+            set.clear();
+            for (int i = 1, n = valueFunctions.size(); i < n; i++) {
+                addUUIDToSet(valueFunctions.getQuick(i), valueFunctionPositions.getQuick(i), set);
+            }
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(keyFunc).val(" in ").val(set);
         }
     }
-
 }
