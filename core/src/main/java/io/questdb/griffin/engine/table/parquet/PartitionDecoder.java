@@ -29,17 +29,16 @@ import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
 public class PartitionDecoder implements QuietCloseable {
-    private static final long CHUNK_BUFFERS_SIZE = 2 * Long.BYTES;
     private static final long COLUMN_COUNT_OFFSET = 0;
     private static final long ROW_COUNT_OFFSET = COLUMN_COUNT_OFFSET + Long.BYTES;
     private static final long ROW_GROUP_COUNT_OFFSET = ROW_COUNT_OFFSET + Long.BYTES;
+    private final ColumnChunkBuffers chunkBuffers;
     private final Path path;
-    private long chunkAddr;
-    private long impl;
+    private long ptr;
 
     public PartitionDecoder() {
         try {
-            this.chunkAddr = Unsafe.malloc(CHUNK_BUFFERS_SIZE, MemoryTag.NATIVE_DEFAULT);
+            this.chunkBuffers = new ColumnChunkBuffers();
             this.path = new Path();
         } catch (Throwable th) {
             close();
@@ -50,24 +49,33 @@ public class PartitionDecoder implements QuietCloseable {
     @Override
     public void close() {
         destroy();
-        chunkAddr = Unsafe.free(chunkAddr, CHUNK_BUFFERS_SIZE, MemoryTag.NATIVE_DEFAULT);
         Misc.free(path);
+        chunkBuffers.free();
     }
 
-    public int columnCount() {
-        assert impl != 0;
-        return Unsafe.getUnsafe().getInt(impl + COLUMN_COUNT_OFFSET);
+    public long columnCount() {
+        assert ptr != 0;
+        return Unsafe.getUnsafe().getLong(ptr + COLUMN_COUNT_OFFSET);
     }
 
-    public void decodeColumnChunk(long rowGroup, long column, int columnType) {
-        assert impl != 0;
+    public ColumnChunkBuffers decodeColumnChunk(
+            long rowGroup,
+            long column,
+            int columnType,
+            long dataPtr,
+            long dataSize,
+            long auxPtr,
+            long auxSize
+    ) {
+        assert ptr != 0;
         try {
+            chunkBuffers.init();
             decodeColumnChunk(
-                    impl,
+                    ptr,
                     rowGroup,
                     column,
                     columnType,
-                    chunkAddr
+                    chunkBuffers.ptr()
             );
         } catch (Throwable th) {
             throw CairoException.critical(0).put("Could not decode partition: [path=").put(path)
@@ -75,6 +83,7 @@ public class PartitionDecoder implements QuietCloseable {
                     .put(", msg=").put(th.getMessage())
                     .put(']');
         }
+        return chunkBuffers;
     }
 
     public void of(@Transient Path srcPath) {
@@ -82,7 +91,7 @@ public class PartitionDecoder implements QuietCloseable {
 
         path.of(srcPath);
         try {
-            impl = create(path.ptr(), path.size());
+            ptr = create(path.ptr(), path.size());
         } catch (Throwable th) {
             throw CairoException.critical(0).put("Could not describe partition: [path=").put(path)
                     .put(", exception=").put(th.getClass().getSimpleName())
@@ -91,14 +100,14 @@ public class PartitionDecoder implements QuietCloseable {
         }
     }
 
-    public int rowCount() {
-        assert impl != 0;
-        return Unsafe.getUnsafe().getInt(impl + ROW_COUNT_OFFSET);
+    public long rowCount() {
+        assert ptr != 0;
+        return Unsafe.getUnsafe().getLong(ptr + ROW_COUNT_OFFSET);
     }
 
-    public int rowGroupCount() {
-        assert impl != 0;
-        return Unsafe.getUnsafe().getInt(impl + ROW_GROUP_COUNT_OFFSET);
+    public long rowGroupCount() {
+        assert ptr != 0;
+        return Unsafe.getUnsafe().getLong(ptr + ROW_GROUP_COUNT_OFFSET);
     }
 
     private static native long create(long srcPathPtr, int srcPathLength);
@@ -114,9 +123,84 @@ public class PartitionDecoder implements QuietCloseable {
     private static native void destroy(long impl);
 
     private void destroy() {
-        if (impl != 0) {
-            destroy(impl);
-            impl = 0;
+        if (ptr != 0) {
+            destroy(ptr);
+            ptr = 0;
+        }
+    }
+
+    public static class ColumnChunkBuffers implements QuietCloseable {
+        private static final long DATA_PTR_OFFSET = 0;
+        private static final long DATA_SIZE_OFFSET = DATA_PTR_OFFSET + Long.BYTES;
+        private static final long AUX_PTR_OFFSET = DATA_SIZE_OFFSET + Long.BYTES;
+        private static final long AUX_SIZE_OFFSET = AUX_PTR_OFFSET + Long.BYTES;
+        private static final long SIZE = AUX_SIZE_OFFSET + Long.BYTES;
+
+        private long ptr;
+
+        public long auxPtr() {
+            assert ptr != 0;
+            return Unsafe.getUnsafe().getLong(ptr + AUX_PTR_OFFSET);
+        }
+
+        public long auxSize() {
+            assert ptr != 0;
+            return Unsafe.getUnsafe().getLong(ptr + AUX_SIZE_OFFSET);
+        }
+
+        @Override
+        public void close() {
+            setDataPtr(0);
+            setDataSize(0);
+            setAuxPtr(0);
+            setAuxSize(0);
+        }
+
+        public long dataPtr() {
+            assert ptr != 0;
+            return Unsafe.getUnsafe().getLong(ptr + DATA_PTR_OFFSET);
+        }
+
+        public long dataSize() {
+            assert ptr != 0;
+            return Unsafe.getUnsafe().getLong(ptr + DATA_SIZE_OFFSET);
+        }
+
+        private void free() {
+            if (ptr != 0) {
+                ptr = Unsafe.free(ptr, SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+        }
+
+        private void init() {
+            if (ptr == 0) {
+                ptr = Unsafe.malloc(SIZE, MemoryTag.NATIVE_DEFAULT);
+                Vect.memset(ptr, SIZE, 0);
+            }
+        }
+
+        private long ptr() {
+            return ptr;
+        }
+
+        private void setAuxPtr(long auxPtr) {
+            assert ptr != 0;
+            Unsafe.getUnsafe().putLong(ptr + AUX_PTR_OFFSET, auxPtr);
+        }
+
+        private void setAuxSize(long auxSize) {
+            assert ptr != 0;
+            Unsafe.getUnsafe().putLong(ptr + AUX_SIZE_OFFSET, auxSize);
+        }
+
+        private void setDataPtr(long dataPtr) {
+            assert ptr != 0;
+            Unsafe.getUnsafe().putLong(ptr + DATA_PTR_OFFSET, dataPtr);
+        }
+
+        private void setDataSize(long dataSize) {
+            assert ptr != 0;
+            Unsafe.getUnsafe().putLong(ptr + DATA_SIZE_OFFSET, dataSize);
         }
     }
 

@@ -39,29 +39,7 @@ public class PartitionDecoderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final long rows = 1001;
             ddl("create table x as (select" +
-                    " x id," +
-                    " rnd_boolean() a_boolean," +
-                    " rnd_byte() a_byte," +
-                    " rnd_short() a_short," +
-                    " rnd_char() a_char," +
-                    " rnd_int() an_int," +
-                    " rnd_long() a_long," +
-                    " rnd_float() a_float," +
-                    " rnd_double() a_double," +
-                    " rnd_symbol('a','b','c') a_symbol," +
-                    " rnd_geohash(4) a_geo_byte," +
-                    " rnd_geohash(8) a_geo_short," +
-                    " rnd_geohash(16) a_geo_int," +
-                    " rnd_geohash(32) a_geo_long," +
-                    " rnd_str('hello', 'world', '!') a_string," +
-                    " rnd_bin() a_bin," +
-                    " rnd_varchar('ганьба','слава','добрий','вечір') a_varchar," +
-                    " rnd_ipv4() a_ip," +
-                    " rnd_uuid4() a_uuid," +
-                    " rnd_long256() a_long256," +
-                    " to_long128(rnd_long(), rnd_long()) a_long128," +
-                    " cast(timestamp_sequence(600000000000, 700) as date) a_date," +
-                    " timestamp_sequence(500000000000, 600) a_ts," +
+                    " x::int an_int," +
                     " timestamp_sequence(400000000000, 500) designated_ts" +
                     " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month");
 
@@ -74,10 +52,22 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                 path.of(root).concat("x.parquet").$();
                 partitionEncoder.encode(reader, 0, path);
 
-//                PartitionDecoder.Metadata metadata = partitionDecoder.readMetadata(path);
-//                Assert.assertEquals(24, metadata.columnCount());
-//                Assert.assertEquals(rows, metadata.rowCount());
-//                Assert.assertEquals(1, metadata.rowGroupCount());
+                partitionDecoder.of(path);
+                try (
+                        PartitionDecoder.ColumnChunkBuffers buffers = partitionDecoder.decodeColumnChunk(
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0,
+                                0
+                        )
+                ) {
+                    Assert.assertEquals(rows * Integer.BYTES, buffers.dataSize());
+
+                    // TODO: free buffers memory
+                }
             }
         });
     }
