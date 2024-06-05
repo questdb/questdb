@@ -22,9 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.std.filewatch;
 
-public class InotifyAccessor {
+public class LinuxAccessor {
     public static final int IN_CLOSE_WRITE;
     public static final int IN_CREATE;
     public static final int IN_MODIFY;

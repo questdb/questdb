@@ -22,8 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.std.filewatch;
 
+import io.questdb.FileEventCallback;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;

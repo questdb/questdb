@@ -22,8 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.std.filewatch;
 
+import io.questdb.FileEventCallback;
 import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -38,11 +39,11 @@ import io.questdb.std.str.Utf8s;
 
 import java.nio.file.Paths;
 
-public final class InotifyFileWatcher extends FileWatcher {
+public final class LinuxFileWatcher extends FileWatcher {
 
-    private static final Log LOG = LogFactory.getLog(InotifyFileWatcher.class);
+    private static final Log LOG = LogFactory.getLog(LinuxFileWatcher.class);
     private final long buf;
-    private final int bufSize = InotifyAccessor.getSizeofEvent() + 4096;
+    private final int bufSize = LinuxAccessor.getSizeofEvent() + 4096;
     private final Path dirPath = new Path();
     private final Epoll epoll = new Epoll(
             new EpollFacadeImpl(),
@@ -54,10 +55,10 @@ public final class InotifyFileWatcher extends FileWatcher {
     private final int wd;
     private final int writeEndFd;
 
-    public InotifyFileWatcher(Utf8Sequence filePath, FileEventCallback callback) {
+    public LinuxFileWatcher(Utf8Sequence filePath, FileEventCallback callback) {
         super(callback);
 
-        this.fd = InotifyAccessor.inotifyInit();
+        this.fd = LinuxAccessor.inotifyInit();
         if (this.fd < 0) {
             throw CairoException.critical(Os.errno()).put("inotify_init error");
         }
@@ -67,11 +68,11 @@ public final class InotifyFileWatcher extends FileWatcher {
             this.dirPath.of(filePath).parent().$();
             this.fileName.put(Paths.get(filePath.toString()).getFileName().toString());
 
-            this.wd = InotifyAccessor.inotifyAddWatch(
+            this.wd = LinuxAccessor.inotifyAddWatch(
                     this.fd,
                     this.dirPath.ptr(),
-                    InotifyAccessor.IN_CREATE | InotifyAccessor.IN_MODIFY |
-                            InotifyAccessor.IN_MOVED_TO | InotifyAccessor.IN_CLOSE_WRITE
+                    LinuxAccessor.IN_CREATE | LinuxAccessor.IN_MODIFY |
+                            LinuxAccessor.IN_MOVED_TO | LinuxAccessor.IN_CLOSE_WRITE
             );
 
             if (this.wd < 0) {
@@ -87,7 +88,7 @@ public final class InotifyFileWatcher extends FileWatcher {
                 throw CairoException.critical(Os.errno()).put("malloc error");
             }
 
-            long fds = InotifyAccessor.pipe();
+            long fds = LinuxAccessor.pipe();
             if (fds < 0) {
                 throw CairoException.critical(Os.errno()).put("create a pipe error");
             }
@@ -112,7 +113,7 @@ public final class InotifyFileWatcher extends FileWatcher {
 
         if (closed.compareAndSet(false, true)) {
             // Write to pipe to close
-            if (InotifyAccessor.writePipe(writeEndFd) < 0) {
+            if (LinuxAccessor.writePipe(writeEndFd) < 0) {
                 // todo: handle error, but continue execution
             }
 
@@ -139,7 +140,7 @@ public final class InotifyFileWatcher extends FileWatcher {
         }
 
         // Read the inotify_event into the buffer
-        int res = InotifyAccessor.readEvent(fd, buf, bufSize);
+        int res = LinuxAccessor.readEvent(fd, buf, bufSize);
         if (res < 0) {
             throw CairoException.critical(Os.errno()).put("read error");
         }
@@ -147,8 +148,8 @@ public final class InotifyFileWatcher extends FileWatcher {
         // iterate over buffer and check all files that have been modified
         int i = 0;
         do {
-            int len = Unsafe.getUnsafe().getInt(buf + i + InotifyAccessor.getEventFilenameSizeOffset());
-            i += InotifyAccessor.getEventFilenameOffset();
+            int len = Unsafe.getUnsafe().getInt(buf + i + LinuxAccessor.getEventFilenameSizeOffset());
+            i += LinuxAccessor.getEventFilenameOffset();
             // In the below equality statement, we use fileName.size() instead of the event len because inotify_event
             // structs may include padding at the end of the event data, which we don't want to use for the filename
             // equality check.
@@ -172,7 +173,7 @@ public final class InotifyFileWatcher extends FileWatcher {
         Misc.free(this.dirPath);
         Misc.free(this.fileName);
 
-        if (InotifyAccessor.inotifyRmWatch(this.fd, this.wd) < 0) {
+        if (LinuxAccessor.inotifyRmWatch(this.fd, this.wd) < 0) {
             System.out.println(this.fd);
             // todo: handle error, but continue execution
         }

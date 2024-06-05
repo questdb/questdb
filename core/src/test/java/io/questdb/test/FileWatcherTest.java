@@ -25,8 +25,8 @@
 package io.questdb.test;
 
 import io.questdb.FileEventCallback;
-import io.questdb.FileWatcher;
-import io.questdb.FileWatcherFactory;
+import io.questdb.std.filewatch.FileWatcher;
+import io.questdb.std.filewatch.FileWatcherFactory;
 import io.questdb.cairo.CairoException;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Os;

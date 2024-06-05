@@ -29,6 +29,7 @@ import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
+import io.questdb.std.filewatch.FileWatcher;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 

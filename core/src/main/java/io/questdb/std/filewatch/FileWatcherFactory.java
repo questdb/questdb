@@ -22,8 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.std.filewatch;
 
+import io.questdb.FileEventCallback;
+import io.questdb.KqueueFileWatcher;
 import io.questdb.std.Os;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
@@ -39,7 +41,7 @@ public class FileWatcherFactory {
         } else if (Os.isWindows()) {
             return null;
         } else {
-            return new InotifyFileWatcher(filePath, callback);
+            return new LinuxFileWatcher(filePath, callback);
         }
     }
 }

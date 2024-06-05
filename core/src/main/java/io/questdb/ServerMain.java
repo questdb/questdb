@@ -49,6 +49,8 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Misc;
+import io.questdb.std.filewatch.FileWatcher;
+import io.questdb.std.filewatch.FileWatcherFactory;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
