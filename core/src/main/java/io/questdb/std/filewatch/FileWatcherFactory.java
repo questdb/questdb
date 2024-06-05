@@ -40,7 +40,7 @@ public class FileWatcherFactory {
         if (Os.isOSX() || Os.isFreeBSD()) {
             return new KqueueFileWatcher(filePath, callback);
         } else if (Os.isWindows()) {
-            return null;
+            return new FileWatcherWindows(WindowsAccessorImpl.INSTANCE, filePath, callback);
         } else {
             return new LinuxFileWatcher(LinuxAccessorFacadeImpl.INSTANCE, EpollFacadeImpl.INSTANCE, filePath, callback);
         }

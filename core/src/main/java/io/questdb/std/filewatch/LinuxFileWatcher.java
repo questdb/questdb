@@ -31,7 +31,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.network.Epoll;
 import io.questdb.network.EpollAccessor;
 import io.questdb.network.EpollFacade;
-import io.questdb.network.EpollFacadeImpl;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Path;
@@ -43,16 +42,16 @@ import java.nio.file.Paths;
 public final class LinuxFileWatcher extends FileWatcher {
 
     private static final Log LOG = LogFactory.getLog(LinuxFileWatcher.class);
+    private final LinuxAccessorFacade accessorFacade;
     private final long buf;
     private final int bufSize = LinuxAccessor.getSizeofEvent() + 4096;
     private final Path dirPath = new Path();
     private final Epoll epoll;
-    private final int inotifyFd;
     private final DirectUtf8Sink fileName = new DirectUtf8Sink(0);
     private final int readEndFd;
     private final int wd;
     private final int writeEndFd;
-    private final LinuxAccessorFacade accessorFacade;
+    private int inotifyFd;
 
     public LinuxFileWatcher(LinuxAccessorFacade accessorFacade, EpollFacade epollFacade, Utf8Sequence filePath, FileEventCallback callback) {
         super(callback);
@@ -109,33 +108,10 @@ public final class LinuxFileWatcher extends FileWatcher {
     }
 
     @Override
-    public void close() {
-        if (closed.compareAndSet(false, true)) {
-            // Write to pipe to close
-            if (accessorFacade.writePipe(writeEndFd) < 0) {
-                // todo: handle error, but continue execution
-            }
-
-            // WaitGroup is located in the super class destructor that waits
-            // for the watcher thread to close. We wait for this before cleaning
-            // up any additional resources.
-            super.close();
-
-            cleanUp();
-
-            LOG.info().$("inotify filewatcher closed").$();
-        }
-    }
-
-    @Override
     public void waitForChange() {
         // Thread is parked here until epoll is triggered
         if (epoll.poll(-1) < 0) {
             throw CairoException.critical(Os.errno()).put("epoll_wait error");
-        }
-
-        if (closed.get()) {
-            return;
         }
 
         // Read the inotify_event into the buffer
@@ -165,7 +141,6 @@ public final class LinuxFileWatcher extends FileWatcher {
         if (epoll.control(inotifyFd, 0, EpollAccessor.EPOLL_CTL_MOD, EpollAccessor.EPOLLIN) < 0) {
             throw CairoException.critical(Os.errno()).put("epoll_ctl error");
         }
-
     }
 
     private void cleanUp() {
@@ -195,5 +170,15 @@ public final class LinuxFileWatcher extends FileWatcher {
             Unsafe.free(this.buf, this.bufSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
         }
     }
-}
 
+    @Override
+    protected void _close() {
+        cleanUp();
+        LOG.info().$("inotify filewatcher closed").$();
+    }
+
+    @Override
+    protected void releaseWait() {
+        accessorFacade.writePipe(writeEndFd);
+    }
+}

@@ -136,6 +136,7 @@ if (OS_WINDOWS)
             src/main/c/windows/timer.c
             src/main/c/windows/timer.h
             src/main/c/windows/accept.c
+            src/main/c/windows/filewatch.c
             src/main/c/share/fs.h
     )
 else ()

@@ -22,43 +22,21 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.std.filewatch;
 
-import java.time.Duration;
+import io.questdb.std.str.LPSZ;
 
-public class DebouncingRunnable implements Runnable {
-    private final Duration debouncePeriod;
-    private final Runnable runnable;
-    private Thread thread;
+public interface WindowsAccessor {
 
+    void closeDirectory(long pWatch);
 
-    public DebouncingRunnable(Runnable runnable, Duration debouncePeriod) {
-        this.debouncePeriod = debouncePeriod;
-        this.runnable = runnable;
-        this.reset();
+    long getFileName(long pWatch);
 
-    }
+    long openDirectory(LPSZ dirName);
 
-    public void run() {
-        switch (thread.getState()) {
-            case NEW:
-                thread.start();
-                break;
-            case TERMINATED:
-                this.reset();
-                thread.start();
-                break;
-        }
-    }
+    boolean readDirectoryChanges(long pWatch);
 
-    private void reset() {
-        this.thread = new Thread(() -> {
-            try {
-                Thread.sleep(this.debouncePeriod.toMillis());
-                runnable.run();
-            } catch (InterruptedException e) {
-                throw new RuntimeException(e);
-            }
-        });
-    }
+    void stopWatch(long pWatch);
+
+    int getFileNameSize(long pWatch);
 }

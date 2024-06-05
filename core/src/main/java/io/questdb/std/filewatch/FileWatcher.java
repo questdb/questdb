@@ -38,11 +38,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public abstract class FileWatcher implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(FileWatcher.class);
     private static final Duration debouncePeriod = Duration.ofMillis(100);
-    protected final AtomicBoolean closed = new AtomicBoolean();
     protected final DebouncingRunnable runnable;
-    protected final AtomicBoolean started = new AtomicBoolean();
-    private final SOCountDownLatch latch = new SOCountDownLatch(1);
+    private final AtomicBoolean closed = new AtomicBoolean();
+    private final SOCountDownLatch haltedLatch = new SOCountDownLatch(1);
     private final Thread reloadThread;
+    private final AtomicBoolean started = new AtomicBoolean();
+    private final SOCountDownLatch startedLatch = new SOCountDownLatch(1);
 
     public FileWatcher(@NotNull FileEventCallback callback) {
         this.runnable = new DebouncingRunnable(callback::onFileEvent, debouncePeriod);
@@ -58,7 +59,7 @@ public abstract class FileWatcher implements QuietCloseable {
             } catch (Exception exc) {
                 LOG.error().$(exc).$();
             } finally {
-                latch.countDown();
+                haltedLatch.countDown();
                 LOG.info().$("filewatcher poller thread closed").$();
             }
         });
@@ -66,14 +67,30 @@ public abstract class FileWatcher implements QuietCloseable {
 
     @Override
     public void close() {
-        latch.await();
+        halt();
+    }
+
+    public void halt() {
+        if (closed.compareAndSet(false, true)) {
+            if (started.compareAndSet(true, false)) {
+                startedLatch.await();
+                releaseWait();
+                haltedLatch.await();
+                _close();
+            }
+        }
     }
 
     public void start() {
-        if (started.compareAndSet(false, true)) {
+        if (!closed.get() && started.compareAndSet(false, true)) {
             reloadThread.start();
+            startedLatch.countDown();
         }
     }
+
+    protected abstract void _close();
+
+    protected abstract void releaseWait();
 
     protected abstract void waitForChange();
 }

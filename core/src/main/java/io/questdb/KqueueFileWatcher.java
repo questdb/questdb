@@ -152,21 +152,6 @@ public class KqueueFileWatcher extends FileWatcher {
         }
     }
 
-    @Override
-    public void close() {
-        if (closed.compareAndSet(false, true)) {
-
-            if (KqueueAccessor.writePipe(writeEndFd) < 0) {
-                // todo: handle error
-            }
-
-            super.close();
-
-            cleanUp();
-
-        }
-    }
-
     private void cleanUp() {
         if (kq > 0) {
             Files.close(kq);
@@ -206,6 +191,16 @@ public class KqueueFileWatcher extends FileWatcher {
     }
 
     @Override
+    protected void _close() {
+        cleanUp();
+    }
+
+    @Override
+    protected void releaseWait() {
+        KqueueAccessor.writePipe(writeEndFd);
+    }
+
+    @Override
     protected void waitForChange() {
         // Blocks until there is a change in the watched dir
         int res = KqueueAccessor.keventGetBlocking(
@@ -213,9 +208,6 @@ public class KqueueFileWatcher extends FileWatcher {
                 eventList,
                 1
         );
-        if (closed.get()) {
-            return;
-        }
         if (res < 0) {
             throw CairoException.critical(Os.errno()).put("kevent error");
         }

@@ -66,6 +66,7 @@ public class FileWatcherTest extends AbstractTest {
             ) {
 
                 fw.start();
+                Os.sleep(500);
                 try (PrintWriter writer = new PrintWriter(targetFile.getAbsolutePath(), StandardCharsets.UTF_8)) {
                     writer.println("hello");
                 }
@@ -86,6 +87,7 @@ public class FileWatcherTest extends AbstractTest {
                     new FileChangedCallback(threadLatch))) {
 
                 fw.start();
+                Os.sleep(1000);
                 Assert.assertTrue(targetFile.delete());
                 try (PrintWriter writer = new PrintWriter(targetFile.getAbsolutePath(), StandardCharsets.UTF_8)) {
                     writer.println("hello");
@@ -105,7 +107,6 @@ public class FileWatcherTest extends AbstractTest {
                         Assert::fail
                 )
         ));
-
     }
 
     static class FileChangedCallback implements FileEventCallback {
