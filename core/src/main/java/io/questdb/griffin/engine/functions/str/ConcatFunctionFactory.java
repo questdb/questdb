@@ -70,7 +70,9 @@ public class ConcatFunctionFactory implements FunctionFactory {
         if (allConst) {
             return new ConstConcatFunction(new ObjList<>(args), argPositions);
         }
-        return new ConcatFunction(new ObjList<>(args), argPositions);
+        final IntList positions = new IntList();
+        positions.addAll(argPositions);
+        return new ConcatFunction(new ObjList<>(args), positions);
     }
 
     private static void populateAdapters(ObjList<TypeAdapter> adapters, ObjList<Function> functions, IntList argPositions) throws SqlException {
