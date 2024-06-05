@@ -24,23 +24,41 @@
 
 package io.questdb.std.filewatch;
 
-import io.questdb.FileEventCallback;
-import io.questdb.std.Os;
-import io.questdb.std.str.Utf8Sequence;
-import org.jetbrains.annotations.NotNull;
+public class LinuxAccessorFacadeImpl implements LinuxAccessorFacade {
+    public static final LinuxAccessorFacadeImpl INSTANCE = new LinuxAccessorFacadeImpl();
 
-public class FileWatcherFactory {
+    @Override
+    public int inotifyAddWatch(int fd, long pathPtr, int flags) {
+        return LinuxAccessor.inotifyAddWatch(fd, pathPtr, flags);
+    }
 
-    public static FileWatcher getFileWatcher(@NotNull Utf8Sequence filePath, FileEventCallback callback) {
-        if (filePath.size() == 0) {
-            throw new IllegalArgumentException("file to watch cannot be empty");
-        }
-        if (Os.isOSX() || Os.isFreeBSD()) {
-            return new OsxFileWatcher(filePath, callback);
-        } else if (Os.isWindows()) {
-            return null;
-        } else {
-            return new LinuxFileWatcher(LinuxAccessorFacadeImpl.INSTANCE, filePath, callback);
-        }
+    @Override
+    public int inotifyInit() {
+        return LinuxAccessor.inotifyInit();
+    }
+
+    @Override
+    public short inotifyRmWatch(int fd, int wd) {
+        return LinuxAccessor.inotifyRmWatch(fd, wd);
+    }
+
+    @Override
+    public long pipe() {
+        return LinuxAccessor.pipe();
+    }
+
+    @Override
+    public int readEvent(int fd, long buf, int bufSize) {
+        return LinuxAccessor.readEvent(fd, buf, bufSize);
+    }
+
+    @Override
+    public int readPipe(int fd) {
+        return LinuxAccessor.readPipe(fd);
+    }
+
+    @Override
+    public int writePipe(int fd) {
+        return LinuxAccessor.writePipe(fd);
     }
 }

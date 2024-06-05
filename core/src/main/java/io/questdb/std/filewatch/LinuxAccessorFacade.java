@@ -24,23 +24,18 @@
 
 package io.questdb.std.filewatch;
 
-import io.questdb.FileEventCallback;
-import io.questdb.std.Os;
-import io.questdb.std.str.Utf8Sequence;
-import org.jetbrains.annotations.NotNull;
+public interface LinuxAccessorFacade {
+    int inotifyAddWatch(int fd, long pathPtr, int flags);
 
-public class FileWatcherFactory {
+    int inotifyInit();
 
-    public static FileWatcher getFileWatcher(@NotNull Utf8Sequence filePath, FileEventCallback callback) {
-        if (filePath.size() == 0) {
-            throw new IllegalArgumentException("file to watch cannot be empty");
-        }
-        if (Os.isOSX() || Os.isFreeBSD()) {
-            return new OsxFileWatcher(filePath, callback);
-        } else if (Os.isWindows()) {
-            return null;
-        } else {
-            return new LinuxFileWatcher(LinuxAccessorFacadeImpl.INSTANCE, filePath, callback);
-        }
-    }
+    short inotifyRmWatch(int fd, int wd);
+
+    long pipe();
+
+    int readEvent(int fd, long buf, int bufSize);
+
+    int readPipe(int fd);
+
+    int writePipe(int fd);
 }

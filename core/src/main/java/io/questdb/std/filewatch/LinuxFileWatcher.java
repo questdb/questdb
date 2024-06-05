@@ -54,11 +54,12 @@ public final class LinuxFileWatcher extends FileWatcher {
     private final int readEndFd;
     private final int wd;
     private final int writeEndFd;
+    private final LinuxAccessorFacade accessorFacade;
 
-    public LinuxFileWatcher(Utf8Sequence filePath, FileEventCallback callback) {
+    public LinuxFileWatcher(LinuxAccessorFacade accessorFacade, Utf8Sequence filePath, FileEventCallback callback) {
         super(callback);
-
-        this.fd = LinuxAccessor.inotifyInit();
+        this.accessorFacade = accessorFacade;
+        this.fd = accessorFacade.inotifyInit();
         if (this.fd < 0) {
             throw CairoException.critical(Os.errno()).put("inotify_init error");
         }
@@ -68,7 +69,7 @@ public final class LinuxFileWatcher extends FileWatcher {
             this.dirPath.of(filePath).parent().$();
             this.fileName.put(Paths.get(filePath.toString()).getFileName().toString());
 
-            this.wd = LinuxAccessor.inotifyAddWatch(
+            this.wd = accessorFacade.inotifyAddWatch(
                     this.fd,
                     this.dirPath.ptr(),
                     LinuxAccessor.IN_CREATE | LinuxAccessor.IN_MODIFY |
@@ -88,7 +89,7 @@ public final class LinuxFileWatcher extends FileWatcher {
                 throw CairoException.critical(Os.errno()).put("malloc error");
             }
 
-            long fds = LinuxAccessor.pipe();
+            long fds = accessorFacade.pipe();
             if (fds < 0) {
                 throw CairoException.critical(Os.errno()).put("create a pipe error");
             }
@@ -113,7 +114,7 @@ public final class LinuxFileWatcher extends FileWatcher {
 
         if (closed.compareAndSet(false, true)) {
             // Write to pipe to close
-            if (LinuxAccessor.writePipe(writeEndFd) < 0) {
+            if (accessorFacade.writePipe(writeEndFd) < 0) {
                 // todo: handle error, but continue execution
             }
 
@@ -140,7 +141,7 @@ public final class LinuxFileWatcher extends FileWatcher {
         }
 
         // Read the inotify_event into the buffer
-        int res = LinuxAccessor.readEvent(fd, buf, bufSize);
+        int res = accessorFacade.readEvent(fd, buf, bufSize);
         if (res < 0) {
             throw CairoException.critical(Os.errno()).put("read error");
         }
@@ -173,7 +174,7 @@ public final class LinuxFileWatcher extends FileWatcher {
         Misc.free(this.dirPath);
         Misc.free(this.fileName);
 
-        if (LinuxAccessor.inotifyRmWatch(this.fd, this.wd) < 0) {
+        if (accessorFacade.inotifyRmWatch(this.fd, this.wd) < 0) {
             System.out.println(this.fd);
             // todo: handle error, but continue execution
         }
