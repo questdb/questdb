@@ -24,10 +24,12 @@
 
 package io.questdb.test.griffin.engine.functions;
 
+import io.questdb.griffin.SqlException;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.BindVariableTestTuple;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class InVarcharTest extends AbstractCairoTest {
@@ -78,6 +80,27 @@ public class InVarcharTest extends AbstractCairoTest {
         ));
 
         assertSql("test where a in ($1, $2, $3)", tuples);
+    }
+
+    @Test
+    public void testBindVarTypeNotConvertible() throws Exception {
+        ddl("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))");
+
+        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
+        tuples.add(new BindVariableTestTuple(
+                "mixed",
+                "a\tts\n",
+                bindVariableService -> {
+                    bindVariableService.setVarchar(0, new Utf8String("52"));
+                    bindVariableService.setInt(1, 4567);
+                }
+        ));
+
+        try {
+            assertSql("test where a in ('6', '81', $1, null, $2)", tuples);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getMessage(), "[38] cannot compare VARCHAR with type INT");
+        }
     }
 
     @Test
