@@ -1,3 +1,6 @@
+use std::mem;
+use std::slice;
+
 use parquet2::encoding::Encoding;
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
@@ -12,14 +15,14 @@ const HEADER_FLAG_NULL: u8 = 1 << 2;
 
 const HEADER_FLAGS_WIDTH: u32 = 4;
 
-#[repr(C, packed)]
+#[repr(C, packed(16))]
 struct AuxEntryInlined {
     header: u8,
     chars: [u8; 9],
     _offset: [u8; 6],
 }
 
-#[repr(C, packed)]
+#[repr(C, packed(16))]
 struct AuxEntrySplit {
     header: u32,
     chars: [u8; 6],
@@ -36,7 +39,7 @@ fn encode_plain(aux: &[AuxEntryInlined], data: &[u8], buffer: &mut Vec<u8>) {
             buffer.extend_from_slice(&len);
             buffer.extend_from_slice(utf8_slice);
         } else {
-            let entry: &AuxEntrySplit = unsafe { std::mem::transmute(entry) };
+            let entry: &AuxEntrySplit = unsafe { mem::transmute(entry) };
             let header = entry.header;
             let size = (header >> HEADER_FLAGS_WIDTH) as usize;
             let offset = entry.offset_lo as usize + ((entry.offset_hi as usize) << 16);
@@ -65,7 +68,14 @@ pub fn varchar_to_page(
     options: WriteOptions,
     primitive_type: PrimitiveType,
 ) -> ParquetResult<Page> {
-    let aux: &[AuxEntryInlined] = unsafe { std::mem::transmute(aux) };
+    let sizeof_entry = mem::size_of::<AuxEntryInlined>();
+    assert!(aux.len() % sizeof_entry == 0);
+    let aux: &[AuxEntryInlined] = unsafe {
+        slice::from_raw_parts(
+            aux.as_ptr() as *const AuxEntryInlined,
+            aux.len() / sizeof_entry,
+        )
+    };
     let num_rows = column_top + aux.len();
     let mut buffer = vec![];
     let mut null_count = 0;
