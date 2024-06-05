@@ -25,60 +25,98 @@
 package io.questdb.griffin.engine.table.parquet;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Os;
-import io.questdb.std.QuietCloseable;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
 public class PartitionDecoder implements QuietCloseable {
-    private static final long DESCR_SIZE = 3 * Integer.BYTES;
-    private long descrAddr;
-    private Metadata metadata = new Metadata();
+    private static final long CHUNK_BUFFERS_SIZE = 2 * Long.BYTES;
+    private static final long COLUMN_COUNT_OFFSET = 0;
+    private static final long ROW_COUNT_OFFSET = COLUMN_COUNT_OFFSET + Long.BYTES;
+    private static final long ROW_GROUP_COUNT_OFFSET = ROW_COUNT_OFFSET + Long.BYTES;
+    private final Path path;
+    private long chunkAddr;
+    private long impl;
 
     public PartitionDecoder() {
-        this.descrAddr = Unsafe.malloc(DESCR_SIZE, MemoryTag.NATIVE_DEFAULT);
+        try {
+            this.chunkAddr = Unsafe.malloc(CHUNK_BUFFERS_SIZE, MemoryTag.NATIVE_DEFAULT);
+            this.path = new Path();
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override
     public void close() {
-        descrAddr = Unsafe.free(descrAddr, DESCR_SIZE, MemoryTag.NATIVE_DEFAULT);
+        destroy();
+        chunkAddr = Unsafe.free(chunkAddr, CHUNK_BUFFERS_SIZE, MemoryTag.NATIVE_DEFAULT);
+        Misc.free(path);
     }
 
-    public Metadata readMetadata(Path srcPath) {
+    public int columnCount() {
+        assert impl != 0;
+        return Unsafe.getUnsafe().getInt(impl + COLUMN_COUNT_OFFSET);
+    }
+
+    public void decodeColumnChunk(long rowGroup, long column, int columnType) {
+        assert impl != 0;
         try {
-            readMetadata(
-                    srcPath.ptr(),
-                    srcPath.size(),
-                    descrAddr
+            decodeColumnChunk(
+                    impl,
+                    rowGroup,
+                    column,
+                    columnType,
+                    chunkAddr
             );
         } catch (Throwable th) {
-            throw CairoException.critical(0).put("Could not describe partition: [path=").put(srcPath)
+            throw CairoException.critical(0).put("Could not decode partition: [path=").put(path)
                     .put(", exception=").put(th.getClass().getSimpleName())
                     .put(", msg=").put(th.getMessage())
                     .put(']');
         }
-        return metadata;
     }
 
-    private static native void readMetadata(
-            long srcPathPtr,
-            int srcPathLength,
-            long columnNamesPtr
+    public void of(@Transient Path srcPath) {
+        destroy();
+
+        path.of(srcPath);
+        try {
+            impl = create(path.ptr(), path.size());
+        } catch (Throwable th) {
+            throw CairoException.critical(0).put("Could not describe partition: [path=").put(path)
+                    .put(", exception=").put(th.getClass().getSimpleName())
+                    .put(", msg=").put(th.getMessage())
+                    .put(']');
+        }
+    }
+
+    public int rowCount() {
+        assert impl != 0;
+        return Unsafe.getUnsafe().getInt(impl + ROW_COUNT_OFFSET);
+    }
+
+    public int rowGroupCount() {
+        assert impl != 0;
+        return Unsafe.getUnsafe().getInt(impl + ROW_GROUP_COUNT_OFFSET);
+    }
+
+    private static native long create(long srcPathPtr, int srcPathLength);
+
+    private static native void decodeColumnChunk(
+            long impl,
+            long rowGroup,
+            long column,
+            int columnType,
+            long buffersPtr
     );
 
-    public class Metadata {
+    private static native void destroy(long impl);
 
-        public int columnCount() {
-            return Unsafe.getUnsafe().getInt(descrAddr);
-        }
-
-        public int rowCount() {
-            return Unsafe.getUnsafe().getInt(descrAddr + 4L);
-        }
-
-        public int rowGroupCount() {
-            return Unsafe.getUnsafe().getInt(descrAddr + 8L);
+    private void destroy() {
+        if (impl != 0) {
+            destroy(impl);
+            impl = 0;
         }
     }
 
