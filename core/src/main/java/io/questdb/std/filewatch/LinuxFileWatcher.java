@@ -42,6 +42,7 @@ import java.nio.file.Paths;
 public final class LinuxFileWatcher extends FileWatcher {
 
     private static final Log LOG = LogFactory.getLog(LinuxFileWatcher.class);
+    private final LinuxAccessorFacade accessorFacade;
     private final long buf;
     private final int bufSize = LinuxAccessor.getSizeofEvent() + 4096;
     private final Path dirPath = new Path();
@@ -54,7 +55,6 @@ public final class LinuxFileWatcher extends FileWatcher {
     private final int readEndFd;
     private final int wd;
     private final int writeEndFd;
-    private final LinuxAccessorFacade accessorFacade;
 
     public LinuxFileWatcher(LinuxAccessorFacade accessorFacade, Utf8Sequence filePath, FileEventCallback callback) {
         super(callback);
@@ -156,7 +156,7 @@ public final class LinuxFileWatcher extends FileWatcher {
             // equality check.
             // Because of this, we will match on anything with a "server.conf" prefix. It's a bit hacky, but it works...
             if (Utf8s.equals(fileName, buf + i, fileName.size())) {
-                runnable.run();
+                callback.onFileEvent();
                 break;
             }
             i += len;
