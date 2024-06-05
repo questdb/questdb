@@ -263,7 +263,7 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
                         String oldVal = properties.getProperty(key);
                         if (oldVal == null || !oldVal.equals(newProperties.getProperty(key))) {
                             Optional<PropertyKey> prop = PropertyKey.getByString(key);
-                            if (prop.isEmpty()) {
+                            if (!prop.isPresent()) {
                                 return;
                             }
 
