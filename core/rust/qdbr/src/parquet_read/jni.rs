@@ -36,8 +36,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
         let mut reader = File::open(src_path)?;
         let metadata = read_metadata(&mut reader)?;
 
-        let decoder = ParquetDecoder{
-            column_count: if metadata.row_groups.len() > 0 { // TODO: check fields instead
+        // TODO: add some validation
+
+        let decoder = ParquetDecoder {
+            column_count: if metadata.row_groups.len() > 0 {
+                // TODO: check fields instead
                 metadata.row_groups[0].columns().len()
             } else {
                 0

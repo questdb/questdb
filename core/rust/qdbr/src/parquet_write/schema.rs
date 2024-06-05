@@ -70,6 +70,7 @@ impl TryFrom<i32> for ColumnType {
 }
 
 pub fn column_type_to_parquet_type(
+    column_id: i32,
     column_name: &str,
     column_type: ColumnType,
 ) -> ParquetResult<ParquetType> {
@@ -82,7 +83,7 @@ pub fn column_type_to_parquet_type(
             Repetition::Required,
             None,
             None,
-            None,
+            Some(column_id),
         )?),
         ColumnType::Byte => Ok(ParquetType::try_from_primitive(
             name,
@@ -90,7 +91,7 @@ pub fn column_type_to_parquet_type(
             Repetition::Required,
             Some(PrimitiveConvertedType::Int8),
             Some(PrimitiveLogicalType::Integer(IntegerType::Int8)),
-            None,
+            Some(column_id),
         )?),
         ColumnType::Short | ColumnType::Char => Ok(ParquetType::try_from_primitive(
             name,
@@ -98,7 +99,7 @@ pub fn column_type_to_parquet_type(
             Repetition::Required,
             Some(PrimitiveConvertedType::Int16),
             Some(PrimitiveLogicalType::Integer(IntegerType::Int16)),
-            None,
+            Some(column_id),
         )?),
         ColumnType::Int => Ok(ParquetType::try_from_primitive(
             name,
@@ -106,7 +107,7 @@ pub fn column_type_to_parquet_type(
             Repetition::Optional,
             None,
             None,
-            None,
+            Some(column_id),
         )?),
         ColumnType::Long => Ok(ParquetType::try_from_primitive(
             name,
@@ -114,7 +115,7 @@ pub fn column_type_to_parquet_type(
             Repetition::Optional,
             None,
             None,
-            None,
+            Some(column_id),
         )?),
         ColumnType::Date | ColumnType::Timestamp => Ok(ParquetType::try_from_primitive(
             name,
@@ -125,7 +126,7 @@ pub fn column_type_to_parquet_type(
                 unit: TimeUnit::Microseconds,
                 is_adjusted_to_utc: true,
             }),
-            None,
+            Some(column_id),
         )?),
         ColumnType::Float => Ok(ParquetType::try_from_primitive(
             name,
@@ -133,7 +134,7 @@ pub fn column_type_to_parquet_type(
             Repetition::Optional,
             None,
             None,
-            None,
+            Some(column_id),
         )?),
         ColumnType::Double => Ok(ParquetType::try_from_primitive(
             name,
@@ -141,7 +142,7 @@ pub fn column_type_to_parquet_type(
             Repetition::Optional,
             None,
             None,
-            None,
+            Some(column_id),
         )?),
         ColumnType::String | ColumnType::Symbol | ColumnType::Varchar => {
             Ok(ParquetType::try_from_primitive(
@@ -150,7 +151,7 @@ pub fn column_type_to_parquet_type(
                 Repetition::Optional,
                 Some(PrimitiveConvertedType::Utf8),
                 Some(PrimitiveLogicalType::String),
-                None,
+                Some(column_id),
             )?)
         }
         ColumnType::Long256 => Ok(ParquetType::try_from_primitive(
@@ -159,7 +160,7 @@ pub fn column_type_to_parquet_type(
             Repetition::Optional,
             None,
             None,
-            None,
+            Some(column_id),
         )?),
         ColumnType::GeoByte => Ok(ParquetType::try_from_primitive(
             name,
@@ -167,7 +168,7 @@ pub fn column_type_to_parquet_type(
             Repetition::Optional,
             Some(PrimitiveConvertedType::Int8),
             Some(PrimitiveLogicalType::Integer(IntegerType::Int8)),
-            None,
+            Some(column_id),
         )?),
         ColumnType::GeoShort => Ok(ParquetType::try_from_primitive(
             name,
@@ -175,7 +176,7 @@ pub fn column_type_to_parquet_type(
             Repetition::Optional,
             Some(PrimitiveConvertedType::Int16),
             Some(PrimitiveLogicalType::Integer(IntegerType::Int16)),
-            None,
+            Some(column_id),
         )?),
         ColumnType::GeoInt => Ok(ParquetType::try_from_primitive(
             name,
@@ -183,7 +184,7 @@ pub fn column_type_to_parquet_type(
             Repetition::Optional,
             Some(PrimitiveConvertedType::Int32),
             Some(PrimitiveLogicalType::Integer(IntegerType::Int32)),
-            None,
+            Some(column_id),
         )?),
         ColumnType::GeoLong => Ok(ParquetType::try_from_primitive(
             name,
@@ -191,7 +192,7 @@ pub fn column_type_to_parquet_type(
             Repetition::Optional,
             Some(PrimitiveConvertedType::Int64),
             Some(PrimitiveLogicalType::Integer(IntegerType::Int64)),
-            None,
+            Some(column_id),
         )?),
         ColumnType::Binary => Ok(ParquetType::try_from_primitive(
             name,
@@ -199,7 +200,7 @@ pub fn column_type_to_parquet_type(
             Repetition::Optional,
             None,
             None,
-            None,
+            Some(column_id),
         )?),
         ColumnType::Uuid | ColumnType::Long128 => Ok(ParquetType::try_from_primitive(
             name,
@@ -207,7 +208,7 @@ pub fn column_type_to_parquet_type(
             Repetition::Required, //TODO: check for nullability
             None,
             None,
-            None,
+            Some(column_id),
         )?),
         ColumnType::IPv4 => Ok(ParquetType::try_from_primitive(
             name,
@@ -215,13 +216,14 @@ pub fn column_type_to_parquet_type(
             Repetition::Optional,
             None,
             None,
-            None,
+            Some(column_id),
         )?),
     }
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct Column {
+    pub id: i32,
     pub name: &'static str,
     pub data_type: ColumnType,
     pub row_count: usize,
@@ -233,6 +235,7 @@ pub struct Column {
 
 impl Column {
     pub fn from_raw_data(
+        id: i32,
         name: &'static str,
         column_type: i32,
         column_top: i64,
@@ -279,6 +282,7 @@ impl Column {
         };
 
         Ok(Column {
+            id,
             name,
             data_type: column_type,
             column_top: column_top as usize,
@@ -299,7 +303,7 @@ pub fn to_parquet_schema(partition: &Partition) -> ParquetResult<SchemaDescripto
     let parquet_types = partition
         .columns
         .iter()
-        .map(|c| column_type_to_parquet_type(&c.name, c.data_type))
+        .map(|c| column_type_to_parquet_type(c.id, &c.name, c.data_type))
         .collect::<ParquetResult<Vec<_>>>()?;
     Ok(SchemaDescriptor::new(
         partition.table.clone(),

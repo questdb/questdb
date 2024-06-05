@@ -62,7 +62,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         );
         let col_types = unsafe { slice::from_raw_parts(col_types_ptr, col_count) };
         let col_tops = unsafe { slice::from_raw_parts(col_tops_ptr, col_count) };
-        let _col_ids = unsafe { slice::from_raw_parts(col_ids_ptr, col_count) };
+        let col_ids = unsafe { slice::from_raw_parts(col_ids_ptr, col_count) };
 
         let primary_col_addrs_slice =
             unsafe { slice::from_raw_parts(primary_col_addrs_ptr, col_count) };
@@ -89,6 +89,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
 
         let mut columns = vec![];
         for i in 0..col_count {
+            let col_id = col_ids[i];
             let col_name = col_names[i];
             let col_type = col_types[i];
             let col_top = col_tops[i];
@@ -103,6 +104,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             let symbol_offsets_size = symbol_offsets_sizes_slice[i];
 
             let column = Column::from_raw_data(
+                col_id,
                 col_name,
                 col_type,
                 col_top,
@@ -118,6 +120,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             columns.push(column);
         }
 
+        // TODO: use real table name
         let partition = Partition { table: "test_table".to_string(), columns };
 
         let mut file = File::create(dest_path).with_context(|| {
