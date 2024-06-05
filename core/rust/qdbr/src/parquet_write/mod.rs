@@ -74,22 +74,29 @@ mod tests {
     use parquet2::types;
     use std::fs::File;
     use std::io::{Cursor, Write};
-    use std::mem;
     use std::mem::size_of;
     use std::ptr::null;
     use std::time::Instant;
+    use std::{env, mem};
 
     #[test]
-    fn test_write_parquet_1m_rows() {
+    fn test_write_parquet_2m_rows() {
         let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
-        let row_count = 2_000_000;
-        let fix_col_count = 30;
+        let row_count = 1_000_000;
+        let fix_col_count = 3;
         let mut columns = Vec::new();
 
         for i in 0..fix_col_count {
             let column_name = format!("col{}", i);
             let static_str: &'static str = Box::leak(column_name.into_boxed_str());
-            let col1 = create_fix_column(row_count, ColumnType::Long, size_of::<i32>(), static_str);
+            let col1 = create_fix_column(
+                row_count,
+                ColumnType::Timestamp,
+                size_of::<i64>(),
+                static_str,
+            );
+            let col1 = create_fix_column(row_count, ColumnType::Int, size_of::<i32>(), static_str);
+            let col1 = create_fix_column(row_count, ColumnType::Long, size_of::<i64>(), static_str);
             columns.push(col1);
         }
 
@@ -248,9 +255,11 @@ mod tests {
     }
 
     fn save_to_file(bytes: Bytes) {
-        let mut file = File::create("/Users/alpel/temp/db/x.parquet").expect("file create failed");
-        file.write_all(bytes.to_byte_slice())
-            .expect("file write failed");
+        let val = env::var("OUT_PARQUET_FILE").map(|s| {
+            let mut file = File::create(s).expect("file create failed");
+            file.write_all(bytes.to_byte_slice())
+                .expect("file write failed");
+        });
     }
 
     fn serialize_as_symbols(symbol_chars: Vec<&str>) -> (Vec<u8>, Vec<u64>) {
