@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test;
+package io.questdb.test.std.filewatch;
 
 import io.questdb.FileEventCallback;
 import io.questdb.cairo.CairoException;
@@ -31,12 +31,12 @@ import io.questdb.std.Os;
 import io.questdb.std.filewatch.FileWatcher;
 import io.questdb.std.filewatch.FileWatcherFactory;
 import io.questdb.std.str.Utf8String;
+import io.questdb.test.AbstractTest;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.File;
 import java.io.PrintWriter;
-import java.nio.charset.StandardCharsets;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
@@ -65,9 +65,7 @@ public class FileWatcherTest extends AbstractTest {
             ) {
 
                 fw.start();
-                // todo: synchronize the start of the watch here, so we don't write before the watch is set up
-                Thread.sleep(1000);
-                try (PrintWriter writer = new PrintWriter(targetFile.getAbsolutePath(), StandardCharsets.UTF_8)) {
+                try (PrintWriter writer = new PrintWriter(targetFile.getAbsolutePath())) {
                     writer.println("hello");
                 }
                 threadLatch.await();
@@ -87,10 +85,8 @@ public class FileWatcherTest extends AbstractTest {
                     new FileChangedCallback(threadLatch))) {
 
                 fw.start();
-                // todo: synchronize the start of the watch here, so we don't write before the watch is set up
-                Thread.sleep(1000);
                 Assert.assertTrue(targetFile.delete());
-                try (PrintWriter writer = new PrintWriter(targetFile.getAbsolutePath(), StandardCharsets.UTF_8)) {
+                try (PrintWriter writer = new PrintWriter(targetFile.getAbsolutePath())) {
                     writer.println("hello");
                 }
                 threadLatch.await();

@@ -41,7 +41,7 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
     private final Log log;
     private final MicrosecondClock microsecondClock;
     private final Properties properties;
-    private final Set<PropertyKey> reloadableProps = new HashSet<>(List.of(
+    private final Set<PropertyKey> reloadableProps = new HashSet<>(Arrays.asList(
             PropertyKey.PG_USER,
             PropertyKey.PG_PASSWORD,
             PropertyKey.PG_RO_USER_ENABLED,
@@ -263,7 +263,7 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
                         String oldVal = properties.getProperty(key);
                         if (oldVal == null || !oldVal.equals(newProperties.getProperty(key))) {
                             Optional<PropertyKey> prop = PropertyKey.getByString(key);
-                            if (prop.isEmpty()) {
+                            if (!prop.isPresent()) {
                                 return;
                             }
 
