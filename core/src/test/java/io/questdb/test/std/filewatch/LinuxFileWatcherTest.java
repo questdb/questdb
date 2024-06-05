@@ -42,57 +42,24 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.io.PrintWriter;
-import java.nio.charset.StandardCharsets;
 
-import static io.questdb.PropertyKey.*;
+import static io.questdb.PropertyKey.HTTP_ENABLED;
 
 public class LinuxFileWatcherTest extends AbstractTest {
 
+    private static final FileEventCallback DUMMY_CALLBACK = () -> {
+    };
     private Utf8Sequence configPath;
-    private static final FileEventCallback DUMMY_CALLBACK = () -> {};
 
     @Before
     public void createDummyFile() throws Exception {
         final String confPath = root + Files.SEPARATOR + "conf";
         TestUtils.createTestPath(confPath);
         String file = confPath + Files.SEPARATOR + "server.conf";
-        try (PrintWriter writer = new PrintWriter(file, StandardCharsets.UTF_8)) {
+        try (PrintWriter writer = new PrintWriter(file)) {
             writer.println(HTTP_ENABLED + "=true");
         }
         configPath = new Utf8String(file);
-    }
-
-    @Test
-    public void testInotifyInitFailure() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            FaultInjectingLinuxAccessorFacade faultInjector = new FaultInjectingLinuxAccessorFacade(LinuxAccessorFacadeImpl.INSTANCE);
-            faultInjector.injectFaultInotifyInit(0);
-            assertFailure(faultInjector, EpollFacadeImpl.INSTANCE, "inotify_init");
-        });
-    }
-
-    @Test
-    public void testPipeFailure() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            FaultInjectingLinuxAccessorFacade faultInjector = new FaultInjectingLinuxAccessorFacade(LinuxAccessorFacadeImpl.INSTANCE);
-            faultInjector.injectPipeFailure(0);
-            assertFailure(faultInjector, EpollFacadeImpl.INSTANCE, "pipe error");
-        });
-    }
-
-    @Test
-    public void testEpollCtlFailure() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            FaultInjectingEpollFacade faultInjector = new FaultInjectingEpollFacade(EpollFacadeImpl.INSTANCE);
-            faultInjector.injectEpollCtlFailure(0);
-            assertFailure(LinuxAccessorFacadeImpl.INSTANCE, faultInjector, "epoll_ctl error");
-        });
-
-        TestUtils.assertMemoryLeak(() -> {
-            FaultInjectingEpollFacade faultInjector = new FaultInjectingEpollFacade(EpollFacadeImpl.INSTANCE);
-            faultInjector.injectEpollCtlFailure(1);
-            assertFailure(LinuxAccessorFacadeImpl.INSTANCE, faultInjector, "epoll_ctl error");
-        });
     }
 
     @Test
@@ -117,6 +84,39 @@ public class LinuxFileWatcherTest extends AbstractTest {
         });
     }
 
+    @Test
+    public void testEpollCtlFailure() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            FaultInjectingEpollFacade faultInjector = new FaultInjectingEpollFacade(EpollFacadeImpl.INSTANCE);
+            faultInjector.injectEpollCtlFailure(0);
+            assertFailure(LinuxAccessorFacadeImpl.INSTANCE, faultInjector, "epoll_ctl error");
+        });
+
+        TestUtils.assertMemoryLeak(() -> {
+            FaultInjectingEpollFacade faultInjector = new FaultInjectingEpollFacade(EpollFacadeImpl.INSTANCE);
+            faultInjector.injectEpollCtlFailure(1);
+            assertFailure(LinuxAccessorFacadeImpl.INSTANCE, faultInjector, "epoll_ctl error");
+        });
+    }
+
+    @Test
+    public void testInotifyInitFailure() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            FaultInjectingLinuxAccessorFacade faultInjector = new FaultInjectingLinuxAccessorFacade(LinuxAccessorFacadeImpl.INSTANCE);
+            faultInjector.injectFaultInotifyInit(0);
+            assertFailure(faultInjector, EpollFacadeImpl.INSTANCE, "inotify_init");
+        });
+    }
+
+    @Test
+    public void testPipeFailure() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            FaultInjectingLinuxAccessorFacade faultInjector = new FaultInjectingLinuxAccessorFacade(LinuxAccessorFacadeImpl.INSTANCE);
+            faultInjector.injectPipeFailure(0);
+            assertFailure(faultInjector, EpollFacadeImpl.INSTANCE, "pipe error");
+        });
+    }
+
     private void assertFailure(LinuxAccessorFacade accessorFacade, EpollFacade epollFacade, String expectedError) {
         try {
             new LinuxFileWatcher(accessorFacade, epollFacade, configPath, DUMMY_CALLBACK);
@@ -128,10 +128,10 @@ public class LinuxFileWatcherTest extends AbstractTest {
 
     private static class FaultInjectingEpollFacade implements EpollFacade {
         private final EpollFacade delegate;
-        private int epollCtlFaultAt = -1;
         private int epollCtlCounter = 0;
-        private int epollWaitFaultAt = -1;
+        private int epollCtlFaultAt = -1;
         private int epollWaitCounter = 0;
+        private int epollWaitFaultAt = -1;
 
         private FaultInjectingEpollFacade(EpollFacade delegate) {
             this.delegate = delegate;
@@ -195,10 +195,10 @@ public class LinuxFileWatcherTest extends AbstractTest {
 
     private static class FaultInjectingLinuxAccessorFacade implements LinuxAccessorFacade {
         private final LinuxAccessorFacade delegate;
-        private int inotifyInitFaultAt = -1;
         private int inotifyInitCounter = 0;
-        private int pipeFaultAt = -1;
+        private int inotifyInitFaultAt = -1;
         private int pipeCounter = 0;
+        private int pipeFaultAt = -1;
 
         private FaultInjectingLinuxAccessorFacade(LinuxAccessorFacade delegate) {
             this.delegate = delegate;

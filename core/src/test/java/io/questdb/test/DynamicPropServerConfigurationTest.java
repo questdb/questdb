@@ -36,6 +36,7 @@ import java.io.File;
 import java.io.FileWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
@@ -206,7 +207,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     @Before
     public void setUp() {
         latch = new SOCountDownLatch(1);
-        serverConfPath = Path.of(temp.getRoot().getAbsolutePath(), "dbRoot", "conf", "server.conf");
+        serverConfPath = Paths.get(temp.getRoot().getAbsolutePath(), "dbRoot", "conf", "server.conf");
         try {
             Files.createDirectories(serverConfPath.getParent());
             serverConf = serverConfPath.toFile();

@@ -28,17 +28,16 @@ import io.questdb.FileEventCallback;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.DebouncingRunnable;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.NotNull;
 
-import java.time.Duration;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public abstract class FileWatcher implements QuietCloseable {
+    private static final long DEBOUNCE_PERIOD_NANOS = TimeUnit.MILLISECONDS.toNanos(100);
     private static final Log LOG = LogFactory.getLog(FileWatcher.class);
-    private static final Duration debouncePeriod = Duration.ofMillis(100);
-    protected final DebouncingRunnable runnable;
+    protected final DebouncingCallback callback;
     private final AtomicBoolean closed = new AtomicBoolean();
     private final SOCountDownLatch haltedLatch = new SOCountDownLatch(1);
     private final Thread reloadThread;
@@ -46,8 +45,7 @@ public abstract class FileWatcher implements QuietCloseable {
     private final SOCountDownLatch startedLatch = new SOCountDownLatch(1);
 
     public FileWatcher(@NotNull FileEventCallback callback) {
-        this.runnable = new DebouncingRunnable(callback::onFileEvent, debouncePeriod);
-
+        this.callback = new DebouncingCallback(callback, DEBOUNCE_PERIOD_NANOS);
         reloadThread = new Thread(() -> {
             try {
                 do {
@@ -83,6 +81,7 @@ public abstract class FileWatcher implements QuietCloseable {
 
     public void start() {
         if (!closed.get() && started.compareAndSet(false, true)) {
+            callback.start();
             reloadThread.start();
             startedLatch.countDown();
         }
@@ -93,4 +92,64 @@ public abstract class FileWatcher implements QuietCloseable {
     protected abstract void releaseWait();
 
     protected abstract void waitForChange();
+
+    public class DebouncingCallback implements FileEventCallback, QuietCloseable {
+        private final long debouncePeriodNanos;
+        private final FileEventCallback delegate;
+        private final Object mutex = new Object();
+        private boolean closed = false;
+        private long notifyAt;
+
+        public DebouncingCallback(FileEventCallback delegate, long debouncePeriodNanos) {
+            this.delegate = delegate;
+            this.debouncePeriodNanos = debouncePeriodNanos;
+        }
+
+        @Override
+        public void close() {
+            synchronized (mutex) {
+                closed = true;
+                mutex.notifyAll();
+            }
+        }
+
+        @Override
+        public void onFileEvent() {
+            synchronized (mutex) {
+                notifyAt = System.nanoTime() + debouncePeriodNanos;
+                mutex.notifyAll();
+            }
+        }
+
+        private void start() {
+            notifyAt = Long.MAX_VALUE + System.nanoTime();
+            Thread thread = new Thread(() -> {
+                synchronized (mutex) {
+                    for (; ; ) {
+                        if (closed) {
+                            latch.countDown();
+                            return;
+                        }
+                        long now = System.nanoTime();
+                        long waitNanos = notifyAt - now;
+                        long waitMillis = waitNanos / 1_000_000;
+                        try {
+                            if (waitMillis > 0) {
+                                mutex.wait(waitMillis);
+                            } else {
+                                delegate.onFileEvent();
+                                notifyAt = Long.MAX_VALUE + now;
+                            }
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        } catch (Exception e) {
+                            LOG.critical().$("error while reloading server configuration").$(e).$();
+                        }
+                    }
+                }
+            });
+            thread.setName("config hot-reload debouncing thread");
+            thread.start();
+        }
+    }
 }

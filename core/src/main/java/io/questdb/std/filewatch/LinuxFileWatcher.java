@@ -51,7 +51,6 @@ public final class LinuxFileWatcher extends FileWatcher {
     private final int readEndFd;
     private final int wd;
     private final int writeEndFd;
-    private int inotifyFd;
 
     public LinuxFileWatcher(LinuxAccessorFacade accessorFacade, EpollFacade epollFacade, Utf8Sequence filePath, FileEventCallback callback) {
         super(callback);
@@ -130,7 +129,7 @@ public final class LinuxFileWatcher extends FileWatcher {
             // equality check.
             // Because of this, we will match on anything with a "server.conf" prefix. It's a bit hacky, but it works...
             if (Utf8s.equals(fileName, buf + i, fileName.size())) {
-                runnable.run();
+                callback.onFileEvent();
                 break;
             }
             i += len;
