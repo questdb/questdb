@@ -6,7 +6,7 @@ use parquet2::encoding::Encoding;
 use parquet2::metadata::Descriptor;
 use parquet2::page::{DataPage, DataPageHeader, DataPageHeaderV1, DataPageHeaderV2};
 use parquet2::schema::types::PrimitiveType;
-use parquet2::statistics::ParquetStatistics;
+use parquet2::statistics::{serialize_statistics, BinaryStatistics, ParquetStatistics, Statistics};
 use parquet2::types::NativeType;
 use parquet2::write::Version;
 
@@ -45,6 +45,92 @@ impl<T: Copy + NativeType + num_traits::Bounded> MaxMin<T> {
         } else {
             (None, None)
         }
+    }
+}
+
+#[derive(Default)]
+pub struct BinaryMaxMin {
+    max_value: Option<i64>,
+    min_value: Option<Vec<u8>>,
+    len_of_max: Option<usize>,
+}
+
+const SIZEOF_I64: usize = mem::size_of::<i64>();
+
+impl BinaryMaxMin {
+    pub fn new() -> Self {
+        Default::default()
+    }
+
+    pub fn update(&mut self, value: &[u8]) {
+        let val_slice = &value[..value.len().min(SIZEOF_I64)];
+        let mut val_slice_be = [0u8; SIZEOF_I64];
+        val_slice_be[..val_slice.len()].copy_from_slice(val_slice);
+        let mut val = i64::from_be_bytes(val_slice_be);
+        if value.len() > SIZEOF_I64 {
+            // Since we're keeping only the initial 8 bytes of the value,
+            // we must use val + 1 as the upper bound of the full-length value
+            val += 1;
+        }
+        match self.max_value {
+            None => {
+                self.max_value = Some(val);
+                self.len_of_max = Some(val_slice.len());
+            }
+            Some(prev_max) => {
+                if val > prev_max {
+                    self.max_value = Some(val);
+                    self.len_of_max = Some(val_slice.len());
+                }
+            }
+        }
+        match &mut self.min_value {
+            None => {
+                self.min_value = Some(val_slice.to_vec());
+            }
+            Some(min) => {
+                let curr = val_slice.to_vec();
+                if curr < *min {
+                    *min = curr;
+                }
+            }
+        }
+    }
+
+    pub fn into_parquet_stats(
+        self,
+        null_count: usize,
+        primitive_type: &PrimitiveType,
+    ) -> ParquetStatistics {
+        let mut max_value = self
+            .max_value
+            .map(|max| max.to_be_bytes()[..self.len_of_max.expect("len_of_max")].to_vec());
+        let mut min_value = self.min_value;
+
+        match primitive_type.physical_type {
+            parquet2::schema::types::PhysicalType::FixedLenByteArray(len) => {
+                if let Some(max_value) = &mut max_value {
+                    while max_value.len() < len {
+                        max_value.push(0);
+                    }
+                }
+                if let Some(min_value) = &mut min_value {
+                    while min_value.len() < len {
+                        min_value.push(0);
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        let stats = &BinaryStatistics {
+            primitive_type: primitive_type.clone(),
+            null_count: Some(null_count as i64),
+            distinct_count: None,
+            max_value,
+            min_value,
+        } as &dyn Statistics;
+        serialize_statistics(stats)
     }
 }
 

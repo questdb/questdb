@@ -130,11 +130,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             )
         })?;
 
-        // TODO: we need statistics for the designated timestamp column, namely min_value
-        //       and max_value for each row group
-        // FIXME: statistics is a global option (not a column-wise), should be implemented for all types
         ParquetWriter::new(&mut file)
-            .with_statistics(false)
             .finish(partition)
             .map(|_| ())
             .context("")

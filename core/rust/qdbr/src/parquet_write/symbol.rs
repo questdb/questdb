@@ -11,11 +11,19 @@ use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter};
 use crate::parquet_write::{util, ParquetResult};
 
-fn encode_dict(column_vals: &[i32], offsets: &[u64], chars: &[u8]) -> (Vec<u8>, Vec<u32>, u32) {
+use super::util::BinaryMaxMin;
+
+fn encode_dict(
+    column_vals: &[i32],
+    offsets: &[u64],
+    chars: &[u8],
+) -> (Vec<u8>, Vec<u32>, u32, BinaryMaxMin) {
     let mut dict_buffer = vec![];
     let mut local_keys: Vec<u32> = Vec::new();
     let mut keys_to_local = HashMap::new();
     let mut serialized_count = 0;
+    let mut stats = BinaryMaxMin::new();
+
     for column_value in column_vals {
         if *column_value <= -1 {
             continue;
@@ -27,22 +35,29 @@ fn encode_dict(column_vals: &[i32], offsets: &[u64], chars: &[u8]) -> (Vec<u8>, 
             let data_size = i32::from_le_bytes(size_header.try_into().unwrap()) as usize;
             let data_u8 = &data_tail[..data_size];
             let data_u16: &[u16] = unsafe { mem::transmute(data_u8) };
-            let value = String::from_utf16(data_u16).expect("utf16 string");
+            let str_value = String::from_utf16(data_u16).expect("utf16 string");
 
             let local_key = serialized_count;
-            dict_buffer.reserve(u32_size + value.len());
-            dict_buffer.extend_from_slice(&(value.len() as u32).to_le_bytes());
-            dict_buffer.extend_from_slice(value.as_bytes());
+            dict_buffer.reserve(u32_size + str_value.len());
+            dict_buffer.extend_from_slice(&(str_value.len() as u32).to_le_bytes());
+            let value = str_value.as_bytes();
+            dict_buffer.extend_from_slice(value);
             serialized_count += 1;
+            stats.update(value);
             local_key
         });
         local_keys.push(local_key);
     }
     if serialized_count == 0 {
         // No symbol value used in the column data block, all were nulls
-        return (dict_buffer, local_keys, 0);
+        return (dict_buffer, local_keys, 0, stats);
     }
-    (dict_buffer, local_keys, (serialized_count - 1) as u32)
+    (
+        dict_buffer,
+        local_keys,
+        (serialized_count - 1) as u32,
+        stats,
+    )
 }
 
 pub fn symbol_to_pages(
@@ -74,7 +89,7 @@ pub fn symbol_to_pages(
     encode_bool_iter(&mut data_buffer, deflevels_iter, options.version)?;
     let definition_levels_byte_length = data_buffer.len();
 
-    let (dict_buffer, keys, max_key) = encode_dict(column_values, offsets, chars);
+    let (dict_buffer, keys, max_key, stats) = encode_dict(column_values, offsets, chars);
     let bits_per_key = util::get_bit_width(max_key as u64);
 
     let non_null_len = column_values.len() - null_count;
@@ -89,7 +104,11 @@ pub fn symbol_to_pages(
         num_rows,
         null_count,
         definition_levels_byte_length,
-        None,
+        if options.write_statistics {
+            Some(stats.into_parquet_stats(null_count, &primitive_type))
+        } else {
+            None
+        },
         primitive_type,
         options,
         Encoding::RleDictionary,

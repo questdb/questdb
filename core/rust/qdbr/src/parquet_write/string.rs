@@ -33,6 +33,8 @@ use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter};
 use crate::parquet_write::{ParquetError, ParquetResult};
 
+use super::util::BinaryMaxMin;
+
 pub fn string_to_page(
     offsets: &[i64],
     data: &[u8],
@@ -63,21 +65,24 @@ pub fn string_to_page(
 
     let definition_levels_byte_length = buffer.len();
 
-    match encoding {
-        Encoding::Plain => encode_plain(offsets, data, null_count, &mut buffer),
-        Encoding::DeltaLengthByteArray => encode_delta(offsets, data, null_count, &mut buffer),
+    let stats = match encoding {
+        Encoding::Plain => Ok(encode_plain(offsets, data, &mut buffer)),
+        Encoding::DeltaLengthByteArray => Ok(encode_delta(offsets, data, null_count, &mut buffer)),
         other => Err(ParquetError::OutOfSpec(format!(
             "Encoding string as {:?}",
             other
-        )))?,
-    }
-
+        ))),
+    }?;
     build_plain_page(
         buffer,
         num_rows,
         column_top + null_count,
         definition_levels_byte_length,
-        None, //TODO: add statistics
+        if options.write_statistics {
+            Some(stats.into_parquet_stats(null_count, &primitive_type))
+        } else {
+            None
+        },
         primitive_type,
         options,
         encoding,
@@ -85,8 +90,10 @@ pub fn string_to_page(
     .map(Page::Data)
 }
 
-fn encode_plain(offsets: &[i64], values: &[u8], null_count: usize, buffer: &mut Vec<u8>) {
+fn encode_plain(offsets: &[i64], values: &[u8], buffer: &mut Vec<u8>) -> BinaryMaxMin {
     let size_of_header = size_of::<i32>();
+    let mut stats = BinaryMaxMin::new();
+
     for offset in offsets {
         let offset = usize::try_from(*offset).expect("invalid offset value in string aux column");
         let len_raw = types::decode::<i32>(&values[offset..offset + size_of_header]);
@@ -100,17 +107,26 @@ fn encode_plain(offsets: &[i64], values: &[u8], null_count: usize, buffer: &mut 
         // BYTE_ARRAY: first 4 bytes denote length in little-endian.
         let encoded_len = (utf8.len() as u32).to_le_bytes();
         buffer.extend_from_slice(&encoded_len);
-        buffer.extend_from_slice(utf8.as_bytes());
+        let value = utf8.as_bytes();
+        buffer.extend_from_slice(value);
+        stats.update(value);
     }
+    stats
 }
 
-fn encode_delta(offsets: &[i64], values: &[u8], null_count: usize, buffer: &mut Vec<u8>) {
+fn encode_delta(
+    offsets: &[i64],
+    values: &[u8],
+    null_count: usize,
+    buffer: &mut Vec<u8>,
+) -> BinaryMaxMin {
     let size_of_header = size_of::<i32>();
     let row_count = offsets.len();
+    let mut stats = BinaryMaxMin::new();
 
     if row_count == 0 {
         delta_bitpacked::encode(std::iter::empty(), buffer);
-        return;
+        return stats;
     }
 
     // TODO: lengths are broken because they are UTF-16 lengths and the written data is UTF-8
@@ -135,6 +151,9 @@ fn encode_delta(offsets: &[i64], values: &[u8], null_count: usize, buffer: &mut 
         let data = &values[value_offset..value_offset + len];
         let data: &[u16] = unsafe { transmute(data) };
         let utf8 = String::from_utf16(data).expect("utf16 string");
-        buffer.extend_from_slice(utf8.as_bytes());
+        let value = utf8.as_bytes();
+        buffer.extend_from_slice(value);
+        stats.update(value);
     }
+    stats
 }

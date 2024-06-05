@@ -5,10 +5,8 @@ use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
 
 use crate::parquet_write::file::WriteOptions;
-use crate::parquet_write::util::{build_plain_page, encode_bool_iter};
+use crate::parquet_write::util::{build_plain_page, encode_bool_iter, BinaryMaxMin};
 use crate::parquet_write::ParquetResult;
-
-use super::util;
 
 const HEADER_FLAG_INLINED: u8 = 1 << 0;
 const _HEADER_FLAG_ASCII: u8 = 1 << 1;
@@ -31,30 +29,31 @@ struct AuxEntrySplit {
     offset_hi: u32,
 }
 
-fn encode_plain(aux: &[[u8; 16]], data: &[u8], buffer: &mut Vec<u8>) {
+fn encode_plain(aux: &[[u8; 16]], data: &[u8], buffer: &mut Vec<u8>) -> BinaryMaxMin {
     assert!(
         mem::size_of::<AuxEntryInlined>() == 16 && mem::size_of::<AuxEntrySplit>() == 16,
         "size_of(AuxEntryInlined) or size_of(AuxEntrySplit) is not 16"
     );
     let aux: &[AuxEntryInlined] = unsafe { mem::transmute(aux) };
+    let mut stats = BinaryMaxMin::new();
+
     for entry in aux.iter().filter(|entry| !is_null(entry.header)) {
-        if is_inlined(entry.header) {
+        let utf8_slice = if is_inlined(entry.header) {
             let size = (entry.header >> HEADER_FLAGS_WIDTH) as usize;
-            let utf8_slice = &entry.chars[..size];
-            let len = (size as u32).to_le_bytes();
-            buffer.extend_from_slice(&len);
-            buffer.extend_from_slice(utf8_slice);
+            &entry.chars[..size]
         } else {
             let entry: &AuxEntrySplit = unsafe { mem::transmute(entry) };
             let header = entry.header;
             let size = (header >> HEADER_FLAGS_WIDTH) as usize;
             let offset = entry.offset_lo as usize | (entry.offset_hi as usize) << 16;
-            let utf8_slice = &data[offset..][..size];
-            let len = (size as u32).to_le_bytes();
-            buffer.extend_from_slice(&len);
-            buffer.extend_from_slice(utf8_slice);
-        }
+            &data[offset..][..size]
+        };
+        let len = (utf8_slice.len() as u32).to_le_bytes();
+        buffer.extend_from_slice(&len);
+        buffer.extend_from_slice(utf8_slice);
+        stats.update(utf8_slice);
     }
+    stats
 }
 
 #[inline(always)]
@@ -76,7 +75,7 @@ pub fn varchar_to_page(
 ) -> ParquetResult<Page> {
     let num_rows = column_top + aux.len();
     let mut buffer = vec![];
-    let mut null_count = 0;
+    let mut null_count = 0usize;
 
     let deflevels_iter = (0..num_rows).map(|i| {
         if i < column_top {
@@ -96,13 +95,17 @@ pub fn varchar_to_page(
 
     encode_bool_iter(&mut buffer, deflevels_iter, options.version)?;
     let definition_levels_byte_length = buffer.len();
-    encode_plain(aux, data, &mut buffer);
+    let stats = encode_plain(aux, data, &mut buffer);
     build_plain_page(
         buffer,
         num_rows,
         null_count,
         definition_levels_byte_length,
-        None, // TODO: implement statistics
+        if options.write_statistics {
+            Some(stats.into_parquet_stats(null_count, &primitive_type))
+        } else {
+            None
+        },
         primitive_type,
         options,
         Encoding::Plain,

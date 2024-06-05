@@ -33,6 +33,8 @@ use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter};
 use crate::parquet_write::{ParquetError, ParquetResult};
 
+use super::util::BinaryMaxMin;
+
 pub fn binary_to_page(
     offsets: &[i64],
     data: &[u8],
@@ -63,21 +65,25 @@ pub fn binary_to_page(
 
     let definition_levels_byte_length = buffer.len();
 
-    match encoding {
-        Encoding::Plain => encode_plain(offsets, data, null_count, &mut buffer),
-        Encoding::DeltaLengthByteArray => encode_delta(offsets, data, null_count, &mut buffer),
+    let stats = match encoding {
+        Encoding::Plain => Ok(encode_plain(offsets, data, &mut buffer)),
+        Encoding::DeltaLengthByteArray => Ok(encode_delta(offsets, data, null_count, &mut buffer)),
         other => Err(ParquetError::OutOfSpec(format!(
             "Encoding binary as {:?}",
             other
-        )))?,
-    }
+        ))),
+    }?;
 
     build_plain_page(
         buffer,
         num_rows,
         null_count,
         definition_levels_byte_length,
-        None, //TODO: add statistics
+        if options.write_statistics {
+            Some(stats.into_parquet_stats(null_count, &primitive_type))
+        } else {
+            None
+        },
         primitive_type,
         options,
         encoding,
@@ -85,8 +91,10 @@ pub fn binary_to_page(
     .map(Page::Data)
 }
 
-fn encode_plain(offsets: &[i64], values: &[u8], null_count: usize, buffer: &mut Vec<u8>) {
+fn encode_plain(offsets: &[i64], values: &[u8], buffer: &mut Vec<u8>) -> BinaryMaxMin {
     let size_of_header = size_of::<i64>();
+    let mut stats = BinaryMaxMin::new();
+
     for offset in offsets {
         let offset = usize::try_from(*offset).expect("invalid offset value in binary aux column");
         let len = types::decode::<i64>(&values[offset..offset + size_of_header]);
@@ -94,20 +102,28 @@ fn encode_plain(offsets: &[i64], values: &[u8], null_count: usize, buffer: &mut 
             continue;
         }
         let value_offset = offset + size_of_header;
-        let data = &values[value_offset..value_offset + len as usize];
+        let value = &values[value_offset..value_offset + len as usize];
         let encoded_len = (len as u32).to_le_bytes();
         buffer.extend_from_slice(&encoded_len);
-        buffer.extend_from_slice(data);
+        buffer.extend_from_slice(value);
+        stats.update(value);
     }
+    stats
 }
 
-fn encode_delta(offsets: &[i64], values: &[u8], null_count: usize, buffer: &mut Vec<u8>) {
+fn encode_delta(
+    offsets: &[i64],
+    values: &[u8],
+    null_count: usize,
+    buffer: &mut Vec<u8>,
+) -> BinaryMaxMin {
     let size_of_header = size_of::<i64>();
     let row_count = offsets.len();
+    let mut stats = BinaryMaxMin::new();
 
     if row_count == 0 {
         delta_bitpacked::encode(std::iter::empty(), buffer);
-        return;
+        return stats;
     }
 
     // Reserve buffer capacity for performance reasons only. No effect on correctness.
@@ -138,7 +154,9 @@ fn encode_delta(offsets: &[i64], values: &[u8], null_count: usize, buffer: &mut 
             continue;
         }
         let value_offset = offset + size_of_header;
-        let data = &values[value_offset..value_offset + len as usize];
-        buffer.extend_from_slice(data);
+        let value = &values[value_offset..value_offset + len as usize];
+        buffer.extend_from_slice(value);
+        stats.update(value);
     }
+    stats
 }
