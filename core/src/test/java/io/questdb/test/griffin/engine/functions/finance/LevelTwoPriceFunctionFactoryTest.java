@@ -25,10 +25,12 @@
 package io.questdb.test.griffin.engine.functions.finance;
 
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.finance.LevelTwoPriceFunctionFactory;
 import io.questdb.std.ObjList;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.test.tools.BindVariableTestTuple;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTest {
@@ -138,6 +140,28 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
                             "l2price(0.0015, amount2, price2) from recent_trades"
             );
         });
+    }
+
+    @Test
+    public void testBindVarTypeFailureErrorPosition() {
+        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
+        tuples.add(new BindVariableTestTuple(
+                "type failure",
+                "l2price\n" +
+                        "9.825714285714286\n",
+                bindVariableService -> {
+                    bindVariableService.setDouble(0, 8);
+                    bindVariableService.setDouble(1, 5.2);
+                    bindVariableService.setStr(2, "str fail");
+                    bindVariableService.setDouble(3, 23);
+                }
+        ));
+
+        try {
+            assertSql("select l2price(35, $1, $2, $3, 9.3, 42, 22.1), l2price(35, $4, 9.3, 42, 22.1)", tuples);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getMessage(), "[27] l2price requires arguments of type `DOUBLE`, or convertible to `DOUBLE`, not `STRING`");
+        }
     }
 
     @Test
