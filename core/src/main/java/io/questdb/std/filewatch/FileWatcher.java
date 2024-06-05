@@ -31,12 +31,12 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.NotNull;
 
-import java.time.Duration;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public abstract class FileWatcher implements QuietCloseable {
+    private static final long DEBOUNCE_PERIOD_NANOS = TimeUnit.MILLISECONDS.toNanos(100);
     private static final Log LOG = LogFactory.getLog(FileWatcher.class);
-    private static final Duration debouncePeriod = Duration.ofMillis(100);
     protected final DebouncingCallback callback;
     protected final AtomicBoolean closed = new AtomicBoolean();
     protected final AtomicBoolean started = new AtomicBoolean();
@@ -44,7 +44,7 @@ public abstract class FileWatcher implements QuietCloseable {
     private final Thread reloadThread;
 
     public FileWatcher(@NotNull FileEventCallback callback) {
-        this.callback = new DebouncingCallback(callback, debouncePeriod.toNanos());
+        this.callback = new DebouncingCallback(callback, DEBOUNCE_PERIOD_NANOS);
         reloadThread = new Thread(() -> {
             try {
                 do {
@@ -83,7 +83,7 @@ public abstract class FileWatcher implements QuietCloseable {
         private final FileEventCallback delegate;
         private final Object mutex = new Object();
         private boolean closed = false;
-        private long lastEventNanos = Long.MAX_VALUE;
+        private long notifyAt;
 
         public DebouncingCallback(FileEventCallback delegate, long debouncePeriodNanos) {
             this.delegate = delegate;
@@ -101,12 +101,13 @@ public abstract class FileWatcher implements QuietCloseable {
         @Override
         public void onFileEvent() {
             synchronized (mutex) {
-                lastEventNanos = System.nanoTime();
+                notifyAt = System.nanoTime() + debouncePeriodNanos;
                 mutex.notifyAll();
             }
         }
 
         private void start() {
+            notifyAt = Long.MAX_VALUE + System.nanoTime();
             Thread thread = new Thread(() -> {
                 synchronized (mutex) {
                     for (; ; ) {
@@ -115,15 +116,14 @@ public abstract class FileWatcher implements QuietCloseable {
                             return;
                         }
                         long now = System.nanoTime();
-                        // todo: check for overflow
-                        long waitNanos = lastEventNanos - now + debouncePeriodNanos;
+                        long waitNanos = notifyAt - now;
                         long waitMillis = waitNanos / 1_000_000;
                         try {
                             if (waitMillis > 0) {
                                 mutex.wait(waitMillis);
                             } else {
                                 delegate.onFileEvent();
-                                lastEventNanos = Long.MAX_VALUE;
+                                notifyAt = Long.MAX_VALUE + now;
                             }
                         } catch (InterruptedException e) {
                             Thread.currentThread().interrupt();
