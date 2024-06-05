@@ -134,6 +134,7 @@ mod tests {
         );
 
         Column::from_raw_data(
+            0,
             name,
             col_type as i32,
             0,
@@ -221,6 +222,7 @@ mod tests {
     ) {
         assert_eq!(ColumnType::Symbol, ColumnType::try_from(12).expect("fail"));
         let col1_w = Column::from_raw_data(
+            0,
             "col1",
             12,
             0,
@@ -281,6 +283,7 @@ mod tests {
         let expected2 = vec![Some(0.5f32), Some(0.001), None, Some(3.14)];
 
         let col1_w = Column::from_raw_data(
+            0,
             "col1",
             5,
             0,
@@ -295,6 +298,7 @@ mod tests {
         .unwrap();
 
         let col2_w = Column::from_raw_data(
+            0,
             "col2",
             9,
             0,
@@ -353,6 +357,7 @@ mod tests {
         let page_size_bytes = 256usize;
         let col1: Vec<i64> = (0..row_count).into_iter().map(|v| v as i64).collect();
         let col1_w = Column::from_raw_data(
+            0,
             "col1",
             6,
             0,
