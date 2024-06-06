@@ -17,12 +17,12 @@ fn encode_dict(
     column_vals: &[i32],
     offsets: &[u64],
     chars: &[u8],
-) -> (Vec<u8>, Vec<u32>, u32, BinaryMaxMin) {
+    stats: &mut BinaryMaxMin,
+) -> (Vec<u8>, Vec<u32>, u32) {
     let mut dict_buffer = vec![];
     let mut local_keys: Vec<u32> = Vec::new();
     let mut keys_to_local = HashMap::new();
     let mut serialized_count = 0;
-    let mut stats = BinaryMaxMin::new();
 
     for column_value in column_vals {
         if *column_value <= -1 {
@@ -50,14 +50,9 @@ fn encode_dict(
     }
     if serialized_count == 0 {
         // No symbol value used in the column data block, all were nulls
-        return (dict_buffer, local_keys, 0, stats);
+        return (dict_buffer, local_keys, 0);
     }
-    (
-        dict_buffer,
-        local_keys,
-        (serialized_count - 1) as u32,
-        stats,
-    )
+    (dict_buffer, local_keys, (serialized_count - 1) as u32)
 }
 
 pub fn symbol_to_pages(
@@ -89,7 +84,8 @@ pub fn symbol_to_pages(
     encode_bool_iter(&mut data_buffer, deflevels_iter, options.version)?;
     let definition_levels_byte_length = data_buffer.len();
 
-    let (dict_buffer, keys, max_key, stats) = encode_dict(column_values, offsets, chars);
+    let mut stats = BinaryMaxMin::new(&primitive_type);
+    let (dict_buffer, keys, max_key) = encode_dict(column_values, offsets, chars, &mut stats);
     let bits_per_key = util::get_bit_width(max_key as u64);
 
     let non_null_len = column_values.len() - null_count;
@@ -105,7 +101,7 @@ pub fn symbol_to_pages(
         null_count,
         definition_levels_byte_length,
         if options.write_statistics {
-            Some(stats.into_parquet_stats(null_count, &primitive_type))
+            Some(stats.into_parquet_stats(null_count))
         } else {
             None
         },

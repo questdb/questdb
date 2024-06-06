@@ -14,15 +14,15 @@ fn read_utf8_encoded_string_list(
     count: usize,
     strings_sink: *const u8,
     strings_len: usize,
-    lengths: *const i32,
+    sizes: *const i32,
 ) -> Vec<&'static str> {
     let mut strings = Vec::new();
     let mut utf8_sink =
         unsafe { std::str::from_utf8_unchecked(slice::from_raw_parts(strings_sink, strings_len)) };
 
-    let lengths = unsafe { slice::from_raw_parts(lengths, count) };
-    for len in lengths {
-        let (s, tail) = utf8_sink.split_at(*len as usize);
+    let sizes = unsafe { slice::from_raw_parts(sizes, count) };
+    for size in sizes {
+        let (s, tail) = utf8_sink.split_at(*size as usize);
         strings.push(s);
         utf8_sink = tail;
     }
@@ -34,10 +34,12 @@ fn read_utf8_encoded_string_list(
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEncoder_encodePartition(
     mut env: JNIEnv,
     _class: JClass,
+    table_name_ptr: *const u8,
+    table_name_size: jint,
     col_count: jint,
     col_names: *const u8,
     col_names_len: i32,
-    col_name_lengths_ptr: *const i32,
+    col_name_sizes_ptr: *const i32,
     col_types_ptr: *const i32,
     col_ids_ptr: *const i32,
     _timestamp_index: jint,
@@ -58,7 +60,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             col_count,
             col_names,
             col_names_len as usize,
-            col_name_lengths_ptr,
+            col_name_sizes_ptr,
         );
         let col_types = unsafe { slice::from_raw_parts(col_types_ptr, col_count) };
         let col_tops = unsafe { slice::from_raw_parts(col_tops_ptr, col_count) };
@@ -120,8 +122,14 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             columns.push(column);
         }
 
-        // TODO: use real table name
-        let partition = Partition { table: "test_table".to_string(), columns };
+        let table = unsafe {
+            std::str::from_utf8_unchecked(slice::from_raw_parts(
+                table_name_ptr,
+                table_name_size as usize,
+            ))
+        }
+        .to_string();
+        let partition = Partition { table, columns };
 
         let mut file = File::create(dest_path).with_context(|| {
             format!(

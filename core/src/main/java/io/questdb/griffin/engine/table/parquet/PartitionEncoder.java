@@ -44,9 +44,11 @@ public class PartitionEncoder implements QuietCloseable {
     private DirectIntList columnTypes = new DirectIntList(16, MemoryTag.NATIVE_DEFAULT);
     private DirectLongList symbolOffsetsAddrs = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
     private DirectLongList symbolOffsetsSizes = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
+    private DirectUtf8Sink tableName = new DirectUtf8Sink(16);
 
     @Override
     public void close() {
+        tableName = Misc.free(tableName);
         columnNames = Misc.free(columnNames);
         columnNameLengths = Misc.free(columnNameLengths);
         columnTypes = Misc.free(columnTypes);
@@ -64,6 +66,7 @@ public class PartitionEncoder implements QuietCloseable {
         final long partitionSize = tableReader.openPartition(partitionIndex);
         assert partitionSize != 0;
 
+        this.tableName.put(tableReader.getTableToken().getTableName());
         final TableReaderMetadata metadata = tableReader.getMetadata();
         final int columnCount = metadata.getColumnCount();
         final int columnBase = tableReader.getColumnBase(partitionIndex);
@@ -71,8 +74,9 @@ public class PartitionEncoder implements QuietCloseable {
             final String columnName = metadata.getColumnName(i);
             final int columnType = metadata.getColumnType(i);
             if (columnType > 0) {
+                final int startSize = columnNames.size();
                 columnNames.put(columnName);
-                columnNameLengths.add(columnName.length());
+                columnNameLengths.add(columnNames.size() - startSize);
                 columnTypes.add(columnType);
                 columnIds.add(metadata.getColumnMetadata(i).getWriterIndex());
                 final long colTop = Math.min(tableReader.getColumnTop(columnBase, i), partitionSize);
@@ -108,6 +112,8 @@ public class PartitionEncoder implements QuietCloseable {
 
         try {
             encodePartition(
+                    tableName.ptr(),
+                    tableName.size(),
                     columnCount,
                     columnNames.ptr(),
                     columnNames.size(),
@@ -138,6 +144,8 @@ public class PartitionEncoder implements QuietCloseable {
     }
 
     private static native void encodePartition(
+            long tableNamePtr,
+            int tableNameSize,
             int columnCount,
             long columnNamesPtr,
             int columnNamesLength,
