@@ -74,7 +74,7 @@ pub fn reduce(stats: &[&Option<Arc<dyn Statistics>>]) -> Result<Option<Arc<dyn S
             let stats = stats.iter().map(|x| x.as_any().downcast_ref().unwrap());
             Some(Arc::new(reduce_fix_len_binary(stats)))
         }
-        _ => todo!(),
+        _ => panic!("Unexpected physical type"),
     })
 }
 
