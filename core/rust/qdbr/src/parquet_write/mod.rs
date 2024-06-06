@@ -1,3 +1,5 @@
+use num_traits::AsPrimitive;
+
 mod binary;
 mod boolean;
 pub(crate) mod file;
@@ -15,24 +17,6 @@ pub(crate) type ParquetError = parquet2::error::Error;
 
 pub trait Nullable {
     fn is_null(&self) -> bool;
-}
-
-impl Nullable for i8 {
-    fn is_null(&self) -> bool {
-        false
-    }
-}
-
-impl Nullable for bool {
-    fn is_null(&self) -> bool {
-        false
-    }
-}
-
-impl Nullable for i16 {
-    fn is_null(&self) -> bool {
-        false
-    }
 }
 
 impl Nullable for i32 {
@@ -56,6 +40,81 @@ impl Nullable for f32 {
 impl Nullable for f64 {
     fn is_null(&self) -> bool {
         self.is_nan()
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct GeoByte(i8);
+
+impl Nullable for GeoByte {
+    fn is_null(&self) -> bool {
+        self.0 == -1
+    }
+}
+
+impl AsPrimitive<i32> for GeoByte {
+    fn as_(self) -> i32 {
+        self.0 as i32
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct GeoShort(i16);
+
+impl Nullable for GeoShort {
+    fn is_null(&self) -> bool {
+        self.0 == -1
+    }
+}
+
+impl AsPrimitive<i32> for GeoShort {
+    fn as_(self) -> i32 {
+        self.0 as i32
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct GeoInt(i32);
+
+impl Nullable for GeoInt {
+    fn is_null(&self) -> bool {
+        self.0 == -1
+    }
+}
+
+impl AsPrimitive<i32> for GeoInt {
+    fn as_(self) -> i32 {
+        self.0 as i32
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct GeoLong(i64);
+
+impl Nullable for GeoLong {
+    fn is_null(&self) -> bool {
+        self.0 == -1
+    }
+}
+
+impl AsPrimitive<i64> for GeoLong {
+    fn as_(self) -> i64 {
+        self.0 as i64
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct IPv4(i64);
+
+impl Nullable for IPv4 {
+    fn is_null(&self) -> bool {
+        self.0 == 0
+    }
+}
+
+impl AsPrimitive<i32> for IPv4 {
+    fn as_(self) -> i32 {
+        self.0 as i32
     }
 }
 

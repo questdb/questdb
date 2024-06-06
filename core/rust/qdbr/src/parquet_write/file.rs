@@ -19,7 +19,7 @@ use crate::parquet_write::{
     ParquetResult,
 };
 
-use super::util;
+use super::{util, GeoByte, GeoInt, GeoLong, GeoShort, IPv4};
 
 const DEFAULT_PAGE_SIZE: usize = 1024 * 1024;
 const DEFAULT_ROW_GROUP_SIZE: usize = 512 * 512;
@@ -298,9 +298,9 @@ fn chunk_to_page(
                 primitive_type,
             )
         }
-        ColumnType::Byte | ColumnType::GeoByte => {
+        ColumnType::Byte => {
             let column: &[i8] = unsafe { util::transmute_slice(column.primary_data) };
-            primitive::int_slice_to_page::<i8, i32>(
+            primitive::int_slice_to_page_notnull::<i8, i32>(
                 &column[lower_bound..upper_bound],
                 column_top,
                 options,
@@ -308,9 +308,9 @@ fn chunk_to_page(
                 encoding,
             )
         }
-        ColumnType::Short | ColumnType::Char | ColumnType::GeoShort => {
+        ColumnType::Short | ColumnType::Char => {
             let column: &[i16] = unsafe { util::transmute_slice(column.primary_data) };
-            primitive::int_slice_to_page::<i16, i32>(
+            primitive::int_slice_to_page_notnull::<i16, i32>(
                 &column[lower_bound..upper_bound],
                 column_top,
                 options,
@@ -318,9 +318,9 @@ fn chunk_to_page(
                 encoding,
             )
         }
-        ColumnType::Int | ColumnType::GeoInt | ColumnType::IPv4 => {
+        ColumnType::Int => {
             let column: &[i32] = unsafe { util::transmute_slice(column.primary_data) };
-            primitive::int_slice_to_page::<i32, i32>(
+            primitive::int_slice_to_page_nullable::<i32, i32>(
                 &column[lower_bound..upper_bound],
                 column_top,
                 options,
@@ -328,9 +328,59 @@ fn chunk_to_page(
                 encoding,
             )
         }
-        ColumnType::Long | ColumnType::GeoLong | ColumnType::Date | ColumnType::Timestamp => {
+        ColumnType::IPv4 => {
+            let column: &[IPv4] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::int_slice_to_page_nullable::<IPv4, i32>(
+                &column[lower_bound..upper_bound],
+                column_top,
+                options,
+                primitive_type,
+                encoding,
+            )
+        }
+        ColumnType::Long | ColumnType::Date | ColumnType::Timestamp => {
             let column: &[i64] = unsafe { util::transmute_slice(column.primary_data) };
-            primitive::int_slice_to_page::<i64, i64>(
+            primitive::int_slice_to_page_nullable::<i64, i64>(
+                &column[lower_bound..upper_bound],
+                column_top,
+                options,
+                primitive_type,
+                encoding,
+            )
+        }
+        ColumnType::GeoByte => {
+            let column: &[GeoByte] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::int_slice_to_page_nullable::<GeoByte, i32>(
+                &column[lower_bound..upper_bound],
+                column_top,
+                options,
+                primitive_type,
+                encoding,
+            )
+        }
+        ColumnType::GeoShort => {
+            let column: &[GeoShort] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::int_slice_to_page_nullable::<GeoShort, i32>(
+                &column[lower_bound..upper_bound],
+                column_top,
+                options,
+                primitive_type,
+                encoding,
+            )
+        }
+        ColumnType::GeoInt => {
+            let column: &[GeoInt] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::int_slice_to_page_nullable::<GeoInt, i32>(
+                &column[lower_bound..upper_bound],
+                column_top,
+                options,
+                primitive_type,
+                encoding,
+            )
+        }
+        ColumnType::GeoLong => {
+            let column: &[GeoLong] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::int_slice_to_page_nullable::<GeoLong, i64>(
                 &column[lower_bound..upper_bound],
                 column_top,
                 options,
