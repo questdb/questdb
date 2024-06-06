@@ -34,6 +34,34 @@ import org.junit.Test;
 public class InTimestampTimestampTest extends AbstractCairoTest {
 
     @Test
+    public void testBindVarRuntimeConstantsWithConstant() throws SqlException {
+        ddl("create table MovementLog(\n" +
+                "ts timestamp,\n" +
+                "initParticipantId long,\n" +
+                "initParticipantIdType symbol,\n" +
+                "movementBusinessDate date,\n" +
+                "slotId timestamp\n" +
+                ") timestamp(ts) partition by day wal\n");
+
+        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
+        tuples.add(new BindVariableTestTuple(
+                "runtime constants",
+                "participantId\tparticipantIdType\n",
+                bindVariableService -> {
+                    bindVariableService.setDate(0, 1000L);
+                    bindVariableService.setTimestamp(1, 2000L);
+                    bindVariableService.setTimestamp(2, 3000L);
+                }
+        ));
+
+        assertSql("SELECT DISTINCT initParticipantId AS participantId, initParticipantIdType AS participantIdType\n" +
+                "FROM 'MovementLog'\n" +
+                "WHERE movementBusinessDate=$1 AND slotId IN ($2, '1970-01-01T00:00:00.005000Z', $3)\n" +
+                "ORDER BY initParticipantId\n" +
+                "LIMIT 0,6", tuples);
+    }
+
+    @Test
     public void testBindVarTypeChange() throws SqlException {
         ddl("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(100))");
 
@@ -134,17 +162,6 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testListOfTimestampsUnsupportedType() throws Exception {
-        ddl("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(100))");
-
-        assertException(
-                "test where ts in ('1970-01-01T00:00:00.070000Z', true)",
-                49,
-                "cannot compare TIMESTAMP with type BOOLEAN"
-        );
-    }
-
-    @Test
     public void testListOfTimestampsInvalidInput() throws Exception {
         ddl("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(100))");
 
@@ -152,6 +169,17 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
                 "test where ts in ('1970-01-01T00:00:0.070000Z', 'abc')",
                 18,
                 "Invalid date [str=1970-01-01T00:00:0.070000Z]"
+        );
+    }
+
+    @Test
+    public void testListOfTimestampsUnsupportedType() throws Exception {
+        ddl("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(100))");
+
+        assertException(
+                "test where ts in ('1970-01-01T00:00:00.070000Z', true)",
+                49,
+                "cannot compare TIMESTAMP with type BOOLEAN"
         );
     }
 }
