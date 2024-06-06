@@ -89,11 +89,12 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
         this.confPath = Paths.get(this.getCairoConfiguration().getConfRoot().toString(), Bootstrap.CONFIG_FILE);
 
         try (Path p = new Path()) {
-            // todo: what happens if file doesn't exist?
+            // we assume the config file does exist, otherwise we should not
+            // get to this code. This constructor is passed properties object,
+            // loaded from the same file. We are not expecting races here either.
             p.of(this.confPath.toString()).$();
             this.lastModified = Files.getLastModified(p);
         }
-
     }
 
     public DynamicPropServerConfiguration(
@@ -263,7 +264,7 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
                         String oldVal = properties.getProperty(key);
                         if (oldVal == null || !oldVal.equals(newProperties.getProperty(key))) {
                             Optional<PropertyKey> prop = PropertyKey.getByString(key);
-                            if (!prop.isPresent()) {
+                            if (prop.isEmpty()) {
                                 return;
                             }
 
