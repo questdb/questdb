@@ -12,13 +12,12 @@ fn encode_plain<const N: usize>(
     data: &[[u8; N]],
     buffer: &mut Vec<u8>,
     null_value: [u8; N],
-) -> BinaryMaxMin {
-    let mut stats = BinaryMaxMin::new();
+    stats: &mut BinaryMaxMin,
+) {
     for x in data.into_iter().filter(|&&x| x != null_value) {
         buffer.extend_from_slice(x);
         stats.update(x);
     }
-    stats
 }
 
 pub fn bytes_to_page<const N: usize>(
@@ -52,14 +51,15 @@ pub fn bytes_to_page<const N: usize>(
 
     encode_bool_iter(&mut buffer, deflevels_iter, options.version)?;
     let definition_levels_byte_length = buffer.len();
-    let stats = encode_plain(data, &mut buffer, null_value);
+    let mut stats = BinaryMaxMin::new(&primitive_type);
+    encode_plain(data, &mut buffer, null_value, &mut stats);
     build_plain_page(
         buffer,
         num_rows,
         null_count,
         definition_levels_byte_length,
         if options.write_statistics {
-            Some(stats.into_parquet_stats(null_count, &primitive_type))
+            Some(stats.into_parquet_stats(null_count))
         } else {
             None
         },

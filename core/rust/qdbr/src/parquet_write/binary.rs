@@ -65,9 +65,16 @@ pub fn binary_to_page(
 
     let definition_levels_byte_length = buffer.len();
 
-    let stats = match encoding {
-        Encoding::Plain => Ok(encode_plain(offsets, data, &mut buffer)),
-        Encoding::DeltaLengthByteArray => Ok(encode_delta(offsets, data, null_count, &mut buffer)),
+    let mut stats = BinaryMaxMin::new(&primitive_type);
+    match encoding {
+        Encoding::Plain => Ok(encode_plain(offsets, data, &mut buffer, &mut stats)),
+        Encoding::DeltaLengthByteArray => Ok(encode_delta(
+            offsets,
+            data,
+            null_count,
+            &mut buffer,
+            &mut stats,
+        )),
         other => Err(ParquetError::OutOfSpec(format!(
             "Encoding binary as {:?}",
             other
@@ -80,7 +87,7 @@ pub fn binary_to_page(
         null_count,
         definition_levels_byte_length,
         if options.write_statistics {
-            Some(stats.into_parquet_stats(null_count, &primitive_type))
+            Some(stats.into_parquet_stats(null_count))
         } else {
             None
         },
@@ -91,9 +98,8 @@ pub fn binary_to_page(
     .map(Page::Data)
 }
 
-fn encode_plain(offsets: &[i64], values: &[u8], buffer: &mut Vec<u8>) -> BinaryMaxMin {
+fn encode_plain(offsets: &[i64], values: &[u8], buffer: &mut Vec<u8>, stats: &mut BinaryMaxMin) {
     let size_of_header = size_of::<i64>();
-    let mut stats = BinaryMaxMin::new();
 
     for offset in offsets {
         let offset = usize::try_from(*offset).expect("invalid offset value in binary aux column");
@@ -108,7 +114,6 @@ fn encode_plain(offsets: &[i64], values: &[u8], buffer: &mut Vec<u8>) -> BinaryM
         buffer.extend_from_slice(value);
         stats.update(value);
     }
-    stats
 }
 
 fn encode_delta(
@@ -116,14 +121,14 @@ fn encode_delta(
     values: &[u8],
     null_count: usize,
     buffer: &mut Vec<u8>,
-) -> BinaryMaxMin {
+    stats: &mut BinaryMaxMin,
+) {
     let size_of_header = size_of::<i64>();
     let row_count = offsets.len();
-    let mut stats = BinaryMaxMin::new();
 
     if row_count == 0 {
         delta_bitpacked::encode(std::iter::empty(), buffer);
-        return stats;
+        return;
     }
 
     // Reserve buffer capacity for performance reasons only. No effect on correctness.
@@ -158,5 +163,4 @@ fn encode_delta(
         buffer.extend_from_slice(value);
         stats.update(value);
     }
-    stats
 }

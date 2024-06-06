@@ -29,13 +29,12 @@ struct AuxEntrySplit {
     offset_hi: u32,
 }
 
-fn encode_plain(aux: &[[u8; 16]], data: &[u8], buffer: &mut Vec<u8>) -> BinaryMaxMin {
+fn encode_plain(aux: &[[u8; 16]], data: &[u8], buffer: &mut Vec<u8>, stats: &mut BinaryMaxMin) {
     assert!(
         mem::size_of::<AuxEntryInlined>() == 16 && mem::size_of::<AuxEntrySplit>() == 16,
         "size_of(AuxEntryInlined) or size_of(AuxEntrySplit) is not 16"
     );
     let aux: &[AuxEntryInlined] = unsafe { mem::transmute(aux) };
-    let mut stats = BinaryMaxMin::new();
 
     for entry in aux.iter().filter(|entry| !is_null(entry.header)) {
         let utf8_slice = if is_inlined(entry.header) {
@@ -53,7 +52,6 @@ fn encode_plain(aux: &[[u8; 16]], data: &[u8], buffer: &mut Vec<u8>) -> BinaryMa
         buffer.extend_from_slice(utf8_slice);
         stats.update(utf8_slice);
     }
-    stats
 }
 
 #[inline(always)]
@@ -95,14 +93,15 @@ pub fn varchar_to_page(
 
     encode_bool_iter(&mut buffer, deflevels_iter, options.version)?;
     let definition_levels_byte_length = buffer.len();
-    let stats = encode_plain(aux, data, &mut buffer);
+    let mut stats = BinaryMaxMin::new(&primitive_type);
+    encode_plain(aux, data, &mut buffer, &mut stats);
     build_plain_page(
         buffer,
         num_rows,
         null_count,
         definition_levels_byte_length,
         if options.write_statistics {
-            Some(stats.into_parquet_stats(null_count, &primitive_type))
+            Some(stats.into_parquet_stats(null_count))
         } else {
             None
         },
