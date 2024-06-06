@@ -41,6 +41,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.Properties;
+import java.util.concurrent.TimeUnit;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
@@ -76,7 +77,6 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 }
             }
         });
-
     }
 
     @Test
@@ -210,6 +210,36 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
             Assert.fail(e.getMessage());
         }
         Assert.assertTrue(serverConf.exists());
+    }
+
+    @Test
+    public void testReloadDisabled() throws Exception {
+        assertMemoryLeak(() -> {
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("pg.user=steven\n");
+                w.write("pg.password=sklar\n");
+                w.write("config.reload.enabled=false\n");
+            }
+
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                try (Connection conn = getConnection("steven", "sklar")) {
+                    Assert.assertFalse(conn.isClosed());
+                }
+
+                // Overwrite file to remove props
+                try (FileWriter w = new FileWriter(serverConf, false)) {
+                    w.write("\n");
+                }
+
+                Assert.assertFalse(latch.await(TimeUnit.SECONDS.toNanos(1)));
+
+                try (Connection conn = getConnection("steven", "sklar")) {
+                    Assert.assertFalse(conn.isClosed());
+                }
+            }
+        });
     }
 
     private static Connection getConnection(String user, String pass) throws SQLException {

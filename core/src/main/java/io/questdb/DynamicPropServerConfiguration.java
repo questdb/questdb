@@ -50,6 +50,7 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
     ));
     private final String root;
     private Runnable afterConfigReloaded;
+    private final boolean configReloadEnabled;
     private long lastModified;
 
     public DynamicPropServerConfiguration(
@@ -72,7 +73,6 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
         this.microsecondClock = microsecondClock;
         this.fpf = fpf;
         this.loadAdditionalConfigurations = loadAdditionalConfigurations;
-
         PropServerConfiguration serverConfig = new PropServerConfiguration(
                 root,
                 properties,
@@ -95,6 +95,7 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
             p.of(this.confPath.toString()).$();
             this.lastModified = Files.getLastModified(p);
         }
+        this.configReloadEnabled = serverConfig.isConfigReloadEnabled();
     }
 
     public DynamicPropServerConfiguration(
@@ -229,6 +230,11 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
     @Override
     public void init(CairoEngine engine, FreeOnExit freeOnExit) {
         delegate.get().init(this, engine, freeOnExit);
+    }
+
+    @Override
+    public boolean isConfigReloadEnabled() {
+        return configReloadEnabled;
     }
 
     @Override

@@ -274,16 +274,14 @@ public class ServerMain implements Closeable {
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
 
         if (config instanceof DynamicServerConfiguration) {
-            try (Path path = new Path()) {
-                path.of(cairoConfig.getConfRoot()).concat(Bootstrap.CONFIG_FILE).$();
-                fileWatcher = FileWatcherFactory.getFileWatcher(
-                        path,
-                        (DynamicServerConfiguration) config
-                );
-            }
-            if (fileWatcher == null) {
-                bootstrap.getLog().advisoryW().$("filewatcher not started because we didn't implement this for windows yet");
-            } else {
+            if (((DynamicServerConfiguration) config).isConfigReloadEnabled()) {
+                try (Path path = new Path()) {
+                    path.of(cairoConfig.getConfRoot()).concat(Bootstrap.CONFIG_FILE).$();
+                    fileWatcher = FileWatcherFactory.getFileWatcher(
+                            path,
+                            (DynamicServerConfiguration) config
+                    );
+                }
                 fileWatcher.start();
             }
         }

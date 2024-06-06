@@ -405,6 +405,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     protected StaticContentProcessorConfiguration staticContentProcessorConfiguration;
     protected long walSegmentRolloverSize;
     private long cairoSqlCopyMaxIndexChunkSize;
+    private final boolean configReloadEnabled;
     private FactoryProvider factoryProvider;
     private short floatDefaultColumnType;
     private int httpMinBindIPv4Address;
@@ -1310,6 +1311,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         this.posthogEnabled = getBoolean(properties, env, PropertyKey.POSTHOG_ENABLED, false);
         this.posthogApiKey = getString(properties, env, PropertyKey.POSTHOG_API_KEY, null);
+        this.configReloadEnabled = getBoolean(properties, env, PropertyKey.CONFIG_RELOAD_ENABLED, true);
     }
 
     public static String rootSubdir(CharSequence dbRoot, CharSequence subdir) {
@@ -1407,6 +1409,10 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     public void init(ServerConfiguration config, CairoEngine engine, FreeOnExit freeOnExit) {
         this.factoryProvider = fpf.getInstance(config, engine, freeOnExit);
+    }
+
+    public boolean isConfigReloadEnabled() {
+        return configReloadEnabled;
     }
 
     private int[] getAffinity(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, int workerCount) throws ServerConfigurationException {
