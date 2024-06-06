@@ -30,6 +30,7 @@ import io.questdb.network.EpollFacade;
 import io.questdb.network.EpollFacadeImpl;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.Files;
+import io.questdb.std.Os;
 import io.questdb.std.filewatch.LinuxAccessorFacade;
 import io.questdb.std.filewatch.LinuxAccessorFacadeImpl;
 import io.questdb.std.filewatch.LinuxFileWatcher;
@@ -38,6 +39,7 @@ import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -60,6 +62,11 @@ public class LinuxFileWatcherTest extends AbstractTest {
             writer.println(HTTP_ENABLED + "=true");
         }
         configPath = new Utf8String(file);
+    }
+
+    @Before
+    public void ensureLinux() {
+        Assume.assumeTrue(Os.isLinux());
     }
 
     @Test
