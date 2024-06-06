@@ -114,6 +114,10 @@ public final class LinuxFileWatcher extends FileWatcher {
             throw CairoException.critical(Os.errno()).put("epoll_wait error");
         }
 
+        if (isClosed()) {
+            return;
+        }
+
         // Read the inotify_event into the buffer
         int res = accessorFacade.readEvent(inotifyFd, buf, bufSize);
         if (res < 0) {

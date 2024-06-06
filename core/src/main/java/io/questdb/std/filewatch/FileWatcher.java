@@ -39,7 +39,7 @@ public abstract class FileWatcher implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(FileWatcher.class);
     protected final DebouncingCallback callback;
     private final AtomicBoolean closed = new AtomicBoolean();
-    private final SOCountDownLatch haltedLatch = new SOCountDownLatch(1);
+    private final SOCountDownLatch haltedLatch = new SOCountDownLatch(2);
     private final Thread reloadThread;
     private final AtomicBoolean started = new AtomicBoolean();
     private final SOCountDownLatch startedLatch = new SOCountDownLatch(1);
@@ -73,6 +73,7 @@ public abstract class FileWatcher implements QuietCloseable {
             if (started.compareAndSet(true, false)) {
                 startedLatch.await();
                 releaseWait();
+                callback.close();
                 haltedLatch.await();
                 _close();
             }
@@ -88,6 +89,10 @@ public abstract class FileWatcher implements QuietCloseable {
     }
 
     protected abstract void _close();
+
+    protected boolean isClosed() {
+        return closed.get();
+    }
 
     protected abstract void releaseWait();
 
