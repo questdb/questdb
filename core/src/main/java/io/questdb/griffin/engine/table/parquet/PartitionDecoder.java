@@ -138,11 +138,18 @@ public class PartitionDecoder implements QuietCloseable {
     public static class ColumnChunkBuffers implements QuietCloseable {
         private static final long DATA_PTR_OFFSET = 0;
         private static final long DATA_SIZE_OFFSET = DATA_PTR_OFFSET + Long.BYTES;
-        private static final long AUX_PTR_OFFSET = DATA_SIZE_OFFSET + Long.BYTES;
+        private static final long DATA_POS_OFFSET = DATA_SIZE_OFFSET + Long.BYTES;
+        private static final long AUX_PTR_OFFSET = DATA_POS_OFFSET + Long.BYTES;
         private static final long AUX_SIZE_OFFSET = AUX_PTR_OFFSET + Long.BYTES;
-        private static final long SIZE = AUX_SIZE_OFFSET + Long.BYTES;
+        private static final long AUX_POS_OFFSET = AUX_SIZE_OFFSET + Long.BYTES;
+        private static final long SIZE = AUX_POS_OFFSET + Long.BYTES;
 
         private long ptr;
+
+        public long auxPos() {
+            assert ptr != 0;
+            return Unsafe.getUnsafe().getLong(ptr + AUX_POS_OFFSET);
+        }
 
         public long auxPtr() {
             assert ptr != 0;
@@ -160,6 +167,11 @@ public class PartitionDecoder implements QuietCloseable {
             setDataSize(0);
             setAuxPtr(0);
             setAuxSize(0);
+        }
+
+        public long dataPos() {
+            assert ptr != 0;
+            return Unsafe.getUnsafe().getLong(ptr + DATA_POS_OFFSET);
         }
 
         public long dataPtr() {

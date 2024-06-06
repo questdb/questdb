@@ -24,21 +24,21 @@
 
 package io.questdb.test.griffin.engine.table.parquet;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class PartitionDecoderTest extends AbstractCairoTest {
 
     @Test
-    @Ignore
     public void testDecodeColumnChunk() throws Exception {
         assertMemoryLeak(() -> {
             final long rows = 1001;
@@ -61,16 +61,25 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                         PartitionDecoder.ColumnChunkBuffers buffers = partitionDecoder.decodeColumnChunk(
                                 0,
                                 0,
-                                0,
+                                ColumnType.INT,
                                 0,
                                 0,
                                 0,
                                 0
                         )
                 ) {
-                    Assert.assertEquals(rows * Integer.BYTES, buffers.dataSize());
+                    Assert.assertTrue(buffers.dataPtr() != 0);
+                    Assert.assertEquals(rows * Integer.BYTES, buffers.dataPos());
+                    Assert.assertTrue(buffers.dataSize() >= buffers.dataPos());
+                    Assert.assertEquals(0, buffers.auxPtr());
+                    Assert.assertEquals(0, buffers.auxPos());
+                    Assert.assertTrue(buffers.auxSize() >= buffers.auxPos());
 
-                    // TODO: free buffers memory
+                    for (int i = 0; i < rows; i++) {
+                        Assert.assertEquals(i + 1, Unsafe.getUnsafe().getInt(buffers.dataPtr() + (long) Integer.BYTES * i));
+                    }
+
+                    Unsafe.getUnsafe().freeMemory(buffers.dataPtr());
                 }
             }
         });

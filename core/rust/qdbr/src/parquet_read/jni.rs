@@ -1,4 +1,5 @@
 use std::fs::File;
+use std::ops::Sub;
 use std::path::Path;
 use std::slice;
 
@@ -12,6 +13,8 @@ use parquet2::page::{split_buffer, DataPage, DictPage, Page};
 use parquet2::read::{decompress, get_page_iterator, read_metadata};
 use parquet2::schema::types::ParquetType::{GroupType, PrimitiveType};
 use parquet2::schema::types::PhysicalType;
+
+const MAX_ALLOC_SIZE: usize = i32::MAX as usize;
 
 // These constants should match constants in Java's PartitionDecoder.
 pub const BOOLEAN: u32 = 0;
@@ -50,10 +53,6 @@ impl ParquetDecoder {
         _column_type: i32,
         buffers: &mut ColumnChunkBuffers,
     ) -> anyhow::Result<()> {
-        // TODO: support input buffers
-        assert!(buffers.aux_ptr.is_null());
-        assert!(buffers.data_ptr.is_null());
-
         let columns = self.metadata.row_groups[row_group].columns();
         let column_metadata = &columns[column];
 
@@ -61,8 +60,6 @@ impl ParquetDecoder {
         let page_reader =
             get_page_iterator(column_metadata, &mut self.reader, None, vec![], 1024 * 1024)?;
 
-        let mut data_buffer = Vec::with_capacity(column_metadata.uncompressed_size() as usize);
-        let mut aux_buffer = vec![];
         let mut dict = None;
         for maybe_page in page_reader {
             let page = maybe_page?;
@@ -74,17 +71,9 @@ impl ParquetDecoder {
                     dict = Some(page);
                 }
                 Page::Data(mut page) => {
-                    decode(&mut page, dict.as_ref(), &mut data_buffer, &mut aux_buffer)?;
+                    decode(&mut page, dict.as_ref(), buffers)?;
                 }
-            }
-
-            buffers.data_size = data_buffer.len();
-            let data_buffer: &mut [u8] = &mut data_buffer;
-            buffers.data_ptr = data_buffer.as_mut_ptr();
-
-            buffers.aux_size = aux_buffer.len();
-            let aux_buffer: &mut [u8] = &mut aux_buffer;
-            buffers.aux_ptr = aux_buffer.as_mut_ptr();
+            };
         }
 
         return Ok(());
@@ -92,12 +81,11 @@ impl ParquetDecoder {
 }
 
 fn decode(
-    page: &mut DataPage,
+    page: &DataPage,
     dict: Option<&DictPage>,
-    data_buffer: &mut Vec<u8>,
-    _aux_buffer: &mut Vec<u8>,
+    buffers: &mut ColumnChunkBuffers,
 ) -> anyhow::Result<()> {
-    let (_rep_levels, _def_levels, _values_buffer) = split_buffer(page)?;
+    let (_rep_levels, _def_levels, values_buffer) = split_buffer(page)?;
 
     match (
         page.descriptor.primitive_type.physical_type,
@@ -105,7 +93,14 @@ fn decode(
         dict,
     ) {
         (PhysicalType::Int32, Encoding::Plain, None) => {
-            data_buffer.append(page.buffer_mut());
+            let prev_pos = buffers.book_data(values_buffer.len())?;
+            unsafe {
+                libc::memcpy(
+                    buffers.data_ptr.add(prev_pos) as *mut libc::c_void,
+                    values_buffer.as_ptr() as *mut libc::c_void,
+                    values_buffer.len(),
+                )
+            };
             Ok(())
         }
         _ => return Err(anyhow!("deserialization not supported")),
@@ -117,8 +112,92 @@ fn decode(
 pub struct ColumnChunkBuffers {
     data_ptr: *mut u8,
     data_size: usize,
+    data_pos: usize,
     aux_ptr: *mut u8,
     aux_size: usize,
+    aux_pos: usize,
+}
+
+impl ColumnChunkBuffers {
+    pub fn avail_aux(&self) -> usize {
+        if self.aux_ptr.is_null() {
+            0
+        } else {
+            self.aux_size - self.aux_pos
+        }
+    }
+
+    pub fn avail_data(&self) -> usize {
+        if self.data_ptr.is_null() {
+            0
+        } else {
+            self.data_size - self.data_pos
+        }
+    }
+
+    // returns old aux_pos value
+    pub fn book_aux(&mut self, wanted: usize) -> anyhow::Result<usize> {
+        let prev_aux_pos = self.aux_pos;
+        let avail = self.avail_aux();
+        if avail >= wanted {
+            self.aux_pos += wanted;
+            return Ok(prev_aux_pos);
+        }
+        let needed = wanted - avail;
+
+        let new_size = (self.aux_size + needed)
+            .next_power_of_two()
+            .min(MAX_ALLOC_SIZE);
+        if (new_size == MAX_ALLOC_SIZE) && (new_size < (self.aux_size + needed)) {
+            return Err(anyhow!("aux buffer overflowed 2GiB limit"));
+        }
+
+        let new_ptr = if self.aux_ptr.is_null() {
+            unsafe { libc::malloc(new_size) }
+        } else {
+            unsafe { libc::realloc(self.aux_ptr as *mut libc::c_void, new_size) }
+        } as *mut u8;
+        if new_ptr.is_null() {
+            return Err(anyhow!("aux alloc failed (out of memory)"));
+        }
+
+        self.aux_ptr = new_ptr;
+        self.aux_size = new_size;
+        self.aux_pos += wanted;
+        Ok(prev_aux_pos)
+    }
+
+    // returns old data_pos value
+    pub fn book_data(&mut self, wanted: usize) -> anyhow::Result<usize> {
+        let prev_data_pos = self.data_pos;
+        let avail = self.avail_data();
+        if avail >= wanted {
+            self.data_pos += wanted;
+            return Ok(prev_data_pos);
+        }
+        let needed = wanted - avail;
+
+        let new_size = (self.data_size + needed)
+            .next_power_of_two()
+            .min(MAX_ALLOC_SIZE);
+        if (new_size == MAX_ALLOC_SIZE) && (new_size < (self.data_size + needed)) {
+            return Err(anyhow!("data buffer overflowed 2GiB limit"));
+        }
+
+        let new_ptr = if self.data_ptr.is_null() {
+            unsafe { libc::malloc(new_size) }
+        } else {
+            unsafe { libc::realloc(self.data_ptr as *mut libc::c_void, new_size) }
+        } as *mut u8;
+        if new_ptr.is_null() {
+            return Err(anyhow!("data alloc failed (out of memory)"));
+        }
+
+        self.data_ptr = new_ptr;
+        self.data_size = new_size;
+        self.data_pos += wanted;
+        Ok(prev_data_pos)
+    }
 }
 
 #[no_mangle]
