@@ -184,6 +184,8 @@ public class Bootstrap {
             }
             reportValidateConfig();
             reportCrashFiles(config.getCairoConfiguration(), log);
+        } catch (BootstrapException e) {
+            throw e;
         } catch (Throwable e) {
             log.errorW().$(e).$();
             throw new BootstrapException(e);
@@ -348,7 +350,12 @@ public class Bootstrap {
         final Properties properties = new Properties();
         java.nio.file.Path configFile = Paths.get(rootDirectory, PropServerConfiguration.CONFIG_DIRECTORY, CONFIG_FILE);
         log.advisoryW().$("Server config: ").$(configFile).$();
-
+        if (!java.nio.file.Files.exists(configFile)) {
+            throw new BootstrapException("Server configuration file does not exist! " + configFile, true);
+        }
+        if (!java.nio.file.Files.isReadable(configFile)) {
+            throw new BootstrapException("Server configuration file exists, but is not readable! Check file permissions. " + configFile, true);
+        }
         try (InputStream is = java.nio.file.Files.newInputStream(configFile)) {
             properties.load(is);
         }
@@ -668,12 +675,23 @@ public class Bootstrap {
     }
 
     public static class BootstrapException extends RuntimeException {
+        private boolean silentStacktrace = false;
+
         public BootstrapException(String message) {
+            this(message, false);
+        }
+
+        public BootstrapException(String message, boolean silentStacktrace) {
             super(message);
+            this.silentStacktrace = silentStacktrace;
         }
 
         public BootstrapException(Throwable thr) {
             super(thr);
+        }
+
+        public boolean isSilentStacktrace() {
+            return silentStacktrace;
         }
     }
 

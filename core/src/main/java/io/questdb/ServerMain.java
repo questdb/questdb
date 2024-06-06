@@ -159,6 +159,14 @@ public class ServerMain implements Closeable {
     public static void main(String[] args) {
         try {
             new ServerMain(args).start(true);
+        } catch (Bootstrap.BootstrapException e) {
+            if (e.isSilentStacktrace()) {
+                System.err.println(e.getMessage());
+            } else {
+                e.printStackTrace();
+            }
+            LogFactory.closeInstance();
+            System.exit(55);
         } catch (Throwable thr) {
             thr.printStackTrace();
             LogFactory.closeInstance();
