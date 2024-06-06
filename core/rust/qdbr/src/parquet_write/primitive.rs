@@ -12,7 +12,7 @@ use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter, MaxMin};
 use crate::parquet_write::{Nullable, ParquetError, ParquetResult};
 
-pub fn float_slice_to_page_plain<T: From<i8> + Debug, P>(
+pub fn float_slice_to_page_plain<T, P>(
     slice: &[T],
     column_top: usize,
     options: WriteOptions,
@@ -20,9 +20,8 @@ pub fn float_slice_to_page_plain<T: From<i8> + Debug, P>(
 ) -> ParquetResult<Page>
 where
     P: NativeType,
-    T: num_traits::AsPrimitive<P> + Nullable + num_traits::Float,
+    T: Nullable + num_traits::AsPrimitive<P> + num_traits::Float + From<i8> + Debug,
 {
-    assert!(primitive_type.field_info.repetition == Repetition::Optional);
     slice_to_page_nullable(
         slice,
         column_top,
@@ -42,10 +41,9 @@ pub fn int_slice_to_page_nullable<T, P>(
     encoding: Encoding,
 ) -> ParquetResult<Page>
 where
-    P: num_traits::AsPrimitive<i64> + NativeType,
-    T: num_traits::AsPrimitive<P> + Nullable + Debug,
+    P: NativeType + num_traits::AsPrimitive<i64>,
+    T: Nullable + num_traits::AsPrimitive<P> + Debug,
 {
-    assert!(primitive_type.field_info.repetition == Repetition::Optional);
     match encoding {
         Encoding::Plain => slice_to_page_nullable(
             slice,
@@ -79,8 +77,8 @@ pub fn int_slice_to_page_notnull<T, P>(
     encoding: Encoding,
 ) -> ParquetResult<Page>
 where
-    P: num_traits::AsPrimitive<i64> + NativeType,
-    T: num_traits::AsPrimitive<P> + Default + Debug,
+    P: NativeType + num_traits::AsPrimitive<i64>,
+    T: Default + num_traits::AsPrimitive<P> + Debug,
 {
     match encoding {
         Encoding::Plain => slice_to_page_notnull(
@@ -117,8 +115,9 @@ fn slice_to_page_notnull<T, P, F: Fn(&[T], usize) -> Vec<u8>>(
 ) -> ParquetResult<DataPage>
 where
     P: NativeType,
-    T: num_traits::AsPrimitive<P> + Default + Debug,
+    T: Default + num_traits::AsPrimitive<P> + Debug,
 {
+    assert!(primitive_type.field_info.repetition == Repetition::Required);
     let statistics = if options.write_statistics {
         let mut statistics = MaxMin::new();
         for value in slice {
@@ -155,9 +154,10 @@ fn slice_to_page_nullable<T, P, F>(
 ) -> ParquetResult<DataPage>
 where
     P: NativeType,
-    T: num_traits::AsPrimitive<P> + Nullable + Debug,
+    T: Nullable + num_traits::AsPrimitive<P> + Debug,
     F: Fn(&[T], usize, Vec<u8>) -> Vec<u8>,
 {
+    assert!(primitive_type.field_info.repetition == Repetition::Optional);
     let num_rows = column_top + slice.len();
     let mut null_count = 0;
     let mut statistics = MaxMin::new();
@@ -209,7 +209,7 @@ where
 fn encode_plain_notnull<T, P>(slice: &[T], column_top: usize) -> Vec<u8>
 where
     P: NativeType,
-    T: num_traits::AsPrimitive<P> + Default,
+    T: Default + num_traits::AsPrimitive<P>,
 {
     let mut buffer = Vec::with_capacity(std::mem::size_of::<P>() * (column_top + slice.len()));
     for i in 0..column_top + slice.len() {
@@ -226,9 +226,8 @@ where
 
 fn encode_delta_notnull<T, P>(slice: &[T], column_top: usize) -> Vec<u8>
 where
-    P: NativeType,
-    P: num_traits::AsPrimitive<i64>,
-    T: num_traits::AsPrimitive<P> + Default,
+    P: NativeType + num_traits::AsPrimitive<i64>,
+    T: Default + num_traits::AsPrimitive<P>,
 {
     let iterator = (0..column_top + slice.len()).map(|i| {
         let x = if i < column_top {
@@ -248,7 +247,7 @@ where
 fn encode_plain_nullable<T, P>(slice: &[T], null_count: usize, mut buffer: Vec<u8>) -> Vec<u8>
 where
     P: NativeType,
-    T: num_traits::AsPrimitive<P> + Nullable,
+    T: Nullable + num_traits::AsPrimitive<P>,
 {
     buffer.reserve(std::mem::size_of::<P>() * (slice.len() - null_count));
     for x in slice.iter().filter(|x| !x.is_null()) {
@@ -260,9 +259,8 @@ where
 
 fn encode_delta_nullable<T, P>(slice: &[T], null_count: usize, mut buffer: Vec<u8>) -> Vec<u8>
 where
-    P: NativeType,
-    P: num_traits::AsPrimitive<i64>,
-    T: num_traits::AsPrimitive<P> + Nullable,
+    P: NativeType + num_traits::AsPrimitive<i64>,
+    T: Nullable + num_traits::AsPrimitive<P>,
 {
     let iterator = slice.iter().filter(|x| !x.is_null()).map(|x| {
         let parquet_native: P = x.as_();
