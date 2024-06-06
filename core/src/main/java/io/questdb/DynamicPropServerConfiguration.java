@@ -288,8 +288,17 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
                     // Check for any old reloadable properties that have been removed in the new config
                     properties.forEach((k, v) -> {
                         if (!newProperties.containsKey(k)) {
-                            this.properties.remove(k);
-                            changed.set(true);
+                            Optional<PropertyKey> prop = PropertyKey.getByString((String) k);
+                            if (!prop.isPresent()) {
+                                return;
+                            }
+                            if (reloadableProps.contains(prop.get())) {
+                                LOG.info().$("removed property ").$(k).$();
+                                this.properties.remove(k);
+                                changed.set(true);
+                            } else {
+                                LOG.advisory().$("property ").$(k).$(" was removed from the config file but cannot be reloaded. ignoring").$();
+                            }
                         }
                     });
 
