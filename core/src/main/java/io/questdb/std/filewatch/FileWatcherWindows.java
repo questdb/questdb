@@ -75,7 +75,7 @@ public class FileWatcherWindows extends FileWatcher {
     protected void waitForChange() {
         if (accessor.readDirectoryChanges(pWatch)) {
             if (Utf8s.equals(fileName, accessor.getFileName(pWatch), accessor.getFileNameSize(pWatch))) {
-                runnable.run();
+                callback.onFileEvent();
             }
         }
     }

@@ -127,7 +127,7 @@ public abstract class FileWatcher implements QuietCloseable {
                 synchronized (mutex) {
                     for (; ; ) {
                         if (closed) {
-                            latch.countDown();
+                            haltedLatch.countDown();
                             return;
                         }
                         long now = System.nanoTime();
