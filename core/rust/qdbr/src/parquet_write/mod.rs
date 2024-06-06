@@ -104,7 +104,7 @@ impl AsPrimitive<i64> for GeoLong {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct IPv4(i64);
+pub struct IPv4(i32);
 
 impl Nullable for IPv4 {
     fn is_null(&self) -> bool {
