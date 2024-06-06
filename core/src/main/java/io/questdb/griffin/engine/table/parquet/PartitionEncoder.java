@@ -71,8 +71,9 @@ public class PartitionEncoder implements QuietCloseable {
             final String columnName = metadata.getColumnName(i);
             final int columnType = metadata.getColumnType(i);
             if (columnType > 0) {
+                final int startSize = columnNames.size();
                 columnNames.put(columnName);
-                columnNameLengths.add(columnName.length());
+                columnNameLengths.add(columnNames.size() - startSize);
                 columnTypes.add(columnType);
                 columnIds.add(metadata.getColumnMetadata(i).getWriterIndex());
                 final long colTop = Math.min(tableReader.getColumnTop(columnBase, i), partitionSize);

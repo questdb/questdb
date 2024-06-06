@@ -14,15 +14,15 @@ fn read_utf8_encoded_string_list(
     count: usize,
     strings_sink: *const u8,
     strings_len: usize,
-    lengths: *const i32,
+    sizes: *const i32,
 ) -> Vec<&'static str> {
     let mut strings = Vec::new();
     let mut utf8_sink =
         unsafe { std::str::from_utf8_unchecked(slice::from_raw_parts(strings_sink, strings_len)) };
 
-    let lengths = unsafe { slice::from_raw_parts(lengths, count) };
-    for len in lengths {
-        let (s, tail) = utf8_sink.split_at(*len as usize);
+    let sizes = unsafe { slice::from_raw_parts(sizes, count) };
+    for size in sizes {
+        let (s, tail) = utf8_sink.split_at(*size as usize);
         strings.push(s);
         utf8_sink = tail;
     }
