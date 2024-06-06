@@ -60,21 +60,24 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
         validateColumnTypes(args, argPositions, true);
 
         final int numberOfPairs = (args.size() - 1) / 2;
+        if (numberOfPairs == 0) {
+            throw SqlException.position(argPositions.getLast()).put("not enough arguments for l2price");
+        }
+        final IntList positions = new IntList();
+        positions.addAll(argPositions);
         switch (numberOfPairs) {
-            case 0:
-                throw SqlException.position(argPositions.getLast()).put("not enough arguments for l2price");
             case 1:
-                return new L2PriceFunction1(new ObjList<>(args), argPositions);
+                return new L2PriceFunction1(new ObjList<>(args), positions);
             case 2:
-                return new L2PriceFunction2(new ObjList<>(args), argPositions);
+                return new L2PriceFunction2(new ObjList<>(args), positions);
             case 3:
-                return new L2PriceFunction3(new ObjList<>(args), argPositions);
+                return new L2PriceFunction3(new ObjList<>(args), positions);
             case 4:
-                return new L2PriceFunction4(new ObjList<>(args), argPositions);
+                return new L2PriceFunction4(new ObjList<>(args), positions);
             case 5:
-                return new L2PriceFunction5(new ObjList<>(args), argPositions);
+                return new L2PriceFunction5(new ObjList<>(args), positions);
             default:
-                return new L2PriceFunctionN(new ObjList<>(args), argPositions);
+                return new L2PriceFunctionN(new ObjList<>(args), positions);
         }
     }
 

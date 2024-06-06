@@ -870,7 +870,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // Set txn number in the column version file to mark the transaction where the column is added
             long firstPartitionTsm = columnVersionWriter.getColumnTopPartitionTimestamp(existingColIndex);
-            if (firstPartitionTsm == Long.MIN_VALUE) {
+            if (firstPartitionTsm == Long.MIN_VALUE && txWriter.getPartitionCount() > 0) {
                 firstPartitionTsm = txWriter.getPartitionTimestampByIndex(0);
             }
             columnVersionWriter.upsertDefaultTxnName(columnIndex, columnNameTxn, firstPartitionTsm);
