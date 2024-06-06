@@ -33,6 +33,7 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
     private static final Log LOG = LogFactory.getLog(DynamicPropServerConfiguration.class);
     private final BuildInformation buildInformation;
     private final java.nio.file.Path confPath;
+    private final boolean configReloadEnabled;
     private final AtomicReference<PropServerConfiguration> delegate;
     private final @Nullable Map<String, String> env;
     private final FilesFacade filesFacade;
@@ -50,7 +51,6 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
     ));
     private final String root;
     private Runnable afterConfigReloaded;
-    private final boolean configReloadEnabled;
     private long lastModified;
 
     public DynamicPropServerConfiguration(
@@ -270,7 +270,7 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
                         String oldVal = properties.getProperty(key);
                         if (oldVal == null || !oldVal.equals(newProperties.getProperty(key))) {
                             Optional<PropertyKey> prop = PropertyKey.getByString(key);
-                            if (prop.isEmpty()) {
+                            if (!prop.isPresent()) {
                                 return;
                             }
 

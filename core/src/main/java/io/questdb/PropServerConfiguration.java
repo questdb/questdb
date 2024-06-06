@@ -117,6 +117,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int commitMode;
     private final TimestampFormatCompiler compiler = new TimestampFormatCompiler();
     private final String confRoot;
+    private final boolean configReloadEnabled;
     private final int connectionPoolInitialCapacity;
     private final int connectionStringPoolCapacity;
     private final int createAsSelectRetryCount;
@@ -405,7 +406,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     protected StaticContentProcessorConfiguration staticContentProcessorConfiguration;
     protected long walSegmentRolloverSize;
     private long cairoSqlCopyMaxIndexChunkSize;
-    private final boolean configReloadEnabled;
     private FactoryProvider factoryProvider;
     private short floatDefaultColumnType;
     private int httpMinBindIPv4Address;
