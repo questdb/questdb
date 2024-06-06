@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table.parquet;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.std.*;
+import io.questdb.std.str.DirectString;
 import io.questdb.std.str.Path;
 
 public class PartitionDecoder implements QuietCloseable {
@@ -40,9 +41,12 @@ public class PartitionDecoder implements QuietCloseable {
     private static final long COLUMN_COUNT_OFFSET = 0;
     private static final long ROW_COUNT_OFFSET = COLUMN_COUNT_OFFSET + Long.BYTES;
     private static final long ROW_GROUP_COUNT_OFFSET = ROW_COUNT_OFFSET + Long.BYTES;
-    private static final long COLUMN_IDS_OFFSET = ROW_GROUP_COUNT_OFFSET + Long.BYTES;
+    private static final long COLUMN_NAMES_OFFSET = ROW_GROUP_COUNT_OFFSET + Long.BYTES;
+    private static final long COLUMN_NAME_LENGTHS_OFFSET = COLUMN_NAMES_OFFSET + Long.BYTES;
+    private static final long COLUMN_IDS_OFFSET = COLUMN_NAME_LENGTHS_OFFSET + Long.BYTES;
     private static final long COLUMN_PHYSICAL_TYPES_OFFSET = COLUMN_IDS_OFFSET + Long.BYTES;
     private final ColumnChunkBuffers chunkBuffers;
+    private final ObjectPool<DirectString> directStringPool = new ObjectPool<>(DirectString::new, 16);
     private final Metadata metadata = new Metadata();
     private final Path path;
     private long ptr;
@@ -103,6 +107,7 @@ public class PartitionDecoder implements QuietCloseable {
         path.of(srcPath);
         try {
             ptr = create(path.ptr(), path.size());
+            metadata.init();
         } catch (Throwable th) {
             throw CairoException.critical(0).put("Could not describe partition: [path=").put(path)
                     .put(", exception=").put(th.getClass().getSimpleName())
@@ -206,14 +211,19 @@ public class PartitionDecoder implements QuietCloseable {
     }
 
     public class Metadata {
+        private final ObjList<DirectString> columnNames = new ObjList<>();
 
-        public long columnCount() {
-            return Unsafe.getUnsafe().getLong(ptr + COLUMN_COUNT_OFFSET);
+        public int columnCount() {
+            return Unsafe.getUnsafe().getInt(ptr + COLUMN_COUNT_OFFSET);
         }
 
         public int columnId(int index) {
             long p = Unsafe.getUnsafe().getLong(ptr + COLUMN_IDS_OFFSET);
             return Unsafe.getUnsafe().getInt(p + (long) Integer.BYTES * index);
+        }
+
+        public CharSequence columnName(int index) {
+            return columnNames.getQuick(index);
         }
 
         public long columnPhysicalType(int index) {
@@ -225,8 +235,25 @@ public class PartitionDecoder implements QuietCloseable {
             return Unsafe.getUnsafe().getLong(ptr + ROW_COUNT_OFFSET);
         }
 
-        public long rowGroupCount() {
-            return Unsafe.getUnsafe().getLong(ptr + ROW_GROUP_COUNT_OFFSET);
+        public int rowGroupCount() {
+            return Unsafe.getUnsafe().getInt(ptr + ROW_GROUP_COUNT_OFFSET);
+        }
+
+        private void init() {
+            columnNames.clear();
+            directStringPool.clear();
+
+            final long columnCount = columnCount();
+            final long namesPtr = Unsafe.getUnsafe().getLong(ptr + COLUMN_NAMES_OFFSET);
+            final long nameLengthsPtr = Unsafe.getUnsafe().getLong(ptr + COLUMN_NAME_LENGTHS_OFFSET);
+            long namesOffset = 0;
+            for (long i = 0; i < columnCount; i++) {
+                DirectString str = directStringPool.next();
+                int len = Unsafe.getUnsafe().getInt(nameLengthsPtr + Integer.BYTES * i);
+                str.of(namesPtr + namesOffset, len);
+                columnNames.add(str);
+                namesOffset += 2L * len;
+            }
         }
     }
 

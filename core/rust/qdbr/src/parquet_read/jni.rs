@@ -26,17 +26,18 @@ pub const FIXED_LEN_BYTE_ARRAY: u32 = 7;
 // The metadata fields are accessed from Java.
 #[repr(C, align(8))]
 pub struct ParquetDecoder {
-    col_count: usize,
+    col_count: i32,
     row_count: usize,
-    row_group_count: usize,
-    col_ids_ptr: *const i32,            // col_ids' pointer exposed to Java
+    row_group_count: i32,
+    col_names_ptr: *const u16,        // col_names' pointer exposed to Java
+    col_name_lengths_ptr: *const i32, // col_name_lengths' pointer exposed to Java
+    col_ids_ptr: *const i32,          // col_ids' pointer exposed to Java
     col_physical_types_ptr: *const i64, // col_physical_types' pointer exposed to Java
-    // col_names: *const u8,
-    // col_names_len: i32,
-    // col_name_lengths: *const i32,
     reader: File,
     metadata: FileMetaData,
     decompress_buffer: Vec<u8>,
+    col_names: Vec<u16>, // UTF-16 encoded
+    col_name_lengths: Vec<i32>,
     col_ids: Vec<i32>,
     col_physical_types: Vec<i64>,
 }
@@ -136,20 +137,15 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
         let mut reader = File::open(src_path)?;
         let metadata = read_metadata(&mut reader)?;
 
-        let col_count = metadata.schema().fields().len();
-        let col_ids = metadata
-            .schema()
-            .fields()
-            .iter()
-            .map(|f| f.get_field_info().id)
-            .flatten()
-            .collect::<Vec<i32>>();
+        let col_count = metadata.schema().fields().len() as i32;
 
-        let col_physical_types = metadata
-            .schema()
-            .fields()
-            .iter()
-            .map(|f| match f {
+        let mut col_names: Vec<u16> = vec![];
+        let mut col_name_lengths: Vec<i32> = vec![];
+        let mut col_ids: Vec<i32> = vec![];
+        let mut col_physical_types: Vec<i64> = vec![];
+
+        for (_i, f) in metadata.schema().fields().iter().enumerate() {
+            let physical_type = match f {
                 PrimitiveType(f) => Ok(f.physical_type),
                 GroupType {
                     field_info: f,
@@ -157,13 +153,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
                     converted_type: _,
                     fields: _,
                 } => Err(anyhow!("group types not supported: {}", f.name)),
-            })
-            .collect::<Vec<anyhow::Result<PhysicalType>>>()
-            .into_iter()
-            .collect::<anyhow::Result<Vec<PhysicalType>>>()?;
-        let col_physical_types: Vec<i64> = col_physical_types
-            .iter()
-            .map(|t| match t {
+            }?;
+            let physical_type = match physical_type {
                 PhysicalType::Boolean => BOOLEAN as i64,
                 PhysicalType::Int32 => INT32 as i64,
                 PhysicalType::Int64 => INT64 as i64,
@@ -173,21 +164,33 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
                 PhysicalType::ByteArray => BYTE_ARRAY as i64,
                 PhysicalType::FixedLenByteArray(length) => {
                     // Should match Numbers#encodeLowHighInts().
-                    (i64::overflowing_shl(*length as i64, 32).0 | (FIXED_LEN_BYTE_ARRAY as i64))
+                    (i64::overflowing_shl(length as i64, 32).0 | (FIXED_LEN_BYTE_ARRAY as i64))
                         as i64
                 }
-            })
-            .collect();
+            };
+            col_physical_types.push(physical_type);
+
+            let info = f.get_field_info();
+            let name: Vec<u16> = info.name.encode_utf16().collect();
+            col_names.extend_from_slice(&name);
+            col_name_lengths.push(name.len() as i32);
+
+            col_ids.push(info.id.unwrap_or(-1));
+        }
 
         // TODO: add some validation
 
         let decoder = ParquetDecoder {
             col_count,
             row_count: metadata.num_rows,
-            row_group_count: metadata.row_groups.len(),
+            row_group_count: metadata.row_groups.len() as i32,
             reader,
             metadata,
             decompress_buffer: vec![],
+            col_names_ptr: col_names.as_ptr(),
+            col_names,
+            col_name_lengths_ptr: col_name_lengths.as_ptr(),
+            col_name_lengths,
             col_ids_ptr: col_ids.as_ptr(),
             col_ids,
             col_physical_types_ptr: col_physical_types.as_ptr(),

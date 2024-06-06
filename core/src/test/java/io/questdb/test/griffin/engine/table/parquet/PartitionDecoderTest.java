@@ -30,6 +30,7 @@ import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -121,6 +122,11 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                 Assert.assertEquals(rows, partitionDecoder.metadata().rowCount());
                 Assert.assertEquals(1, partitionDecoder.metadata().rowGroupCount());
 
+                final String[] expectedColumnNames = new String[]{
+                        "id", "a_boolean", "a_byte", "a_short", "a_char", "an_int", "a_long", "a_float", "a_double", "a_symbol",
+                        "a_geo_byte", "a_geo_short", "a_geo_int", "a_geo_long", "a_string", "a_bin", "a_varchar", "a_ip", "a_uuid", "a_long256",
+                        "a_long128", "a_date", "a_ts", "designated_ts",
+                };
                 final long[] expectedPhysicalTypes = new long[]{
                         PartitionDecoder.INT64_PHYSICAL_TYPE, PartitionDecoder.BOOLEAN_PHYSICAL_TYPE,
                         PartitionDecoder.INT32_PHYSICAL_TYPE, PartitionDecoder.INT32_PHYSICAL_TYPE,
@@ -139,6 +145,7 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                 };
 
                 for (int i = 0; i < columns; i++) {
+                    TestUtils.assertEquals("column: " + i, expectedColumnNames[i], partitionDecoder.metadata().columnName(i));
                     Assert.assertEquals("column: " + i, i, partitionDecoder.metadata().columnId(i));
                     Assert.assertEquals("column: " + i, expectedPhysicalTypes[i], partitionDecoder.metadata().columnPhysicalType(i));
                 }
