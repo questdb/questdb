@@ -46,9 +46,8 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class DynamicPropServerConfigurationTest extends AbstractTest {
 
-    SOCountDownLatch latch;
-    File serverConf;
-    Path serverConfPath;
+    private SOCountDownLatch latch;
+    private File serverConf;
 
     @Test
     public void TestPgWireCredentialsReloadByDeletingProp() throws Exception {
@@ -189,12 +188,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                             bootstrap.getMicrosecondClock(),
                             FactoryProviderFactoryImpl.INSTANCE,
                             true,
-                            new Runnable() {
-                                @Override
-                                public void run() {
-                                    latch.countDown();
-                                }
-                            }
+                            () -> latch.countDown()
                     );
                 } catch (Exception exc) {
                     Assert.fail(exc.getMessage());
@@ -207,7 +201,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     @Before
     public void setUp() {
         latch = new SOCountDownLatch(1);
-        serverConfPath = Paths.get(temp.getRoot().getAbsolutePath(), "dbRoot", "conf", "server.conf");
+        Path serverConfPath = Paths.get(temp.getRoot().getAbsolutePath(), "dbRoot", "conf", "server.conf");
         try {
             Files.createDirectories(serverConfPath.getParent());
             serverConf = serverConfPath.toFile();
