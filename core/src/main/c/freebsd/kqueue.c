@@ -129,7 +129,8 @@ JNIEXPORT jint JNICALL Java_io_questdb_KqueueAccessor_kevent
     int tv_sec = timeout / 1000;
     struct timespec _timeout = {tv_sec, (timeout - tv_sec * 1000) * 1000 * 1000};
     return (jint) kevent(
-            kq, (const struct kevent *) changelist,
+            kq,
+            (const struct kevent *) changelist,
             nChanges,
             (struct kevent *) eventlist,
             nEvents,
