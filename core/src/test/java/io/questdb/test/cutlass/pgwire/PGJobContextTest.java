@@ -7988,7 +7988,7 @@ create table tab as (
                     assertResultSet(
                             "QUERY PLAN[VARCHAR]\n" +
                                     "Async Filter workers: 2\n" +
-                                    "  filter: (to_str(ts) in [Wednesday] or to_str(ts) in [$0::" + stringType + ",$1::" + stringType + "])\n" +
+                                    "  filter: to_str(ts) in [$0::string,'Wednesday',$1::string]\n" +
                                     "    DataFrame\n" +
                                     "        Row forward scan\n" +
                                     "        Frame forward scan on: tab\n",
@@ -10323,7 +10323,8 @@ create table tab as (
                             engine,
                             pool,
                             registry,
-                            createPGSqlExecutionContextFactory(workerCount, workerCount, queryStartedCountDownLatch, null, registry))
+                            createPGSqlExecutionContextFactory(workerCount, workerCount, queryStartedCountDownLatch, null, registry)
+                    )
             ) {
                 Assert.assertNotNull(server);
                 int iteration = 0;

@@ -35,7 +35,7 @@ public class InStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testBadConstant() {
-        assertFailure(12, "STRING constant expected", "xv", "an", 10);
+        assertFailure(12, "cannot compare STRING with type INT", "xv", "an", 10);
     }
 
     @Test

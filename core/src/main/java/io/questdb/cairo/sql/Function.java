@@ -176,6 +176,16 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
      */
     int getVarcharSize(Record rec);
 
+    /**
+     * Returns true if function is constant, i.e. its value does not require
+     * any input from the record.
+     * <p>
+     * Constant functions can evaluated by passing a null record to {@link #getStr(Record, Utf16Sink)}
+     * or other methods. This often happens inside FunctionFactory at query planning stage.
+     *
+     * @return true if function is constant
+     * @see #isRuntimeConstant()
+     */
     default boolean isConstant() {
         return false;
     }

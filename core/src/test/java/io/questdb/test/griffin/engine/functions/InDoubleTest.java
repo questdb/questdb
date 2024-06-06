@@ -33,6 +33,61 @@ import org.junit.Test;
 
 public class InDoubleTest extends AbstractCairoTest {
 
+
+    @Test
+    public void testBindVarConstants() throws SqlException {
+        ddl("create table MovementLog(\n" +
+                "ts timestamp,\n" +
+                "initParticipantId long,\n" +
+                "initParticipantIdType symbol,\n" +
+                "movementBusinessDate date,\n" +
+                "slotId double\n" +
+                ") timestamp(ts) partition by day wal\n");
+
+        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
+        tuples.add(new BindVariableTestTuple(
+                "constants",
+                "participantId\tparticipantIdType\n",
+                bindVariableService -> bindVariableService.setDate(0, 1000L)
+        ));
+
+        assertSql("SELECT DISTINCT initParticipantId AS participantId, initParticipantIdType AS participantIdType\n" +
+                "FROM 'MovementLog'\n" +
+                "WHERE movementBusinessDate=$1 AND slotId IN (1.1, 2.1, 3.52)\n" +
+                "ORDER BY initParticipantId\n" +
+                "LIMIT 0,6", tuples);
+    }
+
+    @Test
+    public void testBindVarRuntimeConstants() throws SqlException {
+        ddl("create table MovementLog(\n" +
+                "ts timestamp,\n" +
+                "initParticipantId long,\n" +
+                "initParticipantIdType symbol,\n" +
+                "movementBusinessDate date,\n" +
+                "slotId double\n" +
+                ") timestamp(ts) partition by day wal\n");
+
+        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
+        tuples.add(new BindVariableTestTuple(
+                "runtime constants",
+                "participantId\tparticipantIdType\n",
+                bindVariableService -> {
+                    bindVariableService.setDate(0, 1000L);
+                    bindVariableService.setDouble(1, 1.5);
+                    bindVariableService.setDouble(2, 22.3);
+                    bindVariableService.setDouble(3, 3.46);
+                }
+        ));
+
+        assertSql("SELECT DISTINCT initParticipantId AS participantId, initParticipantIdType AS participantIdType\n" +
+                "FROM 'MovementLog'\n" +
+                "WHERE movementBusinessDate=$1 AND slotId IN ($2, $3, $4)\n" +
+                "ORDER BY initParticipantId\n" +
+                "LIMIT 0,6", tuples);
+    }
+
+
     @Test
     public void testBindVarTypeChange() throws SqlException {
         ddl("create table test as (select x, rnd_double() a from long_sequence(100))");
@@ -85,6 +140,22 @@ public class InDoubleTest extends AbstractCairoTest {
         ));
 
         assertSql("test where a in ($1,$2,$3)", tuples);
+    }
+
+    @Test
+    public void testConstAndBindVariableMix() throws SqlException {
+        ddl("create table test as (select x, rnd_double() a from long_sequence(100))");
+
+        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
+        tuples.add(new BindVariableTestTuple(
+                "mix",
+                "x\ta\n" +
+                        "58\t0.6821660861001273\n" +
+                        "90\t0.3901731258748704\n",
+                bindVariableService -> bindVariableService.setStr(0, "0.6821660861001273")
+        ));
+
+        assertSql("test where a in (0.3901731258748704, $1)", tuples);
     }
 
     @Test
@@ -174,21 +245,5 @@ public class InDoubleTest extends AbstractCairoTest {
                 24,
                 "cannot compare DOUBLE with type GEOHASH(1b)"
         );
-    }
-
-    @Test
-    public void testConstAndBindVariableMix() throws SqlException {
-        ddl("create table test as (select x, rnd_double() a from long_sequence(100))");
-
-        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
-        tuples.add(new BindVariableTestTuple(
-                "mix",
-                "x\ta\n" +
-                        "58\t0.6821660861001273\n" +
-                        "90\t0.3901731258748704\n",
-                bindVariableService -> bindVariableService.setStr(0, "0.6821660861001273")
-        ));
-
-        assertSql("test where a in (0.3901731258748704, $1)", tuples);
     }
 }
