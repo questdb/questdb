@@ -29,10 +29,21 @@ import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
 public class PartitionDecoder implements QuietCloseable {
+    public static final int BOOLEAN_PHYSICAL_TYPE = 0;
+    public static final int BYTE_ARRAY_PHYSICAL_TYPE = 6;
+    public static final int DOUBLE_PHYSICAL_TYPE = 5;
+    public static final int FIXED_LEN_BYTE_ARRAY_PHYSICAL_TYPE = 7;
+    public static final int FLOAT_PHYSICAL_TYPE = 4;
+    public static final int INT32_PHYSICAL_TYPE = 1;
+    public static final int INT64_PHYSICAL_TYPE = 2;
+    public static final int INT96_PHYSICAL_TYPE = 3;
     private static final long COLUMN_COUNT_OFFSET = 0;
     private static final long ROW_COUNT_OFFSET = COLUMN_COUNT_OFFSET + Long.BYTES;
     private static final long ROW_GROUP_COUNT_OFFSET = ROW_COUNT_OFFSET + Long.BYTES;
+    private static final long COLUMN_IDS_OFFSET = ROW_GROUP_COUNT_OFFSET + Long.BYTES;
+    private static final long COLUMN_PHYSICAL_TYPES_OFFSET = COLUMN_IDS_OFFSET + Long.BYTES;
     private final ColumnChunkBuffers chunkBuffers;
+    private final Metadata metadata = new Metadata();
     private final Path path;
     private long ptr;
 
@@ -51,11 +62,6 @@ public class PartitionDecoder implements QuietCloseable {
         destroy();
         Misc.free(path);
         chunkBuffers.free();
-    }
-
-    public long columnCount() {
-        assert ptr != 0;
-        return Unsafe.getUnsafe().getLong(ptr + COLUMN_COUNT_OFFSET);
     }
 
     public ColumnChunkBuffers decodeColumnChunk(
@@ -86,6 +92,11 @@ public class PartitionDecoder implements QuietCloseable {
         return chunkBuffers;
     }
 
+    public Metadata metadata() {
+        assert ptr != 0;
+        return metadata;
+    }
+
     public void of(@Transient Path srcPath) {
         destroy();
 
@@ -98,16 +109,6 @@ public class PartitionDecoder implements QuietCloseable {
                     .put(", msg=").put(th.getMessage())
                     .put(']');
         }
-    }
-
-    public long rowCount() {
-        assert ptr != 0;
-        return Unsafe.getUnsafe().getLong(ptr + ROW_COUNT_OFFSET);
-    }
-
-    public long rowGroupCount() {
-        assert ptr != 0;
-        return Unsafe.getUnsafe().getLong(ptr + ROW_GROUP_COUNT_OFFSET);
     }
 
     private static native long create(long srcPathPtr, int srcPathLength);
@@ -201,6 +202,31 @@ public class PartitionDecoder implements QuietCloseable {
         private void setDataSize(long dataSize) {
             assert ptr != 0;
             Unsafe.getUnsafe().putLong(ptr + DATA_SIZE_OFFSET, dataSize);
+        }
+    }
+
+    public class Metadata {
+
+        public long columnCount() {
+            return Unsafe.getUnsafe().getLong(ptr + COLUMN_COUNT_OFFSET);
+        }
+
+        public int columnId(int index) {
+            long p = Unsafe.getUnsafe().getLong(ptr + COLUMN_IDS_OFFSET);
+            return Unsafe.getUnsafe().getInt(p + (long) Integer.BYTES * index);
+        }
+
+        public long columnPhysicalType(int index) {
+            long p = Unsafe.getUnsafe().getLong(ptr + COLUMN_PHYSICAL_TYPES_OFFSET);
+            return Unsafe.getUnsafe().getLong(p + (long) Long.BYTES * index);
+        }
+
+        public long rowCount() {
+            return Unsafe.getUnsafe().getLong(ptr + ROW_COUNT_OFFSET);
+        }
+
+        public long rowGroupCount() {
+            return Unsafe.getUnsafe().getLong(ptr + ROW_GROUP_COUNT_OFFSET);
         }
     }
 

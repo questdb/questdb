@@ -10,17 +10,35 @@ use parquet2::encoding::Encoding;
 use parquet2::metadata::FileMetaData;
 use parquet2::page::{split_buffer, DataPage, DictPage, Page};
 use parquet2::read::{decompress, get_page_iterator, read_metadata};
+use parquet2::schema::types::ParquetType::{GroupType, PrimitiveType};
 use parquet2::schema::types::PhysicalType;
+
+// These constants should match constants in Java's PartitionDecoder.
+pub const BOOLEAN: u32 = 0;
+pub const INT32: u32 = 1;
+pub const INT64: u32 = 2;
+pub const INT96: u32 = 3;
+pub const FLOAT: u32 = 4;
+pub const DOUBLE: u32 = 5;
+pub const BYTE_ARRAY: u32 = 6;
+pub const FIXED_LEN_BYTE_ARRAY: u32 = 7;
 
 // The metadata fields are accessed from Java.
 #[repr(C, align(8))]
 pub struct ParquetDecoder {
-    column_count: usize,
+    col_count: usize,
     row_count: usize,
     row_group_count: usize,
+    col_ids_ptr: *const i32,            // col_ids' pointer exposed to Java
+    col_physical_types_ptr: *const i64, // col_physical_types' pointer exposed to Java
+    // col_names: *const u8,
+    // col_names_len: i32,
+    // col_name_lengths: *const i32,
     reader: File,
     metadata: FileMetaData,
     decompress_buffer: Vec<u8>,
+    col_ids: Vec<i32>,
+    col_physical_types: Vec<i64>,
 }
 
 impl ParquetDecoder {
@@ -118,20 +136,62 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
         let mut reader = File::open(src_path)?;
         let metadata = read_metadata(&mut reader)?;
 
+        let col_count = metadata.schema().fields().len();
+        let col_ids = metadata
+            .schema()
+            .fields()
+            .iter()
+            .map(|f| f.get_field_info().id)
+            .flatten()
+            .collect::<Vec<i32>>();
+
+        let col_physical_types = metadata
+            .schema()
+            .fields()
+            .iter()
+            .map(|f| match f {
+                PrimitiveType(f) => Ok(f.physical_type),
+                GroupType {
+                    field_info: f,
+                    logical_type: _,
+                    converted_type: _,
+                    fields: _,
+                } => Err(anyhow!("group types not supported: {}", f.name)),
+            })
+            .collect::<Vec<anyhow::Result<PhysicalType>>>()
+            .into_iter()
+            .collect::<anyhow::Result<Vec<PhysicalType>>>()?;
+        let col_physical_types: Vec<i64> = col_physical_types
+            .iter()
+            .map(|t| match t {
+                PhysicalType::Boolean => BOOLEAN as i64,
+                PhysicalType::Int32 => INT32 as i64,
+                PhysicalType::Int64 => INT64 as i64,
+                PhysicalType::Int96 => INT96 as i64,
+                PhysicalType::Float => FLOAT as i64,
+                PhysicalType::Double => DOUBLE as i64,
+                PhysicalType::ByteArray => BYTE_ARRAY as i64,
+                PhysicalType::FixedLenByteArray(length) => {
+                    // Should match Numbers#encodeLowHighInts().
+                    (i64::overflowing_shl(*length as i64, 32).0 | (FIXED_LEN_BYTE_ARRAY as i64))
+                        as i64
+                }
+            })
+            .collect();
+
         // TODO: add some validation
 
         let decoder = ParquetDecoder {
-            column_count: if metadata.row_groups.len() > 0 {
-                // TODO: check fields instead
-                metadata.row_groups[0].columns().len()
-            } else {
-                0
-            },
+            col_count,
             row_count: metadata.num_rows,
             row_group_count: metadata.row_groups.len(),
             reader,
             metadata,
             decompress_buffer: vec![],
+            col_ids_ptr: col_ids.as_ptr(),
+            col_ids,
+            col_physical_types_ptr: col_physical_types.as_ptr(),
+            col_physical_types,
         };
 
         return Ok(decoder);

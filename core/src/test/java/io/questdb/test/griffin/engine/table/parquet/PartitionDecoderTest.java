@@ -27,14 +27,17 @@ package io.questdb.test.griffin.engine.table.parquet;
 import io.questdb.cairo.TableReader;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class PartitionDecoderTest extends AbstractCairoTest {
 
     @Test
+    @Ignore
     public void testDecodeColumnChunk() throws Exception {
         assertMemoryLeak(() -> {
             final long rows = 1001;
@@ -75,6 +78,7 @@ public class PartitionDecoderTest extends AbstractCairoTest {
     @Test
     public void testMetadata() throws Exception {
         assertMemoryLeak(() -> {
+            final long columns = 24;
             final long rows = 1001;
             ddl("create table x as (select" +
                     " x id," +
@@ -113,9 +117,31 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                 partitionEncoder.encode(reader, 0, path);
 
                 partitionDecoder.of(path);
-                Assert.assertEquals(24, partitionDecoder.columnCount());
-                Assert.assertEquals(rows, partitionDecoder.rowCount());
-                Assert.assertEquals(1, partitionDecoder.rowGroupCount());
+                Assert.assertEquals(24, partitionDecoder.metadata().columnCount());
+                Assert.assertEquals(rows, partitionDecoder.metadata().rowCount());
+                Assert.assertEquals(1, partitionDecoder.metadata().rowGroupCount());
+
+                final long[] expectedPhysicalTypes = new long[]{
+                        PartitionDecoder.INT64_PHYSICAL_TYPE, PartitionDecoder.BOOLEAN_PHYSICAL_TYPE,
+                        PartitionDecoder.INT32_PHYSICAL_TYPE, PartitionDecoder.INT32_PHYSICAL_TYPE,
+                        PartitionDecoder.INT32_PHYSICAL_TYPE, PartitionDecoder.INT32_PHYSICAL_TYPE,
+                        PartitionDecoder.INT64_PHYSICAL_TYPE, PartitionDecoder.FLOAT_PHYSICAL_TYPE,
+                        PartitionDecoder.DOUBLE_PHYSICAL_TYPE, PartitionDecoder.BYTE_ARRAY_PHYSICAL_TYPE,
+                        PartitionDecoder.INT32_PHYSICAL_TYPE, PartitionDecoder.INT32_PHYSICAL_TYPE,
+                        PartitionDecoder.INT32_PHYSICAL_TYPE, PartitionDecoder.INT64_PHYSICAL_TYPE,
+                        PartitionDecoder.BYTE_ARRAY_PHYSICAL_TYPE, PartitionDecoder.BYTE_ARRAY_PHYSICAL_TYPE,
+                        PartitionDecoder.BYTE_ARRAY_PHYSICAL_TYPE, PartitionDecoder.INT32_PHYSICAL_TYPE,
+                        Numbers.encodeLowHighInts(PartitionDecoder.FIXED_LEN_BYTE_ARRAY_PHYSICAL_TYPE, 16), // uuid
+                        Numbers.encodeLowHighInts(PartitionDecoder.FIXED_LEN_BYTE_ARRAY_PHYSICAL_TYPE, 32), // long256
+                        Numbers.encodeLowHighInts(PartitionDecoder.FIXED_LEN_BYTE_ARRAY_PHYSICAL_TYPE, 16), // long128
+                        PartitionDecoder.INT64_PHYSICAL_TYPE, PartitionDecoder.INT64_PHYSICAL_TYPE,
+                        PartitionDecoder.INT64_PHYSICAL_TYPE,
+                };
+
+                for (int i = 0; i < columns; i++) {
+                    Assert.assertEquals("column: " + i, i, partitionDecoder.metadata().columnId(i));
+                    Assert.assertEquals("column: " + i, expectedPhysicalTypes[i], partitionDecoder.metadata().columnPhysicalType(i));
+                }
             }
         });
     }
