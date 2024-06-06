@@ -15,36 +15,25 @@ use crate::parquet_write::ParquetResult;
 
 #[derive(Debug)]
 pub struct MaxMin<T> {
-    max: T,
-    min: T,
-    is_updated: bool,
+    pub max: Option<T>,
+    pub min: Option<T>,
 }
 
-impl<T: Copy + NativeType + num_traits::Bounded> MaxMin<T> {
+impl<T: Copy + NativeType> MaxMin<T> {
     pub fn new() -> Self {
-        MaxMin {
-            max: T::min_value(),
-            min: T::max_value(),
-            is_updated: false,
-        }
+        MaxMin { max: None, min: None }
     }
     pub fn update(&mut self, x: T) {
-        if !self.is_updated {
-            self.max = x;
-            self.min = x;
-            self.is_updated = true;
+        self.max = Some(if let Some(max) = self.max {
+            cmp::max_by(max, x, |x, y| x.ord(y))
         } else {
-            self.max = cmp::max_by(self.max, x, |x, y| x.ord(y));
-            self.min = cmp::min_by(self.min, x, |x, y| x.ord(y));
-        }
-    }
-
-    pub fn get_current_values(&self) -> (Option<T>, Option<T>) {
-        if self.is_updated {
-            (Some(self.max), Some(self.min))
+            x
+        });
+        self.min = Some(if let Some(min) = self.min {
+            cmp::min_by(min, x, |x, y| x.ord(y))
         } else {
-            (None, None)
-        }
+            x
+        });
     }
 }
 
