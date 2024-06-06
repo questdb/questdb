@@ -33,9 +33,12 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Utf8Sequence;
 
 public class EqTimestampCursorFunctionFactory implements FunctionFactory {
     @Override
@@ -67,10 +70,15 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
 
         switch (metadata.getColumnType(0)) {
             case ColumnType.TIMESTAMP:
-                return new EqTimestampTimestampFromCursorFunction(factory, args.get(0), args.getQuick(1));
+            case ColumnType.NULL:
+                return new EqTimestampTimestampFromCursorFunction(factory, args.getQuick(0), args.getQuick(1));
+            case ColumnType.STRING:
+                return new EqTimestampStringFromCursorFunction(factory, args.getQuick(0), args.getQuick(1), argPositions.getQuick(1));
+            case ColumnType.VARCHAR:
+                return new EqTimestampVarcharFromCursorFunction(factory, args.getQuick(0), args.getQuick(1), argPositions.getQuick(1));
+            default:
+                throw SqlException.$(argPositions.getQuick(1), "cannot compare TIMESTAMP and ").put(ColumnType.nameOf(metadata.getColumnType(0)));
         }
-
-        return null;
     }
 
     public static class EqTimestampTimestampFromCursorFunction extends BooleanFunction implements BinaryFunction {
@@ -114,6 +122,116 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 if (cursor.hasNext()) {
                     epoch = cursor.getRecord().getTimestamp(0);
+                } else {
+                    epoch = Numbers.LONG_NULL;
+                }
+            }
+        }
+    }
+
+    public static class EqTimestampStringFromCursorFunction extends BooleanFunction implements BinaryFunction {
+        private final RecordCursorFactory factory;
+        private final Function leftFn;
+        private final Function rightFn;
+        private final int rightFnPos;
+        private long epoch;
+
+        public EqTimestampStringFromCursorFunction(RecordCursorFactory factory, Function leftFn, Function rightFn, int rightFnPos) {
+            this.factory = factory;
+            this.leftFn = leftFn;
+            this.rightFn = rightFn;
+            this.rightFnPos = rightFnPos;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return leftFn.getTimestamp(rec) == epoch;
+        }
+
+        @Override
+        public Function getLeft() {
+            return leftFn;
+        }
+
+        @Override
+        public Function getRight() {
+            return rightFn;
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            // the function is thread safe because its state is epoch, which does not mutate
+            // between frame executions. For non-thread-safe function, which operates a cursor,
+            // the cursor will be re-executed as many times as there are threads. Which is sub-optimal.
+            return true;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                if (cursor.hasNext()) {
+                    final CharSequence value = cursor.getRecord().getStrA(0);
+                    try {
+                        epoch = value != null ? IntervalUtils.parseFloorPartialTimestamp(value) : Numbers.LONG_NULL;
+                    } catch (NumericException e) {
+                        throw SqlException.$(rightFnPos, "invalid timestamp: ").put(value);
+                    }
+                } else {
+                    epoch = Numbers.LONG_NULL;
+                }
+            }
+        }
+    }
+
+    public static class EqTimestampVarcharFromCursorFunction extends BooleanFunction implements BinaryFunction {
+        private final RecordCursorFactory factory;
+        private final Function leftFn;
+        private final Function rightFn;
+        private final int rightFnPos;
+        private long epoch;
+
+        public EqTimestampVarcharFromCursorFunction(RecordCursorFactory factory, Function leftFn, Function rightFn, int rightFnPos) {
+            this.factory = factory;
+            this.leftFn = leftFn;
+            this.rightFn = rightFn;
+            this.rightFnPos = rightFnPos;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return leftFn.getTimestamp(rec) == epoch;
+        }
+
+        @Override
+        public Function getLeft() {
+            return leftFn;
+        }
+
+        @Override
+        public Function getRight() {
+            return rightFn;
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            // the function is thread safe because its state is epoch, which does not mutate
+            // between frame executions. For non-thread-safe function, which operates a cursor,
+            // the cursor will be re-executed as many times as there are threads. Which is sub-optimal.
+            return true;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                if (cursor.hasNext()) {
+                    final Utf8Sequence value = cursor.getRecord().getVarcharA(0);
+                    try {
+                        epoch = value != null ? IntervalUtils.parseFloorPartialTimestamp(value) : Numbers.LONG_NULL;
+                    } catch (NumericException e) {
+                        throw SqlException.$(rightFnPos, "invalid timestamp: ").put(value);
+                    }
                 } else {
                     epoch = Numbers.LONG_NULL;
                 }
