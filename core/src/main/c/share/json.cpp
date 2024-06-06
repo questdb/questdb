@@ -131,7 +131,7 @@ public:
     }
 
     operator jdouble() const {
-        return NAN;
+        return std::numeric_limits<double>::quiet_NaN();
     }
 };
 
@@ -272,6 +272,7 @@ Java_io_questdb_std_json_JsonParser_queryPointer(
                     case simdjson::ondemand::json_type::null:
                         return null_token{};
                 }
+                return null_token{};
             });
 }
 
@@ -321,6 +322,7 @@ Java_io_questdb_std_json_JsonParser_queryPath(
                     case simdjson::ondemand::json_type::null:
                         return null_token{};
                 }
+                return null_token{};
             });
 }
 

@@ -38,9 +38,9 @@ import org.jetbrains.annotations.Nullable;
 import java.util.Objects;
 
 class JsonPathFunc extends VarcharFunction implements BinaryFunction {
-    private final VarcharSupportingState a = new VarcharSupportingState();
-    private final VarcharSupportingState b = new VarcharSupportingState();
-    private final VarcharSupportingState copied = new VarcharSupportingState();
+    private final VarcharSupportingState a;
+    private final VarcharSupportingState b;
+    private final VarcharSupportingState copied;
     private final String functionName;
     private final Function json;
     private final int maxSize;
@@ -49,6 +49,9 @@ class JsonPathFunc extends VarcharFunction implements BinaryFunction {
     private final boolean strict;
 
     public JsonPathFunc(String functionName, Function json, Function path, DirectUtf8Sink pointer, int maxSize, boolean strict) {
+        this.a = new VarcharSupportingState(new DirectUtf8Sink(maxSize));
+        this.b = new VarcharSupportingState(new DirectUtf8Sink(maxSize));
+        this.copied = new VarcharSupportingState();
         this.functionName = functionName;
         this.json = json;
         this.path = path;
@@ -83,54 +86,46 @@ class JsonPathFunc extends VarcharFunction implements BinaryFunction {
     @Override
     public void getVarchar(Record rec, Utf8Sink utf8Sink) {
         if (utf8Sink instanceof DirectUtf8Sink) {
+            if (copied.destSink != null) {
+                copied.destSink.close();
+            }
             copied.destSink = (DirectUtf8Sink) utf8Sink;
-            jsonPointer(functionName, json.getVarcharA(rec), pointer, Objects.requireNonNull(path.getVarcharA(null)), copied, maxSize, strict);
+            copied.closeDestSink = false;
+            jsonPointer(functionName, json.getVarcharA(rec), pointer, Objects.requireNonNull(path.getVarcharA(null)), copied);
         } else {
-            // Extra intermediate copy from malloc'd memory to java memory required.
-            // TODO: Should the `utf8Sink` sink be cleared here?
-            //       Should I validate a minimum residual capacity?
-            //       At the moment, the `maxSize` passed in is the min of whatever is available and
-            //       what is the actual max.
-            // final int curtailedMaxSize = (int) Math.min(maxSize, utf8Sink.capacity());  /// utf8Sink `capacity` is missing!
-            final int curtailedMaxSize = maxSize;
             if (copied.destSink == null) {
-                copied.destSink = new DirectUtf8Sink(curtailedMaxSize);
+                copied.destSink = new DirectUtf8Sink(maxSize);
+                copied.closeDestSink = true;
             } else {
                 copied.destSink.clear();
-                copied.destSink.reserve(curtailedMaxSize);
+                copied.destSink.reserve(maxSize);
             }
-            jsonPointer(functionName, json.getVarcharA(rec), pointer, Objects.requireNonNull(path.getVarcharA(null)), copied, curtailedMaxSize, strict);
+            jsonPointer(functionName, json.getVarcharA(rec), pointer, Objects.requireNonNull(path.getVarcharA(null)), copied);
             utf8Sink.put(copied.destSink);
         }
     }
 
     @Override
     public @Nullable DirectUtf8Sink getVarcharA(Record rec) {
-        return jsonPointer(functionName, json.getVarcharA(rec), pointer, Objects.requireNonNull(path.getVarcharA(null)), a, maxSize, strict);
+        return jsonPointer(functionName, json.getVarcharA(rec), pointer, Objects.requireNonNull(path.getVarcharA(null)), a);
     }
 
     @Override
     public @Nullable DirectUtf8Sink getVarcharB(Record rec) {
-        return jsonPointer(functionName, json.getVarcharB(rec), pointer, Objects.requireNonNull(path.getVarcharB(null)), b, maxSize, strict);
+        return jsonPointer(functionName, json.getVarcharB(rec), pointer, Objects.requireNonNull(path.getVarcharB(null)), b);
     }
 
-    private static @Nullable DirectUtf8Sink jsonPointer(
+    private @Nullable DirectUtf8Sink jsonPointer(
             String functionName,
             @Nullable Utf8Sequence json,
             @NotNull DirectUtf8Sequence pointer,
             @NotNull Utf8Sequence path,
-            VarcharSupportingState state,
-            int maxSize,
-            boolean strict
+            VarcharSupportingState state
     ) {
         if (json == null) {
             return null;
         }
-        if (state.destSink == null) {
-            state.destSink = new DirectUtf8Sink(maxSize);
-        } else {
-            state.destSink.clear();
-        }
+        state.destSink.clear();
         state.parser.queryPointer(state.initPaddedJson(json), pointer, state.jsonResult, state.destSink, maxSize);
         if (state.jsonResult.hasValue()) {
             return state.destSink;
@@ -141,15 +136,24 @@ class JsonPathFunc extends VarcharFunction implements BinaryFunction {
     }
 
     private static class VarcharSupportingState extends SupportingState {
-        public DirectUtf8Sink destSink = null;
+        public @Nullable DirectUtf8Sink destSink;
+        public boolean closeDestSink;
+
+        public VarcharSupportingState() {
+            this.destSink = null;
+            this.closeDestSink = false;
+        }
+
+        public VarcharSupportingState(@NotNull DirectUtf8Sink destSink) {
+            this.destSink = destSink;
+            this.closeDestSink = true;
+        }
 
         @Override
         public void close() {
             super.close();
 
-            // TODO: Should this be done here, considering it might be assigned from the outside?
-            //       When executing from `public void getVarchar(Record rec, Utf8Sink utf8Sink) {`
-            if (destSink != null) {
+            if (closeDestSink && destSink != null) {
                 destSink.close();
             }
         }
