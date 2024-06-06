@@ -51,11 +51,6 @@ public class DefaultFactoryProvider implements FactoryProvider {
     }
 
     @Override
-    public PgWireAuthenticatorFactory getPgWireAuthenticatorFactory() {
-        return DefaultPgWireAuthenticatorFactory.INSTANCE;
-    }
-
-    @Override
     public @NotNull HttpHeaderParserFactory getHttpHeaderParserFactory() {
         return DefaultHttpHeaderParserFactory.INSTANCE;
     }
@@ -83,6 +78,11 @@ public class DefaultFactoryProvider implements FactoryProvider {
     @Override
     public @NotNull SocketFactory getPGWireSocketFactory() {
         return PlainSocketFactory.INSTANCE;
+    }
+
+    @Override
+    public PgWireAuthenticatorFactory getPgWireAuthenticatorFactory() {
+        return DefaultPgWireAuthenticatorFactory.INSTANCE;
     }
 
     @Override

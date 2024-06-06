@@ -103,6 +103,7 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_filewatch_WindowsAccessorImpl_rea
 
     DWORD bytesReturned;
 
+    memset(pwatch->pfni, 0, pwatch->pfniSize);
     boolean b = ReadDirectoryChangesW(
             pwatch->hDir,
             pwatch->pfni,
@@ -115,10 +116,11 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_filewatch_WindowsAccessorImpl_rea
     );
 
     if (b) {
+        memset(pwatch->utf8Name, 0, UTF8_MAX_PATH);
         int len = WideCharToMultiByte(
                 CP_UTF8,
                 0,
-                pwatch->pfni->FileName,
+                &pwatch->pfni->FileName[0],
                 -1,
                 pwatch->utf8Name,
                 UTF8_MAX_PATH,
