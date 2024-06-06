@@ -297,6 +297,8 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
                     }
 
                 }
+            } else if (newLastModified == -1) {
+                LOG.critical().$("Server configuration file is inaccessible! This is dangerous as server will likely not boot on restart. Make sure the current user can access the configuration file [path=").$(this.confPath).I$();
             }
         }
     }
