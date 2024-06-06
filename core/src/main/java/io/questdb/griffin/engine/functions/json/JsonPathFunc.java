@@ -71,6 +71,11 @@ class JsonPathFunc extends VarcharFunction implements BinaryFunction {
     }
 
     @Override
+    public String getName() {
+        return functionName;
+    }
+
+    @Override
     public Function getRight() {
         return path;
     }
@@ -129,8 +134,7 @@ class JsonPathFunc extends VarcharFunction implements BinaryFunction {
         state.parser.queryPointer(state.initPaddedJson(json), pointer, state.jsonResult, state.destSink, maxSize);
         if (state.jsonResult.hasValue()) {
             return state.destSink;
-        }
-        else if (strict && !state.jsonResult.isNull()) {
+        } else if (strict && !state.jsonResult.isNull()) {
             state.jsonResult.throwIfError(functionName, path);
         }
         return null;

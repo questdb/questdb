@@ -73,6 +73,11 @@ public class JsonPathLongFunc extends LongFunction implements BinaryFunction {
     }
 
     @Override
+    public String getName() {
+        return functionName;
+    }
+
+    @Override
     public Function getRight() {
         return path;
     }
