@@ -798,9 +798,28 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertIR("(i32 -1L)(i32 anint)(neg)(=)(ret)");
     }
 
+    @Test
+    public void testInVariableBinding() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setInt("anint", 1);
+        bindVariableService.setLong(0, 2);
+
+        serialize("anint IN (:anint, $1)");
+        assertIR("(i64 :0)(i32 anint)(=)(i32 :1)(i32 anint)(=)(||)(ret)");
+
+        Assert.assertEquals(2, bindVarFunctions.size());
+        Assert.assertEquals(ColumnType.LONG, bindVarFunctions.get(0).getType());
+        Assert.assertEquals(ColumnType.INT, bindVarFunctions.get(1).getType());
+    }
+
     @Test(expected = SqlException.class)
     public void testEmptyIn() throws Exception {
         serialize("anint IN ()");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testInSubSelect() throws Exception {
+        serialize("asymbol in (select asymbol from tab limit 1)");
     }
 
     private void assertIR(String message, String expectedIR) {
