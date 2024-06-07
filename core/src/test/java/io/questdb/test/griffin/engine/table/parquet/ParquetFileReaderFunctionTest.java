@@ -24,10 +24,15 @@
 
 package io.questdb.test.griffin.engine.table.parquet;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
+import io.questdb.std.Chars;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class ParquetFileReaderFunctionTest extends AbstractCairoTest {
@@ -63,6 +68,25 @@ public class ParquetFileReaderFunctionTest extends AbstractCairoTest {
 
                 // Assert 0 rows, header only
                 assertSqlCursors("x where 1 = 2", "select * from read_parquet('" + path + "')  where 1 = 2");
+            }
+        });
+    }
+
+    @Test
+    public void testFileDoesNotExist() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    Path path = new Path();
+            ) {
+                path.of(root).concat("x.parquet").$();
+
+                // Assert 0 rows, header only
+                try {
+                    select("select * from read_parquet('" + path + "')  where 1 = 2");
+                    Assert.fail();
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getMessage(), "could not open read-only");
+                }
             }
         });
     }

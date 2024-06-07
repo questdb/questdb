@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::mem::{offset_of, size_of};
 use std::ops::Sub;
+use std::os::fd::FromRawFd;
 use std::path::Path;
 use std::slice;
 
@@ -8,13 +9,13 @@ use anyhow::anyhow;
 use jni::objects::JClass;
 use jni::JNIEnv;
 
+use crate::parquet_write::schema::ColumnType;
 use parquet2::encoding::Encoding;
 use parquet2::metadata::{Descriptor, FileMetaData};
 use parquet2::page::{split_buffer, DataPage, DictPage, Page};
 use parquet2::read::{decompress, get_page_iterator, read_metadata};
-use parquet2::schema::types::{IntegerType, PhysicalType, PrimitiveLogicalType, TimeUnit};
 use parquet2::schema::types::PrimitiveLogicalType::{Timestamp, Uuid};
-use crate::parquet_write::schema::ColumnType;
+use parquet2::schema::types::{IntegerType, PhysicalType, PrimitiveLogicalType, TimeUnit};
 
 const MAX_ALLOC_SIZE: usize = i32::MAX as usize;
 
@@ -36,7 +37,7 @@ pub struct ParquetDecoder {
     row_group_count: i32,
     columns_ptr: *const ColumnMeta,
     columns: Vec<ColumnMeta>,
-    reader: File,
+    file: File,
     metadata: FileMetaData,
     decompress_buffer: Vec<u8>,
 }
@@ -52,10 +53,8 @@ pub struct ColumnMeta {
     name_vec: Vec<u16>,
 }
 
-
 impl ParquetDecoder {
-    pub fn read(src_path: &Path) -> anyhow::Result<Self> {
-        let mut reader = File::open(src_path)?;
+    pub fn read(mut reader: File) -> anyhow::Result<Self> {
         let metadata = read_metadata(&mut reader)?;
 
         let col_count = metadata.schema().fields().len() as i32;
@@ -99,7 +98,7 @@ impl ParquetDecoder {
             col_count,
             row_count: metadata.num_rows,
             row_group_count: metadata.row_groups.len() as i32,
-            reader,
+            file: reader,
             metadata,
             decompress_buffer: vec![],
             columns_ptr: columns.as_ptr(),
@@ -121,7 +120,7 @@ impl ParquetDecoder {
 
         // TODO: avoid hardcoding page size
         let page_reader =
-            get_page_iterator(column_metadata, &mut self.reader, None, vec![], 1024 * 1024)?;
+            get_page_iterator(column_metadata, &mut self.file, None, vec![], 1024 * 1024)?;
 
         let mut dict = None;
         for maybe_page in page_reader {
@@ -267,15 +266,11 @@ impl ColumnChunkBuffers {
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_create(
     mut env: JNIEnv,
     _class: JClass,
-    src_path: *const u8,
-    src_path_len: i32,
+    raw_fd: i32,
 ) -> *mut ParquetDecoder {
     let init = || -> anyhow::Result<ParquetDecoder> {
-        let src_path = unsafe {
-            std::str::from_utf8_unchecked(slice::from_raw_parts(src_path, src_path_len as usize))
-        };
-        let src_path = Path::new(&src_path);
-        ParquetDecoder::read(src_path)
+        let file = unsafe { File::from_raw_fd(raw_fd) };
+        ParquetDecoder::read(file)
     };
 
     match init() {
@@ -371,7 +366,6 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     offset_of!(ColumnMeta, physical_type)
 }
 
-
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_columnRecordNamePtrOffset(
     env: JNIEnv,
@@ -425,21 +419,38 @@ fn throw_state_ex<T>(env: &mut JNIEnv, method_name: &str, err: anyhow::Error, de
 }
 
 fn to_column_type(des: &Descriptor) -> Option<ColumnType> {
-    match (des.primitive_type.physical_type, des.primitive_type.logical_type) {
-        (PhysicalType::Int64, Some(Timestamp {
-                                       unit: TimeUnit::Microseconds,
-                                       is_adjusted_to_utc: true,
-                                   })) => Some(ColumnType::Timestamp),
-        (PhysicalType::Int64, Some(Timestamp {
-                                       unit: TimeUnit::Milliseconds,
-                                       is_adjusted_to_utc: true,
-                                   })) => Some(ColumnType::Date),
+    match (
+        des.primitive_type.physical_type,
+        des.primitive_type.logical_type,
+    ) {
+        (
+            PhysicalType::Int64,
+            Some(Timestamp {
+                unit: TimeUnit::Microseconds,
+                is_adjusted_to_utc: true,
+            }),
+        ) => Some(ColumnType::Timestamp),
+        (
+            PhysicalType::Int64,
+            Some(Timestamp {
+                unit: TimeUnit::Milliseconds,
+                is_adjusted_to_utc: true,
+            }),
+        ) => Some(ColumnType::Date),
         (PhysicalType::Int64, None) => Some(ColumnType::Long),
-        (PhysicalType::Int64, Some(PrimitiveLogicalType::Integer(IntegerType::Int64))) => Some(ColumnType::Long),
+        (PhysicalType::Int64, Some(PrimitiveLogicalType::Integer(IntegerType::Int64))) => {
+            Some(ColumnType::Long)
+        }
         (PhysicalType::Int32, None) => Some(ColumnType::Int),
-        (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int32))) => Some(ColumnType::Int),
-        (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int16))) => Some(ColumnType::Short),
-        (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int8))) => Some(ColumnType::Byte),
+        (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int32))) => {
+            Some(ColumnType::Int)
+        }
+        (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int16))) => {
+            Some(ColumnType::Short)
+        }
+        (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int8))) => {
+            Some(ColumnType::Byte)
+        }
         (PhysicalType::Boolean, None) => Some(ColumnType::Boolean),
         (PhysicalType::Double, None) => Some(ColumnType::Double),
         (PhysicalType::Float, None) => Some(ColumnType::Float),
@@ -447,25 +458,25 @@ fn to_column_type(des: &Descriptor) -> Option<ColumnType> {
         (PhysicalType::ByteArray, Some(PrimitiveLogicalType::String)) => Some(ColumnType::Varchar),
         (PhysicalType::FixedLenByteArray(32), None) => Some(ColumnType::Long256),
         (PhysicalType::ByteArray, None) => Some(ColumnType::Binary),
-        (_, _) => None
+        (_, _) => None,
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::parquet_read::jni::ParquetDecoder;
     use crate::parquet_write::file::ParquetWriter;
     use crate::parquet_write::schema::{Column, ColumnType, Partition};
     use arrow::array::Array;
+    use arrow::datatypes::ToByteSlice;
     use bytes::Bytes;
+    use std::fs::File;
     use std::io::{Cursor, Write};
     use std::mem::size_of;
+    use std::path::Path;
     use std::ptr::null;
     use std::{env, mem};
-    use std::fs::File;
-    use std::path::Path;
-    use arrow::datatypes::ToByteSlice;
     use tempfile::NamedTempFile;
-    use crate::parquet_read::jni::ParquetDecoder;
 
     #[test]
     fn test_decode_column_type_fixed() {
@@ -508,10 +519,13 @@ mod tests {
         buf.set_position(0);
         let bytes: Bytes = buf.into_inner().into();
         let mut temp_file = NamedTempFile::new().expect("Failed to create temp file");
-        temp_file.write_all(bytes.to_byte_slice()).expect("Failed to write to temp file");
+        temp_file
+            .write_all(bytes.to_byte_slice())
+            .expect("Failed to write to temp file");
 
         let path = temp_file.path().to_str().unwrap();
-        let meta = ParquetDecoder::read(Path::new(&path)).unwrap();
+        let file = File::open(Path::new(path)).unwrap();
+        let meta = ParquetDecoder::read(file).unwrap();
 
         assert_eq!(meta.columns.len(), column_count);
         assert_eq!(meta.row_count, row_count);
@@ -532,7 +546,7 @@ mod tests {
             ColumnType::GeoShort => ColumnType::Short,
             ColumnType::GeoByte => ColumnType::Byte,
             ColumnType::GeoLong => ColumnType::Long,
-            other => other
+            other => other,
         }
     }
 
@@ -567,7 +581,7 @@ mod tests {
             null(),
             0,
         )
-            .unwrap()
+        .unwrap()
     }
 
     fn serialize_to_parquet(
@@ -590,7 +604,7 @@ mod tests {
             offsets.as_ptr(),
             offsets.len(),
         )
-            .unwrap();
+        .unwrap();
 
         let partition = Partition {
             table: "test_table".to_string(),

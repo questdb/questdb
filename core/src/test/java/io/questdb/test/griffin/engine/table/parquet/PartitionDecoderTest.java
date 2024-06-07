@@ -51,7 +51,7 @@ public class PartitionDecoderTest extends AbstractCairoTest {
             try (
                     Path path = new Path();
                     PartitionEncoder partitionEncoder = new PartitionEncoder();
-                    PartitionDecoder partitionDecoder = new PartitionDecoder();
+                    PartitionDecoder partitionDecoder = new PartitionDecoder(engine.getConfiguration().getFilesFacade());
                     TableReader reader = engine.getReader("x")
             ) {
                 path.of(root).concat("x.parquet").$();
@@ -121,7 +121,7 @@ public class PartitionDecoderTest extends AbstractCairoTest {
             try (
                     Path path = new Path();
                     PartitionEncoder partitionEncoder = new PartitionEncoder();
-                    PartitionDecoder partitionDecoder = new PartitionDecoder();
+                    PartitionDecoder partitionDecoder = new PartitionDecoder(engine.getConfiguration().getFilesFacade());
                     TableReader reader = engine.getReader("x")
             ) {
                 path.of(root).concat("x.parquet").$();

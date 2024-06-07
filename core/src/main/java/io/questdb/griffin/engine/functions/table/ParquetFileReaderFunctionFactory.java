@@ -57,13 +57,13 @@ public class ParquetFileReaderFunctionFactory implements FunctionFactory {
         }
         if (checkPathIsSafeToRead(filePath, config)) {
             Path path = Path.getThreadLocal2(filePath);
-            try (PartitionDecoder file = new PartitionDecoder()) {
+            try (PartitionDecoder file = new PartitionDecoder(config.getFilesFacade())) {
                 file.of(path);
                 GenericRecordMetadata metadata = new GenericRecordMetadata();
                 file.getMetadata().copyTo(metadata);
                 return new CursorFunction(new ParquetFileRecordCursorFactory(filePath, metadata, config.getFilesFacade()));
-            } catch (CairoException ex) {
-                throw SqlException.$(argPos.getQuick(0), "filed to read parquet file: ").put(filePath).put(": ").put(ex.getMessage());
+            } catch (CairoException e) {
+                throw SqlException.$(argPos.getQuick(0), "error reading parquet file columns ").put('[').put(e.getErrno()).put("]: ").put(e.getFlyweightMessage());
             } catch (Throwable e) {
                 throw SqlException.$(argPos.getQuick(0), "filed to read parquet file: ").put(filePath).put(": ").put(e.getMessage());
             }
