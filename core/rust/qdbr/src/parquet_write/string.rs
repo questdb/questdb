@@ -22,8 +22,6 @@
  *
  ******************************************************************************/
 
-use std::mem::{size_of, transmute};
-
 use parquet2::encoding::{delta_bitpacked, Encoding};
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
@@ -37,7 +35,7 @@ use crate::parquet_write::{ParquetError, ParquetResult};
 
 use super::util::BinaryMaxMin;
 
-const SIZE_OF_HEADER: usize = size_of::<i32>();
+const SIZE_OF_HEADER: usize = std::mem::size_of::<i32>();
 
 pub fn string_to_page(
     offsets: &[i64],
@@ -51,19 +49,21 @@ pub fn string_to_page(
     let mut buffer = vec![];
     let mut null_count = 0;
 
-    let deflevels_iter = (0..num_rows).map(|i| {
-        let len = if i < column_top {
-            -1
-        } else {
-            let offset = offsets[i - column_top] as usize;
-            let len = types::decode::<i32>(&data[offset..offset + size_of::<i32>()]);
-            if len < 0 {
+    let utf16_slices: Vec<Option<&[u16]>> = offsets
+        .iter()
+        .map(|offset| {
+            let offset =
+                usize::try_from(*offset).expect("invalid offset value in string aux column");
+            let maybe_utf16 = get_utf16(&data[offset..]);
+            if maybe_utf16.is_none() {
                 null_count += 1;
             }
-            len
-        };
-        len >= 0
-    });
+            maybe_utf16
+        })
+        .collect();
+
+    let deflevels_iter =
+        (0..num_rows).map(|i| i >= column_top && utf16_slices[i - column_top].is_some());
 
     encode_bool_iter(&mut buffer, deflevels_iter, options.version)?;
 
@@ -71,10 +71,9 @@ pub fn string_to_page(
 
     let mut stats = BinaryMaxMin::new(&primitive_type);
     match encoding {
-        Encoding::Plain => Ok(encode_plain(offsets, data, &mut buffer, &mut stats)),
+        Encoding::Plain => Ok(encode_plain(&utf16_slices, &mut buffer, &mut stats)),
         Encoding::DeltaLengthByteArray => Ok(encode_delta(
-            offsets,
-            data,
+            &utf16_slices,
             null_count,
             &mut buffer,
             &mut stats,
@@ -101,12 +100,8 @@ pub fn string_to_page(
     .map(Page::Data)
 }
 
-fn encode_plain(offsets: &[i64], values: &[u8], buffer: &mut Vec<u8>, stats: &mut BinaryMaxMin) {
-    for offset in offsets {
-        let offset = usize::try_from(*offset).expect("invalid offset value in string aux column");
-        let Some(utf16) = get_utf16(&values[offset..]) else {
-            continue;
-        };
+fn encode_plain(utf16_slices: &[Option<&[u16]>], buffer: &mut Vec<u8>, stats: &mut BinaryMaxMin) {
+    for utf16 in utf16_slices.iter().filter_map(|&option| option) {
         let utf8 = String::from_utf16(utf16).expect("utf16 string");
         // BYTE_ARRAY: first 4 bytes denote length in little-endian.
         let encoded_len = (utf8.len() as u32).to_le_bytes();
@@ -118,30 +113,18 @@ fn encode_plain(offsets: &[i64], values: &[u8], buffer: &mut Vec<u8>, stats: &mu
 }
 
 fn encode_delta(
-    offsets: &[i64],
-    values: &[u8],
+    utf16_slices: &[Option<&[u16]>],
     null_count: usize,
     buffer: &mut Vec<u8>,
     stats: &mut BinaryMaxMin,
 ) {
-    let row_count = offsets.len();
-
-    if row_count == 0 {
-        delta_bitpacked::encode(std::iter::empty(), buffer);
-        return;
-    }
-
-    let lengths = offsets.iter().filter_map(|&offset| {
-        let offset = usize::try_from(offset).expect("invalid offset value in string aux column");
-        get_utf16(&values[offset as usize..]).map(|utf16| compute_utf8_length(utf16) as i64)
-    });
-    let lengths = ExactSizedIter::new(lengths, row_count - null_count);
+    let lengths = utf16_slices
+        .iter()
+        .filter_map(|&option| option)
+        .map(|utf16| compute_utf8_length(utf16) as i64);
+    let lengths = ExactSizedIter::new(lengths, utf16_slices.len() - null_count);
     delta_bitpacked::encode(lengths, buffer);
-
-    for &offset in offsets {
-        let Some(utf16) = get_utf16(&values[offset as usize..]) else {
-            continue;
-        };
+    for utf16 in utf16_slices.iter().filter_map(|&option| option) {
         let utf8 = String::from_utf16(utf16).expect("utf16 string");
         let value = utf8.as_bytes();
         buffer.extend_from_slice(value);
