@@ -37,25 +37,25 @@ static_assert(
 
 // See `JsonResult.java` for the `Unsafe` access to the fields.
 PACK(class json_result {
-public:
-    simdjson::error_code error;
-    simdjson::ondemand::json_type type;
+     public:
+         simdjson::error_code error;
+         simdjson::ondemand::json_type type;
 
-    void from(simdjson::simdjson_result<simdjson::ondemand::value>& res) {
-        error = res.error();
-        if (error != simdjson::error_code::SUCCESS) {
-            type = static_cast<simdjson::ondemand::json_type>(0);
-            return;
-        }
-        type = res.type().value_unsafe();
-    }
+         void from(simdjson::simdjson_result<simdjson::ondemand::value> &res) {
+             error = res.error();
+             if (error != simdjson::error_code::SUCCESS) {
+                 type = static_cast<simdjson::ondemand::json_type>(0);
+                 return;
+             }
+             type = res.type().value_unsafe();
+         }
 
-    template <typename T>
-    bool set_error(simdjson::simdjson_result<T>& res) {
-        error = res.error();
-        return error == simdjson::error_code::SUCCESS;
-    }
- });
+         template<typename T>
+         bool set_error(simdjson::simdjson_result<T> &res) {
+             error = res.error();
+             return error == simdjson::error_code::SUCCESS;
+         }
+     });
 
 // Assertions to ensure that the offsets/size used `JsonResult.java` are correct.
 static_assert(sizeof(simdjson::error_code) == 4, "Unexpected size of simdjson::error_code");
@@ -82,8 +82,8 @@ static size_t utf8_char_size(std::byte first_byte) {
     return char_size;
 }
 
-std::byte* utf8_find_last_char_start(std::byte* end) {
-    std::byte* last_utf8_start = end - 1;
+std::byte *utf8_find_last_char_start(std::byte *end) {
+    std::byte *last_utf8_start = end - 1;
     while ((*last_utf8_start & BYTE_0xC0) == BYTE_0x80) {
         --last_utf8_start;
     }
@@ -93,13 +93,13 @@ std::byte* utf8_find_last_char_start(std::byte* end) {
 // Copy `src` to `dest` up to `max_dest_len` bytes.
 // If `src` is longer than `max_dest_len`, copy up to the last UTF-8 character that fits.
 // This function guarantees that there are no broken UTF-8 characters in the output.
-static void trimmed_utf8_copy(questdb_byte_sink_t& dest, std::string_view src, size_t max_dest_len) {
+static void trimmed_utf8_copy(questdb_byte_sink_t &dest, std::string_view src, size_t max_dest_len) {
     if (max_dest_len == 0) {
         return;
     }
     const auto copy_len = std::min(src.length(), max_dest_len);
     std::memcpy(dest.ptr, src.data(), copy_len);
-    std::byte* end_ptr = dest.ptr + copy_len;
+    std::byte *end_ptr = dest.ptr + copy_len;
     if (max_dest_len < src.length()) {
         std::byte *last_utf8_start = utf8_find_last_char_start(end_ptr);
         const size_t char_size = utf8_char_size(*last_utf8_start);
@@ -112,41 +112,60 @@ static void trimmed_utf8_copy(questdb_byte_sink_t& dest, std::string_view src, s
 
 // To make the compiler happy when compiling `value_at_path`
 // with a lambda that is supposed to return `void`.
-struct token_void {};
-
-// A representation of a `null` value.
-// This then casts to the best numeric representation for the type.
-class null_token {
-public:
-    operator token_void() const {
-        return {};
-    }
-
-    operator jboolean() const {
-        return false;
-    }
-
-    operator jlong() const {
-        return std::numeric_limits<jlong>::min();
-    }
-
-    operator jdouble() const {
-        return std::numeric_limits<double>::quiet_NaN();
-    }
+struct token_void {
 };
+
+template<typename T>
+struct logical_null;
+
+template<>
+struct logical_null<token_void> {
+    static token_void value() { return {}; }
+};
+
+template<>
+struct logical_null<jboolean> {
+    static jboolean value() { return false; }
+};
+
+template<>
+struct logical_null<jshort> {
+    static jshort value() { return std::numeric_limits<jshort>::min(); }
+};
+
+template<>
+struct logical_null<jint> {
+    static jint value() { return std::numeric_limits<jint>::min(); }
+};
+
+template<>
+struct logical_null<jlong> {
+    static jlong value() { return std::numeric_limits<jlong>::min(); }
+};
+
+template<>
+struct logical_null<jfloat> {
+    static jfloat value() { return std::numeric_limits<float>::quiet_NaN(); }
+};
+
+template<>
+struct logical_null<jdouble> {
+    static jdouble value() { return std::numeric_limits<double>::quiet_NaN(); }
+};
+
 
 using json_value = simdjson::simdjson_result<simdjson::ondemand::value>;
 
-template <typename F>
+template<typename F>
 auto value_at_pointer(
-        simdjson::ondemand::parser* parser,
+        simdjson::ondemand::parser *parser,
         const char *json_chars,
         size_t json_len,
         size_t tail_padding,
         const char *pointer_chars,
         size_t pointer_len,
-        json_result* result,
-        F&& extractor
+        json_result *result,
+        F &&extractor
 ) -> decltype(std::forward<F>(extractor)(json_value{})) {
     const simdjson::padded_string_view json_buf{json_chars, json_len, json_len + tail_padding};
     const std::string_view pointer{pointer_chars, pointer_len};
@@ -155,16 +174,17 @@ auto value_at_pointer(
     result->from(res);
     return std::forward<F>(extractor)(res);
 }
-template <typename F>
+
+template<typename F>
 auto value_at_path(
-        simdjson::ondemand::parser* parser,
+        simdjson::ondemand::parser *parser,
         const char *json_chars,
         size_t json_len,
         size_t tail_padding,
         const char *path_chars,
         size_t path_len,
-        json_result* result,
-        F&& extractor
+        json_result *result,
+        F &&extractor
 ) -> decltype(std::forward<F>(extractor)(json_value{})) {
     const simdjson::padded_string_view json_buf{json_chars, json_len, json_len + tail_padding};
     const std::string_view path{path_chars, path_len};
@@ -186,7 +206,7 @@ Java_io_questdb_std_json_JsonParser_getSimdJsonPadding(
 
 JNIEXPORT jstring JNICALL
 Java_io_questdb_std_json_JsonError_errorMessage(
-        JNIEnv* env,
+        JNIEnv *env,
         jclass /*cl*/,
         jint code
 ) {
@@ -196,22 +216,22 @@ Java_io_questdb_std_json_JsonError_errorMessage(
 
 JNIEXPORT void JNICALL
 Java_io_questdb_std_json_JsonParser_convertJsonPathToPointer(
-        JNIEnv* /*env*/,
+        JNIEnv * /*env*/,
         jclass /*cl*/,
-        const char* json_chars,
+        const char *json_chars,
         size_t json_len,
-        questdb_byte_sink_t* dest_sink
+        questdb_byte_sink_t *dest_sink
 ) {
     const std::string_view json_path{json_chars, json_len};
     const auto json_pointer = simdjson::ondemand::json_path_to_pointer_conversion(json_path);
-    auto dest= questdb_byte_sink_book(dest_sink, json_pointer.size());
+    auto dest = questdb_byte_sink_book(dest_sink, json_pointer.size());
     std::memcpy(dest, json_pointer.data(), json_pointer.size());
     dest_sink->ptr += json_pointer.size();
 }
 
-JNIEXPORT simdjson::ondemand::parser* JNICALL
+JNIEXPORT simdjson::ondemand::parser *JNICALL
 Java_io_questdb_std_json_JsonParser_create(
-        JNIEnv* /*env*/,
+        JNIEnv * /*env*/,
         jclass /*cl*/
 ) {
     return new simdjson::ondemand::parser();
@@ -219,36 +239,35 @@ Java_io_questdb_std_json_JsonParser_create(
 
 JNIEXPORT void JNICALL
 Java_io_questdb_std_json_JsonParser_destroy(
-        JNIEnv* /*env*/,
+        JNIEnv * /*env*/,
         jclass /*cl*/,
-        simdjson::ondemand::parser* parser
+        simdjson::ondemand::parser *parser
 ) {
     delete parser;
 }
 
 JNIEXPORT void JNICALL
 Java_io_questdb_std_json_JsonParser_queryPointer(
-        JNIEnv* /*env*/,
+        JNIEnv * /*env*/,
         jclass /*cl*/,
-        simdjson::ondemand::parser* parser,
-        const char* json_chars,
+        simdjson::ondemand::parser *parser,
+        const char *json_chars,
         size_t json_len,
         size_t tail_padding,
-        const char* pointer_chars,
+        const char *pointer_chars,
         size_t pointer_len,
-        json_result* result,
-        questdb_byte_sink_t* dest_sink,
+        json_result *result,
+        questdb_byte_sink_t *dest_sink,
         int32_t max_size
 ) {
     value_at_pointer(
             parser, json_chars, json_len, tail_padding, pointer_chars, pointer_len, result,
             [result, dest_sink, max_size](json_value res) -> token_void {
                 if (res.error() != simdjson::error_code::SUCCESS) {
-                    return null_token{};
+                    return logical_null<token_void>::value();
                 }
                 switch (result->type) {
-                    case simdjson::ondemand::json_type::string:
-                    {
+                    case simdjson::ondemand::json_type::string: {
                         auto str_res = res.get_string();
                         const auto str = str_res.value_unsafe();
                         const auto max_size_st = static_cast<size_t>(max_size);
@@ -258,125 +277,46 @@ Java_io_questdb_std_json_JsonParser_queryPointer(
                     case simdjson::ondemand::json_type::array:
                     case simdjson::ondemand::json_type::object:
                     case simdjson::ondemand::json_type::number:
-                    case simdjson::ondemand::json_type::boolean:
-                    {
+                    case simdjson::ondemand::json_type::boolean: {
                         const auto max_size_st = static_cast<size_t>(max_size);
                         auto raw_res = res.raw_json();
                         if (!result->set_error(raw_res)) {
-                            return null_token{};
+                            return logical_null<token_void>::value();
                         }
                         auto raw = raw_res.value_unsafe();
                         trimmed_utf8_copy(*dest_sink, raw, max_size_st);
                     }
                         return {};
                     case simdjson::ondemand::json_type::null:
-                        return null_token{};
+                        return logical_null<token_void>::value();
                 }
-                return null_token{};
-            });
-}
-
-JNIEXPORT void JNICALL
-Java_io_questdb_std_json_JsonParser_queryPath(
-        JNIEnv* /*env*/,
-        jclass /*cl*/,
-        simdjson::ondemand::parser* parser,
-        const char* json_chars,
-        size_t json_len,
-        size_t tail_padding,
-        const char* path_chars,
-        size_t path_len,
-        json_result* result,
-        questdb_byte_sink_t* dest_sink,
-        int32_t max_size
-) {
-    value_at_path(
-            parser, json_chars, json_len, tail_padding, path_chars, path_len, result,
-            [result, dest_sink, max_size](json_value res) -> token_void {
-                if (res.error() != simdjson::error_code::SUCCESS) {
-                    return null_token{};
-                }
-                switch (result->type) {
-                    case simdjson::ondemand::json_type::string:
-                    {
-                        auto str_res = res.get_string();
-                        const auto str = str_res.value_unsafe();
-                        const auto max_size_st = static_cast<size_t>(max_size);
-                        trimmed_utf8_copy(*dest_sink, str, max_size_st);
-                    }
-                        return {};
-                    case simdjson::ondemand::json_type::array:
-                    case simdjson::ondemand::json_type::object:
-                    case simdjson::ondemand::json_type::number:
-                    case simdjson::ondemand::json_type::boolean:
-                    {
-                        const auto max_size_st = static_cast<size_t>(max_size);
-                        auto raw_res = res.raw_json();
-                        if (!result->set_error(raw_res)) {
-                            return null_token{};
-                        }
-                        auto raw = raw_res.value_unsafe();
-                        trimmed_utf8_copy(*dest_sink, raw, max_size_st);
-                    }
-                        return {};
-                    case simdjson::ondemand::json_type::null:
-                        return null_token{};
-                }
-                return null_token{};
+                return logical_null<token_void>::value();
             });
 }
 
 JNIEXPORT void JNICALL
 Java_io_questdb_std_json_JsonParser_queryPointerString(
-        JNIEnv* /*env*/,
+        JNIEnv * /*env*/,
         jclass /*cl*/,
-        simdjson::ondemand::parser* parser,
-        const char* json_chars,
+        simdjson::ondemand::parser *parser,
+        const char *json_chars,
         size_t json_len,
         size_t tail_padding,
-        const char* pointer_chars,
+        const char *pointer_chars,
         size_t pointer_len,
-        json_result* result,
-        questdb_byte_sink_t* dest_sink,
+        json_result *result,
+        questdb_byte_sink_t *dest_sink,
         int32_t max_size
 ) {
     value_at_pointer(
             parser, json_chars, json_len, tail_padding, pointer_chars, pointer_len, result,
             [result, dest_sink, max_size](json_value res) -> token_void {
                 if (res.error() != simdjson::error_code::SUCCESS) {
-                    return null_token{};
+                    return logical_null<token_void>::value();
                 }
                 auto str_res = res.get_string();
                 if (!result->set_error(str_res)) {
-                    return null_token{};
-                }
-                const auto str = str_res.value_unsafe();
-                const auto max_size_st = static_cast<size_t>(max_size);
-                trimmed_utf8_copy(*dest_sink, str, max_size_st);
-                return {};
-            });
-}
-
-JNIEXPORT void JNICALL
-Java_io_questdb_std_json_JsonParser_queryPathString(
-        JNIEnv* /*env*/,
-        jclass /*cl*/,
-        simdjson::ondemand::parser* parser,
-        const char* json_chars,
-        size_t json_len,
-        size_t tail_padding,
-        const char* path_chars,
-        size_t path_len,
-        json_result* result,
-        questdb_byte_sink_t* dest_sink,
-        int32_t max_size
-) {
-    value_at_path(
-            parser, json_chars, json_len, tail_padding, path_chars, path_len, result,
-            [result, dest_sink, max_size](json_value res) -> token_void {
-                auto str_res = res.get_string();
-                if (!result->set_error(str_res)) {
-                    return null_token{};
+                    return logical_null<token_void>::value();
                 }
                 const auto str = str_res.value_unsafe();
                 const auto max_size_st = static_cast<size_t>(max_size);
@@ -387,91 +327,103 @@ Java_io_questdb_std_json_JsonParser_queryPathString(
 
 JNIEXPORT jboolean JNICALL
 Java_io_questdb_std_json_JsonParser_queryPointerBoolean(
-        JNIEnv* /*env*/,
+        JNIEnv * /*env*/,
         jclass /*cl*/,
-        simdjson::ondemand::parser* parser,
-        const char* json_chars,
+        simdjson::ondemand::parser *parser,
+        const char *json_chars,
         size_t json_len,
         size_t tail_padding,
-        const char* pointer_chars,
+        const char *pointer_chars,
         size_t pointer_len,
-        json_result* result
+        json_result *result
 ) {
     return value_at_pointer(
             parser, json_chars, json_len, tail_padding, pointer_chars, pointer_len, result,
             [result](json_value res) -> jboolean {
                 auto bool_res = res.get_bool();
                 if (!result->set_error(bool_res)) {
-                    return null_token{};
+                    return logical_null<jboolean>::value();
                 }
                 return bool_res.value_unsafe();
             });
 }
 
-JNIEXPORT jboolean JNICALL
-Java_io_questdb_std_json_JsonParser_queryPathBoolean(
-        JNIEnv* /*env*/,
+JNIEXPORT jshort JNICALL
+Java_io_questdb_std_json_JsonParser_queryPointerShort(
+        JNIEnv * /*env*/,
         jclass /*cl*/,
-        simdjson::ondemand::parser* parser,
-        const char* json_chars,
+        simdjson::ondemand::parser *parser,
+        const char *json_chars,
         size_t json_len,
         size_t tail_padding,
-        const char* path_chars,
-        size_t path_len,
-        json_result* result
+        const char *pointer_chars,
+        size_t pointer_len,
+        json_result *result
 ) {
-    return value_at_path(
-            parser, json_chars, json_len, tail_padding, path_chars, path_len, result,
-            [result](json_value res) -> jboolean {
-                auto bool_res = res.get_bool();
-                if (!result->set_error(bool_res)) {
-                    return null_token{};
+    return value_at_pointer(
+            parser, json_chars, json_len, tail_padding, pointer_chars, pointer_len, result,
+            [result](json_value res) -> jshort {
+                auto int_res = res.get_int64();
+                if (!result->set_error(int_res)) {
+                    return logical_null<jshort>::value();
                 }
-                return bool_res.value_unsafe();
+                const auto int_res64 = int_res.value_unsafe();
+                const auto int_res16 = static_cast<int16_t>(int_res64);
+                if (static_cast<int64_t>(int_res16) != int_res64) {
+                    result->error = simdjson::error_code::NUMBER_OUT_OF_RANGE;
+                    return 0;
+                }
+                return int_res16;
+            });
+}
+
+JNIEXPORT jint JNICALL
+Java_io_questdb_std_json_JsonParser_queryPointerInt(
+        JNIEnv * /*env*/,
+        jclass /*cl*/,
+        simdjson::ondemand::parser *parser,
+        const char *json_chars,
+        size_t json_len,
+        size_t tail_padding,
+        const char *pointer_chars,
+        size_t pointer_len,
+        json_result *result
+) {
+    return value_at_pointer(
+            parser, json_chars, json_len, tail_padding, pointer_chars, pointer_len, result,
+            [result](json_value res) -> jint {
+                auto int_res = res.get_int64();
+                if (!result->set_error(int_res)) {
+                    return logical_null<jint>::value();
+                }
+                const auto int_res64 = int_res.value_unsafe();
+                const auto int_res32 = static_cast<int32_t>(int_res64);
+                if (static_cast<int64_t>(int_res32) != int_res64) {
+                    result->error = simdjson::error_code::NUMBER_OUT_OF_RANGE;
+                    return 0;
+                }
+                return int_res32;
             });
 }
 
 JNIEXPORT jlong JNICALL
 Java_io_questdb_std_json_JsonParser_queryPointerLong(
-        JNIEnv* /*env*/,
+        JNIEnv * /*env*/,
         jclass /*cl*/,
-        simdjson::ondemand::parser* parser,
-        const char* json_chars,
+        simdjson::ondemand::parser *parser,
+        const char *json_chars,
         size_t json_len,
         size_t tail_padding,
-        const char* pointer_chars,
+        const char *pointer_chars,
         size_t pointer_len,
-        json_result* result
+        json_result *result
 ) {
     return value_at_pointer(
             parser, json_chars, json_len, tail_padding, pointer_chars, pointer_len, result,
             [result](json_value res) -> jlong {
                 auto int_res = res.get_int64();
                 if (!result->set_error(int_res)) {
-                    return null_token{};
-                }
-                return int_res.value_unsafe();
-            });
-}
-
-JNIEXPORT jlong JNICALL
-Java_io_questdb_std_json_JsonParser_queryPathLong(
-        JNIEnv* /*env*/,
-        jclass /*cl*/,
-        simdjson::ondemand::parser* parser,
-        const char* json_chars,
-        size_t json_len,
-        size_t tail_padding,
-        const char* path_chars,
-        size_t path_len,
-        json_result* result
-) {
-    return value_at_path(
-            parser, json_chars, json_len, tail_padding, path_chars, path_len, result,
-            [result](json_value res) -> jlong {
-                auto int_res = res.get_int64();
-                if (!result->set_error(int_res)) {
-                    return null_token{};
+                    return logical_null<jlong>::value();
                 }
                 return int_res.value_unsafe();
             });
@@ -479,47 +431,56 @@ Java_io_questdb_std_json_JsonParser_queryPathLong(
 
 JNIEXPORT jdouble JNICALL
 Java_io_questdb_std_json_JsonParser_queryPointerDouble(
-        JNIEnv* /*env*/,
+        JNIEnv * /*env*/,
         jclass /*cl*/,
-        simdjson::ondemand::parser* parser,
-        const char* json_chars,
+        simdjson::ondemand::parser *parser,
+        const char *json_chars,
         size_t json_len,
         size_t tail_padding,
-        const char* pointer_chars,
+        const char *pointer_chars,
         size_t pointer_len,
-        json_result* result
+        json_result *result
 ) {
     return value_at_pointer(
             parser, json_chars, json_len, tail_padding, pointer_chars, pointer_len, result,
             [result](json_value res) -> jdouble {
                 auto double_res = res.get_double();
                 if (!result->set_error(double_res)) {
-                    return null_token{};
+                    return logical_null<jdouble>::value();
                 }
                 return double_res.value_unsafe();
             });
 }
 
-JNIEXPORT jdouble JNICALL
-Java_io_questdb_std_json_JsonParser_queryPathDouble(
-        JNIEnv* /*env*/,
+JNIEXPORT jfloat JNICALL
+Java_io_questdb_std_json_JsonParser_queryPointerFloat(
+        JNIEnv * /*env*/,
         jclass /*cl*/,
-        simdjson::ondemand::parser* parser,
-        const char* json_chars,
+        simdjson::ondemand::parser *parser,
+        const char *json_chars,
         size_t json_len,
         size_t tail_padding,
-        const char* path_chars,
-        size_t path_len,
-        json_result* result
+        const char *pointer_chars,
+        size_t pointer_len,
+        json_result *result
 ) {
-    return value_at_path(
-            parser, json_chars, json_len, tail_padding, path_chars, path_len, result,
-            [result](json_value res) -> jdouble {
+    return value_at_pointer(
+            parser, json_chars, json_len, tail_padding, pointer_chars, pointer_len, result,
+            [result](json_value res) -> jfloat {
                 auto double_res = res.get_double();
                 if (!result->set_error(double_res)) {
-                    return null_token{};
+                    return logical_null<jfloat>::value();
                 }
-                return double_res.value_unsafe();
+                const auto value = double_res.value_unsafe();
+                if (std::isnan(value)) {
+                    return std::numeric_limits<float>::quiet_NaN();
+                }
+
+                if (value < -std::numeric_limits<float>::max() || value > std::numeric_limits<float>::max()) {
+                    result->error = simdjson::error_code::NUMBER_OUT_OF_RANGE;
+                    return std::numeric_limits<float>::quiet_NaN();
+                }
+                return static_cast<float>(value);
             });
 }
 

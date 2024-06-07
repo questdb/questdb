@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.json;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
@@ -47,6 +48,6 @@ public class JsonPathLongStrictFunctionFactory implements FunctionFactory {
         final Function json = args.getQuick(0);
         final Function path = args.getQuick(1);
         final DirectUtf8Sink pointer = SupportingState.varcharConstantToJsonPointer(path);
-        return new JsonPathLongFunc(FUNCTION_NAME, json, path, pointer, true);
+        return new JsonConstPathPrimitiveFunc(ColumnType.LONG, FUNCTION_NAME, json, path, pointer, true);
     }
 }

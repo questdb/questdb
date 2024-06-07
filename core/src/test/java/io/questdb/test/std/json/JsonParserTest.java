@@ -80,10 +80,17 @@ public class JsonParserTest {
         result.clear();
     }
 
+    private static GcUtf8String path2Pointer(String path) {
+        try (DirectUtf8Sink dest = new DirectUtf8Sink(100)) {
+            JsonParser.convertJsonPathToPointer(new GcUtf8String(path), dest);
+            return new GcUtf8String(dest.toString());
+        }
+    }
+
     @Test
     public void testBooleanAbsent() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final boolean res = parser.queryPathBoolean(json, new GcUtf8String(".nonexistent"), result);
+            final boolean res = parser.queryPointerBoolean(json, path2Pointer(".nonexistent"), result);
             Assert.assertFalse(res);
             Assert.assertEquals(result.getType(), JsonType.UNSET);
         });
@@ -92,7 +99,7 @@ public class JsonParserTest {
     @Test
     public void testBooleanNull() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final boolean res = parser.queryPathBoolean(json, new GcUtf8String(".nothing"), result);
+            final boolean res = parser.queryPointerBoolean(json, path2Pointer(".nothing"), result);
             Assert.assertFalse(res);
             Assert.assertEquals(result.getType(), JsonType.NULL);
         });
@@ -119,7 +126,7 @@ public class JsonParserTest {
     @Test
     public void testDoubleAbsent() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final double res = parser.queryPathDouble(json, new GcUtf8String(".nonexistent"), result);
+            final double res = parser.queryPointerDouble(json, path2Pointer(".nonexistent"), result);
             Assert.assertTrue(Double.isNaN(res));
             Assert.assertEquals(result.getType(), JsonType.UNSET);
         });
@@ -128,7 +135,7 @@ public class JsonParserTest {
     @Test
     public void testDoubleNull() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final double res = parser.queryPathDouble(json, new GcUtf8String(".nothing"), result);
+            final double res = parser.queryPointerDouble(json, path2Pointer(".nothing"), result);
             Assert.assertTrue(Double.isNaN(res));
             Assert.assertEquals(result.getType(), JsonType.NULL);
         });
@@ -138,7 +145,7 @@ public class JsonParserTest {
     public void testInvalidPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (DirectUtf8Sink dest = new DirectUtf8Sink(100)) {
-                parser.queryPathString(json, new GcUtf8String("£$£%£%invalid path!!"), result, dest, 100);
+                parser.queryPointerString(json, path2Pointer("£$£%£%invalid path!!"), result, dest, 100);
                 Assert.assertEquals(result.getError(), JsonError.INVALID_JSON_POINTER);
                 Assert.assertEquals(result.getType(), JsonType.UNSET);
             }
@@ -148,7 +155,7 @@ public class JsonParserTest {
     @Test
     public void testLongAbsent() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final long res = parser.queryPathLong(json, new GcUtf8String(".nonexistent"), result);
+            final long res = parser.queryPointerLong(json, path2Pointer(".nonexistent"), result);
             Assert.assertEquals(Long.MIN_VALUE, res);
             Assert.assertEquals(result.getType(), JsonType.UNSET);
         });
@@ -157,7 +164,7 @@ public class JsonParserTest {
     @Test
     public void testLongNull() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final long res = parser.queryPathLong(json, new GcUtf8String(".nothing"), result);
+            final long res = parser.queryPointerLong(json, path2Pointer(".nothing"), result);
             Assert.assertEquals(Long.MIN_VALUE, res);
             Assert.assertEquals(result.getType(), JsonType.NULL);
         });
@@ -166,8 +173,8 @@ public class JsonParserTest {
     @Test
     public void testQueryPathBoolean() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            Assert.assertFalse(parser.queryPathBoolean(json, new GcUtf8String(".hasChildren"), result));
-            Assert.assertTrue(parser.queryPathBoolean(json, new GcUtf8String(".pets[1].scratches"), result));
+            Assert.assertFalse(parser.queryPointerBoolean(json, path2Pointer(".hasChildren"), result));
+            Assert.assertTrue(parser.queryPointerBoolean(json, path2Pointer(".pets[1].scratches"), result));
             Assert.assertEquals(result.getType(), JsonType.BOOLEAN);
         });
     }
@@ -175,7 +182,7 @@ public class JsonParserTest {
     @Test
     public void testQueryPathDouble() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            Assert.assertEquals(5.6, parser.queryPathDouble(json, new GcUtf8String(".height"), result), 0.0001);
+            Assert.assertEquals(5.6, parser.queryPointerDouble(json, path2Pointer(".height"), result), 0.0001);
             Assert.assertEquals(result.getType(), JsonType.NUMBER);
         });
     }
@@ -183,7 +190,7 @@ public class JsonParserTest {
     @Test
     public void testQueryPathLong() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            Assert.assertEquals(30, parser.queryPathLong(json, new GcUtf8String(".age"), result));
+            Assert.assertEquals(30, parser.queryPointerLong(json, path2Pointer(".age"), result));
             Assert.assertEquals(result.getType(), JsonType.NUMBER);
         });
     }
@@ -191,7 +198,7 @@ public class JsonParserTest {
     @Test
     public void testQueryPathLongBignum() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final long res = parser.queryPathLong(json, new GcUtf8String(".bignum"), result);
+            final long res = parser.queryPointerLong(json, path2Pointer(".bignum"), result);
             Assert.assertEquals(Long.MIN_VALUE, res);
             Assert.assertEquals(result.getError(), JsonError.INCORRECT_TYPE);
             Assert.assertEquals(result.getType(), JsonType.NUMBER);
@@ -201,7 +208,7 @@ public class JsonParserTest {
     @Test
     public void testQueryPathLongU64() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final long res = parser.queryPathLong(json, new GcUtf8String(".u64_val"), result);
+            final long res = parser.queryPointerLong(json, path2Pointer(".u64_val"), result);
             Assert.assertEquals(Long.MIN_VALUE, res);
             Assert.assertEquals(result.getError(), JsonError.INCORRECT_TYPE);
             Assert.assertEquals(result.getType(), JsonType.NUMBER);
@@ -212,19 +219,19 @@ public class JsonParserTest {
     public void testQueryPathString() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (DirectUtf8Sink dest = new DirectUtf8Sink(1000)) {
-                parser.queryPathString(json, new GcUtf8String(".name"), result, dest, 100);
+                parser.queryPointerString(json, path2Pointer(".name"), result, dest, 100);
                 Assert.assertEquals("John", dest.toString());
 
-                GcUtf8String descriptionPath = new GcUtf8String(".description");
+                GcUtf8String descriptionPath = path2Pointer(".description");
                 dest.clear();
-                parser.queryPathString(json, descriptionPath, result, dest, 100);
+                parser.queryPointerString(json, descriptionPath, result, dest, 100);
                 Assert.assertEquals(description.substring(0, 100), dest.toString());
 
                 // The maxLen == 272 chops one of the unicode characters and unless
                 // the copy is handled with utf-8-aware logic it would produce a string
                 // with an invalid utf-8 sequence.
                 dest.clear();
-                parser.queryPathString(json, descriptionPath, result, dest, 272);
+                parser.queryPointerString(json, descriptionPath, result, dest, 272);
                 // The string is expected to be truncated at the last valid utf-8 sequence: 270 instead of 272.
                 Assert.assertEquals(dest.size(), 270);
 
@@ -245,7 +252,7 @@ public class JsonParserTest {
     public void testStringAbsent() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (DirectUtf8Sink dest = new DirectUtf8Sink(100)) {
-                parser.queryPathString(json, new GcUtf8String(".nonexistent"), result, dest, 100);
+                parser.queryPointerString(json, path2Pointer(".nonexistent"), result, dest, 100);
                 Assert.assertEquals("", dest.toString());
                 Assert.assertEquals(result.getType(), JsonType.UNSET);
             }
@@ -256,7 +263,7 @@ public class JsonParserTest {
     public void testStringNull() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (DirectUtf8Sink dest = new DirectUtf8Sink(100)) {
-                parser.queryPathString(json, new GcUtf8String(".nothing"), result, dest, 100);
+                parser.queryPointerString(json, path2Pointer(".nothing"), result, dest, 100);
                 Assert.assertEquals("", dest.toString());
                 Assert.assertEquals(result.getType(), JsonType.NULL);
             }
