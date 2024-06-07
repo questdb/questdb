@@ -137,14 +137,14 @@ fn encode_delta(
         return;
     }
 
-    let lengths = offsets.iter().filter_map(|offset| {
-        get_utf16(values, *offset as usize).map(|utf16| compute_utf8_length(utf16) as i64)
+    let lengths = offsets.iter().filter_map(|&offset| {
+        get_utf16(&values[offset as usize..]).map(|utf16| compute_utf8_length(utf16) as i64)
     });
     let lengths = ExactSizedIter::new(lengths, row_count - null_count);
     delta_bitpacked::encode(lengths, buffer);
 
-    for offset in offsets {
-        let Some(utf16) = get_utf16(values, *offset as usize) else {
+    for &offset in offsets {
+        let Some(utf16) = get_utf16(&values[offset as usize..]) else {
             continue;
         };
         let utf8 = String::from_utf16(utf16).expect("utf16 string");
@@ -153,13 +153,14 @@ fn encode_delta(
         stats.update(value);
     }
 
-    fn get_utf16(values: &[u8], offset: usize) -> Option<&[u16]> {
-        let len_raw = types::decode::<i32>(&values[offset..offset + SIZE_OF_HEADER]);
+    fn get_utf16(entry_tail: &[u8]) -> Option<&[u16]> {
+        let (header, value_tail) = entry_tail.split_at(SIZE_OF_HEADER);
+        let len_raw = types::decode::<i32>(header);
         if len_raw < 0 {
             return None;
         }
+        let utf16_tail: &[u16] = unsafe { transmute_slice(value_tail) };
         let char_count = len_raw as usize;
-        let utf16_tail: &[u16] = unsafe { transmute_slice(&values[(offset + SIZE_OF_HEADER)..]) };
         Some(&utf16_tail[..char_count])
     }
 
