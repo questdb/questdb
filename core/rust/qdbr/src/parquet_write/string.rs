@@ -138,14 +138,7 @@ fn encode_delta(
     }
 
     let lengths = offsets.iter().filter_map(|offset| {
-        get_utf16(values, *offset as usize).map(|utf16| {
-            let len = compute_utf8_length(utf16) as i64;
-            println!(
-                "str {}, len {len}",
-                String::from_utf16(utf16).expect("blew up")
-            );
-            len
-        })
+        get_utf16(values, *offset as usize).map(|utf16| compute_utf8_length(utf16) as i64)
     });
     let lengths = ExactSizedIter::new(lengths, row_count - null_count);
     delta_bitpacked::encode(lengths, buffer);
@@ -176,18 +169,14 @@ fn encode_delta(
             // Filter out low surrogates
             .filter(|&char| !(0xDC00..=0xDFFF).contains(char))
             .fold(0, |len, &char| {
-                if char <= 0x7F {
-                    // ASCII char
-                    len + 1
+                len + if char <= 0x7F {
+                    1 // ASCII char
                 } else if char <= 0x7FF {
-                    // Two-byte UTF-8
-                    len + 2
+                    2 // Two-byte UTF-8
                 } else if !(0xD800..=0xDBFF).contains(&char) {
-                    // Not a high surrogate, so must be a three-byte UTF-8
-                    len + 3
+                    3 // Not a high surrogate, so must be a three-byte UTF-8
                 } else {
-                    // High surrogate
-                    len + 4
+                    4 // High surrogate
                 }
             })
     }
