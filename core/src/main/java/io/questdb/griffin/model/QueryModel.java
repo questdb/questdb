@@ -95,6 +95,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private static final ObjList<String> modelTypeName = new ObjList<>();
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> aliasToColumnMap = new LowerCaseCharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceObjHashMap<CharSequence> aliasToColumnNameMap = new LowerCaseCharSequenceObjHashMap<>();
+    // Used to store a deep copy of the whereClause field
+    // since whereClause can be changed during optimization/generation stage.
+    private final ObjStack<ExpressionNode> backupWhereClause = new ObjStack<>();
     private final ObjList<CharSequence> bottomUpColumnAliases = new ObjList<>();
     private final ObjList<QueryColumn> bottomUpColumns = new ObjList<>();
     private final LowerCaseCharSequenceIntHashMap columnAliasIndexes = new LowerCaseCharSequenceIntHashMap();
@@ -130,10 +133,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauseModel = new LowerCaseCharSequenceObjHashMap<>();
     private ExpressionNode alias;
     private boolean artificialStar;
-    // Used to store a deep copy of the whereClause field
-    // since whereClause can be changed during optimization/generation stage.
-    private ExpressionNode backupWhereClause;
-
     // where clause expressions that do not reference any tables, not necessarily constants
     private ExpressionNode constWhereClause;
     private JoinContext context;
@@ -193,6 +192,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
      * Recursively clones the current value of whereClause for the model and its sub-models into the backupWhereClause field.
      */
     public static void backupWhereClause(final ObjectPool<ExpressionNode> pool, final QueryModel model) {
+        System.out.println("BACKUO");
+        new Exception().printStackTrace();
         QueryModel current = model;
         while (current != null) {
             if (current.unionModel != null) {
@@ -207,7 +208,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                     backupWhereClause(pool, m);
                 }
             }
-            current.backupWhereClause = ExpressionNode.deepClone(pool, current.whereClause);
+            current.backupWhereClause.push(ExpressionNode.deepClone(pool, current.whereClause));
             current = current.nestedModel;
         }
     }
@@ -216,6 +217,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
      * Recursively restores the whereClause field from backupWhereClause for the model and its sub-models.
      */
     public static void restoreWhereClause(final ObjectPool<ExpressionNode> pool, final QueryModel model) {
+        System.out.println("RESTORE");
         QueryModel current = model;
         while (current != null) {
             if (current.unionModel != null) {
@@ -230,7 +232,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                     restoreWhereClause(pool, m);
                 }
             }
-            current.whereClause = ExpressionNode.deepClone(pool, current.backupWhereClause);
+            current.whereClause = ExpressionNode.deepClone(pool, current.backupWhereClause.pop());
             current = current.nestedModel;
         }
     }
@@ -377,7 +379,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         dependencies.clear();
         parsedWhere.clear();
         whereClause = null;
-        backupWhereClause = null;
+        backupWhereClause.clear();
         constWhereClause = null;
         nestedModel = null;
         tableNameExpr = null;
@@ -1160,10 +1162,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.artificialStar = artificialStar;
     }
 
-    public void setBackupWhereClause(ExpressionNode backupWhereClause) {
-        this.backupWhereClause = backupWhereClause;
-    }
-
     public void setConstWhereClause(ExpressionNode constWhereClause) {
         this.constWhereClause = constWhereClause;
     }
@@ -1292,16 +1290,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.showKind = showKind;
     }
 
-    public void setTableNameFunction(RecordCursorFactory function) {
-        this.tableNameFunction = function;
-    }
-
     public void setTableId(int id) {
         this.tableId = id;
     }
 
     public void setTableNameExpr(ExpressionNode tableNameExpr) {
         this.tableNameExpr = tableNameExpr;
+    }
+
+    public void setTableNameFunction(RecordCursorFactory function) {
+        this.tableNameFunction = function;
     }
 
     public void setTimestamp(ExpressionNode timestamp) {

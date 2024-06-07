@@ -25,6 +25,7 @@
 package io.questdb.std;
 
 import java.util.Arrays;
+import java.util.Objects;
 
 public class ObjStack<T> implements Mutable {
     private static final int DEFAULT_INITIAL_CAPACITY = 16;
@@ -47,6 +48,19 @@ public class ObjStack<T> implements Mutable {
             head = tail = 0;
             Arrays.fill(elements, null);
         }
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof ObjStack)) return false;
+        ObjStack<?> objStack = (ObjStack<?>) o;
+        return head == objStack.head && mask == objStack.mask && tail == objStack.tail && Objects.deepEquals(elements, objStack.elements);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(Arrays.hashCode(elements), head, mask, tail);
     }
 
     public boolean notEmpty() {
