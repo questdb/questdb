@@ -70,6 +70,7 @@ pub fn string_to_page(
     let definition_levels_byte_length = buffer.len();
 
     let mut stats = BinaryMaxMin::new(&primitive_type);
+
     match encoding {
         Encoding::Plain => Ok(encode_plain(&utf16_slices, &mut buffer, &mut stats)),
         Encoding::DeltaLengthByteArray => Ok(encode_delta(
@@ -83,10 +84,12 @@ pub fn string_to_page(
             other
         ))),
     }?;
+
+    let null_count = column_top + null_count;
     build_plain_page(
         buffer,
         num_rows,
-        column_top + null_count,
+        null_count,
         definition_levels_byte_length,
         if options.write_statistics {
             Some(stats.into_parquet_stats(null_count))

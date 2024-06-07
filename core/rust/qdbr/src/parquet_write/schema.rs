@@ -337,6 +337,7 @@ fn encoding_map(data_type: ColumnType) -> Encoding {
         ColumnType::Symbol => Encoding::RleDictionary,
         ColumnType::Binary => Encoding::DeltaLengthByteArray,
         ColumnType::String => Encoding::DeltaLengthByteArray,
+        ColumnType::Varchar => Encoding::DeltaLengthByteArray,
         _ => Encoding::Plain,
     }
 }

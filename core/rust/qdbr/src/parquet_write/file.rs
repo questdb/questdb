@@ -439,6 +439,7 @@ fn chunk_to_page(
                 column_top,
                 options,
                 primitive_type,
+                encoding,
             )
         }
         ColumnType::Long128 | ColumnType::Uuid => {
