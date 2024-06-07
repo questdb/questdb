@@ -30,10 +30,14 @@ use parquet2::schema::types::PrimitiveType;
 use parquet2::types;
 
 use crate::parquet_write::file::WriteOptions;
-use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter};
+use crate::parquet_write::util::{
+    build_plain_page, encode_bool_iter, transmute_slice, ExactSizedIter,
+};
 use crate::parquet_write::{ParquetError, ParquetResult};
 
 use super::util::BinaryMaxMin;
+
+const SIZE_OF_HEADER: usize = size_of::<i32>();
 
 pub fn string_to_page(
     offsets: &[i64],
@@ -126,7 +130,6 @@ fn encode_delta(
     buffer: &mut Vec<u8>,
     stats: &mut BinaryMaxMin,
 ) {
-    let size_of_header = size_of::<i32>();
     let row_count = offsets.len();
 
     if row_count == 0 {
@@ -134,30 +137,58 @@ fn encode_delta(
         return;
     }
 
-    // TODO: lengths are broken because they are UTF-16 lengths and the written data is UTF-8
-    let lengths = offsets
-        .iter()
-        .map(|offset| {
-            let offset = *offset as usize;
-            2 * types::decode::<i32>(&values[offset..offset + size_of_header]) as i64
+    let lengths = offsets.iter().filter_map(|offset| {
+        get_utf16(values, *offset as usize).map(|utf16| {
+            let len = compute_utf8_length(utf16) as i64;
+            println!(
+                "str {}, len {len}",
+                String::from_utf16(utf16).expect("blew up")
+            );
+            len
         })
-        .filter(|len| *len >= 0);
+    });
     let lengths = ExactSizedIter::new(lengths, row_count - null_count);
     delta_bitpacked::encode(lengths, buffer);
 
     for offset in offsets {
-        let offset = *offset as usize;
-        let len_raw = types::decode::<i32>(&values[offset..offset + size_of_header]);
-        if len_raw < 0 {
+        let Some(utf16) = get_utf16(values, *offset as usize) else {
             continue;
-        }
-        let value_offset = offset + size_of_header;
-        let len = (len_raw as usize) * size_of::<u16>();
-        let data = &values[value_offset..value_offset + len];
-        let data: &[u16] = unsafe { transmute(data) };
-        let utf8 = String::from_utf16(data).expect("utf16 string");
+        };
+        let utf8 = String::from_utf16(utf16).expect("utf16 string");
         let value = utf8.as_bytes();
         buffer.extend_from_slice(value);
         stats.update(value);
+    }
+
+    fn get_utf16(values: &[u8], offset: usize) -> Option<&[u16]> {
+        let len_raw = types::decode::<i32>(&values[offset..offset + SIZE_OF_HEADER]);
+        if len_raw < 0 {
+            return None;
+        }
+        let char_count = len_raw as usize;
+        let utf16_tail: &[u16] = unsafe { transmute_slice(&values[(offset + SIZE_OF_HEADER)..]) };
+        Some(&utf16_tail[..char_count])
+    }
+
+    fn compute_utf8_length(utf16: &[u16]) -> usize {
+        utf16
+            .iter()
+            // Filter out low surrogates
+            .filter(|&char| !(0xDC00..=0xDFFF).contains(char))
+            .fold(0, |len, &char| {
+                if char <= 0x7F {
+                    // ASCII char
+                    len + 1
+                } else if char <= 0x7FF {
+                    // Two-byte UTF-8
+                    len + 2
+                } else if !(0xD800..=0xDBFF).contains(&char) {
+                    // Not a high surrogate, so must be a three-byte UTF-8
+                    len + 3
+                } else {
+                    // High surrogate
+                    len + 4
+                }
+            })
     }
 }
