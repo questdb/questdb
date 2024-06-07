@@ -784,6 +784,12 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertIR("(varchar_header avarchar)(i64 4L)(<>)(ret)");
     }
 
+    @Test
+    public void testIn() throws Exception {
+        serialize("anint IN (1, 2, 3)");
+        assertIR("(i32 3L)(i32 anint)(=)(i32 2L)(i32 anint)(=)(||)(i32 1L)(i32 anint)(=)(||)(ret)");
+    }
+
     private void assertIR(String message, String expectedIR) {
         TestIRSerializer ser = new TestIRSerializer(irMemory, metadata);
         String actualIR = ser.serialize();

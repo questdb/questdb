@@ -123,6 +123,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     .put(node.token);
         }
 
+        if (predicateContext.isActive() && SqlKeywords.isInKeyword(predicateContext.rootNode.token)) {
+            return false;
+        }
+
         // Check if we're at the start of an arithmetic expression
         predicateContext.onNodeDescended(node);
 
@@ -338,6 +342,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
         if (node.paramCount < 2) {
             return false;
+        }
+        if (SqlKeywords.isInKeyword(token)) {
+            return true;
         }
         if (Chars.equals(token, "=")) {
             return true;
@@ -857,6 +864,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private void serializeOperator(int position, final CharSequence token, int argCount) throws SqlException {
+        if (SqlKeywords.isInKeyword(token)) {
+            serializeIn();
+            return;
+        }
         if (SqlKeywords.isNotKeyword(token)) {
             putOperator(NOT);
             return;
@@ -984,6 +995,21 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         throw SqlException.position(position).put("unexpected non-numeric constant: ").put(token);
+    }
+
+    private void serializeIn() throws SqlException {
+        final ObjList<ExpressionNode> args = predicateContext.rootNode.args;
+        boolean firstElement = true;
+        for (int i = 0; i < predicateContext.rootNode.args.size() - 1; ++i) {
+            visit(args.get(i));
+            visit(args.getLast());
+            putOperator(EQ);
+            if (firstElement) {
+                firstElement = false;
+            } else {
+                putOperator(OR);
+            }
+        }
     }
 
     private enum PredicateType {
