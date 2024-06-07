@@ -461,10 +461,10 @@ public class Bootstrap {
         try (Writer w = new FileWriter(growingFile)) {
             w.write(helloMsg);
         } catch (IOException e) {
-            log.infoW().$("Failed to create ").$(growingFile.getAbsolutePath()).$();
+            log.errorW().$("could not create ").$(growingFile.getAbsolutePath()).$();
         }
         if (!growingFile.renameTo(helloFile)) {
-            log.infoW().$("Failed to rename ").$(growingFile.getAbsolutePath()).$(" to ").$(helloFile.getName()).$();
+            log.errorW().$("could not rename ").$(growingFile.getAbsolutePath()).$(" to ").$(helloFile.getName()).$();
         }
         helloFile.deleteOnExit();
     }
