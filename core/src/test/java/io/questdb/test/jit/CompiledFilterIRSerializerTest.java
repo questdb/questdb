@@ -794,6 +794,8 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertIR("(i32 1L)(i32 anint)(=)(i32 0L)(i32 anint)(=)(||)(i32 -1L)(i32 anint)(=)(||)(ret)");
         serialize("anint <> NULL AND anint IN (4, 5)");
         assertIR("(i32 5L)(i32 anint)(=)(i32 4L)(i32 anint)(=)(||)(i32 -2147483648L)(i32 anint)(<>)(&&)(ret)");
+        serialize("-anint IN (-1)");
+        assertIR("(i32 -1L)(i32 anint)(neg)(=)(ret)");
     }
 
     @Test(expected = SqlException.class)

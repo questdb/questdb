@@ -999,28 +999,26 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
     private void serializeIn() throws SqlException {
         predicateContext.currentInSerialization = true;
+
         final ObjList<ExpressionNode> args = predicateContext.rootNode.args;
+        final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
+
         if (args.size() < 3) {
-            descendAndVisit(predicateContext.rootNode.rhs);
-            descendAndVisit(predicateContext.rootNode.lhs);
+            traverseAlgo.traverse(predicateContext.rootNode.rhs, this);
+            traverseAlgo.traverse(predicateContext.rootNode.lhs, this);
             putOperator(EQ);
         }
+
         boolean firstElement = true;
         for (int i = 0; i < predicateContext.rootNode.args.size() - 1; ++i) {
-            descendAndVisit(args.get(i));
-            descendAndVisit(args.getLast());
+            traverseAlgo.traverse(args.get(i), this);
+            traverseAlgo.traverse(args.getLast(), this);
             putOperator(EQ);
             if (firstElement) {
                 firstElement = false;
             } else {
                 putOperator(OR);
             }
-        }
-    }
-
-    private void descendAndVisit(ExpressionNode node) throws SqlException {
-        if (descend(node)) {
-            visit(node);
         }
     }
 
