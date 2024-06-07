@@ -243,6 +243,31 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     }
 
     @Test
+    public void testRemovalOfUnsupportedPropertyWontTriggerReload() throws Exception {
+        assertMemoryLeak(() -> {
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("pg.user=steven\n");
+                w.write("pg.password=sklar\n");
+                w.write("cairo.legacy.string.column.type.default=true\n"); // non-default value
+            }
+
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                Assert.assertTrue(serverMain.getConfiguration().getLineTcpReceiverConfiguration().isUseLegacyStringDefault());
+
+                // remove unsupported property
+                try (FileWriter w = new FileWriter(serverConf, false)) {
+                    w.write("pg.user=steven\n");
+                    w.write("pg.password=sklar\n");
+                }
+
+                Assert.assertFalse(latch.await(TimeUnit.SECONDS.toNanos(1)));
+            }
+        });
+    }
+
+    @Test
     public void testRemovedUnsupportedPropertyWontReturnToDefault() throws Exception {
         assertMemoryLeak(() -> {
             try (FileWriter w = new FileWriter(serverConf)) {
