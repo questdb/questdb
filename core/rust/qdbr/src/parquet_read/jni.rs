@@ -1,4 +1,5 @@
 use std::fs::File;
+use std::mem::{offset_of, size_of};
 use std::ops::Sub;
 use std::path::Path;
 use std::slice;
@@ -8,11 +9,12 @@ use jni::objects::JClass;
 use jni::JNIEnv;
 
 use parquet2::encoding::Encoding;
-use parquet2::metadata::FileMetaData;
+use parquet2::metadata::{Descriptor, FileMetaData};
 use parquet2::page::{split_buffer, DataPage, DictPage, Page};
 use parquet2::read::{decompress, get_page_iterator, read_metadata};
-use parquet2::schema::types::ParquetType::{GroupType, PrimitiveType};
-use parquet2::schema::types::PhysicalType;
+use parquet2::schema::types::{IntegerType, PhysicalType, PrimitiveLogicalType, TimeUnit};
+use parquet2::schema::types::PrimitiveLogicalType::{Timestamp, Uuid};
+use crate::parquet_write::schema::ColumnType;
 
 const MAX_ALLOC_SIZE: usize = i32::MAX as usize;
 
@@ -27,25 +29,86 @@ pub const BYTE_ARRAY: u32 = 6;
 pub const FIXED_LEN_BYTE_ARRAY: u32 = 7;
 
 // The metadata fields are accessed from Java.
-#[repr(C, align(8))]
+#[repr(C)]
 pub struct ParquetDecoder {
     col_count: i32,
     row_count: usize,
     row_group_count: i32,
-    col_names_ptr: *const u16,        // col_names' pointer exposed to Java
-    col_name_lengths_ptr: *const i32, // col_name_lengths' pointer exposed to Java
-    col_ids_ptr: *const i32,          // col_ids' pointer exposed to Java
-    col_physical_types_ptr: *const i64, // col_physical_types' pointer exposed to Java
+    columns_ptr: *const ColumnMeta,
+    columns: Vec<ColumnMeta>,
     reader: File,
     metadata: FileMetaData,
     decompress_buffer: Vec<u8>,
-    col_names: Vec<u16>, // UTF-16 encoded
-    col_name_lengths: Vec<i32>,
-    col_ids: Vec<i32>,
-    col_physical_types: Vec<i64>,
 }
 
+#[repr(C)]
+#[derive(Debug)]
+pub struct ColumnMeta {
+    typ: ColumnType,
+    id: i32,
+    physical_type: i64,
+    name_size: u32,
+    name_ptr: *const u16,
+    name_vec: Vec<u16>,
+}
+
+
 impl ParquetDecoder {
+    pub fn read(src_path: &Path) -> anyhow::Result<Self> {
+        let mut reader = File::open(src_path)?;
+        let metadata = read_metadata(&mut reader)?;
+
+        let col_count = metadata.schema().fields().len() as i32;
+        let mut columns = vec![];
+
+        for (_i, f) in metadata.schema_descr.columns().iter().enumerate() {
+            // Some types are not supported, this will skip them.
+            to_column_type(&f.descriptor).map(|typ| {
+                let physical_type = match f.descriptor.primitive_type.physical_type {
+                    PhysicalType::Boolean => BOOLEAN as i64,
+                    PhysicalType::Int32 => INT32 as i64,
+                    PhysicalType::Int64 => INT64 as i64,
+                    PhysicalType::Int96 => INT96 as i64,
+                    PhysicalType::Float => FLOAT as i64,
+                    PhysicalType::Double => DOUBLE as i64,
+                    PhysicalType::ByteArray => BYTE_ARRAY as i64,
+                    PhysicalType::FixedLenByteArray(length) => {
+                        // Should match Numbers#encodeLowHighInts().
+                        (i64::overflowing_shl(length as i64, 32).0 | (FIXED_LEN_BYTE_ARRAY as i64))
+                            as i64
+                    }
+                };
+
+                let info = &f.descriptor.primitive_type.field_info;
+                let name: Vec<u16> = info.name.encode_utf16().collect();
+
+                columns.push(ColumnMeta {
+                    typ,
+                    id: info.id.unwrap_or(-1),
+                    physical_type,
+                    name_size: name.len() as u32,
+                    name_ptr: name.as_ptr(),
+                    name_vec: name,
+                });
+            });
+        }
+
+        // TODO: add some validation
+
+        let decoder = ParquetDecoder {
+            col_count,
+            row_count: metadata.num_rows,
+            row_group_count: metadata.row_groups.len() as i32,
+            reader,
+            metadata,
+            decompress_buffer: vec![],
+            columns_ptr: columns.as_ptr(),
+            columns,
+        };
+
+        return Ok(decoder);
+    }
+
     pub fn decode_column_chunk(
         &mut self,
         row_group: usize,
@@ -212,71 +275,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
             std::str::from_utf8_unchecked(slice::from_raw_parts(src_path, src_path_len as usize))
         };
         let src_path = Path::new(&src_path);
-
-        let mut reader = File::open(src_path)?;
-        let metadata = read_metadata(&mut reader)?;
-
-        let col_count = metadata.schema().fields().len() as i32;
-
-        let mut col_names: Vec<u16> = vec![];
-        let mut col_name_lengths: Vec<i32> = vec![];
-        let mut col_ids: Vec<i32> = vec![];
-        let mut col_physical_types: Vec<i64> = vec![];
-
-        for (_i, f) in metadata.schema().fields().iter().enumerate() {
-            let physical_type = match f {
-                PrimitiveType(f) => Ok(f.physical_type),
-                GroupType {
-                    field_info: f,
-                    logical_type: _,
-                    converted_type: _,
-                    fields: _,
-                } => Err(anyhow!("group types not supported: {}", f.name)),
-            }?;
-            let physical_type = match physical_type {
-                PhysicalType::Boolean => BOOLEAN as i64,
-                PhysicalType::Int32 => INT32 as i64,
-                PhysicalType::Int64 => INT64 as i64,
-                PhysicalType::Int96 => INT96 as i64,
-                PhysicalType::Float => FLOAT as i64,
-                PhysicalType::Double => DOUBLE as i64,
-                PhysicalType::ByteArray => BYTE_ARRAY as i64,
-                PhysicalType::FixedLenByteArray(length) => {
-                    // Should match Numbers#encodeLowHighInts().
-                    (i64::overflowing_shl(length as i64, 32).0 | (FIXED_LEN_BYTE_ARRAY as i64))
-                        as i64
-                }
-            };
-            col_physical_types.push(physical_type);
-
-            let info = f.get_field_info();
-            let name: Vec<u16> = info.name.encode_utf16().collect();
-            col_names.extend_from_slice(&name);
-            col_name_lengths.push(name.len() as i32);
-
-            col_ids.push(info.id.unwrap_or(-1));
-        }
-
-        // TODO: add some validation
-
-        let decoder = ParquetDecoder {
-            col_count,
-            row_count: metadata.num_rows,
-            row_group_count: metadata.row_groups.len() as i32,
-            reader,
-            metadata,
-            decompress_buffer: vec![],
-            col_names_ptr: col_names.as_ptr(),
-            col_names,
-            col_name_lengths_ptr: col_name_lengths.as_ptr(),
-            col_name_lengths,
-            col_ids_ptr: col_ids.as_ptr(),
-            col_ids,
-            col_physical_types_ptr: col_physical_types.as_ptr(),
-            col_physical_types,
-        };
-
-        return Ok(decoder);
+        ParquetDecoder::read(src_path)
     };
 
     match init() {
@@ -324,6 +323,87 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     }
 }
 
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_columnCountOffset(
+    env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    offset_of!(ParquetDecoder, col_count)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_rowCountOffset(
+    env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    offset_of!(ParquetDecoder, row_count)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_rowGroupCountOffset(
+    env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    offset_of!(ParquetDecoder, row_group_count)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_columnsPtrOffset(
+    env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    offset_of!(ParquetDecoder, columns_ptr)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_columnRecordTypeOffset(
+    env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    offset_of!(ColumnMeta, typ)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_columnRecordPhysicalTypeOffset(
+    env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    offset_of!(ColumnMeta, physical_type)
+}
+
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_columnRecordNamePtrOffset(
+    env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    offset_of!(ColumnMeta, name_ptr)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_columnRecordNameSizeOffset(
+    env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    offset_of!(ColumnMeta, name_size)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_columnIdsOffset(
+    env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    offset_of!(ColumnMeta, id)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_columnRecordSize(
+    env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    size_of::<ColumnMeta>()
+}
+
 fn throw_state_ex<T>(env: &mut JNIEnv, method_name: &str, err: anyhow::Error, def: T) -> T {
     if let Some(jni_err) = err.downcast_ref::<jni::errors::Error>() {
         match jni_err {
@@ -342,4 +422,205 @@ fn throw_state_ex<T>(env: &mut JNIEnv, method_name: &str, err: anyhow::Error, de
             .expect("failed to throw exception");
     }
     def
+}
+
+fn to_column_type(des: &Descriptor) -> Option<ColumnType> {
+    match (des.primitive_type.physical_type, des.primitive_type.logical_type) {
+        (PhysicalType::Int64, Some(Timestamp {
+                                       unit: TimeUnit::Microseconds,
+                                       is_adjusted_to_utc: true,
+                                   })) => Some(ColumnType::Timestamp),
+        (PhysicalType::Int64, Some(Timestamp {
+                                       unit: TimeUnit::Milliseconds,
+                                       is_adjusted_to_utc: true,
+                                   })) => Some(ColumnType::Date),
+        (PhysicalType::Int64, None) => Some(ColumnType::Long),
+        (PhysicalType::Int64, Some(PrimitiveLogicalType::Integer(IntegerType::Int64))) => Some(ColumnType::Long),
+        (PhysicalType::Int32, None) => Some(ColumnType::Int),
+        (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int32))) => Some(ColumnType::Int),
+        (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int16))) => Some(ColumnType::Short),
+        (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int8))) => Some(ColumnType::Byte),
+        (PhysicalType::Boolean, None) => Some(ColumnType::Boolean),
+        (PhysicalType::Double, None) => Some(ColumnType::Double),
+        (PhysicalType::Float, None) => Some(ColumnType::Float),
+        (PhysicalType::FixedLenByteArray(16), Some(Uuid)) => Some(ColumnType::Uuid),
+        (PhysicalType::ByteArray, Some(PrimitiveLogicalType::String)) => Some(ColumnType::Varchar),
+        (PhysicalType::FixedLenByteArray(32), None) => Some(ColumnType::Long256),
+        (PhysicalType::ByteArray, None) => Some(ColumnType::Binary),
+        (_, _) => None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::parquet_write::file::ParquetWriter;
+    use crate::parquet_write::schema::{Column, ColumnType, Partition};
+    use arrow::array::Array;
+    use bytes::Bytes;
+    use std::io::{Cursor, Write};
+    use std::mem::size_of;
+    use std::ptr::null;
+    use std::{env, mem};
+    use std::fs::File;
+    use std::path::Path;
+    use arrow::datatypes::ToByteSlice;
+    use tempfile::NamedTempFile;
+    use crate::parquet_read::jni::ParquetDecoder;
+
+    #[test]
+    fn test_decode_column_type_fixed() {
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        let row_count = 10;
+        let mut columns = Vec::new();
+
+        let cols = vec![
+            (ColumnType::Long256, size_of::<i64>() * 4, "col_long256"),
+            (ColumnType::Timestamp, size_of::<i64>(), "col_ts"),
+            (ColumnType::Int, size_of::<i32>(), "col_int"),
+            (ColumnType::Long, size_of::<i64>(), "col_long"),
+            (ColumnType::Uuid, size_of::<i64>() * 2, "col_uuid"),
+            (ColumnType::Boolean, size_of::<bool>(), "col_bool"),
+            (ColumnType::Date, size_of::<i64>(), "col_date"),
+            (ColumnType::Byte, size_of::<u8>(), "col_byte"),
+            (ColumnType::Short, size_of::<i16>(), "col_short"),
+            (ColumnType::Double, size_of::<f64>(), "col_double"),
+            (ColumnType::Float, size_of::<f32>(), "col_float"),
+            (ColumnType::GeoInt, size_of::<f32>(), "col_geo_int"),
+            (ColumnType::GeoShort, size_of::<u16>(), "col_geo_short"),
+            (ColumnType::GeoByte, size_of::<u8>(), "col_geo_byte"),
+            (ColumnType::GeoLong, size_of::<i64>(), "col_geo_long"),
+            (ColumnType::IPv4, size_of::<i32>(), "col_geo_ipv4"),
+        ];
+
+        for (col_type, value_size, name) in cols.iter() {
+            columns.push(create_fix_column(row_count, *col_type, *value_size, name));
+        }
+
+        let column_count = columns.len();
+        let partition = Partition { table: "test_table".to_string(), columns: columns };
+        let parquet_writer = ParquetWriter::new(&mut buf)
+            .with_statistics(false)
+            .with_row_group_size(Some(1048576))
+            .with_data_page_size(Some(1048576))
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let bytes: Bytes = buf.into_inner().into();
+        let mut temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        temp_file.write_all(bytes.to_byte_slice()).expect("Failed to write to temp file");
+
+        let path = temp_file.path().to_str().unwrap();
+        let meta = ParquetDecoder::read(Path::new(&path)).unwrap();
+
+        assert_eq!(meta.columns.len(), column_count);
+        assert_eq!(meta.row_count, row_count);
+
+        for (i, col) in meta.columns.iter().enumerate() {
+            let (col_type, _, name) = cols[i];
+            assert_eq!(col.typ, to_storage_type(col_type));
+            let actual_name: String = String::from_utf16(&col.name_vec).unwrap();
+            assert_eq!(actual_name, name);
+        }
+
+        temp_file.close().expect("Failed to delete temp file");
+    }
+
+    fn to_storage_type(column_type: ColumnType) -> ColumnType {
+        match column_type {
+            ColumnType::GeoInt | ColumnType::IPv4 => ColumnType::Int,
+            ColumnType::GeoShort => ColumnType::Short,
+            ColumnType::GeoByte => ColumnType::Byte,
+            ColumnType::GeoLong => ColumnType::Long,
+            other => other
+        }
+    }
+
+    fn create_fix_column(
+        row_count: usize,
+        col_type: ColumnType,
+        value_size: usize,
+        name: &'static str,
+    ) -> Column {
+        let mut buff = vec![0u8; row_count * value_size];
+        for i in 0..row_count {
+            let value = i as u8;
+            let offset = i * value_size;
+            buff[offset..offset + 1].copy_from_slice(&value.to_le_bytes());
+        }
+        let col_type_i32 = col_type as i32;
+        assert_eq!(
+            col_type,
+            ColumnType::try_from(col_type_i32).expect("invalid colum type")
+        );
+
+        Column::from_raw_data(
+            0,
+            name,
+            col_type as i32,
+            0,
+            row_count,
+            buff.as_ptr(),
+            buff.len(),
+            null(),
+            0,
+            null(),
+            0,
+        )
+            .unwrap()
+    }
+
+    fn serialize_to_parquet(
+        mut buf: &mut Cursor<Vec<u8>>,
+        col1: Vec<i32>,
+        col_chars: Vec<u8>,
+        offsets: Vec<u64>,
+    ) {
+        assert_eq!(ColumnType::Symbol, ColumnType::try_from(12).expect("fail"));
+        let col1_w = Column::from_raw_data(
+            0,
+            "col1",
+            12,
+            0,
+            col1.len(),
+            col1.as_ptr() as *const u8,
+            col1.len() * size_of::<i32>(),
+            col_chars.as_ptr(),
+            col_chars.len(),
+            offsets.as_ptr(),
+            offsets.len(),
+        )
+            .unwrap();
+
+        let partition = Partition {
+            table: "test_table".to_string(),
+            columns: [col1_w].to_vec(),
+        };
+
+        let parquet_writer = ParquetWriter::new(&mut buf)
+            .with_statistics(false)
+            .finish(partition)
+            .expect("parquet writer");
+    }
+
+    fn serialize_as_symbols(symbol_chars: Vec<&str>) -> (Vec<u8>, Vec<u64>) {
+        let mut chars = vec![];
+        let mut offsets = vec![];
+
+        for s in symbol_chars {
+            let sym_chars: Vec<_> = s.encode_utf16().collect();
+            let len = sym_chars.len();
+            offsets.push(chars.len() as u64);
+            chars.extend_from_slice(&(len as u32).to_le_bytes());
+            let encoded: &[u8] = unsafe {
+                std::slice::from_raw_parts(
+                    sym_chars.as_ptr() as *const u8,
+                    sym_chars.len() * mem::size_of::<u16>(),
+                )
+            };
+            chars.extend_from_slice(encoded);
+        }
+
+        (chars, offsets)
+    }
 }

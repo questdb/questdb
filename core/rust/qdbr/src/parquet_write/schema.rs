@@ -9,30 +9,31 @@ use parquet2::schema::Repetition;
 
 use crate::parquet_write::{ParquetError, ParquetResult};
 
+#[repr(i32)]
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum ColumnType {
-    Boolean,
-    Byte,
-    Short,
-    Char,
-    Int,
-    Long,
-    Date,
-    Timestamp,
-    Float,
-    Double,
-    String,
-    Symbol,
-    Long256,
-    GeoByte,
-    GeoShort,
-    GeoInt,
-    GeoLong,
-    Binary,
-    Uuid,
-    Long128,
-    IPv4,
-    Varchar,
+    Boolean = 1,
+    Byte = 2,
+    Short = 3,
+    Char = 4,
+    Int = 5,
+    Long = 6,
+    Date = 7,
+    Timestamp = 8,
+    Float = 9,
+    Double = 10,
+    String = 11,
+    Symbol = 12,
+    Long256 = 13,
+    GeoByte = 14,
+    GeoShort = 15,
+    GeoInt = 16,
+    GeoLong = 17,
+    Binary = 18,
+    Uuid = 19,
+    Long128 = 20,
+    IPv4 = 25,
+    Varchar = 26,
 }
 
 impl TryFrom<i32> for ColumnType {
@@ -61,6 +62,7 @@ impl TryFrom<i32> for ColumnType {
             17 => Ok(ColumnType::GeoLong),
             18 => Ok(ColumnType::Binary),
             19 => Ok(ColumnType::Uuid),
+            21 => Ok(ColumnType::IPv4),
             24 => Ok(ColumnType::Long128),
             25 => Ok(ColumnType::IPv4),
             26 => Ok(ColumnType::Varchar),
@@ -117,7 +119,18 @@ pub fn column_type_to_parquet_type(
             None,
             Some(column_id),
         )?),
-        ColumnType::Date | ColumnType::Timestamp => Ok(ParquetType::try_from_primitive(
+        ColumnType::Date => Ok(ParquetType::try_from_primitive(
+            name,
+            PhysicalType::Int64,
+            Repetition::Optional,
+            Some(PrimitiveConvertedType::TimestampMillis),
+            Some(PrimitiveLogicalType::Timestamp {
+                unit: TimeUnit::Milliseconds,
+                is_adjusted_to_utc: true,
+            }),
+            Some(column_id),
+        )?),
+        ColumnType::Timestamp => Ok(ParquetType::try_from_primitive(
             name,
             PhysicalType::Int64,
             Repetition::Optional,
@@ -207,7 +220,7 @@ pub fn column_type_to_parquet_type(
             PhysicalType::FixedLenByteArray(16),
             Repetition::Optional,
             None,
-            None,
+            Some(PrimitiveLogicalType::Uuid),
             Some(column_id),
         )?),
         ColumnType::IPv4 => Ok(ParquetType::try_from_primitive(

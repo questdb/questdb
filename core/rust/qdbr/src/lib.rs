@@ -24,6 +24,7 @@
 
 mod parquet_read;
 mod parquet_write;
+mod mem_utils;
 
 pub extern crate jni;
 

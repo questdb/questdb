@@ -876,6 +876,7 @@ io.questdb.griffin.engine.functions.table.ReaderPoolFunctionFactory
 io.questdb.griffin.engine.functions.table.WriterPoolFunctionFactory
 io.questdb.griffin.engine.functions.table.TableWriterMetricsFunctionFactory
 io.questdb.griffin.engine.functions.table.MemoryMetricsFunctionFactory
+io.questdb.griffin.engine.functions.table.ParquetFileReaderFunctionFactory
 
 io.questdb.griffin.engine.functions.groupby.FirstSymbolGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.FirstStrGroupByFunctionFactory

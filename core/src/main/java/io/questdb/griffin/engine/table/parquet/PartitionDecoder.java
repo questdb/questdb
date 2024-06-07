@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.table.parquet;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectString;
 import io.questdb.std.str.Path;
@@ -38,17 +40,21 @@ public class PartitionDecoder implements QuietCloseable {
     public static final int INT32_PHYSICAL_TYPE = 1;
     public static final int INT64_PHYSICAL_TYPE = 2;
     public static final int INT96_PHYSICAL_TYPE = 3;
-    private static final long COLUMN_COUNT_OFFSET = 0;
-    private static final long ROW_COUNT_OFFSET = COLUMN_COUNT_OFFSET + Long.BYTES;
-    private static final long ROW_GROUP_COUNT_OFFSET = ROW_COUNT_OFFSET + Long.BYTES;
-    private static final long COLUMN_NAMES_OFFSET = ROW_GROUP_COUNT_OFFSET + Long.BYTES;
-    private static final long COLUMN_NAME_LENGTHS_OFFSET = COLUMN_NAMES_OFFSET + Long.BYTES;
-    private static final long COLUMN_IDS_OFFSET = COLUMN_NAME_LENGTHS_OFFSET + Long.BYTES;
-    private static final long COLUMN_PHYSICAL_TYPES_OFFSET = COLUMN_IDS_OFFSET + Long.BYTES;
+    private static final long COLUMNS_PTR_OFFSET;
+    private static final long COLUMN_COUNT_OFFSET;
+    private final static long COLUMN_IDS_OFFSET;
+    private static final long COLUMN_PHYSICAL_TYPES_OFFSET;
+    private static final long COLUMN_RECORD_NAME_PTR_OFFSET;
+    private static final long COLUMN_RECORD_NAME_SIZE_OFFSET;
+    private static final long COLUMN_RECORD_SIZE;
+    private static final long COLUMN_RECORD_TYPE_OFFSET;
     private final ColumnChunkBuffers chunkBuffers;
     private final ObjectPool<DirectString> directStringPool = new ObjectPool<>(DirectString::new, 16);
     private final Metadata metadata = new Metadata();
     private final Path path;
+    private static final long ROW_COUNT_OFFSET;
+    private static final long ROW_GROUP_COUNT_OFFSET;
+    private long columnsPtr;
     private long ptr;
 
     public PartitionDecoder() {
@@ -96,7 +102,7 @@ public class PartitionDecoder implements QuietCloseable {
         return chunkBuffers;
     }
 
-    public Metadata metadata() {
+    public Metadata getMetadata() {
         assert ptr != 0;
         return metadata;
     }
@@ -107,6 +113,7 @@ public class PartitionDecoder implements QuietCloseable {
         path.of(srcPath);
         try {
             ptr = create(path.ptr(), path.size());
+            columnsPtr = Unsafe.getUnsafe().getLong(ptr + COLUMNS_PTR_OFFSET);
             metadata.init();
         } catch (Throwable th) {
             throw CairoException.critical(0).put("Could not describe partition: [path=").put(path)
@@ -115,6 +122,20 @@ public class PartitionDecoder implements QuietCloseable {
                     .put(']');
         }
     }
+
+    private static native long columnCountOffset();
+
+    private static native long columnIdsOffset();
+
+    private static native long columnRecordNamePtrOffset();
+
+    private static native long columnRecordNameSizeOffset();
+
+    private static native long columnRecordPhysicalTypeOffset();
+
+    private static native long columnRecordSize();
+
+    private static native long columnRecordTypeOffset();
 
     private static native long create(long srcPathPtr, int srcPathLength);
 
@@ -127,6 +148,12 @@ public class PartitionDecoder implements QuietCloseable {
     );
 
     private static native void destroy(long impl);
+
+    private static native long columnsPtrOffset();
+
+    private static native long rowCountOffset();
+
+    private static native long rowGroupCountOffset();
 
     private void destroy() {
         if (ptr != 0) {
@@ -230,8 +257,7 @@ public class PartitionDecoder implements QuietCloseable {
         }
 
         public int columnId(int index) {
-            long p = Unsafe.getUnsafe().getLong(ptr + COLUMN_IDS_OFFSET);
-            return Unsafe.getUnsafe().getInt(p + (long) Integer.BYTES * index);
+            return Unsafe.getUnsafe().getInt(columnsPtr + index * COLUMN_RECORD_SIZE + COLUMN_IDS_OFFSET);
         }
 
         public CharSequence columnName(int index) {
@@ -239,8 +265,15 @@ public class PartitionDecoder implements QuietCloseable {
         }
 
         public long columnPhysicalType(int index) {
-            long p = Unsafe.getUnsafe().getLong(ptr + COLUMN_PHYSICAL_TYPES_OFFSET);
-            return Unsafe.getUnsafe().getLong(p + (long) Long.BYTES * index);
+            return Unsafe.getUnsafe().getLong(columnsPtr + index * COLUMN_RECORD_SIZE + COLUMN_PHYSICAL_TYPES_OFFSET);
+        }
+
+        public void copyTo(GenericRecordMetadata metadata) {
+            metadata.clear();
+            final int columnCount = columnCount();
+            for (int i = 0; i < columnCount; i++) {
+                metadata.add(new TableColumnMetadata(Chars.toString(columnName(i)), getColumnType(i)));
+            }
         }
 
         public long rowCount() {
@@ -251,25 +284,40 @@ public class PartitionDecoder implements QuietCloseable {
             return Unsafe.getUnsafe().getInt(ptr + ROW_GROUP_COUNT_OFFSET);
         }
 
+        public int getColumnType(int index) {
+            return Unsafe.getUnsafe().getInt(columnsPtr + index * COLUMN_RECORD_SIZE + COLUMN_RECORD_TYPE_OFFSET);
+        }
+
         private void init() {
             columnNames.clear();
             directStringPool.clear();
 
             final long columnCount = columnCount();
-            final long namesPtr = Unsafe.getUnsafe().getLong(ptr + COLUMN_NAMES_OFFSET);
-            final long nameLengthsPtr = Unsafe.getUnsafe().getLong(ptr + COLUMN_NAME_LENGTHS_OFFSET);
-            long namesOffset = 0;
+            long currentColumnPtr = columnsPtr;
             for (long i = 0; i < columnCount; i++) {
                 DirectString str = directStringPool.next();
-                int len = Unsafe.getUnsafe().getInt(nameLengthsPtr + Integer.BYTES * i);
-                str.of(namesPtr + namesOffset, len);
+                int len = Unsafe.getUnsafe().getInt(currentColumnPtr + COLUMN_RECORD_NAME_SIZE_OFFSET);
+                long colNamePtr = Unsafe.getUnsafe().getLong(currentColumnPtr + COLUMN_RECORD_NAME_PTR_OFFSET);
+                str.of(colNamePtr, len);
                 columnNames.add(str);
-                namesOffset += 2L * len;
+                currentColumnPtr += COLUMN_RECORD_SIZE;
             }
         }
     }
 
     static {
         Os.init();
+
+        COLUMN_COUNT_OFFSET = columnCountOffset();
+        COLUMNS_PTR_OFFSET = columnsPtrOffset();
+        ROW_COUNT_OFFSET = rowCountOffset();
+        COLUMN_RECORD_SIZE = columnRecordSize();
+        COLUMN_RECORD_TYPE_OFFSET = columnRecordTypeOffset();
+        COLUMN_RECORD_NAME_SIZE_OFFSET = columnRecordNameSizeOffset();
+        COLUMN_RECORD_NAME_PTR_OFFSET = columnRecordNamePtrOffset();
+        COLUMN_PHYSICAL_TYPES_OFFSET = columnRecordPhysicalTypeOffset();
+        ROW_GROUP_COUNT_OFFSET = rowGroupCountOffset();
+        COLUMN_IDS_OFFSET = columnIdsOffset();
     }
+
 }

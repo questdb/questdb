@@ -6,7 +6,7 @@ pub(crate) mod file;
 mod fixed_len_bytes;
 mod jni;
 mod primitive;
-mod schema;
+pub mod schema;
 mod string;
 mod symbol;
 mod util;
@@ -193,7 +193,7 @@ mod tests {
             let offset = i * value_size;
             buff[offset..offset + size_of::<i32>()].copy_from_slice(&value.to_le_bytes());
         }
-        let col_type_i32 = col_type as i32 + 1;
+        let col_type_i32 = col_type as i32;
         assert_eq!(
             col_type,
             ColumnType::try_from(col_type_i32).expect("invalid colum type")

@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.table.parquet;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.std.Numbers;
@@ -127,15 +128,10 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                 partitionEncoder.encode(reader, 0, path);
 
                 partitionDecoder.of(path);
-                Assert.assertEquals(24, partitionDecoder.metadata().columnCount());
-                Assert.assertEquals(rows, partitionDecoder.metadata().rowCount());
-                Assert.assertEquals(1, partitionDecoder.metadata().rowGroupCount());
+                Assert.assertEquals(24, partitionDecoder.getMetadata().columnCount());
+                Assert.assertEquals(rows, partitionDecoder.getMetadata().rowCount());
+                Assert.assertEquals(1, partitionDecoder.getMetadata().rowGroupCount());
 
-                final String[] expectedColumnNames = new String[]{
-                        "id", "a_boolean", "a_byte", "a_short", "a_char", "an_int", "a_long", "a_float", "a_double", "a_symbol",
-                        "a_geo_byte", "a_geo_short", "a_geo_int", "a_geo_long", "a_string", "a_bin", "a_varchar", "a_ip", "a_uuid", "a_long256",
-                        "a_long128", "a_date", "a_ts", "designated_ts",
-                };
                 final long[] expectedPhysicalTypes = new long[]{
                         PartitionDecoder.INT64_PHYSICAL_TYPE, PartitionDecoder.BOOLEAN_PHYSICAL_TYPE,
                         PartitionDecoder.INT32_PHYSICAL_TYPE, PartitionDecoder.INT32_PHYSICAL_TYPE,
@@ -153,12 +149,38 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                         PartitionDecoder.INT64_PHYSICAL_TYPE,
                 };
 
+                TableReaderMetadata readerMeta = reader.getMetadata();
+                Assert.assertEquals(readerMeta.getColumnCount(), partitionDecoder.getMetadata().columnCount());
+
                 for (int i = 0; i < columns; i++) {
-                    TestUtils.assertEquals("column: " + i, expectedColumnNames[i], partitionDecoder.metadata().columnName(i));
-                    Assert.assertEquals("column: " + i, i, partitionDecoder.metadata().columnId(i));
-                    Assert.assertEquals("column: " + i, expectedPhysicalTypes[i], partitionDecoder.metadata().columnPhysicalType(i));
+                    TestUtils.assertEquals("column: " + i, readerMeta.getColumnName(i), partitionDecoder.getMetadata().columnName(i));
+                    Assert.assertEquals("column: " + i, i, partitionDecoder.getMetadata().columnId(i));
+                    Assert.assertEquals("column: " + i, expectedPhysicalTypes[i], partitionDecoder.getMetadata().columnPhysicalType(i));
+                    Assert.assertEquals("column: " + i, toParquetStorageType(readerMeta.getColumnType(i)), partitionDecoder.getMetadata().getColumnType(i));
                 }
             }
         });
+    }
+
+    private int toParquetStorageType(int columnType) {
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.IPv4:
+            case ColumnType.GEOINT:
+                return ColumnType.INT;
+            case ColumnType.GEOLONG:
+                return ColumnType.LONG;
+            case ColumnType.CHAR:
+            case ColumnType.GEOSHORT:
+                return ColumnType.SHORT;
+            case ColumnType.GEOBYTE:
+                return ColumnType.BYTE;
+            case ColumnType.STRING:
+            case ColumnType.SYMBOL:
+                return ColumnType.VARCHAR;
+            case ColumnType.LONG128:
+                return ColumnType.UUID;
+            default:
+                return columnType;
+        }
     }
 }
