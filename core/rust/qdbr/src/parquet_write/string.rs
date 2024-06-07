@@ -102,18 +102,12 @@ pub fn string_to_page(
 }
 
 fn encode_plain(offsets: &[i64], values: &[u8], buffer: &mut Vec<u8>, stats: &mut BinaryMaxMin) {
-    let size_of_header = size_of::<i32>();
-
     for offset in offsets {
         let offset = usize::try_from(*offset).expect("invalid offset value in string aux column");
-        let len_raw = types::decode::<i32>(&values[offset..offset + size_of_header]);
-        if len_raw < 0 {
+        let Some(utf16) = get_utf16(&values[offset..]) else {
             continue;
-        }
-        let len = len_raw as usize;
-        let value_tail: &[u16] = unsafe { transmute(&values[offset + size_of_header..]) };
-        let value = &value_tail[..len];
-        let utf8 = String::from_utf16(value).expect("utf16 string");
+        };
+        let utf8 = String::from_utf16(utf16).expect("utf16 string");
         // BYTE_ARRAY: first 4 bytes denote length in little-endian.
         let encoded_len = (utf8.len() as u32).to_le_bytes();
         buffer.extend_from_slice(&encoded_len);
@@ -138,6 +132,7 @@ fn encode_delta(
     }
 
     let lengths = offsets.iter().filter_map(|&offset| {
+        let offset = usize::try_from(offset).expect("invalid offset value in string aux column");
         get_utf16(&values[offset as usize..]).map(|utf16| compute_utf8_length(utf16) as i64)
     });
     let lengths = ExactSizedIter::new(lengths, row_count - null_count);
@@ -152,33 +147,33 @@ fn encode_delta(
         buffer.extend_from_slice(value);
         stats.update(value);
     }
+}
 
-    fn get_utf16(entry_tail: &[u8]) -> Option<&[u16]> {
-        let (header, value_tail) = entry_tail.split_at(SIZE_OF_HEADER);
-        let len_raw = types::decode::<i32>(header);
-        if len_raw < 0 {
-            return None;
-        }
-        let utf16_tail: &[u16] = unsafe { transmute_slice(value_tail) };
-        let char_count = len_raw as usize;
-        Some(&utf16_tail[..char_count])
+fn get_utf16(entry_tail: &[u8]) -> Option<&[u16]> {
+    let (header, value_tail) = entry_tail.split_at(SIZE_OF_HEADER);
+    let len_raw = types::decode::<i32>(header);
+    if len_raw < 0 {
+        return None;
     }
+    let utf16_tail: &[u16] = unsafe { transmute_slice(value_tail) };
+    let char_count = len_raw as usize;
+    Some(&utf16_tail[..char_count])
+}
 
-    fn compute_utf8_length(utf16: &[u16]) -> usize {
-        utf16
-            .iter()
-            // Filter out low surrogates
-            .filter(|&char| !(0xDC00..=0xDFFF).contains(char))
-            .fold(0, |len, &char| {
-                len + if char <= 0x7F {
-                    1 // ASCII char
-                } else if char <= 0x7FF {
-                    2 // Two-byte UTF-8
-                } else if !(0xD800..=0xDBFF).contains(&char) {
-                    3 // Not a high surrogate, so must be a three-byte UTF-8
-                } else {
-                    4 // High surrogate
-                }
-            })
-    }
+fn compute_utf8_length(utf16: &[u16]) -> usize {
+    utf16
+        .iter()
+        // Filter out low surrogates
+        .filter(|&char| !(0xDC00..=0xDFFF).contains(char))
+        .fold(0, |len, &char| {
+            len + if char <= 0x7F {
+                1 // ASCII char
+            } else if char <= 0x7FF {
+                2 // Two-byte UTF-8
+            } else if !(0xD800..=0xDBFF).contains(&char) {
+                3 // Not a high surrogate, so must be a three-byte UTF-8
+            } else {
+                4 // High surrogate
+            }
+        })
 }
