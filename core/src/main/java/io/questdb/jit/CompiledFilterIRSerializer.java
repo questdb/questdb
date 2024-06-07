@@ -123,7 +123,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     .put(node.token);
         }
 
-        if (predicateContext.isActive() && SqlKeywords.isInKeyword(predicateContext.rootNode.token)) {
+        if (predicateContext.isActive() && SqlKeywords.isInKeyword(predicateContext.rootNode.token) && !predicateContext.currentInSerialization) {
             return false;
         }
 
@@ -998,17 +998,29 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private void serializeIn() throws SqlException {
+        predicateContext.currentInSerialization = true;
         final ObjList<ExpressionNode> args = predicateContext.rootNode.args;
+        if (args.size() < 3) {
+            descendAndVisit(predicateContext.rootNode.rhs);
+            descendAndVisit(predicateContext.rootNode.lhs);
+            putOperator(EQ);
+        }
         boolean firstElement = true;
         for (int i = 0; i < predicateContext.rootNode.args.size() - 1; ++i) {
-            visit(args.get(i));
-            visit(args.getLast());
+            descendAndVisit(args.get(i));
+            descendAndVisit(args.getLast());
             putOperator(EQ);
             if (firstElement) {
                 firstElement = false;
             } else {
                 putOperator(OR);
             }
+        }
+    }
+
+    private void descendAndVisit(ExpressionNode node) throws SqlException {
+        if (descend(node)) {
+            visit(node);
         }
     }
 
@@ -1186,6 +1198,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         StaticSymbolTable symbolTable; // used for known symbol constant lookups
         PredicateType type;
         private ExpressionNode rootNode;
+        boolean currentInSerialization;
 
         @Override
         public void clear() {
@@ -1284,6 +1297,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             singleBooleanColumn = false;
             hasArithmeticOperations = false;
             localTypesObserver.clear();
+            currentInSerialization = false;
         }
 
         private void updateType(int position, int columnTypeTag) throws SqlException {
