@@ -679,16 +679,23 @@ public final class Utf8s {
     }
 
     public static boolean isAscii(Utf8Sequence utf8) {
-        boolean ascii = true;
         if (utf8 != null) {
             for (int k = 0, kl = utf8.size(); k < kl; k++) {
                 if (utf8.byteAt(k) < 0) {
-                    ascii = false;
-                    break;
+                    return false;
                 }
             }
         }
-        return ascii;
+        return true;
+    }
+
+    public static boolean isAscii(long ptr, int size) {
+        for (long p = ptr, lim = ptr + size; p < lim; p++) {
+            if (Unsafe.getUnsafe().getByte(p) < 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public static int lastIndexOfAscii(@NotNull Utf8Sequence seq, char asciiTerm) {

@@ -31,12 +31,11 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.std.*;
-import io.questdb.std.str.DirectUtf16Sink;
-import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8s;
+import io.questdb.std.str.*;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.regex.Matcher;
 
@@ -75,7 +74,8 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
                 throw SqlException.$(replacementPos, "NULL replacement");
             }
             // Optimize for patterns like "^https?://(?:www\.)?([^/]+)/.*$" and replacements like "$1".
-            if (patternStr.length() > 2 && patternStr.charAt(0) == '^' && patternStr.charAt(patternStr.length() - 1) == '$'
+            if (canSkipDecoding(patternStr)
+                    && patternStr.length() > 2 && patternStr.charAt(0) == '^' && patternStr.charAt(patternStr.length() - 1) == '$'
                     && replacementStr.length() > 1 && replacementStr.charAt(0) == '$') {
                 final Matcher matcher = RegexUtils.createMatcher(pattern, patternPos);
                 try {
@@ -93,15 +93,91 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
         return new Func(value, pattern, patternPos, replacement, replacementPos, maxLength, position);
     }
 
-    private static class SingleGroupFunc extends StrFunction implements UnaryFunction {
+    private boolean canSkipDecoding(CharSequence pattern) {
+        // TODO: come up with the strictest possible check
+        return Chars.isAscii(pattern);
+    }
+
+    private static class DirectAsciiStringView implements CharSequence, DirectUtf8Sequence {
+        private boolean ascii;
+        private long ptr;
+        private int size;
+        private boolean stable;
+
+        @Override
+        public @NotNull CharSequence asAsciiCharSequence() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public byte byteAt(int i) {
+            return Unsafe.getUnsafe().getByte(ptr + i);
+        }
+
+        @Override
+        public char charAt(int i) {
+            return (char) Unsafe.getUnsafe().getByte(ptr + i);
+        }
+
+        @Override
+        public boolean isAscii() {
+            return ascii;
+        }
+
+        @Override
+        public boolean isStable() {
+            return stable;
+        }
+
+        @Override
+        public int length() {
+            return size;
+        }
+
+        public DirectAsciiStringView of(long ptr, int size, boolean ascii, boolean stable) {
+            this.ptr = ptr;
+            this.size = size;
+            this.ascii = ascii;
+            this.stable = stable;
+            return this;
+        }
+
+        @Override
+        public long ptr() {
+            return ptr;
+        }
+
+        @Override
+        public int size() {
+            return size;
+        }
+
+        @Override
+        public @NotNull CharSequence subSequence(int start, int end) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public @NotNull String toString() {
+            return Utf8s.stringFromUtf8Bytes(this);
+        }
+    }
+
+    /**
+     * Should be used only for patterns that can operate on a UTF-16 view of a UTF-8 string,
+     * i.e. patterns that only case about ASCII chars.
+     */
+    private static class SingleGroupFunc extends VarcharFunction implements UnaryFunction {
         private static final int INITIAL_SINK_CAPACITY = 16;
         private final int functionPos;
         private final int group;
         private final Matcher matcher;
         private final String replacement;
-        private final DirectUtf16Sink utf16SinkA;
-        private final DirectUtf16Sink utf16SinkB;
+        private final DirectUtf8Sink utf8SinkA;
+        private final DirectUtf8Sink utf8SinkB;
         private final Function value;
+        private final DirectAsciiStringView viewA = new DirectAsciiStringView();
+        private final DirectAsciiStringView viewB = new DirectAsciiStringView();
 
         public SingleGroupFunc(Function value, Matcher matcher, String replacement, int group, int functionPos) {
             try {
@@ -110,8 +186,8 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
                 this.replacement = replacement;
                 this.group = group;
                 this.functionPos = functionPos;
-                this.utf16SinkA = new DirectUtf16Sink(INITIAL_SINK_CAPACITY);
-                this.utf16SinkB = new DirectUtf16Sink(INITIAL_SINK_CAPACITY);
+                this.utf8SinkA = new DirectUtf8Sink(INITIAL_SINK_CAPACITY);
+                this.utf8SinkB = new DirectUtf8Sink(INITIAL_SINK_CAPACITY);
             } catch (Throwable th) {
                 close();
                 throw th;
@@ -121,8 +197,8 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
         @Override
         public void close() {
             UnaryFunction.super.close();
-            Misc.free(utf16SinkA);
-            Misc.free(utf16SinkB);
+            Misc.free(utf8SinkA);
+            Misc.free(utf8SinkB);
         }
 
         @Override
@@ -131,13 +207,18 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
         }
 
         @Override
-        public CharSequence getStrA(Record rec) {
-            return getStr(rec, utf16SinkA);
+        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+            utf8Sink.put(getVarchar(rec, utf8SinkA, viewA));
         }
 
         @Override
-        public CharSequence getStrB(Record rec) {
-            return getStr(rec, utf16SinkB);
+        public Utf8Sequence getVarcharA(Record rec) {
+            return getVarchar(rec, utf8SinkA, viewA);
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(Record rec) {
+            return getVarchar(rec, utf8SinkB, viewB);
         }
 
         @Override
@@ -160,32 +241,39 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
             sink.val("regexp_replace(").val(value).val(',').val(matcher.pattern().toString()).val(',').val(replacement).val(')');
         }
 
-        private CharSequence getStr(Record rec, DirectUtf16Sink utf16Sink) {
+        private Utf8Sequence getVarchar(Record rec, DirectUtf8Sink utf8Sink, DirectAsciiStringView view) {
             Utf8Sequence us = value.getVarcharA(rec);
             if (us == null) {
                 return null;
             }
 
-            utf16Sink.clear();
-            if (us.isAscii()) {
-                // We want monomorphism in later matcher.reset() call,
-                // so we always deal with the sink.
-                utf16Sink.putAscii(us);
+            if (us.ptr() != -1) {
+                view.of(us.ptr(), us.size(), us.isAscii(), us.isStable());
             } else {
-                Utf8s.utf8ToUtf16(us, utf16Sink);
+                utf8Sink.clear();
+                utf8Sink.put(us);
+                view.of(utf8Sink.ptr(), utf8Sink.size(), utf8Sink.isAscii(), false);
             }
 
-            matcher.reset(utf16Sink);
+            matcher.reset(view);
             try {
                 if (!matcher.find()) {
-                    // Same here: we want monomorphism for the returned types.
-                    return utf16Sink.subSequence(0, utf16Sink.length());
+                    return view;
                 }
-                return utf16Sink.subSequence(matcher.start(group), matcher.end(group));
+                final int start = matcher.start(group);
+                final int end = matcher.end(group);
+                if (view.isAscii()) {
+                    return view.of(view.ptr() + start, end - start, true, view.isStable());
+                } else {
+                    // We need to recalculate the ASCII flag.
+                    long ptr = view.ptr() + start;
+                    int size = end - start;
+                    boolean ascii = Utf8s.isAscii(ptr, size);
+                    return view.of(ptr, size, ascii, view.isStable());
+                }
             } catch (Exception e) {
                 throw CairoException.nonCritical().put("regexp_replace failed [position=").put(functionPos).put(", ex=").put(e.getMessage()).put(']');
             }
         }
     }
 }
-

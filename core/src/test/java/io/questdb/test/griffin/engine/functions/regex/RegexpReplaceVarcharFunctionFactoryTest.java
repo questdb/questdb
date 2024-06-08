@@ -83,28 +83,115 @@ public class RegexpReplaceVarcharFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSingleGroup() throws Exception {
+    public void testSingleGroupStable() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_varchar('https://example1.com/abc','https://example2.com/def','http://example3.com',null) url from long_sequence(5))");
+            ddl("create table x as (select rnd_varchar('https://example1.com/abc','https://example2.com/def','http://example3.com','http://example4.com?q=форсаж','фубар',null) url from long_sequence(20))");
 
             assertSql(
                     "regexp_replace\n" +
                             "example1.com\n" +
-                            "http://example3.com\n" +
+                            "example1.com\n" +
                             "example2.com\n" +
                             "\n" +
-                            "example2.com\n",
+                            "\n" +
+                            "\n" +
+                            "http://example3.com\n" +
+                            "example2.com\n" +
+                            "example1.com\n" +
+                            "фубар\n" +
+                            "фубар\n" +
+                            "http://example3.com\n" +
+                            "фубар\n" +
+                            "example2.com\n" +
+                            "example2.com\n" +
+                            "example1.com\n" +
+                            "example1.com\n" +
+                            "example2.com\n" +
+                            "http://example4.com?q=форсаж\n" +
+                            "фубар\n",
                     "select regexp_replace(url, '^https?://(?:www\\.)?([^/]+)/.*$', '$1') from x"
             );
 
             assertSql(
                     "regexp_replace\n" +
                             "https://example1.com/abc\n" +
-                            "http://example3.com\n" +
+                            "https://example1.com/abc\n" +
                             "https://example2.com/def\n" +
                             "\n" +
-                            "https://example2.com/def\n",
+                            "\n" +
+                            "\n" +
+                            "http://example3.com\n" +
+                            "https://example2.com/def\n" +
+                            "https://example1.com/abc\n" +
+                            "фубар\n" +
+                            "фубар\n" +
+                            "http://example3.com\n" +
+                            "фубар\n" +
+                            "https://example2.com/def\n" +
+                            "https://example2.com/def\n" +
+                            "https://example1.com/abc\n" +
+                            "https://example1.com/abc\n" +
+                            "https://example2.com/def\n" +
+                            "http://example4.com?q=форсаж\n" +
+                            "фубар\n",
                     "select regexp_replace(url, '^https?://(?:www\\.)?([^/]+)/.*$', '$0') from x"
+            );
+        });
+    }
+
+    @Test
+    public void testSingleGroupUnstable() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as (select rnd_varchar('https://example1.com/abc','https://example2.com/def','http://example3.com','http://example4.com?q=форсаж','фубар',null) url from long_sequence(20))");
+
+            assertSql(
+                    "regexp_replace\n" +
+                            "example1.com\n" +
+                            "example1.com\n" +
+                            "example2.com\n" +
+                            "_\n" +
+                            "_\n" +
+                            "_\n" +
+                            "http://example3.com_\n" +
+                            "example2.com\n" +
+                            "example1.com\n" +
+                            "фубар_\n" +
+                            "фубар_\n" +
+                            "http://example3.com_\n" +
+                            "фубар_\n" +
+                            "example2.com\n" +
+                            "example2.com\n" +
+                            "example1.com\n" +
+                            "example1.com\n" +
+                            "example2.com\n" +
+                            "http://example4.com?q=форсаж_\n" +
+                            "фубар_\n",
+                    "select regexp_replace(concat(url, '_'), '^https?://(?:www\\.)?([^/]+)/.*$', '$1') from x"
+            );
+
+            assertSql(
+                    "regexp_replace\n" +
+                            "https://example1.com/abc_\n" +
+                            "https://example1.com/abc_\n" +
+                            "https://example2.com/def_\n" +
+                            "_\n" +
+                            "_\n" +
+                            "_\n" +
+                            "http://example3.com_\n" +
+                            "https://example2.com/def_\n" +
+                            "https://example1.com/abc_\n" +
+                            "фубар_\n" +
+                            "фубар_\n" +
+                            "http://example3.com_\n" +
+                            "фубар_\n" +
+                            "https://example2.com/def_\n" +
+                            "https://example2.com/def_\n" +
+                            "https://example1.com/abc_\n" +
+                            "https://example1.com/abc_\n" +
+                            "https://example2.com/def_\n" +
+                            "http://example4.com?q=форсаж_\n" +
+                            "фубар_\n",
+                    "select regexp_replace(concat(url, '_'), '^https?://(?:www\\.)?([^/]+)/.*$', '$0') from x"
             );
         });
     }
