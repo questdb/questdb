@@ -317,6 +317,27 @@ public class Utf8sTest {
     }
 
     @Test
+    public void testIsAscii() {
+        try (DirectUtf8Sink sink = new DirectUtf8Sink(16)) {
+            sink.put("foobar");
+            Assert.assertTrue(Utf8s.isAscii(sink));
+            Assert.assertTrue(Utf8s.isAscii(sink.ptr(), sink.size()));
+            sink.clear();
+            sink.put("фубар");
+            Assert.assertFalse(Utf8s.isAscii(sink));
+            Assert.assertFalse(Utf8s.isAscii(sink.ptr(), sink.size()));
+            sink.clear();
+            sink.put("foobarfoobarfoobarfoobarфубарфубарфубарфубар");
+            Assert.assertFalse(Utf8s.isAscii(sink));
+            Assert.assertFalse(Utf8s.isAscii(sink.ptr(), sink.size()));
+            sink.clear();
+            sink.put("12345678ы87654321");
+            Assert.assertFalse(Utf8s.isAscii(sink));
+            Assert.assertFalse(Utf8s.isAscii(sink.ptr(), sink.size()));
+        }
+    }
+
+    @Test
     public void testLastIndexOfAscii() {
         Assert.assertEquals(2, Utf8s.lastIndexOfAscii(utf8("foo bar baz"), 'o'));
         Assert.assertEquals(10, Utf8s.lastIndexOfAscii(utf8("foo bar baz"), 'z'));
