@@ -57,6 +57,12 @@ public class TableWriterBenchmark {
     public WriterCommitMode writerCommitMode;
     private long ts;
 
+    private final CairoConfiguration configuration;
+
+    public TableWriterBenchmark() {
+        this.configuration = createConfiguration();
+    }
+
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
                 .include(TableWriterBenchmark.class.getSimpleName())
@@ -69,9 +75,7 @@ public class TableWriterBenchmark {
     }
 
     @Setup(Level.Iteration)
-    public void setup() {
-        final CairoConfiguration configuration = getConfiguration();
-
+    public synchronized void setup() {
         executeDdl("create table if not exists test1(f long)", configuration);
         executeDdl("create table if not exists test2(f timestamp) timestamp (f)", configuration);
         executeDdl("create table if not exists test3(f timestamp) timestamp (f) PARTITION BY DAY", configuration);
@@ -123,19 +127,32 @@ public class TableWriterBenchmark {
 
     @TearDown(Level.Iteration)
     public void tearDown() {
-        writer.commit();
-        writer.truncate();
-        writer.close();
-        writer2.commit();
-        writer2.truncate();
-        writer2.close();
-        writer3.commit();
-        writer3.truncate();
-        writer3.close();
+        try {
+            writer.commit();
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            writer.close();
+        }
+
+        try {
+            writer2.commit();
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            writer2.close();
+        }
+
+        try {
+            writer3.commit();
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            writer3.close();
+        }
 
         ts = 0;
 
-        final CairoConfiguration configuration = getConfiguration();
         executeDdl("drop table test1", configuration);
         executeDdl("drop table test2", configuration);
         executeDdl("drop table test3", configuration);
@@ -212,7 +229,7 @@ public class TableWriterBenchmark {
         }
     }
 
-    private CairoConfiguration getConfiguration() {
+    private CairoConfiguration createConfiguration() {
         final int commitMode;
         switch (writerCommitMode) {
             case NOSYNC:
@@ -240,3 +257,4 @@ public class TableWriterBenchmark {
         NOSYNC, SYNC, ASYNC
     }
 }
+
