@@ -262,15 +262,12 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
                 }
                 final int start = matcher.start(group);
                 final int end = matcher.end(group);
-                if (view.isAscii()) {
-                    return view.of(view.ptr() + start, end - start, true, view.isStable());
-                } else {
-                    // We need to recalculate the ASCII flag.
-                    long ptr = view.ptr() + start;
-                    int size = end - start;
-                    boolean ascii = Utf8s.isAscii(ptr, size);
-                    return view.of(ptr, size, ascii, view.isStable());
-                }
+                long ptr = view.ptr() + start;
+                int size = end - start;
+                // If the string is non-ASCII, we need to recalculate
+                // the ASCII flag for the matched substring.
+                boolean ascii = view.isAscii() || Utf8s.isAscii(ptr, size);
+                return view.of(ptr, size, ascii, view.isStable());
             } catch (Exception e) {
                 throw CairoException.nonCritical().put("regexp_replace failed [position=").put(functionPos).put(", ex=").put(e.getMessage()).put(']');
             }
