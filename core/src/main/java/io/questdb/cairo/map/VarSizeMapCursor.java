@@ -26,24 +26,24 @@ package io.questdb.cairo.map;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.std.Unsafe;
+import io.questdb.std.bytes.Bytes;
 
-public final class Unordered16MapCursor implements MapRecordCursor {
-    private final long entrySize;
-    private final Unordered16Map map;
-    private final Unordered16MapRecord recordA;
-    private final Unordered16MapRecord recordB;
+public final class VarSizeMapCursor implements MapRecordCursor {
+    private final VarSizeMap map;
+    private final VarSizeMapRecord recordA;
+    private final VarSizeMapRecord recordB;
+    private final long valueSize;
     private long address;
     private int count;
-    private long limit;
     private int remaining;
     private long topAddress;
-    private long zeroKeyAddress; // set to 0 when there is no zero
 
-    Unordered16MapCursor(Unordered16MapRecord record, Unordered16Map map) {
+    VarSizeMapCursor(VarSizeMapRecord record, VarSizeMap map) {
         this.recordA = record;
         this.recordB = record.clone();
         this.map = map;
-        this.entrySize = map.entrySize();
+        this.valueSize = map.valueSize();
     }
 
     @Override
@@ -72,13 +72,9 @@ public final class Unordered16MapCursor implements MapRecordCursor {
     @Override
     public boolean hasNext() {
         if (remaining > 0) {
-            if (remaining == 1 && zeroKeyAddress != 0) {
-                recordA.of(zeroKeyAddress);
-                remaining--;
-                return true;
-            }
             recordA.of(address);
-            skipToNonZeroKey();
+            int keySize = Unsafe.getUnsafe().getInt(address);
+            address = Bytes.align8b(address + VarSizeMap.VAR_KEY_HEADER_SIZE + keySize + valueSize);
             remaining--;
             return true;
         }
@@ -87,7 +83,7 @@ public final class Unordered16MapCursor implements MapRecordCursor {
 
     @Override
     public void recordAt(Record record, long atRowId) {
-        ((Unordered16MapRecord) record).of(atRowId);
+        ((VarSizeMapRecord) record).of(atRowId);
     }
 
     @Override
@@ -99,23 +95,11 @@ public final class Unordered16MapCursor implements MapRecordCursor {
     public void toTop() {
         address = topAddress;
         remaining = count;
-        if (count > 0 && (zeroKeyAddress == 0 || count > 1) && map.isZeroKey(address)) {
-            skipToNonZeroKey();
-        }
     }
 
-    private void skipToNonZeroKey() {
-        do {
-            address += entrySize;
-        } while (address < limit && map.isZeroKey(address));
-    }
-
-    Unordered16MapCursor init(long address, long limit, long zeroKeyAddress, int count) {
-        this.topAddress = address;
-        this.limit = limit;
-        this.count = count;
-        this.zeroKeyAddress = zeroKeyAddress;
-        toTop();
+    VarSizeMapCursor init(long address, long limit, int count) {
+        this.address = this.topAddress = address;
+        this.remaining = this.count = count;
         recordA.setLimit(limit);
         recordB.setLimit(limit);
         return this;

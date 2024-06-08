@@ -51,7 +51,7 @@ public interface Map extends Mutable, Closeable, Reopenable {
     MapRecord getRecord();
 
     /**
-     * Returns used heap size in bytes for maps that store keys and values separately like {@link OrderedMap}.
+     * Returns used heap size in bytes for maps that store keys and values separately like {@link VarSizeMap}.
      * Returns -1 if the map doesn't use heap.
      */
     default long getUsedHeapSize() {

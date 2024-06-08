@@ -48,8 +48,8 @@ public class ShardedMapCursorTest extends AbstractCairoTest {
             final int N = 1000;
             final Rnd rnd = new Rnd();
             try (
-                    OrderedMap mapA = new OrderedMap(Numbers.SIZE_1MB, types, types, 64, 0.5, 1);
-                    OrderedMap mapB = new OrderedMap(Numbers.SIZE_1MB, types, types, 64, 0.5, 1)
+                    FixedSizeMap mapA = new FixedSizeMap(Numbers.SIZE_1MB, types, types, 64, 0.5, 1);
+                    FixedSizeMap mapB = new FixedSizeMap(Numbers.SIZE_1MB, types, types, 64, 0.5, 1)
             ) {
                 for (int i = 0; i < N; i++) {
                     MapKey keyA = mapA.withKey();
@@ -97,8 +97,8 @@ public class ShardedMapCursorTest extends AbstractCairoTest {
             final int M = 1000;
             final Rnd rnd = new Rnd();
             try (
-                    OrderedMap mapA = new OrderedMap(Numbers.SIZE_1MB, types, types, 64, 0.5, 1);
-                    OrderedMap mapB = new OrderedMap(Numbers.SIZE_1MB, types, types, 64, 0.5, 1)
+                    FixedSizeMap mapA = new FixedSizeMap(Numbers.SIZE_1MB, types, types, 64, 0.5, 1);
+                    FixedSizeMap mapB = new FixedSizeMap(Numbers.SIZE_1MB, types, types, 64, 0.5, 1)
             ) {
                 for (int i = 0; i < N; i++) {
                     MapKey key = mapA.withKey();
@@ -157,9 +157,9 @@ public class ShardedMapCursorTest extends AbstractCairoTest {
             final int cSize = 420;
             final Rnd rnd = new Rnd();
             try (
-                    OrderedMap mapA = new OrderedMap(Numbers.SIZE_1MB, types, types, 64, 0.5, 1);
-                    OrderedMap mapB = new OrderedMap(Numbers.SIZE_1MB, types, types, 64, 0.5, 1); // mapB will be empty
-                    OrderedMap mapC = new OrderedMap(Numbers.SIZE_1MB, types, types, 64, 0.5, 1)
+                    FixedSizeMap mapA = new FixedSizeMap(Numbers.SIZE_1MB, types, types, 64, 0.5, 1);
+                    FixedSizeMap mapB = new FixedSizeMap(Numbers.SIZE_1MB, types, types, 64, 0.5, 1); // mapB will be empty
+                    FixedSizeMap mapC = new FixedSizeMap(Numbers.SIZE_1MB, types, types, 64, 0.5, 1)
             ) {
                 for (int i = 0; i < aSize; i++) {
                     MapKey key = mapA.withKey();

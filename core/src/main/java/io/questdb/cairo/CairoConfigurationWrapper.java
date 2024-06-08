@@ -656,8 +656,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public double getSqlFastMapLoadFactor() {
-        return getDelegate().getSqlFastMapLoadFactor();
+    public double getSqlFixedSizeMapLoadFactor() {
+        return getDelegate().getSqlFixedSizeMapLoadFactor();
     }
 
     @Override
@@ -813,6 +813,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getSqlUnorderedMapMaxEntrySize() {
         return getDelegate().getSqlUnorderedMapMaxEntrySize();
+    }
+
+    @Override
+    public double getSqlVarSizeMapLoadFactor() {
+        return getDelegate().getSqlVarSizeMapLoadFactor();
     }
 
     @Override

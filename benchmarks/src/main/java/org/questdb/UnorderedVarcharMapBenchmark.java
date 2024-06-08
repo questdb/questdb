@@ -27,8 +27,8 @@ package org.questdb;
 import io.questdb.cairo.*;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.map.OrderedMap;
 import io.questdb.cairo.map.UnorderedVarcharMap;
+import io.questdb.cairo.map.VarSizeMap;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMR;
@@ -59,7 +59,7 @@ public class UnorderedVarcharMapBenchmark {
     private MemoryMR auxReadMemUnstable;
     private MemoryMR dataReadMemStable;
     private MemoryMR dataReadMemUnstable;
-    private OrderedMap orderedMap;
+    private VarSizeMap orderedMap;
     private UnorderedVarcharMap varcharMap;
 
     public static void main(String[] args) throws RunnerException {
@@ -133,7 +133,7 @@ public class UnorderedVarcharMapBenchmark {
         varcharMap = new UnorderedVarcharMap(values, WORD_COUNT, 0.6, 5, 128 * 1024, 4 * Numbers.SIZE_1GB);
 
         // generous initial heap size to avoid resizing
-        orderedMap = new OrderedMap(Numbers.SIZE_1MB, new SingleColumnType(ColumnType.VARCHAR), values, WORD_COUNT, 0.6, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+        orderedMap = new VarSizeMap(Numbers.SIZE_1MB, new SingleColumnType(ColumnType.VARCHAR), values, WORD_COUNT, 0.6, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
     }
 
     @Setup(Level.Trial)

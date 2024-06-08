@@ -26,17 +26,17 @@ package io.questdb.cairo.map;
 
 import io.questdb.std.*;
 
-final class OrderedMapValue implements MapValue {
+final class FixedSizeMapValue implements MapValue {
     private final Long256Impl long256 = new Long256Impl();
     private final long[] valueOffsets;
     private final long valueSize;
     private long limit;
     private boolean newValue;
-    private OrderedMapRecord record; // double-linked
+    private FixedSizeMapRecord record; // double-linked
     private long startAddress; // key-value pair start address
     private long valueAddress;
 
-    public OrderedMapValue(long valueSize, long[] valueOffsets) {
+    public FixedSizeMapValue(long valueSize, long[] valueOffsets) {
         this.valueSize = valueSize;
         this.valueOffsets = valueOffsets;
     }
@@ -90,7 +90,7 @@ final class OrderedMapValue implements MapValue {
 
     @Override
     public void copyFrom(MapValue value) {
-        OrderedMapValue other = (OrderedMapValue) value;
+        FixedSizeMapValue other = (FixedSizeMapValue) value;
         Vect.memcpy(valueAddress, other.valueAddress, valueSize);
     }
 
@@ -317,12 +317,12 @@ final class OrderedMapValue implements MapValue {
         Vect.memcpy(valueAddress, ptr, valueSize);
     }
 
-    void linkRecord(OrderedMapRecord record) {
+    void linkRecord(FixedSizeMapRecord record) {
         this.record = record;
         record.setLimit(limit);
     }
 
-    OrderedMapValue of(long startAddress, long valueAddress, long limit, boolean newValue) {
+    FixedSizeMapValue of(long startAddress, long valueAddress, long limit, boolean newValue) {
         this.startAddress = startAddress;
         this.valueAddress = valueAddress;
         this.limit = limit;

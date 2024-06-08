@@ -186,7 +186,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(64, configuration.getCairoConfiguration().getSqlCharacterStoreSequencePoolCapacity());
         Assert.assertEquals(4096, configuration.getCairoConfiguration().getSqlColumnPoolCapacity());
         Assert.assertEquals(8192, configuration.getCairoConfiguration().getSqlExpressionPoolCapacity());
-        Assert.assertEquals(0.7, configuration.getCairoConfiguration().getSqlFastMapLoadFactor(), 0.0000001);
+        Assert.assertEquals(0.6, configuration.getCairoConfiguration().getSqlFixedSizeMapLoadFactor(), 0.0000001);
+        Assert.assertEquals(0.7, configuration.getCairoConfiguration().getSqlVarSizeMapLoadFactor(), 0.0000001);
         Assert.assertEquals(64, configuration.getCairoConfiguration().getSqlJoinContextPoolCapacity());
         Assert.assertEquals(2048, configuration.getCairoConfiguration().getSqlLexerPoolCapacity());
         Assert.assertEquals(32, configuration.getCairoConfiguration().getSqlSmallMapKeyCapacity());
@@ -1327,7 +1328,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(128, configuration.getSqlCharacterStoreSequencePoolCapacity());
         Assert.assertEquals(2048, configuration.getSqlColumnPoolCapacity());
         Assert.assertEquals(1024, configuration.getSqlExpressionPoolCapacity());
-        Assert.assertEquals(0.3, configuration.getSqlFastMapLoadFactor(), 0.0000001);
+        Assert.assertEquals(0.3, configuration.getSqlFixedSizeMapLoadFactor(), 0.0000001);
+        Assert.assertEquals(0.4, configuration.getSqlVarSizeMapLoadFactor(), 0.0000001);
         Assert.assertEquals(32, configuration.getSqlJoinContextPoolCapacity());
         Assert.assertEquals(1024, configuration.getSqlLexerPoolCapacity());
         Assert.assertEquals(16, configuration.getSqlSmallMapKeyCapacity());

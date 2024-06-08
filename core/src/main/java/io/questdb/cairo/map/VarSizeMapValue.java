@@ -26,17 +26,17 @@ package io.questdb.cairo.map;
 
 import io.questdb.std.*;
 
-final class Unordered2MapValue implements MapValue {
+final class VarSizeMapValue implements MapValue {
     private final Long256Impl long256 = new Long256Impl();
     private final long[] valueOffsets;
     private final long valueSize;
     private long limit;
     private boolean newValue;
-    private Unordered2MapRecord record; // double-linked
+    private VarSizeMapRecord record; // double-linked
     private long startAddress; // key-value pair start address
     private long valueAddress;
 
-    public Unordered2MapValue(long valueSize, long[] valueOffsets) {
+    public VarSizeMapValue(long valueSize, long[] valueOffsets) {
         this.valueSize = valueSize;
         this.valueOffsets = valueOffsets;
     }
@@ -90,7 +90,7 @@ final class Unordered2MapValue implements MapValue {
 
     @Override
     public void copyFrom(MapValue value) {
-        Unordered2MapValue other = (Unordered2MapValue) value;
+        VarSizeMapValue other = (VarSizeMapValue) value;
         Vect.memcpy(valueAddress, other.valueAddress, valueSize);
     }
 
@@ -233,12 +233,14 @@ final class Unordered2MapValue implements MapValue {
     @Override
     public void putByte(int index, byte value) {
         final long p = address0(index);
+        assert p + 1L <= limit;
         Unsafe.getUnsafe().putByte(p, value);
     }
 
     @Override
     public void putChar(int index, char value) {
         final long p = address0(index);
+        assert p + 2L <= limit;
         Unsafe.getUnsafe().putChar(p, value);
     }
 
@@ -250,24 +252,28 @@ final class Unordered2MapValue implements MapValue {
     @Override
     public void putDouble(int index, double value) {
         final long p = address0(index);
+        assert p + 8L <= limit;
         Unsafe.getUnsafe().putDouble(p, value);
     }
 
     @Override
     public void putFloat(int index, float value) {
         final long p = address0(index);
+        assert p + 4L <= limit;
         Unsafe.getUnsafe().putFloat(p, value);
     }
 
     @Override
     public void putInt(int index, int value) {
         final long p = address0(index);
+        assert p + 4L <= limit;
         Unsafe.getUnsafe().putInt(p, value);
     }
 
     @Override
     public void putLong(int index, long value) {
         final long p = address0(index);
+        assert p + 8L <= limit;
         Unsafe.getUnsafe().putLong(p, value);
     }
 
@@ -281,6 +287,7 @@ final class Unordered2MapValue implements MapValue {
     @Override
     public void putLong256(int index, Long256 value) {
         final long p = address0(index);
+        assert p + 32L <= limit;
         Unsafe.getUnsafe().putLong(p, value.getLong0());
         Unsafe.getUnsafe().putLong(p + 8L, value.getLong1());
         Unsafe.getUnsafe().putLong(p + 16L, value.getLong2());
@@ -310,14 +317,14 @@ final class Unordered2MapValue implements MapValue {
         Vect.memcpy(valueAddress, ptr, valueSize);
     }
 
-    void linkRecord(Unordered2MapRecord record) {
+    void linkRecord(VarSizeMapRecord record) {
         this.record = record;
         record.setLimit(limit);
     }
 
-    Unordered2MapValue of(long startAddress, long limit, boolean newValue) {
+    VarSizeMapValue of(long startAddress, long valueAddress, long limit, boolean newValue) {
         this.startAddress = startAddress;
-        this.valueAddress = startAddress + Unordered2Map.KEY_SIZE;
+        this.valueAddress = valueAddress;
         this.limit = limit;
         this.newValue = newValue;
         return this;

@@ -26,9 +26,9 @@ package org.questdb;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SingleColumnType;
+import io.questdb.cairo.map.FixedSizeMap;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.map.OrderedMap;
 import io.questdb.cairo.map.Unordered4Map;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
@@ -45,12 +45,12 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class MapReadIntBenchmark {
 
-    private static final double loadFactor = 0.7;
+    private static final double loadFactor = 0.6;
     private static final Rnd rnd = new Rnd();
     // aim for L1, L2, L3, RAM
     @Param({"5000", "50000", "500000", "5000000"})
     public int size;
-    private OrderedMap orderedMap;
+    private FixedSizeMap fixedSizeMap;
     private Unordered4Map unordered4map;
 
     public static void main(String[] args) throws RunnerException {
@@ -68,14 +68,14 @@ public class MapReadIntBenchmark {
     public void setup() {
         rnd.reset();
 
-        Misc.free(orderedMap);
+        Misc.free(fixedSizeMap);
         Misc.free(unordered4map);
 
-        orderedMap = new OrderedMap(1024 * 1024, new SingleColumnType(ColumnType.INT), new SingleColumnType(ColumnType.LONG), size, loadFactor, Integer.MAX_VALUE);
+        fixedSizeMap = new FixedSizeMap(1024 * 1024, new SingleColumnType(ColumnType.INT), new SingleColumnType(ColumnType.LONG), size, loadFactor, Integer.MAX_VALUE);
         unordered4map = new Unordered4Map(new SingleColumnType(ColumnType.INT), new SingleColumnType(ColumnType.LONG), size, loadFactor, Integer.MAX_VALUE);
 
         for (int i = 0; i < size; i++) {
-            MapKey key = orderedMap.withKey();
+            MapKey key = fixedSizeMap.withKey();
             key.putInt(i);
             MapValue values = key.createValue();
             values.putLong(0, i);
@@ -90,8 +90,8 @@ public class MapReadIntBenchmark {
     }
 
     @Benchmark
-    public long testOrderedMap() {
-        MapKey key = orderedMap.withKey();
+    public long testFixedSizeMap() {
+        MapKey key = fixedSizeMap.withKey();
         key.putInt(rnd.nextInt(size));
         MapValue value = key.findValue();
         return value != null ? value.getLong(0) : 0;

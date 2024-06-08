@@ -387,7 +387,7 @@ public interface CairoConfiguration {
 
     int getSqlExpressionPoolCapacity();
 
-    double getSqlFastMapLoadFactor();
+    double getSqlFixedSizeMapLoadFactor();
 
     int getSqlHashJoinLightValueMaxPages();
 
@@ -455,6 +455,8 @@ public interface CairoConfiguration {
     int getSqlSortValuePageSize();
 
     int getSqlUnorderedMapMaxEntrySize();
+
+    double getSqlVarSizeMapLoadFactor();
 
     int getSqlWindowInitialRangeBufferSize();
 

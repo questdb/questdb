@@ -24,8 +24,13 @@
 
 package io.questdb.test.tools;
 
-import io.questdb.cairo.*;
-import io.questdb.cairo.map.*;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkSPI;
+import io.questdb.cairo.map.Unordered4Map;
+import io.questdb.cairo.map.Unordered8Map;
+import io.questdb.cairo.map.VarSizeMap;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.VirtualRecord;
@@ -41,24 +46,30 @@ import io.questdb.std.ObjList;
  * Methods for quick creation of useful objects with reasonable defaults
  */
 public final class TestDefaults {
-    public static Unordered4Map createUnorderedMap4(ColumnTypes keyColumnTypes, ColumnTypes valueColumnTypes) {
-        return new Unordered4Map(keyColumnTypes, valueColumnTypes, 64, 0.8, 24);
+    public static Function createIntFunction(java.util.function.Function<Record, Integer> f) {
+        return new IntFunction() {
+            @Override
+            public int getInt(Record rec) {
+                return f.apply(rec);
+            }
+        };
     }
 
-    public static Unordered8Map createUnorderedMap8(ColumnTypes keyColumnTypes, ColumnTypes valueColumnTypes) {
-        return new Unordered8Map(keyColumnTypes, valueColumnTypes, 64, 0.8, 24);
-    }
-
-    public static Unordered16Map createUnorderedMap16(ColumnTypes keyColumnTypes, ColumnTypes valueColumnTypes) {
-        return new Unordered16Map(keyColumnTypes, valueColumnTypes, 64, 0.8, 24);
-    }
-
-    public static OrderedMap createOrderedMap(ColumnTypes keyColumnTypes, ColumnTypes valueColumnTypes) {
-        return new OrderedMap(4 * 1024, keyColumnTypes, valueColumnTypes, 64, 0.8, 24);
+    public static Function createLongFunction(java.util.function.Function<Record, Long> f) {
+        return new LongFunction() {
+            @Override
+            public long getLong(Record rec) {
+                return f.apply(rec);
+            }
+        };
     }
 
     public static MemoryCARW createMemoryCARW() {
         return new MemoryCARWImpl(4 * 1024, 1024, MemoryTag.NATIVE_DEFAULT);
+    }
+
+    public static VarSizeMap createOrderedMap(ColumnTypes keyColumnTypes, ColumnTypes valueColumnTypes) {
+        return new VarSizeMap(4 * 1024, keyColumnTypes, valueColumnTypes, 64, 0.8, 24);
     }
 
     public static Record createRecord(short[] columnTypes, Object... values) {
@@ -84,10 +95,6 @@ public final class TestDefaults {
         return new VirtualRecord(functions);
     }
 
-    public static VirtualRecord createVirtualRecord(Function... functions) {
-        return new VirtualRecord(new ObjList<>(functions));
-    }
-
     public static RecordSink createRecordSink(java.util.function.BiConsumer<Record, RecordSinkSPI> f) {
         return new RecordSink() {
             @Override
@@ -101,24 +108,6 @@ public final class TestDefaults {
         };
     }
 
-    public static Function createIntFunction(java.util.function.Function<Record, Integer> f) {
-        return new IntFunction() {
-            @Override
-            public int getInt(Record rec) {
-                return f.apply(rec);
-            }
-        };
-    }
-
-    public static Function createLongFunction(java.util.function.Function<Record, Long> f) {
-        return new LongFunction() {
-            @Override
-            public long getLong(Record rec) {
-                return f.apply(rec);
-            }
-        };
-    }
-
     public static Function createTimestampFunction(java.util.function.Function<Record, Long> f) {
         return new TimestampFunction() {
             @Override
@@ -126,5 +115,17 @@ public final class TestDefaults {
                 return f.apply(rec);
             }
         };
+    }
+
+    public static Unordered4Map createUnorderedMap4(ColumnTypes keyColumnTypes, ColumnTypes valueColumnTypes) {
+        return new Unordered4Map(keyColumnTypes, valueColumnTypes, 64, 0.8, 24);
+    }
+
+    public static Unordered8Map createUnorderedMap8(ColumnTypes keyColumnTypes, ColumnTypes valueColumnTypes) {
+        return new Unordered8Map(keyColumnTypes, valueColumnTypes, 64, 0.8, 24);
+    }
+
+    public static VirtualRecord createVirtualRecord(Function... functions) {
+        return new VirtualRecord(new ObjList<>(functions));
     }
 }

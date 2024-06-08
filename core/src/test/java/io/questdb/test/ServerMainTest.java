@@ -174,7 +174,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.detached.mkdir.mode\tQDB_CAIRO_DETACHED_MKDIR_MODE\t509\tdefault\tfalse\tfalse\n" +
                                     "cairo.enable.crash.simulation\tQDB_CAIRO_ENABLE_CRASH_SIMULATION\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.expression.pool.capacity\tQDB_CAIRO_EXPRESSION_POOL_CAPACITY\t8192\tdefault\tfalse\tfalse\n" +
-                                    "cairo.fast.map.load.factor\tQDB_CAIRO_FAST_MAP_LOAD_FACTOR\t0.7\tdefault\tfalse\tfalse\n" +
+                                    "cairo.fixed.size.map.load.factor\tQDB_CAIRO_FIXED_SIZE_MAP_LOAD_FACTOR\t0.6\tdefault\tfalse\tfalse\n" +
+                                    "cairo.var.size.map.load.factor\tQDB_CAIRO_VAR_SIZE_MAP_LOAD_FACTOR\t0.7\tdefault\tfalse\tfalse\n" +
                                     "cairo.file.operation.retry.count\tQDB_CAIRO_FILE_OPERATION_RETRY_COUNT\t30\tdefault\tfalse\tfalse\n" +
                                     "cairo.idle.check.interval\tQDB_CAIRO_IDLE_CHECK_INTERVAL\t300000\tdefault\tfalse\tfalse\n" +
                                     "cairo.inactive.reader.max.open.partitions\tQDB_CAIRO_INACTIVE_READER_MAX_OPEN_PARTITIONS\t128\tdefault\tfalse\tfalse\n" +

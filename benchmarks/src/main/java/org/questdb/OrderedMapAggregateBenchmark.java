@@ -28,7 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.map.OrderedMap;
+import io.questdb.cairo.map.VarSizeMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import org.openjdk.jmh.annotations.*;
@@ -48,13 +48,13 @@ public class OrderedMapAggregateBenchmark {
     private static final double loadFactor = 0.7;
     private static final int nKeys = 100;
     private static final int pageSize = 32 * 1024;
-    private final OrderedMap map;
+    private final VarSizeMap map;
     private final Rnd rnd = new Rnd();
 
     public OrderedMapAggregateBenchmark() {
         SingleColumnType keyTypes = new SingleColumnType(ColumnType.LONG);
         SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);
-        map = new OrderedMap(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, Integer.MAX_VALUE);
+        map = new VarSizeMap(pageSize, keyTypes, valueTypes, keyCapacity, loadFactor, Integer.MAX_VALUE);
     }
 
     public static void main(String[] args) throws RunnerException {

@@ -28,7 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.map.OrderedMap;
+import io.questdb.cairo.map.VarSizeMap;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import org.openjdk.jmh.annotations.*;
@@ -45,10 +45,10 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
 public class MapWriteBenchmark {
 
-    private static final double loadFactor = 0.7;
+    private static final double loadFactor = 0.6;
     private static final HashMap<String, Long> hmap = new HashMap<>(64, (float) loadFactor);
-    private static final OrderedMap orderedMap = new OrderedMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), 64, loadFactor, Integer.MAX_VALUE);
     private static final StringSink sink = new StringSink();
+    private static final VarSizeMap varSizeMap = new VarSizeMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), 64, loadFactor, Integer.MAX_VALUE);
     private final Rnd rnd = new Rnd();
     // aim for L1, L2, L3, RAM
     @Param({"5000", "50000", "500000", "5000000"})
@@ -70,7 +70,7 @@ public class MapWriteBenchmark {
         rnd.reset();
 
         hmap.clear();
-        orderedMap.clear();
+        varSizeMap.clear();
     }
 
     @Benchmark
@@ -79,8 +79,8 @@ public class MapWriteBenchmark {
     }
 
     @Benchmark
-    public void testOrderedMap() {
-        MapKey key = orderedMap.withKey();
+    public void testVarSizeMap() {
+        MapKey key = varSizeMap.withKey();
         sink.clear();
         sink.put(rnd.nextInt(size));
         key.putStr(sink);

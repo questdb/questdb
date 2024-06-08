@@ -26,9 +26,9 @@ package org.questdb;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SingleColumnType;
+import io.questdb.cairo.map.FixedSizeMap;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.map.OrderedMap;
 import io.questdb.cairo.map.Unordered4Map;
 import io.questdb.std.Rnd;
 import org.openjdk.jmh.annotations.*;
@@ -44,8 +44,8 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class MapWriteIntBenchmark {
 
-    private static final double loadFactor = 0.7;
-    private static final OrderedMap orderedMap = new OrderedMap(1024 * 1024, new SingleColumnType(ColumnType.INT), new SingleColumnType(ColumnType.LONG), 64, loadFactor, Integer.MAX_VALUE);
+    private static final double loadFactor = 0.6;
+    private static final FixedSizeMap fixedSizeMap = new FixedSizeMap(1024 * 1024, new SingleColumnType(ColumnType.INT), new SingleColumnType(ColumnType.LONG), 64, loadFactor, Integer.MAX_VALUE);
     private static final Unordered4Map unordered4map = new Unordered4Map(new SingleColumnType(ColumnType.INT), new SingleColumnType(ColumnType.LONG), 64, loadFactor, Integer.MAX_VALUE);
     private final Rnd rnd = new Rnd();
     // aim for L1, L2, L3, RAM
@@ -67,13 +67,13 @@ public class MapWriteIntBenchmark {
     public void reset() {
         rnd.reset();
 
-        orderedMap.clear();
+        fixedSizeMap.clear();
         unordered4map.clear();
     }
 
     @Benchmark
-    public void testOrderedMap() {
-        MapKey key = orderedMap.withKey();
+    public void testFixedSizeMap() {
+        MapKey key = fixedSizeMap.withKey();
         key.putInt(rnd.nextInt(size));
         MapValue values = key.createValue();
         values.putLong(0, rnd.nextLong());

@@ -37,9 +37,9 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.std.Numbers.MAX_SAFE_INT_POW_2;
 
 /**
- * OrderedMap a.k.a. FastMap is a general purpose off-heap hash table used to store intermediate
- * data of join, group by, sample by queries, but not only. It provides {@link MapKey} and
- * {@link MapValue}, as well as {@link RecordCursor} interfaces for data access and modification.
+ * VarSizeMap a.k.a. FastMap is a general purpose ordered off-heap hash table used to store
+ * intermediate data of join, group by, sample by queries, but not only. It provides {@link MapKey}
+ * and {@link MapValue}, as well as {@link RecordCursor} interfaces for data access and modification.
  * The preferred way to create an OrderedMap is {@link MapFactory}.
  * <p>
  * Map iteration provided by {@link RecordCursor} preserves the key insertion order, hence
@@ -49,7 +49,7 @@ import static io.questdb.std.Numbers.MAX_SAFE_INT_POW_2;
  * to the map constructor. Later put* calls made on {@link MapKey} and {@link MapValue} must match
  * the declared column types to guarantee memory access safety.
  * <p>
- * Keys may be var-size, i.e. a key may contain string or binary columns, while values are expected
+ * Keys must be var-size, i.e. a key may contain string or binary columns, while values are expected
  * to be fixed-size. Only insertions and updates operations are supported meaning that a key can't
  * be removed from the map once it was inserted.
  * <p>
@@ -72,27 +72,24 @@ import static io.questdb.std.Numbers.MAX_SAFE_INT_POW_2;
  * |      4 bytes         |        -         |         -          |
  * +----------------------+------------------+--------------------+
  * </pre>
- * Length field is present for var-size keys only. It stores key length in bytes.
+ * Length field stores key length in bytes.
  */
-public class OrderedMap implements Map, Reopenable {
+public class VarSizeMap implements Map, Reopenable {
 
     static final long VAR_KEY_HEADER_SIZE = 4;
+    private static final long KEY_OFFSET = 4;
     private static final long MAX_HEAP_SIZE = (Integer.toUnsignedLong(-1) - 1) << 3;
     private static final int MIN_KEY_CAPACITY = 16;
-    private final OrderedMapCursor cursor;
+    private final VarSizeMapCursor cursor;
     private final int heapMemoryTag;
-    private final Key key;
-    private final long keyOffset;
-    // Set to -1 when key is var-size.
-    private final long keySize;
+    private final Key key = new Key();
     private final int listMemoryTag;
     private final double loadFactor;
     private final int maxResizes;
-    private final MergeFunction mergeRef;
-    private final OrderedMapRecord record;
-    private final OrderedMapValue value;
-    private final OrderedMapValue value2;
-    private final OrderedMapValue value3;
+    private final VarSizeMapRecord record;
+    private final VarSizeMapValue value;
+    private final VarSizeMapValue value2;
+    private final VarSizeMapValue value3;
     private final int valueColumnCount;
     private final long valueSize;
     private int free;
@@ -110,7 +107,7 @@ public class OrderedMap implements Map, Reopenable {
     private DirectIntList offsets;
     private int size = 0;
 
-    public OrderedMap(
+    public VarSizeMap(
             long heapSize,
             @Transient @NotNull ColumnTypes keyTypes,
             int keyCapacity,
@@ -120,7 +117,7 @@ public class OrderedMap implements Map, Reopenable {
         this(heapSize, keyTypes, null, keyCapacity, loadFactor, maxResizes);
     }
 
-    public OrderedMap(
+    public VarSizeMap(
             long heapSize,
             @Transient @NotNull ColumnTypes keyTypes,
             @Transient @Nullable ColumnTypes valueTypes,
@@ -132,7 +129,7 @@ public class OrderedMap implements Map, Reopenable {
         this(heapSize, keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes, memoryTag, memoryTag);
     }
 
-    public OrderedMap(
+    public VarSizeMap(
             long heapSize,
             @Transient @NotNull ColumnTypes keyTypes,
             @Transient @Nullable ColumnTypes valueTypes,
@@ -143,7 +140,7 @@ public class OrderedMap implements Map, Reopenable {
         this(heapSize, keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes, MemoryTag.NATIVE_FAST_MAP, MemoryTag.NATIVE_FAST_MAP_INT_LIST);
     }
 
-    OrderedMap(
+    VarSizeMap(
             long heapSize,
             @NotNull @Transient ColumnTypes keyTypes,
             @Nullable @Transient ColumnTypes valueTypes,
@@ -186,10 +183,10 @@ public class OrderedMap implements Map, Reopenable {
                     break;
                 }
             }
-            this.keySize = keySize;
 
-            // Reserve 4 bytes for key length in case of var-size keys.
-            keyOffset = keySize != -1 ? 0 : Integer.BYTES;
+            if (keySize > 0) {
+                throw CairoException.nonCritical().put("fixed-size keys are not supported");
+            }
 
             long valueOffset = 0;
             long[] valueOffsets = null;
@@ -214,21 +211,13 @@ public class OrderedMap implements Map, Reopenable {
             }
             this.valueSize = valueSize;
 
-            value = new OrderedMapValue(valueSize, valueOffsets);
-            value2 = new OrderedMapValue(valueSize, valueOffsets);
-            value3 = new OrderedMapValue(valueSize, valueOffsets);
+            value = new VarSizeMapValue(valueSize, valueOffsets);
+            value2 = new VarSizeMapValue(valueSize, valueOffsets);
+            value3 = new VarSizeMapValue(valueSize, valueOffsets);
 
-            assert keySize + valueSize <= heapLimit - heapStart : "page size is too small to fit a single key";
-            if (keySize == -1) {
-                record = new OrderedMapVarSizeRecord(valueSize, valueOffsets, value, keyTypes, valueTypes);
-                key = new VarSizeKey();
-                mergeRef = this::mergeVarSizeKey;
-            } else {
-                record = new OrderedMapFixedSizeRecord(keySize, valueSize, valueOffsets, value, keyTypes, valueTypes);
-                key = new FixedSizeKey();
-                mergeRef = this::mergeFixedSizeKey;
-            }
-            cursor = new OrderedMapCursor(record, this);
+            assert Integer.BYTES + valueSize <= heapLimit - heapStart : "page size is too small to fit a single key";
+            record = new VarSizeMapRecord(valueSize, valueOffsets, value, keyTypes, valueTypes);
+            cursor = new VarSizeMapCursor(record, this);
         } catch (Throwable th) {
             close();
             throw th;
@@ -300,7 +289,51 @@ public class OrderedMap implements Map, Reopenable {
         if (srcMap.size() == 0) {
             return;
         }
-        mergeRef.merge((OrderedMap) srcMap, mergeFunc);
+        final VarSizeMap srcVarMap = (VarSizeMap) srcMap;
+
+        OUTER:
+        for (int i = 0, k = (int) (srcVarMap.offsets.size() >>> 1); i < k; i++) {
+            long offset = getOffset(srcVarMap.offsets, i);
+            if (offset < 0) {
+                continue;
+            }
+
+            long srcStartAddress = srcVarMap.heapStart + offset;
+            int srcKeySize = Unsafe.getUnsafe().getInt(srcStartAddress);
+            int hashCodeLo = getHashCodeLo(srcVarMap.offsets, i);
+            int index = hashCodeLo & mask;
+
+            long destOffset;
+            long destStartAddress;
+            while ((destOffset = getOffset(offsets, index)) > -1) {
+                if (
+                        hashCodeLo == getHashCodeLo(offsets, index)
+                                && Unsafe.getUnsafe().getInt((destStartAddress = heapStart + destOffset)) == srcKeySize
+                                && Vect.memeq(destStartAddress + KEY_OFFSET, srcStartAddress + KEY_OFFSET, srcKeySize)
+                ) {
+                    // Match found, merge values.
+                    mergeFunc.merge(
+                            valueAt(destStartAddress),
+                            srcVarMap.valueAt(srcStartAddress)
+                    );
+                    continue OUTER;
+                }
+                index = (index + 1) & mask;
+            }
+
+            long entrySize = KEY_OFFSET + srcKeySize + valueSize;
+            if (kPos + entrySize > heapLimit) {
+                resize(entrySize, kPos);
+            }
+            Vect.memcpy(kPos, srcStartAddress, entrySize);
+            setOffset(offsets, index, kPos - heapStart);
+            setHashCodeLo(offsets, index, hashCodeLo);
+            kPos = Bytes.align8b(kPos + entrySize);
+            size++;
+            if (--free == 0) {
+                rehash();
+            }
+        }
     }
 
     @Override
@@ -356,11 +389,8 @@ public class OrderedMap implements Map, Reopenable {
 
     @Override
     public MapValue valueAt(long startAddress) {
-        long keySize = this.keySize;
-        if (keySize == -1) {
-            keySize = Unsafe.getUnsafe().getInt(startAddress);
-        }
-        return valueOf(startAddress, startAddress + keyOffset + keySize, false, value);
+        long keySize = Unsafe.getUnsafe().getInt(startAddress);
+        return valueOf(startAddress, startAddress + KEY_OFFSET + keySize, false, value);
     }
 
     @Override
@@ -386,7 +416,7 @@ public class OrderedMap implements Map, Reopenable {
         offsets.set((long) index << 1, (int) ((offset >> 3) + 1));
     }
 
-    private OrderedMapValue asNew(Key keyWriter, int index, int hashCodeLo, OrderedMapValue value) {
+    private VarSizeMapValue asNew(Key keyWriter, int index, int hashCodeLo, VarSizeMapValue value) {
         // Align current pointer to 8 bytes, so that we can store compressed offsets.
         kPos = Bytes.align8b(keyWriter.appendAddress + valueSize);
         setOffset(offsets, index, keyWriter.startAddress - heapStart);
@@ -398,119 +428,23 @@ public class OrderedMap implements Map, Reopenable {
         return valueOf(keyWriter.startAddress, keyWriter.appendAddress, true, value);
     }
 
-    private void mergeFixedSizeKey(OrderedMap srcMap, MapValueMergeFunction mergeFunc) {
-        assert keySize >= 0;
-
-        long entrySize = keySize + valueSize;
-        long alignedEntrySize = Bytes.align8b(entrySize);
-
-        OUTER:
-        for (int i = 0, k = (int) (srcMap.offsets.size() >>> 1); i < k; i++) {
-            long offset = getOffset(srcMap.offsets, i);
-            if (offset < 0) {
-                continue;
-            }
-
-            long srcStartAddress = srcMap.heapStart + offset;
-            int hashCodeLo = getHashCodeLo(srcMap.offsets, i);
-            int index = hashCodeLo & mask;
-
-            long destOffset;
-            long destStartAddress;
-            while ((destOffset = getOffset(offsets, index)) > -1) {
-                if (
-                        hashCodeLo == getHashCodeLo(offsets, index)
-                                && Vect.memeq((destStartAddress = heapStart + destOffset), srcStartAddress, keySize)
-                ) {
-                    // Match found, merge values.
-                    mergeFunc.merge(
-                            valueAt(destStartAddress),
-                            srcMap.valueAt(srcStartAddress)
-                    );
-                    continue OUTER;
-                }
-                index = (index + 1) & mask;
-            }
-
-            if (kPos + entrySize > heapLimit) {
-                resize(entrySize, kPos);
-            }
-            Vect.memcpy(kPos, srcStartAddress, entrySize);
-            setOffset(offsets, index, kPos - heapStart);
-            setHashCodeLo(offsets, index, hashCodeLo);
-            kPos += alignedEntrySize;
-            size++;
-            if (--free == 0) {
-                rehash();
-            }
-        }
-    }
-
-    private void mergeVarSizeKey(OrderedMap srcMap, MapValueMergeFunction mergeFunc) {
-        assert keySize == -1;
-
-        OUTER:
-        for (int i = 0, k = (int) (srcMap.offsets.size() >>> 1); i < k; i++) {
-            long offset = getOffset(srcMap.offsets, i);
-            if (offset < 0) {
-                continue;
-            }
-
-            long srcStartAddress = srcMap.heapStart + offset;
-            int srcKeySize = Unsafe.getUnsafe().getInt(srcStartAddress);
-            int hashCodeLo = getHashCodeLo(srcMap.offsets, i);
-            int index = hashCodeLo & mask;
-
-            long destOffset;
-            long destStartAddress;
-            while ((destOffset = getOffset(offsets, index)) > -1) {
-                if (
-                        hashCodeLo == getHashCodeLo(offsets, index)
-                                && Unsafe.getUnsafe().getInt((destStartAddress = heapStart + destOffset)) == srcKeySize
-                                && Vect.memeq(destStartAddress + keyOffset, srcStartAddress + keyOffset, srcKeySize)
-                ) {
-                    // Match found, merge values.
-                    mergeFunc.merge(
-                            valueAt(destStartAddress),
-                            srcMap.valueAt(srcStartAddress)
-                    );
-                    continue OUTER;
-                }
-                index = (index + 1) & mask;
-            }
-
-            long entrySize = keyOffset + srcKeySize + valueSize;
-            if (kPos + entrySize > heapLimit) {
-                resize(entrySize, kPos);
-            }
-            Vect.memcpy(kPos, srcStartAddress, entrySize);
-            setOffset(offsets, index, kPos - heapStart);
-            setHashCodeLo(offsets, index, hashCodeLo);
-            kPos = Bytes.align8b(kPos + entrySize);
-            size++;
-            if (--free == 0) {
-                rehash();
-            }
-        }
-    }
-
-    private OrderedMapValue probe0(Key keyWriter, int index, int hashCodeLo, long keySize, OrderedMapValue value) {
+    private VarSizeMapValue probe0(Key keyWriter, int index, int hashCodeLo, long keySize, VarSizeMapValue value) {
         long offset;
         while ((offset = getOffset(offsets, index = (++index & mask))) > -1) {
             if (hashCodeLo == getHashCodeLo(offsets, index) && keyWriter.eq(offset)) {
                 long startAddress = heapStart + offset;
-                return valueOf(startAddress, startAddress + keyOffset + keySize, false, value);
+                return valueOf(startAddress, startAddress + KEY_OFFSET + keySize, false, value);
             }
         }
         return asNew(keyWriter, index, hashCodeLo, value);
     }
 
-    private OrderedMapValue probeReadOnly(Key keyWriter, int index, int hashCodeLo, long keySize, OrderedMapValue value) {
+    private VarSizeMapValue probeReadOnly(Key keyWriter, int index, int hashCodeLo, long keySize, VarSizeMapValue value) {
         long offset;
         while ((offset = getOffset(offsets, index = (++index & mask))) > -1) {
             if (hashCodeLo == getHashCodeLo(offsets, index) && keyWriter.eq(offset)) {
                 long startAddress = heapStart + offset;
-                return valueOf(startAddress, startAddress + keyOffset + keySize, false, value);
+                return valueOf(startAddress, startAddress + KEY_OFFSET + keySize, false, value);
             }
         }
         return null;
@@ -563,7 +497,7 @@ public class OrderedMap implements Map, Reopenable {
                 kCapacity = Numbers.ceilPow2(target);
             }
             if (kCapacity > MAX_HEAP_SIZE) {
-                throw LimitOverflowException.instance().put("limit of ").put(MAX_HEAP_SIZE).put(" memory exceeded in FastMap");
+                throw LimitOverflowException.instance().put("limit of ").put(MAX_HEAP_SIZE).put(" memory exceeded in VarSizeMap");
             }
             long kAddress = Unsafe.realloc(heapStart, heapSize, kCapacity, heapMemoryTag);
 
@@ -577,181 +511,41 @@ public class OrderedMap implements Map, Reopenable {
 
             return delta;
         } else {
-            throw LimitOverflowException.instance().put("limit of ").put(maxResizes).put(" resizes exceeded in FastMap");
+            throw LimitOverflowException.instance().put("limit of ").put(maxResizes).put(" resizes exceeded in VarSizeMap");
         }
     }
 
-    private OrderedMapValue valueOf(long startAddress, long valueAddress, boolean newValue, OrderedMapValue value) {
+    private VarSizeMapValue valueOf(long startAddress, long valueAddress, boolean newValue, VarSizeMapValue value) {
         return value.of(startAddress, valueAddress, heapLimit, newValue);
-    }
-
-    long keySize() {
-        return keySize;
     }
 
     long valueSize() {
         return valueSize;
     }
 
-    @FunctionalInterface
-    private interface MergeFunction {
-        void merge(OrderedMap srcMap, MapValueMergeFunction mergeFunc);
-    }
-
-    class FixedSizeKey extends Key {
+    class Key implements MapKey {
+        private long appendAddress;
+        private long len;
+        private long startAddress;
 
         @Override
         public long commit() {
-            assert appendAddress <= startAddress + keySize;
-            return keySize;
+            len = appendAddress - startAddress - KEY_OFFSET;
+            Unsafe.getUnsafe().putInt(startAddress, (int) len);
+            return len;
         }
 
         @Override
         public void copyFrom(MapKey srcKey) {
-            FixedSizeKey srcFixedKey = (FixedSizeKey) srcKey;
-            copyFromRawKey(srcFixedKey.startAddress, keySize);
+            Key srcVarKey = (Key) srcKey;
+            copyFromRawKey(srcVarKey.startAddress + KEY_OFFSET, srcVarKey.len);
         }
 
-        @Override
         public void copyFromRawKey(long srcPtr, long srcSize) {
-            assert srcSize == keySize;
+            checkCapacity(srcSize);
             Vect.memcpy(appendAddress, srcPtr, srcSize);
             appendAddress += srcSize;
         }
-
-        @Override
-        public long hash() {
-            return Hash.hashMem64(startAddress, keySize);
-        }
-
-        public FixedSizeKey init() {
-            super.init();
-            checkCapacity(keySize);
-            return this;
-        }
-
-        @Override
-        public void putBin(BinarySequence value) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void putBool(boolean value) {
-            Unsafe.getUnsafe().putByte(appendAddress, (byte) (value ? 1 : 0));
-            appendAddress += 1L;
-        }
-
-        @Override
-        public void putByte(byte value) {
-            Unsafe.getUnsafe().putByte(appendAddress, value);
-            appendAddress += 1L;
-        }
-
-        @Override
-        public void putChar(char value) {
-            Unsafe.getUnsafe().putChar(appendAddress, value);
-            appendAddress += 2L;
-        }
-
-        @Override
-        public void putDate(long value) {
-            putLong(value);
-        }
-
-        @Override
-        public void putDouble(double value) {
-            Unsafe.getUnsafe().putDouble(appendAddress, value);
-            appendAddress += 8L;
-        }
-
-        @Override
-        public void putFloat(float value) {
-            Unsafe.getUnsafe().putFloat(appendAddress, value);
-            appendAddress += 4L;
-        }
-
-        @Override
-        public void putIPv4(int value) {
-            putInt(value);
-        }
-
-        @Override
-        public void putInt(int value) {
-            Unsafe.getUnsafe().putInt(appendAddress, value);
-            appendAddress += 4L;
-        }
-
-        @Override
-        public void putLong(long value) {
-            Unsafe.getUnsafe().putLong(appendAddress, value);
-            appendAddress += 8L;
-        }
-
-        @Override
-        public void putLong128(long lo, long hi) {
-            Unsafe.getUnsafe().putLong(appendAddress, lo);
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, hi);
-            appendAddress += 16L;
-        }
-
-        @Override
-        public void putLong256(Long256 value) {
-            Unsafe.getUnsafe().putLong(appendAddress, value.getLong0());
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, value.getLong1());
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 2, value.getLong2());
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 3, value.getLong3());
-            appendAddress += 32L;
-        }
-
-        @Override
-        public void putLong256(long l0, long l1, long l2, long l3) {
-            Unsafe.getUnsafe().putLong(appendAddress, l0);
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, l1);
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 2, l2);
-            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES * 3, l3);
-            appendAddress += 32L;
-        }
-
-        @Override
-        public void putShort(short value) {
-            Unsafe.getUnsafe().putShort(appendAddress, value);
-            appendAddress += 2L;
-        }
-
-        @Override
-        public void putStr(CharSequence value) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void putStr(CharSequence value, int lo, int hi) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void putTimestamp(long value) {
-            putLong(value);
-        }
-
-        @Override
-        public void putVarchar(Utf8Sequence value) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void skip(int bytes) {
-            appendAddress += bytes;
-        }
-
-        @Override
-        protected boolean eq(long offset) {
-            return Vect.memeq(heapStart + offset, startAddress, keySize);
-        }
-    }
-
-    abstract class Key implements MapKey {
-        protected long appendAddress;
-        protected long startAddress;
 
         @Override
         public MapValue createValue() {
@@ -783,6 +577,11 @@ public class OrderedMap implements Map, Reopenable {
             return findValue(value3);
         }
 
+        @Override
+        public long hash() {
+            return Hash.hashMem64(startAddress + KEY_OFFSET, len);
+        }
+
         public Key init() {
             reset();
             return this;
@@ -791,92 +590,6 @@ public class OrderedMap implements Map, Reopenable {
         @Override
         public void put(Record record, RecordSink sink) {
             sink.copy(record, this);
-        }
-
-        public abstract void putLong256(long l0, long l1, long l2, long l3);
-
-        @Override
-        public void putRecord(Record value) {
-            // no-op
-        }
-
-        public void reset() {
-            startAddress = kPos;
-            appendAddress = kPos + keyOffset;
-        }
-
-        private MapValue createValue(long keySize, long hashCode) {
-            int hashCodeLo = Numbers.decodeLowInt(hashCode);
-            int index = hashCodeLo & mask;
-            long offset = getOffset(offsets, index);
-            if (offset < 0) {
-                return asNew(this, index, hashCodeLo, value);
-            } else if (hashCodeLo == getHashCodeLo(offsets, index) && eq(offset)) {
-                long startAddress = heapStart + offset;
-                return valueOf(startAddress, startAddress + keyOffset + keySize, false, value);
-            }
-            return probe0(this, index, hashCodeLo, keySize, value);
-        }
-
-        private MapValue findValue(OrderedMapValue value) {
-            long keySize = commit();
-            long hashCode = hash();
-            int hashCodeLo = Numbers.decodeLowInt(hashCode);
-            int index = hashCodeLo & mask;
-            long offset = getOffset(offsets, index);
-
-            if (offset < 0) {
-                return null;
-            } else if (hashCodeLo == getHashCodeLo(offsets, index) && eq(offset)) {
-                long startAddress = heapStart + offset;
-                return valueOf(startAddress, startAddress + keyOffset + keySize, false, value);
-            } else {
-                return probeReadOnly(this, index, hashCodeLo, keySize, value);
-            }
-        }
-
-        protected void checkCapacity(long requiredKeySize) {
-            long requiredSize = requiredKeySize + valueSize;
-            if (appendAddress + requiredSize > heapLimit) {
-                long delta = resize(requiredSize, appendAddress);
-                startAddress += delta;
-                appendAddress += delta;
-                assert startAddress > 0;
-                assert appendAddress > 0;
-            }
-        }
-
-        abstract void copyFromRawKey(long srcPtr, long srcSize);
-
-        protected abstract boolean eq(long offset);
-    }
-
-    class VarSizeKey extends Key {
-        private long len;
-
-        @Override
-        public long commit() {
-            len = appendAddress - startAddress - keyOffset;
-            Unsafe.getUnsafe().putInt(startAddress, (int) len);
-            return len;
-        }
-
-        @Override
-        public void copyFrom(MapKey srcKey) {
-            VarSizeKey srcVarKey = (VarSizeKey) srcKey;
-            copyFromRawKey(srcVarKey.startAddress + keyOffset, srcVarKey.len);
-        }
-
-        @Override
-        public void copyFromRawKey(long srcPtr, long srcSize) {
-            checkCapacity(srcSize);
-            Vect.memcpy(appendAddress, srcPtr, srcSize);
-            appendAddress += srcSize;
-        }
-
-        @Override
-        public long hash() {
-            return Hash.hashMem64(startAddress + keyOffset, len);
         }
 
         @Override
@@ -985,6 +698,11 @@ public class OrderedMap implements Map, Reopenable {
         }
 
         @Override
+        public void putRecord(Record value) {
+            // no-op
+        }
+
+        @Override
         public void putShort(short value) {
             checkCapacity(2L);
             Unsafe.getUnsafe().putShort(appendAddress, value);
@@ -1062,27 +780,72 @@ public class OrderedMap implements Map, Reopenable {
             appendAddress += byteCount;
         }
 
+        public void reset() {
+            startAddress = kPos;
+            appendAddress = kPos + KEY_OFFSET;
+        }
+
         @Override
         public void skip(int bytes) {
             checkCapacity(bytes);
             appendAddress += bytes;
         }
 
-        private void putVarSizeNull() {
-            checkCapacity(4L);
-            Unsafe.getUnsafe().putInt(appendAddress, TableUtils.NULL_LEN);
-            appendAddress += 4L;
+        private void checkCapacity(long requiredKeySize) {
+            long requiredSize = requiredKeySize + valueSize;
+            if (appendAddress + requiredSize > heapLimit) {
+                long delta = resize(requiredSize, appendAddress);
+                startAddress += delta;
+                appendAddress += delta;
+                assert startAddress > 0;
+                assert appendAddress > 0;
+            }
         }
 
-        @Override
-        protected boolean eq(long offset) {
+        private MapValue createValue(long keySize, long hashCode) {
+            int hashCodeLo = Numbers.decodeLowInt(hashCode);
+            int index = hashCodeLo & mask;
+            long offset = getOffset(offsets, index);
+            if (offset < 0) {
+                return asNew(this, index, hashCodeLo, value);
+            } else if (hashCodeLo == getHashCodeLo(offsets, index) && eq(offset)) {
+                long startAddress = heapStart + offset;
+                return valueOf(startAddress, startAddress + KEY_OFFSET + keySize, false, value);
+            }
+            return probe0(this, index, hashCodeLo, keySize, value);
+        }
+
+        private boolean eq(long offset) {
             long a = heapStart + offset;
             long b = startAddress;
             // Check the length first.
             if (Unsafe.getUnsafe().getInt(a) != Unsafe.getUnsafe().getInt(b)) {
                 return false;
             }
-            return Vect.memeq(a + keyOffset, b + keyOffset, len);
+            return Vect.memeq(a + KEY_OFFSET, b + KEY_OFFSET, len);
+        }
+
+        private MapValue findValue(VarSizeMapValue value) {
+            long keySize = commit();
+            long hashCode = hash();
+            int hashCodeLo = Numbers.decodeLowInt(hashCode);
+            int index = hashCodeLo & mask;
+            long offset = getOffset(offsets, index);
+
+            if (offset < 0) {
+                return null;
+            } else if (hashCodeLo == getHashCodeLo(offsets, index) && eq(offset)) {
+                long startAddress = heapStart + offset;
+                return valueOf(startAddress, startAddress + KEY_OFFSET + keySize, false, value);
+            } else {
+                return probeReadOnly(this, index, hashCodeLo, keySize, value);
+            }
+        }
+
+        private void putVarSizeNull() {
+            checkCapacity(4L);
+            Unsafe.getUnsafe().putInt(appendAddress, TableUtils.NULL_LEN);
+            appendAddress += 4L;
         }
     }
 }

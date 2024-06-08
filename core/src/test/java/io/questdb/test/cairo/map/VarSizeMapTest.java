@@ -40,118 +40,7 @@ import org.junit.Test;
 
 import java.util.HashMap;
 
-public class OrderedMapTest extends AbstractCairoTest {
-
-    @Test
-    public void testAllTypesFixedSizeKey() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            Rnd rnd = new Rnd();
-
-            ArrayColumnTypes keyTypes = new ArrayColumnTypes();
-            keyTypes.add(ColumnType.BYTE);
-            keyTypes.add(ColumnType.SHORT);
-            keyTypes.add(ColumnType.CHAR);
-            keyTypes.add(ColumnType.INT);
-            keyTypes.add(ColumnType.LONG);
-            keyTypes.add(ColumnType.FLOAT);
-            keyTypes.add(ColumnType.DOUBLE);
-            keyTypes.add(ColumnType.BOOLEAN);
-            keyTypes.add(ColumnType.DATE);
-            keyTypes.add(ColumnType.TIMESTAMP);
-            keyTypes.add(ColumnType.getGeoHashTypeWithBits(13));
-            keyTypes.add(ColumnType.LONG256);
-
-            ArrayColumnTypes valueTypes = new ArrayColumnTypes();
-            valueTypes.add(ColumnType.BYTE);
-            valueTypes.add(ColumnType.SHORT);
-            valueTypes.add(ColumnType.CHAR);
-            valueTypes.add(ColumnType.INT);
-            valueTypes.add(ColumnType.LONG);
-            valueTypes.add(ColumnType.FLOAT);
-            valueTypes.add(ColumnType.DOUBLE);
-            valueTypes.add(ColumnType.BOOLEAN);
-            valueTypes.add(ColumnType.DATE);
-            valueTypes.add(ColumnType.TIMESTAMP);
-            valueTypes.add(ColumnType.getGeoHashTypeWithBits(20));
-            valueTypes.add(ColumnType.LONG256);
-
-            try (OrderedMap map = new OrderedMap(1024, keyTypes, valueTypes, 64, 0.8, 24)) {
-                final int N = 100000;
-                for (int i = 0; i < N; i++) {
-                    MapKey key = map.withKey();
-                    key.putByte(rnd.nextByte());
-                    key.putShort(rnd.nextShort());
-                    key.putChar(rnd.nextChar());
-                    key.putInt(rnd.nextInt());
-                    key.putLong(rnd.nextLong());
-                    key.putFloat(rnd.nextFloat());
-                    key.putDouble(rnd.nextDouble());
-                    key.putBool(rnd.nextBoolean());
-                    key.putDate(rnd.nextLong());
-                    key.putTimestamp(rnd.nextLong());
-                    key.putShort(rnd.nextShort());
-                    Long256Impl long256 = new Long256Impl();
-                    long256.fromRnd(rnd);
-                    key.putLong256(long256);
-
-                    MapValue value = key.createValue();
-                    Assert.assertTrue(value.isNew());
-
-                    value.putByte(0, rnd.nextByte());
-                    value.putShort(1, rnd.nextShort());
-                    value.putChar(2, rnd.nextChar());
-                    value.putInt(3, rnd.nextInt());
-                    value.putLong(4, rnd.nextLong());
-                    value.putFloat(5, rnd.nextFloat());
-                    value.putDouble(6, rnd.nextDouble());
-                    value.putBool(7, rnd.nextBoolean());
-                    value.putDate(8, rnd.nextLong());
-                    value.putTimestamp(9, rnd.nextLong());
-                    value.putInt(10, rnd.nextInt());
-                    value.putLong256(11, long256);
-                }
-
-                rnd.reset();
-
-                // assert that all values are good
-                for (int i = 0; i < N; i++) {
-                    MapKey key = map.withKey();
-                    key.putByte(rnd.nextByte());
-                    key.putShort(rnd.nextShort());
-                    key.putChar(rnd.nextChar());
-                    key.putInt(rnd.nextInt());
-                    key.putLong(rnd.nextLong());
-                    key.putFloat(rnd.nextFloat());
-                    key.putDouble(rnd.nextDouble());
-                    key.putBool(rnd.nextBoolean());
-                    key.putDate(rnd.nextLong());
-                    key.putTimestamp(rnd.nextLong());
-                    key.putShort(rnd.nextShort());
-                    Long256Impl long256 = new Long256Impl();
-                    long256.fromRnd(rnd);
-                    key.putLong256(long256);
-
-                    MapValue value = key.createValue();
-                    Assert.assertFalse(value.isNew());
-
-                    Assert.assertEquals(rnd.nextByte(), value.getByte(0));
-                    Assert.assertEquals(rnd.nextShort(), value.getShort(1));
-                    Assert.assertEquals(rnd.nextChar(), value.getChar(2));
-                    Assert.assertEquals(rnd.nextInt(), value.getInt(3));
-                    Assert.assertEquals(rnd.nextLong(), value.getLong(4));
-                    Assert.assertEquals(rnd.nextFloat(), value.getFloat(5), 0.000000001f);
-                    Assert.assertEquals(rnd.nextDouble(), value.getDouble(6), 0.000000001d);
-                    Assert.assertEquals(rnd.nextBoolean(), value.getBool(7));
-                    Assert.assertEquals(rnd.nextLong(), value.getDate(8));
-                    Assert.assertEquals(rnd.nextLong(), value.getTimestamp(9));
-                    Assert.assertEquals(rnd.nextInt(), value.getInt(10));
-                    Assert.assertEquals(long256, value.getLong256A(11));
-                }
-
-                // RecordCursor is covered in testAllTypesVarSizeKey
-            }
-        });
-    }
+public class VarSizeMapTest extends AbstractCairoTest {
 
     @Test
     public void testAllTypesReverseColumnAccess() throws Exception {
@@ -190,7 +79,7 @@ public class OrderedMapTest extends AbstractCairoTest {
             final TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
             final Long256Impl long256 = new Long256Impl();
 
-            try (OrderedMap map = new OrderedMap(1024, keyTypes, valueTypes, 64, 0.8, Integer.MAX_VALUE)) {
+            try (VarSizeMap map = new VarSizeMap(1024, keyTypes, valueTypes, 64, 0.8, Integer.MAX_VALUE)) {
                 MapKey key = map.withKey();
                 key.putByte((byte) 1);
                 key.putShort((short) 2);
@@ -316,7 +205,7 @@ public class OrderedMapTest extends AbstractCairoTest {
             valueTypes.add(ColumnType.LONG256);
             valueTypes.add(ColumnType.UUID);
 
-            try (OrderedMap map = new OrderedMap(128, keyTypes, valueTypes, 64, 0.8, 24)) {
+            try (VarSizeMap map = new VarSizeMap(128, keyTypes, valueTypes, 64, 0.8, 24)) {
                 final Utf8StringSink utf8Sink = new Utf8StringSink();
                 final int N = 100000;
                 for (int i = 0; i < N; i++) {
@@ -440,7 +329,7 @@ public class OrderedMapTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
             int N = 10;
-            try (OrderedMap map = new OrderedMap(Numbers.SIZE_1MB, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N / 2, 0.5f, 1)) {
+            try (VarSizeMap map = new VarSizeMap(Numbers.SIZE_1MB, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), N / 2, 0.5f, 1)) {
                 ObjList<String> keys = new ObjList<>();
                 for (int i = 0; i < N; i++) {
                     CharSequence s = rnd.nextChars(11);
@@ -475,7 +364,7 @@ public class OrderedMapTest extends AbstractCairoTest {
             int N = 100000;
             int M = 25;
             try (
-                    OrderedMap map = new OrderedMap(
+                    VarSizeMap map = new VarSizeMap(
                             Numbers.SIZE_1MB,
                             new SingleColumnType(ColumnType.STRING),
                             new SingleColumnType(ColumnType.LONG),
@@ -514,7 +403,7 @@ public class OrderedMapTest extends AbstractCairoTest {
             Rnd rnd = new Rnd();
             Utf8StringSink utf8Sink = new Utf8StringSink();
             int N = 100;
-            try (OrderedMap map = new OrderedMap(Numbers.SIZE_1MB, new SingleColumnType(ColumnType.VARCHAR), new SingleColumnType(ColumnType.LONG), N / 2, 0.5f, 1)) {
+            try (VarSizeMap map = new VarSizeMap(Numbers.SIZE_1MB, new SingleColumnType(ColumnType.VARCHAR), new SingleColumnType(ColumnType.LONG), N / 2, 0.5f, 1)) {
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
                     utf8Sink.clear();
@@ -556,7 +445,7 @@ public class OrderedMapTest extends AbstractCairoTest {
             valueTypes.add(ColumnType.LONG);
 
             // These used to be default FastMap configuration for a join
-            try (OrderedMap map = new OrderedMap(4194304, keyTypes, valueTypes, 2097152 / 4, 0.5, 2147483647)) {
+            try (VarSizeMap map = new VarSizeMap(4194304, keyTypes, valueTypes, 2097152 / 4, 0.5, 2147483647)) {
                 for (int i = 0; i < 40_000_000; i++) {
                     MapKey key = map.withKey();
                     key.putStr(Integer.toString(i / 151));
@@ -580,59 +469,7 @@ public class OrderedMapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCopyToKeyFixedSizeKey() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            ArrayColumnTypes keyTypes = new ArrayColumnTypes();
-            keyTypes.add(ColumnType.INT);
-            keyTypes.add(ColumnType.LONG);
-
-            ArrayColumnTypes valueTypes = new ArrayColumnTypes();
-            valueTypes.add(ColumnType.LONG);
-
-            try (
-                    OrderedMap mapA = new OrderedMap(1024, keyTypes, valueTypes, 64, 0.8, 24);
-                    OrderedMap mapB = new OrderedMap(1024, keyTypes, valueTypes, 64, 0.8, 24)
-            ) {
-                final int N = 100000;
-                for (int i = 0; i < N; i++) {
-                    MapKey keyA = mapA.withKey();
-                    keyA.putInt(i);
-                    keyA.putLong(i + 1);
-
-                    MapKey keyB = mapB.withKey();
-                    keyB.putInt(i);
-                    keyB.putLong(i + 1);
-
-                    MapValue valueA = keyA.createValue();
-                    Assert.assertTrue(valueA.isNew());
-                    valueA.putLong(0, i + 2);
-
-                    MapValue valueB = keyB.createValue();
-                    Assert.assertTrue(valueB.isNew());
-                    valueB.putLong(0, i + 2);
-                }
-
-                Assert.assertEquals(mapA.size(), mapB.size());
-
-                // assert that all map A keys can be found in map B
-                RecordCursor cursorA = mapA.getCursor();
-                MapRecord recordA = mapA.getRecord();
-                while (cursorA.hasNext()) {
-                    MapValue valueA = recordA.getValue();
-
-                    MapKey keyB = mapB.withKey();
-                    recordA.copyToKey(keyB);
-                    MapValue valueB = keyB.findValue();
-
-                    Assert.assertFalse(valueB.isNew());
-                    Assert.assertEquals(valueA.getLong(0), valueB.getLong(0));
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testCopyToKeyVarSizeKey() throws Exception {
+    public void testCopyToKey() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             ArrayColumnTypes keyTypes = new ArrayColumnTypes();
             keyTypes.add(ColumnType.INT);
@@ -642,8 +479,8 @@ public class OrderedMapTest extends AbstractCairoTest {
             valueTypes.add(ColumnType.LONG);
 
             try (
-                    OrderedMap mapA = new OrderedMap(1024, keyTypes, valueTypes, 64, 0.8, 24);
-                    OrderedMap mapB = new OrderedMap(1024, keyTypes, valueTypes, 64, 0.8, 24)
+                    VarSizeMap mapA = new VarSizeMap(1024, keyTypes, valueTypes, 64, 0.8, 24);
+                    VarSizeMap mapB = new VarSizeMap(1024, keyTypes, valueTypes, 64, 0.8, 24)
             ) {
                 final int N = 100000;
                 for (int i = 0; i < N; i++) {
@@ -684,60 +521,7 @@ public class OrderedMapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCopyValueFixedSizeKey() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            ArrayColumnTypes keyTypes = new ArrayColumnTypes();
-            keyTypes.add(ColumnType.INT);
-            keyTypes.add(ColumnType.LONG);
-
-            ArrayColumnTypes valueTypes = new ArrayColumnTypes();
-            valueTypes.add(ColumnType.LONG);
-
-            try (
-                    OrderedMap mapA = new OrderedMap(1024, keyTypes, valueTypes, 64, 0.8, 24);
-                    OrderedMap mapB = new OrderedMap(1024, keyTypes, valueTypes, 64, 0.8, 24)
-            ) {
-                final int N = 100000;
-                for (int i = 0; i < N; i++) {
-                    MapKey keyA = mapA.withKey();
-                    keyA.putInt(i);
-                    keyA.putLong(i + 1);
-
-                    MapValue valueA = keyA.createValue();
-                    Assert.assertTrue(valueA.isNew());
-                    valueA.putLong(0, i + 2);
-                }
-
-                RecordCursor cursorA = mapA.getCursor();
-                MapRecord recordA = mapA.getRecord();
-                while (cursorA.hasNext()) {
-                    MapKey keyB = mapB.withKey();
-                    recordA.copyToKey(keyB);
-                    MapValue valueB = keyB.createValue();
-                    Assert.assertTrue(valueB.isNew());
-                    recordA.copyValue(valueB);
-                }
-
-                Assert.assertEquals(mapA.size(), mapB.size());
-
-                // assert that all map A keys and values are in map B
-                cursorA.toTop();
-                while (cursorA.hasNext()) {
-                    MapValue valueA = recordA.getValue();
-
-                    MapKey keyB = mapB.withKey();
-                    recordA.copyToKey(keyB);
-                    MapValue valueB = keyB.findValue();
-
-                    Assert.assertFalse(valueB.isNew());
-                    Assert.assertEquals(valueA.getLong(0), valueB.getLong(0));
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testCopyValueVarSizeKey() throws Exception {
+    public void testCopyValue() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             ArrayColumnTypes keyTypes = new ArrayColumnTypes();
             keyTypes.add(ColumnType.INT);
@@ -747,8 +531,8 @@ public class OrderedMapTest extends AbstractCairoTest {
             valueTypes.add(ColumnType.LONG);
 
             try (
-                    OrderedMap mapA = new OrderedMap(1024, keyTypes, valueTypes, 64, 0.8, 24);
-                    OrderedMap mapB = new OrderedMap(1024, keyTypes, valueTypes, 64, 0.8, 24)
+                    VarSizeMap mapA = new VarSizeMap(1024, keyTypes, valueTypes, 64, 0.8, 24);
+                    VarSizeMap mapB = new VarSizeMap(1024, keyTypes, valueTypes, 64, 0.8, 24)
             ) {
                 final int N = 100000;
                 for (int i = 0; i < N; i++) {
@@ -790,32 +574,6 @@ public class OrderedMapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFixedSizeKeyOnly() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            ColumnTypes types = new SingleColumnType(ColumnType.INT);
-
-            final int N = 10000;
-            try (OrderedMap map = new OrderedMap(Numbers.SIZE_1MB, types, null, 64, 0.5, Integer.MAX_VALUE)) {
-                for (int i = 0; i < N; i++) {
-                    MapKey key = map.withKey();
-                    key.putInt(i);
-                    MapValue values = key.createValue();
-                    Assert.assertTrue(values.isNew());
-                }
-
-                try (RecordCursor cursor = map.getCursor()) {
-                    final MapRecord record = (MapRecord) cursor.getRecord();
-                    int i = 0;
-                    while (cursor.hasNext()) {
-                        Assert.assertEquals(i, record.getInt(0));
-                        i++;
-                    }
-                }
-            }
-        });
-    }
-
-    @Test
     public void testFuzz() throws Exception {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         TestUtils.assertMemoryLeak(() -> {
@@ -823,7 +581,7 @@ public class OrderedMapTest extends AbstractCairoTest {
             SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);
 
             HashMap<String, Long> oracle = new HashMap<>();
-            try (OrderedMap map = new OrderedMap(1024, keyTypes, valueTypes, 64, 0.8, Integer.MAX_VALUE)) {
+            try (VarSizeMap map = new VarSizeMap(1024, keyTypes, valueTypes, 64, 0.8, Integer.MAX_VALUE)) {
                 final int N = 100000;
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
@@ -853,136 +611,7 @@ public class OrderedMapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testGeoHashRecordAsKey() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            final int N = 5000;
-            final Rnd rnd = new Rnd();
-            int precisionBits = 10;
-            int geohashType = ColumnType.getGeoHashTypeWithBits(precisionBits);
-
-            BytecodeAssembler asm = new BytecodeAssembler();
-            TableModel model = new TableModel(configuration, "x", PartitionBy.NONE);
-            model.col("a", ColumnType.LONG).col("b", geohashType);
-            AbstractCairoTest.create(model);
-
-            try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
-                for (int i = 0; i < N; i++) {
-                    TableWriter.Row row = writer.newRow();
-                    long rndGeohash = GeoHashes.fromCoordinatesDeg(rnd.nextDouble() * 180 - 90, rnd.nextDouble() * 360 - 180, precisionBits);
-                    row.putLong(0, i);
-                    row.putGeoHash(1, rndGeohash);
-                    row.append();
-                }
-                writer.commit();
-            }
-
-            try (TableReader reader = newOffPoolReader(configuration, "x")) {
-                EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
-                entityColumnFilter.of(reader.getMetadata().getColumnCount());
-
-                try (
-                        OrderedMap map = new OrderedMap(
-                                Numbers.SIZE_1MB,
-                                new SymbolAsStrTypes(reader.getMetadata()),
-                                new ArrayColumnTypes()
-                                        .add(ColumnType.LONG)
-                                        .add(ColumnType.INT)
-                                        .add(ColumnType.SHORT)
-                                        .add(ColumnType.BYTE)
-                                        .add(ColumnType.FLOAT)
-                                        .add(ColumnType.DOUBLE)
-                                        .add(ColumnType.DATE)
-                                        .add(ColumnType.TIMESTAMP)
-                                        .add(ColumnType.BOOLEAN)
-                                        .add(ColumnType.UUID),
-                                N,
-                                0.9f,
-                                1
-                        )
-                ) {
-
-                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, true);
-                    // this random will be populating values
-                    Rnd rnd2 = new Rnd();
-
-                    RecordCursor cursor = reader.getCursor();
-                    populateMap(map, rnd2, cursor, sink);
-
-                    try (RecordCursor mapCursor = map.getCursor()) {
-                        long c = 0;
-                        rnd.reset();
-                        rnd2.reset();
-                        final Record record = mapCursor.getRecord();
-                        while (mapCursor.hasNext()) {
-                            // value
-                            Assert.assertEquals(++c, record.getLong(0));
-                            Assert.assertEquals(rnd2.nextInt(), record.getInt(1));
-                            Assert.assertEquals(rnd2.nextShort(), record.getShort(2));
-                            Assert.assertEquals(rnd2.nextByte(), record.getByte(3));
-                            Assert.assertEquals(rnd2.nextFloat(), record.getFloat(4), 0.000001f);
-                            Assert.assertEquals(rnd2.nextDouble(), record.getDouble(5), 0.000000001);
-                            Assert.assertEquals(rnd2.nextLong(), record.getDate(6));
-                            Assert.assertEquals(rnd2.nextLong(), record.getTimestamp(7));
-                            Assert.assertEquals(rnd2.nextBoolean(), record.getBool(8));
-                            Assert.assertEquals(rnd2.nextLong(), record.getLong128Lo(9));
-                            Assert.assertEquals(rnd2.nextLong(), record.getLong128Hi(9));
-                        }
-                    }
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testHeapBoundariesFixedSizeKey() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            // Here, the entry size is 16 bytes, so that we fill the heap up to the boundary exactly before growing it.
-            Rnd rnd = new Rnd();
-            int expectedEntrySize = 16;
-
-            try (
-                    OrderedMap map = new OrderedMap(
-                            32,
-                            new SingleColumnType(ColumnType.LONG),
-                            new SingleColumnType(ColumnType.LONG),
-                            16,
-                            0.8,
-                            1024
-                    )
-            ) {
-                final int N = 100;
-                for (int i = 0; i < N; i++) {
-                    MapKey key = map.withKey();
-                    key.putLong(rnd.nextLong());
-
-                    long usedHeap = map.getUsedHeapSize();
-                    MapValue value = key.createValue();
-                    Assert.assertTrue(value.isNew());
-                    Assert.assertEquals(expectedEntrySize, (int) (map.getUsedHeapSize() - usedHeap));
-
-                    value.putLong(0, rnd.nextLong());
-                }
-
-                rnd.reset();
-
-                // assert that all values are good
-                for (int i = 0; i < N; i++) {
-                    MapKey key = map.withKey();
-                    key.putLong(rnd.nextLong());
-
-                    MapValue value = key.createValue();
-                    Assert.assertFalse(value.isNew());
-
-                    Assert.assertEquals(rnd.nextLong(), value.getLong(0));
-                }
-
-                Assert.assertEquals(N, map.size());
-            }
-        });
-    }
-
-    @Test
-    public void testHeapBoundariesVarSizeKey() throws Exception {
+    public void testHeapBoundaries() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             // Here, the entry size is 32 bytes, so that we fill the heap up to the boundary exactly before growing it.
             Rnd rnd = new Rnd();
@@ -993,7 +622,7 @@ public class OrderedMapTest extends AbstractCairoTest {
             valueTypes.add(ColumnType.LONG);
 
             try (
-                    OrderedMap map = new OrderedMap(
+                    VarSizeMap map = new VarSizeMap(
                             32,
                             new SingleColumnType(ColumnType.STRING),
                             valueTypes,
@@ -1036,64 +665,7 @@ public class OrderedMapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testKeyCopyFromFixedSizeKey() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            ArrayColumnTypes keyTypes = new ArrayColumnTypes();
-            keyTypes.add(ColumnType.INT);
-            keyTypes.add(ColumnType.LONG);
-
-            ArrayColumnTypes valueTypes = new ArrayColumnTypes();
-            valueTypes.add(ColumnType.LONG);
-
-            try (
-                    OrderedMap mapA = new OrderedMap(1024, keyTypes, valueTypes, 64, 0.8, 24);
-                    OrderedMap mapB = new OrderedMap(1024, keyTypes, valueTypes, 64, 0.8, 24)
-            ) {
-                final int N = 100000;
-                for (int i = 0; i < N; i++) {
-                    MapKey keyA = mapA.withKey();
-                    keyA.putInt(i);
-                    keyA.putLong(i + 1);
-
-                    MapValue valueA = keyA.createValue();
-                    Assert.assertTrue(valueA.isNew());
-                    valueA.putLong(0, i + 2);
-
-                    MapKey keyB = mapB.withKey();
-                    keyB.copyFrom(keyA);
-
-                    MapValue valueB = keyB.createValue();
-                    Assert.assertTrue(valueB.isNew());
-                    valueB.putLong(0, i + 2);
-                }
-
-                Assert.assertEquals(mapA.size(), mapB.size());
-
-                // assert that all map A keys can be found in map B
-                for (int i = 0; i < N; i++) {
-                    MapKey keyA = mapA.withKey();
-                    keyA.putInt(i);
-                    keyA.putLong(i + 1);
-
-                    MapKey keyB = mapB.withKey();
-                    keyB.putInt(i);
-                    keyB.putLong(i + 1);
-
-                    MapValue valueA = keyA.findValue();
-                    Assert.assertFalse(valueA.isNew());
-
-                    MapValue valueB = keyB.findValue();
-                    Assert.assertFalse(valueB.isNew());
-
-                    Assert.assertEquals(i + 2, valueA.getLong(0));
-                    Assert.assertEquals(valueA.getLong(0), valueB.getLong(0));
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testKeyCopyFromVarSizeKey() throws Exception {
+    public void testKeyCopyFrom() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             ArrayColumnTypes keyTypes = new ArrayColumnTypes();
             keyTypes.add(ColumnType.INT);
@@ -1103,8 +675,8 @@ public class OrderedMapTest extends AbstractCairoTest {
             valueTypes.add(ColumnType.LONG);
 
             try (
-                    OrderedMap mapA = new OrderedMap(1024, keyTypes, valueTypes, 64, 0.8, 24);
-                    OrderedMap mapB = new OrderedMap(1024, keyTypes, valueTypes, 64, 0.8, 24)
+                    VarSizeMap mapA = new VarSizeMap(1024, keyTypes, valueTypes, 64, 0.8, 24);
+                    VarSizeMap mapB = new VarSizeMap(1024, keyTypes, valueTypes, 64, 0.8, 24)
             ) {
                 final int N = 100000;
                 for (int i = 0; i < N; i++) {
@@ -1150,44 +722,7 @@ public class OrderedMapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testKeyHashCodeFixedSizeKey() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            ArrayColumnTypes keyTypes = new ArrayColumnTypes();
-            keyTypes.add(ColumnType.INT);
-            keyTypes.add(ColumnType.LONG);
-
-            ArrayColumnTypes valueTypes = new ArrayColumnTypes();
-            valueTypes.add(ColumnType.LONG);
-
-            try (OrderedMap map = new OrderedMap(1024, keyTypes, valueTypes, 64, 0.8, 24)) {
-                final int N = 100000;
-                final LongList keyHashCodes = new LongList(N);
-                for (int i = 0; i < N; i++) {
-                    MapKey key = map.withKey();
-                    key.putInt(i);
-                    key.putLong(i + 1);
-                    long hashCode = key.hash();
-                    keyHashCodes.add(hashCode);
-
-                    MapValue value = key.createValue(hashCode);
-                    Assert.assertTrue(value.isNew());
-                    value.putLong(0, i + 2);
-                }
-
-                final LongList recordHashCodes = new LongList(N);
-                RecordCursor cursor = map.getCursor();
-                MapRecord record = map.getRecord();
-                while (cursor.hasNext()) {
-                    recordHashCodes.add(record.keyHashCode());
-                }
-
-                TestUtils.assertEquals(keyHashCodes, recordHashCodes);
-            }
-        });
-    }
-
-    @Test
-    public void testKeyHashCodeVarSizeKey() throws Exception {
+    public void testKeyHashCode() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             ArrayColumnTypes keyTypes = new ArrayColumnTypes();
             keyTypes.add(ColumnType.INT);
@@ -1196,7 +731,7 @@ public class OrderedMapTest extends AbstractCairoTest {
             ArrayColumnTypes valueTypes = new ArrayColumnTypes();
             valueTypes.add(ColumnType.LONG);
 
-            try (OrderedMap map = new OrderedMap(1024, keyTypes, valueTypes, 64, 0.8, 24)) {
+            try (VarSizeMap map = new VarSizeMap(1024, keyTypes, valueTypes, 64, 0.8, 24)) {
                 final int N = 100000;
                 final LongList keyHashCodes = new LongList(N);
                 for (int i = 0; i < N; i++) {
@@ -1225,12 +760,37 @@ public class OrderedMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeyOnly() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            ColumnTypes types = new SingleColumnType(ColumnType.STRING);
+
+            final int N = 10000;
+            try (VarSizeMap map = new VarSizeMap(Numbers.SIZE_1MB, types, null, 64, 0.5, Integer.MAX_VALUE)) {
+                for (int i = 0; i < N; i++) {
+                    MapKey key = map.withKey();
+                    key.putStr(Chars.repeat("a", i % 32));
+                    key.createValue();
+                }
+
+                try (RecordCursor cursor = map.getCursor()) {
+                    final MapRecord record = (MapRecord) cursor.getRecord();
+                    int i = 0;
+                    while (cursor.hasNext()) {
+                        TestUtils.assertEquals(Chars.repeat("a", i % 32), record.getStrA(0));
+                        i++;
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testLargeBinSequence() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             ColumnTypes keyTypes = new SingleColumnType(ColumnType.BINARY);
             ColumnTypes valueTypes = new SingleColumnType(ColumnType.INT);
             TestRecord.ArrayBinarySequence binarySequence = new TestRecord.ArrayBinarySequence();
-            try (OrderedMap map = new OrderedMap(Numbers.SIZE_1MB, keyTypes, valueTypes, 64, 0.5, 1)) {
+            try (VarSizeMap map = new VarSizeMap(Numbers.SIZE_1MB, keyTypes, valueTypes, 64, 0.5, 1)) {
                 final Rnd rnd = new Rnd();
                 MapKey key = map.withKey();
                 key.putBin(binarySequence.of(rnd.nextBytes(10)));
@@ -1277,26 +837,26 @@ public class OrderedMapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLong256AndCharAsKey() throws Exception {
+    public void testLong256AndStringAsKey() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd();
 
             ArrayColumnTypes keyTypes = new ArrayColumnTypes();
             keyTypes.add(ColumnType.LONG256);
-            keyTypes.add(ColumnType.CHAR);
+            keyTypes.add(ColumnType.STRING);
 
             ArrayColumnTypes valueTypes = new ArrayColumnTypes();
             valueTypes.add(ColumnType.DOUBLE);
 
             Long256Impl long256 = new Long256Impl();
 
-            try (OrderedMap map = new OrderedMap(64, keyTypes, valueTypes, 64, 0.8, 24)) {
+            try (VarSizeMap map = new VarSizeMap(64, keyTypes, valueTypes, 64, 0.8, 24)) {
                 final int N = 100000;
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
                     long256.fromRnd(rnd);
                     key.putLong256(long256);
-                    key.putChar(rnd.nextChar());
+                    key.putStr(rnd.nextString(1));
 
                     MapValue value = key.createValue();
                     Assert.assertTrue(value.isNew());
@@ -1310,7 +870,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                     MapKey key = map.withKey();
                     long256.fromRnd(rnd);
                     key.putLong256(long256);
-                    key.putChar(rnd.nextChar());
+                    key.putStr(rnd.nextString(1));
 
                     MapValue value = key.createValue();
                     Assert.assertFalse(value.isNew());
@@ -1343,7 +903,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                 }
 
                 final Rnd rnd = new Rnd();
-                try (OrderedMap map = new OrderedMap(Numbers.SIZE_1MB, keyTypes, valueTypes, 1024, 0.5f, 1)) {
+                try (VarSizeMap map = new VarSizeMap(Numbers.SIZE_1MB, keyTypes, valueTypes, 1024, 0.5f, 1)) {
                     try {
                         MapKey key = map.withKey();
                         for (int i = 0; i < N; i++) {
@@ -1360,103 +920,7 @@ public class OrderedMapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMergeFixedSizeKey() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            ArrayColumnTypes keyTypes = new ArrayColumnTypes();
-            keyTypes.add(ColumnType.INT);
-            keyTypes.add(ColumnType.LONG);
-
-            ArrayColumnTypes valueTypes = new ArrayColumnTypes();
-            valueTypes.add(ColumnType.LONG);
-
-            try (
-                    OrderedMap mapA = new OrderedMap(1024, keyTypes, valueTypes, 64, 0.8, 24);
-                    OrderedMap mapB = new OrderedMap(1024, keyTypes, valueTypes, 64, 0.8, 24)
-            ) {
-                final int N = 100000;
-                for (int i = 0; i < N; i++) {
-                    MapKey keyA = mapA.withKey();
-                    keyA.putInt(i);
-                    keyA.putLong(i + 1);
-
-                    MapValue valueA = keyA.createValue();
-                    Assert.assertTrue(valueA.isNew());
-                    valueA.putLong(0, i + 2);
-                }
-
-                for (int i = 0; i < 2 * N; i++) {
-                    MapKey keyB = mapB.withKey();
-                    keyB.putInt(i);
-                    keyB.putLong(i + 1);
-
-                    MapValue valueB = keyB.createValue();
-                    Assert.assertTrue(valueB.isNew());
-                    valueB.putLong(0, i + 2);
-                }
-
-                Assert.assertEquals(2 * mapA.size(), mapB.size());
-
-                mapA.merge(mapB, new TestMapValueMergeFunction());
-
-                Assert.assertEquals(mapA.size(), mapB.size());
-
-                // assert that all map B keys can be found in map A
-                RecordCursor cursorA = mapA.getCursor();
-                MapRecord recordA = mapA.getRecord();
-                while (cursorA.hasNext()) {
-                    int i = recordA.getInt(1);
-                    MapValue valueA = recordA.getValue();
-
-                    MapKey keyB = mapB.withKey();
-                    keyB.putInt(i);
-                    keyB.putLong(i + 1);
-                    MapValue valueB = keyB.findValue();
-
-                    Assert.assertFalse(valueB.isNew());
-                    if (i < N) {
-                        Assert.assertEquals(valueA.getLong(0), 2 * valueB.getLong(0));
-                    } else {
-                        Assert.assertEquals(valueA.getLong(0), valueB.getLong(0));
-                    }
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testMergeStressTest() throws Exception {
-        // Here we aim to resize both map A's hash table and heap as many times as possible
-        // to catch possible bugs with append address initialization.
-        TestUtils.assertMemoryLeak(() -> {
-            SingleColumnType keyTypes = new SingleColumnType(ColumnType.STRING);
-            SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);
-
-            try (
-                    OrderedMap mapA = new OrderedMap(64, keyTypes, valueTypes, 16, 0.9, Integer.MAX_VALUE);
-                    OrderedMap mapB = new OrderedMap(64, keyTypes, valueTypes, 16, 0.9, Integer.MAX_VALUE)
-            ) {
-                final int N = 100;
-                final int M = 1000;
-                for (int i = 0; i < N; i++) {
-                    mapB.clear();
-                    for (int j = 0; j < M; j++) {
-                        MapKey keyB = mapB.withKey();
-                        keyB.putStr(String.valueOf((long) M * i + j));
-
-                        MapValue valueB = keyB.createValue();
-                        Assert.assertTrue(valueB.isNew());
-                        valueB.putLong(0, M * i + j);
-                    }
-
-                    mapA.merge(mapB, new TestMapValueMergeFunction());
-                    Assert.assertEquals((i + 1) * M, mapA.size());
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testMergeVarSizeKey() throws Exception {
+    public void testMerge() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             ArrayColumnTypes keyTypes = new ArrayColumnTypes();
             keyTypes.add(ColumnType.INT);
@@ -1466,8 +930,8 @@ public class OrderedMapTest extends AbstractCairoTest {
             valueTypes.add(ColumnType.LONG);
 
             try (
-                    OrderedMap mapA = new OrderedMap(1024, keyTypes, valueTypes, 64, 0.8, 24);
-                    OrderedMap mapB = new OrderedMap(1024, keyTypes, valueTypes, 64, 0.8, 24)
+                    VarSizeMap mapA = new VarSizeMap(1024, keyTypes, valueTypes, 64, 0.8, 24);
+                    VarSizeMap mapB = new VarSizeMap(1024, keyTypes, valueTypes, 64, 0.8, 24)
             ) {
                 final int N = 100000;
                 for (int i = 0; i < N; i++) {
@@ -1520,15 +984,47 @@ public class OrderedMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMergeStressTest() throws Exception {
+        // Here we aim to resize both map A's hash table and heap as many times as possible
+        // to catch possible bugs with append address initialization.
+        TestUtils.assertMemoryLeak(() -> {
+            SingleColumnType keyTypes = new SingleColumnType(ColumnType.STRING);
+            SingleColumnType valueTypes = new SingleColumnType(ColumnType.LONG);
+
+            try (
+                    VarSizeMap mapA = new VarSizeMap(64, keyTypes, valueTypes, 16, 0.9, Integer.MAX_VALUE);
+                    VarSizeMap mapB = new VarSizeMap(64, keyTypes, valueTypes, 16, 0.9, Integer.MAX_VALUE)
+            ) {
+                final int N = 100;
+                final int M = 1000;
+                for (int i = 0; i < N; i++) {
+                    mapB.clear();
+                    for (int j = 0; j < M; j++) {
+                        MapKey keyB = mapB.withKey();
+                        keyB.putStr(String.valueOf((long) M * i + j));
+
+                        MapValue valueB = keyB.createValue();
+                        Assert.assertTrue(valueB.isNew());
+                        valueB.putLong(0, M * i + j);
+                    }
+
+                    mapA.merge(mapB, new TestMapValueMergeFunction());
+                    Assert.assertEquals((i + 1) * M, mapA.size());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testNoValueColumns() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final SingleColumnType keyTypes = new SingleColumnType();
             final Rnd rnd = new Rnd();
             final int N = 100;
-            try (OrderedMap map = new OrderedMap(2 * Numbers.SIZE_1MB, keyTypes.of(ColumnType.INT), 128, 0.7f, 1)) {
+            try (VarSizeMap map = new VarSizeMap(2 * Numbers.SIZE_1MB, keyTypes.of(ColumnType.STRING), 128, 0.7f, 1)) {
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
-                    key.putInt(rnd.nextInt());
+                    key.putStr(String.valueOf(rnd.nextInt()));
                     Assert.assertTrue(key.create());
                 }
 
@@ -1538,7 +1034,7 @@ public class OrderedMapTest extends AbstractCairoTest {
 
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
-                    key.putInt(rnd.nextInt());
+                    key.putStr(String.valueOf(rnd.nextInt()));
                     Assert.assertFalse(key.notFound());
                 }
                 Assert.assertEquals(N, map.size());
@@ -1562,7 +1058,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                 entityColumnFilter.of(reader.getMetadata().getColumnCount());
 
                 try (
-                        OrderedMap map = new OrderedMap(
+                        VarSizeMap map = new VarSizeMap(
                                 Numbers.SIZE_1MB,
                                 new SymbolAsStrTypes(reader.getMetadata()),
                                 new ArrayColumnTypes()
@@ -1606,7 +1102,7 @@ public class OrderedMapTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             final int N = 10000;
             final Rnd rnd = new Rnd();
-            try (OrderedMap map = new OrderedMap(Numbers.SIZE_1MB, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.INT), 64, 0.5, 1)) {
+            try (VarSizeMap map = new VarSizeMap(Numbers.SIZE_1MB, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.INT), 64, 0.5, 1)) {
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
                     key.putStr(rnd.nextString(10));
@@ -1657,7 +1153,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                 entityColumnFilter.of(reader.getMetadata().getColumnCount());
 
                 try (
-                        OrderedMap map = new OrderedMap(
+                        VarSizeMap map = new VarSizeMap(
                                 Numbers.SIZE_1MB,
                                 new SymbolAsStrTypes(reader.getMetadata()),
                                 new ArrayColumnTypes()
@@ -1733,7 +1229,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                 }
 
                 try (
-                        OrderedMap map = new OrderedMap(
+                        VarSizeMap map = new VarSizeMap(
                                 Numbers.SIZE_1MB,
                                 new SymbolAsIntTypes().of(reader.getMetadata()),
                                 new ArrayColumnTypes()
@@ -1793,31 +1289,6 @@ public class OrderedMapTest extends AbstractCairoTest {
                         Assert.assertEquals(rnd2.nextInt(), value.getInt(1));
                         Assert.assertEquals(rnd2.nextShort(), value.getShort(2));
                         Assert.assertEquals(rnd2.nextByte(), value.getByte(3));
-                    }
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testVarSizeKeyOnly() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            ColumnTypes types = new SingleColumnType(ColumnType.STRING);
-
-            final int N = 10000;
-            try (OrderedMap map = new OrderedMap(Numbers.SIZE_1MB, types, null, 64, 0.5, Integer.MAX_VALUE)) {
-                for (int i = 0; i < N; i++) {
-                    MapKey key = map.withKey();
-                    key.putStr(Chars.repeat("a", i % 32));
-                    key.createValue();
-                }
-
-                try (RecordCursor cursor = map.getCursor()) {
-                    final MapRecord record = (MapRecord) cursor.getRecord();
-                    int i = 0;
-                    while (cursor.hasNext()) {
-                        TestUtils.assertEquals(Chars.repeat("a", i % 32), record.getStrA(0));
-                        i++;
                     }
                 }
             }
@@ -2049,8 +1520,7 @@ public class OrderedMapTest extends AbstractCairoTest {
             Assert.assertEquals(long256b.getLong2(), long256.getLong2());
             Assert.assertEquals(long256b.getLong3(), long256.getLong3());
 
-            Assert.assertEquals(rnd.nextChar(), record.getChar(2));
-
+            TestUtils.assertEquals(rnd.nextString(1), record.getStrA(2));
 
             // value part, it comes first in record
 
@@ -2151,7 +1621,7 @@ public class OrderedMapTest extends AbstractCairoTest {
         }
     }
 
-    private void populateMap(OrderedMap map, Rnd rnd2, RecordCursor cursor, RecordSink sink) {
+    private void populateMap(VarSizeMap map, Rnd rnd2, RecordCursor cursor, RecordSink sink) {
         long counter = 0;
         final Record record = cursor.getRecord();
         while (cursor.hasNext()) {

@@ -32,13 +32,13 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Provides Record access interface for FastMap key-value pairs with var-size keys.
+ * Provides Record access interface for VarSizeMap key-value pairs.
  * <p>
  * Uses an offsets array to speed up value column look-ups.
  * Key column offsets are calculated dynamically since keys are var-size.
  * The last accessed key column offset is cached to speed up sequential access.
  */
-final class OrderedMapVarSizeRecord implements OrderedMapRecord {
+final class VarSizeMapRecord implements MapRecord {
     private final DirectBinarySequence[] bs;
     private final DirectString[] csA;
     private final DirectString[] csB;
@@ -48,7 +48,7 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
     private final int splitIndex;
     private final DirectUtf8String[] usA;
     private final DirectUtf8String[] usB;
-    private final OrderedMapValue value;
+    private final VarSizeMapValue value;
     private final long[] valueOffsets;
     private final long valueSize;
     private long keyAddress;
@@ -60,10 +60,10 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
     private RecordCursor symbolTableResolver;
     private long valueAddress;
 
-    OrderedMapVarSizeRecord(
+    VarSizeMapRecord(
             long valueSize,
             long[] valueOffsets,
-            OrderedMapValue value,
+            VarSizeMapValue value,
             @NotNull @Transient ColumnTypes keyTypes,
             @Nullable @Transient ColumnTypes valueTypes
     ) {
@@ -154,7 +154,7 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
         this.keyLong256B = long256B;
     }
 
-    private OrderedMapVarSizeRecord(
+    private VarSizeMapRecord(
             long valueSize,
             long[] valueOffsets,
             ColumnTypes keyTypes,
@@ -171,7 +171,7 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
         this.valueOffsets = valueOffsets;
         this.keyTypes = keyTypes;
         this.splitIndex = splitIndex;
-        this.value = new OrderedMapValue(valueSize, valueOffsets);
+        this.value = new VarSizeMapValue(valueSize, valueOffsets);
         this.csA = csA;
         this.csB = csB;
         this.usA = usA;
@@ -183,7 +183,7 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
 
     @SuppressWarnings("MethodDoesntCallSuperMethod")
     @Override
-    public OrderedMapRecord clone() {
+    public VarSizeMapRecord clone() {
         final DirectString[] csA;
         final DirectString[] csB;
         final DirectUtf8String[] usA;
@@ -252,19 +252,19 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
             long256A = null;
             long256B = null;
         }
-        return new OrderedMapVarSizeRecord(valueSize, valueOffsets, keyTypes, splitIndex, csA, csB, usA, usB, bs, long256A, long256B);
+        return new VarSizeMapRecord(valueSize, valueOffsets, keyTypes, splitIndex, csA, csB, usA, usB, bs, long256A, long256B);
     }
 
     @Override
     public void copyToKey(MapKey destKey) {
-        OrderedMap.VarSizeKey destFastKey = (OrderedMap.VarSizeKey) destKey;
+        VarSizeMap.Key destFastKey = (VarSizeMap.Key) destKey;
         int keySize = Unsafe.getUnsafe().getInt(startAddress);
         destFastKey.copyFromRawKey(keyAddress, keySize);
     }
 
     @Override
     public void copyValue(MapValue destValue) {
-        OrderedMapValue destFastValue = (OrderedMapValue) destValue;
+        VarSizeMapValue destFastValue = (VarSizeMapValue) destValue;
         destFastValue.copyRawValue(valueAddress);
     }
 
@@ -450,7 +450,6 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
         return Hash.hashMem64(startAddress + Integer.BYTES, keySize);
     }
 
-    @Override
     public void of(long address) {
         this.startAddress = address;
         this.keyAddress = address + Integer.BYTES;
@@ -460,7 +459,6 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
         this.lastKeyOffset = -1;
     }
 
-    @Override
     public void setLimit(long limit) {
         this.limit = limit;
     }

@@ -66,10 +66,10 @@ public class MapTest extends AbstractCairoTest {
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-                {MapType.ORDERED_MAP},
+                {MapType.VAR_SIZE_MAP},
+                {MapType.FIXED_SIZE_MAP},
                 {MapType.UNORDERED_4_MAP},
                 {MapType.UNORDERED_8_MAP},
-                {MapType.UNORDERED_16_MAP},
                 {MapType.UNORDERED_VARCHAR_MAP},
         });
     }
@@ -436,6 +436,8 @@ public class MapTest extends AbstractCairoTest {
                         int index;
                         if (mapType == MapType.UNORDERED_VARCHAR_MAP) {
                             index = Numbers.parseInt(record.getVarcharA(0));
+                        } else if (mapType == MapType.VAR_SIZE_MAP) {
+                            index = Numbers.parseInt(record.getStrA(0));
                         } else {
                             index = record.getInt(0);
                         }
@@ -864,14 +866,14 @@ public class MapTest extends AbstractCairoTest {
 
     private Map createMap(ColumnTypes keyTypes, ColumnTypes valueTypes, int keyCapacity, double loadFactor, int maxResizes) {
         switch (mapType) {
-            case ORDERED_MAP:
-                return new OrderedMap(32 * 1024, keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes);
+            case VAR_SIZE_MAP:
+                return new VarSizeMap(32 * 1024, keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes);
+            case FIXED_SIZE_MAP:
+                return new FixedSizeMap(32 * 1024, keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes);
             case UNORDERED_4_MAP:
                 return new Unordered4Map(keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes);
             case UNORDERED_8_MAP:
                 return new Unordered8Map(keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes);
-            case UNORDERED_16_MAP:
-                return new Unordered16Map(keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes);
             case UNORDERED_VARCHAR_MAP:
                 Assert.assertEquals(1, keyTypes.getColumnCount());
                 Assert.assertEquals(ColumnType.VARCHAR, keyTypes.getColumnType(0));
@@ -882,7 +884,12 @@ public class MapTest extends AbstractCairoTest {
     }
 
     private SingleColumnType keyColumnType(int preferredKeyColumnType) {
-        return new SingleColumnType((mapType == MapType.UNORDERED_VARCHAR_MAP ? ColumnType.VARCHAR : preferredKeyColumnType));
+        if (mapType == MapType.UNORDERED_VARCHAR_MAP) {
+            return new SingleColumnType(ColumnType.VARCHAR);
+        } else if (mapType == MapType.VAR_SIZE_MAP) {
+            return new SingleColumnType(ColumnType.STRING);
+        }
+        return new SingleColumnType(preferredKeyColumnType);
     }
 
     private void populateKey(MapKey key, int index, int preferredKeyType) {
@@ -892,19 +899,21 @@ public class MapTest extends AbstractCairoTest {
                 // 10% chances of using on-heap utf8 sequence
                 key.putVarchar(new Utf8String(String.valueOf(index)));
             } else if (mode == 1) {
-                // 10% of using a non-stable offheap sequence
+                // 10% of using a non-stable off-heap sequence
                 try (DirectUtf8Sink sink = new DirectUtf8Sink(16)) {
                     sink.put(index);
                     key.putVarchar(sink);
                 }
             } else {
-                // 80% of using a stable offheap sequence
+                // 80% of using a stable off-heap sequence
                 long hi = STABLE_SINK.hi();
                 STABLE_SINK.put(index);
                 DirectUtf8String directStr = new DirectUtf8String(true);
                 directStr.of(hi, STABLE_SINK.hi(), true, true);
                 key.putVarchar(directStr);
             }
+        } else if (mapType == MapType.VAR_SIZE_MAP) {
+            key.putStr(String.valueOf(index));
         } else {
             switch (preferredKeyType) {
                 case ColumnType.INT:
@@ -922,6 +931,8 @@ public class MapTest extends AbstractCairoTest {
     private int readKey(Record record, int index, int preferredType) throws NumericException {
         if (mapType == MapType.UNORDERED_VARCHAR_MAP) {
             return Numbers.parseInt(record.getVarcharA(index));
+        } else if (mapType == MapType.VAR_SIZE_MAP) {
+            return Numbers.parseInt(record.getStrA(index));
         }
         if (preferredType == ColumnType.INT) {
             return record.getInt(index);
@@ -933,7 +944,7 @@ public class MapTest extends AbstractCairoTest {
     }
 
     public enum MapType {
-        ORDERED_MAP, UNORDERED_4_MAP, UNORDERED_8_MAP, UNORDERED_16_MAP, UNORDERED_VARCHAR_MAP
+        VAR_SIZE_MAP, FIXED_SIZE_MAP, UNORDERED_4_MAP, UNORDERED_8_MAP, UNORDERED_VARCHAR_MAP
     }
 
     private static class TestMapValueMergeFunction implements MapValueMergeFunction {

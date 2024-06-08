@@ -657,8 +657,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public double getSqlFastMapLoadFactor() {
-        return 0.7;
+    public double getSqlFixedSizeMapLoadFactor() {
+        return 0.6;
     }
 
     @Override
@@ -814,6 +814,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlUnorderedMapMaxEntrySize() {
         return 16;
+    }
+
+    @Override
+    public double getSqlVarSizeMapLoadFactor() {
+        return 0.7;
     }
 
     @Override

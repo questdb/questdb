@@ -42,11 +42,23 @@ public class MapFactory {
     ) {
         final int keyCapacity = configuration.getSqlSmallMapKeyCapacity();
         final long pageSize = configuration.getSqlSmallMapPageSize();
-        return new OrderedMap(
+
+        final int keySize = totalSize(keyTypes);
+        if (keySize > 0) {
+            return new FixedSizeMap(
+                    pageSize,
+                    keyTypes,
+                    keyCapacity,
+                    configuration.getSqlFixedSizeMapLoadFactor(),
+                    configuration.getSqlMapMaxResizes()
+            );
+        }
+
+        return new VarSizeMap(
                 pageSize,
                 keyTypes,
                 keyCapacity,
-                configuration.getSqlFastMapLoadFactor(),
+                configuration.getSqlVarSizeMapLoadFactor(),
                 configuration.getSqlMapMaxResizes()
         );
     }
@@ -61,12 +73,25 @@ public class MapFactory {
     ) {
         final int keyCapacity = configuration.getSqlSmallMapKeyCapacity();
         final long pageSize = configuration.getSqlSmallMapPageSize();
-        return new OrderedMap(
+
+        final int keySize = totalSize(keyTypes);
+        if (keySize > 0) {
+            return new FixedSizeMap(
+                    pageSize,
+                    keyTypes,
+                    valueTypes,
+                    keyCapacity,
+                    configuration.getSqlFixedSizeMapLoadFactor(),
+                    configuration.getSqlMapMaxResizes()
+            );
+        }
+
+        return new VarSizeMap(
                 pageSize,
                 keyTypes,
                 valueTypes,
                 keyCapacity,
-                configuration.getSqlFastMapLoadFactor(),
+                configuration.getSqlVarSizeMapLoadFactor(),
                 configuration.getSqlMapMaxResizes()
         );
     }
@@ -104,51 +129,50 @@ public class MapFactory {
 
         final int keySize = totalSize(keyTypes);
         final int valueSize = totalSize(valueTypes);
-        if (keySize > 0) {
-            if (keySize <= Short.BYTES && valueSize <= maxEntrySize) {
-                return new Unordered2Map(keyTypes, valueTypes);
-            } else if (keySize <= Integer.BYTES && Integer.BYTES + valueSize <= maxEntrySize) {
+        if (keySize > 0) { // fixed-size key
+            if (keySize == Integer.BYTES && keySize + valueSize <= maxEntrySize) {
                 return new Unordered4Map(
                         keyTypes,
                         valueTypes,
                         keyCapacity,
-                        configuration.getSqlFastMapLoadFactor(),
+                        configuration.getSqlFixedSizeMapLoadFactor(),
                         configuration.getSqlMapMaxResizes()
                 );
-            } else if (keySize <= Long.BYTES && Long.BYTES + valueSize <= maxEntrySize) {
+            } else if (keySize == Long.BYTES && keySize + valueSize <= maxEntrySize) {
                 return new Unordered8Map(
                         keyTypes,
                         valueTypes,
                         keyCapacity,
-                        configuration.getSqlFastMapLoadFactor(),
-                        configuration.getSqlMapMaxResizes()
-                );
-            } else if (keySize <= 2 * Long.BYTES && 2 * Long.BYTES + valueSize <= maxEntrySize) {
-                return new Unordered16Map(
-                        keyTypes,
-                        valueTypes,
-                        keyCapacity,
-                        configuration.getSqlFastMapLoadFactor(),
+                        configuration.getSqlFixedSizeMapLoadFactor(),
                         configuration.getSqlMapMaxResizes()
                 );
             }
+
+            return new FixedSizeMap(
+                    pageSize,
+                    keyTypes,
+                    valueTypes,
+                    keyCapacity,
+                    configuration.getSqlFixedSizeMapLoadFactor(),
+                    configuration.getSqlMapMaxResizes()
+            );
         } else if (keyTypes.getColumnCount() == 1 && keyTypes.getColumnType(0) == ColumnType.VARCHAR && 2 * Long.BYTES + valueSize <= maxEntrySize) {
             return new UnorderedVarcharMap(
                     valueTypes,
                     keyCapacity,
-                    configuration.getSqlFastMapLoadFactor(),
+                    configuration.getSqlVarSizeMapLoadFactor(),
                     configuration.getSqlMapMaxResizes(),
                     configuration.getGroupByAllocatorDefaultChunkSize(),
                     configuration.getGroupByAllocatorMaxChunkSize()
             );
         }
 
-        return new OrderedMap(
+        return new VarSizeMap(
                 pageSize,
                 keyTypes,
                 valueTypes,
                 keyCapacity,
-                configuration.getSqlFastMapLoadFactor(),
+                configuration.getSqlVarSizeMapLoadFactor(),
                 configuration.getSqlMapMaxResizes()
         );
     }

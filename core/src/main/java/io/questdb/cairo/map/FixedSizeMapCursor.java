@@ -26,24 +26,26 @@ package io.questdb.cairo.map;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.std.bytes.Bytes;
 
-public final class Unordered2MapCursor implements MapRecordCursor {
-    private final long entrySize;
-    private final Unordered2Map map;
-    private final Unordered2MapRecord recordA;
-    private final Unordered2MapRecord recordB;
+public final class FixedSizeMapCursor implements MapRecordCursor {
+    private final long alignedKeyValueSize;
+    private final FixedSizeMap map;
+    private final FixedSizeMapRecord recordA;
+    private final FixedSizeMapRecord recordB;
+    private final long valueSize;
     private long address;
     private int count;
-    private boolean hasZero;
-    private long limit;
     private int remaining;
     private long topAddress;
 
-    Unordered2MapCursor(Unordered2MapRecord record, Unordered2Map map) {
+    FixedSizeMapCursor(FixedSizeMapRecord record, FixedSizeMap map) {
         this.recordA = record;
         this.recordB = record.clone();
         this.map = map;
-        this.entrySize = map.entrySize();
+        this.valueSize = map.valueSize();
+        assert map.keySize() != -1;
+        alignedKeyValueSize = Bytes.align8b(map.keySize() + map.valueSize());
     }
 
     @Override
@@ -73,7 +75,7 @@ public final class Unordered2MapCursor implements MapRecordCursor {
     public boolean hasNext() {
         if (remaining > 0) {
             recordA.of(address);
-            skipToNonZeroKey();
+            address += alignedKeyValueSize;
             remaining--;
             return true;
         }
@@ -82,7 +84,7 @@ public final class Unordered2MapCursor implements MapRecordCursor {
 
     @Override
     public void recordAt(Record record, long atRowId) {
-        ((Unordered2MapRecord) record).of(atRowId);
+        ((FixedSizeMapRecord) record).of(atRowId);
     }
 
     @Override
@@ -94,23 +96,11 @@ public final class Unordered2MapCursor implements MapRecordCursor {
     public void toTop() {
         address = topAddress;
         remaining = count;
-        if (!hasZero) {
-            skipToNonZeroKey();
-        }
     }
 
-    private void skipToNonZeroKey() {
-        do {
-            address += entrySize;
-        } while (address < limit && map.isZeroKey(address));
-    }
-
-    Unordered2MapCursor init(long address, long limit, boolean hasZero, int count) {
-        this.topAddress = address;
-        this.limit = limit;
-        this.count = count;
-        this.hasZero = hasZero;
-        toTop();
+    FixedSizeMapCursor init(long address, long limit, int count) {
+        this.address = this.topAddress = address;
+        this.remaining = this.count = count;
         recordA.setLimit(limit);
         recordB.setLimit(limit);
         return this;

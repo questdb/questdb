@@ -281,7 +281,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlDoubleToStrCastScale;
     private final int sqlExplainModelPoolCapacity;
     private final int sqlExpressionPoolCapacity;
-    private final double sqlFastMapLoadFactor;
+    private final double sqlFixedSizeMapLoadFactor;
     private final int sqlFloatToStrCastScale;
     private final long sqlGroupByAllocatorChunkSize;
     private final long sqlGroupByAllocatorMaxChunkSize;
@@ -331,6 +331,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlStrFunctionBufferMaxSize;
     private final int sqlTxnScoreboardEntryCount;
     private final int sqlUnorderedMapMaxEntrySize;
+    private final double sqlVarSizeMapLoadFactor;
     private final int sqlWindowColumnPoolCapacity;
     private final int sqlWindowInitialRangeBufferSize;
     private final int sqlWindowMaxRecursion;
@@ -944,7 +945,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlCharacterStoreSequencePoolCapacity = getInt(properties, env, PropertyKey.CAIRO_CHARACTER_STORE_SEQUENCE_POOL_CAPACITY, 64);
             this.sqlColumnPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_COLUMN_POOL_CAPACITY, 4096);
             this.sqlExpressionPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_EXPRESSION_POOL_CAPACITY, 8192);
-            this.sqlFastMapLoadFactor = getDouble(properties, env, PropertyKey.CAIRO_FAST_MAP_LOAD_FACTOR, "0.7");
+            this.sqlFixedSizeMapLoadFactor = getDouble(properties, env, PropertyKey.CAIRO_FIXED_SIZE_MAP_LOAD_FACTOR, "0.6");
+            this.sqlVarSizeMapLoadFactor = getDouble(properties, env, PropertyKey.CAIRO_VAR_SIZE_MAP_LOAD_FACTOR, "0.7");
             this.sqlJoinContextPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_JOIN_CONTEXT_POOL_CAPACITY, 64);
             this.sqlLexerPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_LEXER_POOL_CAPACITY, 2048);
             this.sqlSmallMapKeyCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 32);
@@ -1795,7 +1797,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             registerDeprecated(PropertyKey.LINE_TCP_TIMESTAMP);
             registerDeprecated(PropertyKey.CAIRO_QUERY_CACHE_EVENT_QUEUE_CAPACITY);
             registerDeprecated(PropertyKey.CAIRO_SQL_JIT_ROWS_THRESHOLD);
-            registerDeprecated(PropertyKey.CAIRO_COMPACT_MAP_LOAD_FACTOR);
             registerDeprecated(PropertyKey.CAIRO_DEFAULT_MAP_TYPE);
             registerDeprecated(
                     PropertyKey.CAIRO_SQL_ANALYTIC_COLUMN_POOL_CAPACITY,
@@ -2558,8 +2559,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public double getSqlFastMapLoadFactor() {
-            return sqlFastMapLoadFactor;
+        public double getSqlFixedSizeMapLoadFactor() {
+            return sqlFixedSizeMapLoadFactor;
         }
 
         @Override
@@ -2715,6 +2716,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlUnorderedMapMaxEntrySize() {
             return sqlUnorderedMapMaxEntrySize;
+        }
+
+        @Override
+        public double getSqlVarSizeMapLoadFactor() {
+            return sqlVarSizeMapLoadFactor;
         }
 
         @Override

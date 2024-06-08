@@ -27,7 +27,7 @@ package org.questdb;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.map.OrderedMap;
+import io.questdb.cairo.map.VarSizeMap;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocatorArena;
 import io.questdb.griffin.engine.groupby.GroupByLongHashSet;
@@ -49,7 +49,7 @@ public class GroupByLongHashSetBenchmark {
     private static final double loadFactor = 0.7;
     private static final GroupByLongHashSet groupByLongHashSet = new GroupByLongHashSet(64, loadFactor, 0);
     private static final int orderedMapPageSize = 1024 * 1024;
-    private static final OrderedMap orderedMap = new OrderedMap(orderedMapPageSize, new SingleColumnType(ColumnType.LONG), null, 64, loadFactor, Integer.MAX_VALUE);
+    private static final VarSizeMap orderedMap = new VarSizeMap(orderedMapPageSize, new SingleColumnType(ColumnType.LONG), null, 64, loadFactor, Integer.MAX_VALUE);
     private static final Rnd rnd = new Rnd();
     private static long ptr = 0;
     @Param({"5000", "50000", "500000", "5000000"})

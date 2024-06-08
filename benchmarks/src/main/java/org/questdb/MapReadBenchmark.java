@@ -28,7 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.map.OrderedMap;
+import io.questdb.cairo.map.VarSizeMap;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
@@ -46,14 +46,14 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 public class MapReadBenchmark {
 
-    private static final double loadFactor = 0.7;
+    private static final double loadFactor = 0.6;
     private static final Rnd rnd = new Rnd();
     private static final StringSink sink = new StringSink();
     // aim for L1, L2, L3, RAM
     @Param({"1000", "10000", "100000", "1000000"})
     public int size;
     private HashMap<String, Long> hmap;
-    private OrderedMap orderedMap;
+    private VarSizeMap varSizeMap;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
@@ -70,13 +70,13 @@ public class MapReadBenchmark {
     public void setup() {
         rnd.reset();
 
-        Misc.free(orderedMap);
+        Misc.free(varSizeMap);
 
         hmap = new HashMap<>(size, (float) loadFactor);
-        orderedMap = new OrderedMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), size, loadFactor, Integer.MAX_VALUE);
+        varSizeMap = new VarSizeMap(1024 * 1024, new SingleColumnType(ColumnType.STRING), new SingleColumnType(ColumnType.LONG), size, loadFactor, Integer.MAX_VALUE);
 
         for (int i = 0; i < size; i++) {
-            MapKey key = orderedMap.withKey();
+            MapKey key = varSizeMap.withKey();
             key.putStr(String.valueOf(i));
             MapValue values = key.createValue();
             values.putLong(0, i);
@@ -93,8 +93,8 @@ public class MapReadBenchmark {
     }
 
     @Benchmark
-    public long testOrderedMap() {
-        MapKey key = orderedMap.withKey();
+    public long testVarSizeMap() {
+        MapKey key = varSizeMap.withKey();
         sink.clear();
         sink.put(rnd.nextInt(size));
         key.putStr(sink);
