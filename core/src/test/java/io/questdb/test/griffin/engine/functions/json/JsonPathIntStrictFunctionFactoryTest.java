@@ -34,8 +34,17 @@ import org.junit.Test;
 
 public class JsonPathIntStrictFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
-    public void testNullJson() throws SqlException {
-        call(utf8(null), utf8(".path")).andAssert(Integer.MIN_VALUE);
+    public void test10000() throws SqlException {
+        call(utf8("{\"path\": 10000}"), utf8(".path")).andAssert(10000);
+    }
+
+    @Test
+    public void testBigNumber() throws SqlException {
+        final CairoException exc = Assert.assertThrows(
+                CairoException.class,
+                () -> call(utf8("{\"path\": 100000000000000000000000000}"), utf8(".path"))
+        );
+        Assert.assertTrue(exc.getMessage().contains("json_path_int_strict(.., '.path'): INCORRECT_TYPE:"));
     }
 
     @Test
@@ -51,18 +60,55 @@ public class JsonPathIntStrictFunctionFactoryTest extends AbstractFunctionFactor
     }
 
     @Test
+    public void testFloat() throws SqlException {
+        final CairoException exc = Assert.assertThrows(CairoException.class, () -> call(utf8("{\"path\": 123.45}"), utf8(".path")));
+        Assert.assertTrue(exc.getMessage().contains("json_path_int_strict(.., '.path'): INCORRECT_TYPE:"));
+    }
+
+    @Test
+    public void testNegative() throws SqlException {
+        call(utf8("{\"path\": -2147483649\n}"), utf8(".path")).andAssert(-123);
+    }
+
+    @Test
+    public void testNullJson() throws SqlException {
+        call(utf8(null), utf8(".path")).andAssert(Integer.MIN_VALUE);
+    }
+
+    @Test
     public void testNullJsonValue() throws SqlException {
         call(utf8("{\"path\": null}"), utf8(".path")).andAssert(Integer.MIN_VALUE);
     }
 
     @Test
-    public void testZero() throws SqlException {
-        call(utf8("{\"path\": 0}"), utf8(".path")).andAssert(0);
+    public void testOne() throws SqlException {
+        call(utf8("{\"path\": 1}"), utf8(".path")).andAssert(1);
     }
 
     @Test
-    public void testOne() throws SqlException {
-        call(utf8("{\"path\": 1}"), utf8(".path")).andAssert(1);
+    public void testOobNeg() throws SqlException {
+        // -(2^31) -1: The first neg number that requires a 64-bit range.
+        final CairoException exc = Assert.assertThrows(
+                CairoException.class,
+                () -> call(utf8("{\"path\": -2147483649\n}"), utf8(".path"))
+        );
+        Assert.assertTrue(exc.getMessage().contains("json_path_int_strict(.., '.path'): NUMBER_OUT_OF_RANGE"));
+    }
+
+    @Test
+    public void testOobPos() throws SqlException {
+        // 2^31: The first pos number that requires a 64-bit range.
+        final CairoException exc = Assert.assertThrows(
+                CairoException.class,
+                () -> call(utf8("{\"path\": 2147483648\n}"), utf8(".path"))
+        );
+        Assert.assertTrue(exc.getMessage().contains("json_path_int_strict(.., '.path'): NUMBER_OUT_OF_RANGE"));
+    }
+
+    @Test
+    public void testStringContainingNumber() throws SqlException {
+        final CairoException exc = Assert.assertThrows(CairoException.class, () -> call(utf8("{\"path\": \"123\"}"), utf8(".path")));
+        Assert.assertTrue(exc.getMessage().contains("json_path_int_strict(.., '.path'): INCORRECT_TYPE:"));
     }
 
     @Test
@@ -74,29 +120,19 @@ public class JsonPathIntStrictFunctionFactoryTest extends AbstractFunctionFactor
         assertMemoryLeak(() -> {
             assertSql(
                     "json_path_int_strict\n" +
-                    "2\n" +
-                    "2\n" +
-                    "2\n" +
-                    "2\n" +
-                    "2\n" +
-                    "2\n" +
-                    "2\n" +
-                    "2\n" +
-                    "2\n" +
-                    "2\n",
+                            "2\n" +
+                            "2\n" +
+                            "2\n" +
+                            "2\n" +
+                            "2\n" +
+                            "2\n" +
+                            "2\n" +
+                            "2\n" +
+                            "2\n" +
+                            "2\n",
                     "select json_path_int_strict(path, '.path') from x"
             );
         });
-    }
-
-    @Test
-    public void test10000() throws SqlException {
-        call(utf8("{\"path\": 10000}"), utf8(".path")).andAssert(10000);
-    }
-
-    @Test
-    public void testNegative() throws SqlException {
-        call(utf8("{\"path\": -123}"), utf8(".path")).andAssert(-123);
     }
 
     @Test
@@ -109,24 +145,8 @@ public class JsonPathIntStrictFunctionFactoryTest extends AbstractFunctionFactor
     }
 
     @Test
-    public void testBigNumber() throws SqlException {
-        final CairoException exc = Assert.assertThrows(
-                CairoException.class,
-                () -> call(utf8("{\"path\": 100000000000000000000000000}"), utf8(".path"))
-        );
-        Assert.assertTrue(exc.getMessage().contains("json_path_int_strict(.., '.path'): INCORRECT_TYPE:"));
-    }
-
-    @Test
-    public void testFloat() throws SqlException {
-        final CairoException exc = Assert.assertThrows(CairoException.class, () -> call(utf8("{\"path\": 123.45}"), utf8(".path")));
-        Assert.assertTrue(exc.getMessage().contains("json_path_int_strict(.., '.path'): INCORRECT_TYPE:"));
-    }
-
-    @Test
-    public void testStringContainingNumber() throws SqlException {
-        final CairoException exc = Assert.assertThrows(CairoException.class, () -> call(utf8("{\"path\": \"123\"}"), utf8(".path")));
-        Assert.assertTrue(exc.getMessage().contains("json_path_int_strict(.., '.path'): INCORRECT_TYPE:"));
+    public void testZero() throws SqlException {
+        call(utf8("{\"path\": 0}"), utf8(".path")).andAssert(0);
     }
 
     @Override
