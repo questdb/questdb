@@ -64,7 +64,6 @@ public interface Map extends Mutable, Closeable, Reopenable {
 
     /**
      * Reopens previously closed map with given key capacity and initial heap size.
-     * Key capacity is ignored if the map is not based on a hash table, e.g. {@link Unordered2Map}.
      * Heap size value is ignored if the map does not use heap to store keys and values, e.g. {@link Unordered8Map}.
      */
     void reopen(int keyCapacity, long heapSize);
