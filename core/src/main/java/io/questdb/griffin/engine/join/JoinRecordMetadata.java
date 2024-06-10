@@ -26,9 +26,9 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
-import io.questdb.cairo.map.VarSizeMap;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
@@ -45,7 +45,7 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
     private int refCount;
 
     public JoinRecordMetadata(CairoConfiguration configuration, int columnCount) {
-        this.map = new VarSizeMap(
+        this.map = MapFactory.createOrderedMap(
                 configuration.getSqlJoinMetadataPageSize(),
                 keyTypes,
                 valueTypes,

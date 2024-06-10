@@ -28,9 +28,10 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkSPI;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.Unordered4Map;
 import io.questdb.cairo.map.Unordered8Map;
-import io.questdb.cairo.map.VarSizeMap;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.VirtualRecord;
@@ -68,8 +69,8 @@ public final class TestDefaults {
         return new MemoryCARWImpl(4 * 1024, 1024, MemoryTag.NATIVE_DEFAULT);
     }
 
-    public static VarSizeMap createOrderedMap(ColumnTypes keyColumnTypes, ColumnTypes valueColumnTypes) {
-        return new VarSizeMap(4 * 1024, keyColumnTypes, valueColumnTypes, 64, 0.8, 24);
+    public static Map createOrderedMap(ColumnTypes keyColumnTypes, ColumnTypes valueColumnTypes) {
+        return MapFactory.createOrderedMap(4 * 1024, keyColumnTypes, valueColumnTypes, 64, 0.8, 24, MemoryTag.NATIVE_FAST_MAP);
     }
 
     public static Record createRecord(short[] columnTypes, Object... values) {

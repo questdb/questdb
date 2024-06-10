@@ -27,6 +27,7 @@ package io.questdb.cairo.map;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -35,64 +36,100 @@ public class MapFactory {
 
     /**
      * Creates a Map pre-allocated to a small capacity to be used in SAMPLE BY, GROUP BY queries, but not only.
+     * <p>
+     * The returned map preserves insertion order in its cursor, i.e. when iterating the items.
      */
     public static Map createOrderedMap(
             CairoConfiguration configuration,
             @Transient @NotNull ColumnTypes keyTypes
     ) {
-        final int keyCapacity = configuration.getSqlSmallMapKeyCapacity();
-        final long pageSize = configuration.getSqlSmallMapPageSize();
-
-        final int keySize = totalSize(keyTypes);
-        if (keySize > 0) {
-            return new FixedSizeMap(
-                    pageSize,
-                    keyTypes,
-                    keyCapacity,
-                    configuration.getSqlFixedSizeMapLoadFactor(),
-                    configuration.getSqlMapMaxResizes()
-            );
-        }
-
-        return new VarSizeMap(
-                pageSize,
+        return createOrderedMap(
+                configuration.getSqlSmallMapPageSize(),
                 keyTypes,
-                keyCapacity,
+                null,
+                configuration.getSqlSmallMapKeyCapacity(),
                 configuration.getSqlVarSizeMapLoadFactor(),
-                configuration.getSqlMapMaxResizes()
+                configuration.getSqlMapMaxResizes(),
+                MemoryTag.NATIVE_FAST_MAP
         );
     }
 
     /**
      * Creates a Map pre-allocated to a small capacity to be used in SAMPLE BY, GROUP BY queries, but not only.
+     * <p>
+     * The returned map preserves insertion order in its cursor, i.e. when iterating the items.
      */
     public static Map createOrderedMap(
             CairoConfiguration configuration,
             @Transient @NotNull ColumnTypes keyTypes,
             @Transient @Nullable ColumnTypes valueTypes
     ) {
-        final int keyCapacity = configuration.getSqlSmallMapKeyCapacity();
-        final long pageSize = configuration.getSqlSmallMapPageSize();
+        return createOrderedMap(
+                configuration.getSqlSmallMapPageSize(),
+                keyTypes,
+                valueTypes,
+                configuration.getSqlSmallMapKeyCapacity(),
+                configuration.getSqlVarSizeMapLoadFactor(),
+                configuration.getSqlMapMaxResizes(),
+                MemoryTag.NATIVE_FAST_MAP
+        );
+    }
 
+    /**
+     * The returned map preserves insertion order in its cursor, i.e. when iterating the items.
+     */
+    public static Map createOrderedMap(
+            long heapSize,
+            @Transient @NotNull ColumnTypes keyTypes,
+            @Transient @Nullable ColumnTypes valueTypes,
+            int keyCapacity,
+            double loadFactor,
+            int maxResizes
+    ) {
+        return createOrderedMap(
+                heapSize,
+                keyTypes,
+                valueTypes,
+                keyCapacity,
+                loadFactor,
+                maxResizes,
+                MemoryTag.NATIVE_FAST_MAP
+        );
+    }
+
+    /**
+     * The returned map preserves insertion order in its cursor, i.e. when iterating the items.
+     */
+    public static Map createOrderedMap(
+            long heapSize,
+            @Transient @NotNull ColumnTypes keyTypes,
+            @Transient @Nullable ColumnTypes valueTypes,
+            int keyCapacity,
+            double loadFactor,
+            int maxResizes,
+            int memoryTag
+    ) {
         final int keySize = totalSize(keyTypes);
         if (keySize > 0) {
             return new FixedSizeMap(
-                    pageSize,
+                    heapSize,
                     keyTypes,
                     valueTypes,
                     keyCapacity,
-                    configuration.getSqlFixedSizeMapLoadFactor(),
-                    configuration.getSqlMapMaxResizes()
+                    loadFactor,
+                    maxResizes,
+                    memoryTag
             );
         }
 
         return new VarSizeMap(
-                pageSize,
+                heapSize,
                 keyTypes,
                 valueTypes,
                 keyCapacity,
-                configuration.getSqlVarSizeMapLoadFactor(),
-                configuration.getSqlMapMaxResizes()
+                loadFactor,
+                maxResizes,
+                memoryTag
         );
     }
 
