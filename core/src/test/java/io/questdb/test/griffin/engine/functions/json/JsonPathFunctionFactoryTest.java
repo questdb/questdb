@@ -35,32 +35,46 @@ import org.junit.Test;
 public class JsonPathFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testNullJson() throws SqlException {
-        call(utf8(null), utf8(".path")).andAssertUtf8(null);
+        call(null, utf8(".path")).andAssertUtf8(null);
+        call(null, dirUtf8(".path")).andAssertUtf8(null);
+        call(null, dirUtf80(".path")).andAssertUtf8(null);
     }
 
     @Test
     public void testNullPath() {
         Assert.assertThrows(SqlException.class, () -> call(utf8("{}"), null));
+        Assert.assertThrows(SqlException.class, () -> call(dirUtf8("{}"), null));
+        Assert.assertThrows(SqlException.class, () -> call(dirUtf80("{}"), null));
     }
 
     @Test
     public void testEmptyJson() throws SqlException {
         call(utf8("{}"), utf8(".path")).andAssertUtf8(null);
+        call(dirUtf8("{}"), utf8(".path")).andAssertUtf8(null);
+        call(dirUtf80("{}"), utf8(".path")).andAssertUtf8(null);
+        call(dirUtf8("{}"), utf8(".path")).andAssertUtf8(null);
+        call(dirUtf8("{}"), dirUtf8(".path")).andAssertUtf8(null);
+        call(dirUtf8("{}"), dirUtf80(".path")).andAssertUtf8(null);
     }
 
     @Test
     public void testEmptyPath() throws SqlException {
         call(utf8("{\"path\": 1}"), utf8("")).andAssertUtf8("{\"path\": 1}");
+        call(dirUtf8("{\"path\": 1}"), utf8("")).andAssertUtf8("{\"path\": 1}");
+        call(dirUtf8("{\"path\": 1}"), dirUtf8("")).andAssertUtf8("{\"path\": 1}");
+        call(dirUtf80("{\"path\": 1}"), dirUtf8("")).andAssertUtf8("{\"path\": 1}");
     }
 
     @Test
     public void testSimplePath() throws SqlException {
         call(utf8("{\"path\": \"abc\"}"), utf8(".path")).andAssertUtf8("abc");
+        call(dirUtf8("{\"path\": \"abc\"}"), dirUtf8(".path")).andAssertUtf8("abc");
     }
 
     @Test
     public void testLargeJson() throws SqlException {
         call(utf8(JsonParserTest.jsonStr), utf8(".name")).andAssertUtf8("John");
+        call(dirUtf8(JsonParserTest.jsonStr), dirUtf8(".name")).andAssertUtf8("John");
     }
 
     @Test

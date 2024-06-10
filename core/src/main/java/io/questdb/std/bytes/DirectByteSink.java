@@ -239,10 +239,12 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
     }
 
     private long getImplHi() {
+        assert impl != 0;
         return Unsafe.getUnsafe().getLong(impl + 16);
     }
 
     private long getImplLo() {
+        assert impl != 0;
         return Unsafe.getUnsafe().getLong(impl + 8);
     }
 

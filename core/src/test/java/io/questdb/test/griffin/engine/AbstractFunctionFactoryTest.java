@@ -36,16 +36,13 @@ import io.questdb.griffin.engine.functions.cast.CastIntToByteFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIntToShortFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLongToDateFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLongToTimestampFunctionFactory;
-import io.questdb.std.BinarySequence;
-import io.questdb.std.Long256;
-import io.questdb.std.Long256Impl;
-import io.questdb.std.Numbers;
-import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.*;
+import io.questdb.std.str.*;
 import io.questdb.test.griffin.BaseFunctionFactoryTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 
+import java.io.Closeable;
 import java.util.Arrays;
 
 public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTest {
@@ -477,6 +474,8 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         private final Function function2;
         private final TestUtils.LeakCheck leakCheck;
         private final Record record;
+        private final Utf8StringSink utf8Sink = new Utf8StringSink();
+        private final DirectUtf8Sink dirUtf8Sink = new DirectUtf8Sink(1024 * 1024);
 
         public Invocation(TestUtils.LeakCheck leakCheck, Function function1, Function function2, Record record) {
             this.leakCheck = leakCheck;
@@ -488,7 +487,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         public void andAssert(boolean expected) {
             Assert.assertEquals(expected, function1.getBool(record));
             Assert.assertEquals(expected, function2.getBool(record));
-            closeFunctions();
+            cleanup();
         }
 
         public void andAssert(CharSequence expected) {
@@ -496,37 +495,37 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                 assertString(function1, expected);
                 assertString(function2, expected);
             }
-            closeFunctions();
+            cleanup();
         }
 
         public void andAssert(int expected) {
             Assert.assertEquals(expected, function1.getInt(record));
             Assert.assertEquals(expected, function2.getInt(record));
-            closeFunctions();
+            cleanup();
         }
 
         public void andAssert(long expected) {
             Assert.assertEquals(expected, function1.getLong(record));
             Assert.assertEquals(expected, function2.getLong(record));
-            closeFunctions();
+            cleanup();
         }
 
         public void andAssert(double expected, double delta) {
             Assert.assertEquals(expected, function1.getDouble(record), delta);
             Assert.assertEquals(expected, function2.getDouble(record), delta);
-            closeFunctions();
+            cleanup();
         }
 
         public void andAssertDate(long expected) {
             Assert.assertEquals(expected, function1.getDate(record));
             Assert.assertEquals(expected, function2.getDate(record));
-            closeFunctions();
+            cleanup();
         }
 
         public void andAssertLong256(Long256 expected) {
             Assert.assertEquals(expected, function1.getLong256A(record));
             Assert.assertEquals(expected, function2.getLong256A(record));
-            closeFunctions();
+            cleanup();
         }
 
         public void andAssertOnlyColumnValues(boolean expected) {
@@ -536,7 +535,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         public void andAssertTimestamp(long expected) {
             Assert.assertEquals(expected, function1.getTimestamp(record));
             Assert.assertEquals(expected, function2.getTimestamp(record));
-            closeFunctions();
+            cleanup();
         }
 
         public void andAssertUtf8(CharSequence expectedString) {
@@ -545,7 +544,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                 assertUtf8(function1, expected);
                 assertUtf8(function2, expected);
             }
-            closeFunctions();
+            cleanup();
         }
 
         public Invocation andInit(SqlExecutionContext context) throws SqlException {
@@ -589,6 +588,9 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                 utf8Sink.clear();
                 func.getVarchar(record, utf8Sink);
                 Assert.assertEquals(0, utf8Sink.size());
+                dirUtf8Sink.clear();
+                func.getVarchar(record, dirUtf8Sink);
+                Assert.assertEquals(0, dirUtf8Sink.size());
             } else {
                 Utf8Sequence a = func.getVarcharA(record);
                 Utf8Sequence b = func.getVarcharB(record);
@@ -605,21 +607,40 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                 utf8Sink.clear();
                 func.getVarchar(record, utf8Sink);
                 TestUtils.assertEquals(expected, utf8Sink);
+
+                dirUtf8Sink.clear();
+                func.getVarchar(record, dirUtf8Sink);
+                TestUtils.assertEquals(expected, dirUtf8Sink);
             }
         }
 
-        private void closeFunctions() {
+        private void cleanup() {
             function1.close();
             function2.close();
+            dirUtf8Sink.close();
             leakCheck.close();
+
+            // This is done _after_ the leak check since the record fields were created before it.
+            if (record instanceof Closeable) {
+                Misc.free((Closeable) record);
+            }
         }
     }
 
-    private static class TestRecord implements Record {
+    private static class TestRecord implements Record, QuietCloseable {
         private final Object[] args;
 
         public TestRecord(Object[] args) {
             this.args = args;
+        }
+
+        @Override
+        public void close() {
+            for (Object arg : args) {
+                if (arg instanceof Closeable) {
+                    Misc.free((Closeable) arg);
+                }
+            }
         }
 
         @Override

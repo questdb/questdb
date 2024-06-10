@@ -63,6 +63,9 @@ public class JsonParser implements QuietCloseable {
     public void queryPointer(DirectUtf8Sequence json, DirectUtf8Sequence pointer, JsonResult result, DirectUtf8Sink dest, int maxSize) {
         assert json.tailPadding() >= SIMDJSON_PADDING;
         final long nativeByteSinkPtr = dest.borrowDirectByteSink().ptr();
+        if (!(dest.capacity() - dest.size() >= maxSize)) {
+            throw new IllegalArgumentException("Destination buffer is too small");
+        }
         assert dest.capacity() - dest.size() >= maxSize;  // Without this guarantee we'd need to close `NativeByteSink.close`.
         queryPointer(impl, json.ptr(), json.size(), json.tailPadding(), pointer.ptr(), pointer.size(), result.ptr(), nativeByteSinkPtr, maxSize);
     }

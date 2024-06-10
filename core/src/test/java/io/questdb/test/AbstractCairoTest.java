@@ -46,6 +46,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.json.JsonParser;
 import io.questdb.std.str.*;
 import io.questdb.test.cairo.CairoTestConfiguration;
 import io.questdb.test.cairo.Overrides;
@@ -74,7 +75,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static final Log LOG = LogFactory.getLog(AbstractCairoTest.class);
     protected static final PlanSink planSink = new TextPlanSink();
     protected static final StringSink sink = new StringSink();
-    protected static final Utf8StringSink utf8Sink = new Utf8StringSink();
     private static final double EPSILON = 0.000001;
     private static final long[] SNAPSHOT = new long[MemoryTag.SIZE];
     private static final LongList rows = new LongList();
@@ -451,6 +451,23 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     public static Utf8String utf8(CharSequence value) {
         return value != null ? new Utf8String(value) : null;
+    }
+
+    public static DirectUtf8Sequence dirUtf8(CharSequence value, int padding) {
+        if (value == null) {
+            return null;
+        }
+        final DirectUtf8Sink utf8Sink = new DirectUtf8Sink(value.length() + padding);
+        utf8Sink.put(value);
+        return utf8Sink;
+    }
+
+    public static DirectUtf8Sequence dirUtf8(CharSequence value) {
+        return dirUtf8(value, JsonParser.SIMDJSON_PADDING);
+    }
+
+    public static DirectUtf8Sequence dirUtf80(CharSequence value) {
+        return dirUtf8(value, 0);
     }
 
     @Before
