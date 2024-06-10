@@ -608,6 +608,14 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                 func.getVarchar(record, utf8Sink);
                 TestUtils.assertEquals(expected, utf8Sink);
 
+                utf8Sink.clear();
+                func.getVarchar(record, utf8Sink);
+                TestUtils.assertEquals(expected, utf8Sink);
+
+                dirUtf8Sink.clear();
+                func.getVarchar(record, dirUtf8Sink);
+                TestUtils.assertEquals(expected, dirUtf8Sink);
+
                 dirUtf8Sink.clear();
                 func.getVarchar(record, dirUtf8Sink);
                 TestUtils.assertEquals(expected, dirUtf8Sink);

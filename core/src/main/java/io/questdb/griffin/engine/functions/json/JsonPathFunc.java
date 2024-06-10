@@ -86,7 +86,7 @@ class JsonPathFunc extends VarcharFunction implements BinaryFunction {
     @Override
     public void getVarchar(Record rec, Utf8Sink utf8Sink) {
         if (utf8Sink instanceof DirectUtf8Sink) {
-            if (copied.destSink != null) {
+            if ((copied.destSink != null) && copied.closeDestSink) {
                 copied.destSink.close();
             }
             copied.destSink = (DirectUtf8Sink) utf8Sink;

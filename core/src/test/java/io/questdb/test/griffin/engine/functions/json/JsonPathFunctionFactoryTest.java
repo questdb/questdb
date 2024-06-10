@@ -74,7 +74,9 @@ public class JsonPathFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testLargeJson() throws SqlException {
         call(utf8(JsonParserTest.jsonStr), utf8(".name")).andAssertUtf8("John");
+        call(utf8(JsonParserTest.jsonStr), dirUtf8(".name")).andAssertUtf8("John");
         call(dirUtf8(JsonParserTest.jsonStr), dirUtf8(".name")).andAssertUtf8("John");
+        call(utf8(JsonParserTest.jsonStr), dirUtf8(".name")).andAssertUtf8("John");
     }
 
     @Test

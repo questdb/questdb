@@ -23,10 +23,7 @@
  ******************************************************************************/
 
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.engine.functions.json.JsonPathFunctionFactory;
-import io.questdb.griffin.engine.functions.json.JsonPathLongFunctionFactory;
-import io.questdb.griffin.engine.functions.json.JsonPathLongStrictFunctionFactory;
-import io.questdb.griffin.engine.functions.json.JsonPathStrictFunctionFactory;
+import io.questdb.griffin.engine.functions.json.*;
 
 open module io.questdb {
     requires transitive jdk.unsupported;
@@ -858,6 +855,8 @@ open module io.questdb {
             JsonPathStrictFunctionFactory,
             JsonPathLongFunctionFactory,
             JsonPathLongStrictFunctionFactory,
+            JsonPathIntFunctionFactory,
+            JsonPathIntStrictFunctionFactory,
 
             // regexp_replace()
             io.questdb.griffin.engine.functions.regex.RegexpReplaceStrFunctionFactory,
