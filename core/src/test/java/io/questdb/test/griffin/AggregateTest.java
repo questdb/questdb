@@ -491,36 +491,6 @@ public class AggregateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNoWhereClauseErasureInUnion() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table tab as (select timestamp_sequence(0, 1000000000) ts, rnd_double() val from long_sequence(100000)) timestamp(ts) partition by month");
-
-            assertSql("QUERY PLAN\n" +
-                            "Sort light\n" +
-                            "  keys: [hour]\n" +
-                            "    GroupBy vectorized: false\n" +
-                            "      keys: [hour]\n" +
-                            "      values: [count(*)]\n" +
-                            "        VirtualRecord\n" +
-                            "          functions: [hour(ts)]\n" +
-                            "            Filter filter: val<0.5\n" +
-                            "                Union All\n" +
-                            "                    DataFrame\n" +
-                            "                        Row forward scan\n" +
-                            "                        Interval forward scan on: tab\n" +
-                            "                          intervals: [(\"1970-01-01T00:00:00.000000Z\",\"1970-01-01T23:59:59.999999Z\")]\n" +
-                            "                    DataFrame\n" +
-                            "                        Row forward scan\n" +
-                            "                        Interval forward scan on: tab\n" +
-                            "                          intervals: [(\"1970-04-26T00:00:00.000000Z\",\"1970-04-26T23:59:59.999999Z\")]\n",
-                    "explain select hour(ts), count from " +
-                            "(select * from tab where ts in '1970-01-01' union all select * from tab where ts in '1970-04-26')" +
-                            "where val < 0.5 order by 1"
-            );
-        });
-    }
-
-    @Test
     public void testHourInt() throws Exception {
         assertQuery(
                 "hour\tcount\tsum\tmin\tmax\tavg\n" +

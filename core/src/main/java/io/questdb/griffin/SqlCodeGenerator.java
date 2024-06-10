@@ -123,6 +123,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             {0, 1, 2, 3, 11, 5, 6, 7, 8, 9, 10, 11, 11, 13, -1, -1, -1, -1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,},
     };
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> avgConstructors = new IntObjHashMap<>();
+    private static final ModelOperator backupWhereClauseRef = QueryModel::backupWhereClause;
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> countConstructors = new IntObjHashMap<>();
     private static final boolean[] joinsRequiringTimestamp = new boolean[JOIN_MAX + 1];
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> ksumConstructors = new IntObjHashMap<>();
@@ -490,6 +491,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return true;
     }
 
+    private void backupWhereClause(ExpressionNode node) {
+        processNodeQueryModels(node, backupWhereClauseRef);
+    }
+
     // Checks if lo, hi is set and lo >= 0 while hi < 0 (meaning - return whole result set except some rows at start and some at the end)
     // because such case can't really be optimized by topN/bottomN
     private boolean canSortAndLimitBeOptimized(QueryModel model, SqlExecutionContext context, Function loFunc, Function hiFunc) {
@@ -548,8 +553,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (filter != null && !filter.isReadThreadSafe()) {
             assert filterExpr != null;
             ObjList<Function> workerFilters = new ObjList<>();
-//            restoreWhereClause(filterExpr); // restore original filters in node query models
             for (int i = 0; i < workerCount; i++) {
+                restoreWhereClause(filterExpr); // restore original filters in node query models
                 Function workerFilter = compileBooleanFilter(filterExpr, metadata, executionContext);
                 workerFilters.extendAndSet(i, workerFilter);
                 assert filter.getClass() == workerFilter.getClass();
@@ -1666,8 +1671,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             SqlExecutionContext executionContext
     ) throws SqlException {
         final ExpressionNode filterExpr = model.getWhereClause();
+
         // back up in case if the above factory steals the filter
-        //  QueryModel.backupWhereClause(expressionNodePool, model);
+        model.setBackupWhereClause(ExpressionNode.deepClone(expressionNodePool, filterExpr));
+        // back up in case filters need to be compiled again
+        backupWhereClause(filterExpr);
+        model.setWhereClause(null);
 
         final Function filter;
         try {
@@ -1715,7 +1724,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
                     final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
 
-                    model.setWhereClause(null);
                     return new AsyncJitFilteredRecordCursorFactory(
                             configuration,
                             executionContext.getMessageBus(),
@@ -3454,6 +3462,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             boolean pageFramingSupported = false;
             boolean specialCaseKeys = false;
 
+            QueryModel.backupWhereClause(expressionNodePool, model);
+
             // check for special case time function aggregations
             final QueryModel nested = model.getNestedModel();
             assert nested != null;
@@ -3466,7 +3476,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             && columnExpr.rhs.type == LITERAL
             ) {
                 specialCaseKeys = true;
-                QueryModel.backupWhereClause(expressionNodePool, model);
                 factory = generateSubQuery(nested, executionContext);
                 pageFramingSupported = factory.supportsPageFrameCursor();
                 if (pageFramingSupported) {
@@ -3493,12 +3502,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 } else {
                     factory = Misc.free(factory);
-                    QueryModel.restoreWhereClause(expressionNodePool, model);
                 }
             }
 
             if (factory == null) {
-                QueryModel.backupWhereClause(expressionNodePool, model);
+                if (specialCaseKeys) {
+                    QueryModel.restoreWhereClause(expressionNodePool, model);
+                }
                 factory = generateSubQuery(model, executionContext);
                 pageFramingSupported = factory.supportsPageFrameCursor();
             }
@@ -3675,11 +3685,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 throw e;
             }
 
-            if (
-                    enableParallelGroupBy
+            if (enableParallelGroupBy
                     && SqlUtil.isParallelismSupported(keyFunctions)
-                    && GroupByUtils.isParallelismSupported(groupByFunctions)
-            ) {
+                    && GroupByUtils.isParallelismSupported(groupByFunctions)) {
                 boolean supportsParallelism = factory.supportsPageFrameCursor();
                 CompiledFilter compiledFilter = null;
                 MemoryCARW bindVarMemory = null;
@@ -3698,12 +3706,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         filter = filterFactory.getFilter();
                         supportsParallelism = true;
                         filterFactory.halfClose();
-                        QueryModel.restoreWhereClause(expressionNodePool, model);
                     }
                 }
 
                 if (supportsParallelism) {
-//                    QueryModel.restoreWhereClause(expressionNodePool, model);
+                    QueryModel.restoreWhereClause(expressionNodePool, model);
 
                     // back up required lists as generateSubQuery or compileWorkerFilterConditionally may overwrite them
                     ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes().addAll(keyTypes);
