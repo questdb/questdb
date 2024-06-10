@@ -70,6 +70,7 @@ import static io.questdb.std.Numbers.MAX_SAFE_INT_POW_2;
  * +------------------+--------------------+
  * |        -         |         -          |
  * +------------------+--------------------+
+ * </pre>
  */
 public class FixedSizeMap implements Map, Reopenable {
 
