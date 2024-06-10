@@ -36,8 +36,7 @@ import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.auth.DefaultLineAuthenticatorFactory;
 import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
-import io.questdb.cutlass.http.HttpContextConfiguration;
-import io.questdb.cutlass.http.HttpServer;
+import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.line.tcp.StaticChallengeResponseMatcher;
 import io.questdb.cutlass.pgwire.*;
 import io.questdb.cutlass.text.CopyJob;
@@ -121,6 +120,15 @@ public class ServerMain implements Closeable {
             protected void setupWalApplyJob(WorkerPool workerPool, CairoEngine engine, int sharedWorkerCount) {
             }
         };
+    }
+
+    public static HttpAuthenticatorFactory getHttpAuthenticatorFactory(ServerConfiguration configuration) {
+        HttpServerConfiguration httpConfig = configuration.getHttpServerConfiguration();
+        String username = httpConfig.getUsername();
+        if (username == null) {
+            return DefaultHttpAuthenticatorFactory.INSTANCE;
+        }
+        return new StaticHttpAuthenticatorFactory(username, httpConfig.getPassword());
     }
 
     public static LineAuthenticatorFactory getLineAuthenticatorFactory(ServerConfiguration configuration) {

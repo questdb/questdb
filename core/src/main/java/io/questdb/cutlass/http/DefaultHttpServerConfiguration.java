@@ -131,6 +131,11 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     @Override
+    public String getPassword() {
+        return null;
+    }
+
+    @Override
     public String getPoolName() {
         return "http";
     }
@@ -153,6 +158,11 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     @Override
     public StaticContentProcessorConfiguration getStaticContentProcessorConfiguration() {
         return staticContentProcessorConfiguration;
+    }
+
+    @Override
+    public String getUsername() {
+        return null;
     }
 
     @Override
