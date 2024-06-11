@@ -1,4 +1,4 @@
-use parquet_format_safe::RowGroup;
+use parquet_format_safe::{RowGroup, SortingColumn};
 
 use super::{column_chunk_metadata::ColumnChunkMetaData, schema_descriptor::SchemaDescriptor};
 use crate::{
@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 pub struct RowGroupMetaData {
     columns: Vec<ColumnChunkMetaData>,
     num_rows: usize,
+    sorting_columns: Option<Vec<SortingColumn>>,
     total_byte_size: usize,
 }
 
@@ -27,10 +28,24 @@ impl RowGroupMetaData {
         Self {
             columns,
             num_rows,
+            sorting_columns: None,
             total_byte_size,
         }
     }
 
+    pub fn with_sorting_columns(
+        columns: Vec<ColumnChunkMetaData>,
+        num_rows: usize,
+        sorting_columns: Option<Vec<SortingColumn>>,
+        total_byte_size: usize,
+    ) -> RowGroupMetaData {
+        Self {
+            columns,
+            num_rows,
+            total_byte_size,
+            sorting_columns,
+        }
+    }
     /// Returns slice of column chunk metadata.
     pub fn columns(&self) -> &[ColumnChunkMetaData] {
         &self.columns
@@ -39,6 +54,12 @@ impl RowGroupMetaData {
     /// Number of rows in this row group.
     pub fn num_rows(&self) -> usize {
         self.num_rows
+    }
+
+    /// If set, specifies a sort ordering of the rows in this RowGroup.
+    /// The sorting columns can be a subset of all the columns.
+    pub fn sorting_columns(&self) -> &Option<Vec<SortingColumn>> {
+       &self.sorting_columns
     }
 
     /// Total byte size of all uncompressed column data in this row group.
@@ -76,6 +97,7 @@ impl RowGroupMetaData {
         Ok(RowGroupMetaData {
             columns,
             num_rows,
+            sorting_columns: rg.sorting_columns,
             total_byte_size,
         })
     }
@@ -95,7 +117,7 @@ impl RowGroupMetaData {
             columns: self.columns.into_iter().map(|v| v.into_thrift()).collect(),
             total_byte_size: self.total_byte_size as i64,
             num_rows: self.num_rows as i64,
-            sorting_columns: None,
+            sorting_columns: self.sorting_columns,
             file_offset,
             total_compressed_size,
             ordinal: None,
