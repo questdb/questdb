@@ -1,5 +1,5 @@
 use std::io::Write;
-use std::{mem, slice};
+use std::mem;
 
 use parquet2::compression::CompressionOptions;
 use parquet2::encoding::Encoding;

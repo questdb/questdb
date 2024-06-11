@@ -1,9 +1,6 @@
 use std::fs::File;
 use std::mem::{offset_of, size_of};
-use std::ops::Sub;
 use std::os::fd::FromRawFd;
-use std::path::Path;
-use std::slice;
 
 use anyhow::anyhow;
 use jni::objects::JClass;
@@ -320,7 +317,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_columnCountOffset(
-    env: JNIEnv,
+    _env: JNIEnv,
     _class: JClass,
 ) -> usize {
     offset_of!(ParquetDecoder, col_count)
@@ -328,7 +325,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_rowCountOffset(
-    env: JNIEnv,
+    _env: JNIEnv,
     _class: JClass,
 ) -> usize {
     offset_of!(ParquetDecoder, row_count)
@@ -336,7 +333,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_rowGroupCountOffset(
-    env: JNIEnv,
+    _env: JNIEnv,
     _class: JClass,
 ) -> usize {
     offset_of!(ParquetDecoder, row_group_count)
@@ -344,7 +341,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_columnsPtrOffset(
-    env: JNIEnv,
+    _env: JNIEnv,
     _class: JClass,
 ) -> usize {
     offset_of!(ParquetDecoder, columns_ptr)
@@ -352,7 +349,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_columnRecordTypeOffset(
-    env: JNIEnv,
+    _env: JNIEnv,
     _class: JClass,
 ) -> usize {
     offset_of!(ColumnMeta, typ)
@@ -360,7 +357,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_columnRecordPhysicalTypeOffset(
-    env: JNIEnv,
+    _env: JNIEnv,
     _class: JClass,
 ) -> usize {
     offset_of!(ColumnMeta, physical_type)
@@ -368,7 +365,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_columnRecordNamePtrOffset(
-    env: JNIEnv,
+    _env: JNIEnv,
     _class: JClass,
 ) -> usize {
     offset_of!(ColumnMeta, name_ptr)
@@ -376,7 +373,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_columnRecordNameSizeOffset(
-    env: JNIEnv,
+    _env: JNIEnv,
     _class: JClass,
 ) -> usize {
     offset_of!(ColumnMeta, name_size)
@@ -384,7 +381,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_columnIdsOffset(
-    env: JNIEnv,
+    _env: JNIEnv,
     _class: JClass,
 ) -> usize {
     offset_of!(ColumnMeta, id)
@@ -392,7 +389,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_columnRecordSize(
-    env: JNIEnv,
+    _env: JNIEnv,
     _class: JClass,
 ) -> usize {
     size_of::<ColumnMeta>()
