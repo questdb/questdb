@@ -20,7 +20,7 @@ pub struct RowGroupMetaData {
 
 impl RowGroupMetaData {
     /// Create a new [`RowGroupMetaData`]
-    pub fn new(
+    pub fn _new(
         columns: Vec<ColumnChunkMetaData>,
         num_rows: usize,
         total_byte_size: usize,

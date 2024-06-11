@@ -3,7 +3,7 @@ use std::mem;
 
 use parquet2::compression::CompressionOptions;
 use parquet2::encoding::Encoding;
-use parquet2::metadata::SchemaDescriptor;
+use parquet2::metadata::{SchemaDescriptor, SortingColumn};
 use parquet2::page::{CompressedPage, Page};
 use parquet2::schema::types::{ParquetType, PhysicalType, PrimitiveType};
 use parquet2::write::{
@@ -48,6 +48,8 @@ pub struct ParquetWriter<W: Write> {
     row_group_size: Option<usize>,
     /// if `None` will be DEFAULT_PAGE_SIZE bytes
     data_page_size: Option<usize>,
+    /// Sets sorting order of rows in the row group if any
+    sorting_columns: Option<Vec<SortingColumn>>,
 }
 
 impl<W: Write> ParquetWriter<W> {
@@ -62,6 +64,7 @@ impl<W: Write> ParquetWriter<W> {
             statistics: true,
             row_group_size: None,
             data_page_size: None,
+            sorting_columns: None,
         }
     }
 
@@ -90,6 +93,12 @@ impl<W: Write> ParquetWriter<W> {
         self
     }
 
+    /// Sets sorting order of rows in the row group if any
+    pub fn with_sorting_columns(mut self,  sorting_columns: Option<Vec<SortingColumn>>) -> Self {
+        self.sorting_columns = sorting_columns;
+        self
+    }
+
     fn write_options(&self) -> WriteOptions {
         WriteOptions {
             write_statistics: self.statistics,
@@ -110,11 +119,12 @@ impl<W: Write> ParquetWriter<W> {
         };
 
         let created_by = Some("QuestDB".to_string());
-        let writer = FileWriter::new(
+        let writer = FileWriter::with_sorting_columns(
             self.writer,
             parquet_schema.clone(),
             file_write_options,
             created_by,
+            self.sorting_columns,
         );
         Ok(ChunkedWriter { writer, parquet_schema, encodings, options })
     }
@@ -174,7 +184,6 @@ impl<W: Write> ChunkedWriter<W> {
     }
 }
 
-// TODO: we need to include designated timestamp column into sorting_columns.
 fn create_row_group(
     partition: &Partition,
     offset: usize,

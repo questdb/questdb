@@ -15,3 +15,4 @@ pub use schema_descriptor::SchemaDescriptor;
 pub use sort::*;
 
 pub use crate::thrift_format::FileMetaData as ThriftFileMetaData;
+pub use crate::thrift_format::SortingColumn;

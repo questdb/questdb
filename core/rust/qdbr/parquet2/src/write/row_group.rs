@@ -3,7 +3,7 @@ use std::io::Write;
 #[cfg(feature = "async")]
 use futures::AsyncWrite;
 
-use parquet_format_safe::{ColumnChunk, RowGroup};
+use parquet_format_safe::{ColumnChunk, RowGroup, SortingColumn};
 
 use crate::{
     error::{Error, Result},
@@ -84,6 +84,7 @@ pub fn write_row_group<
     mut offset: u64,
     descriptors: &[ColumnDescriptor],
     columns: DynIter<'a, std::result::Result<DynStreamingIterator<'a, CompressedPage, E>, E>>,
+    sorting_columns: &Option<Vec<SortingColumn>>,
     ordinal: usize,
 ) -> Result<(RowGroup, Vec<Vec<PageWriteSpec>>, u64)>
 where
@@ -130,7 +131,7 @@ where
             columns,
             total_byte_size,
             num_rows,
-            sorting_columns: None,
+            sorting_columns: sorting_columns.clone(),
             file_offset,
             total_compressed_size: Some(total_compressed_size),
             ordinal: ordinal.try_into().ok(),
@@ -151,6 +152,7 @@ pub async fn write_row_group_async<
     mut offset: u64,
     descriptors: &[ColumnDescriptor],
     columns: DynIter<'a, std::result::Result<DynStreamingIterator<'a, CompressedPage, E>, E>>,
+    sorting_columns: &Option<Vec<SortingColumn>>,
     ordinal: usize,
 ) -> Result<(RowGroup, Vec<Vec<PageWriteSpec>>, u64)>
 where
@@ -196,7 +198,7 @@ where
             columns,
             total_byte_size,
             num_rows: num_rows as i64,
-            sorting_columns: None,
+            sorting_columns: sorting_columns.clone(),
             file_offset,
             total_compressed_size: Some(total_compressed_size),
             ordinal: ordinal.try_into().ok(),

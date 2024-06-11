@@ -1,7 +1,7 @@
 use std::io::Write;
 
 use parquet_format_safe::thrift::protocol::TCompactOutputProtocol;
-use parquet_format_safe::RowGroup;
+use parquet_format_safe::{RowGroup, SortingColumn};
 
 use crate::metadata::ThriftFileMetaData;
 use crate::{
@@ -48,7 +48,7 @@ pub struct FileWriter<W: Write> {
     schema: SchemaDescriptor,
     options: WriteOptions,
     created_by: Option<String>,
-
+    sorting_columns: Option<Vec<SortingColumn>>,
     offset: u64,
     row_groups: Vec<RowGroup>,
     page_specs: Vec<Vec<Vec<PageWriteSpec>>>,
@@ -108,6 +108,7 @@ impl<W: Write> FileWriter<W> {
             schema,
             options,
             created_by,
+            sorting_columns: None,
             offset: 0,
             row_groups: vec![],
             page_specs: vec![],
@@ -116,6 +117,26 @@ impl<W: Write> FileWriter<W> {
         }
     }
 
+    pub fn with_sorting_columns(
+        writer: W,
+        schema: SchemaDescriptor,
+        options: WriteOptions,
+        created_by: Option<String>,
+        sorting_columns: Option<Vec<SortingColumn>>,
+    ) -> Self {
+        Self {
+            writer,
+            schema,
+            options,
+            created_by,
+            sorting_columns,
+            offset: 0,
+            row_groups: vec![],
+            page_specs: vec![],
+            state: State::Initialised,
+            metadata: None,
+        }
+    }
     /// Writes the header of the file.
     ///
     /// This is automatically called by [`Self::write`] if not called following [`Self::new`].
@@ -151,6 +172,7 @@ impl<W: Write> FileWriter<W> {
             self.offset,
             self.schema.columns(),
             row_group,
+            &self.sorting_columns,
             ordinal,
         )?;
         self.offset += size;

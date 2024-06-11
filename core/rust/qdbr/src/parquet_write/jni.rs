@@ -6,6 +6,7 @@ use anyhow::Context;
 use jni::objects::JClass;
 use jni::sys::{jint, jlong};
 use jni::JNIEnv;
+use parquet2::metadata::SortingColumn;
 
 use crate::parquet_write::file::ParquetWriter;
 use crate::parquet_write::schema::{Column, Partition};
@@ -42,7 +43,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     col_name_sizes_ptr: *const i32,
     col_types_ptr: *const i32,
     col_ids_ptr: *const i32,
-    _timestamp_index: jint,
+    timestamp_index: jint,
     col_tops_ptr: *const i64,
     primary_col_addrs_ptr: *const *const u8,
     primary_col_sizes_ptr: *const i64,
@@ -138,7 +139,14 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             )
         })?;
 
+        let sorting_columns = if timestamp_index != -1 {
+            Some(vec![SortingColumn::new(timestamp_index as i32, false, false)])
+        } else {
+            None
+        };
+
         ParquetWriter::new(&mut file)
+            .with_sorting_columns(sorting_columns)
             .finish(partition)
             .map(|_| ())
             .context("")
