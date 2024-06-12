@@ -27,7 +27,10 @@ package io.questdb.test;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.client.Sender;
+import io.questdb.cutlass.http.client.HttpClient;
+import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.line.LineSenderException;
+import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -71,6 +74,88 @@ public class ServerMainHttpAuthTest extends AbstractBootstrapTest {
                 // no need to start the server, just check that the configuration is loaded
                 Assert.assertEquals(USER, serverMain.getConfiguration().getHttpServerConfiguration().getUsername());
                 Assert.assertEquals(PASSWORD, serverMain.getConfiguration().getHttpServerConfiguration().getPassword());
+            }
+        });
+    }
+
+    @Test
+    public void testMinHttpServerAccess_badPassword() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
+                serverMain.start();
+
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance();
+                     HttpClient.ResponseHeaders responseHeaders = httpClient.newRequest("localhost", HTTP_MIN_PORT)
+                             .GET()
+                             .url("/health")
+                             .authBasic(USER, "notquest")
+                             .send()
+                ) {
+                    responseHeaders.await();
+                    DirectUtf8Sequence statusCode = responseHeaders.getStatusCode();
+                    TestUtils.assertEquals("401", statusCode);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMinHttpServerAccess_explicitlyAllowedAnonymousAccess() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = startWithEnvVariables(PropertyKey.HTTP_HEALTH_CHECK_AUTHENTICATION_REQUIRED.getEnvVarName(), "false")) {
+                Assert.assertEquals(USER, serverMain.getConfiguration().getHttpServerConfiguration().getUsername());
+                Assert.assertEquals(PASSWORD, serverMain.getConfiguration().getHttpServerConfiguration().getPassword());
+
+                serverMain.start();
+
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
+                    try (HttpClient.ResponseHeaders responseHeaders = httpClient.newRequest("localhost", HTTP_MIN_PORT).GET().url("/health").send()) {
+                        responseHeaders.await();
+                        DirectUtf8Sequence statusCode = responseHeaders.getStatusCode();
+                        TestUtils.assertEquals("200", statusCode);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMinHttpServerAccess_missingAuth() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
+                serverMain.start();
+
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance();
+                     HttpClient.ResponseHeaders responseHeaders = httpClient.newRequest("localhost", HTTP_MIN_PORT)
+                             .GET()
+                             .url("/health")
+                             .send()
+                ) {
+                    responseHeaders.await();
+                    DirectUtf8Sequence statusCode = responseHeaders.getStatusCode();
+                    TestUtils.assertEquals("401", statusCode);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMinHttpServerAccess_successfulAuth() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
+                serverMain.start();
+
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance();
+                     HttpClient.ResponseHeaders responseHeaders = httpClient.newRequest("localhost", HTTP_MIN_PORT)
+                             .GET()
+                             .url("/health")
+                             .authBasic(USER, PASSWORD)
+                             .send()
+                ) {
+                    responseHeaders.await();
+                    DirectUtf8Sequence statusCode = responseHeaders.getStatusCode();
+                    TestUtils.assertEquals("200", statusCode);
+                }
             }
         });
     }
