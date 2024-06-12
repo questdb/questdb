@@ -5803,7 +5803,6 @@ public class SqlOptimiser implements Mutable {
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
             validateWindowFunctions(rewrittenModel, sqlExecutionContext, 0);
             authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
-            rewrittenModel.toString0();
             return rewrittenModel;
         } catch (Throwable e) {
             // at this point models may have functions than need to be freed
