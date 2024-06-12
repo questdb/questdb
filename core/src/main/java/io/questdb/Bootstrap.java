@@ -454,14 +454,8 @@ public class Bootstrap {
     }
 
     private void createHelloFile(String helloMsg) {
-        final File helloFile = new File(rootDirectory, "log/hello.txt");
-        File logDir = helloFile.getParentFile();
-        if (!java.nio.file.Files.exists(logDir.toPath())) {
-            if (!logDir.mkdirs()) {
-                log.errorW().$("could not create log directory. check user permissions [dir=").$(logDir.getAbsolutePath()).I$();
-            }
-        }
-        final File growingFile = new File(logDir, helloFile.getName() + ".tmp");
+        final File helloFile = new File(rootDirectory, "hello.txt");
+        final File growingFile = new File(rootDirectory, helloFile.getName() + ".tmp");
         try (Writer w = new FileWriter(growingFile)) {
             w.write(helloMsg);
         } catch (IOException e) {
