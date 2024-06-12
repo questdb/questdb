@@ -38,7 +38,10 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.str.*;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.Nullable;
 
 public class ColumnTypeConverter {
@@ -228,7 +231,7 @@ public class ColumnTypeConverter {
         sink.clear();
         for (long addr = srcMapAddress; addr < hi; addr += srcColumnTypeSize) {
             if (converterInt2String.convert(addr, sink)) {
-                StringTypeDriver.appendValue(dstVarMem, dstFixMem, sink);
+                StringTypeDriver.appendValue(dstFixMem, dstVarMem, sink);
                 sink.clear();
             } else {
                 StringTypeDriver.INSTANCE.appendNull(dstFixMem, dstVarMem);
@@ -473,7 +476,7 @@ public class ColumnTypeConverter {
                 if (utf8 != null) {
                     sink.clear();
                     sink.put(utf8);
-                    StringTypeDriver.appendValue(dstVarMem, dstFixMem, sink);
+                    StringTypeDriver.appendValue(dstFixMem, dstVarMem, sink);
                 } else {
                     StringTypeDriver.INSTANCE.appendNull(dstFixMem, dstVarMem);
                 }
@@ -624,7 +627,7 @@ public class ColumnTypeConverter {
                 int symbol = Unsafe.getUnsafe().getInt(lo);
                 CharSequence str = symbolTable.valueOf(symbol);
                 if (str != null) {
-                    StringTypeDriver.appendValue(dstVarMem, dstFixMem, str);
+                    StringTypeDriver.appendValue(dstFixMem, dstVarMem, str);
                 } else {
                     typeDriver.appendNull(dstFixMem, dstVarMem);
                 }

@@ -199,8 +199,8 @@ public class PageAddressCacheRecord implements Record, Closeable {
     }
 
     @Override
-    public long getLong128Hi(int col) {
-        long address = pageAddressCache.getPageAddress(frameIndex, col);
+    public long getLong128Hi(int columnIndex) {
+        long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         if (address == 0) {
             return NullMemoryMR.INSTANCE.getLong128Hi();
         }
@@ -208,8 +208,8 @@ public class PageAddressCacheRecord implements Record, Closeable {
     }
 
     @Override
-    public long getLong128Lo(int col) {
-        long address = pageAddressCache.getPageAddress(frameIndex, col);
+    public long getLong128Lo(int columnIndex) {
+        long address = pageAddressCache.getPageAddress(frameIndex, columnIndex);
         if (address == 0) {
             return NullMemoryMR.INSTANCE.getLong128Lo();
         }

@@ -28,9 +28,10 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.PageAddressCache;
 import io.questdb.cairo.sql.StatefulAtom;
-import io.questdb.std.DirectLongList;
-import io.questdb.std.FlyweightMessageContainer;
-import io.questdb.std.Misc;
+import io.questdb.cairo.vm.MemoryCARWImpl;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
@@ -41,7 +42,11 @@ public class PageFrameReduceTask implements Closeable {
     public static final byte TYPE_GROUP_BY = 1;
     public static final byte TYPE_GROUP_BY_NOT_KEYED = 2;
     private static final String exceptionMessage = "unexpected filter error";
-
+    private final ObjList<MemoryCARW> columnChunks = new ObjList<>();
+    private final ObjectPool<MemoryCARWImpl> columnChunksPool = new ObjectPool<>(
+            () -> (MemoryCARWImpl) Vm.getCARWInstance(Numbers.SIZE_1MB, Integer.MAX_VALUE, MemoryTag.NATIVE_OFFLOAD),
+            256
+    );
     // Used to pass the list of column page frame addresses to a JIT-compiled filter.
     private final DirectLongList columns;
     private final StringSink errorMsg = new StringSink();
@@ -71,6 +76,12 @@ public class PageFrameReduceTask implements Closeable {
         Misc.free(filteredRows);
         Misc.free(columns);
         Misc.free(varSizeAux);
+        Misc.freeObjListAndClear(columnChunks);
+        columnChunksPool.clear();
+    }
+
+    public ObjList<MemoryCARW> getColumnChunks() {
+        return columnChunks;
     }
 
     /**
@@ -132,6 +143,10 @@ public class PageFrameReduceTask implements Closeable {
         return isCancelled;
     }
 
+    public MemoryCARW nextColumnChunk() {
+        return columnChunksPool.next();
+    }
+
     public void of(PageFrameSequence<?> frameSequence, int frameIndex) {
         this.frameSequence = frameSequence;
         this.frameSequenceId = frameSequence.getId();
@@ -142,6 +157,8 @@ public class PageFrameReduceTask implements Closeable {
         if (type == TYPE_FILTER) {
             filteredRows.clear();
         }
+        Misc.freeObjListAndClear(columnChunks);
+        columnChunksPool.clear();
     }
 
     public void populateJitData() {
@@ -176,6 +193,8 @@ public class PageFrameReduceTask implements Closeable {
         filteredRows.resetCapacity();
         columns.resetCapacity();
         varSizeAux.resetCapacity();
+        Misc.freeObjListAndClear(columnChunks);
+        columnChunksPool.clear();
     }
 
     public void setErrorMsg(Throwable th) {

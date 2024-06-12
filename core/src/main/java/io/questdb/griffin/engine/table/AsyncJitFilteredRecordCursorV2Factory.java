@@ -48,26 +48,23 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.sql.DataFrameCursorFactory.*;
 
-public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFactory implements StealableFilterRecordCursorFactory {
+public class AsyncJitFilteredRecordCursorV2Factory extends AbstractRecordCursorFactory implements StealableFilterRecordCursorFactory {
 
-    private static final PageFrameReducer REDUCER = AsyncJitFilteredRecordCursorFactory::filter;
+    private static final PageFrameReducer REDUCER = AsyncJitFilteredRecordCursorV2Factory::filter;
 
     private final RecordCursorFactory base;
     private final ObjList<Function> bindVarFunctions;
     private final MemoryCARW bindVarMemory;
     private final SCSequence collectSubSeq = new SCSequence();
     private final CompiledFilter compiledFilter;
-    private final AsyncFilteredRecordCursor cursor;
+    private final AsyncFilteredRecordV2Cursor cursor;
     private final Function filter;
-    private final PageFrameSequence<AsyncJitFilterAtom> frameSequence;
+    private final PageFrameSequence<AsyncJitFilterV2Atom> frameSequence;
     private final Function limitLoFunction;
     private final int limitLoPos;
-    private final int maxNegativeLimit;
-    private final AsyncFilteredNegativeLimitRecordCursor negativeLimitCursor;
     private final int workerCount;
-    private DirectLongList negativeLimitRows;
 
-    public AsyncJitFilteredRecordCursorFactory(
+    public AsyncJitFilteredRecordCursorV2Factory(
             @NotNull CairoConfiguration configuration,
             @NotNull MessageBus messageBus,
             @NotNull RecordCursorFactory base,
@@ -78,17 +75,15 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             @Nullable ObjList<Function> perWorkerFilters,
             @Nullable Function limitLoFunction,
             int limitLoPos,
-            boolean preTouchColumns,
             int workerCount
     ) {
         super(base.getMetadata());
         assert !(base instanceof FilteredRecordCursorFactory);
-        assert !(base instanceof AsyncJitFilteredRecordCursorFactory);
+        assert !(base instanceof AsyncJitFilteredRecordCursorV2Factory);
         this.base = base;
         this.compiledFilter = compiledFilter;
         this.filter = filter;
-        this.cursor = new AsyncFilteredRecordCursor(filter, base.getScanDirection());
-        this.negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor(base.getScanDirection());
+        this.cursor = new AsyncFilteredRecordV2Cursor(filter, base.getScanDirection());
         this.bindVarMemory = Vm.getCARWInstance(
                 configuration.getSqlJitBindVarsMemoryPageSize(),
                 configuration.getSqlJitBindVarsMemoryMaxPages(),
@@ -101,7 +96,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             int columnType = base.getMetadata().getColumnType(i);
             columnTypes.add(columnType);
         }
-        AsyncJitFilterAtom atom = new AsyncJitFilterAtom(
+        AsyncJitFilterV2Atom atom = new AsyncJitFilterV2Atom(
                 configuration,
                 filter,
                 perWorkerFilters,
@@ -121,7 +116,6 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         );
         this.limitLoFunction = limitLoFunction;
         this.limitLoPos = limitLoPos;
-        this.maxNegativeLimit = configuration.getSqlMaxNegativeLimit();
         this.workerCount = workerCount;
     }
 
@@ -142,7 +136,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     }
 
     @Override
-    public PageFrameSequence<AsyncJitFilterAtom> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
+    public PageFrameSequence<AsyncJitFilterV2Atom> execute(SqlExecutionContext executionContext, SCSequence collectSubSeq, int order) throws SqlException {
         return frameSequence.of(base, executionContext, collectSubSeq, order);
     }
 
@@ -193,14 +187,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         }
 
         if (order != baseOrder && rowsRemaining != Long.MAX_VALUE) {
-            if (rowsRemaining > maxNegativeLimit) {
-                throw SqlException.position(limitLoPos).put("absolute LIMIT value is too large, maximum allowed value: ").put(maxNegativeLimit);
-            }
-            if (negativeLimitRows == null) {
-                negativeLimitRows = new DirectLongList(maxNegativeLimit, MemoryTag.NATIVE_OFFLOAD);
-            }
-            negativeLimitCursor.of(execute(executionContext, collectSubSeq, order), rowsRemaining, negativeLimitRows);
-            return negativeLimitCursor;
+            throw SqlException.position(limitLoPos).put("negative LIMIT is not supported in V2 factory");
         }
 
         cursor.of(execute(executionContext, collectSubSeq, order), rowsRemaining);
@@ -221,7 +208,6 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     public void halfClose() {
         Misc.free(frameSequence);
         cursor.freeRecords();
-        negativeLimitCursor.freeRecords();
     }
 
     @Override
@@ -285,7 +271,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     ) {
         final DirectLongList rows = task.getFilteredRows();
         final long frameRowCount = task.getFrameRowCount();
-        final AsyncJitFilterAtom atom = task.getFrameSequence(AsyncJitFilterAtom.class).getAtom();
+        final AsyncJitFilterV2Atom atom = task.getFrameSequence(AsyncJitFilterV2Atom.class).getAtom();
         final PageAddressCache pageAddressCache = task.getPageAddressCache();
 
         rows.clear();
@@ -302,10 +288,11 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                         rows.add(r);
                     }
                 }
-                return;
+                atom.copyToColumnChunks(record, task);
             } finally {
                 atom.releaseFilter(filterId);
             }
+            return;
         }
 
         // Use JIT-compiled filter.
@@ -326,8 +313,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         );
         rows.setPos(hi);
 
-        // Pre-touch fixed-size columns, if asked.
-        atom.preTouchColumns(record, rows);
+        atom.copyToColumnChunks(record, task);
     }
 
     private static void writeBindVarFunction(
@@ -399,7 +385,6 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     @Override
     protected void _close() {
         Misc.free(base);
-        Misc.free(negativeLimitRows);
         halfClose();
         Misc.free(compiledFilter);
         Misc.free(filter);
@@ -407,13 +392,13 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         Misc.freeObjList(bindVarFunctions);
     }
 
-    public static class AsyncJitFilterAtom extends AsyncFilterAtom {
+    public static class AsyncJitFilterV2Atom extends AsyncFilterAtom {
 
         final ObjList<Function> bindVarFunctions;
         final MemoryCARW bindVarMemory;
         final CompiledFilter compiledFilter;
 
-        public AsyncJitFilterAtom(
+        public AsyncJitFilterV2Atom(
                 CairoConfiguration configuration,
                 Function filter,
                 ObjList<Function> perWorkerFilters,
