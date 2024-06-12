@@ -30,6 +30,7 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.HttpAuthenticator;
 import io.questdb.cutlass.http.HttpAuthenticatorFactory;
 import io.questdb.cutlass.http.HttpRequestHeader;
+import io.questdb.cutlass.http.StaticHttpAuthenticatorFactory;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Misc;
@@ -505,6 +506,34 @@ public class HttpSecurityTest extends AbstractTest {
                                 null
                         )
         );
+    }
+
+    @Test
+    public void testStaticHttpAuthenticatorFactory_badPassword() throws Exception {
+        StaticHttpAuthenticatorFactory factory = new StaticHttpAuthenticatorFactory("foo", "bar");
+        testHttpEndpoint(factory, SecurityContext.AUTH_TYPE_CREDENTIALS, SecurityContext.AUTH_TYPE_CREDENTIALS, code -> {
+            testHttpClient.assertGet(
+                    "/query",
+                    "Unauthorized\r\n",
+                    "select 1",
+                    "foo",
+                    "notbar"
+            );
+        });
+    }
+
+    @Test
+    public void testStaticHttpAuthenticatorFactory_success() throws Exception {
+        StaticHttpAuthenticatorFactory factory = new StaticHttpAuthenticatorFactory("foo", "bar");
+        testHttpEndpoint(factory, SecurityContext.AUTH_TYPE_CREDENTIALS, SecurityContext.AUTH_TYPE_CREDENTIALS, code -> {
+            testHttpClient.assertGet(
+                    "/query",
+                    "{\"query\":\"select 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}",
+                    "select 1",
+                    "foo",
+                    "bar"
+            );
+        });
     }
 
     private static void sendAndReceive(String request, CharSequence response) {

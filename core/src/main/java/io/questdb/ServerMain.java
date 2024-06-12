@@ -125,7 +125,7 @@ public class ServerMain implements Closeable {
     public static HttpAuthenticatorFactory getHttpAuthenticatorFactory(ServerConfiguration configuration) {
         HttpServerConfiguration httpConfig = configuration.getHttpServerConfiguration();
         String username = httpConfig.getUsername();
-        if (username == null) {
+        if (Chars.empty(username)) {
             return DefaultHttpAuthenticatorFactory.INSTANCE;
         }
         return new StaticHttpAuthenticatorFactory(username, httpConfig.getPassword());
