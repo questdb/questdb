@@ -3803,6 +3803,90 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
+     Rewrites
+     SELECT LAST(timestamp) FROM table_name;
+     into query which can is optimised search
+     SELECT timestamp from (SELECT timestamp from table_name order by timestamp) limit 1
+     This enables FrameBackwardScan for aggregation queries containing LAST keyword
+     */
+
+    private void optimiseAggregateFunctions(QueryModel parent){
+
+        if(parent== null || parent.getNestedModel() == null)
+          return;
+
+        QueryModel nestedModel = parent.getNestedModel();
+        CharSequence designatedTimestampColumn = null;
+
+        //get designated timestamp column name
+        if(nestedModel!=null && nestedModel.getTimestamp()!= null)
+            designatedTimestampColumn =  nestedModel.getTimestamp().token;
+
+        //if LAST(column) does not contain designated-timestamp column, optimise nested models recursively
+        else {
+            optimiseAggregateFunctions(nestedModel);
+            return;
+        }
+
+        ObjList<QueryColumn> queryColumns = parent.getBottomUpColumns();
+        for(int i=0; i<parent.getColumns().size(); i++) {
+            QueryColumn column = queryColumns.get(i);
+            ExpressionNode node = column.getAst();
+
+            CharSequence token= null;
+            CharSequence rhs= null;
+
+            if(node != null) {
+                token = node.token;
+                 rhs = node.rhs == null ? null: node.rhs.token;
+            }
+
+            /**
+             Core logic for issue #4231 will be applicable under two conditions
+             Condition1: QueryColumn contains LAST function keyword
+             Condition2: QueryColumn for LAST keyword should be same as designatedTimestamp column
+
+             Core logic for changing query plan
+              - Add limit 1 via expressionNode to parent model
+              - Change model to select-choose from select-group-by
+              - Column alias by default is LAST if alias is not provided, replace with original column name
+              - Add order by clause to nested model
+             Call this recursively for nested models
+            */
+            if (rhs!=null &&
+                    ("LAST").equals(token.toString()) &&
+                    designatedTimestampColumn.toString().equals(rhs.toString())) {
+
+                //adding limit 1
+                ExpressionNode lowerLimitNode = expressionNodePool.next();
+                lowerLimitNode.token = "1";
+                lowerLimitNode.type = 2;
+                parent.setLimit(lowerLimitNode, null);
+
+
+                //change model type to select-choose
+                parent.setSelectModelType(1);
+
+                //change ast params
+                node.token = node.token.toString().equals("LAST") ? rhs.toString() : node.token.toString();
+                if(column.getAlias().equals("LAST"))
+                    column.setAlias(node.token);
+                node.paramCount = 0;
+                node.type = 4;
+
+                //adding order by
+
+                ExpressionNode newTimestampNode =  expressionNodePool.next();
+                newTimestampNode.token = designatedTimestampColumn;
+                nestedModel.addOrderBy(newTimestampNode, QueryModel.ORDER_DIRECTION_DESCENDING);
+                break;
+            }
+        }
+        optimiseAggregateFunctions(nestedModel);
+
+        }
+
+    /**
      * Rewrites expressions such as :
      * SELECT count_distinct(s) FROM tab WHERE s like '%a' ;
      * into more parallel-friendly :
@@ -5699,6 +5783,7 @@ public class SqlOptimiser implements Mutable {
             enumerateTableColumns(rewrittenModel, sqlExecutionContext, sqlParserCallback);
             rewriteTopLevelLiteralsToFunctions(rewrittenModel);
             rewrittenModel = rewriteSampleBy(rewrittenModel);
+            optimiseAggregateFunctions(rewrittenModel);
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
             resolveJoinColumns(rewrittenModel);
             optimiseBooleanNot(rewrittenModel);
@@ -5718,6 +5803,7 @@ public class SqlOptimiser implements Mutable {
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
             validateWindowFunctions(rewrittenModel, sqlExecutionContext, 0);
             authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
+            rewrittenModel.toString0();
             return rewrittenModel;
         } catch (Throwable e) {
             // at this point models may have functions than need to be freed
