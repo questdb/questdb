@@ -463,37 +463,42 @@ public interface Sender extends Closeable {
          * @param address address of a QuestDB server
          * @return this instance for method chaining.
          */
-        public LineSenderBuilder address(CharSequence address) {
-            if (this.host != null) {
-                throw new LineSenderException("server address is already configured ")
-                        .put("[address=").put(this.host).put("]");
-            }
-            if (Chars.isBlank(address)) {
-                throw new LineSenderException("address cannot be empty nor null");
-            }
-            int portIndex = Chars.indexOf(address, ':');
-            if (portIndex + 1 == address.length()) {
-                throw new LineSenderException("invalid address, use IPv4 address or a domain name [address=").put(address).put("]");
-            }
-            if (portIndex != -1) {
-                if (port != PARAMETER_NOT_SET_EXPLICITLY) {
-                    throw new LineSenderException("address contains a port, but a port was already configured ")
-                            .put("[address=").put(address)
-                            .put(", port=").put(port)
-                            .put("]");
-                }
-                this.host = address.subSequence(0, portIndex).toString();
-                try {
-                    port(Numbers.parseInt(address, portIndex + 1, address.length()));
-                } catch (NumericException e) {
-                    throw new LineSenderException("cannot parse a port from the address, use IPv4 address or a domain name")
-                            .put(" [address=").put(address).put("]");
-                }
-            } else {
-                this.host = address.toString();
-            }
-            return this;
+  public LineSenderBuilder address(CharSequence address) {
+    if (this.host != null) {
+        throw new LineSenderException("server address is already configured ")
+                .put("[address=").put(this.host).put("]");
+    }
+    if (Chars.isBlank(address)) {
+        throw new LineSenderException("address cannot be empty nor null");
+    }
+    
+    String addressStr = address.toString();
+    int portIndex = addressStr.lastIndexOf(':');
+    
+    if (portIndex == -1) {
+        this.host = addressStr;
+    } else {
+        if (portIndex == addressStr.length() - 1) {
+            throw new LineSenderException("invalid address, use IPv4 address or a domain name [address=").put(addressStr).put("]");
         }
+        
+        if (port != PARAMETER_NOT_SET_EXPLICITLY) {
+            throw new LineSenderException("address contains a port, but a port was already configured ")
+                    .put("[address=").put(addressStr)
+                    .put(", port=").put(port)
+                    .put("]");
+        }
+        
+        this.host = addressStr.substring(0, portIndex);
+        try {
+            port(Numbers.parseInt(addressStr, portIndex + 1, addressStr.length()));
+        } catch (NumericException e) {
+            throw new LineSenderException("cannot parse a port from the address, use IPv4 address or a domain name")
+                    .put(" [address=").put(addressStr).put("]");
+        }
+    }
+    return this;
+}
 
         /**
          * Advanced TLS configuration. Most users should not need to use this.
