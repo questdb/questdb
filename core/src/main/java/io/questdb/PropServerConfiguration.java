@@ -4429,8 +4429,13 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public byte getRequiredAuthType() {
-            //todo: hack!
-            return httpUsername == null ? SecurityContext.AUTH_TYPE_NONE : SecurityContext.AUTH_TYPE_CREDENTIALS;
+            // When static HTTP auth is enabled we want to secure static content too - it makes a browser
+            // to show a username/password dialog when user tries to open a web console.
+
+            // When static HTTP auth is disabled then we want to allow access to static content for everyone.
+            // Q: Why?
+            // A: In the EE edition we can serve a nice login dialog for not yet authenticated users
+            return Chars.empty(httpUsername) ? SecurityContext.AUTH_TYPE_NONE : SecurityContext.AUTH_TYPE_CREDENTIALS;
         }
     }
 
