@@ -412,6 +412,11 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public long dedupMergeVarColumnLen(long mergeIndexAddr, long mergeIndexSize, long srcDataFixAddr, long srcOooFixAddr) {
+        return Vect.dedupMergeVarcharColumnLen(mergeIndexAddr, mergeIndexSize, srcDataFixAddr, srcOooFixAddr);
+    }
+
+    @Override
     public long getAuxVectorOffset(long row) {
         return VARCHAR_AUX_WIDTH_BYTES * row;
     }
