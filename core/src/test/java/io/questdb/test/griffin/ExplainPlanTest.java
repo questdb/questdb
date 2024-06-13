@@ -3582,6 +3582,24 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKSumNSum() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("CREATE TABLE tab ( k long, x double );");
+
+            assertPlanNoLeakCheck(
+                    "SELECT k, ksum(x), nsum(x) FROM tab",
+                    "Async Group By workers: 1\n" +
+                            "  keys: [k]\n" +
+                            "  values: [ksum(x),nsum(x)]\n" +
+                            "  filter: null\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tab\n"
+            );
+        });
+    }
+
+    @Test
     public void testLatestByAllSymbolsFilteredFactoryWithLimit() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table maps\n" +

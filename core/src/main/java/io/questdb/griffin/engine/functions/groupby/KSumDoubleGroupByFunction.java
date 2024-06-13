@@ -35,6 +35,9 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
+/**
+ * See <a href="https://en.wikipedia.org/wiki/Kahan_summation_algorithm">Kahan summation algorithm</a>.
+ */
 public class KSumDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
     private int valueIndex;
@@ -50,7 +53,7 @@ public class KSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
             mapValue.putDouble(valueIndex, value);
             mapValue.putLong(valueIndex + 2, 1);
         } else {
-            mapValue.putDouble(valueIndex, 0); // sum = 0
+            mapValue.putDouble(valueIndex, 0);         // sum = 0
             mapValue.putLong(valueIndex + 2, 0); // finite count = 0
         }
         mapValue.putDouble(valueIndex + 1, 0.0); // c = 0
@@ -100,12 +103,31 @@ public class KSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.DOUBLE); // sum
         columnTypes.add(ColumnType.DOUBLE); // c
-        columnTypes.add(ColumnType.LONG); // finite value count
+        columnTypes.add(ColumnType.LONG);   // finite value count
     }
 
     @Override
     public boolean isConstant() {
         return false;
+    }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return UnaryFunction.super.isReadThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        double srcSum = srcValue.getDouble(valueIndex);
+        double srcC = srcValue.getDouble(valueIndex + 1);
+        long srcCount = srcValue.getLong(valueIndex + 2);
+
+        double destSum = destValue.getDouble(valueIndex);
+        double y = srcSum - srcC;
+        double t = destSum + y;
+        destValue.putDouble(valueIndex, t);
+        destValue.putDouble(valueIndex + 1, t - destSum - y);
+        destValue.addLong(valueIndex + 2, srcCount);
     }
 
     @Override
@@ -122,6 +144,6 @@ public class KSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
 
     @Override
     public boolean supportsParallelism() {
-        return false;
+        return UnaryFunction.super.supportsParallelism();
     }
 }
