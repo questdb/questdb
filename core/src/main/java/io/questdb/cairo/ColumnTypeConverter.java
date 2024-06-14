@@ -157,22 +157,22 @@ public class ColumnTypeConverter {
     private static boolean convertFixedToFixed(long rowCount, long skipRows, int srcFixFd, int dstFixFd, int srcColumnType, int dstColumnType, FilesFacade ff, ColumnConversionOffsetSink columnSizesSink) {
         final long srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
         final long dstColumnTypeSize = ColumnType.sizeOf(dstColumnType);
-        long srcMapAddressRaw = 0;
-        long dstMapAddressRaw = 0;
+        long srcMapAddress = 0;
+        long dstMapAddress = 0;
 
         long skipBytes = skipRows * srcColumnTypeSize;
         long mapBytes = rowCount * srcColumnTypeSize;
         long dstMapBytes = rowCount * dstColumnTypeSize;
 
         try {
-            srcMapAddressRaw = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipBytes, mapBytes, false, memoryTag);
+            srcMapAddress = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipBytes, mapBytes, false, memoryTag);
             columnSizesSink.setSrcOffsets(skipBytes, -1);
 
             ff.truncate(dstFixFd, dstMapBytes);
-            dstMapAddressRaw = TableUtils.mapAppendColumnBuffer(ff, dstFixFd, 0, dstMapBytes, true, memoryTag);
+            dstMapAddress = TableUtils.mapAppendColumnBuffer(ff, dstFixFd, 0, dstMapBytes, true, memoryTag);
             columnSizesSink.setDestSizes(dstMapBytes, -1);
 
-            long succeeded = ConvertersNative.fixedToFixed(Math.abs(srcMapAddressRaw), srcColumnType, Math.abs(dstMapAddressRaw), dstColumnType, rowCount);
+            long succeeded = ConvertersNative.fixedToFixed(srcMapAddress, srcColumnType, dstMapAddress, dstColumnType, rowCount);
             switch ((int) succeeded) {
                 case ConvertersNative.ConversionError.NONE:
                     return true;
@@ -182,11 +182,11 @@ public class ColumnTypeConverter {
                     throw CairoException.critical(0).put("Unknown return code from native call: ").put(succeeded);
             }
         } finally {
-            if (srcMapAddressRaw != 0) {
-                TableUtils.mapAppendColumnBufferRelease(ff, srcMapAddressRaw, skipBytes, mapBytes, memoryTag);
+            if (srcMapAddress != 0) {
+                TableUtils.mapAppendColumnBufferRelease(ff, srcMapAddress, skipBytes, mapBytes, memoryTag);
             }
-            if (dstMapAddressRaw != 0) {
-                TableUtils.mapAppendColumnBufferRelease(ff, dstMapAddressRaw, 0, dstMapBytes, memoryTag);
+            if (dstMapAddress != 0) {
+                TableUtils.mapAppendColumnBufferRelease(ff, dstMapAddress, 0, dstMapBytes, memoryTag);
             }
         }
     }
@@ -194,14 +194,14 @@ public class ColumnTypeConverter {
     private static boolean convertFixedToString(long skipRows, long rowCount, int srcFixFd, int srcColumnType, int dstFixFd, int dstVarFd, FilesFacade ff, long appendPageSize, ColumnConversionOffsetSink columnSizesSink) {
         final long srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
         assert srcColumnTypeSize > 0;
-        long srcMapAddressRaw;
+        long srcMapAddress;
 
         long skipBytes = skipRows * srcColumnTypeSize;
         long mapBytes = rowCount * srcColumnTypeSize;
         MemoryCMARW dstVarMem = dstVarMemTL.get();
         MemoryCMARW dstFixMem = dstFixMemTL.get();
 
-        srcMapAddressRaw = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipBytes, mapBytes, false, memoryTag);
+        srcMapAddress = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipBytes, mapBytes, false, memoryTag);
         try {
             dstVarMem.of(ff, dstVarFd, null, appendPageSize, appendPageSize, memoryTag);
             dstVarMem.jumpTo(0);
@@ -212,10 +212,10 @@ public class ColumnTypeConverter {
             columnSizesSink.setSrcOffsets(skipBytes, -1);
 
             Fixed2VarConverter converter = getFixedToVarConverter(srcColumnType, ColumnType.STRING);
-            convertFixedToString0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converter);
+            convertFixedToString0(rowCount, srcMapAddress, dstFixMem, dstVarMem, sink, srcColumnType, converter);
             columnSizesSink.setDestSizes(dstVarMem.getAppendOffset(), dstFixMem.getAppendOffset());
         } finally {
-            TableUtils.mapAppendColumnBufferRelease(ff, srcMapAddressRaw, skipBytes, mapBytes, memoryTag);
+            TableUtils.mapAppendColumnBufferRelease(ff, srcMapAddress, skipBytes, mapBytes, memoryTag);
             dstFixMem.detachFdClose();
             dstVarMem.detachFdClose();
         }
@@ -255,13 +255,13 @@ public class ColumnTypeConverter {
     private static boolean convertFixedToSymbol(long skipRows, long rowCount, int srcFixFd, int srcColumnType, int dstFixFd, SymbolMapWriterLite symbolMapWriter, FilesFacade ff, long appendPageSize, ColumnConversionOffsetSink columnSizesSink) {
         final long srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
         assert srcColumnTypeSize > 0;
-        long srcMapAddressRaw;
+        long srcMapAddress;
 
         long skipBytes = skipRows * srcColumnTypeSize;
         long mapBytes = rowCount * srcColumnTypeSize;
         MemoryCMARW dstFixMem = dstFixMemTL.get();
 
-        srcMapAddressRaw = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipBytes, mapBytes, false, memoryTag);
+        srcMapAddress = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipBytes, mapBytes, false, memoryTag);
         try {
             dstFixMem.of(ff, dstFixFd, null, appendPageSize, StringTypeDriver.INSTANCE.getAuxVectorSize(rowCount), memoryTag);
             dstFixMem.jumpTo(0);
@@ -269,10 +269,10 @@ public class ColumnTypeConverter {
             columnSizesSink.setSrcOffsets(skipBytes, -1);
 
             Fixed2VarConverter converter = getFixedToVarConverter(srcColumnType, ColumnType.SYMBOL);
-            convertFixedToSymbo0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, symbolMapWriter, sink, srcColumnType, converter);
+            convertFixedToSymbo0(rowCount, srcMapAddress, dstFixMem, symbolMapWriter, sink, srcColumnType, converter);
             columnSizesSink.setDestSizes(dstFixMem.getAppendOffset(), -1);
         } finally {
-            TableUtils.mapAppendColumnBufferRelease(ff, srcMapAddressRaw, skipBytes, mapBytes, memoryTag);
+            TableUtils.mapAppendColumnBufferRelease(ff, srcMapAddress, skipBytes, mapBytes, memoryTag);
             dstFixMem.detachFdClose();
         }
         return true;
@@ -281,14 +281,14 @@ public class ColumnTypeConverter {
     private static boolean convertFixedToVarchar(long skipRows, long rowCount, int srcFixFd, int srcColumnType, int dstFixFd, int dstVarFd, FilesFacade ff, long appendPageSize, ColumnConversionOffsetSink columnSizesSink) {
         final long srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
         assert srcColumnTypeSize > 0;
-        long srcMapAddressRaw;
+        long srcMapAddress;
 
         long skipBytes = skipRows * srcColumnTypeSize;
         long mapBytes = rowCount * srcColumnTypeSize;
         MemoryCMARW dstVarMem = dstVarMemTL.get();
         MemoryCMARW dstFixMem = dstFixMemTL.get();
 
-        srcMapAddressRaw = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipBytes, mapBytes, false, memoryTag);
+        srcMapAddress = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipBytes, mapBytes, false, memoryTag);
         try {
             dstVarMem.of(ff, dstVarFd, null, appendPageSize, appendPageSize, memoryTag);
             dstVarMem.jumpTo(0);
@@ -298,10 +298,10 @@ public class ColumnTypeConverter {
             columnSizesSink.setSrcOffsets(skipBytes, -1);
 
             Fixed2VarConverter converter = getFixedToVarConverter(srcColumnType, ColumnType.VARCHAR);
-            convertFixedToVarchar0(rowCount, Math.abs(srcMapAddressRaw), dstFixMem, dstVarMem, sink, srcColumnType, converter);
+            convertFixedToVarchar0(rowCount, srcMapAddress, dstFixMem, dstVarMem, sink, srcColumnType, converter);
             columnSizesSink.setDestSizes(dstVarMem.getAppendOffset(), dstFixMem.getAppendOffset());
         } finally {
-            TableUtils.mapAppendColumnBufferRelease(ff, srcMapAddressRaw, skipBytes, mapBytes, memoryTag);
+            TableUtils.mapAppendColumnBufferRelease(ff, srcMapAddress, skipBytes, mapBytes, memoryTag);
             dstFixMem.detachFdClose();
             dstVarMem.detachFdClose();
         }
@@ -374,12 +374,10 @@ public class ColumnTypeConverter {
             long appendPageSize,
             ColumnConversionOffsetSink columnSizesSink
     ) {
-        long symbolMapAddressRaw;
         columnSizesSink.setSrcOffsets(skipRows * Integer.BYTES, -1);
-        symbolMapAddressRaw = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipRows * Integer.BYTES, rowCount * Integer.BYTES, false, memoryTag);
+        long symbolMapAddress = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipRows * Integer.BYTES, rowCount * Integer.BYTES, false, memoryTag);
 
         try {
-            long symbolMapAddress = Math.abs(symbolMapAddressRaw);
             switch (ColumnType.tagOf(dstColumnType)) {
                 case ColumnType.STRING:
                     convertSymbolToString(rowCount, symbolMapAddress, dstFixFd, dstVarFd, ff, appendPageSize, symbolTable, columnSizesSink);
@@ -391,7 +389,7 @@ public class ColumnTypeConverter {
             Var2FixedConverter<CharSequence> converter = getConverterFromVarToFixed(ColumnType.SYMBOL, dstColumnType);
             convertSymbolToFixed(rowCount, symbolMapAddress, dstFixFd, ff, appendPageSize, symbolTable, columnSizesSink, dstColumnType, converter);
         } finally {
-            TableUtils.mapAppendColumnBufferRelease(ff, symbolMapAddressRaw, skipRows * Integer.BYTES, rowCount * Integer.BYTES, memoryTag);
+            TableUtils.mapAppendColumnBufferRelease(ff, symbolMapAddress, skipRows * Integer.BYTES, rowCount * Integer.BYTES, memoryTag);
         }
     }
 
