@@ -659,7 +659,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (Chars.isQuoted(token)) {
             if (predicateContext.type == PredicateType.TIMESTAMP) {
                 try {
-                    long ts = IntervalUtils.parseFloorPartialTimestamp(token, 1, token.length() - 1);
+                    long ts = IntervalUtils.parseFloorPartialTimestamp(token, 1, len - 1);
                     putOperand(offset, IMM, I8_TYPE, ts);
                 } catch (NumericException e) {
                     throw SqlException.invalidDate(token, position);
