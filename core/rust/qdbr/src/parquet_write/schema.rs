@@ -215,7 +215,15 @@ pub fn column_type_to_parquet_type(
             None,
             Some(column_id),
         )?),
-        ColumnType::Uuid | ColumnType::Long128 => Ok(ParquetType::try_from_primitive(
+        ColumnType::Long128 => Ok(ParquetType::try_from_primitive(
+            name,
+            PhysicalType::FixedLenByteArray(16),
+            Repetition::Optional,
+            None,
+            None,
+            Some(column_id),
+        )?),
+        ColumnType::Uuid => Ok(ParquetType::try_from_primitive(
             name,
             PhysicalType::FixedLenByteArray(16),
             Repetition::Optional,
