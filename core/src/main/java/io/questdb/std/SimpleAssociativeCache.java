@@ -34,7 +34,7 @@ import org.jetbrains.annotations.Nullable;
 /**
  * Thread-unsafe cache implementation.
  */
-public class SimpleAssociativeCache<V> implements AssociativeCache<V>, Mutable {
+public class SimpleAssociativeCache<V> implements AssociativeCache<V> {
     private static final int MIN_BLOCKS = 1;
     private static final int MIN_ROWS = 1;
     private static final int NOT_FOUND = -1;
