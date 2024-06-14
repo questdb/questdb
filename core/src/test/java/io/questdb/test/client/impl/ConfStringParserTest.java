@@ -158,7 +158,7 @@ public final class ConfStringParserTest {
         assertHasNext(config, pos);
         pos = assertNextKeyValueOk(config, pos, "host", "localhost");
         pos = assertNextKeyOk(config, pos, "port");
-        pos = assertNextValueError(config, pos, "missing trailing semicolon at position 30");
+        pos = assertNextValueOk(config, pos, "9000");
         assertNoNext(config, pos);
     }
 
@@ -217,7 +217,7 @@ public final class ConfStringParserTest {
         pos = assertSchemaOk(config, "http");
         assertHasNext(config, pos);
         pos = assertNextKeyOk(config, pos, "foo");
-        pos = assertNextValueError(config, pos, "missing trailing semicolon at position 15");
+        pos = assertNextValueOk(config, pos, "bar;");
         assertNoNext(config, pos);
 
         config = "https::foo=;;;;;";

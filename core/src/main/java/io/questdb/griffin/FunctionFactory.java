@@ -69,9 +69,10 @@ public interface FunctionFactory {
      * </ul>
      * <p>
      * Lower-case letters will require arguments to be constant expressions. Upper-case letters allow both constant and
-     * variable expressions.
+     * non-constant expressions.
      *
      * @return signature, for example "substr(SII)"
+     * @see Function#isConstant()
      */
     String getSignature();
 
