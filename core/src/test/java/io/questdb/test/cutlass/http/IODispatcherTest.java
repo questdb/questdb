@@ -83,15 +83,14 @@ import static io.questdb.test.tools.TestUtils.drainWalQueue;
 import static org.junit.Assert.assertTrue;
 
 public class IODispatcherTest extends AbstractTest {
-    public static final String JSON_DDL_RESPONSE = "0c\r\n" +
-            "{\"ddl\":\"OK\"}\r\n" +
-            "00\r\n" +
-            "\r\n";
     public static final String INSERT_QUERY_RESPONSE = "0c\r\n" +
             "{\"dml\":\"OK\"}\r\n" +
             "00\r\n" +
             "\r\n";
-
+    public static final String JSON_DDL_RESPONSE = "0c\r\n" +
+            "{\"ddl\":\"OK\"}\r\n" +
+            "00\r\n" +
+            "\r\n";
     private static final RescheduleContext EmptyRescheduleContext = (retry) -> {
     };
     private static final Log LOG = LogFactory.getLog(IODispatcherTest.class);
@@ -5766,6 +5765,21 @@ public class IODispatcherTest extends AbstractTest {
                 Net.close(fd);
             }
         }, false);
+    }
+
+    @Test
+    public void testNoMetadataInTextExport() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine) -> {
+                    CharSequenceObjHashMap<String> queryParams = new CharSequenceObjHashMap<>();
+                    queryParams.put("nm", "true");
+                    queryParams.put("query", "select 42 from long_sequence(1);");
+                    testHttpClient.assertGet("/exp", "42\r\n", queryParams, null, null);
+                });
     }
 
     @Test
