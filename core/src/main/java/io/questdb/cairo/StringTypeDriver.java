@@ -322,8 +322,8 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public long dedupMergeVarColumnLen(long mergeIndexAddr, long mergeIndexSize, long srcDataFixAddr, long srcOooFixAddr) {
-        return Vect.dedupMergeStrBinColumnLen(mergeIndexAddr, mergeIndexSize, srcDataFixAddr, srcOooFixAddr);
+    public long dedupMergeVarColumnSize(long mergeIndexAddr, long mergeIndexCount, long srcDataFixAddr, long srcOooFixAddr) {
+        return Vect.dedupMergeStrBinColumnSize(mergeIndexAddr, mergeIndexCount, srcDataFixAddr, srcOooFixAddr);
     }
 }
 
