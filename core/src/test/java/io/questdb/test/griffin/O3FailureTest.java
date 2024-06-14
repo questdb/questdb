@@ -35,7 +35,10 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -588,20 +591,13 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testFixedColumnCopyPrefixFails() throws Exception {
-
         int storageLength = 8;
         long records = 500;
 
         executeWithPool(
                 0,
-                (
-                        CairoEngine engine,
-                        SqlCompiler compiler,
-                        SqlExecutionContext sqlExecutionContext
-                ) -> {
-
-                    Assume.assumeFalse(Os.isWindows());
-                    Assert.assertTrue("mixed IO should be enabled non-windows", engine.getConfiguration().isWriterMixedIOEnabled());
+                (engine, compiler, sqlExecutionContext) -> {
+                    Assume.assumeTrue(engine.getConfiguration().isWriterMixedIOEnabled());
 
                     String tableName = "testFixedColumnCopyPrefixFails";
                     compiler.compile(
@@ -935,19 +931,13 @@ public class O3FailureTest extends AbstractO3Test {
 
     @Test
     public void testVarColumnCopyPrefixFails() throws Exception {
-
         String strColVal = "[srcDataMax=165250000]";
         int storageLength = getStorageLength(strColVal);
         long records = 500;
 
         executeWithPool(
                 0,
-                (
-                        CairoEngine engine,
-                        SqlCompiler compiler,
-                        SqlExecutionContext sqlExecutionContext
-                ) -> {
-
+                (engine, compiler, sqlExecutionContext) -> {
                     Assume.assumeTrue(engine.getConfiguration().isWriterMixedIOEnabled());
 
                     String tableName = "testVarColumnCopyPrefixFails";
