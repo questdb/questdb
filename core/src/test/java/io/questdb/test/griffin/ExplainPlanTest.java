@@ -1882,7 +1882,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             );
 
             assertPlanNoLeakCheck("select s, count() from trips where l > 100 or l != 0 and s not in (null, 'A1000', 'A2000')",
-                    "Async Group By workers: 1\n" +
+                    "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (100<l or (l!=0 and not (s in [null,A1000,A2000])))\n" +
@@ -1895,7 +1895,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             bindVariableService.setStr("s1", "A500");
 
             assertPlanNoLeakCheck("select s, count() from trips where l > 100 or l != 0 and s not in (null, 'A1000', :s1)",
-                    "Async Group By workers: 1\n" +
+                    "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (100<l or (l!=0 and not (s in [null,A1000] or s in [:s1::string])))\n" +
@@ -2019,7 +2019,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             bindVariableService.setStr("s1", "A500");
 
             assertPlanNoLeakCheck("select s, count() from trips where l > 100 or l != 0 and s not in (null, 'A1000', :s1)",
-                    "Async Group By workers: 1\n" +
+                    "Async JIT Group By workers: 1\n" +
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (100<l or (l!=0 and not (s in [null,A1000] or s in [:s1::string])))\n" +
@@ -3439,7 +3439,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a (u uuid, ts timestamp) timestamp(ts);",
                 "select u, ts from a where u in ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222', '33333333-3333-3333-3333-333333333333')",
-                "Async Filter workers: 1\n" +
+                "Async JIT Filter workers: 1\n" +
                         "  filter: u in ['22222222-2222-2222-2222-222222222222','11111111-1111-1111-1111-111111111111','33333333-3333-3333-3333-333333333333']\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
@@ -7257,7 +7257,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select * from t where d in (5, -1, 1, null)",
-                    "Async Filter workers: 1\n" +
+                    "Async JIT Filter workers: 1\n" +
                             "  filter: d in [-1.0,1.0,5.0,NaN]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
@@ -7266,7 +7266,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select * from t where d not in (5, -1, 1, null)",
-                    "Async Filter workers: 1\n" +
+                    "Async JIT Filter workers: 1\n" +
                             "  filter: not (d in [-1.0,1.0,5.0,NaN])\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
@@ -7958,7 +7958,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select * from t where l in (5, -1, 1, null)",
-                    "Async Filter workers: 1\n" +
+                    "Async JIT Filter workers: 1\n" +
                             "  filter: l in [null,-1,1,5]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
@@ -7967,7 +7967,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select * from t where l not in (5, -1, 1, null)",
-                    "Async Filter workers: 1\n" +
+                    "Async JIT Filter workers: 1\n" +
                             "  filter: not (l in [null,-1,1,5])\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
@@ -8412,12 +8412,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
-    @Test // TODO: this one should use jit
+    @Test
     public void testSelectWithJittedFilter10() throws Exception {
         assertPlan(
                 "create table tab ( s symbol, ts timestamp);",
                 "select * from tab where s in ( 'A', 'B' )",
-                "Async Filter workers: 1\n" +
+                "Async JIT Filter workers: 1\n" +
                         "  filter: s in [A,B]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
@@ -8826,12 +8826,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
-    @Test // TODO: this one should use jit
+    @Test
     public void testSelectWithJittedFilter9() throws Exception {
         assertPlan(
                 "create table tab ( l long, ts timestamp);",
                 "select * from tab where l in ( 100, 200 )",
-                "Async Filter workers: 1\n" +
+                "Async JIT Filter workers: 1\n" +
                         "  filter: l in [100,200]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +

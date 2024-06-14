@@ -91,7 +91,7 @@ public class NoOpGroupByTest extends AbstractCairoTest {
                     query,
                     "VirtualRecord\n" +
                             "  functions: [sym1,avgBid]\n" +
-                            "    Async Group By workers: 1\n" +
+                            "    Async JIT Group By workers: 1\n" +
                             "      keys: [sym1,sym2]\n" +
                             "      values: [avg(bid)]\n" +
                             "      filter: sym1 in [AA,BB]\n" +

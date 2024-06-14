@@ -123,7 +123,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     .put(node.token);
         }
 
-        if (predicateContext.isActive() && SqlKeywords.isInKeyword(predicateContext.rootNode.token) && !predicateContext.currentInSerialization) {
+        if (predicateContext.inOperationNode != null && !predicateContext.currentInSerialization) {
             return false;
         }
 
@@ -1000,17 +1000,17 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private void serializeIn() throws SqlException {
         predicateContext.currentInSerialization = true;
 
-        final ObjList<ExpressionNode> args = predicateContext.rootNode.args;
+        final ObjList<ExpressionNode> args = predicateContext.inOperationNode.args;
         final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
 
         if (args.size() < 3) {
-            traverseAlgo.traverse(predicateContext.rootNode.rhs, this);
-            traverseAlgo.traverse(predicateContext.rootNode.lhs, this);
+            traverseAlgo.traverse(predicateContext.inOperationNode.rhs, this);
+            traverseAlgo.traverse(predicateContext.inOperationNode.lhs, this);
             putOperator(EQ);
         }
 
         boolean firstElement = true;
-        for (int i = 0; i < predicateContext.rootNode.args.size() - 1; ++i) {
+        for (int i = 0; i < predicateContext.inOperationNode.args.size() - 1; ++i) {
             traverseAlgo.traverse(args.get(i), this);
             traverseAlgo.traverse(args.getLast(), this);
             putOperator(EQ);
@@ -1196,7 +1196,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         StaticSymbolTable symbolTable; // used for known symbol constant lookups
         PredicateType type;
         private ExpressionNode rootNode;
-        boolean currentInSerialization;
+        private ExpressionNode inOperationNode = null;
+        private boolean currentInSerialization = false;
 
         @Override
         public void clear() {
@@ -1222,6 +1223,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     singleBooleanColumn = true;
                 }
             }
+
+            if (SqlKeywords.isInKeyword(node.token)) {
+                inOperationNode = node;
+            }
         }
 
         public boolean onNodeVisited(final ExpressionNode node) throws SqlException {
@@ -1230,6 +1235,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 // We left the predicate.
                 rootNode = null;
                 predicateLeft = true;
+            }
+
+            if (node == inOperationNode) {
+                inOperationNode = null;
+                currentInSerialization = false;
             }
 
             switch (node.type) {
@@ -1296,6 +1306,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             hasArithmeticOperations = false;
             localTypesObserver.clear();
             currentInSerialization = false;
+            inOperationNode = null;
         }
 
         private void updateType(int position, int columnTypeTag) throws SqlException {
