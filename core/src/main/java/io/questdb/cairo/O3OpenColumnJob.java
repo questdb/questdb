@@ -461,12 +461,15 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // 'long long value'
                     // Which is longer than oooLen + dataLen
                     // To deal with unpredicatability of the dedup var col size run the dedup merged size calculation
-                    dstDataAppendOffset2 = dstDataAppendOffset1 + Vect.dedupMergeVarColumnLen(
+                    long dedupMergeVarColumnSize = columnTypeDriver.dedupMergeVarColumnSize(
                             timestampMergeIndexAddr,
                             timestampMergeIndexSize / TIMESTAMP_MERGE_ENTRY_BYTES,
                             srcAuxAddr + srcDataFixOffset - columnTypeDriver.getAuxVectorOffset(srcDataTop),
                             o3AuxAddr
                     );
+
+                    assert dedupMergeVarColumnSize >= 0;
+                    dstDataAppendOffset2 = dstDataAppendOffset1 + dedupMergeVarColumnSize;
                 }
             } else {
                 dstAuxAppendOffset2 = dstAuxAppendOffset1;

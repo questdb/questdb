@@ -846,7 +846,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             columnType,
                             columnSize,
                             columnTop,
-                            Math.abs(mappedAddress) - columnTop * columnSize,
+                            mappedAddress - columnTop * columnSize,
                             oooColAddress,
                             mappedAddress,
                             mapSize,

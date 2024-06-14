@@ -71,6 +71,21 @@ public class AssociativeCacheTest {
     }
 
     @Test
+    public void testClear() {
+        try (AssociativeCache<String> cache = createCache(8, 8)) {
+            cache.put("X", "1");
+            cache.put("Y", "2");
+            cache.put("Z", "3");
+
+            cache.clear();
+
+            Assert.assertNull(cache.poll("X"));
+            Assert.assertNull(cache.poll("Y"));
+            Assert.assertNull(cache.poll("Z"));
+        }
+    }
+
+    @Test
     public void testConcurrent() throws Exception {
         Assume.assumeTrue(cacheType == CacheType.CONCURRENT);
 
