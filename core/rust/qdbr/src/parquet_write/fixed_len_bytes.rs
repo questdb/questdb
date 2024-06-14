@@ -8,6 +8,18 @@ use crate::parquet_write::ParquetResult;
 
 use super::util::BinaryMaxMin;
 
+fn encode_plain_be<const N: usize>(
+    data: &[[u8; N]],
+    buffer: &mut Vec<u8>,
+    null_value: [u8; N],
+    stats: &mut BinaryMaxMin,
+) {
+    for x in data.into_iter().filter(|&&x| x != null_value) {
+        buffer.extend(x.iter().rev());
+        stats.update(x);
+    }
+}
+
 fn encode_plain<const N: usize>(
     data: &[[u8; N]],
     buffer: &mut Vec<u8>,
@@ -22,6 +34,7 @@ fn encode_plain<const N: usize>(
 
 pub fn bytes_to_page<const N: usize>(
     data: &[[u8; N]],
+    reverse: bool,
     column_top: usize,
     options: WriteOptions,
     primitive_type: PrimitiveType,
@@ -52,7 +65,12 @@ pub fn bytes_to_page<const N: usize>(
     encode_bool_iter(&mut buffer, deflevels_iter, options.version)?;
     let definition_levels_byte_length = buffer.len();
     let mut stats = BinaryMaxMin::new(&primitive_type);
-    encode_plain(data, &mut buffer, null_value, &mut stats);
+    if reverse {
+        encode_plain_be(data, &mut buffer, null_value, &mut stats);
+    } else {
+        encode_plain(data, &mut buffer, null_value, &mut stats);
+    }
+
     build_plain_page(
         buffer,
         num_rows,

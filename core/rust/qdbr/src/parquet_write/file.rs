@@ -452,9 +452,11 @@ fn chunk_to_page(
             )
         }
         ColumnType::Long128 | ColumnType::Uuid => {
+            let reversed = column.data_type == ColumnType::Uuid;
             let column: &[[u8; 16]] = unsafe { util::transmute_slice(column.primary_data) };
             fixed_len_bytes::bytes_to_page(
                 &column[lower_bound..upper_bound],
+                reversed,
                 column_top,
                 options,
                 primitive_type,
@@ -464,6 +466,7 @@ fn chunk_to_page(
             let column: &[[u8; 32]] = unsafe { util::transmute_slice(column.primary_data) };
             fixed_len_bytes::bytes_to_page(
                 &column[lower_bound..upper_bound],
+                false,
                 column_top,
                 options,
                 primitive_type,
