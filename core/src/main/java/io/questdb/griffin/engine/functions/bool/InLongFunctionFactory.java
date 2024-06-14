@@ -97,47 +97,56 @@ public class InLongFunctionFactory implements FunctionFactory {
         }
 
         if (runtimeConstCount == argCount || runtimeConstCount + constCount == argCount) {
-            return new InLongRuntimeConstFunction(args.getQuick(0), args, argPositions);
+            final IntList positions = new IntList();
+            positions.addAll(argPositions);
+            return new InLongRuntimeConstFunction(args.getQuick(0), new ObjList<>(args), positions);
         }
 
         // have to copy, args is mutable
         return new InLongVarFunction(new ObjList<>(args));
     }
 
-    private static void parseToLong(ObjList<Function> args, IntList argPositions, LongList outList) throws SqlException {
+    private static void parseToLong(
+            ObjList<Function> args,
+            IntList argPositions,
+            LongList outLongList
+    ) throws SqlException {
         for (int i = 1, n = args.size(); i < n; i++) {
-            Function func = args.getQuick(i);
-            long val;
-            switch (ColumnType.tagOf(func.getType())) {
-                case ColumnType.TIMESTAMP:
-                case ColumnType.LONG:
-                case ColumnType.INT:
-                case ColumnType.SHORT:
-                case ColumnType.BYTE:
-                    val = func.getLong(null);
-                    break;
-                case ColumnType.STRING:
-                case ColumnType.SYMBOL:
-                case ColumnType.NULL:
-                    CharSequence tsValue = func.getStrA(null);
-                    val = (tsValue != null) ? tryParseLong(tsValue, argPositions.getQuick(i)) : Numbers.LONG_NULL;
-                    break;
-                case ColumnType.VARCHAR:
-                    Utf8Sequence seq = func.getVarcharA(null);
-                    val = (seq != null) ? tryParseLong(seq.asAsciiCharSequence(), argPositions.getQuick(i)) : Numbers.LONG_NULL;
-                    break;
-                default:
-                    throw SqlException.inconvertibleTypes(
-                            argPositions.getQuick(i),
-                            func.getType(),
-                            ColumnType.nameOf(func.getType()),
-                            ColumnType.LONG,
-                            ColumnType.nameOf(ColumnType.LONG)
-                    );
-            }
-            outList.add(val);
+            outLongList.add(parseValue(argPositions, args.getQuick(i), i));
         }
-        outList.sort();
+        outLongList.sort();
+    }
+
+    private static long parseValue(IntList argPositions, Function func, int i) throws SqlException {
+        long val;
+        switch (ColumnType.tagOf(func.getType())) {
+            case ColumnType.TIMESTAMP:
+            case ColumnType.LONG:
+            case ColumnType.INT:
+            case ColumnType.SHORT:
+            case ColumnType.BYTE:
+                val = func.getLong(null);
+                break;
+            case ColumnType.STRING:
+            case ColumnType.SYMBOL:
+            case ColumnType.NULL:
+                CharSequence tsValue = func.getStrA(null);
+                val = (tsValue != null) ? tryParseLong(tsValue, argPositions.getQuick(i)) : Numbers.LONG_NULL;
+                break;
+            case ColumnType.VARCHAR:
+                Utf8Sequence seq = func.getVarcharA(null);
+                val = (seq != null) ? tryParseLong(seq.asAsciiCharSequence(), argPositions.getQuick(i)) : Numbers.LONG_NULL;
+                break;
+            default:
+                throw SqlException.inconvertibleTypes(
+                        argPositions.getQuick(i),
+                        func.getType(),
+                        ColumnType.nameOf(func.getType()),
+                        ColumnType.LONG,
+                        ColumnType.nameOf(ColumnType.LONG)
+                );
+        }
+        return val;
     }
 
     private static class InLongConstFunction extends NegatableBooleanFunction implements UnaryFunction {
@@ -170,38 +179,36 @@ public class InLongFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class InLongRuntimeConstFunction extends NegatableBooleanFunction implements UnaryFunction {
+    private static class InLongRuntimeConstFunction extends NegatableBooleanFunction implements MultiArgFunction {
         private final LongList inList;
         private final Function keyFunc;
-        private final ObjList<Function> valueFunctions;
         private final IntList valueFunctionPositions;
+        private final ObjList<Function> valueFunctions;
 
         public InLongRuntimeConstFunction(Function keyFunc, ObjList<Function> valueFunctions, IntList valueFunctionPositions) {
             this.keyFunc = keyFunc;
+            // value functions also contain key function at 0 index.
             this.valueFunctions = valueFunctions;
             this.valueFunctionPositions = valueFunctionPositions;
             this.inList = new LongList(valueFunctions.size() - 1);
         }
 
         @Override
-        public Function getArg() {
-            return keyFunc;
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            UnaryFunction.super.init(symbolTableSource, executionContext);
-            for (int i = 1, n = valueFunctions.size(); i < n; i++) {
-                valueFunctions.getQuick(i).init(symbolTableSource, executionContext);
-            }
-            inList.clear();
-            parseToLong(valueFunctions, valueFunctionPositions, inList);
+        public ObjList<Function> getArgs() {
+            return valueFunctions;
         }
 
         @Override
         public boolean getBool(Record rec) {
             long val = keyFunc.getLong(rec);
             return negated != inList.binarySearch(val, BinarySearch.SCAN_UP) >= 0;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            MultiArgFunction.super.init(symbolTableSource, executionContext);
+            inList.clear();
+            parseToLong(valueFunctions, valueFunctionPositions, inList);
         }
 
         @Override

@@ -25,10 +25,12 @@
 package io.questdb.test.griffin.engine.functions.finance;
 
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.finance.LevelTwoPriceFunctionFactory;
 import io.questdb.std.ObjList;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.test.tools.BindVariableTestTuple;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTest {
@@ -119,7 +121,47 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
                     "amount4, price4, amount5, price5, amount6, price6) from recent_trades\n" +
                     "limit -1;");
 
+            assertFailure(
+                    "[869] l2price requires arguments of type `DOUBLE`, or convertible to `DOUBLE`, not `STRING`.",
+                    "with recent_trades as\n" +
+                            "(\n" +
+                            "    select \n" +
+                            "    FIRST_VALUE(amount) over(partition by symbol order by timestamp rows between 1 preceding and 1 preceding) as amount1,\n" +
+                            "    FIRST_VALUE(amount) over(partition by symbol order by timestamp rows between 2 preceding and 2 preceding) as amount2,\n" +
+                            "    FIRST_VALUE(amount) over(partition by symbol order by timestamp rows between 3 preceding and 3 preceding) as amount3,\n" +
+                            "    FIRST_VALUE(price) over(partition by symbol order by timestamp rows between 1 preceding and 1 preceding) as price1,\n" +
+                            "    FIRST_VALUE(price) over(partition by symbol order by timestamp rows between 2 preceding and 2 preceding) as price2,\n" +
+                            "    FIRST_VALUE(price) over(partition by symbol order by timestamp rows between 3 preceding and 3 preceding) as price3\n" +
+                            "    from btc_trades\n" +
+                            "    where side = 'buy'\n" +
+                            "    limit -12\n" +
+                            ")\n" +
+                            "select l2price(0.0015, amount1, price1, amount2, 'string fail', amount3, price3),\n" +
+                            "l2price(0.0015, amount2, price2) from recent_trades"
+            );
         });
+    }
+
+    @Test
+    public void testBindVarTypeFailureErrorPosition() {
+        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
+        tuples.add(new BindVariableTestTuple(
+                "type failure",
+                "l2price\n" +
+                        "9.825714285714286\n",
+                bindVariableService -> {
+                    bindVariableService.setDouble(0, 8);
+                    bindVariableService.setDouble(1, 5.2);
+                    bindVariableService.setStr(2, "str fail");
+                    bindVariableService.setDouble(3, 23);
+                }
+        ));
+
+        try {
+            assertSql("select l2price(35, $1, $2, $3, 9.3, 42, 22.1), l2price(35, $4, 9.3, 42, 22.1)", tuples);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getMessage(), "[27] l2price requires arguments of type `DOUBLE`, or convertible to `DOUBLE`, not `STRING`");
+        }
     }
 
     @Test

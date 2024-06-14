@@ -34,6 +34,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.CharSequenceHashSet;
@@ -42,6 +43,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class InStrFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "in(Sv)";
@@ -55,14 +57,12 @@ public class InStrFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        int n = args.size();
+        final int n = args.size();
         if (n == 1) {
             return BooleanConstant.FALSE;
         }
-        ObjList<Function> deferredValueFunctions = null;
-        IntList deferredValuePositions = null;
 
-        final CharSequenceHashSet valueSet = new CharSequenceHashSet();
+        boolean allConst = true;
         for (int i = 1; i < n; i++) {
             Function func = args.getQuick(i);
             switch (ColumnType.tagOf(func.getType())) {
@@ -70,51 +70,67 @@ public class InStrFunctionFactory implements FunctionFactory {
                 case ColumnType.STRING:
                 case ColumnType.VARCHAR:
                 case ColumnType.SYMBOL:
-                    // the "undefined" case hinges on the fact it is "runtime constant" and that
-                    // all undefined bind variable would end up being deferred.
-                case ColumnType.UNDEFINED:
-                    if (func.isRuntimeConstant()) { // bind variables
-                        if (deferredValueFunctions == null) {
-                            deferredValueFunctions = new ObjList<>();
-                            deferredValuePositions = new IntList();
-                        }
-                        deferredValueFunctions.add(func);
-                        deferredValuePositions.add(argPositions.getQuick(i));
-                        continue;
-                    }
-                    CharSequence value = func.getStrA(null);
-                    if (value == null) {
-                        valueSet.addNull();
-                    }
-                    valueSet.add(Chars.toString(value));
-                    break;
                 case ColumnType.CHAR:
-                    valueSet.add(String.valueOf(func.getChar(null)));
+                case ColumnType.UNDEFINED:
                     break;
                 default:
-                    throw SqlException.$(argPositions.getQuick(i), "STRING constant expected");
+                    throw SqlException.position(argPositions.getQuick(i)).put("cannot compare STRING with type ").put(ColumnType.nameOf(func.getType()));
+            }
+
+            if (!func.isConstant()) {
+                allConst = false;
+
+                if (!func.isRuntimeConstant()) {
+                    // we should never get here because
+                    // FunctionParser rejects the SQL if the expression is not constant or runtime constant
+                    throw SqlException.position(argPositions.getQuick(i)).put("unsupported expression");
+                }
             }
         }
-        final Function var = args.getQuick(0);
-        if (var.isConstant() && deferredValueFunctions == null) {
-            return BooleanConstant.of(valueSet.contains(var.getStrA(null)));
+
+        if (allConst) {
+            final CharSequenceHashSet set = new CharSequenceHashSet();
+            parseToString(args, argPositions, set);
+
+            final Function arg = args.getQuick(0);
+            if (arg.isConstant()) {
+                return BooleanConstant.of(set.contains(arg.getStrA(null)));
+            }
+            return new ConstFunc(arg, set);
         }
-        return new InStrFunction(var, valueSet, deferredValueFunctions, deferredValuePositions);
+        final IntList positions = new IntList();
+        positions.addAll(argPositions);
+        return new RuntimeConstFunc(new ObjList<>(args), positions);
     }
 
-    private static class InStrFunction extends BooleanFunction implements UnaryFunction {
-        private final Function arg;
-        private final CharSequenceHashSet deferredSet;
-        private final ObjList<Function> deferredValueFunctions;
-        private final IntList deferredValuePositions;
-        private final CharSequenceHashSet valueSet;
+    private static void parseToString(ObjList<Function> args, IntList argPositions, CharSequenceHashSet set) throws SqlException {
+        set.clear();
+        final int n = args.size();
+        for (int i = 1; i < n; i++) {
+            Function func = args.getQuick(i);
+            switch (ColumnType.tagOf(func.getType())) {
+                case ColumnType.NULL:
+                case ColumnType.STRING:
+                case ColumnType.VARCHAR:
+                case ColumnType.SYMBOL:
+                    set.add(Chars.toString(func.getStrA(null)));
+                    break;
+                case ColumnType.CHAR:
+                    set.add(String.valueOf(func.getChar(null)));
+                    break;
+                default:
+                    throw SqlException.position(argPositions.getQuick(i)).put("cannot compare STRING with type ").put(ColumnType.nameOf(func.getType()));
+            }
+        }
+    }
 
-        public InStrFunction(Function arg, CharSequenceHashSet valueSet, ObjList<Function> deferredValueFunctions, IntList deferredValuePositions) {
+    private static class ConstFunc extends BooleanFunction implements UnaryFunction {
+        private final Function arg;
+        private final CharSequenceHashSet set;
+
+        public ConstFunc(Function arg, CharSequenceHashSet set) {
             this.arg = arg;
-            this.valueSet = valueSet;
-            this.deferredValueFunctions = deferredValueFunctions;
-            this.deferredSet = deferredValueFunctions != null ? new CharSequenceHashSet() : null;
-            this.deferredValuePositions = deferredValuePositions;
+            this.set = set;
         }
 
         @Override
@@ -124,49 +140,46 @@ public class InStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            CharSequence val = arg.getStrA(rec);
-            return valueSet.contains(val)
-                    || (deferredSet != null && deferredSet.contains(val));
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            arg.init(symbolTableSource, executionContext);
-            if (deferredValueFunctions != null) {
-                deferredSet.clear();
-                for (int i = 0, n = deferredValueFunctions.size(); i < n; i++) {
-                    Function func = deferredValueFunctions.getQuick(i);
-                    func.init(symbolTableSource, executionContext);
-                    // check the supported types, these types may mutate as bind variables get redefined
-                    switch (func.getType()) {
-                        case ColumnType.STRING:
-                        case ColumnType.CHAR:
-                        case ColumnType.VARCHAR:
-                        case ColumnType.NULL:
-                            deferredSet.add(func.getStrA(null));
-                            break;
-                        default:
-                            throw SqlException.inconvertibleTypes(
-                                    deferredValuePositions.getQuick(i),
-                                    func.getType(),
-                                    ColumnType.nameOf(func.getType()),
-                                    ColumnType.TIMESTAMP,
-                                    ColumnType.nameOf(ColumnType.TIMESTAMP)
-                            );
-                    }
-                }
-            }
+            final CharSequence val = arg.getStrA(rec);
+            return set.contains(val);
         }
 
         @Override
         public void toPlan(PlanSink sink) {
-            if (deferredValueFunctions != null) {
-                sink.val('(');
-            }
-            sink.val(arg).val(" in ").val(valueSet);
-            if (deferredValueFunctions != null) {
-                sink.val(" or ").val(arg).val(" in ").val(deferredValueFunctions).val(')');
-            }
+            sink.val(arg).val(" in ").val(set);
+        }
+    }
+
+    private static class RuntimeConstFunc extends BooleanFunction implements MultiArgFunction {
+        private final IntList argPositions;
+        private final ObjList<Function> args;
+        private final CharSequenceHashSet set = new CharSequenceHashSet();
+
+        public RuntimeConstFunc(ObjList<Function> args, IntList argPositions) {
+            this.args = args;
+            this.argPositions = argPositions;
+        }
+
+        @Override
+        public ObjList<Function> getArgs() {
+            return args;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            final CharSequence val = args.getQuick(0).getStrA(rec);
+            return set.contains(val);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            MultiArgFunction.super.init(symbolTableSource, executionContext);
+            parseToString(args, argPositions, set);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(args.getQuick(0)).val(" in ").val(args, 1);
         }
     }
 }

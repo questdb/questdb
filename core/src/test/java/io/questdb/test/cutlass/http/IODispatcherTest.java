@@ -5768,6 +5768,21 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testNoMetadataInTextExport() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine) -> {
+                    CharSequenceObjHashMap<String> queryParams = new CharSequenceObjHashMap<>();
+                    queryParams.put("nm", "true");
+                    queryParams.put("query", "select 42 from long_sequence(1);");
+                    testHttpClient.assertGet("/exp", "42\r\n", queryParams, null, null);
+                });
+    }
+
+    @Test
     public void testPostRequestToGetProcessor() throws Exception {
         testImport(
                 "HTTP/1.1 404 Not Found\r\n" +
