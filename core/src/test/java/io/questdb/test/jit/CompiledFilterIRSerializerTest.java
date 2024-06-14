@@ -787,15 +787,17 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test
     public void testIn() throws Exception {
         serialize("anint IN (1, 2, 3)");
-        assertIR("(i32 3L)(i32 anint)(=)(i32 2L)(i32 anint)(=)(||)(i32 1L)(i32 anint)(=)(||)(ret)");
+        assertIR("(i32 3L)(i32 anint)(=)(i32 2L)(i32 anint)(=)(i32 1L)(i32 anint)(=)(||)(||)(ret)");
         serialize("anint IN (1)");
         assertIR("(i32 1L)(i32 anint)(=)(ret)");
         serialize("anint IN (-1, 0, 1)");
-        assertIR("(i32 1L)(i32 anint)(=)(i32 0L)(i32 anint)(=)(||)(i32 -1L)(i32 anint)(=)(||)(ret)");
+        assertIR("(i32 1L)(i32 anint)(=)(i32 0L)(i32 anint)(=)(i32 -1L)(i32 anint)(=)(||)(||)(ret)");
         serialize("anint <> NULL AND anint IN (4, 5)");
         assertIR("(i32 5L)(i32 anint)(=)(i32 4L)(i32 anint)(=)(||)(i32 -2147483648L)(i32 anint)(<>)(&&)(ret)");
         serialize("-anint IN (-1)");
         assertIR("(i32 -1L)(i32 anint)(neg)(=)(ret)");
+        serialize("anint NOT IN (1, 2, 3)");
+        assertIR("(i32 3L)(i32 anint)(=)(i32 2L)(i32 anint)(=)(i32 1L)(i32 anint)(=)(||)(||)(!)(ret)");
     }
 
     @Test

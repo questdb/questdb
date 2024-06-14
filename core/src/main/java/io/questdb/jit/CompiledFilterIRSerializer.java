@@ -1009,16 +1009,16 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             putOperator(EQ);
         }
 
-        boolean firstElement = true;
+        int orCount = -1;
         for (int i = 0; i < predicateContext.inOperationNode.args.size() - 1; ++i) {
             traverseAlgo.traverse(args.get(i), this);
             traverseAlgo.traverse(args.getLast(), this);
             putOperator(EQ);
-            if (firstElement) {
-                firstElement = false;
-            } else {
-                putOperator(OR);
-            }
+            orCount++;
+        }
+
+        for (int i = 0; i < orCount; ++i) {
+            putOperator(OR);
         }
     }
 
