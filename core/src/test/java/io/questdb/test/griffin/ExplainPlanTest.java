@@ -6293,8 +6293,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
             // no where clause, distinct constant
             assertPlanNoLeakCheck("SELECT count_distinct(10) FROM test",
                     "Count\n" +
-                            "    GroupBy vectorized: false\n" +
+                            "    Async Group By workers: 1\n" +
                             "      keys: [10]\n" +
+                            "      filter: null\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: test\n");
@@ -6954,12 +6955,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
-    @Test // TODO: this should use Count factory same as queries above
+    @Test
     public void testSelectCount3() throws Exception {
         assertPlan(
                 "create table a ( i int, d double)",
                 "select count(2) from a",
-                "GroupBy vectorized: false\n" +
+                "GroupBy vectorized: true workers: 1\n" +
                         "  values: [count(*)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +

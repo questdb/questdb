@@ -3436,7 +3436,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return generateSampleBy(model, executionContext, sampleByNode, model.getSampleByUnit());
         }
 
-        RecordCursorFactory factory = null;
+         RecordCursorFactory baseFactory = generateSubQuery(model, executionContext);
+        final boolean baseFactorySupportsFrames = baseFactory.supportsPageFrameCursor();
+        final RecordMetadata baseFactoryMetadata = baseFactory.getMetadata();
+
         try {
             ObjList<QueryColumn> columns;
             ExpressionNode columnExpr;
@@ -3450,7 +3453,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // check if count() was not aliased, if it was, we need to generate new metadata, bummer
                     final RecordMetadata metadata = isCountKeyword(columnName) ? CountRecordCursorFactory.DEFAULT_COUNT_METADATA :
                             new GenericRecordMetadata().add(new TableColumnMetadata(Chars.toString(columnName), ColumnType.LONG));
-                    return new CountRecordCursorFactory(metadata, generateSubQuery(model, executionContext));
+                    return new CountRecordCursorFactory(metadata, baseFactory);
                 }
             }
 
@@ -3459,10 +3462,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             arrayColumnTypes.clear();
             tempKeyKinds.clear();
 
-            boolean pageFramingSupported = false;
             boolean specialCaseKeys = false;
 
-            QueryModel.backupWhereClause(expressionNodePool, model);
+//            QueryModel.backupWhereClause(expressionNodePool, model);
 
             // check for special case time function aggregations
             final QueryModel nested = model.getNestedModel();
@@ -3476,11 +3478,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             && columnExpr.rhs.type == LITERAL
             ) {
                 specialCaseKeys = true;
-                factory = generateSubQuery(nested, executionContext);
-                pageFramingSupported = factory.supportsPageFrameCursor();
-                if (pageFramingSupported) {
+                if (baseFactorySupportsFrames) {
                     // find position of the hour() argument in the factory meta
-                    tempKeyIndexesInBase.add(factory.getMetadata().getColumnIndex(columnExpr.rhs.token));
+                    tempKeyIndexesInBase.add(baseFactoryMetadata.getColumnIndex(columnExpr.rhs.token));
 
                     // find position of hour() alias in selected columns
                     // also make sure there are no other literal column than our function reference
@@ -3494,30 +3494,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 tempKeyKinds.add(GKK_HOUR_INT);
                                 arrayColumnTypes.add(ColumnType.INT);
                             } else {
-                                // there is something else here, fallback to default implementation
-                                pageFramingSupported = false;
                                 break;
                             }
                         }
                     }
-                } else {
-                    factory = Misc.free(factory);
                 }
             }
-
-            if (factory == null) {
-                if (specialCaseKeys) {
-                    QueryModel.restoreWhereClause(expressionNodePool, model);
-                }
-                factory = generateSubQuery(model, executionContext);
-                pageFramingSupported = factory.supportsPageFrameCursor();
-            }
-
-            RecordMetadata metadata = factory.getMetadata();
 
             final boolean enableParallelGroupBy = configuration.isSqlParallelGroupByEnabled();
             // Inspect model for possibility of vector aggregate intrinsics.
-            if (enableParallelGroupBy && pageFramingSupported && assembleKeysAndFunctionReferences(columns, metadata, !specialCaseKeys)) {
+            if (enableParallelGroupBy && baseFactorySupportsFrames && assembleKeysAndFunctionReferences(columns, baseFactoryMetadata, !specialCaseKeys)) {
                 // Create metadata from everything we've gathered.
                 GenericRecordMetadata meta = new GenericRecordMetadata();
 
@@ -3535,7 +3521,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         type,
                                         false,
                                         0,
-                                        metadata.isSymbolTableStatic(indexInBase),
+                                        baseFactoryMetadata.isSymbolTableStatic(indexInBase),
                                         null
                                 )
                         );
@@ -3575,7 +3561,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (tempKeyIndexesInBase.size() == 0) {
                     return new GroupByNotKeyedVectorRecordCursorFactory(
                             configuration,
-                            factory,
+                            baseFactory,
                             meta,
                             executionContext.getSharedWorkerCount(),
                             tempVaf
@@ -3606,7 +3592,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                     return new GroupByRecordCursorFactory(
                             configuration,
-                            factory,
+                            baseFactory,
                             meta,
                             arrayColumnTypes,
                             executionContext.getSharedWorkerCount(),
@@ -3621,18 +3607,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 Misc.freeObjList(tempVaf);
             }
 
-            if (specialCaseKeys) {
-                // uh-oh, we had special case keys, but could not find implementation for the functions
-                // release factory we created unnecessarily
-                factory = Misc.free(factory);
-                // create factory on top level model
-                QueryModel.restoreWhereClause(expressionNodePool, model);
-                factory = generateSubQuery(model, executionContext);
-                // and reset metadata
-                metadata = factory.getMetadata();
-            }
-
-            final int timestampIndex = getTimestampIndex(model, factory);
+            final int timestampIndex = getTimestampIndex(model, baseFactory);
 
             keyTypes.clear();
             valueTypes.clear();
@@ -3645,7 +3620,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             try {
                 GroupByUtils.prepareGroupByFunctions(
                         model,
-                        metadata,
+                        baseFactoryMetadata,
                         functionParser,
                         executionContext,
                         groupByFunctions,
@@ -3666,7 +3641,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 GroupByUtils.prepareGroupByRecordFunctions(
                         sqlNodeStack,
                         model,
-                        metadata,
+                        baseFactoryMetadata,
                         listColumnFilterA,
                         groupByFunctions,
                         groupByFunctionPositions,
@@ -3685,21 +3660,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 throw e;
             }
 
-            if (enableParallelGroupBy
+            if (
+                    enableParallelGroupBy
                     && SqlUtil.isParallelismSupported(keyFunctions)
-                    && GroupByUtils.isParallelismSupported(groupByFunctions)) {
-                boolean supportsParallelism = factory.supportsPageFrameCursor();
+                    && GroupByUtils.isParallelismSupported(groupByFunctions)
+            ) {
+                boolean supportsParallelism = baseFactory.supportsPageFrameCursor();
                 CompiledFilter compiledFilter = null;
                 MemoryCARW bindVarMemory = null;
                 ObjList<Function> bindVarFunctions = null;
                 Function filter = null;
                 // Try to steal the filter from the nested factory, if possible.
                 // We aim for simple cases such as select key, avg(value) from t where value > 0
-                if (!supportsParallelism && (factory instanceof StealableFilterRecordCursorFactory)) {
-                    StealableFilterRecordCursorFactory filterFactory = (StealableFilterRecordCursorFactory) factory;
+                if (!supportsParallelism && (baseFactory instanceof StealableFilterRecordCursorFactory)) {
+                    StealableFilterRecordCursorFactory filterFactory = (StealableFilterRecordCursorFactory) baseFactory;
                     if (filterFactory.supportsFilterStealing()) {
-                        factory = factory.getBaseFactory();
-                        assert factory.supportsPageFrameCursor();
+                        baseFactory = baseFactory.getBaseFactory();
+                        assert baseFactory.supportsPageFrameCursor();
                         compiledFilter = filterFactory.getCompiledFilter();
                         bindVarMemory = filterFactory.getBindVarMemory();
                         bindVarFunctions = filterFactory.getBindVarFunctions();
@@ -3724,7 +3701,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 asm,
                                 configuration,
                                 executionContext.getMessageBus(),
-                                factory,
+                                baseFactory,
                                 groupByMetadata,
                                 groupByFunctions,
                                 compileWorkerGroupByFunctionsConditionally(
@@ -3732,7 +3709,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         model,
                                         groupByFunctions,
                                         executionContext.getSharedWorkerCount(),
-                                        factory.getMetadata()
+                                        baseFactory.getMetadata()
                                 ),
                                 valueTypesCopy.getColumnCount(),
                                 compiledFilter,
@@ -3745,7 +3722,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         filter,
                                         executionContext.getSharedWorkerCount(),
                                         nested.getWhereClause(),
-                                        factory.getMetadata()
+                                        baseFactory.getMetadata()
                                 ),
                                 executionContext.getSharedWorkerCount()
                         );
@@ -3755,7 +3732,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             asm,
                             configuration,
                             executionContext.getMessageBus(),
-                            factory,
+                            baseFactory,
                             groupByMetadata,
                             listColumnFilterCopy,
                             keyTypesCopy,
@@ -3766,7 +3743,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     model,
                                     groupByFunctions,
                                     executionContext.getSharedWorkerCount(),
-                                    factory.getMetadata()
+                                    baseFactory.getMetadata()
                             ),
                             keyFunctions,
                             compileWorkerKeyFunctionsConditionally(
@@ -3774,7 +3751,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     keyFunctions,
                                     executionContext.getSharedWorkerCount(),
                                     keyFunctionNodes,
-                                    factory.getMetadata()
+                                    baseFactory.getMetadata()
                             ),
                             recordFunctions,
                             compiledFilter,
@@ -3787,7 +3764,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     filter,
                                     executionContext.getSharedWorkerCount(),
                                     nested.getWhereClause(),
-                                    factory.getMetadata()
+                                    baseFactory.getMetadata()
                             ),
                             executionContext.getSharedWorkerCount()
                     );
@@ -3799,7 +3776,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return new GroupByNotKeyedRecordCursorFactory(
                         asm,
                         configuration,
-                        factory,
+                        baseFactory,
                         groupByMetadata,
                         groupByFunctions,
                         valueTypes.getColumnCount()
@@ -3809,7 +3786,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return new io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory(
                     asm,
                     configuration,
-                    factory,
+                    baseFactory,
                     listColumnFilterA,
                     keyTypes,
                     valueTypes,
@@ -3819,7 +3796,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     recordFunctions
             );
         } catch (Throwable e) {
-            Misc.free(factory);
+            Misc.free(baseFactory);
             throw e;
         }
     }
@@ -4634,7 +4611,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         boolean requiresTimestamp = joinsRequiringTimestamp[model.getJoinType()];
         final GenericRecordMetadata myMeta = new GenericRecordMetadata();
-        boolean framingSupported;
         try {
             if (requiresTimestamp) {
                 executionContext.pushTimestampRequiredFlag(true);
@@ -4643,44 +4619,39 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             boolean contextTimestampRequired = executionContext.isTimestampRequired();
             // some "sample by" queries don't select any cols but needs timestamp col selected
             // for example "select count() from x sample by 1h" implicitly needs timestamp column selected
-            if (topDownColumnCount > 0 || contextTimestampRequired || model.isUpdate()) {
-                framingSupported = true;
-                for (int i = 0; i < topDownColumnCount; i++) {
-                    int columnIndex = metadata.getColumnIndexQuiet(topDownColumns.getQuick(i).getName());
-                    int type = metadata.getColumnType(columnIndex);
-                    int typeSize = ColumnType.sizeOf(type);
+            for (int i = 0; i < topDownColumnCount; i++) {
+                int columnIndex = metadata.getColumnIndexQuiet(topDownColumns.getQuick(i).getName());
+                int type = metadata.getColumnType(columnIndex);
+                int typeSize = ColumnType.sizeOf(type);
 
-                    columnIndexes.add(columnIndex);
-                    columnSizes.add(type == ColumnType.NULL ? 0 : Numbers.msb(typeSize));
+                columnIndexes.add(columnIndex);
+                columnSizes.add(type == ColumnType.NULL ? 0 : Numbers.msb(typeSize));
 
-                    myMeta.add(new TableColumnMetadata(
-                            Chars.toString(topDownColumns.getQuick(i).getName()),
-                            type,
-                            metadata.isColumnIndexed(columnIndex),
-                            metadata.getIndexValueBlockCapacity(columnIndex),
-                            metadata.isSymbolTableStatic(columnIndex),
-                            metadata.getMetadata(columnIndex)
-                    ));
+                myMeta.add(new TableColumnMetadata(
+                        Chars.toString(topDownColumns.getQuick(i).getName()),
+                        type,
+                        metadata.isColumnIndexed(columnIndex),
+                        metadata.getIndexValueBlockCapacity(columnIndex),
+                        metadata.isSymbolTableStatic(columnIndex),
+                        metadata.getMetadata(columnIndex)
+                ));
 
-                    if (columnIndex == readerTimestampIndex) {
-                        myMeta.setTimestampIndex(myMeta.getColumnCount() - 1);
-                    }
-                }
-
-                // select timestamp when it is required but not already selected
-                if (readerTimestampIndex != -1 && myMeta.getTimestampIndex() == -1 && contextTimestampRequired) {
-                    myMeta.add(new TableColumnMetadata(
-                            metadata.getColumnName(readerTimestampIndex),
-                            metadata.getColumnType(readerTimestampIndex),
-                            metadata.getMetadata(readerTimestampIndex)
-                    ));
+                if (columnIndex == readerTimestampIndex) {
                     myMeta.setTimestampIndex(myMeta.getColumnCount() - 1);
-
-                    columnIndexes.add(readerTimestampIndex);
-                    columnSizes.add((Numbers.msb(ColumnType.TIMESTAMP)));
                 }
-            } else {
-                framingSupported = false;
+            }
+
+            // select timestamp when it is required but not already selected
+            if (readerTimestampIndex != -1 && myMeta.getTimestampIndex() == -1 && contextTimestampRequired) {
+                myMeta.add(new TableColumnMetadata(
+                        metadata.getColumnName(readerTimestampIndex),
+                        metadata.getColumnType(readerTimestampIndex),
+                        metadata.getMetadata(readerTimestampIndex)
+                ));
+                myMeta.setTimestampIndex(myMeta.getColumnCount() - 1);
+
+                columnIndexes.add(readerTimestampIndex);
+                columnSizes.add((Numbers.msb(ColumnType.TIMESTAMP)));
             }
         } finally {
             if (requiresTimestamp) {
@@ -4942,9 +4913,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             }
                         } else {
                             if (filter == null) {
-                                rcf = new SymbolIndexRowCursorFactory(keyColumnIndex, symbolKey, true, indexDirection, null);
+                                rcf = new SymbolIndexRowCursorFactory(
+                                        keyColumnIndex,
+                                        symbolKey,
+                                        true,
+                                        indexDirection,
+                                        null
+                                );
                             } else {
-                                rcf = new SymbolIndexFilteredRowCursorFactory(keyColumnIndex, symbolKey, filter, true, indexDirection, columnIndexes, null);
+                                rcf = new SymbolIndexFilteredRowCursorFactory(
+                                        keyColumnIndex,
+                                        symbolKey,
+                                        filter,
+                                        true,
+                                        indexDirection,
+                                        columnIndexes,
+                                        null
+                                );
                             }
                         }
 
@@ -5110,7 +5095,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     rowFactory,
                     false,
                     null,
-                    framingSupported,
+                    true,
                     columnIndexes,
                     columnSizes,
                     supportsRandomAccess
@@ -5140,7 +5125,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     rowCursorFactory,
                     orderDescendingByDesignatedTimestampOnly || isOrderByDesignatedTimestampOnly(model),
                     null,
-                    framingSupported,
+                    true,
                     columnIndexes,
                     columnSizes,
                     supportsRandomAccess

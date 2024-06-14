@@ -217,6 +217,11 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
         private long partitionLo;
 
         @Override
+        public int getColumnCount() {
+            return pageSizes.size() / 2;
+        }
+
+        @Override
         public BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {
             return reader.getBitmapIndexReader(partitionIndex, columnIndexes.getQuick(columnIndex), direction);
         }

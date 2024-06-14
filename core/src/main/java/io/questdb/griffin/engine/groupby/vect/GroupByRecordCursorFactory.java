@@ -386,6 +386,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 PageFrame frame;
                 while ((frame = pageFrameCursor.next()) != null) {
                     final long keyAddress = frame.getPageAddress(keyColumnIndex);
+                    final long frameRowCount = frame.getPartitionHi() - frame.getPartitionLo();
                     for (int i = 0; i < vafCount; i++) {
                         final VectorAggregateFunction vaf = vafList.getQuick(i);
                         // when column index = -1 we assume that vector function does not have value
@@ -401,10 +402,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         // need to rethink our way of computing size for the count. This would be either type checking column
                         // 0 and working out size differently or finding any fixed-size column and using that.
                         final long valueAddress = columnIndex > -1 ? frame.getPageAddress(columnIndex) : 0;
-                        final int pageColIndex = columnIndex > -1 ? columnIndex : 0;
-                        final int columnSizeShr = frame.getColumnShiftBits(pageColIndex);
-                        final long valueAddressSize = frame.getPageSize(pageColIndex);
-
                         while (true) {
                             long cursor = pubSeq.next();
                             if (cursor < 0) {
@@ -415,10 +412,10 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                     final int slot = perWorkerLocks.acquireSlot(workerId, circuitBreaker);
                                     try {
                                         if (keyAddress == 0) {
-                                            vaf.aggregate(valueAddress, valueAddressSize, columnSizeShr, slot);
+                                            vaf.aggregate(valueAddress, frameRowCount, slot);
                                         } else {
                                             long oldSize = Rosti.getAllocMemory(pRosti[slot]);
-                                            if (!vaf.aggregate(pRosti[slot], keyAddress, valueAddress, valueAddressSize, columnSizeShr, slot)) {
+                                            if (!vaf.aggregate(pRosti[slot], keyAddress, valueAddress, frameRowCount)) {
                                                 oomCounter.incrementAndGet();
                                             }
                                             raf.updateMemoryUsage(pRosti[slot], oldSize);
@@ -440,14 +437,13 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                             null,
                                             0,
                                             valueAddress,
-                                            valueAddressSize,
-                                            columnSizeShr,
                                             startedCounter,
                                             doneLatch,
                                             oomCounter,
                                             null,
                                             perWorkerLocks,
-                                            sharedCircuitBreaker
+                                            sharedCircuitBreaker,
+                                            frameRowCount
                                     );
                                 } else {
                                     entry.of(
@@ -455,14 +451,13 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                             pRosti,
                                             keyAddress,
                                             valueAddress,
-                                            valueAddressSize,
-                                            columnSizeShr,
                                             startedCounter,
                                             doneLatch,
                                             oomCounter,
                                             raf,
                                             perWorkerLocks,
-                                            sharedCircuitBreaker
+                                            sharedCircuitBreaker,
+                                            frameRowCount
                                     );
                                 }
                                 queue.get(cursor).entry = entry;

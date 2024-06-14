@@ -222,6 +222,11 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
         }
 
         @Override
+        public int getColumnCount() {
+            return columnCount;
+        }
+
+        @Override
         public int getColumnShiftBits(int columnIndex) {
             return columnSizes.getQuick(columnIndex);
         }
