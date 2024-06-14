@@ -320,5 +320,10 @@ public class StringTypeDriver implements ColumnTypeDriver {
 
         Vect.shiftCopyFixedSizeColumnData(shift, src, srcLo, srcHi + 1, dstAddr);
     }
+
+    @Override
+    public long dedupMergeVarColumnSize(long mergeIndexAddr, long mergeIndexCount, long srcDataFixAddr, long srcOooFixAddr) {
+        return Vect.dedupMergeStrBinColumnSize(mergeIndexAddr, mergeIndexCount, srcDataFixAddr, srcOooFixAddr);
+    }
 }
 
