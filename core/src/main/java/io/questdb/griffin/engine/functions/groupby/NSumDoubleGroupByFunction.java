@@ -54,9 +54,9 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
             sum(mapValue, value, 0, 0);
             mapValue.putLong(valueIndex + 2, 1);
         } else {
-            mapValue.putDouble(valueIndex, 0);             // sum = 0
+            mapValue.putDouble(valueIndex, 0); // sum = 0
             mapValue.putDouble(valueIndex + 1, 0.0); // c = 0
-            mapValue.putLong(valueIndex + 2, 0);     // finite count = 0
+            mapValue.putLong(valueIndex + 2, 0); // finite count = 0
         }
     }
 

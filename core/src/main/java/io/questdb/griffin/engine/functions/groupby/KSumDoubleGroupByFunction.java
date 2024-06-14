@@ -53,7 +53,7 @@ public class KSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
             mapValue.putDouble(valueIndex, value);
             mapValue.putLong(valueIndex + 2, 1);
         } else {
-            mapValue.putDouble(valueIndex, 0);         // sum = 0
+            mapValue.putDouble(valueIndex, 0); // sum = 0
             mapValue.putLong(valueIndex + 2, 0); // finite count = 0
         }
         mapValue.putDouble(valueIndex + 1, 0.0); // c = 0
