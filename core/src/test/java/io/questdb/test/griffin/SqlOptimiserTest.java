@@ -157,7 +157,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String query = "select LAST(ts), x from y";
             final QueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose ts, x from (select [ts, x] from y timestamp (ts)) order by ts desc limit 1", model.toString0());
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "Limit lo: 1\n" +
                             "    DataFrame\n" +
