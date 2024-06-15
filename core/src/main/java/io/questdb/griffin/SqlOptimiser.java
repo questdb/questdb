@@ -3804,7 +3804,7 @@ public class SqlOptimiser implements Mutable {
     /**
      Rewrites
      SELECT LAST(timestamp) FROM table_name;
-     into query which can is optimised search
+     into query which  can is optimised search
      SELECT timestamp from (SELECT timestamp from table_name order by timestamp) limit 1
      This enables FrameBackwardScan for aggregation queries containing LAST keyword
      */
