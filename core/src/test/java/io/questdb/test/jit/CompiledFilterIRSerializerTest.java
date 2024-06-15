@@ -220,7 +220,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         Map<String, String[]> typeToColumn = new HashMap<>();
         typeToColumn.put("i8", new String[]{"aboolean", "abyte", "ageobyte"});
         typeToColumn.put("i16", new String[]{"ashort", "ageoshort", "achar"});
-        typeToColumn.put("i32", new String[]{"anint", "ageoint"/*, "asymbol"*/});
+        typeToColumn.put("i32", new String[]{"anint", "ageoint", "asymbol"});
         typeToColumn.put("i64", new String[]{"along", "ageolong", "adate", "atimestamp"});
         typeToColumn.put("i128", new String[]{"auuid", "along128"});
         typeToColumn.put("f32", new String[]{"afloat"});
@@ -228,8 +228,8 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
         for (String type : typeToColumn.keySet()) {
             for (String col : typeToColumn.get(type)) {
-                serialize(col + " < " + col);
-                assertIR("different results for " + type, "(" + type + " " + col + ")(" + type + " " + col + ")(<)(ret)");
+                serialize(col + " = " + col);
+                assertIR("different results for " + type, "(" + type + " " + col + ")(" + type + " " + col + ")(=)(ret)");
             }
         }
     }
@@ -296,6 +296,11 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
             serialize(name + " = " + constant);
             assertIR("different results for " + name, "(" + type + " " + value + ")(" + type + " " + name + ")(=)(ret)");
         }
+    }
+
+    @Test(expected = SqlException.class)
+    public void testInvalidTimestampLiteral() throws Exception {
+        serialize("atimestamp > ''");
     }
 
     @Test(expected = SqlException.class)
@@ -516,6 +521,22 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertIR("(string_header astring)(i32 -1L)(<>)(ret)");
         serialize("null = astring");
         assertIR("(string_header astring)(i32 -1L)(=)(ret)");
+    }
+
+    @Test
+    public void testTimestampLiteral() throws Exception {
+        serialize("atimestamp = '2023-02-11T11:12:22.116234Z'");
+        assertIR("(i64 1676113942116234L)(i64 atimestamp)(=)(ret)");
+        serialize("atimestamp >= '2023-02-11T11:12:22'");
+        assertIR("(i64 1676113942000000L)(i64 atimestamp)(>=)(ret)");
+        serialize("atimestamp <= '2023-02-11T11'");
+        assertIR("(i64 1676113200000000L)(i64 atimestamp)(<=)(ret)");
+        serialize("atimestamp > '2023-02-11'");
+        assertIR("(i64 1676073600000000L)(i64 atimestamp)(>)(ret)");
+        serialize("atimestamp < '2023-02'");
+        assertIR("(i64 1675209600000000L)(i64 atimestamp)(<)(ret)");
+        serialize("atimestamp != '2023'");
+        assertIR("(i64 1672531200000000L)(i64 atimestamp)(<>)(ret)");
     }
 
     @Test
