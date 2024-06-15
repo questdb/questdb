@@ -133,6 +133,10 @@ public class PGWireServer implements Closeable {
         }
     }
 
+    public void clearSelectCache() {
+        typesAndSelectCache.clear();
+    }
+
     @Override
     public void close() {
         Misc.free(dispatcher);

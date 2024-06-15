@@ -38,8 +38,11 @@ public class NoOpAssociativeCache<V> implements AssociativeCache<V> {
     }
 
     @Override
+    public void clear() {
+    }
+
+    @Override
     public void close() {
-        // no-op
     }
 
     @Override
