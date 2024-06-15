@@ -1067,7 +1067,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     private static void runO3PartitionPurgeJob() {
         engine.releaseAllReaders();
         engine.releaseAllWriters();
-        try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), engine.getSnapshotAgent(), 1)) {
+        try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, engine.getSnapshotAgent(), 1)) {
             while (purgeJob.run(0)) {
                 Os.pause();
             }
@@ -1076,7 +1076,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     private void assertUpdateFailsBecausePartitionIsReadOnly(String updateSql, String tableName, String partitionName) {
         try {
-            assertException(updateSql);
+            assertExceptionNoLeakCheck(updateSql);
         } catch (CairoException e) {
             TestUtils.assertContains(
                     "cannot update read-only partition [table=" + tableName + ", partitionTimestamp=" + partitionName + "T00:00:00.000Z]",

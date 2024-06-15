@@ -277,6 +277,15 @@ public class TimestampQueryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertAsSelectTimestampVarcharCast() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (l long, t timestamp) timestamp(t) partition by DAY");
+            insert("insert into x select 1, '2024-02-27T00:00:00'::varchar");
+            assertSql("l\tt\n1\t2024-02-27T00:00:00.000000Z\n", "select * from x");
+        });
+    }
+
+    @Test
     public void testLMoreThanOrEqualsToTimestampFormatYearOnlyPositiveTest1() throws Exception {
         assertMemoryLeak(() -> {
             //create table
@@ -773,15 +782,6 @@ public class TimestampQueryTest extends AbstractCairoTest {
                 "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
                 "from long_sequence(48L)", "min\tmax\n" +
                 "2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n", false, true, false);
-    }
-
-    @Test
-    public void testInsertAsSelectTimestampVarcharCast() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table x (l long, t timestamp) timestamp(t) partition by DAY");
-            insert("insert into x select 1, '2024-02-27T00:00:00'::varchar");
-            assertSql("l\tt\n1\t2024-02-27T00:00:00.000000Z\n", "select * from x");
-        });
     }
 
     @Test
@@ -1303,7 +1303,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     "from long_sequence(48L)");
 
             assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts > 'invalid'");
-            assertTimestampTtFailedQuery("STRING constant expected", "select min(nts), max(nts) from tt where '2020-01-01' in ( NaN)");
+            assertTimestampTtFailedQuery("cannot compare STRING with type DOUBLE", "select min(nts), max(nts) from tt where '2020-01-01' in ( NaN)");
         });
     }
 

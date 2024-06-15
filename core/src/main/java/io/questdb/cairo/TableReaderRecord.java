@@ -304,8 +304,7 @@ public class TableReaderRecord implements Record, Sinkable {
     }
 
     @Override
-    @Nullable
-    public Utf8Sequence getVarcharB(int col) {
+    public @Nullable Utf8Sequence getVarcharB(int col) {
         return getVarchar(col, 2);
     }
 
@@ -356,10 +355,8 @@ public class TableReaderRecord implements Record, Sinkable {
                 rowNum,
                 TableReader.getPrimaryColumnIndex(columnBase, col)
         );
-        return VarcharTypeDriver.getValue(
-                rowNum,
-                reader.getColumn(absoluteColumnIndex),
-                reader.getColumn(absoluteColumnIndex + 1),
+        return VarcharTypeDriver.getSplitValue(
+                reader.getColumn(absoluteColumnIndex + 1), reader.getColumn(absoluteColumnIndex), rowNum,
                 ab
         );
     }

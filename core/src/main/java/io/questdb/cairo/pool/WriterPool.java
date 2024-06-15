@@ -69,7 +69,7 @@ public class WriterPool extends AbstractPool {
     public static final String OWNERSHIP_REASON_RELEASED = "released";
     public static final String OWNERSHIP_REASON_UNKNOWN = "unknown";
     static final String OWNERSHIP_REASON_WRITER_ERROR = "writer error";
-    private final static long ENTRY_OWNER = Unsafe.getFieldOffset(Entry.class, "owner");
+    private static final long ENTRY_OWNER = Unsafe.getFieldOffset(Entry.class, "owner");
     private static final Log LOG = LogFactory.getLog(WriterPool.class);
     private static final long QUEUE_PROCESSING_OWNER = -2L;
     private final MicrosecondClock clock;

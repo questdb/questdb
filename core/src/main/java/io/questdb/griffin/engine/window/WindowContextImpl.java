@@ -37,7 +37,6 @@ public class WindowContextImpl implements WindowContext, Mutable {
     private boolean baseSupportsRandomAccess;
     private boolean empty = true;
     private int exclusionKind;
-
     private int exclusionKindPos;
     private int framingMode;
     private int orderByDirection;
@@ -50,7 +49,6 @@ public class WindowContextImpl implements WindowContext, Mutable {
     private int rowsHiKindPos;
     private long rowsLo;
     private int rowsLoKindPos;
-
     private int timestampIndex;
 
     @Override

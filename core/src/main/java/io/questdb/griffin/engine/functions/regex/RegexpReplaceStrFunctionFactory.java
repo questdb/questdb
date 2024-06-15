@@ -59,26 +59,27 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final Function value = args.getQuick(0);
-
         final Function pattern = args.getQuick(1);
         final int patternPos = argPositions.getQuick(1);
-        if (!pattern.isConstant() && !pattern.isRuntimeConstant()) {
-            throw SqlException.$(patternPos, "not implemented: dynamic pattern would be very slow to execute");
-        }
-
         final Function replacement = args.getQuick(2);
         final int replacementPos = argPositions.getQuick(2);
-        if (!replacement.isConstant() && !replacement.isRuntimeConstant()) {
-            throw SqlException.$(patternPos, "not implemented: dynamic replacement would be slow to execute");
-        }
+        validateInputs(pattern, patternPos, replacement, replacementPos);
 
+        final Function value = args.getQuick(0);
         final int maxLength = configuration.getStrFunctionMaxBufferLength();
         return new Func(value, pattern, patternPos, replacement, replacementPos, maxLength, position);
     }
 
-    private static class Func extends StrFunction implements UnaryFunction {
+    protected void validateInputs(Function pattern, int patternPos, Function replacement, int replacementPos) throws SqlException {
+        if (!pattern.isConstant() && !pattern.isRuntimeConstant()) {
+            throw SqlException.$(patternPos, "not implemented: dynamic pattern would be very slow to execute");
+        }
+        if (!replacement.isConstant() && !replacement.isRuntimeConstant()) {
+            throw SqlException.$(replacementPos, "not implemented: dynamic replacement would be slow to execute");
+        }
+    }
 
+    protected static class Func extends StrFunction implements UnaryFunction {
         private final int functionPos;
         private final int maxLength;
         private final Function pattern;
@@ -106,11 +107,6 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
             return value;
         }
 
-        @Override
-        public CharSequence getStrA(Record rec) {
-            return getStr(rec, sink);
-        }
-
         public CharSequence getStr(Record rec, StringBuilderSink sink) {
             CharSequence cs = value.getStrA(rec);
             if (cs == null) {
@@ -120,22 +116,31 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
             matcher.reset(cs);
             sink.clear();
 
-            boolean result = find();
-            if (!result) {
-                sink.buffer.append(cs);
-            } else {
-                do {
-                    if (sink.length() > maxLength) {
-                        throw CairoException.nonCritical()
-                                .put("breached memory limit set for ").put(SIGNATURE)
-                                .put(" [maxLength=").put(maxLength).put(']');
-                    }
-                    matcher.appendReplacement(sink.buffer, replacementStr);
-                    result = find();
-                } while (result);
-                matcher.appendTail(sink.buffer);
+            try {
+                boolean result = matcher.find();
+                if (!result) {
+                    sink.buffer.append(cs);
+                } else {
+                    do {
+                        if (sink.length() > maxLength) {
+                            throw CairoException.nonCritical()
+                                    .put("breached memory limit set for ").put(SIGNATURE)
+                                    .put(" [maxLength=").put(maxLength).put(']');
+                        }
+                        matcher.appendReplacement(sink.buffer, replacementStr);
+                        result = matcher.find();
+                    } while (result);
+                    matcher.appendTail(sink.buffer);
+                }
+                return sink;
+            } catch (Exception e) {
+                throw CairoException.nonCritical().put("regexp_replace failed [position=").put(functionPos).put(", ex=").put(e.getMessage()).put(']');
             }
-            return sink;
+        }
+
+        @Override
+        public CharSequence getStrA(Record rec) {
+            return getStr(rec, sink);
         }
 
         @Override
@@ -174,14 +179,6 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val("regexp_replace(").val(value).val(',').val(pattern).val(',').val(replacement).val(')');
-        }
-
-        private boolean find() {
-            try {
-                return matcher.find();
-            } catch (StackOverflowError err) {
-                throw CairoException.nonCritical().put("stack overflow error [position=").put(functionPos).put(']');
-            }
         }
     }
 
@@ -227,4 +224,3 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
         }
     }
 }
-

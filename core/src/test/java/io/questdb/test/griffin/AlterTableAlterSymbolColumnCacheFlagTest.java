@@ -75,10 +75,9 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractCairoTest 
                 "msft\t1970-01-01T02:30:00.000000Z\n";
 
         assertMemoryLeak(() -> {
+            createX();
 
-            assertMemoryLeak(this::createX);
-
-            assertQueryPlain(expectedOrdered,
+            assertQueryNoLeakCheck(expectedOrdered,
                     "select sym from x order by sym"
             );
 
@@ -89,16 +88,15 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractCairoTest 
             }
 
             assertSql(expectedChronological, "select sym, k from x");
-        });
 
-        assertQueryPlain(expectedOrdered,
-                "select sym from x order by 1 asc"
-        );
+            assertQueryNoLeakCheck(expectedOrdered,
+                    "select sym from x order by 1 asc"
+            );
+        });
     }
 
     @Test
     public void testAlterSymbolCacheFlagToTrueCheckOpenReaderWithCursor() throws Exception {
-
         assertMemoryLeak(() -> {
             ddl("create table x (i int, sym symbol nocache) ;");
             insert("insert into x values (1, 'GBP')");
@@ -110,31 +108,28 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractCairoTest 
             insert("insert into x values (7, 'GBP')");
             insert("insert into x values (8, 'GBP')");
             insert("insert into x values (9, 'GBP')");
-        });
 
-        String expectedOrdered = "sym\n" +
-                "CHF\n" +
-                "GBP\n" +
-                "GBP\n" +
-                "GBP\n" +
-                "GBP\n" +
-                "GBP\n" +
-                "GBP\n" +
-                "JPY\n" +
-                "USD\n";
+            String expectedOrdered = "sym\n" +
+                    "CHF\n" +
+                    "GBP\n" +
+                    "GBP\n" +
+                    "GBP\n" +
+                    "GBP\n" +
+                    "GBP\n" +
+                    "GBP\n" +
+                    "JPY\n" +
+                    "USD\n";
 
-        String expectedChronological = "i\tsym\n" +
-                "1\tGBP\n" +
-                "2\tCHF\n" +
-                "3\tGBP\n" +
-                "4\tJPY\n" +
-                "5\tUSD\n" +
-                "6\tGBP\n" +
-                "7\tGBP\n" +
-                "8\tGBP\n" +
-                "9\tGBP\n";
-
-        assertMemoryLeak(() -> {
+            String expectedChronological = "i\tsym\n" +
+                    "1\tGBP\n" +
+                    "2\tCHF\n" +
+                    "3\tGBP\n" +
+                    "4\tJPY\n" +
+                    "5\tUSD\n" +
+                    "6\tGBP\n" +
+                    "7\tGBP\n" +
+                    "8\tGBP\n" +
+                    "9\tGBP\n";
 
             assertSql(
                     expectedOrdered,
@@ -154,27 +149,27 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractCairoTest 
                     expectedChronological,
                     "select i, sym from x"
             );
-        });
 
-        assertQueryPlain
-                (expectedOrdered,
-                        "select sym from x order by 1 asc"
-                );
+            assertQueryNoLeakCheck(
+                    expectedOrdered,
+                    "select sym from x order by 1 asc"
+            );
+        });
     }
 
     @Test
     public void testBadSyntax() throws Exception {
-        assertFailure("alter table x alter column z", 28, "'add index' or 'drop index' or 'cache' or 'nocache' expected");
+        assertFailure("alter table x alter column c", 28, "'add index' or 'drop index' or 'type' or 'cache' or 'nocache' expected");
     }
 
     @Test
     public void testInvalidColumn() throws Exception {
-        assertFailure("alter table x alter column y cache", 27, "Invalid column: y");
+        assertFailure("alter table x alter column y cache", 27, "column 'y' does not exists in table 'x'");
     }
 
     @Test
     public void testWhenCacheOrNocacheAreNotInAlterStatement() throws Exception {
-        assertFailure("alter table x alter column z ca", 29, "'cache' or 'nocache' expected");
+        assertFailure("alter table x alter column c ca", 29, "'cache' or 'nocache' expected");
     }
 
     private void assertFailure(String sql, int position, String message) throws Exception {

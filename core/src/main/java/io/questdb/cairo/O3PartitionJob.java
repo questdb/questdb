@@ -510,8 +510,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                 if (
                         prefixType == O3_BLOCK_DATA
-                        && prefixHi >= tableWriter.getPartitionO3SplitThreshold()
-                        && prefixHi > 2 * (mergeDataHi - mergeDataLo + suffixHi - suffixLo + mergeO3Hi - mergeO3Lo)
+                                && prefixHi >= tableWriter.getPartitionO3SplitThreshold()
+                                && prefixHi > 2 * (mergeDataHi - mergeDataLo + suffixHi - suffixLo + mergeO3Hi - mergeO3Lo)
                 ) {
                     // large prefix copy, better to split the partition
                     long maxSourceTimestamp = Unsafe.getUnsafe().getLong(srcTimestampAddr + prefixHi * Long.BYTES);
@@ -846,7 +846,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             columnType,
                             columnSize,
                             columnTop,
-                            Math.abs(mappedAddress) - columnTop * columnSize,
+                            mappedAddress - columnTop * columnSize,
                             oooColAddress,
                             mappedAddress,
                             mapSize,
@@ -1192,23 +1192,23 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long tempIndexSize = mergeRowCount * TIMESTAMP_MERGE_ENTRY_BYTES;
             assert tempIndexSize > 0; // avoid SIGSEGV
 
-            if (!tableWriter.isDeduplicationEnabled()) {
-                timestampMergeIndexSize = tempIndexSize;
-                timestampMergeIndexAddr = createMergeIndex(
-                        srcTimestampAddr,
-                        sortedTimestampsAddr,
-                        mergeDataLo,
-                        mergeDataHi,
-                        mergeOOOLo,
-                        mergeOOOHi,
-                        timestampMergeIndexSize
-                );
-            } else {
-                final long tempIndexAddr = Unsafe.malloc(tempIndexSize, MemoryTag.NATIVE_O3);
-                final DedupColumnCommitAddresses dedupCommitAddresses = tableWriter.getDedupCommitAddresses();
-                final Path tempTablePath = Path.getThreadLocal(tableWriter.getConfiguration().getRoot()).concat(tableWriter.getTableToken());
+            try {
+                if (!tableWriter.isDeduplicationEnabled()) {
+                    timestampMergeIndexSize = tempIndexSize;
+                    timestampMergeIndexAddr = createMergeIndex(
+                            srcTimestampAddr,
+                            sortedTimestampsAddr,
+                            mergeDataLo,
+                            mergeDataHi,
+                            mergeOOOLo,
+                            mergeOOOHi,
+                            timestampMergeIndexSize
+                    );
+                } else {
+                    final long tempIndexAddr = Unsafe.malloc(tempIndexSize, MemoryTag.NATIVE_O3);
+                    final DedupColumnCommitAddresses dedupCommitAddresses = tableWriter.getDedupCommitAddresses();
+                    final Path tempTablePath = Path.getThreadLocal(tableWriter.getConfiguration().getRoot()).concat(tableWriter.getTableToken());
 
-                try {
                     final long dedupRows = getDedupRows(
                             oldPartitionTimestamp,
                             srcNameTxn,
@@ -1249,21 +1249,21 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 .$(", mergeOOOHi=").$(mergeOOOHi)
                                 .I$();
                     }
-                } catch (Throwable e) {
-                    tableWriter.o3BumpErrorCount();
-                    LOG.error().$("open column error [table=").utf8(tableWriter.getTableToken().getTableName())
-                            .$(", e=").$(e)
-                            .I$();
-                    O3CopyJob.closeColumnIdleQuick(
-                            0,
-                            0,
-                            srcTimestampFd,
-                            srcTimestampAddr,
-                            srcTimestampSize,
-                            tableWriter
-                    );
-                    throw e;
                 }
+            } catch (Throwable e) {
+                tableWriter.o3BumpErrorCount();
+                LOG.error().$("open column error [table=").utf8(tableWriter.getTableToken().getTableName())
+                        .$(", e=").$(e)
+                        .I$();
+                O3CopyJob.closeColumnIdleQuick(
+                        0,
+                        0,
+                        srcTimestampFd,
+                        srcTimestampAddr,
+                        srcTimestampSize,
+                        tableWriter
+                );
+                throw e;
             }
         } else {
             timestampMergeIndexAddr = 0;

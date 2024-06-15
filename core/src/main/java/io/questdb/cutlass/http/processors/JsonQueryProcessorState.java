@@ -258,22 +258,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         info().$("Response buffer is too small, state=").$(queryState).$();
     }
 
-    public void logExecuteCached() {
-        info().$("execute-cached [skip: ").$(skip)
-                .$(", stop: ").$(stop).I$();
-    }
-
-    public void logExecuteNew() {
-        info().$("execute-new [skip: ").$(skip)
-                .$(", stop: ").$(stop).I$();
-    }
-
-    public void logSqlError(FlyweightMessageContainer container) {
-        info().$("sql error [q=`").utf8(getQueryOrHidden())
-                .$("`, at=").$(container.getPosition())
-                .$(", message=`").utf8(container.getFlyweightMessage()).$('`').$(']').$();
-    }
-
     public void logTimings() {
         info().$("timings ")
                 .$("[compiler: ").$(compilerNanos)
@@ -868,7 +852,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         response.putAscii('{')
                 .putAsciiQuoted("query").putAscii(':').putQuote().escapeJsonStr(query != null ? query : "").putQuote().putAscii(',')
-                .putAsciiQuoted("error").putAscii(':').putQuote().escapeJsonStr(message).putQuote().putAscii(',')
+                .putAsciiQuoted("error").putAscii(':').putQuote().escapeJsonStr(message != null ? message : "").putQuote().putAscii(',')
                 .putAsciiQuoted("position").putAscii(':').put(position)
                 .putAscii('}');
         response.sendChunk(true);

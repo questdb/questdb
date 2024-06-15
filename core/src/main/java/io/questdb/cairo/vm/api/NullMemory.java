@@ -28,7 +28,6 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
-import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
@@ -58,6 +57,11 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
 
     @Override
     public void close() {
+    }
+
+    @Override
+    public int detachFdClose() {
+        return -1;
     }
 
     @Override
@@ -116,16 +120,6 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
 
     @Override
     public CharSequence getStrB(long offset) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public DirectUtf8Sequence getVarcharA(long offset, int size, boolean ascii) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public DirectUtf8Sequence getVarcharB(long offset, int size, boolean ascii) {
         throw new UnsupportedOperationException();
     }
 
@@ -357,7 +351,7 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     }
 
     @Override
-    public void switchTo(int fd, long offset, boolean truncate, byte truncateMode) {
+    public void switchTo(FilesFacade ff, int fd, long extendSegmentSize, long offset, boolean truncate, byte truncateMode) {
     }
 
     @Override

@@ -53,6 +53,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
+import static io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory.toSizePretty;
+
 public class Bootstrap {
 
     public static final String SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION = "--use-default-log-factory-configuration";
@@ -112,31 +114,19 @@ public class Bootstrap {
         log = LogFactory.getLog(LOG_NAME);
 
         // report copyright and architecture
-        log.advisoryW().$(buildInformation.getSwName()).$(' ').$(buildInformation.getSwVersion()).$(". Copyright (C) 2014-").$(Dates.getYear(System.currentTimeMillis())).$(", all rights reserved.").$();
-        String archName;
+        log.advisoryW()
+                .$(buildInformation.getSwName()).$(' ').$(buildInformation.getSwVersion())
+                .$(". Copyright (C) 2014-").$(Dates.getYear(System.currentTimeMillis()))
+                .$(", all rights reserved.").$();
         boolean isOsSupported = true;
         switch (Os.type) {
             case Os.WINDOWS:
-                archName = "OS/Arch Windows/amd64";
-                break;
-            case Os.LINUX_AMD64:
-                archName = "OS/Arch linux/amd64";
-                break;
-            case Os.OSX_AMD64:
-                archName = "OS/Arch apple/amd64";
-                break;
-            case Os.OSX_ARM64:
-                archName = "OS/Arch apple/apple-silicon";
-                break;
-            case Os.LINUX_ARM64:
-                archName = "OS/Arch linux/arm64";
-                break;
+            case Os.DARWIN:
+            case Os.LINUX:
             case Os.FREEBSD:
-                archName = "OS/ARCH freebsd/amd64";
                 break;
             default:
                 isOsSupported = false;
-                archName = "Unsupported OS";
                 break;
         }
         StringBuilder sb = new StringBuilder(Vect.getSupportedInstructionSetName());
@@ -144,9 +134,9 @@ public class Bootstrap {
         sb.append(", ").append(System.getProperty("sun.arch.data.model")).append(" bits");
         sb.append(", ").append(Runtime.getRuntime().availableProcessors()).append(" processors");
         if (isOsSupported) {
-            log.advisoryW().$(archName).$(sb).I$();
+            log.advisoryW().$(Os.name).$('-').$(Os.archName).$(sb).I$();
         } else {
-            log.critical().$(archName).$(sb).I$();
+            log.critical().$("!!UNSUPPORTED!!").$(System.getProperty("os.name")).$('-').$(Os.archName).$(sb).I$();
         }
 
         verifyFileLimits();
@@ -203,14 +193,14 @@ public class Bootstrap {
             log.errorW().$(e).$();
             throw new BootstrapException(e);
         }
-
-        // metrics
         if (config.getMetricsConfiguration().isEnabled()) {
             metrics = Metrics.enabled();
         } else {
             metrics = Metrics.disabled();
             log.advisoryW().$("Metrics are disabled, health check endpoint will not consider unhandled errors").$();
         }
+        Unsafe.setRssMemLimit(config.getMemoryConfiguration().getResolvedRamUsageLimitBytes());
+
     }
 
     public static String[] getServerMainArgs(CharSequence root) {
@@ -285,9 +275,9 @@ public class Bootstrap {
 
     public void extractSite() throws IOException {
         final byte[] buffer = new byte[1024 * 1024];
-        final URL resource = getResourceClass().getResource(getPublicZipPath());
+        final URL resource = ServerMain.class.getResource(PUBLIC_ZIP);
         if (resource == null) {
-            log.infoW().$("Web Console build [").$(getPublicZipPath()).$("] not found").$();
+            log.infoW().$("Web Console build [").$(PUBLIC_ZIP).$("] not found").$();
             extractConfDir(buffer);
         } else {
             long thisVersion = resource.openConnection().getLastModified();
@@ -332,10 +322,6 @@ public class Bootstrap {
                 log.infoW().$("Web Console is up to date").$();
             }
         }
-    }
-
-    public String getBanner() {
-        return banner;
     }
 
     public BuildInformation getBuildInformation() {
@@ -425,6 +411,15 @@ public class Bootstrap {
         return null;
     }
 
+    private static void padToNextCol(StringBuilder sb, int headerWidth) {
+        int colWidth = 32;
+        // Insert at least one space between columns
+        sb.append("  ");
+        for (int i = headerWidth + 2; i < colWidth; i++) {
+            sb.append(' ');
+        }
+    }
+
     private static void setPublicVersion(String publicDir, String version) throws IOException {
         File f = new File(publicDir, PUBLIC_VERSION_TXT);
         File publicFolder = f.getParentFile();
@@ -458,25 +453,18 @@ public class Bootstrap {
         ff.remove(path);
     }
 
-    private void extractSite0(String publicDir, byte[] buffer, String thisVersion) throws IOException {
-        try (final InputStream is = getResourceClass().getResourceAsStream(getPublicZipPath())) {
-            if (is != null) {
-                try (ZipInputStream zip = new ZipInputStream(is)) {
-                    ZipEntry ze;
-                    while ((ze = zip.getNextEntry()) != null) {
-                        final File dest = new File(publicDir, ze.getName());
-                        if (!ze.isDirectory()) {
-                            copyInputStream(true, buffer, dest, zip, log);
-                        }
-                        zip.closeEntry();
-                    }
-                }
-            } else {
-                log.errorW().$("could not find site [resource=").$(getPublicZipPath()).$(']').$();
-            }
+    private void createHelloFile(String helloMsg) {
+        final File helloFile = new File(rootDirectory, "log/hello.txt");
+        final File growingFile = new File(helloFile.getParentFile(), helloFile.getName() + ".tmp");
+        try (Writer w = new FileWriter(growingFile)) {
+            w.write(helloMsg);
+        } catch (IOException e) {
+            log.infoW().$("Failed to create ").$(growingFile.getAbsolutePath()).$();
         }
-        setPublicVersion(publicDir, thisVersion);
-        extractConfDir(buffer);
+        if (!growingFile.renameTo(helloFile)) {
+            log.infoW().$("Failed to rename ").$(growingFile.getAbsolutePath()).$(" to ").$(helloFile.getName()).$();
+        }
+        helloFile.deleteOnExit();
     }
 
     private void extractConfDir(byte[] buffer) throws IOException {
@@ -493,6 +481,27 @@ public class Bootstrap {
         copyConfResource(rootDirectory, false, buffer, "conf/log.conf", log);
     }
 
+    private void extractSite0(String publicDir, byte[] buffer, String thisVersion) throws IOException {
+        try (final InputStream is = ServerMain.class.getResourceAsStream(PUBLIC_ZIP)) {
+            if (is != null) {
+                try (ZipInputStream zip = new ZipInputStream(is)) {
+                    ZipEntry ze;
+                    while ((ze = zip.getNextEntry()) != null) {
+                        final File dest = new File(publicDir, ze.getName());
+                        if (!ze.isDirectory()) {
+                            copyInputStream(true, buffer, dest, zip, log);
+                        }
+                        zip.closeEntry();
+                    }
+                }
+            } else {
+                log.errorW().$("could not find site [resource=").$(PUBLIC_ZIP).$(']').$();
+            }
+        }
+        setPublicVersion(publicDir, thisVersion);
+        extractConfDir(buffer);
+    }
+
     private void reportValidateConfig() {
         final boolean httpEnabled = config.getHttpServerConfiguration().isEnabled();
         final boolean httpReadOnly = config.getHttpServerConfiguration().getHttpContextConfiguration().readOnlySecurityContext();
@@ -501,12 +510,13 @@ public class Bootstrap {
         final boolean pgReadOnly = config.getPGWireConfiguration().readOnlySecurityContext();
         final String pgReadOnlyHint = pgEnabled && pgReadOnly ? " [read-only]" : "";
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
+
         log.advisoryW().$("Config:").$();
         log.advisoryW().$(" - http.enabled : ").$(httpEnabled).$(httpReadOnlyHint).$();
         log.advisoryW().$(" - tcp.enabled  : ").$(config.getLineTcpReceiverConfiguration().isEnabled()).$();
         log.advisoryW().$(" - pg.enabled   : ").$(pgEnabled).$(pgReadOnlyHint).$();
         log.advisoryW().$(" - attach partition suffix: ").$(config.getCairoConfiguration().getAttachPartitionSuffix()).$();
-        log.advisoryW().$(" - open database [id=").$(cairoConfig.getDatabaseIdLo()).$('.').$(cairoConfig.getDatabaseIdHi()).I$();
+        log.advisoryW().$(" - open database [").$uuid(cairoConfig.getDatabaseIdLo(), cairoConfig.getDatabaseIdHi()).I$();
         if (cairoConfig.isReadOnlyInstance()) {
             log.advisoryW().$(" - THIS IS READ ONLY INSTANCE").$();
         }
@@ -536,6 +546,17 @@ public class Bootstrap {
                     break;
             }
         }
+        MemoryConfiguration ramConfig = config.getMemoryConfiguration();
+        long ramUsageLimitBytes = ramConfig.getRamUsageLimitBytes();
+        long ramUsageLimitPercent = ramConfig.getRamUsageLimitPercent();
+        long effectiveRamUsageLimit = ramConfig.getResolvedRamUsageLimitBytes();
+        log.advisoryW().$(" - configured ram.usage.limit.bytes: ")
+                .$(ramUsageLimitBytes != 0 ? toSizePretty(ramUsageLimitBytes) : "0 (no limit)").$();
+        log.advisoryW().$(" - configured ram.usage.limit.percent: ")
+                .$(ramUsageLimitPercent != 0 ? ramUsageLimitPercent : "0 (no limit)").$();
+        log.advisoryW().$(" - system RAM: ").$(toSizePretty(ramConfig.getTotalSystemMemory())).$();
+        log.advisoryW().$(" - resolved RAM usage limit: ")
+                .$(effectiveRamUsageLimit != 0 ? toSizePretty(effectiveRamUsageLimit) : "0 (no limit)").$();
     }
 
     private void verifyFileLimits() {
@@ -583,7 +604,7 @@ public class Bootstrap {
         long fsStatus = Files.getFileSystemStatus(path);
         path.seekZ();
         LogRecord rec = log.advisoryW().$(" - ").$(kind).$(" root: [path=").$(rootDir).$(", magic=0x");
-        if (fsStatus < 0 || (fsStatus == 0 && Os.type == Os.OSX_ARM64)) {
+        if (fsStatus < 0 || (fsStatus == 0 && Os.type == Os.DARWIN && Os.arch == Os.ARCH_AARCH64)) {
             rec.$hex(-fsStatus).$("] -> SUPPORTED").$();
         } else {
             rec.$hex(fsStatus).$("] -> UNSUPPORTED (SYSTEM COULD BE UNSTABLE)").$();
@@ -649,37 +670,6 @@ public class Bootstrap {
         final String helloMsg = sb.toString();
         log.infoW().$(helloMsg).$();
         createHelloFile(helloMsg);
-    }
-
-    private static void padToNextCol(StringBuilder sb, int headerWidth) {
-        int colWidth = 32;
-        // Insert at least one space between columns
-        sb.append("  ");
-        for (int i = headerWidth + 2; i < colWidth; i++) {
-            sb.append(' ');
-        }
-    }
-
-    private void createHelloFile(String helloMsg) {
-        final File helloFile = new File(rootDirectory, "log/hello.txt");
-        final File growingFile = new File(helloFile.getParentFile(), helloFile.getName() + ".tmp");
-        try (Writer w = new FileWriter(growingFile)) {
-            w.write(helloMsg);
-        } catch (IOException e) {
-            log.infoW().$("Failed to create ").$(growingFile.getAbsolutePath()).$();
-        }
-        if (!growingFile.renameTo(helloFile)) {
-            log.infoW().$("Failed to rename ").$(growingFile.getAbsolutePath()).$(" to ").$(helloFile.getName()).$();
-        }
-        helloFile.deleteOnExit();
-    }
-
-    protected String getPublicZipPath() {
-        return PUBLIC_ZIP;
-    }
-
-    protected Class<?> getResourceClass() {
-        return ServerMain.class;
     }
 
     public static class BootstrapException extends RuntimeException {

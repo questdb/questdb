@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastFloatToBooleanFunctionFactory implements FunctionFactory {
@@ -50,7 +51,8 @@ public class CastFloatToBooleanFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return Math.signum(arg.getFloat(rec)) != 0;
+            float flt = arg.getFloat(rec);
+            return !Numbers.isNull(flt) && Math.signum(flt) != 0;
         }
     }
 }

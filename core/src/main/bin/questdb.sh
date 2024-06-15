@@ -54,7 +54,7 @@ export QDB_PROCESS_LABEL="QuestDB-Runtime-66535"
 export QDB_MAX_STOP_ATTEMPTS=60;
 export QDB_OS=`uname`
 
-case `uname` in
+case $QDB_OS in
    Darwin|FreeBSD)
        export PS_CMD="ps aux"
        if [ -d "/usr/local/var/questdb" ] || [ "$(id -u)" = "0" ]; then
@@ -107,6 +107,20 @@ function export_java {
     fi
 
     echo "JAVA: $JAVA"
+}
+
+function export_jemalloc() {
+    if [[ "$QDB_JEMALLOC" = "true" ]]; then
+      jemalloc_so=$(ls $BASE/libjemalloc*)
+      if [[ "$QDB_OS" != "FreeBSD" && -r "${jemalloc_so}" ]]; then
+          if [[ "$QDB_OS" == "Darwin" ]]; then
+              export DYLD_INSERT_LIBRARIES=${jemalloc_so}
+          else
+              export LD_PRELOAD=${jemalloc_so}
+          fi
+          echo "Using jemalloc"
+      fi
+    fi
 }
 
 function export_args {
@@ -164,6 +178,7 @@ function start {
     fi
 
     export_java
+    export_jemalloc
 
     # create root directory if it does not exist
     if [ ! -d "$QDB_ROOT" ]; then
@@ -175,7 +190,7 @@ function start {
     mkdir -p ${QDB_LOG}
 
     JAVA_LIB="$BASE/questdb.jar"
-    
+
     JAVA_OPTS="
     -D$QDB_PROCESS_LABEL
     -ea -Dnoebug
@@ -186,7 +201,7 @@ function start {
     ${JVM_PREPEND}
     "
 
-    if [ "$(uname)" == "Darwin" ]; then
+    if [ "$QDB_OS" == "Darwin" ]; then
         # JVM on MacOS has its own max open files limit, set to 10240
         # This limit can be removed by passing the -XX:-MaxFDLimit option
         # However, if this built-in limit is removed, the JVM starts to use the soft limit as if it was the hard limit,

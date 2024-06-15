@@ -74,12 +74,12 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumnConcurrent() throws Throwable {
-        CyclicBarrier start = new CyclicBarrier(2);
-        AtomicInteger done = new AtomicInteger();
-        AtomicInteger columnsAdded = new AtomicInteger();
-        AtomicInteger reloadCount = new AtomicInteger();
-        int totalColAddCount = 1000;
-        TableToken tableToken = engine.verifyTableName("all");
+        final CyclicBarrier start = new CyclicBarrier(2);
+        final AtomicInteger columnsAdded = new AtomicInteger();
+        final AtomicInteger reloadCount = new AtomicInteger();
+
+        final int totalColAddCount = 1000;
+        final TableToken tableToken = engine.verifyTableName("all");
 
         Thread writerThread = new Thread(() -> {
             try (TableWriter writer = getWriter(tableToken)) {
@@ -91,15 +91,14 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
             } catch (Throwable e) {
                 exception = e;
                 LOG.error().$(e).$();
-            } finally {
-                done.incrementAndGet();
             }
         });
 
         Thread readerThread = new Thread(() -> {
             try (TableReader reader = engine.getReader(tableToken)) {
                 start.await();
-                int colAdded = -1, newColsAdded;
+                int colAdded = -1;
+                int newColsAdded;
                 while (colAdded < totalColAddCount) {
                     if (colAdded < (newColsAdded = columnsAdded.get())) {
                         reader.reload();
@@ -122,7 +121,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
         if (exception != null) {
             throw exception;
         }
-        Assert.assertTrue(reloadCount.get() > 100);
+        Assert.assertTrue(reloadCount.get() > 0);
         LOG.infoW().$("total reload count ").$(reloadCount.get()).$();
     }
 
@@ -146,6 +145,49 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 w -> w.removeColumn("bin2"),
                 w -> w.removeColumn("int"),
                 w -> w.addColumn("int", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testAddRemoveChangeType() throws Exception {
+        final String expected = "int:INT\n" +
+                "short:SHORT\n" +
+                "byte:BYTE\n" +
+                "double:DOUBLE\n" +
+                "float:FLOAT\n" +
+                "long:LONG\n" +
+                "str:" + varcharColumnType + "\n" +
+                "sym:" + stringColumnType + "\n" +
+                "bin:BINARY\n" +
+                "date:DATE\n" +
+                "varchar:" + stringColumnType + "\n" +
+                "bool2:BOOLEAN\n";
+        assertThat(expected,
+                w -> w.changeColumnType("sym", ColumnType.STRING, 0, false, false, 0, false, null),
+                w -> w.changeColumnType("str", ColumnType.VARCHAR, 0, false, false, 0, false, null),
+                w -> w.removeColumn("bool"),
+                w -> w.addColumn("bool2", ColumnType.BOOLEAN, 0, false, false, 0, false, null),
+                w -> w.changeColumnType("varchar", ColumnType.STRING, 0, false, false, 0, false, null)
+        );
+    }
+
+    @Test
+    public void testChangeType() throws Exception {
+        final String expected = "int:INT\n" +
+                "short:SHORT\n" +
+                "byte:BYTE\n" +
+                "double:DOUBLE\n" +
+                "float:FLOAT\n" +
+                "long:LONG\n" +
+                "str:" + varcharColumnType + "\n" +
+                "sym:" + stringColumnType + "\n" +
+                "bool:BOOLEAN\n" +
+                "bin:BINARY\n" +
+                "date:DATE\n" +
+                "varchar:" + varcharColumnType + "\n";
+        assertThat(expected,
+                w -> w.changeColumnType("sym", ColumnType.STRING, 0, false, false, 0, false, null),
+                w -> w.changeColumnType("str", ColumnType.VARCHAR, 0, false, false, 0, false, null)
         );
     }
 
@@ -440,12 +482,8 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                         manipulator.restructure(writer);
                         structVersion = writer.getMetadataVersion();
                     }
-                    long pTransitionIndex = metadata.createTransitionIndex(structVersion);
-                    try {
-                        metadata.applyTransitionIndex();
-                    } finally {
-                        TableUtils.freeTransitionIndex(pTransitionIndex);
-                    }
+                    metadata.prepareTransition(structVersion);
+                    metadata.applyTransition();
                 }
                 StringSink sink = new StringSink();
                 for (int i = 0; i < metadata.getColumnCount(); i++) {

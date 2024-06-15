@@ -32,7 +32,7 @@ import org.jetbrains.annotations.NotNull;
 
 public final class Constants {
     private static final ObjList<ConstantFunction> geoNullConstants = new ObjList<>();
-    private static final ObjList<ConstantFunction> nullConstants = new ObjList<>();
+    private static final ObjList<ConstantFunction> nullConstants = new ObjList<>(ColumnType.NULL + 1);
     private static final ObjList<TypeConstant> typeConstants = new ObjList<>();
 
     public static ConstantFunction getGeoHashConstant(long hash, int bits) {
@@ -72,6 +72,7 @@ public final class Constants {
     }
 
     static {
+        nullConstants.set(ColumnType.UNDEFINED, ColumnType.NULL + 1, NullConstant.NULL);
         nullConstants.extendAndSet(ColumnType.INT, IntConstant.NULL);
         nullConstants.extendAndSet(ColumnType.STRING, StrConstant.NULL);
         nullConstants.extendAndSet(ColumnType.SYMBOL, SymbolConstant.NULL);
@@ -94,6 +95,7 @@ public final class Constants {
         nullConstants.extendAndSet(ColumnType.UUID, UuidConstant.NULL);
         nullConstants.extendAndSet(ColumnType.IPv4, IPv4Constant.NULL);
         nullConstants.extendAndSet(ColumnType.VARCHAR, VarcharConstant.NULL);
+        nullConstants.setPos(ColumnType.NULL + 1);
 
         typeConstants.extendAndSet(ColumnType.INT, IntTypeConstant.INSTANCE);
         typeConstants.extendAndSet(ColumnType.STRING, StrTypeConstant.INSTANCE);

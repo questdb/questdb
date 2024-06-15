@@ -330,7 +330,7 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
                         // Table is create but no line should be committed
                         TableToken tt = serverMain.getEngine().getTableTokenIfExists("line");
                         Assert.assertNotNull(tt);
-                        Assert.assertEquals(-1, getSeqTxn(serverMain, tt));
+                        Assert.assertEquals(0, getSeqTxn(serverMain, tt));
 
                         // Assert no Wal Writers are left in ILP http TUD cache
                         Assert.assertEquals(0, walWriterTaken.get());

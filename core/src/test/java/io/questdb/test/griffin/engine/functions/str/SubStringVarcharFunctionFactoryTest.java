@@ -91,19 +91,19 @@ public class SubStringVarcharFunctionFactoryTest extends AbstractFunctionFactory
 
         try {
             call(utf8("foo"), 3, -1).andAssert(null);
-            assertException("non-const negative len is not allowed");
+            assertExceptionNoLeakCheck("non-const negative len is not allowed");
         } catch (CairoException e) {
             // negative substring length is not allowed
         }
 
         try {
-            assertQuery(
+            assertQueryNoLeakCheck(
                     null,
                     "select substring('foo',1,-6)",
                     null,
                     true
             );
-            assertException("const negative len is not allowed");
+            assertExceptionNoLeakCheck("const negative len is not allowed");
         } catch (SqlException e) {
             // negative substring length is not allowed
         }

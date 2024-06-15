@@ -119,6 +119,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean getCairoSqlLegacyOperatorPrecedence() {
+        return false;
+    }
+
+    @Override
     public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
         return circuitBreakerConfiguration;
     }
@@ -314,6 +319,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getGroupByPresizeMaxHeapSize() {
+        return 128 * Numbers.SIZE_1MB;
+    }
+
+    @Override
+    public long getGroupByPresizeMaxSize() {
+        return 1_000_000;
+    }
+
+    @Override
     public int getGroupByShardingThreshold() {
         return 1000;
     }
@@ -500,6 +515,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getQueryCacheEventQueueCapacity() {
+        return 4;
+    }
+
+    @Override
     public int getQueryRegistryPoolSize() {
         return 8;
     }
@@ -542,6 +562,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSampleByIndexSearchPageSize() {
         return 0;
+    }
+
+    @Override
+    public long getSequencerCheckInterval() {
+        return 10_000;
     }
 
     @Override
@@ -747,12 +772,17 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlParallelWorkStealingThreshold() {
+        return 16;
+    }
+
+    @Override
     public int getSqlSmallMapKeyCapacity() {
         return 64;
     }
 
     @Override
-    public int getSqlSmallMapPageSize() {
+    public long getSqlSmallMapPageSize() {
         return 4 * 1024;
     }
 
@@ -1021,13 +1051,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getWriterMemoryLimit() {
-        return 0;
+    public int getWriterTickRowsCountMod() {
+        return 1024 - 1;
     }
 
     @Override
-    public int getWriterTickRowsCountMod() {
-        return 1024 - 1;
+    public boolean isGroupByPresizeEnabled() {
+        return true;
     }
 
     @Override

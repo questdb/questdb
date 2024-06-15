@@ -89,14 +89,14 @@ public class InCharFunctionFactory implements FunctionFactory {
         if (var.isConstant()) {
             return BooleanConstant.of(set.contains(var.getChar(null)));
         }
-        return new Func(var, set);
+        return new InCharConstFunction(var, set);
     }
 
-    private static class Func extends BooleanFunction implements UnaryFunction {
+    private static class InCharConstFunction extends BooleanFunction implements UnaryFunction {
         private final Function arg;
         private final IntHashSet set;
 
-        public Func(Function arg, IntHashSet set) {
+        public InCharConstFunction(Function arg, IntHashSet set) {
             this.arg = arg;
             this.set = set;
         }

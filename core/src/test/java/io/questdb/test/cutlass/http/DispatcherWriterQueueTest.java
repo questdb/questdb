@@ -525,7 +525,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                                             .executeWithStandardHeaders(
                                                     "GET /query?query=" + httpUpdateQuery + " HTTP/1.1\r\n",
                                                     "18\r\n" +
-                                                            "{\"ddl\":\"OK\",\"updated\":" + updatedCount + "}\r\n" +
+                                                            "{\"dml\":\"OK\",\"updated\":" + updatedCount + "}\r\n" +
                                                             "00\r\n" +
                                                             "\r\n"
                                             );

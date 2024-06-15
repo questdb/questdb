@@ -122,11 +122,11 @@ public class RetryIODispatcherTest extends AbstractTest {
             "|   Rows handled  |                                                24  |                 |         |              |\r\n" +
             "|  Rows imported  |                                                24  |                 |         |              |\r\n" +
             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
-            "|              0  |                              Dispatching_base_num  |                   STRING  |           0  |\r\n" +
+            "|              0  |                              Dispatching_base_num  |                  VARCHAR  |           0  |\r\n" +
             "|              1  |                                   Pickup_DateTime  |                     DATE  |           0  |\r\n" +
-            "|              2  |                                  DropOff_datetime  |                   STRING  |           0  |\r\n" +
-            "|              3  |                                      PUlocationID  |                   STRING  |           0  |\r\n" +
-            "|              4  |                                      DOlocationID  |                   STRING  |           0  |\r\n" +
+            "|              2  |                                  DropOff_datetime  |                  VARCHAR  |           0  |\r\n" +
+            "|              3  |                                      PUlocationID  |                  VARCHAR  |           0  |\r\n" +
+            "|              4  |                                      DOlocationID  |                  VARCHAR  |           0  |\r\n" +
             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
             "\r\n" +
             "00\r\n" +
@@ -632,7 +632,7 @@ public class RetryIODispatcherTest extends AbstractTest {
                                                 .withClientLinger(60)
                                                 .executeWithStandardHeaders(
                                                         "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(1%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n",
-                                                        IODispatcherTest.JSON_DDL_RESPONSE
+                                                        IODispatcherTest.INSERT_QUERY_RESPONSE
                                                 );
                                     } catch (AssertionError ase) {
                                         fails.incrementAndGet();
@@ -695,7 +695,7 @@ public class RetryIODispatcherTest extends AbstractTest {
                                                 .withClientLinger(60)
                                                 .executeWithStandardHeaders(
                                                         "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(1%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n",
-                                                        IODispatcherTest.JSON_DDL_RESPONSE
+                                                        IODispatcherTest.INSERT_QUERY_RESPONSE
                                                 );
                                     } catch (Exception e) {
                                         LOG.error().$("Failed execute insert http request. Server error ").$(e).$();

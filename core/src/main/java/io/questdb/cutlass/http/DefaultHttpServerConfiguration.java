@@ -137,12 +137,12 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
 
     @Override
     public int getQueryCacheBlockCount() {
-        return 4;
+        return 2;
     }
 
     @Override
     public int getQueryCacheRowCount() {
-        return 4;
+        return 8;
     }
 
     @Override
@@ -250,12 +250,12 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     public class DefaultLineHttpProcessorConfiguration implements LineHttpProcessorConfiguration {
         @Override
         public boolean autoCreateNewColumns() {
-            return lineHttpProcessorConfiguration.isStringAsTagSupported();
+            return lineHttpProcessorConfiguration.autoCreateNewColumns();
         }
 
         @Override
         public boolean autoCreateNewTables() {
-            return lineHttpProcessorConfiguration.isStringAsTagSupported();
+            return lineHttpProcessorConfiguration.autoCreateNewTables();
         }
 
         @Override
@@ -299,18 +299,8 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         }
 
         @Override
-        public boolean isStringAsTagSupported() {
-            return lineHttpProcessorConfiguration.isSymbolAsFieldSupported();
-        }
-
-        @Override
         public boolean isStringToCharCastAllowed() {
-            return lineHttpProcessorConfiguration.isStringAsTagSupported();
-        }
-
-        @Override
-        public boolean isSymbolAsFieldSupported() {
-            return lineHttpProcessorConfiguration.isSymbolAsFieldSupported();
+            return lineHttpProcessorConfiguration.isStringToCharCastAllowed();
         }
 
         @Override

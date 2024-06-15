@@ -34,6 +34,8 @@ import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.mp.Sequence;
 import io.questdb.tasks.GroupByMergeShardTask;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeShardTask> {
     private static final Log LOG = LogFactory.getLog(GroupByMergeShardJob.class);
 
@@ -43,6 +45,7 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
 
     public static void run(int workerId, GroupByMergeShardTask task, Sequence subSeq, long cursor) {
         final AtomicBooleanCircuitBreaker circuitBreaker = task.getCircuitBreaker();
+        final AtomicInteger startedCounter = task.getStartedCounter();
         final CountDownLatchSPI doneLatch = task.getDoneLatch();
         final AsyncGroupByAtom atom = task.getAtom();
         final int shardIndex = task.getShardIndex();
@@ -50,9 +53,13 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
         task.clear();
         subSeq.done(cursor);
 
+        startedCounter.incrementAndGet();
+
         int slotId = -1;
         try {
-            slotId = atom.acquire(workerId, circuitBreaker);
+            if (atom.isMergeLockRequired()) {
+                slotId = atom.acquire(workerId, circuitBreaker);
+            }
             if (circuitBreaker.checkIfTripped()) {
                 return;
             }
@@ -61,7 +68,9 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
             LOG.error().$("merge shard failed [ex=").$(e).I$();
             circuitBreaker.cancel();
         } finally {
-            atom.release(slotId);
+            if (atom.isMergeLockRequired()) {
+                atom.release(slotId);
+            }
             doneLatch.countDown();
         }
     }

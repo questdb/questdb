@@ -165,15 +165,27 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     void getVarchar(Record rec, Utf8Sink utf8Sink);
 
-    @Nullable Utf8Sequence getVarcharA(Record rec);
+    @Nullable
+    Utf8Sequence getVarcharA(Record rec);
 
-    @Nullable Utf8Sequence getVarcharB(Record rec);
+    @Nullable
+    Utf8Sequence getVarcharB(Record rec);
 
     /**
      * @return size of the varchar value or {@link TableUtils#NULL_LEN} in case of NULL
      */
     int getVarcharSize(Record rec);
 
+    /**
+     * Returns true if function is constant, i.e. its value does not require
+     * any input from the record.
+     * <p>
+     * Constant functions can evaluated by passing a null record to {@link #getStr(Record, Utf16Sink)}
+     * or other methods. This often happens inside FunctionFactory at query planning stage.
+     *
+     * @return true if function is constant
+     * @see #isRuntimeConstant()
+     */
     default boolean isConstant() {
         return false;
     }
@@ -201,8 +213,18 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
         return false;
     }
 
-    // If function is constant for query, e.g. record independent
-    // For example now() and bind variables are Runtime Constants
+    /**
+     * Declares that the function will maintain its value for all the rows during
+     * {@link RecordCursor} traversal. However, between cursor traversals the function
+     * value is liable to change.
+     * <p>
+     * In practice this means that function arguments that are runtime constants can be
+     * evaluated in the functions {@link #init(ObjList, SymbolTableSource, SqlExecutionContext)} call.
+     * <p>
+     * It has be noted that the function cannot be both {@link #isConstant()} and runtime constant.
+     *
+     * @return true when function is runtime constant.
+     */
     default boolean isRuntimeConstant() {
         return false;
     }

@@ -51,15 +51,15 @@ public class SeqTxnTracker {
 
     public boolean initTxns(long newWriterTxn, long newSeqTxn, boolean isSuspended) {
         Unsafe.cas(this, SUSPENDED_STATE_OFFSET, 0, isSuspended ? -1 : 1);
-        long stxn = seqTxn;
-        while (stxn < newSeqTxn && !Unsafe.cas(this, SEQ_TXN_OFFSET, stxn, newSeqTxn)) {
-            stxn = seqTxn;
-        }
         long wtxn = writerTxn;
         while (newWriterTxn > wtxn && !Unsafe.cas(this, WRITER_TXN_OFFSET, wtxn, newWriterTxn)) {
             wtxn = writerTxn;
         }
-        return suspendedState > 0 && seqTxn > 0 && seqTxn > writerTxn;
+        long stxn = seqTxn;
+        while (stxn < newSeqTxn && !Unsafe.cas(this, SEQ_TXN_OFFSET, stxn, newSeqTxn)) {
+            stxn = seqTxn;
+        }
+        return seqTxn > 0 && seqTxn > writerTxn;
     }
 
     public boolean isInitialised() {
@@ -103,7 +103,9 @@ public class SeqTxnTracker {
         }
         // Return that Apply job notification is needed
         // when there is some new work for ApplyWal2Table job
-        return (stxn == -1 || writerTxn == (newSeqTxn - 1)) && suspendedState >= 0;
+        // Notify on transactions that are first move seqTxn from -1 or 0
+        // or when writerTxn is behind seqTxn by 1 and not suspended
+        return (stxn < 1 || writerTxn == (newSeqTxn - 1)) && suspendedState >= 0;
     }
 
     public void setSuspended() {

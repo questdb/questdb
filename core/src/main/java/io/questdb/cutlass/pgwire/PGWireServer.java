@@ -35,9 +35,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.*;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjectFactory;
+import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
@@ -46,23 +44,42 @@ import java.io.Closeable;
 import static io.questdb.network.IODispatcher.*;
 
 public class PGWireServer implements Closeable {
-
     private static final Log LOG = LogFactory.getLog(PGWireServer.class);
-
+    private static final NoOpAssociativeCache<TypesAndSelect> NO_OP_CACHE = new NoOpAssociativeCache<>();
+    private final PGConnectionContextFactory contextFactory;
     private final IODispatcher<PGConnectionContext> dispatcher;
     private final Metrics metrics;
     private final CircuitBreakerRegistry registry;
+    private final AssociativeCache<TypesAndSelect> typesAndSelectCache;
     private final WorkerPool workerPool;
 
     public PGWireServer(
             PGWireConfiguration configuration,
             CairoEngine engine,
             WorkerPool workerPool,
-            PGConnectionContextFactory contextFactory,
-            CircuitBreakerRegistry registry
+            CircuitBreakerRegistry registry,
+            ObjectFactory<SqlExecutionContextImpl> executionContextObjectFactory
     ) {
-        this.dispatcher = IODispatchers.create(configuration.getDispatcherConfiguration(), contextFactory);
         this.metrics = engine.getMetrics();
+        if (configuration.isSelectCacheEnabled()) {
+            this.typesAndSelectCache = new ConcurrentAssociativeCache<>(
+                    configuration.getSelectCacheBlockCount(),
+                    configuration.getSelectCacheRowCount(),
+                    metrics.pgWire().cachedSelectsGauge(),
+                    metrics.pgWire().selectCacheHitCounter(),
+                    metrics.pgWire().selectCacheMissCounter()
+            );
+        } else {
+            this.typesAndSelectCache = NO_OP_CACHE;
+        }
+        this.contextFactory = new PGConnectionContextFactory(
+                engine,
+                configuration,
+                registry,
+                executionContextObjectFactory,
+                typesAndSelectCache
+        );
+        this.dispatcher = IODispatchers.create(configuration.getDispatcherConfiguration(), contextFactory);
         this.workerPool = workerPool;
         this.registry = registry;
 
@@ -110,16 +127,22 @@ public class PGWireServer implements Closeable {
                 }
             });
 
-            // http context factory has thread local pools
+            // context factory has thread local pools
             // therefore we need each thread to clean their thread locals individually
             workerPool.assignThreadLocalCleaner(i, contextFactory::freeThreadLocal);
         }
+    }
+
+    public void clearSelectCache() {
+        typesAndSelectCache.clear();
     }
 
     @Override
     public void close() {
         Misc.free(dispatcher);
         Misc.free(registry);
+        Misc.free(contextFactory);
+        Misc.free(typesAndSelectCache);
     }
 
     public int getPort() {
@@ -131,13 +154,14 @@ public class PGWireServer implements Closeable {
         return workerPool;
     }
 
-    public static class PGConnectionContextFactory extends IOContextFactoryImpl<PGConnectionContext> {
+    private static class PGConnectionContextFactory extends IOContextFactoryImpl<PGConnectionContext> {
 
         public PGConnectionContextFactory(
                 CairoEngine engine,
                 PGWireConfiguration configuration,
                 CircuitBreakerRegistry registry,
-                ObjectFactory<SqlExecutionContextImpl> executionContextObjectFactory
+                ObjectFactory<SqlExecutionContextImpl> executionContextObjectFactory,
+                AssociativeCache<TypesAndSelect> typesAndSelectCache
         ) {
             super(
                     () -> {
@@ -149,7 +173,8 @@ public class PGWireServer implements Closeable {
                                 engine,
                                 configuration,
                                 executionContextObjectFactory.newInstance(),
-                                circuitBreaker
+                                circuitBreaker,
+                                typesAndSelectCache
                         );
                         FactoryProvider factoryProvider = configuration.getFactoryProvider();
                         Authenticator authenticator = factoryProvider.getPgWireAuthenticatorFactory().getPgWireAuthenticator(

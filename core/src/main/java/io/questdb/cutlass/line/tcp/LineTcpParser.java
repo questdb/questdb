@@ -81,8 +81,6 @@ public class LineTcpParser {
     private final DirectUtf8String charSeq = new DirectUtf8String();
     private final ObjList<ProtoEntity> entityCache = new ObjList<>();
     private final DirectUtf8String measurementName = new DirectUtf8String();
-    private final boolean stringAsTagSupported;
-    private final boolean symbolAsFieldSupported;
     private long bufAt;
     private ProtoEntity currentEntity;
     private byte entityHandler = -1;
@@ -95,14 +93,11 @@ public class LineTcpParser {
     private int nQuoteCharacters;
     private boolean nextValueCanBeOpenQuote;
     private boolean scape;
-    private boolean tagStartsWithQuote;
     private boolean tagsComplete;
     private long timestamp;
     private byte timestampUnit;
 
-    public LineTcpParser(boolean stringAsTagSupported, boolean symbolAsFieldSupported) {
-        this.stringAsTagSupported = stringAsTagSupported;
-        this.symbolAsFieldSupported = symbolAsFieldSupported;
+    public LineTcpParser() {
     }
 
     public long getBufferAddress() {
@@ -281,8 +276,6 @@ public class LineTcpParser {
                         break;
                     } else if (isQuotedFieldValue) {
                         return getError(bufHi);
-                    } else if (entityLo == bufAt) {
-                        tagStartsWithQuote = true;
                     }
 
                 default:
@@ -344,7 +337,6 @@ public class LineTcpParser {
         isQuotedFieldValue = false;
         entityLo = bufAt;
         tagsComplete = false;
-        tagStartsWithQuote = false;
         nEntities = 0;
         currentEntity = null;
         entityHandler = ENTITY_HANDLER_TABLE;
@@ -687,7 +679,7 @@ public class LineTcpParser {
                         return true;
                     }
                     type = ENTITY_TYPE_SYMBOL;
-                    return true;
+                    return false;
                 case 'n':
                     if (valueLen > 1) {
                         unit = ENTITY_UNIT_NANO;
@@ -700,7 +692,7 @@ public class LineTcpParser {
                     }
                     // fall through
                     type = ENTITY_TYPE_SYMBOL;
-                    return true;
+                    return false;
                 case 't':
                     if (valueLen > 1) {
                         unit = ENTITY_UNIT_MICRO;
@@ -724,6 +716,7 @@ public class LineTcpParser {
                             type = ENTITY_TYPE_BOOLEAN;
                         } else {
                             type = ENTITY_TYPE_SYMBOL;
+                            return false;
                         }
                     } else {
                         charSeq.of(value.lo(), value.hi(), !hasNonAscii);
@@ -735,6 +728,7 @@ public class LineTcpParser {
                             type = ENTITY_TYPE_BOOLEAN;
                         } else {
                             type = ENTITY_TYPE_SYMBOL;
+                            return false;
                         }
                     }
                     return true;
@@ -746,7 +740,7 @@ public class LineTcpParser {
                         return true;
                     }
                     type = ENTITY_TYPE_SYMBOL;
-                    return true;
+                    return false;
                 }
                 // fall through
                 default:
@@ -755,6 +749,7 @@ public class LineTcpParser {
                         type = ENTITY_TYPE_FLOAT;
                     } catch (NumericException ex) {
                         type = ENTITY_TYPE_SYMBOL;
+                        return false;
                     }
                     return true;
             }
@@ -769,6 +764,7 @@ public class LineTcpParser {
             } catch (NumericException notANumber) {
                 unit = ENTITY_UNIT_NONE;
                 type = ENTITY_TYPE_SYMBOL;
+                return false;
             }
             return true;
         }
@@ -789,13 +785,13 @@ public class LineTcpParser {
             if (tagsComplete) {
                 if (valueLen > 0) {
                     byte lastByte = value.byteAt(valueLen - 1);
-                    return parse(lastByte, valueLen) && (symbolAsFieldSupported || type != ENTITY_TYPE_SYMBOL);
+                    return parse(lastByte, valueLen);
                 }
                 type = ENTITY_TYPE_NULL;
                 return true;
             }
             type = ENTITY_TYPE_TAG;
-            return !tagStartsWithQuote || valueLen < 2 || value.byteAt(valueLen - 1) != '"' || stringAsTagSupported;
+            return true;
         }
     }
 

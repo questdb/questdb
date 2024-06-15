@@ -1246,7 +1246,7 @@ public class TableReaderTest extends AbstractCairoTest {
             AtomicInteger done = new AtomicInteger();
             AtomicInteger columnsAdded = new AtomicInteger();
             AtomicInteger reloadCount = new AtomicInteger();
-            int totalColAddCount = Os.type == Os.LINUX_ARM64 || Os.type == Os.LINUX_AMD64 ? 100 : 10;
+            int totalColAddCount = Os.isLinux() ? 100 : 10;
 
             String tableName = "tbl_meta_test";
             TableToken tableToken = createTable(tableName, PartitionBy.DAY);
@@ -1390,7 +1390,7 @@ public class TableReaderTest extends AbstractCairoTest {
             AtomicInteger done = new AtomicInteger();
             AtomicInteger columnsAdded = new AtomicInteger();
             AtomicInteger reloadCount = new AtomicInteger();
-            int totalColAddCount = Os.type == Os.LINUX_AMD64 || Os.type == Os.LINUX_ARM64 ? 500 : 50;
+            int totalColAddCount = Os.isLinux() ? 500 : 50;
 
             String tableName = "tbl_meta_test";
             TableToken tableToken = createTable(tableName, PartitionBy.HOUR);
@@ -1829,9 +1829,9 @@ public class TableReaderTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> {
             try (TableReader reader = getReader(tableToken)) {
-                int partitionsToAdd = Os.type == Os.LINUX_ARM64 || Os.type == Os.LINUX_AMD64 ? (int) (Files.PAGE_SIZE / Long.BYTES / 4) + 1 : 10;
+                int partitionsToAdd = Os.isLinux() ? (int) (Files.PAGE_SIZE / Long.BYTES / 4) + 1 : 10;
                 try (TableWriter writer = getWriter(tableToken)) {
-                    int symbolsToAdd = Os.type == Os.LINUX_ARM64 || Os.type == Os.LINUX_AMD64 ? (int) (Files.PAGE_SIZE / Long.BYTES / 4) + 1 : 10;
+                    int symbolsToAdd = Os.isLinux() ? (int) (Files.PAGE_SIZE / Long.BYTES / 4) + 1 : 10;
                     for (int i = 0; i < symbolsToAdd; i++) {
                         writer.addColumn("col" + i, ColumnType.SYMBOL);
                     }
@@ -2505,7 +2505,7 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testReloadWithTrailingNullString() throws NumericException {
+    public void testReloadWithTrailingNullString() throws Exception {
         final String tableName = "reload_test";
         TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY);
         model.col("str", ColumnType.STRING);

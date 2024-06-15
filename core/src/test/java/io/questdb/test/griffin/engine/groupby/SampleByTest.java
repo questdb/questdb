@@ -61,7 +61,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class SampleByTest extends AbstractCairoTest {
-    private final static Log LOG = LogFactory.getLog(SampleByTest.class);
+    private static final Log LOG = LogFactory.getLog(SampleByTest.class);
 
     @Test
     public void testBadFunction() throws Exception {
@@ -628,8 +628,22 @@ public class SampleByTest extends AbstractCairoTest {
                     "select symbol, sum(amount) + 2 * vwap(price, amount), " +
                             "cast(to_timezone(dateadd('h', 2, timestamp),'EST') as double) + sum(amount)" +
                             "from (" +
-                            "   select symbol, amount, price,  timestamp_floor('5m', timestamp) as timestamp from trades" +
+                            "   select symbol, amount, price, timestamp_floor('5m', timestamp) as timestamp from trades" +
                             ")\n");
+
+            assertSql("symbol\tsum\ttimestamp_floor\tlast_timestamp\n" +
+                            "a\t0.6390492980774742\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:03:00.000000Z\n" +
+                            "c\t2.3759005540157383\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:09:00.000000Z\n" +
+                            "b\t1.6749086742799453\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:07:00.000000Z\n",
+                    "select symbol, sum(amount), timestamp_floor('1d', timestamp), last(timestamp) last_timestamp " +
+                            "from trades\n");
+
+            assertSql("symbol\tsum\ttimestamp\tlast_timestamp\n" +
+                            "a\t0.6390492980774742\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:03:00.000000Z\n" +
+                            "c\t2.3759005540157383\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:09:00.000000Z\n" +
+                            "b\t1.6749086742799453\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:07:00.000000Z\n",
+                    "select symbol, sum(amount), timestamp_floor('1d', timestamp) timestamp, last(timestamp) last_timestamp " +
+                            "from trades\n");
         });
     }
 
@@ -881,7 +895,6 @@ public class SampleByTest extends AbstractCairoTest {
                         "from\n" +
                         "long_sequence(150)\n"
         );
-
 
         assertWithSymbolColumnTop(
                 "k\ts\tlat\tlon\n" +
@@ -1261,7 +1274,6 @@ public class SampleByTest extends AbstractCairoTest {
                                     "sample by 1h align to calendar time zone $1 with offset $2"
                     )
             ) {
-
                 String expectedMoscow = "k\ts\tlat\tlon\n" +
                         "2021-03-28T00:15:00.000000Z\ta\t144.77803379943109\tnull\n" +
                         "2021-03-28T01:15:00.000000Z\ta\t31.267026583720984\tnull\n" +
@@ -1509,7 +1521,7 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleByAlignToCalendarWithTimezoneBerlinShiftBackHourly() throws Exception {
-        assertSampleByIndexQuery(
+        assertMemoryLeak(() -> assertSampleByIndexQuery(
                 "to_timezone\tk\ts\tlat\tlon\n" +
                         "2021-03-27T22:00:00.000000Z\t2021-03-27T21:00:00.000000Z\ta\t132.09083798490755\t2021-03-27T21:51:00.000000Z\n" +
                         "2021-03-27T23:00:00.000000Z\t2021-03-27T22:00:00.000000Z\ta\t77.68770182183965\t2021-03-27T22:56:00.000000Z\n" +
@@ -1534,12 +1546,12 @@ public class SampleByTest extends AbstractCairoTest {
                         "   from" +
                         "   long_sequence(1000)" +
                         "),index(s) timestamp(k)"
-        );
+        ));
     }
 
     @Test
     public void testIndexSampleByAlignToCalendarWithTimezoneBerlinShiftBackHourlyWithOffset() throws Exception {
-        assertSampleByIndexQuery(
+        assertMemoryLeak(() -> assertSampleByIndexQuery(
                 "to_timezone\tk\ts\tlat\tlon\n" +
                         "2021-03-27T21:15:00.000000Z\t2021-03-27T20:15:00.000000Z\ta\t132.09083798490755\t2021-03-27T21:12:00.000000Z\n" +
                         "2021-03-27T22:15:00.000000Z\t2021-03-27T21:15:00.000000Z\ta\t179.5841357536068\t2021-03-27T21:51:00.000000Z\n" +
@@ -1565,12 +1577,12 @@ public class SampleByTest extends AbstractCairoTest {
                         "   from" +
                         "   long_sequence(1000)" +
                         "),index(s) timestamp(k)"
-        );
+        ));
     }
 
     @Test
     public void testIndexSampleByAlignToCalendarWithTimezoneBerlinShiftForward() throws Exception {
-        assertSampleByIndexQuery(
+        assertMemoryLeak(() -> assertSampleByIndexQuery(
                 "to_timezone\tk\ts\tlat\tlon\n" +
                         "2021-03-26T00:00:00.000000Z\t2021-03-25T23:00:00.000000Z\ta\t142.30215575416736\t2021-03-26T22:50:00.000000Z\n" +
                         "2021-03-27T00:00:00.000000Z\t2021-03-26T23:00:00.000000Z\ta\tnull\t2021-03-27T22:10:00.000000Z\n" +
@@ -1593,7 +1605,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "   from" +
                         "   long_sequence(120)" +
                         "),index(s) timestamp(k)"
-        );
+        ));
     }
 
     @Test
@@ -1985,51 +1997,51 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleByIndexNoTimestampColSelected() throws Exception {
-        assertMemoryLeak(() -> ddl("create table xx (lat double, lon double, s symbol, k timestamp)" +
-                ", index(s capacity 256) timestamp(k) partition by DAY"));
-
-        assertQuery(
-                "s\tlat\tlon\n" +
-                        "a\t-2.0\t2.0\n" +
-                        "a\t-32.0\t32.0\n" +
-                        "a\t-62.0\t62.0\n" +
-                        "a\t-92.0\t92.0\n" +
-                        "a\t-122.0\t122.0\n" +
-                        "a\t-152.0\t152.0\n",
-                "select s, first(lat) lat, first(lon) lon " +
-                        "from xx " +
-                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
-                        "sample by 2h align to first observation",
-                "insert into xx " +
-                        "select -x lat,\n" +
-                        "x lon,\n" +
-                        "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
-                        "timestamp_sequence(0, 10 * 60 * 1000000L) k\n" +
-                        "from\n" +
-                        "long_sequence(180)\n",
-                null,
-                false,
-                false
-        );
-
         assertMemoryLeak(() -> {
+            ddl("create table xx (lat double, lon double, s symbol, k timestamp)" +
+                    ", index(s capacity 256) timestamp(k) partition by DAY");
+
+            assertQueryNoLeakCheck(
+                    "s\tlat\tlon\n" +
+                            "a\t-2.0\t2.0\n" +
+                            "a\t-32.0\t32.0\n" +
+                            "a\t-62.0\t62.0\n" +
+                            "a\t-92.0\t92.0\n" +
+                            "a\t-122.0\t122.0\n" +
+                            "a\t-152.0\t152.0\n",
+                    "select s, first(lat) lat, first(lon) lon " +
+                            "from xx " +
+                            "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                            "sample by 2h align to first observation",
+                    "insert into xx " +
+                            "select -x lat,\n" +
+                            "x lon,\n" +
+                            "(case when x % 2 = 0 then 'a' else 'b' end) s,\n" +
+                            "timestamp_sequence(0, 10 * 60 * 1000000L) k\n" +
+                            "from\n" +
+                            "long_sequence(180)\n",
+                    null,
+                    false,
+                    false
+            );
+
             ddl("alter table xx drop column s", sqlExecutionContext);
             ddl("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
-        });
 
-        TestUtils.assertSqlCursors(
-                engine,
-                sqlExecutionContext,
-                "select s, first(lat) lat, last(lon) lon " +
-                        "from xx " +
-                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10'" +
-                        "sample by 2h align to first observation",
-                "select s, first(lat) lat, last(lon) lon " +
-                        "from xx " +
-                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s = null " +
-                        "sample by 2h align to first observation",
-                LOG
-        );
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    "select s, first(lat) lat, last(lon) lon " +
+                            "from xx " +
+                            "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10'" +
+                            "sample by 2h align to first observation",
+                    "select s, first(lat) lat, last(lon) lon " +
+                            "from xx " +
+                            "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s = null " +
+                            "sample by 2h align to first observation",
+                    LOG
+            );
+        });
     }
 
     @Test
@@ -2169,7 +2181,7 @@ public class SampleByTest extends AbstractCairoTest {
     public void testIndexSampleByMicro() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_PAGE_SIZE, 256);
 
-        assertSampleByIndexQuery(
+        assertMemoryLeak(() -> assertSampleByIndexQuery(
                 "k\tfirst\n" +
                         "2021-01-01T00:07:39.760000Z\t15318\n" +
                         "2021-01-01T00:07:40.560000Z\t15341\n" +
@@ -2271,13 +2283,10 @@ public class SampleByTest extends AbstractCairoTest {
                         "2021-01-01T00:08:28.020000Z\t16945\n" +
                         "2021-01-01T00:08:28.250000Z\t16951\n" +
                         "2021-01-01T00:08:29.420000Z\t16994\n",
-                //"select count() from (\n" +
                 "select k, first(lat)\n" +
                         "from sam_by_tst\n" +
                         "where s in ('a')\n" +
-                        "sample by 10T align to first observation  limit -100\n"
-                // + ")"
-                ,
+                        "sample by 10T align to first observation  limit -100\n",
                 "create table sam_by_tst as (\n" +
                         "select rnd_symbol('0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f', 'g') as s,\n" +
                         "timestamp_sequence('2021-01-01', rnd_short(1,5) * 10000L) as k,\n" +
@@ -2285,7 +2294,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "-x as lon\n" +
                         "from long_sequence(17 * 1000L)\n" +
                         "), index(s) timestamp(k) partition by DAY"
-        );
+        ));
     }
 
     @Test
@@ -2462,7 +2471,7 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testIndexSampleByWithInvalidFunctionArgs() throws Exception {
-        assertSampleByIndexQuery(
+        assertMemoryLeak(() -> assertSampleByIndexQuery(
                 "k\ts\tlat\tlon\n" +
                         "1970-01-04T00:26:40.000000Z\ta\t71.00560222114518\t336.09942524982637\n" +
                         "1970-01-04T01:26:40.000000Z\ta\t7.612327943200507\t302.609357768427\n" +
@@ -2482,7 +2491,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "   from" +
                         "   long_sequence(100)" +
                         "), index(s capacity 10) timestamp(k) partition by DAY"
-        );
+        ));
     }
 
     @Test
@@ -2522,25 +2531,25 @@ public class SampleByTest extends AbstractCairoTest {
                             "from\n" +
                             "long_sequence(100)\n");
             ddl("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
+
+            String expected = "fk\tlk\tk\ts\n" +
+                    "1970-01-01T00:00:00.000000Z\t1970-01-01T00:59:00.000000Z\t1970-01-01T00:00:00.000000Z\t\n" +
+                    "1970-01-01T01:00:00.000000Z\t1970-01-01T01:39:00.000000Z\t1970-01-01T01:00:00.000000Z\t\n";
+
+            // Forced no index execution
+            assertSql(expected, "select first(k) fk, last(k) lk, k, s\n" +
+                    "from xx\n" +
+                    "where s = null or s = 'none'\n" +
+                    "sample by 1h"
+            );
+
+            // Indexed execution
+            assertSql(expected, "select first(k) fk, last(k) lk, k, s\n" +
+                    "from xx\n" +
+                    "where s = null\n" +
+                    "sample by 1h"
+            );
         });
-
-        String expected = "fk\tlk\tk\ts\n" +
-                "1970-01-01T00:00:00.000000Z\t1970-01-01T00:59:00.000000Z\t1970-01-01T00:00:00.000000Z\t\n" +
-                "1970-01-01T01:00:00.000000Z\t1970-01-01T01:39:00.000000Z\t1970-01-01T01:00:00.000000Z\t\n";
-
-        // Forced no index execution
-        assertSql(expected, "select first(k) fk, last(k) lk, k, s\n" +
-                "from xx\n" +
-                "where s = null or s = 'none'\n" +
-                "sample by 1h"
-        );
-
-        // Indexed execution
-        assertSql(expected, "select first(k) fk, last(k) lk, k, s\n" +
-                "from xx\n" +
-                "where s = null\n" +
-                "sample by 1h"
-        );
     }
 
     @Test
@@ -3133,7 +3142,7 @@ public class SampleByTest extends AbstractCairoTest {
     public void testSampleByAllowsPredicatePushDownWhenTsIsNotIncludedInColumnList() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select * from (" +
                             "select ts2 as tstmp, sym, first(val), avg(val), last(val), max(val) " +
                             "from x " +
@@ -3343,17 +3352,20 @@ public class SampleByTest extends AbstractCairoTest {
                     "select dateadd('m', 11*x::int, '2022-12-01T01:00:00.000000Z') ts, x v, rnd_str('A', 'B') s\n" +
                     "from long_sequence(6) ) timestamp(ts)");
 
-            assertQuery("ts\tv\ts\n" +
+            assertQueryNoLeakCheck("ts\tv\ts\n" +
                             "2022-12-01T01:11:00.000000Z\t1\tA\n" +
                             "2022-12-01T01:22:00.000000Z\t2\tA\n" +
                             "2022-12-01T01:33:00.000000Z\t3\tB\n" +
                             "2022-12-01T01:44:00.000000Z\t4\tB\n" +
                             "2022-12-01T01:55:00.000000Z\t5\tB\n" +
                             "2022-12-01T02:06:00.000000Z\t6\tB\n",
-                    "select * from tab", "ts", true, true
+                    "select * from tab",
+                    "ts",
+                    true,
+                    true
             );
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select * from (select ts, s, first(v) from tab sample by 30m fill(prev) align to first observation) where s = 'B'",
                     "SelectedRecord\n" +
                             "    Filter filter: s='B'\n" +
@@ -3366,11 +3378,13 @@ public class SampleByTest extends AbstractCairoTest {
                             "                Frame forward scan on: tab\n"
             );
 
-            assertQuery("ts\ts\tfirst\n" +
+            assertQueryNoLeakCheck(
+                    "ts\ts\tfirst\n" +
                             "2022-12-01T01:11:00.000000Z\tB\t3\n" +
                             "2022-12-01T01:41:00.000000Z\tB\t4\n",
                     "select * from (select ts, s, first(v) from tab sample by 30m fill(prev) align to first observation) where s = 'B' ",
-                    "ts", false
+                    "ts",
+                    false
             );
         });
     }
@@ -3382,7 +3396,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "select dateadd('m', 10*x::int, '2022-12-01T01:00:00.000000Z') ts, x v\n" +
                     "from long_sequence(6) ) timestamp(ts)");
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select * from (select ts, first(v) from tab sample by 30m fill(prev) align to first observation) where ts > '2022-12-01T01:10:00.000000Z'",
                     "Filter filter: 1669857000000000<ts\n" +
                             "    SampleByFillPrev\n" +
@@ -3392,10 +3406,12 @@ public class SampleByTest extends AbstractCairoTest {
                             "            Frame forward scan on: tab\n"
             );
 
-            assertQuery("ts\tfirst\n" +
+            assertQueryNoLeakCheck(
+                    "ts\tfirst\n" +
                             "2022-12-01T01:40:00.000000Z\t4\n",
                     "select * from (select ts, first(v) from tab sample by 30m fill(prev) align to first observation) where ts > '2022-12-01T01:10:00.000000Z' ",
-                    "ts", false
+                    "ts",
+                    false
             );
         });
     }
@@ -3459,7 +3475,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "  geo6 GEOHASH(6c)" +
                     ") timestamp (time) PARTITION BY DAY;");
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select time, last(lat) lat, last(lon) lon " +
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
@@ -3489,7 +3505,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "  geo6 GEOHASH(6c)" +
                     ") timestamp (time) PARTITION BY DAY;");
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select   id, time, ts, last(lat) lat, last(lon) lon " +
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
@@ -3519,7 +3535,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "  type SYMBOL " +
                     ") timestamp (time) PARTITION BY DAY;");
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select time, type, last(lat) lat, last(lon) lon " +
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
@@ -3534,7 +3550,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "            Frame forward scan on: pos\n"
             );
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select   id, time, type, last(lat) lat, last(lon) lon " +
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
@@ -3563,7 +3579,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "  geo6 GEOHASH(6c)" +
                     ") timestamp (time) PARTITION BY DAY;");
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select   id, time, geo6, last(lat) lat, last(lon) lon " +
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
@@ -3578,7 +3594,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "            Frame forward scan on: pos\n"
             );
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select   id, time, lat, last(lat) lastlat, last(lon) lon " +
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
@@ -3690,7 +3706,8 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByFirstLastWithNonTsOrFilteredSymbolColumn() throws Exception {
-        assertQuery("id\ttime\tgeo6\tlat\tlon\n",
+        assertQuery(
+                "id\ttime\tgeo6\tlat\tlon\n",
                 "select   id, time, geo6, last(lat) lat, last(lon) lon " +
                         "from pos " +
                         "where id = 'A' sample by 15m ALIGN to CALENDAR " +
@@ -3843,7 +3860,6 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByMillisFillNoneNotKeyedEmpty() throws Exception {
-
         String expected = "sum\tk\n";
 
         String ddl = "create table x as " +
@@ -4307,7 +4323,7 @@ public class SampleByTest extends AbstractCairoTest {
     public void testSampleByRewriteJoinNoTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select * from " +
                             "(select sym, first(val), avg(val), last(val), max(val) " +
                             "from x " +
@@ -4348,7 +4364,7 @@ public class SampleByTest extends AbstractCairoTest {
     public void testSampleByRewriteJoinTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select * from " +
                             "(select ts1, sym, first(val), avg(val), last(val), max(val) " +
                             "from x " +
@@ -4423,7 +4439,7 @@ public class SampleByTest extends AbstractCairoTest {
     public void testSampleByRewriteMultipleTimestamps1() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select ts1 a, ts1 b, sym, first(val), avg(val), last(val), max(val) " +
                             "from x " +
                             "sample by 1m align to calendar ",
@@ -4445,7 +4461,7 @@ public class SampleByTest extends AbstractCairoTest {
     public void testSampleByRewriteMultipleTimestamps1NotKeyed() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select ts1 a, ts1 b, first(val), avg(val), last(val), max(val) " +
                             "from x " +
                             "sample by 1m align to calendar ",
@@ -4467,7 +4483,7 @@ public class SampleByTest extends AbstractCairoTest {
     public void testSampleByRewriteMultipleTimestamps2() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select ts1 a, ts1 b, sym, first(val), avg(val), ts1 e, last(val), max(val), ts1 c, ts1 d " +
                             "from x " +
                             "sample by 1m align to calendar ",
@@ -4489,7 +4505,7 @@ public class SampleByTest extends AbstractCairoTest {
     public void testSampleByRewriteUTCOffset() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select ts1, sym, min(val), avg(val), max(val) " +
                             "from x " +
                             "sample by 1m align to calendar time zone 'UTC'",
@@ -4510,7 +4526,7 @@ public class SampleByTest extends AbstractCairoTest {
     public void testSampleByRewriteUnionNoTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select sym, first(val), avg(val), last(val), max(val) " +
                             "from x " +
                             "sample by 1m align to calendar " +
@@ -4547,7 +4563,7 @@ public class SampleByTest extends AbstractCairoTest {
     public void testSampleByRewriteUnionTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "select ts1 as tstmp, sym, first(val), avg(val), last(val), max(val) " +
                             "from x " +
                             "sample by 1m align to calendar " +
@@ -4580,7 +4596,7 @@ public class SampleByTest extends AbstractCairoTest {
     public void testSampleByRewriteWith() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "with y as (select ts1 a, ts1 b, sym, first(val), avg(val), ts1 e, last(val), max(val), ts1 c, ts1 d " +
                             "from x " +
                             "sample by 1m align to calendar) select * from y ",
@@ -4782,7 +4798,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "select dateadd('m', 11*x::int, '2022-12-01T01:00:00.000000Z') ts, x v, rnd_str('A', 'B') s\n" +
                     "from long_sequence(6) ) timestamp(ts)");
 
-            assertQuery("ts\tv\ts\n" +
+            assertQueryNoLeakCheck("ts\tv\ts\n" +
                             "2022-12-01T01:11:00.000000Z\t1\tA\n" +
                             "2022-12-01T01:22:00.000000Z\t2\tA\n" +
                             "2022-12-01T01:33:00.000000Z\t3\tB\n" +
@@ -4794,7 +4810,7 @@ public class SampleByTest extends AbstractCairoTest {
 
             String query = "select ts, s, first(v) from tab where s = 'B' and ts > '2022-12-01T00:00:00.000000Z' sample by 30m fill(prev) align to first observation";
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "SampleBy\n" +
                             "  fill: prev\n" +
@@ -4808,10 +4824,13 @@ public class SampleByTest extends AbstractCairoTest {
                             "              intervals: [(\"2022-12-01T00:00:00.000001Z\",\"MAX\")]\n"
             );
 
-            assertQuery("ts\ts\tfirst\n" +
+            assertQueryNoLeakCheck(
+                    "ts\ts\tfirst\n" +
                             "2022-12-01T01:33:00.000000Z\tB\t3\n" +
                             "2022-12-01T02:03:00.000000Z\tB\t6\n",
-                    query, "ts", false
+                    query,
+                    "ts",
+                    false
             );
         });
     }
@@ -4877,6 +4896,26 @@ public class SampleByTest extends AbstractCairoTest {
                     "select symbol || 'abcd' as symbol, sum(amount), vwap(price, amount), dateadd('h', 2, to_timezone(timestamp,'EST')) + 1000000L NYTime\n" +
                             "from trades\n" +
                             "sample by 5m"
+            );
+
+            assertSampleByFlavours(
+                    "symbol\tsum\tprice\tlast_timestamp\n" +
+                            "a\t0.6390492980774742\t0.22452340856088226\t2022-02-24T00:03:00.000000Z\n" +
+                            "c\t2.3759005540157383\t0.7675673070796104\t2022-02-24T00:09:00.000000Z\n" +
+                            "b\t1.6749086742799453\t0.3100545983862456\t2022-02-24T00:07:00.000000Z\n",
+                    "select symbol, sum(amount), last(price) price, last(timestamp) last_timestamp\n" +
+                            "from trades\n" +
+                            "sample by 1h"
+            );
+
+            assertSampleByFlavours(
+                    "symbol\tsum\tprice\ttimestamp\tlast_timestamp\n" +
+                            "a\t0.6390492980774742\t0.22452340856088226\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:03:00.000000Z\n" +
+                            "c\t2.3759005540157383\t0.7675673070796104\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:09:00.000000Z\n" +
+                            "b\t1.6749086742799453\t0.3100545983862456\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:07:00.000000Z\n",
+                    "select symbol, sum(amount), last(price) price, timestamp, max(timestamp) last_timestamp\n" +
+                            "from trades\n" +
+                            "sample by 1d"
             );
         });
     }
@@ -5762,141 +5801,151 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillLinear() throws Exception {
-        assertQuery("b\tsum\tk\n" +
-                "\t11.427984775756228\t1970-01-03T00:00:00.000000Z\n" +
-                "VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000Z\n" +
-                "RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000Z\n" +
-                "PEHN\t60.419130298418445\t1970-01-03T00:00:00.000000Z\n" +
-                "HYRX\t269.0808495558698\t1970-01-03T00:00:00.000000Z\n" +
-                "PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000Z\n" +
-                "\t120.87811633071126\t1970-01-03T03:00:00.000000Z\n" +
-                "VTJW\t44.39196261932496\t1970-01-03T03:00:00.000000Z\n" +
-                "RXGZ\tnull\t1970-01-03T03:00:00.000000Z\n" +
-                "HYRX\t183.3959405081909\t1970-01-03T03:00:00.000000Z\n" +
-                "HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000Z\n" +
-                "PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000Z\n" +
-                "\t57.93466326862211\t1970-01-03T06:00:00.000000Z\n" +
-                "VTJW\t46.60623681895594\t1970-01-03T06:00:00.000000Z\n" +
-                "RXGZ\tnull\t1970-01-03T06:00:00.000000Z\n" +
-                "HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z\n" +
-                "VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000Z\n" +
-                "\t26.922103479744898\t1970-01-03T09:00:00.000000Z\n" +
-                "RXGZ\tnull\t1970-01-03T09:00:00.000000Z\n" +
-                "PEHN\t82.9603306085581\t1970-01-03T09:00:00.000000Z\n" +
-                "\t150.48604795487125\t1970-01-03T12:00:00.000000Z\n" +
-                "PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000Z\n" +
-                "VTJW\t51.034785218217934\t1970-01-03T12:00:00.000000Z\n" +
-                "RXGZ\tnull\t1970-01-03T12:00:00.000000Z\n" +
-                "HYRX\t-73.65878663484577\t1970-01-03T12:00:00.000000Z\n" +
-                "PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000Z\n" +
-                "\t172.06125086724973\t1970-01-03T15:00:00.000000Z\n" +
-                "VTJW\t53.249059417848926\t1970-01-03T15:00:00.000000Z\n" +
-                "RXGZ\tnull\t1970-01-03T15:00:00.000000Z\n" +
-                "HYRX\t-159.3436956825247\t1970-01-03T15:00:00.000000Z\n" +
-                "\t86.08992670884706\t1970-01-03T18:00:00.000000Z\n" +
-                "VTJW\t55.463333617479904\t1970-01-03T18:00:00.000000Z\n" +
-                "RXGZ\tnull\t1970-01-03T18:00:00.000000Z\n" +
-                "PEHN\t13.557627225594155\t1970-01-03T18:00:00.000000Z\n" +
-                "HYRX\t-245.0286047302036\t1970-01-03T18:00:00.000000Z\n", "select b, sum(a), k from x sample by 3h fill(linear)", "create table x as " +
-                "(" +
-                "select" +
-                " rnd_double(0)*100 a," +
-                " rnd_symbol(5,4,4,1) b," +
-                " timestamp_sequence(172800000000, 3600000000) k" +
-                " from" +
-                " long_sequence(20)" +
-                ") timestamp(k) partition by NONE", "k", "insert into x select * from (" +
-                "select" +
-                " rnd_double(0)*100 a," +
-                " rnd_symbol(5,4,4,1) b," +
-                " timestamp_sequence(277200000000, 3600000000) k" +
-                " from" +
-                " long_sequence(5)" +
-                ") timestamp(k)", "b\tsum\tk\n" +
-                "\t11.427984775756228\t1970-01-03T00:00:00.000000Z\n" +
-                "VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000Z\n" +
-                "RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000Z\n" +
-                "PEHN\t60.419130298418445\t1970-01-03T00:00:00.000000Z\n" +
-                "HYRX\t269.0808495558698\t1970-01-03T00:00:00.000000Z\n" +
-                "UVSD\tnull\t1970-01-03T00:00:00.000000Z\n" +
-                "KGHV\tnull\t1970-01-03T00:00:00.000000Z\n" +
-                "PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000Z\n" +
-                "\t120.87811633071126\t1970-01-03T03:00:00.000000Z\n" +
-                "VTJW\t44.39196261932496\t1970-01-03T03:00:00.000000Z\n" +
-                "RXGZ\tnull\t1970-01-03T03:00:00.000000Z\n" +
-                "HYRX\t183.3959405081909\t1970-01-03T03:00:00.000000Z\n" +
-                "UVSD\tnull\t1970-01-03T03:00:00.000000Z\n" +
-                "KGHV\tnull\t1970-01-03T03:00:00.000000Z\n" +
-                "HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000Z\n" +
-                "PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000Z\n" +
-                "\t57.93466326862211\t1970-01-03T06:00:00.000000Z\n" +
-                "VTJW\t46.60623681895594\t1970-01-03T06:00:00.000000Z\n" +
-                "RXGZ\tnull\t1970-01-03T06:00:00.000000Z\n" +
-                "UVSD\tnull\t1970-01-03T06:00:00.000000Z\n" +
-                "KGHV\tnull\t1970-01-03T06:00:00.000000Z\n" +
-                "HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z\n" +
-                "VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000Z\n" +
-                "\t26.922103479744898\t1970-01-03T09:00:00.000000Z\n" +
-                "RXGZ\tnull\t1970-01-03T09:00:00.000000Z\n" +
-                "PEHN\t82.9603306085581\t1970-01-03T09:00:00.000000Z\n" +
-                "UVSD\tnull\t1970-01-03T09:00:00.000000Z\n" +
-                "KGHV\tnull\t1970-01-03T09:00:00.000000Z\n" +
-                "\t150.48604795487125\t1970-01-03T12:00:00.000000Z\n" +
-                "PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000Z\n" +
-                "VTJW\t51.034785218217934\t1970-01-03T12:00:00.000000Z\n" +
-                "RXGZ\tnull\t1970-01-03T12:00:00.000000Z\n" +
-                "HYRX\t-73.65878663484577\t1970-01-03T12:00:00.000000Z\n" +
-                "UVSD\tnull\t1970-01-03T12:00:00.000000Z\n" +
-                "KGHV\tnull\t1970-01-03T12:00:00.000000Z\n" +
-                "PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000Z\n" +
-                "\t172.06125086724973\t1970-01-03T15:00:00.000000Z\n" +
-                "VTJW\t53.249059417848926\t1970-01-03T15:00:00.000000Z\n" +
-                "RXGZ\tnull\t1970-01-03T15:00:00.000000Z\n" +
-                "HYRX\t-159.3436956825247\t1970-01-03T15:00:00.000000Z\n" +
-                "UVSD\tnull\t1970-01-03T15:00:00.000000Z\n" +
-                "KGHV\tnull\t1970-01-03T15:00:00.000000Z\n" +
-                "\t86.08992670884706\t1970-01-03T18:00:00.000000Z\n" +
-                "VTJW\t55.463333617479904\t1970-01-03T18:00:00.000000Z\n" +
-                "RXGZ\tnull\t1970-01-03T18:00:00.000000Z\n" +
-                "PEHN\t13.557627225594155\t1970-01-03T18:00:00.000000Z\n" +
-                "HYRX\t-245.0286047302036\t1970-01-03T18:00:00.000000Z\n" +
-                "UVSD\tnull\t1970-01-03T18:00:00.000000Z\n" +
-                "KGHV\tnull\t1970-01-03T18:00:00.000000Z\n" +
-                "\t75.55713454429453\t1970-01-03T21:00:00.000000Z\n" +
-                "VTJW\t57.67760781711089\t1970-01-03T21:00:00.000000Z\n" +
-                "RXGZ\tnull\t1970-01-03T21:00:00.000000Z\n" +
-                "PEHN\t-21.889850047664094\t1970-01-03T21:00:00.000000Z\n" +
-                "HYRX\t-330.7135137778825\t1970-01-03T21:00:00.000000Z\n" +
-                "UVSD\tnull\t1970-01-03T21:00:00.000000Z\n" +
-                "KGHV\tnull\t1970-01-03T21:00:00.000000Z\n" +
-                "\t65.02434237974201\t1970-01-04T00:00:00.000000Z\n" +
-                "VTJW\t59.891882016741896\t1970-01-04T00:00:00.000000Z\n" +
-                "RXGZ\tnull\t1970-01-04T00:00:00.000000Z\n" +
-                "PEHN\t-57.337327320922356\t1970-01-04T00:00:00.000000Z\n" +
-                "HYRX\t-416.39842282556134\t1970-01-04T00:00:00.000000Z\n" +
-                "UVSD\tnull\t1970-01-04T00:00:00.000000Z\n" +
-                "KGHV\tnull\t1970-01-04T00:00:00.000000Z\n" +
-                "\t54.49155021518948\t1970-01-04T03:00:00.000000Z\n" +
-                "VTJW\t62.10615621637288\t1970-01-04T03:00:00.000000Z\n" +
-                "RXGZ\tnull\t1970-01-04T03:00:00.000000Z\n" +
-                "PEHN\t-92.78480459418059\t1970-01-04T03:00:00.000000Z\n" +
-                "HYRX\t-502.0833318732403\t1970-01-04T03:00:00.000000Z\n" +
-                "UVSD\tnull\t1970-01-04T03:00:00.000000Z\n" +
-                "KGHV\tnull\t1970-01-04T03:00:00.000000Z\n" +
-                "\t135.835983782176\t1970-01-04T06:00:00.000000Z\n" +
-                "UVSD\t49.42890511958454\t1970-01-04T06:00:00.000000Z\n" +
-                "VTJW\t64.32043041600387\t1970-01-04T06:00:00.000000Z\n" +
-                "RXGZ\tnull\t1970-01-04T06:00:00.000000Z\n" +
-                "PEHN\t-128.23228186743887\t1970-01-04T06:00:00.000000Z\n" +
-                "HYRX\t-587.7682409209192\t1970-01-04T06:00:00.000000Z\n" +
-                "KGHV\tnull\t1970-01-04T06:00:00.000000Z\n" +
-                "KGHV\t67.52509547112409\t1970-01-04T09:00:00.000000Z\n" +
-                "\t217.1804173491625\t1970-01-04T09:00:00.000000Z\n" +
-                "VTJW\t66.53470461563491\t1970-01-04T09:00:00.000000Z\n" +
-                "RXGZ\tnull\t1970-01-04T09:00:00.000000Z\n" +
-                "PEHN\t-163.67975914069712\t1970-01-04T09:00:00.000000Z\n" +
-                "HYRX\t-673.453149968598\t1970-01-04T09:00:00.000000Z\n" +
-                "UVSD\tnull\t1970-01-04T09:00:00.000000Z\n", true, true, false);
+        assertQuery(
+                "b\tsum\tk\n" +
+                        "\t11.427984775756228\t1970-01-03T00:00:00.000000Z\n" +
+                        "VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000Z\n" +
+                        "PEHN\t60.419130298418445\t1970-01-03T00:00:00.000000Z\n" +
+                        "HYRX\t269.0808495558698\t1970-01-03T00:00:00.000000Z\n" +
+                        "PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000Z\n" +
+                        "\t120.87811633071126\t1970-01-03T03:00:00.000000Z\n" +
+                        "VTJW\t44.39196261932496\t1970-01-03T03:00:00.000000Z\n" +
+                        "RXGZ\tnull\t1970-01-03T03:00:00.000000Z\n" +
+                        "HYRX\t183.3959405081909\t1970-01-03T03:00:00.000000Z\n" +
+                        "HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000Z\n" +
+                        "PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000Z\n" +
+                        "\t57.93466326862211\t1970-01-03T06:00:00.000000Z\n" +
+                        "VTJW\t46.60623681895594\t1970-01-03T06:00:00.000000Z\n" +
+                        "RXGZ\tnull\t1970-01-03T06:00:00.000000Z\n" +
+                        "HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z\n" +
+                        "VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000Z\n" +
+                        "\t26.922103479744898\t1970-01-03T09:00:00.000000Z\n" +
+                        "RXGZ\tnull\t1970-01-03T09:00:00.000000Z\n" +
+                        "PEHN\t82.9603306085581\t1970-01-03T09:00:00.000000Z\n" +
+                        "\t150.48604795487125\t1970-01-03T12:00:00.000000Z\n" +
+                        "PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000Z\n" +
+                        "VTJW\t51.034785218217934\t1970-01-03T12:00:00.000000Z\n" +
+                        "RXGZ\tnull\t1970-01-03T12:00:00.000000Z\n" +
+                        "HYRX\t-73.65878663484577\t1970-01-03T12:00:00.000000Z\n" +
+                        "PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000Z\n" +
+                        "\t172.06125086724973\t1970-01-03T15:00:00.000000Z\n" +
+                        "VTJW\t53.249059417848926\t1970-01-03T15:00:00.000000Z\n" +
+                        "RXGZ\tnull\t1970-01-03T15:00:00.000000Z\n" +
+                        "HYRX\t-159.3436956825247\t1970-01-03T15:00:00.000000Z\n" +
+                        "\t86.08992670884706\t1970-01-03T18:00:00.000000Z\n" +
+                        "VTJW\t55.463333617479904\t1970-01-03T18:00:00.000000Z\n" +
+                        "RXGZ\tnull\t1970-01-03T18:00:00.000000Z\n" +
+                        "PEHN\t13.557627225594155\t1970-01-03T18:00:00.000000Z\n" +
+                        "HYRX\t-245.0286047302036\t1970-01-03T18:00:00.000000Z\n",
+                "select b, sum(a), k from x sample by 3h fill(linear)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(277200000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(5)" +
+                        ") timestamp(k)",
+                "b\tsum\tk\n" +
+                        "\t11.427984775756228\t1970-01-03T00:00:00.000000Z\n" +
+                        "VTJW\t42.17768841969397\t1970-01-03T00:00:00.000000Z\n" +
+                        "RXGZ\t23.90529010846525\t1970-01-03T00:00:00.000000Z\n" +
+                        "PEHN\t60.419130298418445\t1970-01-03T00:00:00.000000Z\n" +
+                        "HYRX\t269.0808495558698\t1970-01-03T00:00:00.000000Z\n" +
+                        "UVSD\tnull\t1970-01-03T00:00:00.000000Z\n" +
+                        "KGHV\tnull\t1970-01-03T00:00:00.000000Z\n" +
+                        "PEHN\t70.94360487171201\t1970-01-03T03:00:00.000000Z\n" +
+                        "\t120.87811633071126\t1970-01-03T03:00:00.000000Z\n" +
+                        "VTJW\t44.39196261932496\t1970-01-03T03:00:00.000000Z\n" +
+                        "RXGZ\tnull\t1970-01-03T03:00:00.000000Z\n" +
+                        "HYRX\t183.3959405081909\t1970-01-03T03:00:00.000000Z\n" +
+                        "UVSD\tnull\t1970-01-03T03:00:00.000000Z\n" +
+                        "KGHV\tnull\t1970-01-03T03:00:00.000000Z\n" +
+                        "HYRX\t97.71103146051203\t1970-01-03T06:00:00.000000Z\n" +
+                        "PEHN\t81.46807944500559\t1970-01-03T06:00:00.000000Z\n" +
+                        "\t57.93466326862211\t1970-01-03T06:00:00.000000Z\n" +
+                        "VTJW\t46.60623681895594\t1970-01-03T06:00:00.000000Z\n" +
+                        "RXGZ\tnull\t1970-01-03T06:00:00.000000Z\n" +
+                        "UVSD\tnull\t1970-01-03T06:00:00.000000Z\n" +
+                        "KGHV\tnull\t1970-01-03T06:00:00.000000Z\n" +
+                        "HYRX\t12.026122412833129\t1970-01-03T09:00:00.000000Z\n" +
+                        "VTJW\t48.820511018586934\t1970-01-03T09:00:00.000000Z\n" +
+                        "\t26.922103479744898\t1970-01-03T09:00:00.000000Z\n" +
+                        "RXGZ\tnull\t1970-01-03T09:00:00.000000Z\n" +
+                        "PEHN\t82.9603306085581\t1970-01-03T09:00:00.000000Z\n" +
+                        "UVSD\tnull\t1970-01-03T09:00:00.000000Z\n" +
+                        "KGHV\tnull\t1970-01-03T09:00:00.000000Z\n" +
+                        "\t150.48604795487125\t1970-01-03T12:00:00.000000Z\n" +
+                        "PEHN\t84.45258177211063\t1970-01-03T12:00:00.000000Z\n" +
+                        "VTJW\t51.034785218217934\t1970-01-03T12:00:00.000000Z\n" +
+                        "RXGZ\tnull\t1970-01-03T12:00:00.000000Z\n" +
+                        "HYRX\t-73.65878663484577\t1970-01-03T12:00:00.000000Z\n" +
+                        "UVSD\tnull\t1970-01-03T12:00:00.000000Z\n" +
+                        "KGHV\tnull\t1970-01-03T12:00:00.000000Z\n" +
+                        "PEHN\t49.00510449885239\t1970-01-03T15:00:00.000000Z\n" +
+                        "\t172.06125086724973\t1970-01-03T15:00:00.000000Z\n" +
+                        "VTJW\t53.249059417848926\t1970-01-03T15:00:00.000000Z\n" +
+                        "RXGZ\tnull\t1970-01-03T15:00:00.000000Z\n" +
+                        "HYRX\t-159.3436956825247\t1970-01-03T15:00:00.000000Z\n" +
+                        "UVSD\tnull\t1970-01-03T15:00:00.000000Z\n" +
+                        "KGHV\tnull\t1970-01-03T15:00:00.000000Z\n" +
+                        "\t86.08992670884706\t1970-01-03T18:00:00.000000Z\n" +
+                        "VTJW\t55.463333617479904\t1970-01-03T18:00:00.000000Z\n" +
+                        "RXGZ\tnull\t1970-01-03T18:00:00.000000Z\n" +
+                        "PEHN\t13.557627225594155\t1970-01-03T18:00:00.000000Z\n" +
+                        "HYRX\t-245.0286047302036\t1970-01-03T18:00:00.000000Z\n" +
+                        "UVSD\tnull\t1970-01-03T18:00:00.000000Z\n" +
+                        "KGHV\tnull\t1970-01-03T18:00:00.000000Z\n" +
+                        "\t75.55713454429453\t1970-01-03T21:00:00.000000Z\n" +
+                        "VTJW\t57.67760781711089\t1970-01-03T21:00:00.000000Z\n" +
+                        "RXGZ\tnull\t1970-01-03T21:00:00.000000Z\n" +
+                        "PEHN\t-21.889850047664094\t1970-01-03T21:00:00.000000Z\n" +
+                        "HYRX\t-330.7135137778825\t1970-01-03T21:00:00.000000Z\n" +
+                        "UVSD\tnull\t1970-01-03T21:00:00.000000Z\n" +
+                        "KGHV\tnull\t1970-01-03T21:00:00.000000Z\n" +
+                        "\t65.02434237974201\t1970-01-04T00:00:00.000000Z\n" +
+                        "VTJW\t59.891882016741896\t1970-01-04T00:00:00.000000Z\n" +
+                        "RXGZ\tnull\t1970-01-04T00:00:00.000000Z\n" +
+                        "PEHN\t-57.337327320922356\t1970-01-04T00:00:00.000000Z\n" +
+                        "HYRX\t-416.39842282556134\t1970-01-04T00:00:00.000000Z\n" +
+                        "UVSD\tnull\t1970-01-04T00:00:00.000000Z\n" +
+                        "KGHV\tnull\t1970-01-04T00:00:00.000000Z\n" +
+                        "\t54.49155021518948\t1970-01-04T03:00:00.000000Z\n" +
+                        "VTJW\t62.10615621637288\t1970-01-04T03:00:00.000000Z\n" +
+                        "RXGZ\tnull\t1970-01-04T03:00:00.000000Z\n" +
+                        "PEHN\t-92.78480459418059\t1970-01-04T03:00:00.000000Z\n" +
+                        "HYRX\t-502.0833318732403\t1970-01-04T03:00:00.000000Z\n" +
+                        "UVSD\tnull\t1970-01-04T03:00:00.000000Z\n" +
+                        "KGHV\tnull\t1970-01-04T03:00:00.000000Z\n" +
+                        "\t135.835983782176\t1970-01-04T06:00:00.000000Z\n" +
+                        "UVSD\t49.42890511958454\t1970-01-04T06:00:00.000000Z\n" +
+                        "VTJW\t64.32043041600387\t1970-01-04T06:00:00.000000Z\n" +
+                        "RXGZ\tnull\t1970-01-04T06:00:00.000000Z\n" +
+                        "PEHN\t-128.23228186743887\t1970-01-04T06:00:00.000000Z\n" +
+                        "HYRX\t-587.7682409209192\t1970-01-04T06:00:00.000000Z\n" +
+                        "KGHV\tnull\t1970-01-04T06:00:00.000000Z\n" +
+                        "KGHV\t67.52509547112409\t1970-01-04T09:00:00.000000Z\n" +
+                        "\t217.1804173491625\t1970-01-04T09:00:00.000000Z\n" +
+                        "VTJW\t66.53470461563491\t1970-01-04T09:00:00.000000Z\n" +
+                        "RXGZ\tnull\t1970-01-04T09:00:00.000000Z\n" +
+                        "PEHN\t-163.67975914069712\t1970-01-04T09:00:00.000000Z\n" +
+                        "HYRX\t-673.453149968598\t1970-01-04T09:00:00.000000Z\n" +
+                        "UVSD\tnull\t1970-01-04T09:00:00.000000Z\n",
+                true,
+                true,
+                false
+        );
     }
 
     @Test
@@ -6146,154 +6195,177 @@ public class SampleByTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertQuery("ts\tcount\n" +
-                    "2024-03-30T12:24:01.000000Z\t10\n" +
-                    "2024-03-30T12:29:01.000000Z\t10\n" +
-                    "2024-03-30T12:34:01.000000Z\t10\n" +
-                    "2024-03-30T12:39:01.000000Z\t5\n" +
-                    "2024-03-30T12:54:01.000000Z\t2\n" +
-                    "2024-03-30T12:59:01.000000Z\t1\n" +
-                    "2024-03-30T13:04:01.000000Z\t1\n" +
-                    "2024-03-30T17:04:01.000000Z\t4\n" +
-                    "2024-03-30T17:09:01.000000Z\t10\n" +
-                    "2024-03-30T17:14:01.000000Z\t6\n", "select ts, count() from x sample by 5m align to first observation\n", "ts", false, false);
+            assertQueryNoLeakCheck(
+                    "ts\tcount\n" +
+                            "2024-03-30T12:24:01.000000Z\t10\n" +
+                            "2024-03-30T12:29:01.000000Z\t10\n" +
+                            "2024-03-30T12:34:01.000000Z\t10\n" +
+                            "2024-03-30T12:39:01.000000Z\t5\n" +
+                            "2024-03-30T12:54:01.000000Z\t2\n" +
+                            "2024-03-30T12:59:01.000000Z\t1\n" +
+                            "2024-03-30T13:04:01.000000Z\t1\n" +
+                            "2024-03-30T17:04:01.000000Z\t4\n" +
+                            "2024-03-30T17:09:01.000000Z\t10\n" +
+                            "2024-03-30T17:14:01.000000Z\t6\n",
+                    "select ts, count() from x sample by 5m align to first observation\n",
+                    "ts",
+                    false,
+                    false
+            );
 
-            assertQuery("ts\tcount\n" +
-                    "2024-03-30T12:24:01.000000Z\t10\n" +
-                    "2024-03-30T12:29:01.000000Z\t10\n" +
-                    "2024-03-30T12:34:01.000000Z\t10\n" +
-                    "2024-03-30T12:39:01.000000Z\t5\n" +
-                    "2024-03-30T12:44:01.000000Z\t4\n" +
-                    "2024-03-30T12:49:01.000000Z\t3\n" +
-                    "2024-03-30T12:54:01.000000Z\t2\n" +
-                    "2024-03-30T12:59:01.000000Z\t1\n" +
-                    "2024-03-30T13:04:01.000000Z\t1\n" +
-                    "2024-03-30T13:09:01.000000Z\t1\n" +
-                    "2024-03-30T13:14:01.000000Z\t1\n" +
-                    "2024-03-30T13:19:01.000000Z\t1\n" +
-                    "2024-03-30T13:24:01.000000Z\t1\n" +
-                    "2024-03-30T13:29:01.000000Z\t1\n" +
-                    "2024-03-30T13:34:01.000000Z\t1\n" +
-                    "2024-03-30T13:39:01.000000Z\t1\n" +
-                    "2024-03-30T13:44:01.000000Z\t1\n" +
-                    "2024-03-30T13:49:01.000000Z\t1\n" +
-                    "2024-03-30T13:54:01.000000Z\t1\n" +
-                    "2024-03-30T13:59:01.000000Z\t1\n" +
-                    "2024-03-30T14:04:01.000000Z\t1\n" +
-                    "2024-03-30T14:09:01.000000Z\t1\n" +
-                    "2024-03-30T14:14:01.000000Z\t1\n" +
-                    "2024-03-30T14:19:01.000000Z\t1\n" +
-                    "2024-03-30T14:24:01.000000Z\t2\n" +
-                    "2024-03-30T14:29:01.000000Z\t2\n" +
-                    "2024-03-30T14:34:01.000000Z\t2\n" +
-                    "2024-03-30T14:39:01.000000Z\t2\n" +
-                    "2024-03-30T14:44:01.000000Z\t2\n" +
-                    "2024-03-30T14:49:01.000000Z\t2\n" +
-                    "2024-03-30T14:54:01.000000Z\t2\n" +
-                    "2024-03-30T14:59:01.000000Z\t2\n" +
-                    "2024-03-30T15:04:01.000000Z\t2\n" +
-                    "2024-03-30T15:09:01.000000Z\t2\n" +
-                    "2024-03-30T15:14:01.000000Z\t2\n" +
-                    "2024-03-30T15:19:01.000000Z\t2\n" +
-                    "2024-03-30T15:24:01.000000Z\t2\n" +
-                    "2024-03-30T15:29:01.000000Z\t2\n" +
-                    "2024-03-30T15:34:01.000000Z\t2\n" +
-                    "2024-03-30T15:39:01.000000Z\t2\n" +
-                    "2024-03-30T15:44:01.000000Z\t3\n" +
-                    "2024-03-30T15:49:01.000000Z\t3\n" +
-                    "2024-03-30T15:54:01.000000Z\t3\n" +
-                    "2024-03-30T15:59:01.000000Z\t3\n" +
-                    "2024-03-30T16:04:01.000000Z\t3\n" +
-                    "2024-03-30T16:09:01.000000Z\t3\n" +
-                    "2024-03-30T16:14:01.000000Z\t3\n" +
-                    "2024-03-30T16:19:01.000000Z\t3\n" +
-                    "2024-03-30T16:24:01.000000Z\t3\n" +
-                    "2024-03-30T16:29:01.000000Z\t3\n" +
-                    "2024-03-30T16:34:01.000000Z\t3\n" +
-                    "2024-03-30T16:39:01.000000Z\t3\n" +
-                    "2024-03-30T16:44:01.000000Z\t3\n" +
-                    "2024-03-30T16:49:01.000000Z\t3\n" +
-                    "2024-03-30T16:54:01.000000Z\t3\n" +
-                    "2024-03-30T16:59:01.000000Z\t3\n" +
-                    "2024-03-30T17:04:01.000000Z\t4\n" +
-                    "2024-03-30T17:09:01.000000Z\t10\n" +
-                    "2024-03-30T17:14:01.000000Z\t6\n", "select ts, count() from x sample by 5m fill(linear) align to first observation\n", "ts", true, true);
+            assertQueryNoLeakCheck(
+                    "ts\tcount\n" +
+                            "2024-03-30T12:24:01.000000Z\t10\n" +
+                            "2024-03-30T12:29:01.000000Z\t10\n" +
+                            "2024-03-30T12:34:01.000000Z\t10\n" +
+                            "2024-03-30T12:39:01.000000Z\t5\n" +
+                            "2024-03-30T12:44:01.000000Z\t4\n" +
+                            "2024-03-30T12:49:01.000000Z\t3\n" +
+                            "2024-03-30T12:54:01.000000Z\t2\n" +
+                            "2024-03-30T12:59:01.000000Z\t1\n" +
+                            "2024-03-30T13:04:01.000000Z\t1\n" +
+                            "2024-03-30T13:09:01.000000Z\t1\n" +
+                            "2024-03-30T13:14:01.000000Z\t1\n" +
+                            "2024-03-30T13:19:01.000000Z\t1\n" +
+                            "2024-03-30T13:24:01.000000Z\t1\n" +
+                            "2024-03-30T13:29:01.000000Z\t1\n" +
+                            "2024-03-30T13:34:01.000000Z\t1\n" +
+                            "2024-03-30T13:39:01.000000Z\t1\n" +
+                            "2024-03-30T13:44:01.000000Z\t1\n" +
+                            "2024-03-30T13:49:01.000000Z\t1\n" +
+                            "2024-03-30T13:54:01.000000Z\t1\n" +
+                            "2024-03-30T13:59:01.000000Z\t1\n" +
+                            "2024-03-30T14:04:01.000000Z\t1\n" +
+                            "2024-03-30T14:09:01.000000Z\t1\n" +
+                            "2024-03-30T14:14:01.000000Z\t1\n" +
+                            "2024-03-30T14:19:01.000000Z\t1\n" +
+                            "2024-03-30T14:24:01.000000Z\t2\n" +
+                            "2024-03-30T14:29:01.000000Z\t2\n" +
+                            "2024-03-30T14:34:01.000000Z\t2\n" +
+                            "2024-03-30T14:39:01.000000Z\t2\n" +
+                            "2024-03-30T14:44:01.000000Z\t2\n" +
+                            "2024-03-30T14:49:01.000000Z\t2\n" +
+                            "2024-03-30T14:54:01.000000Z\t2\n" +
+                            "2024-03-30T14:59:01.000000Z\t2\n" +
+                            "2024-03-30T15:04:01.000000Z\t2\n" +
+                            "2024-03-30T15:09:01.000000Z\t2\n" +
+                            "2024-03-30T15:14:01.000000Z\t2\n" +
+                            "2024-03-30T15:19:01.000000Z\t2\n" +
+                            "2024-03-30T15:24:01.000000Z\t2\n" +
+                            "2024-03-30T15:29:01.000000Z\t2\n" +
+                            "2024-03-30T15:34:01.000000Z\t2\n" +
+                            "2024-03-30T15:39:01.000000Z\t2\n" +
+                            "2024-03-30T15:44:01.000000Z\t3\n" +
+                            "2024-03-30T15:49:01.000000Z\t3\n" +
+                            "2024-03-30T15:54:01.000000Z\t3\n" +
+                            "2024-03-30T15:59:01.000000Z\t3\n" +
+                            "2024-03-30T16:04:01.000000Z\t3\n" +
+                            "2024-03-30T16:09:01.000000Z\t3\n" +
+                            "2024-03-30T16:14:01.000000Z\t3\n" +
+                            "2024-03-30T16:19:01.000000Z\t3\n" +
+                            "2024-03-30T16:24:01.000000Z\t3\n" +
+                            "2024-03-30T16:29:01.000000Z\t3\n" +
+                            "2024-03-30T16:34:01.000000Z\t3\n" +
+                            "2024-03-30T16:39:01.000000Z\t3\n" +
+                            "2024-03-30T16:44:01.000000Z\t3\n" +
+                            "2024-03-30T16:49:01.000000Z\t3\n" +
+                            "2024-03-30T16:54:01.000000Z\t3\n" +
+                            "2024-03-30T16:59:01.000000Z\t3\n" +
+                            "2024-03-30T17:04:01.000000Z\t4\n" +
+                            "2024-03-30T17:09:01.000000Z\t10\n" +
+                            "2024-03-30T17:14:01.000000Z\t6\n",
+                    "select ts, count() from x sample by 5m fill(linear) align to first observation\n",
+                    "ts",
+                    true,
+                    true
+            );
 
-            assertQuery("ts\tcount\n" +
-                    "2024-03-30T12:20:00.000000Z\t2\n" +
-                    "2024-03-30T12:25:00.000000Z\t10\n" +
-                    "2024-03-30T12:30:00.000000Z\t10\n" +
-                    "2024-03-30T12:35:00.000000Z\t10\n" +
-                    "2024-03-30T12:40:00.000000Z\t3\n" +
-                    "2024-03-30T12:55:00.000000Z\t2\n" +
-                    "2024-03-30T13:00:00.000000Z\t1\n" +
-                    "2024-03-30T13:05:00.000000Z\t1\n" +
-                    "2024-03-30T17:05:00.000000Z\t6\n" +
-                    "2024-03-30T17:10:00.000000Z\t10\n" +
-                    "2024-03-30T17:15:00.000000Z\t4\n", "select ts, count() from x sample by 5m align to calendar\n", "ts", true, true);
+            assertQueryNoLeakCheck(
+                    "ts\tcount\n" +
+                            "2024-03-30T12:20:00.000000Z\t2\n" +
+                            "2024-03-30T12:25:00.000000Z\t10\n" +
+                            "2024-03-30T12:30:00.000000Z\t10\n" +
+                            "2024-03-30T12:35:00.000000Z\t10\n" +
+                            "2024-03-30T12:40:00.000000Z\t3\n" +
+                            "2024-03-30T12:55:00.000000Z\t2\n" +
+                            "2024-03-30T13:00:00.000000Z\t1\n" +
+                            "2024-03-30T13:05:00.000000Z\t1\n" +
+                            "2024-03-30T17:05:00.000000Z\t6\n" +
+                            "2024-03-30T17:10:00.000000Z\t10\n" +
+                            "2024-03-30T17:15:00.000000Z\t4\n",
+                    "select ts, count() from x sample by 5m align to calendar\n",
+                    "ts",
+                    true,
+                    true
+            );
 
-            assertQuery("ts\tcount\n" +
-                    "2024-03-30T12:20:00.000000Z\t2\n" +
-                    "2024-03-30T12:25:00.000000Z\t10\n" +
-                    "2024-03-30T12:30:00.000000Z\t10\n" +
-                    "2024-03-30T12:35:00.000000Z\t10\n" +
-                    "2024-03-30T12:40:00.000000Z\t3\n" +
-                    "2024-03-30T12:45:00.000000Z\t2\n" +
-                    "2024-03-30T12:50:00.000000Z\t2\n" +
-                    "2024-03-30T12:55:00.000000Z\t2\n" +
-                    "2024-03-30T13:00:00.000000Z\t1\n" +
-                    "2024-03-30T13:05:00.000000Z\t1\n" +
-                    "2024-03-30T13:10:00.000000Z\t1\n" +
-                    "2024-03-30T13:15:00.000000Z\t1\n" +
-                    "2024-03-30T13:20:00.000000Z\t1\n" +
-                    "2024-03-30T13:25:00.000000Z\t1\n" +
-                    "2024-03-30T13:30:00.000000Z\t1\n" +
-                    "2024-03-30T13:35:00.000000Z\t1\n" +
-                    "2024-03-30T13:40:00.000000Z\t1\n" +
-                    "2024-03-30T13:45:00.000000Z\t1\n" +
-                    "2024-03-30T13:50:00.000000Z\t1\n" +
-                    "2024-03-30T13:55:00.000000Z\t2\n" +
-                    "2024-03-30T14:00:00.000000Z\t2\n" +
-                    "2024-03-30T14:05:00.000000Z\t2\n" +
-                    "2024-03-30T14:10:00.000000Z\t2\n" +
-                    "2024-03-30T14:15:00.000000Z\t2\n" +
-                    "2024-03-30T14:20:00.000000Z\t2\n" +
-                    "2024-03-30T14:25:00.000000Z\t2\n" +
-                    "2024-03-30T14:30:00.000000Z\t2\n" +
-                    "2024-03-30T14:35:00.000000Z\t2\n" +
-                    "2024-03-30T14:40:00.000000Z\t2\n" +
-                    "2024-03-30T14:45:00.000000Z\t3\n" +
-                    "2024-03-30T14:50:00.000000Z\t3\n" +
-                    "2024-03-30T14:55:00.000000Z\t3\n" +
-                    "2024-03-30T15:00:00.000000Z\t3\n" +
-                    "2024-03-30T15:05:00.000000Z\t3\n" +
-                    "2024-03-30T15:10:00.000000Z\t3\n" +
-                    "2024-03-30T15:15:00.000000Z\t3\n" +
-                    "2024-03-30T15:20:00.000000Z\t3\n" +
-                    "2024-03-30T15:25:00.000000Z\t3\n" +
-                    "2024-03-30T15:30:00.000000Z\t4\n" +
-                    "2024-03-30T15:35:00.000000Z\t4\n" +
-                    "2024-03-30T15:40:00.000000Z\t4\n" +
-                    "2024-03-30T15:45:00.000000Z\t4\n" +
-                    "2024-03-30T15:50:00.000000Z\t4\n" +
-                    "2024-03-30T15:55:00.000000Z\t4\n" +
-                    "2024-03-30T16:00:00.000000Z\t4\n" +
-                    "2024-03-30T16:05:00.000000Z\t4\n" +
-                    "2024-03-30T16:10:00.000000Z\t4\n" +
-                    "2024-03-30T16:15:00.000000Z\t4\n" +
-                    "2024-03-30T16:20:00.000000Z\t5\n" +
-                    "2024-03-30T16:25:00.000000Z\t5\n" +
-                    "2024-03-30T16:30:00.000000Z\t5\n" +
-                    "2024-03-30T16:35:00.000000Z\t5\n" +
-                    "2024-03-30T16:40:00.000000Z\t5\n" +
-                    "2024-03-30T16:45:00.000000Z\t5\n" +
-                    "2024-03-30T16:50:00.000000Z\t5\n" +
-                    "2024-03-30T16:55:00.000000Z\t5\n" +
-                    "2024-03-30T17:00:00.000000Z\t5\n" +
-                    "2024-03-30T17:05:00.000000Z\t6\n" +
-                    "2024-03-30T17:10:00.000000Z\t10\n" +
-                    "2024-03-30T17:15:00.000000Z\t4\n", "select ts, count() from x sample by 5m fill(linear) align to calendar\n", "ts", true, true);
-
+            assertQueryNoLeakCheck(
+                    "ts\tcount\n" +
+                            "2024-03-30T12:20:00.000000Z\t2\n" +
+                            "2024-03-30T12:25:00.000000Z\t10\n" +
+                            "2024-03-30T12:30:00.000000Z\t10\n" +
+                            "2024-03-30T12:35:00.000000Z\t10\n" +
+                            "2024-03-30T12:40:00.000000Z\t3\n" +
+                            "2024-03-30T12:45:00.000000Z\t2\n" +
+                            "2024-03-30T12:50:00.000000Z\t2\n" +
+                            "2024-03-30T12:55:00.000000Z\t2\n" +
+                            "2024-03-30T13:00:00.000000Z\t1\n" +
+                            "2024-03-30T13:05:00.000000Z\t1\n" +
+                            "2024-03-30T13:10:00.000000Z\t1\n" +
+                            "2024-03-30T13:15:00.000000Z\t1\n" +
+                            "2024-03-30T13:20:00.000000Z\t1\n" +
+                            "2024-03-30T13:25:00.000000Z\t1\n" +
+                            "2024-03-30T13:30:00.000000Z\t1\n" +
+                            "2024-03-30T13:35:00.000000Z\t1\n" +
+                            "2024-03-30T13:40:00.000000Z\t1\n" +
+                            "2024-03-30T13:45:00.000000Z\t1\n" +
+                            "2024-03-30T13:50:00.000000Z\t1\n" +
+                            "2024-03-30T13:55:00.000000Z\t2\n" +
+                            "2024-03-30T14:00:00.000000Z\t2\n" +
+                            "2024-03-30T14:05:00.000000Z\t2\n" +
+                            "2024-03-30T14:10:00.000000Z\t2\n" +
+                            "2024-03-30T14:15:00.000000Z\t2\n" +
+                            "2024-03-30T14:20:00.000000Z\t2\n" +
+                            "2024-03-30T14:25:00.000000Z\t2\n" +
+                            "2024-03-30T14:30:00.000000Z\t2\n" +
+                            "2024-03-30T14:35:00.000000Z\t2\n" +
+                            "2024-03-30T14:40:00.000000Z\t2\n" +
+                            "2024-03-30T14:45:00.000000Z\t3\n" +
+                            "2024-03-30T14:50:00.000000Z\t3\n" +
+                            "2024-03-30T14:55:00.000000Z\t3\n" +
+                            "2024-03-30T15:00:00.000000Z\t3\n" +
+                            "2024-03-30T15:05:00.000000Z\t3\n" +
+                            "2024-03-30T15:10:00.000000Z\t3\n" +
+                            "2024-03-30T15:15:00.000000Z\t3\n" +
+                            "2024-03-30T15:20:00.000000Z\t3\n" +
+                            "2024-03-30T15:25:00.000000Z\t3\n" +
+                            "2024-03-30T15:30:00.000000Z\t4\n" +
+                            "2024-03-30T15:35:00.000000Z\t4\n" +
+                            "2024-03-30T15:40:00.000000Z\t4\n" +
+                            "2024-03-30T15:45:00.000000Z\t4\n" +
+                            "2024-03-30T15:50:00.000000Z\t4\n" +
+                            "2024-03-30T15:55:00.000000Z\t4\n" +
+                            "2024-03-30T16:00:00.000000Z\t4\n" +
+                            "2024-03-30T16:05:00.000000Z\t4\n" +
+                            "2024-03-30T16:10:00.000000Z\t4\n" +
+                            "2024-03-30T16:15:00.000000Z\t4\n" +
+                            "2024-03-30T16:20:00.000000Z\t5\n" +
+                            "2024-03-30T16:25:00.000000Z\t5\n" +
+                            "2024-03-30T16:30:00.000000Z\t5\n" +
+                            "2024-03-30T16:35:00.000000Z\t5\n" +
+                            "2024-03-30T16:40:00.000000Z\t5\n" +
+                            "2024-03-30T16:45:00.000000Z\t5\n" +
+                            "2024-03-30T16:50:00.000000Z\t5\n" +
+                            "2024-03-30T16:55:00.000000Z\t5\n" +
+                            "2024-03-30T17:00:00.000000Z\t5\n" +
+                            "2024-03-30T17:05:00.000000Z\t6\n" +
+                            "2024-03-30T17:10:00.000000Z\t10\n" +
+                            "2024-03-30T17:15:00.000000Z\t4\n",
+                    "select ts, count() from x sample by 5m fill(linear) align to calendar\n",
+                    "ts",
+                    true,
+                    true
+            );
         });
     }
 
@@ -11803,7 +11875,7 @@ public class SampleByTest extends AbstractCairoTest {
             ddl("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
             ddl("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "time\tsum\tsum1\tsum2\n" +
                             "1970-01-01T00:00:00.000000Z\t33.423793766512645\t28.964416248629917\t32.11038924761886\n" +
                             "1970-01-01T01:00:00.000000Z\t20.686394200400652\t18.863001213785466\t21.027598662521456\n",
@@ -11814,7 +11886,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "time"
             );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "time\tsum\tsum1\tsum2\n" +
                             "1970-01-01T00:00:00.000000Z\t33.423793766512645\t28.964416248629917\t32.11038924761886\n" +
                             "1970-01-01T01:00:00.000000Z\t20.686394200400652\t18.863001213785466\t21.027598662521456\n",
@@ -11835,7 +11907,7 @@ public class SampleByTest extends AbstractCairoTest {
             ddl("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
             ddl("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "sum\tsum1\tsum2\ttime\n" +
                             "33.423793766512645\t28.964416248629917\t32.11038924761886\t1970-01-01T00:00:00.000000Z\n" +
                             "20.686394200400652\t18.863001213785466\t21.027598662521456\t1970-01-01T01:00:00.000000Z\n",
@@ -11846,7 +11918,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "time"
             );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "sum\tsum1\tsum2\ttime\n" +
                             "33.423793766512645\t28.964416248629917\t32.11038924761886\t1970-01-01T00:00:00.000000Z\n" +
                             "20.686394200400652\t18.863001213785466\t21.027598662521456\t1970-01-01T01:00:00.000000Z\n",
@@ -11867,7 +11939,7 @@ public class SampleByTest extends AbstractCairoTest {
             ddl("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
             ddl("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "sum\ttime\tsum1\tsum2\n" +
                             "33.423793766512645\t1970-01-01T00:00:00.000000Z\t28.964416248629917\t32.11038924761886\n" +
                             "20.686394200400652\t1970-01-01T01:00:00.000000Z\t18.863001213785466\t21.027598662521456\n",
@@ -11878,7 +11950,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "time"
             );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "sum\ttime\tsum1\tsum2\n" +
                             "33.423793766512645\t1970-01-01T00:00:00.000000Z\t28.964416248629917\t32.11038924761886\n" +
                             "20.686394200400652\t1970-01-01T01:00:00.000000Z\t18.863001213785466\t21.027598662521456\n",
@@ -11899,7 +11971,7 @@ public class SampleByTest extends AbstractCairoTest {
             ddl("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
             ddl("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "ts\tsum\tsum1\tsum2\n" +
                             "1970-01-01T00:00:00.000000Z\t33.423793766512645\t28.964416248629917\t32.11038924761886\n" +
                             "1970-01-01T01:00:00.000000Z\t20.686394200400652\t18.863001213785466\t21.027598662521456\n",
@@ -11910,7 +11982,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "ts"
             );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "ts\tsum\tsum1\tsum2\n" +
                             "1970-01-01T00:00:00.000000Z\t33.423793766512645\t28.964416248629917\t32.11038924761886\n" +
                             "1970-01-01T01:00:00.000000Z\t20.686394200400652\t18.863001213785466\t21.027598662521456\n",
@@ -11931,7 +12003,7 @@ public class SampleByTest extends AbstractCairoTest {
             ddl("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
             ddl("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "sum\tsum1\tsum2\tts\n" +
                             "33.423793766512645\t28.964416248629917\t32.11038924761886\t1970-01-01T00:00:00.000000Z\n" +
                             "20.686394200400652\t18.863001213785466\t21.027598662521456\t1970-01-01T01:00:00.000000Z\n",
@@ -11942,7 +12014,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "ts"
             );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "sum\tsum1\tsum2\tts\n" +
                             "33.423793766512645\t28.964416248629917\t32.11038924761886\t1970-01-01T00:00:00.000000Z\n" +
                             "20.686394200400652\t18.863001213785466\t21.027598662521456\t1970-01-01T01:00:00.000000Z\n",
@@ -11963,7 +12035,7 @@ public class SampleByTest extends AbstractCairoTest {
             ddl("create table ap_systems as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
             ddl("create table eloverblik as (select timestamp_sequence(0, 60 * 1000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "sum\tsum1\tsum2\ttime\n" +
                             "33.423793766512645\t28.964416248629917\t32.11038924761886\t1970-01-01T00:00:00.000000Z\n" +
                             "20.686394200400652\t18.863001213785466\t21.027598662521456\t1970-01-01T01:00:00.000000Z\n",
@@ -11974,7 +12046,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "time"
             );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "sum\tsum1\tsum2\ttime\n" +
                             "33.423793766512645\t28.964416248629917\t32.11038924761886\t1970-01-01T00:00:00.000000Z\n" +
                             "20.686394200400652\t18.863001213785466\t21.027598662521456\t1970-01-01T01:00:00.000000Z\n",
@@ -12035,8 +12107,9 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTimestampIsNotRequiredAfterSubqueryWithExplicitTs() throws SqlException {
-        assertQuery("ts\tvalue\n" +
+    public void testTimestampIsNotRequiredAfterSubqueryWithExplicitTs() throws Exception {
+        assertQuery(
+                "ts\tvalue\n" +
                         "2023-02-19T00:00:00.000000Z\t0\n" +
                         "2023-02-20T00:00:00.000000Z\t0\n" +
                         "2023-02-21T00:00:00.000000Z\t0\n" +
@@ -12063,13 +12136,15 @@ public class SampleByTest extends AbstractCairoTest {
                         "    FROM timed\n" +
                         "    SAMPLE BY 1d FILL(0) ALIGN TO CALENDAR \n" +
                         ")\n" +
-                        "select * from sampled;", "ts"
+                        "select * from sampled;",
+                "ts"
         );
     }
 
     @Test
-    public void testTimestampIsNotRequiredAfterSubqueryWithExplicitTs2() throws SqlException {
-        assertQuery("ts\tvalue\n" +
+    public void testTimestampIsNotRequiredAfterSubqueryWithExplicitTs2() throws Exception {
+        assertQuery(
+                "ts\tvalue\n" +
                         "2023-02-19T00:00:00.000000Z\t0\n" +
                         "2023-02-20T00:00:00.000000Z\t0\n" +
                         "2023-02-21T00:00:00.000000Z\t0\n" +
@@ -12091,20 +12166,22 @@ public class SampleByTest extends AbstractCairoTest {
                         "    select * from just_foobar order by ts asc\n" +
                         "), timed as (\n" +
                         "    select * from ordered timestamp(ts)\n" +
-                        "), intermediate as (\n" + //the distance between sample by and model with explicit ts is bigger
+                        "), intermediate as (\n" + // the distance between sample by and model with explicit ts is bigger
                         "    select * from timed where ts > 0::timestamp \n" +
                         "), sampled as (\n" +
                         "    SELECT ts, sum(value) as value\n" +
                         "    FROM intermediate\n" +
                         "    SAMPLE BY 1d FILL(0) ALIGN TO CALENDAR \n" +
                         ")\n" +
-                        "select * from sampled;", "ts"
+                        "select * from sampled;",
+                "ts"
         );
     }
 
     @Test
-    public void testTimestampIsNotRequiredAfterSubqueryWithExplicitTsNotInSelectList() throws SqlException {
-        assertQuery("value\n" +
+    public void testTimestampIsNotRequiredAfterSubqueryWithExplicitTsNotInSelectList() throws Exception {
+        assertQuery(
+                "value\n" +
                         "0\n" +
                         "0\n" +
                         "0\n" +
@@ -12127,11 +12204,12 @@ public class SampleByTest extends AbstractCairoTest {
                         "), timed as (\n" +
                         "    select * from ordered timestamp(ts)\n" +
                         "), sampled as (\n" +
-                        "    SELECT sum(value) as value\n" + //no ts in select list
+                        "    SELECT sum(value) as value\n" + // no ts in select list
                         "    FROM timed\n" +
                         "    SAMPLE BY 1d FILL(0) ALIGN TO CALENDAR \n" +
                         ")\n" +
-                        "select * from sampled;", null
+                        "select * from sampled;",
+                null
         );
     }
 
@@ -12325,26 +12403,28 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     private void assertSampleByIndexQuery(String expected, String query, String insert, boolean supportsRandomAccess, boolean expectSize) throws Exception {
-        String forceNoIndexQuery = query.replace("in ('b')", "in ('b', 'none')")
-                .replace("in ('a')", "in ('a', 'none')");
+        assertMemoryLeak(() -> {
+            String forceNoIndexQuery = query.replace("in ('b')", "in ('b', 'none')")
+                    .replace("in ('a')", "in ('a', 'none')");
 
-        assertQuery(
-                expected,
-                forceNoIndexQuery,
-                insert,
-                "k",
-                supportsRandomAccess,
-                expectSize
-        );
+            assertQueryNoLeakCheck(
+                    expected,
+                    forceNoIndexQuery,
+                    insert,
+                    "k",
+                    supportsRandomAccess,
+                    expectSize
+            );
 
-        assertQuery(
-                expected,
-                query,
-                null,
-                "k",
-                supportsRandomAccess,
-                expectSize
-        );
+            assertQueryNoLeakCheck(
+                    expected,
+                    query,
+                    null,
+                    "k",
+                    supportsRandomAccess,
+                    expectSize
+            );
+        });
     }
 
     private void assertWithSymbolColumnTop(String expected, String query) throws Exception {
@@ -12355,27 +12435,27 @@ public class SampleByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("alter table xx drop column s", sqlExecutionContext);
             ddl("alter table xx add s SYMBOL INDEX", sqlExecutionContext);
+
+            String forceNoIndexQuery = query.replace("and s = null", " ");
+
+            assertQueryNoLeakCheck(
+                    expected,
+                    forceNoIndexQuery,
+                    null,
+                    "k",
+                    supportsRandomAccess,
+                    expectSize
+            );
+
+            assertQueryNoLeakCheck(
+                    expected,
+                    query,
+                    null,
+                    "k",
+                    supportsRandomAccess,
+                    expectSize
+            );
         });
-
-        String forceNoIndexQuery = query.replace("and s = null", " ");
-
-        assertQuery(
-                expected,
-                forceNoIndexQuery,
-                null,
-                "k",
-                supportsRandomAccess,
-                expectSize
-        );
-
-        assertQuery(
-                expected,
-                query,
-                null,
-                "k",
-                supportsRandomAccess,
-                expectSize
-        );
     }
 
     @NotNull
@@ -12405,7 +12485,9 @@ public class SampleByTest extends AbstractCairoTest {
         final int workerCount = 2;
 
         WorkerPool pool = new WorkerPool((() -> workerCount));
-        TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+        assertMemoryLeak(() -> TestUtils.execute(
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
                     engine.ddl(
                             "create table x (d1 double, d2 double, s symbol index, kms long, k timestamp) timestamp(k) partition by day;",
                             sqlExecutionContext
@@ -12465,7 +12547,7 @@ public class SampleByTest extends AbstractCairoTest {
                 },
                 configuration,
                 LOG
-        );
+        ));
     }
 
     private void testSampleByPeriodFails(String query, int errorPosition, String errorContains) throws Exception {
@@ -12483,7 +12565,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "), index(s) timestamp(k) partition by DAY"
             );
             try {
-                assertException(query);
+                assertExceptionNoLeakCheck(query);
             } catch (SqlException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), errorContains);
                 Assert.assertEquals(errorPosition, ex.getPosition());
@@ -12506,7 +12588,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "sample by 1m " + fillOpt + " " + alignTo + " ) " +
                     "where tstmp >= '2022-12-01T00:00:00.000000Z' and  sym = 'B' and length(sym)*tstmp::long > 0  ";
             String actualPlan = plan.replace("#TABLE#", "x");
-            assertPlan(query, actualPlan);
+            assertPlanNoLeakCheck(query, actualPlan);
         });
     }
 
@@ -12520,7 +12602,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "sample by 1m " + fillOpt + " " + alignTo + " ) " +
                     "where tstmp >= '2022-12-01T00:00:00.000000Z' and  sym = 'B' and length(sym)*tstmp::long > 0  ";
             String actualPlan = plan.replace("#TABLE#", "y");
-            assertPlan(query, actualPlan);
+            assertPlanNoLeakCheck(query, actualPlan);
         });
     }
 }

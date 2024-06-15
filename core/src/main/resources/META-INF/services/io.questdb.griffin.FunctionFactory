@@ -22,11 +22,14 @@
 #
 ################################################################################
 
+io.questdb.griffin.engine.functions.finance.LevelTwoPriceFunctionFactory
+
 io.questdb.griffin.engine.functions.activity.CancelQueryFunctionFactory
 io.questdb.griffin.engine.functions.activity.QueryActivityFunctionFactory
 
 io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory
 io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory
+io.questdb.griffin.engine.functions.test.TestOwnerCountingFunctionFactory
 io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory
 io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory
 io.questdb.griffin.engine.functions.test.TestSumTDoubleGroupByFunctionFactory
@@ -217,6 +220,7 @@ io.questdb.griffin.engine.functions.rnd.RndSymbolFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndLongCCFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndLongFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndUuidFunctionFactory
+io.questdb.griffin.engine.functions.rnd.RndUUIDCFunctionFactory
 io.questdb.griffin.engine.functions.date.TimestampSequenceFunctionFactory
 io.questdb.griffin.engine.functions.long128.LongsToLong128FunctionFactory
 io.questdb.griffin.engine.functions.long256.LongsToLong256FunctionFactory
@@ -767,6 +771,7 @@ io.questdb.griffin.engine.functions.catalogue.WalTableListFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.WalTransactionsFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.DumpMemoryUsageFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.FlushQueryCacheFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PrefixedAgeFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PgIsInRecoveryFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PrefixedPgIsInRecoveryFunctionFactory
@@ -808,13 +813,16 @@ io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory
 io.questdb.griffin.engine.functions.str.SubStringFunctionFactory
 io.questdb.griffin.engine.functions.str.SubStringVarcharFunctionFactory
 io.questdb.griffin.engine.functions.str.QuoteIdentFunctionFactory
+io.questdb.griffin.engine.functions.str.QuoteIdentVarcharFunctionFactory
 
 #starts_with()
 io.questdb.griffin.engine.functions.str.StartsWithStrFunctionFactory
+io.questdb.griffin.engine.functions.str.StartsWithVarcharFunctionFactory
 
 # split_part()
 io.questdb.griffin.engine.functions.str.SplitPartFunctionFactory
 io.questdb.griffin.engine.functions.str.SplitPartCharFunctionFactory
+io.questdb.griffin.engine.functions.str.SplitPartVarcharFunctionFactory
 
 # avg()
 io.questdb.griffin.engine.functions.groupby.AvgDoubleGroupByFunctionFactory

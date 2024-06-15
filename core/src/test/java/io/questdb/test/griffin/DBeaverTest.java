@@ -24,13 +24,13 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 public class DBeaverTest extends AbstractCairoTest {
+
     @Test
-    public void testDotNetGetTypes() throws SqlException {
+    public void testDotNetGetTypes() throws Exception {
         assertQuery(
                 "nspname\toid\ttypnamespace\ttypname\ttyptype\ttyprelid\ttypnotnull\trelkind\telemtypoid\telemtypname\telemrelkind\telemtyptype\tord\n" +
                         "public\t1043\t2200\tvarchar\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
@@ -97,7 +97,7 @@ public class DBeaverTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFrequentSql() throws SqlException {
+    public void testFrequentSql() throws Exception {
         assertQuery(
                 "current_schema\tsession_user\n" +
                         "public\tadmin\n",
@@ -114,7 +114,7 @@ public class DBeaverTest extends AbstractCairoTest {
             ddl("create table xyz(a int, t timestamp)");
             ddl("create table tab2(b long, z binary)");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "relname\tattrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\tdef_value\tdescription\n" +
                             "xyz\t1\ta\t1\t23\tfalse\t0\t4\t\tfalse\ttrue\t\t\n" +
                             "xyz\t1\tt\t2\t1114\tfalse\t0\t-1\t\tfalse\ttrue\t\t\n",
@@ -140,7 +140,7 @@ public class DBeaverTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table xyz(a int)");
             ddl("create table tab2(b long)");
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "oid tral\toid\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin\tdescription\tpartition_expr\tpartition_key\n" +
                             "2\t2\ttab2\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\t\t\t\n" +
                             "1\t1\txyz\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\t\t\t\n",
@@ -152,12 +152,11 @@ public class DBeaverTest extends AbstractCairoTest {
                     true,
                     false
             );
-
         });
     }
 
     @Test
-    public void testListTypes() throws SqlException {
+    public void testListTypes() throws Exception {
         assertQuery(
                 "oid1\toid\ttypname\ttypbasetype\ttyparray\ttypnamespace\ttypnotnull\ttyptypmod\ttyptype\ttypcategory\ttyprelid\ttypelem\ttypreceive\ttypdelim\ttypinput\ttypowner\ttyplen\ttypbyval\ttypispreferred\ttypisdefined\ttypalign\ttypstorage\ttypndims\ttypcollation\ttypdefault\trelkind\tbase_type_name\tdescription\n" +
                         "16\t16\tbool\t0\t0\t2200\tfalse\t0\tb\tB\tnull\t0\t0\t0\t0\t0\t1\tfalse\tfalse\ttrue\tc\tp\t0\t0\tfalse\t\t\t\n" +
@@ -185,7 +184,7 @@ public class DBeaverTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNamespaceListSql() throws SqlException {
+    public void testNamespaceListSql() throws Exception {
         assertQuery(
                 "n_oid\tnspname\toid\txmin\tnspowner\tdescription\n" +
                         "11\tpg_catalog\t11\t0\t1\t\n" +
@@ -200,7 +199,7 @@ public class DBeaverTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testShowSearchPath() throws SqlException {
+    public void testShowSearchPath() throws Exception {
         assertQuery(
                 "search_path\n" +
                         "\"$user\", public\n",

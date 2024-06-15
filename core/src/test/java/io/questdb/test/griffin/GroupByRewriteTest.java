@@ -39,7 +39,7 @@ public class GroupByRewriteTest extends AbstractCairoTest {
             compile("CREATE TABLE tabb ( bx int, bid int );");
             insert("INSERT INTO tabb values (3,1), (4,2)");
 
-            assertQuery("sum\tsum1\tsum2\tsum3\n" +
+            assertQueryNoLeakCheck("sum\tsum1\tsum2\tsum3\n" +
                             "3\t7\t23\t27\n",
                     "SELECT sum(ax), sum(bx), sum(ax+10), sum(bx+10) " +
                             "FROM taba " +
@@ -83,19 +83,25 @@ public class GroupByRewriteTest extends AbstractCairoTest {
 
     @Test
     public void testRewriteAggregateOnOrderBySumBadQuery() throws Exception {
-        try {
-            assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
+            try {
                 compile("CREATE TABLE telemetry (created timestamp)");
 
-                assertQuery("sum\tsum1\tsum2\tsum3\n" +
+                assertQueryNoLeakCheck(
+                        "sum\tsum1\tsum2\tsum3\n" +
                                 "3\t7\t23\t27\n",
-                        "SELECT telemetry.created FROM telemetry ORDER BY SUM(1, 1 IN (telemetry.created), 1);", null, false, false, true);
-            });
-            throw new RuntimeException("query above should have thrown");
-        } catch (SqlException e) {
-            String expected = "[49] unexpected argument for function: SUM. expected args: (DOUBLE). actual args: (INT constant,BOOLEAN,INT constant)";
-            Assert.assertEquals(expected, e.getMessage());
-        }
+                        "SELECT telemetry.created FROM telemetry ORDER BY SUM(1, 1 IN (telemetry.created), 1);",
+                        null,
+                        false,
+                        false,
+                        true
+                );
+                Assert.fail("query above should have thrown");
+            } catch (SqlException e) {
+                String expected = "[49] unexpected argument for function: SUM. expected args: (DOUBLE). actual args: (INT constant,BOOLEAN,INT constant)";
+                Assert.assertEquals(expected, e.getMessage());
+            }
+        });
     }
 
     @Test

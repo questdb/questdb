@@ -28,10 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
-import io.questdb.std.DirectLongList;
-import io.questdb.std.IntList;
-import io.questdb.std.LongList;
-import io.questdb.std.MemoryTag;
+import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
 public class LatestByAllIndexedRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
@@ -46,14 +43,18 @@ public class LatestByAllIndexedRecordCursorFactory extends AbstractTreeSetRecord
             @NotNull LongList prefixes
     ) {
         super(metadata, dataFrameCursorFactory, configuration);
-        this.prefixes = new DirectLongList(Math.max(2, prefixes.size()), MemoryTag.NATIVE_LATEST_BY_LONG_LIST);
+        try {
+            this.prefixes = new DirectLongList(Math.max(2, prefixes.size()), MemoryTag.NATIVE_LATEST_BY_LONG_LIST);
+            // copy into owned direct memory
+            for (int i = 0; i < prefixes.size(); i++) {
+                this.prefixes.add(prefixes.get(i));
+            }
 
-        // copy into owned direct memory
-        for (int i = 0; i < prefixes.size(); i++) {
-            this.prefixes.add(prefixes.get(i));
+            this.cursor = new LatestByAllIndexedRecordCursor(columnIndex, rows, columnIndexes, this.prefixes);
+        } catch (Throwable th) {
+            close();
+            throw th;
         }
-
-        this.cursor = new LatestByAllIndexedRecordCursor(columnIndex, rows, columnIndexes, this.prefixes);
     }
 
     @Override
@@ -76,6 +77,6 @@ public class LatestByAllIndexedRecordCursorFactory extends AbstractTreeSetRecord
     @Override
     protected void _close() {
         super._close();
-        prefixes.close();
+        Misc.free(prefixes);
     }
 }

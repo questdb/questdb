@@ -27,6 +27,7 @@ package io.questdb;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.FlushQueryCacheJob;
 import io.questdb.cairo.security.ReadOnlySecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -48,7 +49,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
-import io.questdb.std.Unsafe;
+import io.questdb.std.Misc;
 import io.questdb.std.str.DirectUtf8Sink;
 import org.jetbrains.annotations.NotNull;
 
@@ -68,6 +69,7 @@ public class ServerMain implements Closeable {
     private final AtomicBoolean running = new AtomicBoolean();
     private HttpServer httpServer;
     private boolean initialized;
+    private PGWireServer pgWireServer;
     private WorkerPoolManager workerPoolManager;
 
     public ServerMain(String... args) {
@@ -81,11 +83,10 @@ public class ServerMain implements Closeable {
         try {
             final ServerConfiguration config = bootstrap.getConfiguration();
             config.init(engine, freeOnExit);
-            Unsafe.setWriterMemLimit(config.getCairoConfiguration().getWriterMemoryLimit());
             freeOnExit.register(config.getFactoryProvider());
             engine.load();
         } catch (Throwable th) {
-            freeOnExit.close();
+            Misc.free(freeOnExit);
             throw th;
         }
     }
@@ -367,7 +368,7 @@ public class ServerMain implements Closeable {
 
         // http
         freeOnExit.register(httpServer = services().createHttpServer(
-                config.getHttpServerConfiguration(),
+                config,
                 engine,
                 workerPoolManager,
                 metrics
@@ -376,17 +377,22 @@ public class ServerMain implements Closeable {
         // http min
         freeOnExit.register(services().createMinHttpServer(
                 config.getHttpMinServerConfiguration(),
-                engine,
                 workerPoolManager,
                 metrics
         ));
 
         // pg wire
-        freeOnExit.register(services().createPGWireServer(
+        freeOnExit.register(pgWireServer = services().createPGWireServer(
                 config.getPGWireConfiguration(),
                 engine,
                 workerPoolManager,
                 metrics
+        ));
+
+        workerPoolManager.getSharedPool().assign(new FlushQueryCacheJob(
+                engine.getMessageBus(),
+                httpServer,
+                pgWireServer
         ));
 
         if (!isReadOnly && config.getLineTcpReceiverConfiguration().isEnabled()) {

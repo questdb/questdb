@@ -25,7 +25,6 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.Metrics;
-import io.questdb.QueryLogger;
 import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
@@ -68,7 +67,6 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     private final int floatScale;
     private final int maxSqlRecompileAttempts;
     private final Metrics metrics;
-    private final QueryLogger queryLogger;
     private final byte requiredAuthType;
     private final SqlExecutionContextImpl sqlExecutionContext;
 
@@ -95,7 +93,6 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB4);
         this.metrics = engine.getMetrics();
         this.engine = engine;
-        queryLogger = engine.getConfiguration().getQueryLogger();
         maxSqlRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
         requiredAuthType = configuration.getRequiredAuthType();
     }
@@ -130,17 +127,10 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                     } else if (isExpRequest) {
                         throw SqlException.$(0, "/exp endpoint only accepts SELECT");
                     }
-                    queryLogger.logQuery(LOG, context.getFd(), state.query, context.getSecurityContext(), "execute-new")
-                            .$(", skip: ").$(state.skip)
-                            .$(", stop: ").$(state.stop)
-                            .I$();
                     sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_TEXT);
                 }
             } else {
-                queryLogger.logQuery(LOG, context.getFd(), state.query, context.getSecurityContext(), "execute-cached")
-                        .$(", skip: ").$(state.skip)
-                        .$(", stop: ").$(state.stop)
-                        .I$();
+                sqlExecutionContext.setCacheHit(true);
                 sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT, TelemetryOrigin.HTTP_TEXT);
             }
 
@@ -329,16 +319,18 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                         // fall through
 
                     case JsonQueryProcessorState.QUERY_METADATA:
-                        state.columnIndex = 0;
-                        while (state.columnIndex < columnCount) {
-                            if (state.columnIndex > 0) {
-                                response.putAscii(state.delimiter);
+                        if (!state.noMeta) {
+                            state.columnIndex = 0;
+                            while (state.columnIndex < columnCount) {
+                                if (state.columnIndex > 0) {
+                                    response.putAscii(state.delimiter);
+                                }
+                                response.putQuote().escapeJsonStr(state.metadata.getColumnName(state.columnIndex)).putQuote();
+                                state.columnIndex++;
+                                response.bookmark();
                             }
-                            response.putQuote().escapeJsonStr(state.metadata.getColumnName(state.columnIndex)).putQuote();
-                            state.columnIndex++;
-                            response.bookmark();
+                            response.putEOL();
                         }
-                        response.putEOL();
                         state.queryState = JsonQueryProcessorState.QUERY_RECORD_START;
                         response.bookmark();
                         // fall through

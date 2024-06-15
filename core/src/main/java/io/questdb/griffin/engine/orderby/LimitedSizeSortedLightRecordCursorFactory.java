@@ -258,10 +258,8 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
 
     @Override
     protected void _close() {
-        base.close();
-        if (cursor != null) {
-            cursor.close();
-        }
+        Misc.free(base);
+        Misc.free(cursor);
     }
 }
 

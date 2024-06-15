@@ -25,7 +25,7 @@
 package io.questdb.std.ex;
 
 public final class ZLibException extends RuntimeException {
-    public final static ZLibException INSTANCE = new ZLibException();
+    public static final ZLibException INSTANCE = new ZLibException();
 
     private ZLibException() {
     }

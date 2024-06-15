@@ -72,49 +72,54 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
     private TableWriter writer;
 
     public ColumnPurgeJob(CairoEngine engine) throws SqlException {
-        CairoConfiguration configuration = engine.getConfiguration();
-        this.clock = configuration.getMicrosecondClock();
-        this.inQueue = engine.getMessageBus().getColumnPurgeQueue();
-        this.inSubSequence = engine.getMessageBus().getColumnPurgeSubSeq();
-        String tableName = configuration.getSystemTableNamePrefix() + "column_versions_purge_log";
-        this.taskPool = new WeakMutableObjectPool<>(ColumnPurgeRetryTask::new, configuration.getColumnPurgeTaskPoolCapacity());
-        this.retryQueue = new PriorityQueue<>(configuration.getColumnPurgeQueueCapacity(), ColumnPurgeJob::compareRetryTasks);
-        this.retryDelayLimit = configuration.getColumnPurgeRetryDelayLimit();
-        this.retryDelay = configuration.getColumnPurgeRetryDelay();
-        this.retryDelayMultiplier = configuration.getColumnPurgeRetryDelayMultiplier();
-        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
-        this.sqlExecutionContext.with(
-                configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
-                null,
-                null
-        );
-        try (SqlCompiler sqlCompiler = engine.getSqlCompiler()) {
-            this.tableToken = sqlCompiler.query()
-                    .$("CREATE TABLE IF NOT EXISTS \"")
-                    .$(tableName)
-                    .$("\" (" +
-                            "ts timestamp, " + // 0
-                            "table_name symbol, " + // 1
-                            "column_name symbol, " + // 2
-                            "table_id int, " + // 3
-                            "truncate_version long, " + // 4
-                            "columnType int, " + // 5
-                            "table_partition_by int, " + // 6
-                            "updated_txn long, " + // 7
-                            "column_version long, " + // 8
-                            "partition_timestamp timestamp, " + // 9
-                            "partition_name_txn long," + // 10
-                            "completed timestamp" + // 11
-                            ") timestamp(ts) partition by MONTH BYPASS WAL"
-                    )
-                    .compile(sqlExecutionContext)
-                    .getTableToken();
-        }
+        try {
+            final CairoConfiguration configuration = engine.getConfiguration();
+            this.clock = configuration.getMicrosecondClock();
+            this.inQueue = engine.getMessageBus().getColumnPurgeQueue();
+            this.inSubSequence = engine.getMessageBus().getColumnPurgeSubSeq();
+            String tableName = configuration.getSystemTableNamePrefix() + "column_versions_purge_log";
+            this.taskPool = new WeakMutableObjectPool<>(ColumnPurgeRetryTask::new, configuration.getColumnPurgeTaskPoolCapacity());
+            this.retryQueue = new PriorityQueue<>(configuration.getColumnPurgeQueueCapacity(), ColumnPurgeJob::compareRetryTasks);
+            this.retryDelayLimit = configuration.getColumnPurgeRetryDelayLimit();
+            this.retryDelay = configuration.getColumnPurgeRetryDelay();
+            this.retryDelayMultiplier = configuration.getColumnPurgeRetryDelayMultiplier();
+            this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
+            this.sqlExecutionContext.with(
+                    configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                    null,
+                    null
+            );
+            try (SqlCompiler sqlCompiler = engine.getSqlCompiler()) {
+                this.tableToken = sqlCompiler.query()
+                        .$("CREATE TABLE IF NOT EXISTS \"")
+                        .$(tableName)
+                        .$("\" (" +
+                                "ts timestamp, " + // 0
+                                "table_name symbol, " + // 1
+                                "column_name symbol, " + // 2
+                                "table_id int, " + // 3
+                                "truncate_version long, " + // 4
+                                "columnType int, " + // 5
+                                "table_partition_by int, " + // 6
+                                "updated_txn long, " + // 7
+                                "column_version long, " + // 8
+                                "partition_timestamp timestamp, " + // 9
+                                "partition_name_txn long," + // 10
+                                "completed timestamp" + // 11
+                                ") timestamp(ts) partition by MONTH BYPASS WAL"
+                        )
+                        .compile(sqlExecutionContext)
+                        .getTableToken();
+            }
 
-        this.writer = engine.getWriter(tableToken, "QuestDB system");
-        this.columnPurgeOperator = new ColumnPurgeOperator(configuration, this.writer, "completed");
-        this.snapshotAgent = engine.getSnapshotAgent();
-        processTableRecords(engine);
+            this.writer = engine.getWriter(tableToken, "QuestDB system");
+            this.columnPurgeOperator = new ColumnPurgeOperator(configuration, this.writer, "completed");
+            this.snapshotAgent = engine.getSnapshotAgent();
+            processTableRecords(engine);
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override

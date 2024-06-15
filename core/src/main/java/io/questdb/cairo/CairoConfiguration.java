@@ -93,6 +93,8 @@ public interface CairoConfiguration {
     @NotNull
     BuildInformation getBuildInformation();
 
+    boolean getCairoSqlLegacyOperatorPrecedence();
+
     @NotNull
     SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
 
@@ -181,6 +183,10 @@ public interface CairoConfiguration {
     int getGroupByMergeShardQueueCapacity();
 
     int getGroupByPoolCapacity();
+
+    long getGroupByPresizeMaxHeapSize();
+
+    long getGroupByPresizeMaxSize();
 
     int getGroupByShardingThreshold();
 
@@ -296,9 +302,7 @@ public interface CairoConfiguration {
 
     int getPartitionPurgeListCapacity();
 
-    default QueryLogger getQueryLogger() {
-        return DefaultQueryLogger.INSTANCE;
-    }
+    int getQueryCacheEventQueueCapacity();
 
     int getQueryRegistryPoolSize();
 
@@ -336,6 +340,8 @@ public interface CairoConfiguration {
     boolean getSampleByDefaultAlignmentCalendar();
 
     int getSampleByIndexSearchPageSize();
+
+    long getSequencerCheckInterval();
 
     boolean getSimulateCrashEnabled();
 
@@ -432,9 +438,11 @@ public interface CairoConfiguration {
 
     int getSqlPageFrameMinRows();
 
+    int getSqlParallelWorkStealingThreshold();
+
     int getSqlSmallMapKeyCapacity();
 
-    int getSqlSmallMapPageSize();
+    long getSqlSmallMapPageSize();
 
     int getSqlSortKeyMaxPages();
 
@@ -560,9 +568,9 @@ public interface CairoConfiguration {
 
     long getWriterFileOpenOpts();
 
-    long getWriterMemoryLimit();
-
     int getWriterTickRowsCountMod();
+
+    boolean isGroupByPresizeEnabled();
 
     boolean isIOURingEnabled();
 

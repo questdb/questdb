@@ -103,6 +103,9 @@ public class BindVariableServiceImpl implements BindVariableService {
     @Override
     public int define(int index, int type, int position) throws SqlException {
         switch (ColumnType.tagOf(type)) {
+            // unable to define undefined type
+            case ColumnType.UNDEFINED:
+                return type;
             case ColumnType.BOOLEAN:
                 setBoolean(index);
                 return type;
@@ -138,9 +141,12 @@ public class BindVariableServiceImpl implements BindVariableService {
                 return type;
             case ColumnType.STRING:
             case ColumnType.SYMBOL:
-            case ColumnType.VAR_ARG:
                 setStr(index);
                 return ColumnType.STRING;
+            case ColumnType.VAR_ARG:
+                // we cannot define bind variable as vararg, it is
+                // a code for method signature and is not a "type"
+                throw SqlException.$(position, "unsupported type: VAR_ARG");
             case ColumnType.LONG256:
                 setLong256(index);
                 return type;
@@ -446,7 +452,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         // variable exists
         Function function = indexedVariables.getQuick(index);
         if (function != null) {
-            setIPv40(function, value, index, null);
+            setIPv40(function, value);
         } else {
             indexedVariables.setQuick(index, function = IPv4VarPool.next());
             ((IPv4BindVariable) function).value = value;
@@ -459,7 +465,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         // variable exists
         Function function = indexedVariables.getQuick(index);
         if (function != null) {
-            setIPv40(function, Numbers.parseIPv4Quiet(value), index, null);
+            setIPv40(function, Numbers.parseIPv4Quiet(value));
         } else {
             indexedVariables.setQuick(index, function = IPv4VarPool.next());
             ((IPv4BindVariable) function).value = Numbers.parseIPv4Quiet(value);
@@ -925,7 +931,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         }
     }
 
-    private static void setIPv40(Function function, int value, int index, @Nullable CharSequence name) {
+    private static void setIPv40(Function function, int value) {
         ((IPv4BindVariable) function).value = value;
     }
 
@@ -1088,7 +1094,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         final int functionType = ColumnType.tagOf(function.getType());
         switch (functionType) {
             case ColumnType.BOOLEAN:
-                ((BooleanBindVariable) function).value = SqlKeywords.isTrueKeyword(value);
+                ((BooleanBindVariable) function).value = value != null && SqlKeywords.isTrueKeyword(value);
                 break;
             case ColumnType.BYTE:
                 ((ByteBindVariable) function).value = SqlUtil.implicitCastStrAsByte(value);
@@ -1242,9 +1248,6 @@ public class BindVariableServiceImpl implements BindVariableService {
                         break;
                     case ColumnType.LONG256:
                         SqlUtil.implicitCastStrAsLong256(charSeq, ((Long256BindVariable) function).value);
-                        break;
-                    default:
-                        assert false;
                         break;
                 }
                 break;

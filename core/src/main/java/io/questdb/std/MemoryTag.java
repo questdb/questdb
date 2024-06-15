@@ -43,7 +43,8 @@ public final class MemoryTag {
     public static final int MMAP_UPDATE = MMAP_TX_LOG_CURSOR + 1;
 
     // All malloc calls should use NATIVE_* tags
-    public static final int NATIVE_DEFAULT = MMAP_UPDATE + 1;
+    public static final int NATIVE_PATH = MMAP_UPDATE + 1;
+    public static final int NATIVE_DEFAULT = NATIVE_PATH + 1;
     public static final int NATIVE_CB1 = NATIVE_DEFAULT + 1;
     public static final int NATIVE_CB2 = NATIVE_CB1 + 1;
     public static final int NATIVE_CB3 = NATIVE_CB2 + 1;
@@ -73,8 +74,7 @@ public final class MemoryTag {
     public static final int NATIVE_O3 = NATIVE_MIG_MMAP + 1;
     public static final int NATIVE_OFFLOAD = NATIVE_O3 + 1;
     public static final int NATIVE_PARALLEL_IMPORT = NATIVE_OFFLOAD + 1;
-    public static final int NATIVE_PATH = NATIVE_PARALLEL_IMPORT + 1;
-    public static final int NATIVE_PGW_CONN = NATIVE_PATH + 1;
+    public static final int NATIVE_PGW_CONN = NATIVE_PARALLEL_IMPORT + 1;
     public static final int NATIVE_RECORD_CHAIN = NATIVE_PGW_CONN + 1;
     public static final int NATIVE_REPL = NATIVE_RECORD_CHAIN + 1;
     public static final int NATIVE_ROSTI = NATIVE_REPL + 1;

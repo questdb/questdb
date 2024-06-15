@@ -26,7 +26,6 @@ package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MemorySerializer;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.wal.WalUtils;
@@ -39,6 +38,7 @@ import org.jetbrains.annotations.NotNull;
 import java.lang.ThreadLocal;
 import java.util.concurrent.atomic.AtomicLong;
 
+import static io.questdb.cairo.TableUtils.openRO;
 import static io.questdb.cairo.wal.WalUtils.*;
 
 /**
@@ -103,7 +103,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             path.concat(TXNLOG_PARTS_DIR).slash().put(part).$();
             int partFd = -1;
             try {
-                partFd = TableUtils.openRO(ff, path, LOG);
+                partFd = openRO(ff, path, LOG);
                 long fileReadOffset = (prevTxn % partTransactionCount) * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET;
                 return ff.readNonNegativeLong(partFd, fileReadOffset);
             } finally {
@@ -305,6 +305,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     }
 
     private static class TransactionLogCursorImpl implements TransactionLogCursor {
+        private final Path rootPath;
         private long address;
         private FilesFacade ff;
         private int headerFd;
@@ -312,7 +313,6 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         private long partId = -1;
         private long partMapSize;
         private int partTransactionCount;
-        private Path rootPath;
         private long txn = -2;
         private long txnCount = -1;
         private long txnLo;
@@ -361,6 +361,11 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         @Override
         public long getMaxTxn() {
             return txnCount - 1;
+        }
+
+        @Override
+        public int getPartitionSize() {
+            return partTransactionCount;
         }
 
         @Override
@@ -451,7 +456,6 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
                         break;
                     }
                 }
-
             } finally {
                 rootPath.trimTo(rootLen);
             }
@@ -460,24 +464,9 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         }
 
         @Override
-        public int getPartitionSize() {
-            return partTransactionCount;
-        }
-
-        @Override
         public void toTop() {
             if (txnCount > -1L) {
                 this.txn = txnLo;
-            }
-        }
-
-        private static int openFileRO(final FilesFacade ff, final Path path, final String fileName) {
-            final int rootLen = path.size();
-            path.concat(fileName).$();
-            try {
-                return TableUtils.openRO(ff, path, LOG);
-            } finally {
-                path.trimTo(rootLen);
             }
         }
 
@@ -496,7 +485,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             this.partTransactionCount = partTransactionCount;
             partMapSize = partTransactionCount * RECORD_SIZE;
             this.ff = ff;
-            this.headerFd = openFileRO(ff, path, TXNLOG_FILE_NAME);
+            this.headerFd = openRO(ff, path, WalUtils.TXNLOG_FILE_NAME, LOG);
             long newTxnCount = ff.readNonNegativeLong(headerFd, MAX_TXN_OFFSET_64);
             rootPath.of(path);
 
@@ -518,7 +507,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
                 int size = rootPath.size();
                 try {
                     rootPath.concat(TXNLOG_PARTS_DIR).slash().put(part).$();
-                    partFd = TableUtils.openRO(ff, rootPath, LOG);
+                    partFd = openRO(ff, rootPath, LOG);
                     address = ff.mmap(partFd, partMapSize, 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);
                     partId = part;
                 } finally {
