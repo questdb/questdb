@@ -3853,7 +3853,7 @@ public class SqlOptimiser implements Mutable {
 
         /**
          Type 1 Optimisations: Will be optimised by adding order by clause and changing model type
-         Type 2 Optimisations: Will be done only by changing model type to prevent invoking group by workers
+         Type 2 Optimisations: Will be done only by changing  model type to prevent invoking group by workers
          */
         int optimisationType = 0;
         if(AGGREGATE_FUNCTIONS_OPTIMISED_BY_BACKWARD_SCAN.contains(token.toString()))
