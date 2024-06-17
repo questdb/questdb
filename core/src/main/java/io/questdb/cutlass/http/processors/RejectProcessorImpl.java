@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.http.processors;
 
-import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.network.PeerDisconnectedException;
@@ -67,12 +66,7 @@ public class RejectProcessorImpl implements RejectProcessor {
     @Override
     public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
         if (rejectCode == HTTP_UNAUTHORIZED) {
-            if (authenticationType == SecurityContext.AUTH_TYPE_CREDENTIALS) {
-                // special case, include basic auth realm
-                httpConnectionContext.simpleResponse().sendStatusTextContent(HTTP_UNAUTHORIZED, "WWW-Authenticate: Basic realm=\"questdb\", charset=\"UTF-8\"");
-            } else {
-                httpConnectionContext.simpleResponse().sendStatusTextContent(HTTP_UNAUTHORIZED);
-            }
+            httpConnectionContext.simpleResponse().sendStatusTextContent(HTTP_UNAUTHORIZED);
             httpConnectionContext.reset();
         } else {
             httpConnectionContext.simpleResponse().sendStatusWithCookie(rejectCode, rejectMessage, rejectCookieName, rejectCookieValue);
