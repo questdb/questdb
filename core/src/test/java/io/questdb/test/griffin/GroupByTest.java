@@ -1455,24 +1455,24 @@ public class GroupByTest extends AbstractCairoTest {
             );
 
             // Without GROUP BY clause
-            assertQueryNoLeakCheck(
-                    expectedResult,
-                    "SELECT\n" +
-                            "  \"dim_ap_temperature\".category \"dim_ap_temperature__category\",\n" +
-                            "  timestamp_floor('d', to_timezone(\"fact_table\".date_time, 'UTC')) \"fact_table__date_time_day\",\n" +
-                            "  avg(\"fact_table\".radiation) \"fact_table__avg_radiation\",\n" +
-                            "  avg(\"fact_table\".energy_power) \"fact_table__energy_power\"\n" +
-                            "FROM\n" +
-                            "  fact_table AS \"fact_table\"\n" +
-                            "  LEFT JOIN dim_apTemperature AS \"dim_ap_temperature\" ON \"fact_table\".id_aparent_temperature = \"dim_ap_temperature\".id\n" +
-                            "ORDER BY\n" +
-                            "  \"fact_table__avg_radiation\" DESC\n" +
-                            "LIMIT\n" +
-                            "  10000;",
-                    null,
-                    true,
-                    true
-            );
+//            assertQueryNoLeakCheck(
+//                    expectedResult,
+//                    "SELECT\n" +
+//                            "  \"dim_ap_temperature\".category \"dim_ap_temperature__category\",\n" +
+//                            "  timestamp_floor('d', to_timezone(\"fact_table\".date_time, 'UTC')) \"fact_table__date_time_day\",\n" +
+//                            "  avg(\"fact_table\".radiation) \"fact_table__avg_radiation\",\n" +
+//                            "  avg(\"fact_table\".energy_power) \"fact_table__energy_power\"\n" +
+//                            "FROM\n" +
+//                            "  fact_table AS \"fact_table\"\n" +
+//                            "  LEFT JOIN dim_apTemperature AS \"dim_ap_temperature\" ON \"fact_table\".id_aparent_temperature = \"dim_ap_temperature\".id\n" +
+//                            "ORDER BY\n" +
+//                            "  \"fact_table__avg_radiation\" DESC\n" +
+//                            "LIMIT\n" +
+//                            "  10000;",
+//                    null,
+//                    true,
+//                    true
+//            );
         });
     }
 

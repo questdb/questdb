@@ -199,26 +199,6 @@ public class SqlOptimiser implements Mutable {
         constNameToToken.clear();
     }
 
-    public CharSequence findColumnByAst(ObjList<ExpressionNode> groupByNodes, ObjList<CharSequence> groupByAliases, ExpressionNode node) {
-        for (int i = 0, max = groupByNodes.size(); i < max; i++) {
-            ExpressionNode n = groupByNodes.getQuick(i);
-            if (ExpressionNode.compareNodesExact(node, n)) {
-                return groupByAliases.getQuick(i);
-            }
-        }
-        return null;
-    }
-
-    public int findColumnIdxByAst(ObjList<ExpressionNode> groupByNodes, ExpressionNode node) {
-        for (int i = 0, max = groupByNodes.size(); i < max; i++) {
-            ExpressionNode n = groupByNodes.getQuick(i);
-            if (ExpressionNode.compareNodesExact(node, n)) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
     private static boolean isOrderedByDesignatedTimestamp(QueryModel model) {
         return model.getTimestamp() != null && model.getOrderBy().size() == 1
                 && Chars.equals(model.getOrderBy().getQuick(0).token, model.getTimestamp().token);
@@ -2104,6 +2084,26 @@ public class SqlOptimiser implements Mutable {
         return Long.MAX_VALUE;
     }
 
+    private CharSequence findColumnByAst(ObjList<ExpressionNode> groupByNodes, ObjList<CharSequence> groupByAliases, ExpressionNode node) {
+        for (int i = 0, max = groupByNodes.size(); i < max; i++) {
+            ExpressionNode n = groupByNodes.getQuick(i);
+            if (ExpressionNode.compareNodesExact(node, n)) {
+                return groupByAliases.getQuick(i);
+            }
+        }
+        return null;
+    }
+
+    private int findColumnIdxByAst(ObjList<ExpressionNode> groupByNodes, ExpressionNode node) {
+        for (int i = 0, max = groupByNodes.size(); i < max; i++) {
+            ExpressionNode n = groupByNodes.getQuick(i);
+            if (ExpressionNode.compareNodesExact(node, n)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     private CharSequence findQueryColumnByAst(ObjList<QueryColumn> bottomUpColumns, ExpressionNode node) {
         for (int i = 0, max = bottomUpColumns.size(); i < max; i++) {
             QueryColumn qc = bottomUpColumns.getQuick(i);
@@ -3758,77 +3758,6 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    // Restores table_name.column_name to alias translation
-    // Example:
-    // translating model:
-    //   select fact_table.data_time data_time, ...
-    // original node:
-    //   timestamp_floor('d',to_timezone(fact_table.data_time,'UTC')) timestamp_floor
-    // restored node:
-    //   timestamp_floor('d',to_timezone(data_time,'UTC')) timestamp_floor
-    private void restoreTranslation(@Transient ExpressionNode node, QueryModel translatingModel) {
-        sqlNodeStack.clear();
-
-        // pre-order iterative tree traversal
-        // see: http://en.wikipedia.org/wiki/Tree_traversal
-
-        while (!sqlNodeStack.isEmpty() || node != null) {
-            if (node != null) {
-                if (node.paramCount < 3) {
-                    if (node.rhs != null) {
-                        ExpressionNode n = restoredTranslatedAlias(node.rhs, translatingModel);
-                        if (node.rhs == n) {
-                            sqlNodeStack.push(node.rhs);
-                        } else {
-                            node.rhs = n;
-                        }
-                    }
-
-                    ExpressionNode n = restoredTranslatedAlias(node.lhs, translatingModel);
-                    if (n == node.lhs) {
-                        node = node.lhs;
-                    } else {
-                        node.lhs = n;
-                        node = null;
-                    }
-                } else {
-                    for (int i = 1, k = node.paramCount; i < k; i++) {
-                        ExpressionNode e = node.args.getQuick(i);
-                        ExpressionNode n = restoredTranslatedAlias(e, translatingModel);
-                        if (e == n) {
-                            sqlNodeStack.push(e);
-                        } else {
-                            node.args.setQuick(i, n);
-                        }
-                    }
-
-                    ExpressionNode e = node.args.getQuick(0);
-                    ExpressionNode n = restoredTranslatedAlias(e, translatingModel);
-                    if (e == n) {
-                        node = e;
-                    } else {
-                        node.args.setQuick(0, n);
-                        node = null;
-                    }
-                }
-            } else {
-                node = sqlNodeStack.poll();
-            }
-        }
-    }
-
-    private ExpressionNode restoredTranslatedAlias(@Transient ExpressionNode node, QueryModel translatingModel) {
-        if (node != null && node.type == LITERAL) {
-            final LowerCaseCharSequenceObjHashMap<CharSequence> map = translatingModel.getColumnNameToAliasMap();
-            final int index = map.keyIndex(node.token);
-            if (index < 0) {
-                final CharSequence alias = map.valueAtQuick(index);
-                return nextLiteral(alias, node.position);
-            }
-        }
-        return node;
-    }
-
     // Rewrite:
     // sum(x*10) into sum(x) * 10, etc.
     // sum(x+10) into sum(x) + count(x)*10
@@ -4883,7 +4812,7 @@ public class SqlOptimiser implements Mutable {
         boolean explicitGroupBy = groupBy.size() > 0;
 
         if (explicitGroupBy) {
-            // Outer model is not needed only if select clauses is the same as group by plus aggregate function calls
+            // Outer model is not needed only if select clause is the same as group by plus aggregate function calls
             for (int i = 0, n = groupBy.size(); i < n; i++) {
                 ExpressionNode node = groupBy.getQuick(i);
                 CharSequence alias = null;
@@ -5138,11 +5067,20 @@ public class SqlOptimiser implements Mutable {
                         continue;
                     }
 
-                    addMissingTablePrefixes(qc.getAst(), baseModel);
                     final int beforeSplit = groupByModel.getBottomUpColumns().size();
-                    // if there is explicit GROUP BY clause then we've to replace matching expressions with aliases in outer virtual model
-                    final ExpressionNode node = rewriteGroupBySelectExpression(qc.getAst(), groupByModel, groupByNodes, groupByAliases);
+
                     final ExpressionNode originalNode = qc.getAst();
+                    // if the alias is in groupByAliases, it means that we've already seen
+                    // the column in the GROUP BY clause and emitted literals for it to
+                    // the inner models; this means that if we add a missing table alias
+                    // to its node, it'll break the references; to avoid that, clone the node
+                    ExpressionNode node = groupByAliases.indexOf(qc.getAlias()) != -1
+                            ? deepClone(expressionNodePool, qc.getAst())
+                            : qc.getAst();
+                    addMissingTablePrefixes(node, baseModel);
+
+                    // if there is explicit GROUP BY clause then we've to replace matching expressions with aliases in outer virtual model
+                    node = rewriteGroupBySelectExpression(node, groupByModel, groupByNodes, groupByAliases);
                     if (originalNode == node) {
                         useOuterModel = true;
                     } else {
@@ -5157,10 +5095,6 @@ public class SqlOptimiser implements Mutable {
                         }
                         qc.of(qc.getAlias(), node, qc.isIncludeIntoWildcard(), qc.getColumnType());
                     }
-                    // in case of group by on joined tables, we could have broken the previously made
-                    // table_name.column_name to alias translation when calling addMissingTablePrefixes(),
-                    // so we try to restore the aliases
-                    restoreTranslation(originalNode, translatingModel);
 
                     emitCursors(qc.getAst(), cursorModel, innerVirtualModel, translatingModel, baseModel, sqlExecutionContext, sqlParserCallback);
                     qc = ensureAliasUniqueness(outerVirtualModel, qc);

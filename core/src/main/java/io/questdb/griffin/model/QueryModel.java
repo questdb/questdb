@@ -1292,16 +1292,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.showKind = showKind;
     }
 
-    public void setTableNameFunction(RecordCursorFactory function) {
-        this.tableNameFunction = function;
-    }
-
     public void setTableId(int id) {
         this.tableId = id;
     }
 
     public void setTableNameExpr(ExpressionNode tableNameExpr) {
         this.tableNameExpr = tableNameExpr;
+    }
+
+    public void setTableNameFunction(RecordCursorFactory function) {
+        this.tableNameFunction = function;
     }
 
     public void setTimestamp(ExpressionNode timestamp) {
@@ -1562,7 +1562,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 tableNameExpr.toSink(sink);
             } else {
                 sink.putAscii('(');
-                nestedModel.toSink0(sink, false, showOrderBy);
+                if (nestedModel != null) {
+                    nestedModel.toSink0(sink, false, showOrderBy);
+                }
                 sink.putAscii(')');
             }
             if (alias != null) {
