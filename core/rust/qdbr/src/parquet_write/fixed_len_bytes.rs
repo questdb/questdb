@@ -12,11 +12,9 @@ fn encode_plain_be<const N: usize>(
     data: &[[u8; N]],
     buffer: &mut Vec<u8>,
     null_value: [u8; N],
-    stats: &mut BinaryMaxMin,
 ) {
     for x in data.into_iter().filter(|&&x| x != null_value) {
         buffer.extend(x.iter().rev());
-        stats.update(x);
     }
 }
 
@@ -66,7 +64,7 @@ pub fn bytes_to_page<const N: usize>(
     let definition_levels_byte_length = buffer.len();
     let mut stats = BinaryMaxMin::new(&primitive_type);
     if reverse {
-        encode_plain_be(data, &mut buffer, null_value, &mut stats);
+        encode_plain_be(data, &mut buffer, null_value);
     } else {
         encode_plain(data, &mut buffer, null_value, &mut stats);
     }
