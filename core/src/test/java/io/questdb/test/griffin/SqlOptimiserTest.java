@@ -149,14 +149,29 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         });
     }
 
-
     @Test
     public void testQueryPlanForLastAggregateFunctionOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table y ( x int, ts timestamp) timestamp(ts);");
-            final String query = "select LAST(ts), x from y";
+            final String query = "select LAST(ts) from y";
             final QueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-choose ts, x from (select [ts, x] from y timestamp (ts)) order by ts desc limit 1", model.toString0());
+            TestUtils.assertEquals("select-choose ts from (select [ts] from y timestamp (ts)) order by ts desc limit 1", model.toString0());
+            assertPlanNoLeakCheck(
+                    query,
+                    "Limit lo: 1\n" +
+                            "    DataFrame\n" +
+                            "        Row backward scan\n" +
+                            "        Frame backward scan on: y\n");
+        });
+    }
+
+    @Test
+    public void testQueryPlanForMaxAggregateFunctionOnDesignatedTimestampColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y ( x int, ts timestamp) timestamp(ts);");
+            final String query = "select max(ts) from y";
+            final QueryModel model = compileModel(query);
+            TestUtils.assertEquals("select-choose ts from (select [ts] from y timestamp (ts)) order by ts desc limit 1", model.toString0());
             assertPlanNoLeakCheck(
                     query,
                     "Limit lo: 1\n" +

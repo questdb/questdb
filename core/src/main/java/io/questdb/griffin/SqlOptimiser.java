@@ -3804,85 +3804,82 @@ public class SqlOptimiser implements Mutable {
     /**
      Rewrites
      SELECT LAST(timestamp) FROM table_name;
+     AND
+     SELECT max(timestamp) FROM table_name;
      into query which can is optimised search
      SELECT timestamp from (SELECT timestamp from table_name order by timestamp) limit 1
      This enables FrameBackwardScan for aggregation queries containing LAST keyword
      */
-
     private void optimiseAggregateFunctions(QueryModel parent){
 
+        //base condition to stop recursion
         if(parent== null || parent.getNestedModel() == null)
           return;
 
+        ObjList<QueryColumn> queryColumns = parent.getBottomUpColumns();
         QueryModel nestedModel = parent.getNestedModel();
         CharSequence designatedTimestampColumn = null;
 
-        //get designated timestamp column name
-        if(nestedModel!=null && nestedModel.getTimestamp()!= null)
-            designatedTimestampColumn =  nestedModel.getTimestamp().token;
-
-        //if LAST(column) does not contain designated-timestamp column, optimise nested models recursively
-        else {
+        /**if LAST(column) does not contain designated-timestamp column
+         * OR
+         * another column present in select clause
+         * then don't apply optimisations to base model
+         */
+        if (nestedModel.getTimestamp() == null || queryColumns.size() > 1) {
             optimiseAggregateFunctions(nestedModel);
             return;
         }
 
-        ObjList<QueryColumn> queryColumns = parent.getBottomUpColumns();
-        for(int i=0; i<parent.getColumns().size(); i++) {
-            QueryColumn column = queryColumns.get(i);
-            ExpressionNode node = column.getAst();
-
-            CharSequence token= null;
-            CharSequence rhs= null;
-
-            if(node != null) {
-                token = node.token;
-                 rhs = node.rhs == null ? null: node.rhs.token;
-            }
-
-            /**
-             Core logic for issue #4231 will be applicable under two conditions
-             Condition1: QueryColumn contains LAST function keyword
-             Condition2: QueryColumn for LAST keyword should be same as designatedTimestamp column
-
-             Core logic for changing query plan
-              - Add limit 1 via expressionNode to parent model
-              - Change model to select-choose from select-group-by
-              - Column alias by default is LAST if alias is not provided, replace with original column name
-              - Add order by clause to nested model
-             Call this recursively for nested models
-            */
-            if (rhs!=null &&
-                    ("LAST").equals(token.toString()) &&
-                    designatedTimestampColumn.toString().equals(rhs.toString())) {
-
-                //adding limit 1
-                ExpressionNode lowerLimitNode = expressionNodePool.next();
-                lowerLimitNode.token = "1";
-                lowerLimitNode.type = 2;
-                parent.setLimit(lowerLimitNode, null);
-
-
-                //change model type to select-choose
-                parent.setSelectModelType(1);
-
-                //change ast params
-                node.token = node.token.toString().equals("LAST") ? rhs.toString() : node.token.toString();
-                if(column.getAlias().equals("LAST"))
-                    column.setAlias(node.token);
-                node.paramCount = 0;
-                node.type = 4;
-
-                //adding order by
-
-                ExpressionNode newTimestampNode =  expressionNodePool.next();
-                newTimestampNode.token = designatedTimestampColumn;
-                nestedModel.addOrderBy(newTimestampNode, QueryModel.ORDER_DIRECTION_DESCENDING);
-                break;
-            }
+        //get designated timestamp column name
+        designatedTimestampColumn =  nestedModel.getTimestamp().token;
+        QueryColumn column = queryColumns.get(0);
+        ExpressionNode node = column.getAst();
+        CharSequence token= null;
+        CharSequence rhs= null;
+        if(node != null) {
+            token = node.token;
+             rhs = node.rhs == null ? null: node.rhs.token;
         }
-        optimiseAggregateFunctions(nestedModel);
 
+        /**
+         Core logic for issue #4231 will be applicable under two conditions
+         Condition1: QueryColumn contains LAST/max function keyword
+         Condition2: QueryColumn for LAST/max keyword should be same as designatedTimestamp column
+
+         Core logic for changing query plan
+          - Add limit 1 via expressionNode to parent model
+          - Change model to select-choose from select-group-by
+          - Column alias by default is LAST/max if alias is not provided, replace with original column name
+          - Add order by clause to nested model
+         Call this recursively for nested models
+        */
+        if (rhs!=null &&
+                (("LAST").equals(token.toString()) || ("max").equals(token.toString())) &&
+                designatedTimestampColumn.toString().equals(rhs.toString())) {
+            //adding limit 1
+            ExpressionNode lowerLimitNode = expressionNodePool.next();
+            lowerLimitNode.token = "1";
+            lowerLimitNode.type = 2;
+            parent.setLimit(lowerLimitNode, null);
+
+            //change model type to select-choose
+            parent.setSelectModelType(1);
+
+            //change ast params
+            node.token = node.token.toString().equals("LAST") ||  node.token.toString().equals("max")
+                    ? rhs.toString() : node.token.toString();
+            if(column.getAlias().equals("LAST") || column.getAlias().equals("max"))
+                column.setAlias(node.token);
+            node.paramCount = 0;
+            node.type = 4;
+
+            //adding order by
+            ExpressionNode newTimestampNode =  expressionNodePool.next();
+            newTimestampNode.token = designatedTimestampColumn;
+            nestedModel.addOrderBy(newTimestampNode, QueryModel.ORDER_DIRECTION_DESCENDING);
+        }
+
+        optimiseAggregateFunctions(nestedModel);
         }
 
     /**
