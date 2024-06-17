@@ -29,8 +29,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.function.Predicate;
-
 public class TableNameRegistryRO extends AbstractTableNameRegistry {
     private final long autoReloadTimeout;
     private final MillisecondClock clockMs;
@@ -40,8 +38,8 @@ public class TableNameRegistryRO extends AbstractTableNameRegistry {
     private ConcurrentHashMap<TableToken> tableNameToTableTokenMap1 = new ConcurrentHashMap<>(false);
     private ConcurrentHashMap<TableToken> tableNameToTableTokenMap2 = new ConcurrentHashMap<>(false);
 
-    public TableNameRegistryRO(CairoConfiguration configuration, Predicate<CharSequence> protectedTableResolver) {
-        super(configuration, protectedTableResolver);
+    public TableNameRegistryRO(CairoConfiguration configuration, TableFlagResolver tableFlagResolver) {
+        super(configuration, tableFlagResolver);
         this.clockMs = configuration.getMillisecondClock();
         long timeout = configuration.getTableRegistryAutoReloadFrequency();
         this.autoReloadTimeout = timeout > 0 ? timeout : Long.MAX_VALUE;

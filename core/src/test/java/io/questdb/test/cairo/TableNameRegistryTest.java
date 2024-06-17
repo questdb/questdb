@@ -52,7 +52,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
-import static io.questdb.cairo.CairoEngine.EMPTY_RESOLVER;
 import static io.questdb.cairo.GrowOnlyTableNameRegistryStore.OPERATION_ADD;
 import static io.questdb.cairo.wal.WalUtils.TABLE_REGISTRY_NAME_FILE;
 import static io.questdb.std.Files.FILES_RENAME_OK;
@@ -230,7 +229,10 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             for (int i = 0; i < threadCount; i++) {
                 threads.add(new Thread(() -> {
                     try {
-                        try (TableNameRegistryRO ro = new TableNameRegistryRO(configuration, EMPTY_RESOLVER)) {
+                        try (TableNameRegistryRO ro = new TableNameRegistryRO(
+                                configuration,
+                                new TableFlagResolverImpl(configuration.getSystemTableNamePrefix().toString())
+                        )) {
                             startBarrier.await();
                             while (!done.get()) {
                                 ro.reload();
@@ -256,7 +258,10 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 // Add / remove tables
                 engine.closeNameRegistry();
                 Rnd rnd = TestUtils.generateRandom(LOG);
-                try (TableNameRegistryRW rw = new TableNameRegistryRW(configuration, EMPTY_RESOLVER)) {
+                try (TableNameRegistryRW rw = new TableNameRegistryRW(
+                        configuration,
+                        new TableFlagResolverImpl(configuration.getSystemTableNamePrefix().toString())
+                )) {
                     rw.reload();
                     startBarrier.await();
                     int iteration = 0;
@@ -641,7 +646,10 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             createTableWal("tab1");
 
             engine.closeNameRegistry();
-            try (TableNameRegistryStore store = new TableNameRegistryStore(engine.getConfiguration(), EMPTY_RESOLVER)) {
+            try (TableNameRegistryStore store = new TableNameRegistryStore(
+                    configuration,
+                    new TableFlagResolverImpl(configuration.getSystemTableNamePrefix().toString())
+            )) {
                 store.lock();
                 store.reload(new ConcurrentHashMap<>(1), new ConcurrentHashMap<>(1), null);
                 store.writeEntry(new TableToken("tab1", "tab1~1", 1, true, false, false), OPERATION_ADD);
@@ -794,7 +802,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
         final ObjList<TableToken> convertedTables = TableConverter.convertTables(
                 configuration,
                 engine.getTableSequencerAPI(),
-                engine.getProtectedTableResolver()
+                engine.getTableFlagResolver()
         );
         engine.closeNameRegistry();
         engine.reloadTableNames(convertedTables);
@@ -823,7 +831,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 engine.releaseInactive();
             }
 
-            final ObjList<TableToken> convertedTables = TableConverter.convertTables(configuration, engine.getTableSequencerAPI(), engine.getProtectedTableResolver());
+            final ObjList<TableToken> convertedTables = TableConverter.convertTables(configuration, engine.getTableSequencerAPI(), engine.getTableFlagResolver());
 
             if (!releaseInactiveBeforeConversion) {
                 engine.releaseInactive();
