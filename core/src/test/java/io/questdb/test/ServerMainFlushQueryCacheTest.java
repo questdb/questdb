@@ -75,19 +75,14 @@ public class ServerMainFlushQueryCacheTest extends AbstractBootstrapTest {
                 }
 
                 final Metrics metrics = serverMain.getEngine().getMetrics();
-                TestUtils.assertEventually(
-                        () -> Assert.assertEquals(nQueries, metrics.pgWire().cachedSelectsGauge().getValue()),
-                        120
-                );
+                TestUtils.assertEventually(() -> Assert.assertEquals(nQueries, metrics.pgWire().cachedSelectsGauge().getValue()));
 
                 try (Statement statement = conn.createStatement()) {
                     statement.execute("select flush_query_cache();");
                 }
 
-                TestUtils.assertEventually(
-                        () -> Assert.assertEquals(0, metrics.pgWire().cachedSelectsGauge().getValue()),
-                        120
-                );
+                // Only the select flush_query_cache(); query may remain in the cache.
+                TestUtils.assertEventually(() -> Assert.assertTrue(metrics.pgWire().cachedSelectsGauge().getValue() <= 1));
             }
         }
     }
