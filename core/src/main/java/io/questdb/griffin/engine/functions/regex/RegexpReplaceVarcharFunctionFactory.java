@@ -104,11 +104,23 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
      * i.e. it only cares about ASCII chars.
      */
     private boolean canSkipUtf8Decoding(CharSequence pattern) {
-        return Chars.isAscii(pattern)
-                && !Chars.contains(pattern, "\\D") && !Chars.contains(pattern, "[^0-9]")
+        if (!Chars.isAscii(pattern)) {
+            return false;
+        }
+        // First, filter out all class character closes with quantifiers, but ']+'.
+        // That's because classes like '[^0-9]' match single non-digit char while
+        // for UTF-16 view each non-ASCII char is interpreted as multiple chars.
+        for (int i = 0, n = pattern.length(); i < n; i++) {
+            if (pattern.charAt(i) == ']' && (i == n - 1 || pattern.charAt(i + 1) != '+')) {
+                return false;
+            }
+        }
+        // Now, filter out everything that involves digits/letters/words/etc.
+        return !Chars.contains(pattern, "\\D") && !Chars.contains(pattern, "\\x")
+                && !Chars.contains(pattern, "\\B") && !Chars.contains(pattern, "\\b")
                 && !Chars.contains(pattern, "\\S") && !Chars.contains(pattern, "\\s")
                 && !Chars.contains(pattern, "\\W") && !Chars.contains(pattern, "\\w")
-                && !Chars.contains(pattern, "\\x") && !Chars.contains(pattern, "\\p{");
+                && !Chars.contains(pattern, "\\p{");
     }
 
     private static class DirectAsciiStringView implements CharSequence, DirectUtf8Sequence {
