@@ -233,21 +233,18 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
 
     private void prepareExpectedPlan(int t, int f, String keys, String function, String expectedFunction) {
         boolean rosti = (t >= INT && t <= TIMESTAMP && f > 1) || t == DOUBLE || (t == SHORT && !function.contains("KSum") && !function.contains("NSum"));
-        boolean parallel = !function.contains("KSum") && !function.contains("NSum");
 
         planSink.clear();
         if (rosti) {
             planSink.put("GroupBy vectorized: true workers: 1\n");
-        } else if (parallel) {
-            planSink.put("Async Group By workers: 1\n");
         } else {
-            planSink.put("GroupBy vectorized: false\n");
+            planSink.put("Async Group By workers: 1\n");
         }
         if (keys != null) {
             planSink.put("  keys: [").put(keys).put("]\n");
         }
         planSink.put("  values: [").put(expectedFunction).put("]\n");
-        if (!rosti && parallel) {
+        if (!rosti) {
             planSink.put("  filter: null\n");
         }
         planSink.put("    DataFrame\n" +

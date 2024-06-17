@@ -48,7 +48,6 @@ import java.util.List;
  * Basic tests that compare compiled filter output with the Java implementation.
  */
 public class CompiledFilterRegressionTest extends AbstractCairoTest {
-
     private static final Log LOG = LogFactory.getLog(CompiledFilterRegressionTest.class);
     private static final int N_SIMD = 512;
     private static final int N_SIMD_WITH_SCALAR_TAIL = N_SIMD + 3;
@@ -61,7 +60,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         // Disable the test suite on ARM64.
         Assume.assumeTrue(JitUtil.isJitSupported());
         super.setUp();
-//        compiler.setEnableJitNullChecks(true);
+        // compiler.setEnableJitNullChecks(true);
     }
 
     @Test
@@ -149,22 +148,6 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testColumnLessThanNullComparison() throws Exception {
-        final String ddl = "create table x as " +
-                "(select timestamp_sequence(400000000000, 500000000) as k," +
-                " rnd_int(-10, 10, 10) i32," +
-                " rnd_long(-10, 10, 10) i64," +
-                " rnd_float(10) f32," +
-                " rnd_double(10) f64 " +
-                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        FilterGenerator gen = new FilterGenerator()
-                .withOptionalNegation().withAnyOf("i32", "i64", "f32", "f64")
-                .withAnyOf(" <= ", " >= ", " = ")
-                .withAnyOf("null");
-        assertGeneratedQueryNullable(ddl, gen);
-    }
-
-    @Test
     public void testColumnFloatConstantComparison() throws Exception {
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
@@ -215,6 +198,34 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 .withAnyOf("i8", "i16", "i32", "i64", "f32", "f64")
                 .withComparisonOperator()
                 .withAnyOf(String.valueOf(boundary));
+        assertGeneratedQueryNotNull(ddl, gen);
+    }
+
+    @Test
+    public void testColumnLessThanNullComparison() throws Exception {
+        final String ddl = "create table x as " +
+                "(select timestamp_sequence(400000000000, 500000000) as k," +
+                " rnd_int(-10, 10, 10) i32," +
+                " rnd_long(-10, 10, 10) i64," +
+                " rnd_float(10) f32," +
+                " rnd_double(10) f64 " +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
+        FilterGenerator gen = new FilterGenerator()
+                .withOptionalNegation().withAnyOf("i32", "i64", "f32", "f64")
+                .withAnyOf(" <= ", " >= ", " = ")
+                .withAnyOf("null");
+        assertGeneratedQueryNullable(ddl, gen);
+    }
+
+    @Test
+    public void testColumnTimestampLiteralComparison() throws Exception {
+        final String ddl = "create table x as " +
+                "(select rnd_timestamp(to_timestamp('2019','yyyy'),to_timestamp('2021','yyyy'),2) ts" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + "))";
+        FilterGenerator gen = new FilterGenerator()
+                .withAnyOf("ts")
+                .withComparisonOperator()
+                .withAnyOf("'2020-01-01T01:01:01.111111Z'");
         assertGeneratedQueryNotNull(ddl, gen);
     }
 
@@ -486,21 +497,21 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampComparison2() throws Exception {
+        final String query = "select * from x where ts >= 0";
+        final String ddl = "create table x as " +
+                "(select case when x < 10 then cast(NULL as TIMESTAMP) else cast(x as TIMESTAMP) end ts" +
+                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + "))";
+        assertQueryNullable(query, ddl);
+    }
+
+    @Test
     public void testTimestampNull() throws Exception {
         final String query = "select * from x where t <> null";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400000000000, 500000000) as k," +
                 " rnd_timestamp(to_timestamp('2020', 'yyyy'), to_timestamp('2021', 'yyyy'), 5) t" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        assertQueryNullable(query, ddl);
-    }
-
-    @Test
-    public void testTimestampNullValueComparison() throws Exception {
-        final String query = "select * from x where ts >= 0";
-        final String ddl = "create table x as " +
-                "(select case when x < 10 then cast(NULL as TIMESTAMP) else cast(x as TIMESTAMP) end ts" +
-                " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + "))";
         assertQueryNullable(query, ddl);
     }
 

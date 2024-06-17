@@ -515,6 +515,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getQueryCacheEventQueueCapacity() {
+        return 4;
+    }
+
+    @Override
     public int getQueryRegistryPoolSize() {
         return 8;
     }
