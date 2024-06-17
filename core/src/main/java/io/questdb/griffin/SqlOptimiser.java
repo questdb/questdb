@@ -119,6 +119,8 @@ public class SqlOptimiser implements Mutable {
     private ObjList<JoinContext> emittedJoinClauses;
     private CharSequence tempColumnAlias;
     private QueryModel tempQueryModel;
+    private static final ObjList<String> AGGREGATE_FUNCTIONS_OPTIMISED_BY_BACKWARD_SCAN = new ObjList<>("LAST", "max");
+    private static final ObjList<String> AGGREGATE_FUNCTIONS_OPTIMISED_BY_FORWARD_SCAN = new ObjList<>("FIRST", "min");
 
     public SqlOptimiser(
             CairoConfiguration configuration,
@@ -3809,6 +3811,14 @@ public class SqlOptimiser implements Mutable {
      into query which can is optimised search
      SELECT timestamp from (SELECT timestamp from table_name order by timestamp) limit 1
      This enables FrameBackwardScan for aggregation queries containing LAST keyword
+     AND
+     Rewrites
+     SELECT FIRST(timestamp) FROM table_name;
+     AND
+     SELECT min(timestamp) FROM table_name;
+     into query which can is optimised search
+     SELECT timestamp from (SELECT timestamp from table_name) limit 1
+     This disables invoking group by workers
      */
     private void optimiseAggregateFunctions(QueryModel parent){
 
@@ -3820,7 +3830,7 @@ public class SqlOptimiser implements Mutable {
         QueryModel nestedModel = parent.getNestedModel();
         CharSequence designatedTimestampColumn = null;
 
-        /**if LAST(column) does not contain designated-timestamp column
+        /**if FIRST/LAST/min/max(column) does not contain designated-timestamp column
          * OR
          * another column present in select clause
          * then don't apply optimisations to base model
@@ -3833,53 +3843,65 @@ public class SqlOptimiser implements Mutable {
         //get designated timestamp column name
         designatedTimestampColumn =  nestedModel.getTimestamp().token;
         QueryColumn column = queryColumns.get(0);
-        ExpressionNode node = column.getAst();
+        ExpressionNode ast = column.getAst();
         CharSequence token= null;
         CharSequence rhs= null;
-        if(node != null) {
-            token = node.token;
-             rhs = node.rhs == null ? null: node.rhs.token;
+        if(ast != null) {
+            token = ast.token;
+             rhs = ast.rhs == null ? null: ast.rhs.token;
         }
 
         /**
+         Type 1 Optimisations: Will be optimised by adding order by clause and changing model type
+         Type 2 Optimisations: Will be done only by changing model type to prevent invoking group by workers
+         */
+        int optimisationType = 0;
+        if(AGGREGATE_FUNCTIONS_OPTIMISED_BY_BACKWARD_SCAN.contains(token.toString()))
+            optimisationType = 1;
+        else if(AGGREGATE_FUNCTIONS_OPTIMISED_BY_FORWARD_SCAN.contains(token.toString()))
+            optimisationType = 2;
+
+        /**
          Core logic for issue #4231 will be applicable under two conditions
-         Condition1: QueryColumn contains LAST/max function keyword
+         Condition1: QueryColumn contains FIRST/LAST/max/min function keyword
          Condition2: QueryColumn for LAST/max keyword should be same as designatedTimestamp column
-
          Core logic for changing query plan
-          - Add limit 1 via expressionNode to parent model
-          - Change model to select-choose from select-group-by
-          - Column alias by default is LAST/max if alias is not provided, replace with original column name
-          - Add order by clause to nested model
+         - Add limit 1 via expressionNode to parent model
+         - Change model to select-choose from select-group-by
+         - Column alias by default is LAST/max if alias is not provided, replace with original column name
+         - Add order by clause to nested model
          Call this recursively for nested models
-        */
-        if (rhs!=null &&
-                (("LAST").equals(token.toString()) || ("max").equals(token.toString())) &&
-                designatedTimestampColumn.toString().equals(rhs.toString())) {
-            //adding limit 1
-            ExpressionNode lowerLimitNode = expressionNodePool.next();
-            lowerLimitNode.token = "1";
-            lowerLimitNode.type = 2;
-            parent.setLimit(lowerLimitNode, null);
+         */
+        if (rhs!=null && (optimisationType == 1 || optimisationType == 2)
+            && designatedTimestampColumn.toString().equals(rhs.toString())) {
+            switch (optimisationType) {
+                case 1:
+                    ExpressionNode newTimestampNode =  expressionNodePool.next();
+                    newTimestampNode.token = designatedTimestampColumn;
+                    nestedModel.addOrderBy(newTimestampNode, QueryModel.ORDER_DIRECTION_DESCENDING);
+                case 2:
 
-            //change model type to select-choose
-            parent.setSelectModelType(1);
-
-            //change ast params
-            node.token = node.token.toString().equals("LAST") ||  node.token.toString().equals("max")
-                    ? rhs.toString() : node.token.toString();
-            if(column.getAlias().equals("LAST") || column.getAlias().equals("max"))
-                column.setAlias(node.token);
-            node.paramCount = 0;
-            node.type = 4;
-
-            //adding order by
-            ExpressionNode newTimestampNode =  expressionNodePool.next();
-            newTimestampNode.token = designatedTimestampColumn;
-            nestedModel.addOrderBy(newTimestampNode, QueryModel.ORDER_DIRECTION_DESCENDING);
+                default:
+                    addParamsForAggregateFunctionOptimisation(parent, ast, rhs);
+            }
         }
 
         optimiseAggregateFunctions(nestedModel);
+    }
+
+    private void addParamsForAggregateFunctionOptimisation(QueryModel parent, ExpressionNode ast, CharSequence rhs){
+        ExpressionNode lowerLimitNode = expressionNodePool.next();
+        lowerLimitNode.token = "1";
+        lowerLimitNode.type = 2;
+        parent.setLimit(lowerLimitNode, null);
+
+        //change model type to select-choose
+        parent.setSelectModelType(1);
+
+        //change ast params
+        ast.token = rhs.toString();
+        ast.paramCount = 0;
+        ast.type = 4;
     }
 
     /**
