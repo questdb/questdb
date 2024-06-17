@@ -199,7 +199,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_WINDOW_TREE_MAX_PAGES("cairo.sql.window.tree.max.pages"),
     CAIRO_SQL_LEGACY_OPERATOR_PRECEDENCE("cairo.sql.legacy.operator.precedence"),
     CAIRO_O3_TXN_SCOREBOARD_ENTRY_COUNT("cairo.o3.txn.scoreboard.entry.count"),
-    CAIRO_LATESTBY_QUEUE_CAPACITY("cairo.latestby.queue.capacity"),
+    CAIRO_LATEST_ON_QUEUE_CAPACITY("cairo.latestby.queue.capacity"),
     CAIRO_O3_PARTITION_PURGE_LIST_INITIAL_CAPACITY("cairo.o3.partition.purge.list.initial.capacity"),
     CAIRO_O3_ENABLED("cairo.o3.enabled"),
     CAIRO_QUERY_CACHE_EVENT_QUEUE_CAPACITY("cairo.query.cache.event.queue.capacity"),

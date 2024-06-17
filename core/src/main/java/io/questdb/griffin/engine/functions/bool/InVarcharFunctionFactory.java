@@ -92,7 +92,7 @@ public class InVarcharFunctionFactory implements FunctionFactory {
 
         if (allConst) {
             final Utf8SequenceHashSet set = new Utf8SequenceHashSet();
-            parseToVarchar(args, set);
+            parseToVarchar(args, argPositions, set);
 
             final Function arg = args.getQuick(0);
             if (arg.isConstant()) {
@@ -100,10 +100,12 @@ public class InVarcharFunctionFactory implements FunctionFactory {
             }
             return new ConstFunc(arg, set);
         }
-        return new RuntimeConstFunc(new ObjList<>(args));
+        final IntList positions = new IntList();
+        positions.addAll(argPositions);
+        return new RuntimeConstFunc(new ObjList<>(args), positions);
     }
 
-    private static void parseToVarchar(ObjList<Function> args, Utf8SequenceHashSet set) {
+    private static void parseToVarchar(ObjList<Function> args, IntList argPositions, Utf8SequenceHashSet set) throws SqlException {
         set.clear();
         final int n = args.size();
         for (int i = 1; i < n; i++) {
@@ -119,7 +121,7 @@ public class InVarcharFunctionFactory implements FunctionFactory {
                     set.add(new Utf8String(func.getChar(null)));
                     break;
                 default:
-                    // should not happen, log a warning at least?
+                    throw SqlException.position(argPositions.getQuick(i)).put("cannot compare VARCHAR with type ").put(ColumnType.nameOf(func.getType()));
             }
         }
     }
@@ -151,11 +153,13 @@ public class InVarcharFunctionFactory implements FunctionFactory {
     }
 
     private static class RuntimeConstFunc extends BooleanFunction implements MultiArgFunction {
+        private final IntList argPositions;
         private final ObjList<Function> args;
         private final Utf8SequenceHashSet set = new Utf8SequenceHashSet();
 
-        public RuntimeConstFunc(ObjList<Function> args) {
+        public RuntimeConstFunc(ObjList<Function> args, IntList argPositions) {
             this.args = args;
+            this.argPositions = argPositions;
         }
 
         @Override
@@ -172,7 +176,7 @@ public class InVarcharFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             MultiArgFunction.super.init(symbolTableSource, executionContext);
-            parseToVarchar(args, set);
+            parseToVarchar(args, argPositions, set);
         }
 
         @Override

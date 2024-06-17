@@ -93,8 +93,13 @@ public class Services {
 
         final HttpCookieHandler cookieHandler = serverConfiguration.getFactoryProvider().getHttpCookieHandler();
         final HttpHeaderParserFactory headerParserFactory = serverConfiguration.getFactoryProvider().getHttpHeaderParserFactory();
-        final HttpServer server = new HttpServer(httpServerConfiguration, metrics, workerPool,
-                serverConfiguration.getFactoryProvider().getHttpSocketFactory(), cookieHandler, headerParserFactory
+        final HttpServer server = new HttpServer(
+                httpServerConfiguration,
+                metrics,
+                workerPool,
+                serverConfiguration.getFactoryProvider().getHttpSocketFactory(),
+                cookieHandler,
+                headerParserFactory
         );
         HttpServer.HttpRequestProcessorBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
                 httpServerConfiguration.getJsonQueryProcessorConfiguration(),

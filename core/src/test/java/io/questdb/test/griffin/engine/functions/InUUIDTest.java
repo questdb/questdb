@@ -36,6 +36,60 @@ import org.junit.Test;
 public class InUUIDTest extends AbstractCairoTest {
 
     @Test
+    public void testBindVarConstants() throws SqlException {
+        ddl("create table MovementLog(\n" +
+                "ts timestamp,\n" +
+                "initParticipantId long,\n" +
+                "initParticipantIdType symbol,\n" +
+                "movementBusinessDate date,\n" +
+                "slotId uuid\n" +
+                ") timestamp(ts) partition by day wal\n");
+
+        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
+        tuples.add(new BindVariableTestTuple(
+                "constants",
+                "participantId\tparticipantIdType\n",
+                bindVariableService -> bindVariableService.setDate(0, 1000L)
+        ));
+
+        assertSql("SELECT DISTINCT initParticipantId AS participantId, initParticipantIdType AS participantIdType\n" +
+                "FROM 'MovementLog'\n" +
+                "WHERE movementBusinessDate=$1 AND slotId IN ('aa7dc4ec-cb68-446f-b37f-1ec82752c7d7', " +
+                "'b5b2159a-2356-4217-965d-4c984f0ffa8a', '4cd64b0b-0a34-4f8e-a698-c6c186b7571a')\n" +
+                "ORDER BY initParticipantId\n" +
+                "LIMIT 0,6", tuples);
+    }
+
+    @Test
+    public void testBindVarRuntimeConstants() throws SqlException {
+        ddl("create table MovementLog(\n" +
+                "ts timestamp,\n" +
+                "initParticipantId long,\n" +
+                "initParticipantIdType symbol,\n" +
+                "movementBusinessDate date,\n" +
+                "slotId uuid\n" +
+                ") timestamp(ts) partition by day wal\n");
+
+        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
+        tuples.add(new BindVariableTestTuple(
+                "runtime constants",
+                "participantId\tparticipantIdType\n",
+                bindVariableService -> {
+                    bindVariableService.setDate(0, 1000L);
+                    bindVariableService.setStr(1, "aa7dc4ec-cb68-446f-b37f-1ec82752c7d7");
+                    bindVariableService.setStr(2, "b5b2159a-2356-4217-965d-4c984f0ffa8a");
+                    bindVariableService.setStr(3, "4cd64b0b-0a34-4f8e-a698-c6c186b7571a");
+                }
+        ));
+
+        assertSql("SELECT DISTINCT initParticipantId AS participantId, initParticipantIdType AS participantIdType\n" +
+                "FROM 'MovementLog'\n" +
+                "WHERE movementBusinessDate=$1 AND slotId IN ($2, $3, $4)\n" +
+                "ORDER BY initParticipantId\n" +
+                "LIMIT 0,6", tuples);
+    }
+
+    @Test
     public void testBindVarTypeChange() throws SqlException {
         ddl("create table test as (select x, rnd_uuid4(1) a from long_sequence(100))");
 
@@ -140,26 +194,6 @@ public class InUUIDTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testConstInvalidType() throws Exception {
-        ddl("create table test as (select x, rnd_uuid4(1) a from long_sequence(100))");
-        assertException(
-                "test where a in (0.1323)",
-                17,
-                "cannot compare UUID with type DOUBLE"
-        );
-    }
-
-    @Test
-    public void testConstBadUUID() throws Exception {
-        ddl("create table test as (select x, rnd_uuid4(1) a from long_sequence(100))");
-        assertException(
-                "test where a in ('9/12')",
-                17,
-                "invalid UUID value [9/12]"
-        );
-    }
-
-    @Test
     public void testConstAndBindVariableVarcharMix() throws SqlException {
         ddl("create table test as (select x, rnd_uuid4(1) a from long_sequence(100))");
 
@@ -203,5 +237,25 @@ public class InUUIDTest extends AbstractCairoTest {
         ));
 
         assertSql("test where a in ('aa7dc4ec-cb68-446f-b37f-1ec82752c7d7'::varchar, $1, null::varchar)", tuples);
+    }
+
+    @Test
+    public void testConstBadUUID() throws Exception {
+        ddl("create table test as (select x, rnd_uuid4(1) a from long_sequence(100))");
+        assertException(
+                "test where a in ('9/12')",
+                17,
+                "invalid UUID value [9/12]"
+        );
+    }
+
+    @Test
+    public void testConstInvalidType() throws Exception {
+        ddl("create table test as (select x, rnd_uuid4(1) a from long_sequence(100))");
+        assertException(
+                "test where a in (0.1323)",
+                17,
+                "cannot compare UUID with type DOUBLE"
+        );
     }
 }

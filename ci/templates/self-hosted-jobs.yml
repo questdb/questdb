@@ -8,7 +8,29 @@ jobs:
         - Agent.Name -equals arm64-$(System.StageName)$(Build.BuildId)
     dependsOn:
       - StartArmAgent
+    timeoutInMinutes: 60
+    condition: eq(variables['System.PullRequest.IsFork'], 'false')
+    variables:
+      SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED']]
+      CODE_COVERAGE_TOOL_OPTION: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]
+      ARCHIVED_CRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).log"
+      testset: "all"
+      javadoc_step: ""
+      javadoc_profile: ""
+      jdk: "1.11"
+      os: Linux
+    steps:
+      - template: steps.yml
 
+  - job: linux_x64_zfs
+    displayName: "on linux-x64-zfs"
+    pool:
+      name: "amd64-zfs"
+      vmImage:
+      demands:
+        - Agent.Name -equals amd64-zfs-$(System.StageName)$(Build.BuildId)
+    dependsOn:
+      - StartX64ZfsAgent
     timeoutInMinutes: 60
     condition: eq(variables['System.PullRequest.IsFork'], 'false')
     variables:

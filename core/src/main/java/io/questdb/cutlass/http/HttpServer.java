@@ -41,7 +41,6 @@ import java.io.Closeable;
 
 public class HttpServer implements Closeable {
     static final NoOpAssociativeCache<RecordCursorFactory> NO_OP_CACHE = new NoOpAssociativeCache<>();
-
     private final ObjList<Closeable> closeables = new ObjList<>();
     private final IODispatcher<HttpConnectionContext> dispatcher;
     private final HttpContextFactory httpContextFactory;
@@ -104,7 +103,7 @@ public class HttpServer implements Closeable {
         this.dispatcher = IODispatchers.create(configuration.getDispatcherConfiguration(), httpContextFactory);
         pool.assign(dispatcher);
         this.rescheduleContext = new WaitProcessor(configuration.getWaitProcessorConfiguration(), dispatcher);
-        pool.assign(this.rescheduleContext);
+        pool.assign(rescheduleContext);
 
         for (int i = 0; i < workerCount; i++) {
             final int index = i;
@@ -279,6 +278,10 @@ public class HttpServer implements Closeable {
                 }
             }
         }
+    }
+
+    public void clearSelectCache() {
+        selectCache.clear();
     }
 
     @Override
