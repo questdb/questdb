@@ -3880,7 +3880,7 @@ public class SqlOptimiser implements Mutable {
         }
 
         optimiseAggregateFunctions(nestedModel);
-        }
+    }
 
     /**
      * Rewrites expressions such as :
