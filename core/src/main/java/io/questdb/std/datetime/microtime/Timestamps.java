@@ -293,6 +293,10 @@ public final class Timestamps {
         return micros - micros % (stride * HOUR_MICROS);
     }
 
+    public static long floorHH(long micros, int stride, long offset) {
+        return (micros - ((micros - offset) % (stride * HOUR_MICROS)));
+    }
+
     /**
      * Floors timestamp value to the nearest microsecond.
      *
@@ -312,23 +316,24 @@ public final class Timestamps {
         return micros - micros % (stride * MINUTE_MICROS);
     }
 
+    public static long floorMI(long micros, int stride, long offset) {
+        return micros - ((micros - offset) % (stride * MINUTE_MICROS));
+    }
+
+
     public static long floorMM(long micros) {
         int y;
         boolean l;
         return yearMicros(y = getYear(micros), l = isLeapYear(y)) + monthOfYearMicros(getMonthOfYear(micros, y, l), l);
     }
 
-    public static long floorMM(long micros, int stride, long offset) {
-        final int origin = getYear(offset);
-        long m = (getMonthsBetween(origin, micros) / stride) * stride;
+    public static long floorMM(long micros, int stride) {
+        final int origin = getYear(0);
+        long m = (getMonthsBetween(0, micros) / stride) * stride;
         int y = (int) (origin + m / 12);
         int mm = (int) (m % 12);
         boolean l = isLeapYear(y);
         return yearMicros(y, l) + (mm > 0 ? monthOfYearMicros(mm, l) : 0);
-    }
-
-    public static long floorMM(long micros, int stride) {
-        return floorMM(micros, stride, 0);
     }
 
     public static long floorMS(long micros, int stride, long offset) {
@@ -385,6 +390,12 @@ public final class Timestamps {
     public static long floorSS(long micros, int stride) {
         return micros - micros % (stride * SECOND_MICROS);
     }
+
+
+    public static long floorSS(long micros, int stride, long offset) {
+        return micros - ((micros - offset) % (stride * SECOND_MICROS));
+    }
+
 
     public static long floorWW(long micros) {
         return floorWW(micros, 1);

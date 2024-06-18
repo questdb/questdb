@@ -104,7 +104,7 @@ public class TimestampFloorOffsetFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDayFloorWithStride() throws Exception {
+    public void testDaysFloorWithStride() throws Exception {
         assertMemoryLeak(() -> {
                     assertSql("timestamp_floor_offset\n" +
                                     "2016-02-10T00:00:00.000000Z\n",
@@ -118,7 +118,21 @@ public class TimestampFloorOffsetFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMillisecondFloorWithStride() throws Exception {
+    public void testHoursFloorWithStride() throws Exception {
+        assertMemoryLeak(() -> {
+                    assertSql("timestamp_floor_offset\n" +
+                                    "2016-02-10T00:00:00.000000Z\n",
+                            "select timestamp_floor_offset('3h', '2016-02-10T01:18:22.862145Z', '2016-02-10T00:00:00Z')");
+                    assertSql("timestamp_floor_offset\n" +
+                                    "2016-02-10T15:00:00.000000Z\n",
+                            "select timestamp_floor_offset('3h', '2016-02-10T16:18:22.862145Z', '2016-02-10T00:00:00Z')");
+                }
+
+        );
+    }
+
+    @Test
+    public void testMillisecondsFloorWithStride() throws Exception {
         assertMemoryLeak(() -> {
                     assertSql("timestamp_floor_offset\n" +
                                     "2016-02-10T16:18:22.862000Z\n",
@@ -132,7 +146,35 @@ public class TimestampFloorOffsetFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWeekFloorWithStride() throws Exception {
+    public void testMonthsFloorWithStride() throws Exception {
+        assertMemoryLeak(() -> {
+                    assertSql("timestamp_floor_offset\n" +
+                                    "2016-02-10T00:00:00.000000Z\n",
+                            "select timestamp_floor_offset('3M', '2016-02-10T16:18:22.862145Z', '2016-02-10T00:00:00Z')");
+                    assertSql("timestamp_floor_offset\n" +
+                                    "2016-02-10T00:00:00.000000Z\n",
+                            "select timestamp_floor_offset('3M', '2016-02-10T16:18:22.862145Z', '2016-02-10T00:00:00Z')");
+                }
+
+        );
+    }
+
+    @Test
+    public void testSecondsFloorWithStride() throws Exception {
+        assertMemoryLeak(() -> {
+                    assertSql("timestamp_floor_offset\n" +
+                                    "2016-02-10T16:18:18.000000Z\n",
+                            "select timestamp_floor_offset('6s', '2016-02-10T16:18:22.862145Z', '2016-02-10T00:00:00Z')");
+                    assertSql("timestamp_floor_offset\n" +
+                                    "2016-02-10T00:00:00.000000Z\n",
+                            "select timestamp_floor_offset('6s', '2016-02-10T00:00:04.862145Z', '2016-02-10T00:00:00Z')");
+                }
+
+        );
+    }
+
+    @Test
+    public void testWeeksFloorWithStride() throws Exception {
         assertMemoryLeak(() -> {
                     assertSql("timestamp_floor_offset\n" +
                                     "2016-02-10T00:00:00.000000Z\n",

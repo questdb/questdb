@@ -53,20 +53,20 @@ public class TimestampFloorOffsetFunctionFactory implements FunctionFactory {
         final long offset = args.getQuick(2).getTimestamp(null);
 
         switch (unit) {
-            case 'M':
-                return new TimestampFloorFunctions.TimestampFloorMMFunction(timestamp, stride, offset);
+//            case 'M':
+//                return new TimestampFloorFunctions.TimestampFloorMMFunction(timestamp, stride, offset);
             case 'y':
                 return new TimestampFloorFunctions.TimestampFloorYYYYFunction(timestamp, stride, offset);
             case 'w':
                 return new TimestampFloorFunctions.TimestampFloorWWFunction(timestamp, stride, offset);
             case 'd':
                 return new TimestampFloorFunctions.TimestampFloorDDFunction(timestamp, stride, offset);
-//            case 'h':
-//                return new TimestampFloorFunctions.TimestampFloorHHFunction(timestamp, stride, offset);
-//            case 'm':
-//                return new TimestampFloorFunctions.TimestampFloorMIFunction(timestamp, stride, offset);
-//            case 's':
-//                return new TimestampFloorFunctions.TimestampFloorSSFunction(timestamp, stride, offset);
+            case 'h':
+                return new TimestampFloorFunctions.TimestampFloorHHFunction(timestamp, stride, offset);
+            case 'm':
+                return new TimestampFloorFunctions.TimestampFloorMIFunction(timestamp, stride, offset);
+            case 's':
+                return new TimestampFloorFunctions.TimestampFloorSSFunction(timestamp, stride, offset);
             case 'T':
                 return new TimestampFloorFunctions.TimestampFloorMSFunction(timestamp, stride, offset);
 //            case 'U':
