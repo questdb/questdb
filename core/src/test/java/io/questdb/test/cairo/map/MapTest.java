@@ -336,7 +336,7 @@ public class MapTest extends AbstractCairoTest {
     @Test
     public void testKeyCopyFrom() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            SingleColumnType keyTypes = keyColumnType(ColumnType.SHORT);
+            SingleColumnType keyTypes = keyColumnType(ColumnType.INT);
             SingleColumnType valueTypes = new SingleColumnType(ColumnType.INT);
 
             try (
@@ -346,7 +346,7 @@ public class MapTest extends AbstractCairoTest {
                 final int N = 10000;
                 for (int i = 0; i < N; i++) {
                     MapKey keyA = mapA.withKey();
-                    populateKey(keyA, i, ColumnType.SHORT);
+                    populateKey(keyA, i, ColumnType.INT);
 
                     MapValue valueA = keyA.createValue();
                     Assert.assertTrue(valueA.isNew());
@@ -365,10 +365,10 @@ public class MapTest extends AbstractCairoTest {
                 // assert that all map A keys can be found in map B
                 for (int i = 0; i < N; i++) {
                     MapKey keyA = mapA.withKey();
-                    populateKey(keyA, i, ColumnType.SHORT);
+                    populateKey(keyA, i, ColumnType.INT);
 
                     MapKey keyB = mapB.withKey();
-                    populateKey(keyB, i, ColumnType.SHORT);
+                    populateKey(keyB, i, ColumnType.INT);
 
                     MapValue valueA = keyA.findValue();
                     Assert.assertFalse(valueA.isNew());
@@ -888,6 +888,8 @@ public class MapTest extends AbstractCairoTest {
             return new SingleColumnType(ColumnType.VARCHAR);
         } else if (mapType == MapType.VAR_SIZE_MAP) {
             return new SingleColumnType(ColumnType.STRING);
+        } else if (mapType == MapType.UNORDERED_8_MAP) {
+            return new SingleColumnType(ColumnType.LONG);
         }
         return new SingleColumnType(preferredKeyColumnType);
     }
@@ -914,6 +916,8 @@ public class MapTest extends AbstractCairoTest {
             }
         } else if (mapType == MapType.VAR_SIZE_MAP) {
             key.putStr(String.valueOf(index));
+        } else if (mapType == MapType.UNORDERED_8_MAP) {
+            key.putLong(index);
         } else {
             switch (preferredKeyType) {
                 case ColumnType.INT:

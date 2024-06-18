@@ -55,8 +55,7 @@ public class Unordered4MapTest extends AbstractCairoTest {
             Rnd rnd = new Rnd();
 
             ArrayColumnTypes keyTypes = new ArrayColumnTypes();
-            keyTypes.add(ColumnType.BYTE);
-            keyTypes.add(ColumnType.SHORT);
+            keyTypes.add(ColumnType.IPv4);
 
             ArrayColumnTypes valueTypes = new ArrayColumnTypes();
             valueTypes.add(ColumnType.BYTE);
@@ -77,8 +76,7 @@ public class Unordered4MapTest extends AbstractCairoTest {
                 final int N = 10000;
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
-                    key.putByte(rnd.nextByte());
-                    key.putShort(rnd.nextShort());
+                    key.putIPv4(rnd.nextInt());
 
                     MapValue value = key.createValue();
                     Assert.assertTrue(value.isNew());
@@ -105,8 +103,7 @@ public class Unordered4MapTest extends AbstractCairoTest {
                 // assert that all values are good
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
-                    key.putByte(rnd.nextByte());
-                    key.putShort(rnd.nextShort());
+                    key.putInt(rnd.nextInt());
 
                     MapValue value = key.createValue();
                     Assert.assertFalse(value.isNew());
@@ -130,16 +127,11 @@ public class Unordered4MapTest extends AbstractCairoTest {
                 }
 
                 try (RecordCursor cursor = map.getCursor()) {
-                    HashMap<String, Long> keyToRowIds = new HashMap<>();
+                    HashMap<Integer, Long> keyToRowIds = new HashMap<>();
                     LongList rowIds = new LongList();
                     final Record record = cursor.getRecord();
                     while (cursor.hasNext()) {
-                        // key part, comes after value part in records
-                        int col = 13;
-                        byte b = record.getByte(col++);
-                        short sh = record.getShort(col);
-                        String key = b + "," + sh;
-                        keyToRowIds.put(key, record.getRowId());
+                        keyToRowIds.put(record.getIPv4(13), record.getRowId());
                         rowIds.add(record.getRowId());
                     }
 
@@ -147,21 +139,14 @@ public class Unordered4MapTest extends AbstractCairoTest {
                     cursor.toTop();
                     int i = 0;
                     while (cursor.hasNext()) {
-                        int col = 13;
-                        byte b = record.getByte(col++);
-                        short sh = record.getShort(col);
-                        String key = b + "," + sh;
-                        Assert.assertEquals((long) keyToRowIds.get(key), record.getRowId());
+                        Assert.assertEquals((long) keyToRowIds.get(record.getIPv4(13)), record.getRowId());
                         Assert.assertEquals(rowIds.getQuick(i++), record.getRowId());
                     }
 
                     // Validate that recordAt jumps to what we previously inserted.
                     rnd.reset();
                     for (i = 0; i < N; i++) {
-                        byte b = rnd.nextByte();
-                        short sh = rnd.nextShort();
-                        String key = b + "," + sh;
-                        long rowId = keyToRowIds.get(key);
+                        long rowId = keyToRowIds.get(rnd.nextInt());
                         cursor.recordAt(record, rowId);
 
                         // value part, it comes first in record
