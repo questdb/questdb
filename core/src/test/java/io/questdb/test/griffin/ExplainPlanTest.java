@@ -2544,6 +2544,22 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
+    @Test // special case
+    public void testGroupByHour2() throws Exception {
+        assertPlan(
+                "create table a (ts timestamp, d double)",
+                "select hour(ts), min(d) from a where d > 0 group by hour(ts)",
+                "Async JIT Group By workers: 1\n" +
+                        "  keys: [hour]\n" +
+                        "  values: [min(d)]\n" +
+                        "  filter: 0<d\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+    }
+
+
     @Test
     public void testGroupByInt1() throws Exception {
         assertPlan(
