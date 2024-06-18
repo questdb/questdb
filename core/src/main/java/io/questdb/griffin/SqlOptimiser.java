@@ -119,8 +119,6 @@ public class SqlOptimiser implements Mutable {
     private ObjList<JoinContext> emittedJoinClauses;
     private CharSequence tempColumnAlias;
     private QueryModel tempQueryModel;
-    private static final ObjList<String> AGGREGATE_FUNCTIONS_OPTIMISED_BY_BACKWARD_SCAN = new ObjList<>("LAST", "max");
-    private static final ObjList<String> AGGREGATE_FUNCTIONS_OPTIMISED_BY_FORWARD_SCAN = new ObjList<>("FIRST", "min");
 
     public SqlOptimiser(
             CairoConfiguration configuration,
@@ -3804,27 +3802,27 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     Rewrites
-     SELECT LAST(timestamp) FROM table_name;
-     AND
-     SELECT max(timestamp) FROM table_name;
-     into query which can is optimised search
-     SELECT timestamp from (SELECT timestamp from table_name order by timestamp) limit 1
-     This enables FrameBackwardScan for aggregation queries containing LAST keyword
-     AND
-     Rewrites
-     SELECT FIRST(timestamp) FROM table_name;
-     AND
-     SELECT min(timestamp) FROM table_name;
-     into query which can is optimised search
-     SELECT timestamp from (SELECT timestamp from table_name) limit 1
-     This disables invoking group by workers
+     * Rewrites
+     * SELECT LAST(timestamp) FROM table_name;
+     * AND
+     * SELECT max(timestamp) FROM table_name;
+     * into query which can is optimised search
+     * SELECT timestamp from (SELECT timestamp from table_name order by timestamp) limit 1
+     * This enables FrameBackwardScan for aggregation queries containing LAST keyword
+     * AND
+     * Rewrites
+     * SELECT FIRST(timestamp) FROM table_name;
+     * AND
+     * SELECT min(timestamp) FROM table_name;
+     * into query which can is optimised search
+     * SELECT timestamp from (SELECT timestamp from table_name) limit 1
+     * This disables invoking group by workers
      */
-    private void optimiseAggregateFunctions(QueryModel parent){
+    private void rewriteGroupByForFirstLastMaxMinAggregateFunctions(QueryModel parent) {
 
         //base condition to stop recursion
-        if(parent== null || parent.getNestedModel() == null)
-          return;
+        if (parent == null || parent.getNestedModel() == null)
+            return;
 
         ObjList<QueryColumn> queryColumns = parent.getBottomUpColumns();
         QueryModel nestedModel = parent.getNestedModel();
@@ -3836,19 +3834,19 @@ public class SqlOptimiser implements Mutable {
          * then don't apply optimisations to base model
          */
         if (nestedModel.getTimestamp() == null || queryColumns.size() > 1) {
-            optimiseAggregateFunctions(nestedModel);
+            rewriteGroupByForFirstLastMaxMinAggregateFunctions(nestedModel);
             return;
         }
 
         //get designated timestamp column name
-        designatedTimestampColumn =  nestedModel.getTimestamp().token;
+        designatedTimestampColumn = nestedModel.getTimestamp().token;
         QueryColumn column = queryColumns.get(0);
         ExpressionNode ast = column.getAst();
-        CharSequence token= null;
-        CharSequence rhs= null;
-        if(ast != null) {
+        CharSequence token = null;
+        CharSequence rhs = null;
+        if (ast != null) {
             token = ast.token;
-             rhs = ast.rhs == null ? null: ast.rhs.token;
+            rhs = ast.rhs == null ? null : ast.rhs.token;
         }
 
         /**
@@ -3856,10 +3854,12 @@ public class SqlOptimiser implements Mutable {
          Type 2 Optimisations: Will be done only by changing model type to prevent invoking group by workers
          */
         int optimisationType = 0;
-        if(AGGREGATE_FUNCTIONS_OPTIMISED_BY_BACKWARD_SCAN.contains(token.toString()))
-            optimisationType = 1;
-        else if(AGGREGATE_FUNCTIONS_OPTIMISED_BY_FORWARD_SCAN.contains(token.toString()))
-            optimisationType = 2;
+        if (rhs != null && ast.type == 8 && Chars.equals(designatedTimestampColumn, rhs)) {
+            if (Chars.equalsIgnoreCase(token, "LAST") || Chars.equalsIgnoreCase(token, "MAX"))
+                optimisationType = 1;
+            else if (Chars.equalsIgnoreCase(token, "FIRST") || Chars.equalsIgnoreCase(token, "MIN"))
+                optimisationType = 2;
+        }
 
         /**
          Core logic for issue #4231 will be applicable under two conditions
@@ -3872,36 +3872,31 @@ public class SqlOptimiser implements Mutable {
          - Add order by clause to nested model
          Call this recursively for nested models
          */
-        if (rhs!=null && (optimisationType == 1 || optimisationType == 2)
-            && designatedTimestampColumn.toString().equals(rhs.toString())) {
+        if (optimisationType == 1 || optimisationType == 2) {
             switch (optimisationType) {
                 case 1:
-                    ExpressionNode newTimestampNode =  expressionNodePool.next();
+                    ExpressionNode newTimestampNode = expressionNodePool.next();
                     newTimestampNode.token = designatedTimestampColumn;
                     nestedModel.addOrderBy(newTimestampNode, QueryModel.ORDER_DIRECTION_DESCENDING);
                 case 2:
 
                 default:
-                    addParamsForAggregateFunctionOptimisation(parent, ast, rhs);
+                    ExpressionNode lowerLimitNode = expressionNodePool.next();
+                    lowerLimitNode.token = "1";
+                    lowerLimitNode.type = 2;
+                    parent.setLimit(lowerLimitNode, null);
+
+                    //change model type to select-choose
+                    parent.setSelectModelType(1);
+
+                    //change ast params
+                    ast.token = rhs;
+                    ast.paramCount = 0;
+                    ast.type = 4;
             }
         }
 
-        optimiseAggregateFunctions(nestedModel);
-    }
-
-    private void addParamsForAggregateFunctionOptimisation(QueryModel parent, ExpressionNode ast, CharSequence rhs){
-        ExpressionNode lowerLimitNode = expressionNodePool.next();
-        lowerLimitNode.token = "1";
-        lowerLimitNode.type = 2;
-        parent.setLimit(lowerLimitNode, null);
-
-        //change model type to select-choose
-        parent.setSelectModelType(1);
-
-        //change ast params
-        ast.token = rhs.toString();
-        ast.paramCount = 0;
-        ast.type = 4;
+        rewriteGroupByForFirstLastMaxMinAggregateFunctions(nestedModel);
     }
 
     /**
@@ -5799,7 +5794,7 @@ public class SqlOptimiser implements Mutable {
             enumerateTableColumns(rewrittenModel, sqlExecutionContext, sqlParserCallback);
             rewriteTopLevelLiteralsToFunctions(rewrittenModel);
             rewrittenModel = rewriteSampleBy(rewrittenModel);
-            optimiseAggregateFunctions(rewrittenModel);
+            rewriteGroupByForFirstLastMaxMinAggregateFunctions(rewrittenModel);
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
             resolveJoinColumns(rewrittenModel);
             optimiseBooleanNot(rewrittenModel);
