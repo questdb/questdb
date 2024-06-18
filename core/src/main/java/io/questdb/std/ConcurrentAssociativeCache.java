@@ -91,7 +91,7 @@ public class ConcurrentAssociativeCache<V> implements AssociativeCache<V> {
     }
 
     @Override
-    public void close() {
+    public void clear() {
         long freed = 0;
         for (int i = 0; i < rows; i++) {
             final String[] rowKeys = keys.getQuick(i);
@@ -109,6 +109,11 @@ public class ConcurrentAssociativeCache<V> implements AssociativeCache<V> {
             }
         }
         cachedGauge.add(-freed);
+    }
+
+    @Override
+    public void close() {
+        clear();
     }
 
     @Override
