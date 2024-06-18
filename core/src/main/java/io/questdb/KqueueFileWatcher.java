@@ -77,7 +77,7 @@ public class KqueueFileWatcher extends FileWatcher {
             );
 
             if (this.evtFile == 0) {
-                throw CairoException.critical(Os.errno()).put("could allocate kevent for file");
+                throw CairoException.critical(Os.errno()).put("could not allocate kevent for file");
             }
 
             this.evtDir = KqueueAccessor.evtAlloc(
@@ -92,7 +92,7 @@ public class KqueueFileWatcher extends FileWatcher {
             );
 
             if (this.evtDir == 0) {
-                throw CairoException.critical(Os.errno()).put("could allocate kevent for directory");
+                throw CairoException.critical(Os.errno()).put("could not allocate kevent for directory");
             }
 
             long fds = KqueueAccessor.pipe();
