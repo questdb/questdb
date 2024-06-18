@@ -166,27 +166,40 @@ public class MapFactory {
 
         final int keySize = totalSize(keyTypes);
         final int valueSize = totalSize(valueTypes);
-        if (keySize > 0) { // fixed-size key
-            if (keyTypes.getColumnCount() == 1) {
-                if (keySize == Integer.BYTES && keySize + valueSize <= maxEntrySize) {
-                    return new Unordered4Map(
-                            keyTypes,
-                            valueTypes,
-                            keyCapacity,
-                            configuration.getSqlFixedSizeMapLoadFactor(),
-                            configuration.getSqlMapMaxResizes()
-                    );
-                } else if (keySize == Long.BYTES && keySize + valueSize <= maxEntrySize) {
-                    return new Unordered8Map(
-                            keyTypes,
-                            valueTypes,
-                            keyCapacity,
-                            configuration.getSqlFixedSizeMapLoadFactor(),
-                            configuration.getSqlMapMaxResizes()
-                    );
-                }
-            }
 
+        if (keyTypes.getColumnCount() == 1) {
+            final int keyType = keyTypes.getColumnType(0);
+            if ((keyType == ColumnType.INT || keyType == ColumnType.IPv4 || keyType == ColumnType.GEOINT)
+                    && keySize + valueSize <= maxEntrySize) {
+                return new Unordered4Map(
+                        keyTypes,
+                        valueTypes,
+                        keyCapacity,
+                        configuration.getSqlFixedSizeMapLoadFactor(),
+                        configuration.getSqlMapMaxResizes()
+                );
+            } else if ((keyType == ColumnType.LONG || keyType == ColumnType.GEOLONG)
+                    && keySize + valueSize <= maxEntrySize) {
+                return new Unordered8Map(
+                        keyTypes,
+                        valueTypes,
+                        keyCapacity,
+                        configuration.getSqlFixedSizeMapLoadFactor(),
+                        configuration.getSqlMapMaxResizes()
+                );
+            } else if (keyType == ColumnType.VARCHAR && 2 * Long.BYTES + valueSize <= maxEntrySize) {
+                return new UnorderedVarcharMap(
+                        valueTypes,
+                        keyCapacity,
+                        configuration.getSqlVarSizeMapLoadFactor(),
+                        configuration.getSqlMapMaxResizes(),
+                        configuration.getGroupByAllocatorDefaultChunkSize(),
+                        configuration.getGroupByAllocatorMaxChunkSize()
+                );
+            }
+        }
+
+        if (keySize > 0) {
             return new FixedSizeMap(
                     pageSize,
                     keyTypes,
@@ -194,15 +207,6 @@ public class MapFactory {
                     keyCapacity,
                     configuration.getSqlFixedSizeMapLoadFactor(),
                     configuration.getSqlMapMaxResizes()
-            );
-        } else if (keyTypes.getColumnCount() == 1 && keyTypes.getColumnType(0) == ColumnType.VARCHAR && 2 * Long.BYTES + valueSize <= maxEntrySize) {
-            return new UnorderedVarcharMap(
-                    valueTypes,
-                    keyCapacity,
-                    configuration.getSqlVarSizeMapLoadFactor(),
-                    configuration.getSqlMapMaxResizes(),
-                    configuration.getGroupByAllocatorDefaultChunkSize(),
-                    configuration.getGroupByAllocatorMaxChunkSize()
             );
         }
 
