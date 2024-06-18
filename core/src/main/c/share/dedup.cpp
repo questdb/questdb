@@ -645,9 +645,9 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
 
 
 JNIEXPORT jlong JNICALL
-Java_io_questdb_std_Vect_dedupMergeVarColumnLen(JNIEnv *env, jclass cl,
+Java_io_questdb_std_Vect_dedupMergeStrBinColumnSize(JNIEnv *env, jclass cl,
                                                jlong merge_index_addr,
-                                               jlong merge_index_size,
+                                               jlong merge_index_row_count,
                                                jlong src_data_fix_addr,
                                                jlong src_ooo_fix_addr) {
     auto merge_index = reinterpret_cast<index_t *>(merge_index_addr);
@@ -656,13 +656,41 @@ Java_io_questdb_std_Vect_dedupMergeVarColumnLen(JNIEnv *env, jclass cl,
     int64_t *src_fix[] = {src_ooo_fix, src_data_fix};
     int64_t dst_var_offset = 0;
 
-    for (int64_t l = 0; l < merge_index_size; l++) {
+    for (int64_t l = 0; l < merge_index_row_count; l++) {
         MM_PREFETCH_T0(merge_index + l + 64);
         const uint64_t row = merge_index[l].i;
         const uint32_t bit = (row >> 63);
         const uint64_t rr = row & ~(1ull << 63);
-        const int64_t len = src_fix[bit][rr + 1] - src_fix[bit][rr];
-        dst_var_offset += len;
+        const int64_t size = src_fix[bit][rr + 1] - src_fix[bit][rr];
+        dst_var_offset += size;
+    }
+    return dst_var_offset;
+}
+
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_dedupMergeVarcharColumnSize(JNIEnv *env, jclass cl,
+                                                   jlong merge_index_addr,
+                                                   jlong merge_index_row_count,
+                                                   jlong src_data_fix_addr,
+                                                   jlong src_ooo_fix_addr) {
+    auto merge_index = reinterpret_cast<index_t *>(merge_index_addr);
+    auto src_ooo_fix = reinterpret_cast<int64_t *>(src_ooo_fix_addr);
+    auto src_data_fix = reinterpret_cast<int64_t *>(src_data_fix_addr);
+    int64_t *src_fix[] = {src_ooo_fix, src_data_fix};
+    int64_t dst_var_offset = 0;
+
+    for (int64_t l = 0; l < merge_index_row_count; l++) {
+        const uint64_t row = merge_index[l].i;
+        const uint32_t bit = (row >> 63);
+        const uint64_t rr = row & ~(1ull << 63);
+        const int64_t firstWord = src_fix[bit][rr * 2];
+
+        if ((firstWord & 1) == 0 && (firstWord & 4) == 0) {
+            // not inlined and not null
+            auto size = (firstWord >> 4) & 0xffffff;
+            dst_var_offset += size;
+        }
     }
     return dst_var_offset;
 }

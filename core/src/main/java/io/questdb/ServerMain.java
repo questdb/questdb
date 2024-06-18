@@ -27,6 +27,7 @@ package io.questdb;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.FlushQueryCacheJob;
 import io.questdb.cairo.security.ReadOnlySecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -71,6 +72,7 @@ public class ServerMain implements Closeable {
     private FileWatcher fileWatcher;
     private HttpServer httpServer;
     private boolean initialized;
+    private PGWireServer pgWireServer;
     private WorkerPoolManager workerPoolManager;
 
     public ServerMain(String... args) {
@@ -367,11 +369,17 @@ public class ServerMain implements Closeable {
         ));
 
         // pg wire
-        freeOnExit.register(services().createPGWireServer(
+        freeOnExit.register(pgWireServer = services().createPGWireServer(
                 config.getPGWireConfiguration(),
                 engine,
                 workerPoolManager,
                 metrics
+        ));
+
+        workerPoolManager.getSharedPool().assign(new FlushQueryCacheJob(
+                engine.getMessageBus(),
+                httpServer,
+                pgWireServer
         ));
 
         if (!isReadOnly && config.getLineTcpReceiverConfiguration().isEnabled()) {
