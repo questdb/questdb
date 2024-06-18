@@ -32,7 +32,7 @@ import org.jetbrains.annotations.Nullable;
  * <p>
  * Note: implementations are not necessarily thread-safe.
  */
-public interface AssociativeCache<V> extends QuietCloseable {
+public interface AssociativeCache<V> extends QuietCloseable, Mutable {
 
     int capacity();
 

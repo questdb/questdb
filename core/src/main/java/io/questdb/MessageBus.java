@@ -41,6 +41,12 @@ public interface MessageBus extends Closeable {
 
     SCSequence getColumnPurgeSubSeq();
 
+    MPSequence getColumnTaskPubSeq();
+
+    RingQueue<ColumnTask> getColumnTaskQueue();
+
+    MCSequence getColumnTaskSubSeq();
+
     CairoConfiguration getConfiguration();
 
     MPSequence getCopyRequestPubSeq();
@@ -62,12 +68,6 @@ public interface MessageBus extends Closeable {
     RingQueue<LatestByTask> getLatestByQueue();
 
     MCSequence getLatestBySubSeq();
-
-    MPSequence getColumnTaskPubSeq();
-
-    RingQueue<ColumnTask> getColumnTaskQueue();
-
-    MCSequence getColumnTaskSubSeq();
 
     MPSequence getO3CopyPubSeq();
 
@@ -102,6 +102,10 @@ public interface MessageBus extends Closeable {
     int getPageFrameReduceShardCount();
 
     MCSequence getPageFrameReduceSubSeq(int shard);
+
+    MPSequence getQueryCacheEventPubSeq();
+
+    MCSequence getQueryCacheEventSubSeq();
 
     FanOut getTableWriterEventFanOut();
 

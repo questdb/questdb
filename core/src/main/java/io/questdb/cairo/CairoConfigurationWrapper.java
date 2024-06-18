@@ -516,6 +516,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getQueryCacheEventQueueCapacity() {
+        return getDelegate().getQueryCacheEventQueueCapacity();
+    }
+
+    @Override
     public int getQueryRegistryPoolSize() {
         return getDelegate().getQueryRegistryPoolSize();
     }
