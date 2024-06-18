@@ -159,6 +159,13 @@ auto get_int64(simdjson::ondemand::json_type ty, json_value& res) {
     return res.get_int64();
 }
 
+auto get_double(simdjson::ondemand::json_type ty, json_value& res) {
+    if (ty == simdjson::ondemand::json_type::string) {
+        return res.get_double_in_string();
+    }
+    return res.get_double();
+}
+
 template<typename F>
 auto value_at_pointer(
         simdjson::ondemand::parser *parser,
@@ -455,7 +462,7 @@ Java_io_questdb_std_json_JsonParser_queryPointerDouble(
     return value_at_pointer(
             parser, json_chars, json_len, tail_padding, pointer_chars, pointer_len, result,
             [result, default_value](json_value res) -> jdouble {
-                auto double_res = res.get_double();
+                auto double_res = get_double(result->type, res);
                 if (!result->set_error(double_res)) {
                     return default_value;
                 }
@@ -479,7 +486,7 @@ Java_io_questdb_std_json_JsonParser_queryPointerFloat(
     return value_at_pointer(
             parser, json_chars, json_len, tail_padding, pointer_chars, pointer_len, result,
             [result, default_value](json_value res) -> jfloat {
-                auto double_res = res.get_double();
+                auto double_res = get_double(result->type, res);
                 if (!result->set_error(double_res)) {
                     return default_value;
                 }

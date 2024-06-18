@@ -96,7 +96,7 @@ public class JsonPathLongFunctionFactoryTest extends AbstractFunctionFactoryTest
 
     @Test
     public void testStringContainingNumber() throws SqlException {
-        call(utf8("{\"path\": \"123\"}"), utf8(".path")).andAssert(Long.MIN_VALUE);
+        call(utf8("{\"path\": \"123\"}"), utf8(".path")).andAssert(123);
     }
 
     @Override

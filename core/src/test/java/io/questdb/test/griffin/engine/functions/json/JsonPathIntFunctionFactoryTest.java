@@ -24,103 +24,251 @@
 
 package io.questdb.test.griffin.engine.functions.json;
 
-import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CairoException;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.json.JsonPathFunctionFactory;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
+import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.Arrays;
+
+import static io.questdb.griffin.engine.functions.json.JsonPathFunc.DEFAULT_VALUE_ON_ERROR;
+import static io.questdb.griffin.engine.functions.json.JsonPathFunc.FAIL_ON_ERROR;
+
 public class JsonPathIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
-    private static final int INT_COL_TYPE = ColumnType.INT;
+    private static final int INT = io.questdb.cairo.ColumnType.INT;
 
     @Override
     public Invocation call(Object... args) {
         throw new UnsupportedOperationException();
     }
 
-    private Invocation callFn(Object... args) throws SqlException {
-        return callCustomised(
-                null,
-                new boolean[] {false, true, true},
-                true,
-                args);
+    @Test
+    public void testInt10000() throws SqlException {
+        callFn(utf8("{\"path\": 10000}"), utf8(".path"), INT).andAssert(10000);
+        callFn(utf8("{\"path\": 10000}"), dirUtf8(".path"), INT).andAssert(10000);
+        callFn(dirUtf8("{\"path\": 10000}"), utf8(".path"), INT).andAssert(10000);
+        callFn(dirUtf8("{\"path\": 10000}"), dirUtf8(".path"), INT).andAssert(10000);
     }
 
     @Test
-    public void testNullJson() throws SqlException {
+    public void testIntBigNumber() throws SqlException {
+        callFn(utf8("{\"path\": 100000000000000000000000000}"), utf8(".path"), INT).andAssert(Integer.MIN_VALUE);
+    }
+
+    @Test
+    public void testIntDefaultDifferentType() throws SqlException {
+        callFn(utf8("{\"path\": \"abc\"}"), utf8(".path"), INT, DEFAULT_VALUE_ON_ERROR, 42).andAssert(42);
+    }
+
+    @Test
+    public void testIntDefaultNullJsonValue() throws SqlException {
+        callFn(utf8("{\"path\": null}"), utf8(".path"), INT, DEFAULT_VALUE_ON_ERROR, 42).andAssert(Integer.MIN_VALUE);
+    }
+
+    @Test
+    public void testIntDifferentType() throws SqlException {
+        callFn(utf8("{\"path\": \"abc\"}"), utf8(".path"), INT).andAssert(Integer.MIN_VALUE);
+        callFn(dirUtf8("{\"path\": \"abc\"}"), dirUtf8(".path"), INT).andAssert(Integer.MIN_VALUE);
+    }
+
+    @Test
+    public void testIntEmptyJson() throws SqlException {
+        callFn(utf8("{}"), utf8(".path"), INT).andAssert(Integer.MIN_VALUE);
+    }
+
+    @Test
+    public void testIntFloat() throws SqlException {
+        callFn(dirUtf8("{\"path\": 123.45}"), dirUtf8(".path"), INT).andAssert(Integer.MIN_VALUE);
+    }
+
+    @Test
+    public void testIntInString() throws SqlException {
+        callFn(utf8("{\"path\": \"123\"}"), utf8(".path"), INT).andAssert(123);
+    }
+
+    @Test
+    public void testIntNegative() throws SqlException {
+        callFn(utf8("{\"path\": -123}"), utf8(".path"), INT).andAssert(-123);
+    }
+
+    @Test
+    public void testIntNullJson() throws SqlException {
         callFn(
                 utf8(null),
                 utf8(".path"),
-                INT_COL_TYPE
+                INT
         ).andAssert(Integer.MIN_VALUE);
         callFn(
                 utf8(null),
                 dirUtf8(".path"),
-                INT_COL_TYPE
+                INT
         ).andAssert(Integer.MIN_VALUE);
     }
 
     @Test
-    public void testDifferentType() throws SqlException {
-        callFn(utf8("{\"path\": \"abc\"}"), utf8(".path"), INT_COL_TYPE).andAssert(Integer.MIN_VALUE);
-        callFn(dirUtf8("{\"path\": \"abc\"}"), dirUtf8(".path"), INT_COL_TYPE).andAssert(Integer.MIN_VALUE);
+    public void testIntNullJsonValue() throws SqlException {
+        callFn(utf8("{\"path\": null}"), utf8(".path"), INT).andAssert(Integer.MIN_VALUE);
+        callFn(utf8("{\"path\": null}"), dirUtf8(".path"), INT).andAssert(Integer.MIN_VALUE);
+        callFn(dirUtf8("{\"path\": null}"), utf8(".path"), INT).andAssert(Integer.MIN_VALUE);
+        callFn(dirUtf8("{\"path\": null}"), dirUtf8(".path"), INT).andAssert(Integer.MIN_VALUE);
     }
 
     @Test
-    public void testEmptyJson() throws SqlException {
-        callFn(utf8("{}"), utf8(".path"), INT_COL_TYPE).andAssert(Integer.MIN_VALUE);
+    public void testIntOne() throws SqlException {
+        callFn(utf8("{\"path\": 1}"), utf8(".path"), INT).andAssert(1);
     }
 
     @Test
-    public void testNullJsonValue() throws SqlException {
-        callFn(utf8("{\"path\": null}"), utf8(".path"), INT_COL_TYPE).andAssert(Integer.MIN_VALUE);
-        callFn(utf8("{\"path\": null}"), dirUtf8(".path"), INT_COL_TYPE).andAssert(Integer.MIN_VALUE);
-        callFn(dirUtf8("{\"path\": null}"), utf8(".path"), INT_COL_TYPE).andAssert(Integer.MIN_VALUE);
-        callFn(dirUtf8("{\"path\": null}"), dirUtf8(".path"), INT_COL_TYPE).andAssert(Integer.MIN_VALUE);
+    public void testIntStrict10000() throws SqlException {
+        callFn(utf8("{\"path\": 10000}"), utf8(".path"), INT, FAIL_ON_ERROR).andAssert(10000);
     }
 
     @Test
-    public void testZero() throws SqlException {
-        callFn(utf8("{\"path\": 0}"), utf8(".path"), INT_COL_TYPE).andAssert(0);
+    public void testIntStrictBigNumber() throws SqlException {
+        final CairoException exc = Assert.assertThrows(
+                CairoException.class,
+                () -> callFn(utf8("{\"path\": 100000000000000000000000000}"), utf8(".path"), INT, FAIL_ON_ERROR)
+        );
+        Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): INCORRECT_TYPE:"));
     }
 
     @Test
-    public void testOne() throws SqlException {
-        callFn(utf8("{\"path\": 1}"), utf8(".path"), INT_COL_TYPE).andAssert(1);
+    public void testIntStrictDefaultDifferentType() throws SqlException {
+        final CairoException exc = Assert.assertThrows(
+                CairoException.class,
+                () -> callFn(utf8("{\"path\": \"abc\"}"), utf8(".path"), INT, FAIL_ON_ERROR, 42));
+        Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): INCORRECT_TYPE:"));
     }
 
     @Test
-    public void test10000() throws SqlException {
-        callFn(utf8("{\"path\": 10000}"), utf8(".path"), INT_COL_TYPE).andAssert(10000);
-        callFn(utf8("{\"path\": 10000}"), dirUtf8(".path"), INT_COL_TYPE).andAssert(10000);
-        callFn(dirUtf8("{\"path\": 10000}"), utf8(".path"), INT_COL_TYPE).andAssert(10000);
-        callFn(dirUtf8("{\"path\": 10000}"), dirUtf8(".path"), INT_COL_TYPE).andAssert(10000);
+    public void testIntStrictDefaultNullJsonValue() throws SqlException {
+        callFn(utf8("{\"path\": null}"), utf8(".path"), INT, FAIL_ON_ERROR, 42).andAssert(Integer.MIN_VALUE);
     }
 
     @Test
-    public void testNegative() throws SqlException {
-        callFn(utf8("{\"path\": -123}"), utf8(".path"), INT_COL_TYPE).andAssert(-123);
+    public void testIntStrictDifferentType() throws SqlException {
+        final CairoException exc = Assert.assertThrows(
+                CairoException.class,
+                () -> callFn(utf8("{\"path\": \"abc\"}"), utf8(".path"), INT, FAIL_ON_ERROR));
+        Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): INCORRECT_TYPE:"));
     }
 
     @Test
-    public void testUnsigned64Bit() throws SqlException {
-        callFn(utf8("{\"path\": 9999999999999999999}"), utf8(".path"), INT_COL_TYPE).andAssert(Integer.MIN_VALUE);
+    public void testIntStrictEmptyJson() throws SqlException {
+        final CairoException exc = Assert.assertThrows(
+                CairoException.class,
+                () -> callFn(utf8("{}"), utf8(".path"), INT, FAIL_ON_ERROR));
+        Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): NO_SUCH_FIELD:"));
     }
 
     @Test
-    public void testBigNumber() throws SqlException {
-        callFn(utf8("{\"path\": 100000000000000000000000000}"), utf8(".path"), INT_COL_TYPE).andAssert(Integer.MIN_VALUE);
+    public void testIntStrictFloat() throws SqlException {
+        final CairoException exc = Assert.assertThrows(
+                CairoException.class,
+                () -> callFn(utf8("{\"path\": 123.45}"), utf8(".path"), INT, FAIL_ON_ERROR));
+        Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): INCORRECT_TYPE:"));
     }
 
     @Test
-    public void testFloat() throws SqlException {
-        callFn(dirUtf8("{\"path\": 123.45}"), dirUtf8(".path"), INT_COL_TYPE).andAssert(Integer.MIN_VALUE);
+    public void testIntStrictNegative() throws SqlException {
+        callFn(utf8("{\"path\": -123\n}"), utf8(".path"), INT, FAIL_ON_ERROR).andAssert(-123);
     }
 
     @Test
-    public void testStringContainingNumber() throws SqlException {
-        callFn(utf8("{\"path\": \"123\"}"), utf8(".path"), INT_COL_TYPE).andAssert(123);
+    public void testIntStrictNullJson() throws SqlException {
+        callFn(utf8(null), utf8(".path"), INT, FAIL_ON_ERROR).andAssert(Integer.MIN_VALUE);
+    }
+
+    @Test
+    public void testIntStrictNullJsonValue() throws SqlException {
+        callFn(utf8("{\"path\": null}"), utf8(".path"), INT, FAIL_ON_ERROR).andAssert(Integer.MIN_VALUE);
+    }
+
+    @Test
+    public void testIntStrictOne() throws SqlException {
+        callFn(utf8("{\"path\": 1}"), utf8(".path"), INT, FAIL_ON_ERROR).andAssert(1);
+    }
+
+    @Test
+    public void testIntStrictOobNeg() throws SqlException {
+        // -(2^31) -1: The first neg number that requires a 64-bit range.
+        final CairoException exc = Assert.assertThrows(
+                CairoException.class,
+                () -> callFn(utf8("{\"path\": -2147483649\n}"), utf8(".path"), INT, FAIL_ON_ERROR)
+        );
+        Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): NUMBER_OUT_OF_RANGE"));
+    }
+
+    @Test
+    public void testIntStrictOobPos() throws SqlException {
+        // 2^31: The first pos number that requires a 64-bit range.
+        final CairoException exc = Assert.assertThrows(
+                CairoException.class,
+                () -> callFn(utf8("{\"path\": 2147483648\n}"), utf8(".path"), INT, FAIL_ON_ERROR)
+        );
+        Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): NUMBER_OUT_OF_RANGE"));
+    }
+
+    @Test
+    public void testIntStrictUnsigned64Bit() throws SqlException {
+        final CairoException exc = Assert.assertThrows(
+                CairoException.class,
+                () -> callFn(utf8("{\"path\": 9999999999999999999}"), utf8(".path"), INT, FAIL_ON_ERROR)
+        );
+        Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): INCORRECT_TYPE:"));
+    }
+
+    @Test
+    public void testIntStrictZero() throws SqlException {
+        callFn(utf8("{\"path\": 0}"), utf8(".path"), INT, FAIL_ON_ERROR).andAssert(0);
+    }
+
+    @Test
+    public void testIntUnsigned64Bit() throws SqlException {
+        callFn(utf8("{\"path\": 9999999999999999999}"), utf8(".path"), INT).andAssert(Integer.MIN_VALUE);
+    }
+
+    @Test
+    public void testIntViaSql() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as (select '{\"path\": 2}'::varchar as path from long_sequence(10));");
+        });
+
+        assertMemoryLeak(() -> {
+            assertSql(
+                    "json_path\n" +
+                            "2\n" +
+                            "2\n" +
+                            "2\n" +
+                            "2\n" +
+                            "2\n" +
+                            "2\n" +
+                            "2\n" +
+                            "2\n" +
+                            "2\n" +
+                            "2\n",
+                    "select json_path(path, '.path', " + INT + ") from x"
+            );
+        });
+    }
+
+    @Test
+    public void testIntZero() throws SqlException {
+        callFn(utf8("{\"path\": 0}"), utf8(".path"), INT).andAssert(0);
+    }
+
+    private Invocation callFn(Object... args) throws SqlException {
+        final boolean[] forceConstants = new boolean[args.length];
+        Arrays.fill(forceConstants, true);
+        forceConstants[0] = false;
+        return callCustomised(
+                null,
+                forceConstants,
+                true,
+                args);
     }
 
     @Override
