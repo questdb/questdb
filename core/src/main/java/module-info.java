@@ -855,7 +855,6 @@ open module io.questdb {
             JsonPathStrictFunctionFactory,
             JsonPathLongFunctionFactory,
             JsonPathLongStrictFunctionFactory,
-            JsonPathIntFunctionFactory,
             JsonPathIntStrictFunctionFactory,
 
             // regexp_replace()

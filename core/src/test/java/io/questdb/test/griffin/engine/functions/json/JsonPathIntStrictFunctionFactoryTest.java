@@ -67,7 +67,7 @@ public class JsonPathIntStrictFunctionFactoryTest extends AbstractFunctionFactor
 
     @Test
     public void testNegative() throws SqlException {
-        call(utf8("{\"path\": -2147483649\n}"), utf8(".path")).andAssert(-123);
+        call(utf8("{\"path\": -123\n}"), utf8(".path")).andAssert(-123);
     }
 
     @Test

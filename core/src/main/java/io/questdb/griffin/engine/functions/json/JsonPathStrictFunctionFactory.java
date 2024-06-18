@@ -50,6 +50,6 @@ public class JsonPathStrictFunctionFactory implements FunctionFactory {
         final Function path = args.getQuick(1);
         final DirectUtf8Sink pointer = SupportingState.varcharConstantToJsonPointer(path);
         final int maxSize = configuration.getStrFunctionMaxBufferLength();
-        return new JsonPathFunc(FUNCTION_NAME, json, path, pointer, maxSize, true);
+        return new JsonPathVarcharFunc(FUNCTION_NAME, json, path, pointer, maxSize, true);
     }
 }

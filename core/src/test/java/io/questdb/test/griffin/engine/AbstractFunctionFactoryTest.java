@@ -40,6 +40,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.*;
 import io.questdb.test.griffin.BaseFunctionFactoryTest;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 
 import java.io.Closeable;
@@ -54,7 +55,14 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
     private static int toTimestampRefs = 0;
     private FunctionFactory factory;
 
-    private Invocation callCustomised(String signature, boolean forceConstant, boolean argTypeFromSig, Object... args) throws SqlException {
+    protected Invocation callCustomised(String signature, boolean forceConstant, boolean argTypeFromSig, Object... args) throws SqlException {
+        final boolean[] forcedConstants = new boolean[args.length];
+        Arrays.fill(forcedConstants, forceConstant);
+        return callCustomised(signature, forcedConstants, argTypeFromSig, args);
+    }
+
+    protected Invocation callCustomised(String signature, boolean[] forceConstants, boolean argTypeFromSig, Object... args) throws SqlException {
+        assert forceConstants != null;
         setUp();
         toShortRefs = 0;
         toByteRefs = 0;
@@ -117,7 +125,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                     printArgument(
                             signature,
                             pos,
-                            forceConstant,
+                            forceConstants[0],
                             metadata,
                             argTypeFromSig,
                             constVarArg,
@@ -131,7 +139,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                     printArgument(
                             signature,
                             pos,
-                            forceConstant,
+                            forceConstants[0],
                             metadata,
                             argTypeFromSig,
                             constVarArg,
@@ -146,7 +154,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                     printArgument(
                             signature,
                             pos,
-                            forceConstant,
+                            forceConstants[1],
                             metadata,
                             argTypeFromSig,
                             constVarArg,
@@ -171,7 +179,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                 printArgument(
                         signature,
                         pos,
-                        forceConstant,
+                        forceConstants[i],
                         metadata,
                         i < argCount,
                         constVarArg,
@@ -297,7 +305,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             int signatureTypeOffset,
             boolean forceConstant,
             GenericRecordMetadata metadata,
-            boolean b,
+            boolean argTypeFromSig,
             boolean constVarArg,
             StringSink expression1,
             StringSink expression2,
@@ -308,7 +316,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         final boolean constantArg;
         final int argType;
 
-        if (b) {
+        if (argTypeFromSig) {
             final char typeChar = signature.charAt(signatureTypeOffset + i + 1);
             constantArg = Character.isLowerCase(typeChar);
             argType = FunctionFactoryDescriptor.getArgType(typeChar);

@@ -60,51 +60,51 @@ public class JsonParser implements QuietCloseable {
     /**
      * Get a pointer value and force the result to a string, regardless of the type.
      */
-    public void queryPointer(DirectUtf8Sequence json, DirectUtf8Sequence pointer, JsonResult result, DirectUtf8Sink dest, int maxSize) {
+    public void queryPointer(DirectUtf8Sequence json, DirectUtf8Sequence pointer, JsonResult result, DirectUtf8Sink dest, int maxSize, long defaultValuePtr, long defaultValueSize) {
         assert json.tailPadding() >= SIMDJSON_PADDING;
         final long nativeByteSinkPtr = dest.borrowDirectByteSink().ptr();
         if (!(dest.capacity() - dest.size() >= maxSize)) {
             throw new IllegalArgumentException("Destination buffer is too small");
         }
         assert dest.capacity() - dest.size() >= maxSize;  // Without this guarantee we'd need to close `NativeByteSink.close`.
-        queryPointer(impl, json.ptr(), json.size(), json.tailPadding(), pointer.ptr(), pointer.size(), result.ptr(), nativeByteSinkPtr, maxSize);
+        queryPointer(impl, json.ptr(), json.size(), json.tailPadding(), pointer.ptr(), pointer.size(), result.ptr(), nativeByteSinkPtr, maxSize, defaultValuePtr, defaultValueSize);
     }
 
-    public boolean queryPointerBoolean(DirectUtf8Sequence json, DirectUtf8Sequence pointer, JsonResult result) {
+    public boolean queryPointerBoolean(DirectUtf8Sequence json, DirectUtf8Sequence pointer, JsonResult result, boolean defaultValue) {
         assert json.tailPadding() >= SIMDJSON_PADDING;
-        return queryPointerBoolean(impl, json.ptr(), json.size(), json.tailPadding(), pointer.ptr(), pointer.size(), result.ptr());
+        return queryPointerBoolean(impl, json.ptr(), json.size(), json.tailPadding(), pointer.ptr(), pointer.size(), result.ptr(), defaultValue);
     }
 
-    public double queryPointerDouble(DirectUtf8Sequence json, DirectUtf8Sequence pointer, JsonResult result) {
+    public double queryPointerDouble(DirectUtf8Sequence json, DirectUtf8Sequence pointer, JsonResult result, double defaultValue) {
         assert json.tailPadding() >= SIMDJSON_PADDING;
-        return queryPointerDouble(impl, json.ptr(), json.size(), json.tailPadding(), pointer.ptr(), pointer.size(), result.ptr());
+        return queryPointerDouble(impl, json.ptr(), json.size(), json.tailPadding(), pointer.ptr(), pointer.size(), result.ptr(), defaultValue);
     }
 
-    public float queryPointerFloat(DirectUtf8Sequence json, DirectUtf8Sequence pointer, JsonResult result) {
+    public float queryPointerFloat(DirectUtf8Sequence json, DirectUtf8Sequence pointer, JsonResult result, float defaultValue) {
         assert json.tailPadding() >= SIMDJSON_PADDING;
-        return queryPointerFloat(impl, json.ptr(), json.size(), json.tailPadding(), pointer.ptr(), pointer.size(), result.ptr());
+        return queryPointerFloat(impl, json.ptr(), json.size(), json.tailPadding(), pointer.ptr(), pointer.size(), result.ptr(), defaultValue);
     }
 
-    public int queryPointerInt(DirectUtf8Sequence json, DirectUtf8Sink pointer, JsonResult result) {
+    public int queryPointerInt(DirectUtf8Sequence json, DirectUtf8Sink pointer, JsonResult result, int defaultValue) {
         assert json.tailPadding() >= SIMDJSON_PADDING;
-        return queryPointerInt(impl, json.ptr(), json.size(), json.tailPadding(), pointer.ptr(), pointer.size(), result.ptr());
+        return queryPointerInt(impl, json.ptr(), json.size(), json.tailPadding(), pointer.ptr(), pointer.size(), result.ptr(), defaultValue);
     }
 
-    public long queryPointerLong(DirectUtf8Sequence json, DirectUtf8Sequence pointer, JsonResult result) {
+    public long queryPointerLong(DirectUtf8Sequence json, DirectUtf8Sequence pointer, JsonResult result, long defaultValue) {
         assert json.tailPadding() >= SIMDJSON_PADDING;
-        return queryPointerLong(impl, json.ptr(), json.size(), json.tailPadding(), pointer.ptr(), pointer.size(), result.ptr());
+        return queryPointerLong(impl, json.ptr(), json.size(), json.tailPadding(), pointer.ptr(), pointer.size(), result.ptr(), defaultValue);
     }
 
-    public short queryPointerShort(DirectUtf8Sequence json, DirectUtf8Sequence pointer, JsonResult result) {
+    public short queryPointerShort(DirectUtf8Sequence json, DirectUtf8Sequence pointer, JsonResult result, short defaultValue) {
         assert json.tailPadding() >= SIMDJSON_PADDING;
-        return queryPointerShort(impl, json.ptr(), json.size(), json.tailPadding(), pointer.ptr(), pointer.size(), result.ptr());
+        return queryPointerShort(impl, json.ptr(), json.size(), json.tailPadding(), pointer.ptr(), pointer.size(), result.ptr(), defaultValue);
     }
 
-    public void queryPointerString(DirectUtf8Sequence json, DirectUtf8Sequence pointer, JsonResult result, DirectUtf8Sink dest, int maxSize) {
+    public void queryPointerString(DirectUtf8Sequence json, DirectUtf8Sequence pointer, JsonResult result, DirectUtf8Sink dest, int maxSize, long defaultValuePtr, long defaultValueSize) {
         assert json.tailPadding() >= SIMDJSON_PADDING;
         final long nativeByteSinkPtr = dest.borrowDirectByteSink().ptr();
         assert dest.capacity() - dest.size() >= maxSize;  // Without this guarantee we'd need to close `NativeByteSink.close`.
-        queryPointerString(impl, json.ptr(), json.size(), json.tailPadding(), pointer.ptr(), pointer.size(), result.ptr(), nativeByteSinkPtr, maxSize);
+        queryPointerString(impl, json.ptr(), json.size(), json.tailPadding(), pointer.ptr(), pointer.size(), result.ptr(), nativeByteSinkPtr, maxSize, defaultValuePtr, defaultValueSize);
     }
 
     private static native void convertJsonPathToPointer(
@@ -128,7 +128,9 @@ public class JsonParser implements QuietCloseable {
             long pointerLen,
             long resultPtr,
             long destPtr,
-            int maxSize
+            int maxSize,
+            long defaultPtr,
+            long defaultLen
     );
 
     private static native boolean queryPointerBoolean(
@@ -138,7 +140,8 @@ public class JsonParser implements QuietCloseable {
             long jsonTailPadding,
             long pointerPtr,
             long pointerLen,
-            long resultPtr
+            long resultPtr,
+            boolean defaultValue
     );
 
     private static native double queryPointerDouble(
@@ -148,7 +151,8 @@ public class JsonParser implements QuietCloseable {
             long jsonTailPadding,
             long pointerPtr,
             long pointerLen,
-            long resultPtr
+            long resultPtr,
+            double defaultValue
     );
 
     private static native float queryPointerFloat(
@@ -158,7 +162,8 @@ public class JsonParser implements QuietCloseable {
             long jsonTailPadding,
             long pointerPtr,
             long pointerLen,
-            long resultPtr
+            long resultPtr,
+            float defaultValue
     );
 
     private static native int queryPointerInt(
@@ -168,7 +173,8 @@ public class JsonParser implements QuietCloseable {
             long jsonTailPadding,
             long pointerPtr,
             long pointerLen,
-            long resultPtr
+            long resultPtr,
+            int defaultValue
     );
 
     private static native long queryPointerLong(
@@ -178,7 +184,8 @@ public class JsonParser implements QuietCloseable {
             long jsonTailPadding,
             long pointerPtr,
             long pointerLen,
-            long resultPtr
+            long resultPtr,
+            long defaultValue
     );
 
     private static native short queryPointerShort(
@@ -188,7 +195,8 @@ public class JsonParser implements QuietCloseable {
             long jsonTailPadding,
             long pointerPtr,
             long pointerLen,
-            long resultPtr
+            long resultPtr,
+            short defaultValue
     );
 
     private static native void queryPointerString(
@@ -200,7 +208,9 @@ public class JsonParser implements QuietCloseable {
             long pointerLen,
             long resultPtr,
             long destPtr,
-            int maxSize
+            int maxSize,
+            long defaultPtr,
+            long defaultLen
     );
 
     static {

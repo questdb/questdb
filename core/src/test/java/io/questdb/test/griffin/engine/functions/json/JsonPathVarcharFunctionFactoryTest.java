@@ -32,7 +32,7 @@ import io.questdb.test.std.json.JsonParserTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class JsonPathFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class JsonPathVarcharFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testNullJson() throws SqlException {
         call(null, utf8(".path")).andAssertUtf8(null);

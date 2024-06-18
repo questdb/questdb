@@ -34,7 +34,7 @@ import io.questdb.std.Long256;
 import io.questdb.std.str.*;
 import org.jetbrains.annotations.Nullable;
 
-public class JsonConstPathPrimitiveFunc implements ScalarFunction, BinaryFunction {
+public class JsonConstPathPrimitiveFunc implements ScalarFunction, BinaryFunction, JsonPathFunc {
     private final int columnType;
     private final String functionName;
     private final Function json;
@@ -42,6 +42,12 @@ public class JsonConstPathPrimitiveFunc implements ScalarFunction, BinaryFunctio
     private final DirectUtf8Sink pointer;
     private final SupportingState state;
     private final boolean strict;
+    private long defaultLong = Long.MIN_VALUE;
+    private double defaultDouble = Double.NaN;
+    private boolean defaultBool = false;
+    private short defaultShort = Short.MIN_VALUE;
+    private int defaultInt = Integer.MIN_VALUE;
+    private float defaultFloat = Float.NaN;
 
     public JsonConstPathPrimitiveFunc(
             int columnType,
@@ -79,9 +85,9 @@ public class JsonConstPathPrimitiveFunc implements ScalarFunction, BinaryFunctio
     public boolean getBool(Record rec) {
         final Utf8Sequence jsonSeq = json.getVarcharA(rec);
         if (jsonSeq == null) {
-            return false;
+            return defaultBool;
         }
-        final boolean res = state.parser.queryPointerBoolean(state.initPaddedJson(jsonSeq), pointer, state.jsonResult);
+        final boolean res = state.parser.queryPointerBoolean(state.initPaddedJson(jsonSeq), pointer, state.jsonResult, defaultBool);
         if (strict && !state.jsonResult.isNull()) {
             state.jsonResult.throwIfError(functionName, path.getVarcharA(null));
         }
@@ -109,7 +115,7 @@ public class JsonConstPathPrimitiveFunc implements ScalarFunction, BinaryFunctio
         if (jsonSeq == null) {
             return Double.NaN;
         }
-        final double res = state.parser.queryPointerDouble(state.initPaddedJson(jsonSeq), pointer, state.jsonResult);
+        final double res = state.parser.queryPointerDouble(state.initPaddedJson(jsonSeq), pointer, state.jsonResult, defaultDouble);
         if (strict && !state.jsonResult.isNull()) {
             state.jsonResult.throwIfError(functionName, path.getVarcharA(null));
         }
@@ -122,7 +128,7 @@ public class JsonConstPathPrimitiveFunc implements ScalarFunction, BinaryFunctio
         if (jsonSeq == null) {
             return Float.NaN;
         }
-        final float res = state.parser.queryPointerFloat(state.initPaddedJson(jsonSeq), pointer, state.jsonResult);
+        final float res = state.parser.queryPointerFloat(state.initPaddedJson(jsonSeq), pointer, state.jsonResult, defaultFloat);
         if (strict && !state.jsonResult.isNull()) {
             state.jsonResult.throwIfError(functionName, path.getVarcharA(null));
         }
@@ -160,7 +166,7 @@ public class JsonConstPathPrimitiveFunc implements ScalarFunction, BinaryFunctio
         if (jsonSeq == null) {
             return Integer.MIN_VALUE;
         }
-        final int res = state.parser.queryPointerInt(state.initPaddedJson(jsonSeq), pointer, state.jsonResult);
+        final int res = state.parser.queryPointerInt(state.initPaddedJson(jsonSeq), pointer, state.jsonResult, defaultInt);
         if (strict && !state.jsonResult.isNull()) {
             state.jsonResult.throwIfError(functionName, path.getVarcharA(null));
         }
@@ -178,7 +184,7 @@ public class JsonConstPathPrimitiveFunc implements ScalarFunction, BinaryFunctio
         if (jsonSeq == null) {
             return Long.MIN_VALUE;
         }
-        final long res = state.parser.queryPointerLong(state.initPaddedJson(jsonSeq), pointer, state.jsonResult);
+        final long res = state.parser.queryPointerLong(state.initPaddedJson(jsonSeq), pointer, state.jsonResult, defaultLong);
         if (strict && !state.jsonResult.isNull()) {
             state.jsonResult.throwIfError(functionName, path.getVarcharA(null));
         }
@@ -226,7 +232,7 @@ public class JsonConstPathPrimitiveFunc implements ScalarFunction, BinaryFunctio
         if (jsonSeq == null) {
             return Short.MIN_VALUE;
         }
-        final short res = state.parser.queryPointerShort(state.initPaddedJson(jsonSeq), pointer, state.jsonResult);
+        final short res = state.parser.queryPointerShort(state.initPaddedJson(jsonSeq), pointer, state.jsonResult, defaultShort);
         if (strict && !state.jsonResult.isNull()) {
             state.jsonResult.throwIfError(functionName, path.getVarcharA(null));
         }
@@ -290,6 +296,46 @@ public class JsonConstPathPrimitiveFunc implements ScalarFunction, BinaryFunctio
 
     @Override
     public int getVarcharSize(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setDefaultLong(long value) {
+        defaultLong = value;
+    }
+
+    @Override
+    public void setDefaultDouble(double value) {
+        defaultDouble = value;
+    }
+
+    @Override
+    public void setDefaultBool(boolean value) {
+        defaultBool = value;
+    }
+
+    @Override
+    public void setDefaultSymbol(CharSequence value) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setDefaultShort(short value) {
+        defaultShort = value;
+    }
+
+    @Override
+    public void setDefaultInt(int value) {
+        defaultInt = value;
+    }
+
+    @Override
+    public void setDefaultFloat(float value) {
+        defaultFloat = value;
+    }
+
+    @Override
+    public void setDefaultVarchar(Utf8Sequence varcharA) {
         throw new UnsupportedOperationException();
     }
 }
