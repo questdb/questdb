@@ -24,6 +24,7 @@
 
 package io.questdb.std.datetime.microtime;
 
+import io.questdb.griffin.SqlException;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
@@ -81,6 +82,14 @@ public final class Timestamps {
 
     public static long addHours(long micros, int hours) {
         return micros + hours * HOUR_MICROS;
+    }
+
+    public static long addMicros(long micros, int moreMicros) {
+        return micros + moreMicros;
+    }
+
+    public static long addMillis(long micros, int millis) {
+        return micros + millis * MILLI_MICROS;
     }
 
     public static long addMinutes(long micros, int minutes) {
@@ -145,14 +154,6 @@ public final class Timestamps {
 
     public static long addSeconds(long micros, int seconds) {
         return micros + seconds * SECOND_MICROS;
-    }
-
-    public static long addMillis(long micros, int millis) {
-        return micros + millis * MILLI_MICROS;
-    }
-
-    public static long addMicros(long micros, int moreMicros) {
-        return micros + moreMicros;
     }
 
     public static long addWeeks(long micros, int weeks) {
@@ -246,7 +247,11 @@ public final class Timestamps {
     }
 
     public static long floorDD(long micros, int stride) {
-        long result = micros - getTimeMicros(micros, stride);
+        return floorDD(micros, stride, 0);
+    }
+
+    public static long floorDD(long micros, int stride, long offset) {
+        long result = micros - getTimeMicros(micros, stride, offset);
         return Math.min(result, micros);
     }
 
@@ -313,13 +318,22 @@ public final class Timestamps {
         return yearMicros(y = getYear(micros), l = isLeapYear(y)) + monthOfYearMicros(getMonthOfYear(micros, y, l), l);
     }
 
-    public static long floorMM(long micros, int stride) {
-        final int origin = getYear(0);
-        long m = (getMonthsBetween(0, micros) / stride) * stride;
+    public static long floorMM(long micros, int stride, long offset) {
+        final int origin = getYear(offset);
+        long m = (getMonthsBetween(origin, micros) / stride) * stride;
         int y = (int) (origin + m / 12);
         int mm = (int) (m % 12);
         boolean l = isLeapYear(y);
         return yearMicros(y, l) + (mm > 0 ? monthOfYearMicros(mm, l) : 0);
+    }
+
+    public static long floorMM(long micros, int stride) {
+        return floorMM(micros, stride, 0);
+    }
+
+    public static long floorMS(long micros, int stride, long offset) {
+        long result = micros - ((micros - offset) % (stride * MILLI_MICROS));
+        return Math.min(result, micros);
     }
 
     public static long floorMS(long micros) {
@@ -389,13 +403,24 @@ public final class Timestamps {
         return micros - weekOffset;
     }
 
+    public static long floorWW(long micros, int stride, long offset) {
+        return floorDD(micros, stride * 7, offset);
+    }
+
     public static long floorYYYY(long micros) {
-        int y;
-        return yearMicros(y = getYear(micros), isLeapYear(y));
+        return floorYYYY(micros, 1, 0);
+    }
+
+    public static long floorYYYY(long micros, long offset) {
+        return floorYYYY(micros, 1, offset);
     }
 
     public static long floorYYYY(long micros, int stride) {
-        final int origin = getYear(0);
+        return floorYYYY(micros, stride, 0);
+    }
+
+    public static long floorYYYY(long micros, int stride, long offset) {
+        final int origin = getYear(offset);
         int y = origin + ((getYear(micros) - origin) / stride) * stride;
         return yearMicros(y, isLeapYear(y));
     }
@@ -689,6 +714,36 @@ public final class Timestamps {
 
     public static long getSecondsBetween(long a, long b) {
         return Math.abs(a - b) / SECOND_MICROS;
+    }
+
+    public static int getStrideMultiple(CharSequence str) {
+        if (str != null && str.length() > 1) {
+            try {
+                final int multiple = Numbers.parseInt(str, 0, str.length() - 1);
+                return multiple <= 0 ? 1 : multiple;
+            } catch (NumericException ignored) {
+            }
+        }
+        return 1;
+    }
+
+    public static char getStrideUnit(CharSequence str) throws SqlException {
+        assert str.length() > 0;
+        final char unit = str.charAt(str.length() - 1);
+        switch (unit) {
+            case 'M':
+            case 'y':
+            case 'w':
+            case 'd':
+            case 'h':
+            case 'm':
+            case 's':
+            case 'T':
+            case 'U':
+                return unit;
+            default:
+                throw SqlException.position(-1).put("Invalid unit: ").put(unit);
+        }
     }
 
     // https://en.wikipedia.org/wiki/ISO_week_date
@@ -1103,8 +1158,12 @@ public final class Timestamps {
     }
 
     private static long getTimeMicros(long micros, int stride) {
+        return getTimeMicros(micros, 1, 0);
+    }
+
+    private static long getTimeMicros(long micros, int stride, long offset) {
         final long us = stride * DAY_MICROS;
-        return micros < 0 ? us - 1 + (micros % us) : micros % us;
+        return micros < 0 ? us - 1 + ((micros - offset) % us) : (micros - offset) % us;
     }
 
     private static boolean isDigit(char c) {

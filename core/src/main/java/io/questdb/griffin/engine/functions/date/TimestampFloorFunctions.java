@@ -85,6 +85,7 @@ final class TimestampFloorFunctions {
     }
 
     static class TimestampFloorDDFunction extends AbstractTimestampFloorFunction {
+        private final long offset;
         private final int stride;
 
         public TimestampFloorDDFunction(Function arg) {
@@ -94,11 +95,19 @@ final class TimestampFloorFunctions {
         public TimestampFloorDDFunction(Function arg, int stride) {
             super(arg);
             this.stride = stride;
+            this.offset = 0;
         }
+
+        public TimestampFloorDDFunction(Function arg, int stride, long offset) {
+            super(arg);
+            this.stride = stride;
+            this.offset = offset;
+        }
+
 
         @Override
         public long floor(long timestamp) {
-            return Timestamps.floorDD(timestamp, stride);
+            return Timestamps.floorDD(timestamp, stride, offset);
         }
 
         @Override
@@ -205,6 +214,7 @@ final class TimestampFloorFunctions {
     }
 
     static class TimestampFloorMMFunction extends AbstractTimestampFloorFunction {
+        private final long offset;
         private final int stride;
 
         public TimestampFloorMMFunction(Function arg) {
@@ -214,6 +224,13 @@ final class TimestampFloorFunctions {
         public TimestampFloorMMFunction(Function arg, int stride) {
             super(arg);
             this.stride = stride;
+            this.offset = 0;
+        }
+
+        public TimestampFloorMMFunction(Function arg, int stride, long offset) {
+            super(arg);
+            this.stride = stride;
+            this.offset = offset;
         }
 
         @Override
@@ -228,20 +245,28 @@ final class TimestampFloorFunctions {
     }
 
     static class TimestampFloorMSFunction extends AbstractTimestampFloorFunction {
+        private final long offset;
         private final int stride;
 
         public TimestampFloorMSFunction(Function arg) {
-            this(arg, 1);
+            this(arg, 1, 0);
         }
 
         public TimestampFloorMSFunction(Function arg, int stride) {
             super(arg);
             this.stride = stride;
+            this.offset = 0;
+        }
+
+        public TimestampFloorMSFunction(Function arg, int stride, long offset) {
+            super(arg);
+            this.stride = stride;
+            this.offset = offset;
         }
 
         @Override
         public long floor(long timestamp) {
-            return Timestamps.floorMS(timestamp, stride);
+            return Timestamps.floorMS(timestamp, stride, offset);
         }
 
         @Override
@@ -306,16 +331,24 @@ final class TimestampFloorFunctions {
     }
 
     static class TimestampFloorWWFunction extends AbstractTimestampFloorFunction {
+        private final long offset;
         private final int stride;
 
         public TimestampFloorWWFunction(Function arg, int stride) {
             super(arg);
             this.stride = stride;
+            this.offset = 0;
+        }
+
+        public TimestampFloorWWFunction(Function arg, int stride, long offset) {
+            super(arg);
+            this.stride = stride;
+            this.offset = offset;
         }
 
         @Override
         public long floor(long timestamp) {
-            return Timestamps.floorWW(timestamp, stride);
+            return Timestamps.floorWW(timestamp, stride, offset);
         }
 
         @Override
@@ -325,21 +358,30 @@ final class TimestampFloorFunctions {
     }
 
     static class TimestampFloorYYYYFunction extends AbstractTimestampFloorFunction {
+        private final long offset;
         private final int stride;
 
         public TimestampFloorYYYYFunction(Function arg) {
-            this(arg, 1);
+            this(arg, 1, 0);
         }
 
         public TimestampFloorYYYYFunction(Function arg, int stride) {
             super(arg);
             this.stride = stride;
+            this.offset = 0;
+        }
+
+        public TimestampFloorYYYYFunction(Function arg, int stride, long offset) {
+            super(arg);
+            this.stride = stride;
+            this.offset = offset;
         }
 
         @Override
         public long floor(long timestamp) {
-            return stride > 1 ? Timestamps.floorYYYY(timestamp, stride) : Timestamps.floorYYYY(timestamp);
+            return stride > 1 ? Timestamps.floorYYYY(timestamp, stride, offset) : Timestamps.floorYYYY(timestamp, offset);
         }
+
 
         @Override
         CharSequence getUnit() {

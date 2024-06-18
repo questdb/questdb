@@ -310,6 +310,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.uuid.LongsToUuidFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampShuffleFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory,
+            io.questdb.griffin.engine.functions.date.TimestampFloorOffsetFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampCeilFunctionFactory,
             io.questdb.griffin.engine.functions.date.DateTruncFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndByteCCFunctionFactory,
