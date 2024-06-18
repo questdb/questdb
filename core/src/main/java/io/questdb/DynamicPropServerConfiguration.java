@@ -261,10 +261,6 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
         return configReloadEnabled;
     }
 
-    @Override
-    public boolean isLineTcpEnabled() {
-        return delegate.get().isLineTcpEnabled();
-    }
 
     @Override
     public void onFileEvent() {
