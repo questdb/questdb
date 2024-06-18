@@ -5072,11 +5072,11 @@ public class SqlOptimiser implements Mutable {
                     final ExpressionNode originalNode = qc.getAst();
                     // if the alias is in groupByAliases, it means that we've already seen
                     // the column in the GROUP BY clause and emitted literals for it to
-                    // the inner models; this means that if we add a missing table alias
-                    // to its node, it'll break the references; to avoid that, clone the node
+                    // the inner models; in this case, if we add a missing table prefix to
+                    // column's nodes, it may break the references; to avoid that, clone the node
                     ExpressionNode node = groupByAliases.indexOf(qc.getAlias()) != -1
-                            ? deepClone(expressionNodePool, qc.getAst())
-                            : qc.getAst();
+                            ? deepClone(expressionNodePool, originalNode)
+                            : originalNode;
                     addMissingTablePrefixes(node, baseModel);
 
                     // if there is explicit GROUP BY clause then we've to replace matching expressions with aliases in outer virtual model

@@ -1562,9 +1562,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 tableNameExpr.toSink(sink);
             } else {
                 sink.putAscii('(');
-                if (nestedModel != null) {
-                    nestedModel.toSink0(sink, false, showOrderBy);
-                }
+                nestedModel.toSink0(sink, false, showOrderBy);
                 sink.putAscii(')');
             }
             if (alias != null) {
