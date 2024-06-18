@@ -167,22 +167,24 @@ public class MapFactory {
         final int keySize = totalSize(keyTypes);
         final int valueSize = totalSize(valueTypes);
         if (keySize > 0) { // fixed-size key
-            if (keySize == Integer.BYTES && keySize + valueSize <= maxEntrySize) {
-                return new Unordered4Map(
-                        keyTypes,
-                        valueTypes,
-                        keyCapacity,
-                        configuration.getSqlFixedSizeMapLoadFactor(),
-                        configuration.getSqlMapMaxResizes()
-                );
-            } else if (keySize == Long.BYTES && keySize + valueSize <= maxEntrySize) {
-                return new Unordered8Map(
-                        keyTypes,
-                        valueTypes,
-                        keyCapacity,
-                        configuration.getSqlFixedSizeMapLoadFactor(),
-                        configuration.getSqlMapMaxResizes()
-                );
+            if (keyTypes.getColumnCount() == 1) {
+                if (keySize == Integer.BYTES && keySize + valueSize <= maxEntrySize) {
+                    return new Unordered4Map(
+                            keyTypes,
+                            valueTypes,
+                            keyCapacity,
+                            configuration.getSqlFixedSizeMapLoadFactor(),
+                            configuration.getSqlMapMaxResizes()
+                    );
+                } else if (keySize == Long.BYTES && keySize + valueSize <= maxEntrySize) {
+                    return new Unordered8Map(
+                            keyTypes,
+                            valueTypes,
+                            keyCapacity,
+                            configuration.getSqlFixedSizeMapLoadFactor(),
+                            configuration.getSqlMapMaxResizes()
+                    );
+                }
             }
 
             return new FixedSizeMap(
