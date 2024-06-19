@@ -308,6 +308,10 @@ public final class Timestamps {
         return micros - micros % stride;
     }
 
+    public static long floorMC(long micros, int stride, long offset) {
+        return micros - ((micros - offset) % stride);
+    }
+
     public static long floorMI(long micros) {
         return floorMI(micros, 1);
     }

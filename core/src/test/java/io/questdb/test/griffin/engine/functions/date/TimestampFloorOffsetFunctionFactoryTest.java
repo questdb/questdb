@@ -57,6 +57,19 @@ public class TimestampFloorOffsetFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMicrosecondsFloorWithStride() throws Exception {
+        assertMemoryLeak(() -> {
+                    assertSql("timestamp_floor_offset\n" +
+                                    "2016-02-10T16:18:18.862143Z\n",
+                            "select timestamp_floor_offset('3U', '2016-02-10T16:18:18.862144Z', '2016-02-10T16:18:18.123456Z')");
+                    assertSql("timestamp_floor_offset\n" +
+                                    "2016-02-10T16:18:18.862144Z\n",
+                            "select timestamp_floor_offset('3U', '2016-02-10T16:18:18.862145Z', '2016-02-10T16:18:18.862144Z')");
+                }
+        );
+    }
+
+    @Test
     public void testMillisecondsFloorWithStride() throws Exception {
         assertMemoryLeak(() -> {
                     assertSql("timestamp_floor_offset\n" +
@@ -107,7 +120,6 @@ public class TimestampFloorOffsetFunctionFactoryTest extends AbstractCairoTest {
                                     "2016-02-10T00:00:00.000000Z\n",
                             "select timestamp_floor_offset('6s', '2016-02-10T00:00:04.862145Z', '2016-02-10T00:00:00Z')");
                 }
-
         );
     }
 

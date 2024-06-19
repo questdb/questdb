@@ -69,8 +69,8 @@ public class TimestampFloorOffsetFunctionFactory implements FunctionFactory {
                 return new TimestampFloorFunctions.TimestampFloorSSFunction(timestamp, stride, offset);
             case 'T':
                 return new TimestampFloorFunctions.TimestampFloorMSFunction(timestamp, stride, offset);
-//            case 'U':
-//                return new TimestampFloorFunctions.TimestampFloorMCFunction(timestamp, stride, offset);
+            case 'U':
+                return new TimestampFloorFunctions.TimestampFloorMCFunction(timestamp, stride, offset);
             case 0:
                 throw SqlException.position(argPositions.getQuick(0)).put("invalid unit 'null'");
             default:

@@ -182,16 +182,25 @@ final class TimestampFloorFunctions {
     }
 
     static class TimestampFloorMCFunction extends AbstractTimestampFloorFunction {
+        private final long offset;
         private final int stride;
 
         public TimestampFloorMCFunction(Function arg, int stride) {
             super(arg);
             this.stride = stride;
+            this.offset = 0;
         }
+
+        public TimestampFloorMCFunction(Function arg, int stride, long offset) {
+            super(arg);
+            this.stride = stride;
+            this.offset = offset;
+        }
+
 
         @Override
         public long floor(long timestamp) {
-            return Timestamps.floorMC(timestamp, stride);
+            return Timestamps.floorMC(timestamp, stride, offset);
         }
 
         @Override
