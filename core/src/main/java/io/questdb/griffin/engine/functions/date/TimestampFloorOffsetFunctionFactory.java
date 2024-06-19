@@ -41,7 +41,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 public class TimestampFloorOffsetFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "timestamp_floor_offset(sNn)";
+        return "timestamp_floor(sNn)";
     }
 
     @Override
