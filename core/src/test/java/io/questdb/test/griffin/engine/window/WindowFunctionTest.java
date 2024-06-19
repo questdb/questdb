@@ -2541,8 +2541,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testRowNumberWithFilter() throws Exception {
         assertQuery(
                 "author\tsym\tcommits\trk\n" +
-                        "user1\tETH\t3\t1\n" +
-                        "user2\tETH\t3\t2\n",
+                        "user1\tETH\t15\t2\n" +
+                        "user2\tETH\t18\t1\n" +
+                        "user3\tETH\t10\t3\n",
                 "with active_devs as (" +
                         "    select author, sym, count() as commits" +
                         "    from dev_stats" +
@@ -2559,9 +2560,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "(" +
                         "select" +
                         " rnd_symbol('ETH','BTC') sym," +
-                        " rnd_symbol('user1','user2') author," +
-                        " timestamp_sequence(0, 100000000000) ts" +
-                        " from long_sequence(10)" +
+                        " rnd_symbol('user1','user2','user3') author," +
+                        " timestamp_sequence(0, 1000000000) ts" +
+                        " from long_sequence(100)" +
                         ") timestamp(ts) partition by day",
                 null,
                 true,
