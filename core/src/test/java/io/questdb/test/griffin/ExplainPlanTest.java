@@ -10572,8 +10572,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
         }
     }
 
+    // you cannot win with JDK8, without "SafeVarargs" - a warning we corrupt something
+    // with "SafeVarargs" - JDK8 wants private method to be "final", even more final than private.
+    // this bunch of suppressions is to shut intellij code inspection up
+    @SuppressWarnings("FinalPrivateMethod")
     @SafeVarargs
-    private <T> ObjList<T> list(T... values) {
+    private final <T> ObjList<T> list(T... values) {
         return new ObjList<>(values);
     }
 
