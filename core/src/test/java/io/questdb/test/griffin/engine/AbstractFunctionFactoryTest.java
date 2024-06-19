@@ -506,6 +506,12 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             cleanup();
         }
 
+        public void andAssert(short expected) {
+            Assert.assertEquals(expected, function1.getShort(record));
+            Assert.assertEquals(expected, function2.getShort(record));
+            cleanup();
+        }
+
         public void andAssert(int expected) {
             Assert.assertEquals(expected, function1.getInt(record));
             Assert.assertEquals(expected, function2.getInt(record));

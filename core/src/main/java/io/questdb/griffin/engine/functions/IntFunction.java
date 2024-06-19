@@ -139,7 +139,12 @@ public abstract class IntFunction implements ScalarFunction {
 
     @Override
     public final short getShort(Record rec) {
-        throw new UnsupportedOperationException();
+        final int value = getInt(rec);
+        final short narrowed = (short) value;
+        if (narrowed != value) {
+            throw new UnsupportedOperationException();
+        }
+        return narrowed;
     }
 
     @Override
