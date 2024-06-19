@@ -2572,6 +2572,22 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByHourUnorderedColumns() throws Exception {
+        assertPlan(
+                "create table a (ts timestamp, d double)",
+                "select min(d), hour(ts) from a group by hour(ts)",
+                "VirtualRecord\n" +
+                        "  functions: [min,hour]\n" +
+                        "    GroupBy vectorized: true workers: 1\n" +
+                        "      keys: [ts]\n" +
+                        "      values: [min(d)]\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
     public void testGroupByInt1() throws Exception {
         assertPlan(
                 "create table a (i int, d double)",
