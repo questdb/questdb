@@ -142,7 +142,7 @@ public abstract class IntFunction implements ScalarFunction {
         final int value = getInt(rec);
         final short narrowed = (short) value;
         if (narrowed != value) {
-            throw new UnsupportedOperationException();
+            throw new UnsupportedOperationException();  // TODO: What's the most appropriate exception to throw here?
         }
         return narrowed;
     }
