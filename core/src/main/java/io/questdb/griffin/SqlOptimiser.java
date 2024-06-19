@@ -3820,8 +3820,9 @@ public class SqlOptimiser implements Mutable {
      */
     private void rewriteGroupByForFirstLastMaxMinAggregateFunctions(QueryModel parent) {
         //base condition to stop recursion
-        if (parent == null || parent.getNestedModel() == null)
+        if (parent == null || parent.getNestedModel() == null) {
             return;
+        }
 
         ObjList<QueryColumn> queryColumns = parent.getBottomUpColumns();
         QueryModel nestedModel = parent.getNestedModel();
@@ -3899,6 +3900,11 @@ public class SqlOptimiser implements Mutable {
             modifiedNestedModel = newNestedModel;
         }
         rewriteGroupByForFirstLastMaxMinAggregateFunctions(modifiedNestedModel);
+
+        final QueryModel union = parent.getUnionModel();
+        if (union != null) {
+            rewriteGroupByForFirstLastMaxMinAggregateFunctions(union);
+        }
     }
 
     /**
