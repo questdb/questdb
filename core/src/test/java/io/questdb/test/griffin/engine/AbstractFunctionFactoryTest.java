@@ -536,6 +536,12 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             cleanup();
         }
 
+        public void andAssertDblNan() {
+            Assert.assertTrue(Double.isNaN(function1.getDouble(record)));
+            Assert.assertTrue(Double.isNaN(function2.getDouble(record)));
+            cleanup();
+        }
+
         public void andAssertLong256(Long256 expected) {
             Assert.assertEquals(expected, function1.getLong256A(record));
             Assert.assertEquals(expected, function2.getLong256A(record));
