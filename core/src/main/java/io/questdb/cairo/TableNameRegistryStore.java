@@ -38,7 +38,6 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.Map;
-import java.util.function.Predicate;
 
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.*;
@@ -48,15 +47,15 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
     private static final Log LOG = LogFactory.getLog(TableNameRegistryStore.class);
     private final CairoConfiguration configuration;
     private final StringSink nameSink = new StringSink();
-    private final Predicate<CharSequence> protectedTableResolver;
+    private final TableFlagResolver tableFlagResolver;
     private final MemoryCMR tableNameRoMemory = Vm.getCMRInstance();
     private int lockFd = -1;
     private long longBuffer;
 
-    public TableNameRegistryStore(CairoConfiguration configuration, Predicate<CharSequence> protectedTableResolver) {
+    public TableNameRegistryStore(CairoConfiguration configuration, TableFlagResolver tableFlagResolver) {
         super(configuration.getFilesFacade());
         this.configuration = configuration;
-        this.protectedTableResolver = protectedTableResolver;
+        this.tableFlagResolver = tableFlagResolver;
     }
 
     public static int findLastTablesFileVersion(FilesFacade ff, Path path, StringSink nameSink) {
@@ -361,9 +360,10 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                         }
 
                         if (tableId > -1L) {
-                            boolean isProtected = protectedTableResolver.test(tableName);
-                            boolean isSystem = TableUtils.isSystemTable(tableName, configuration);
-                            TableToken token = new TableToken(tableName, dirName, tableId, isWal, isSystem, isProtected);
+                            boolean isProtected = tableFlagResolver.isProtected(tableName);
+                            boolean isSystem = tableFlagResolver.isSystem(tableName);
+                            boolean isPublic = tableFlagResolver.isPublic(tableName);
+                            TableToken token = new TableToken(tableName, dirName, tableId, isWal, isSystem, isProtected, isPublic);
                             TableToken existingTableToken = tableNameToTableTokenMap.get(tableName);
 
                             if (existingTableToken != null) {
@@ -456,9 +456,10 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                     dirNameToTableTokenMap.remove(dirName);
                 } else {
                     if (token == null) {
-                        boolean isProtected = protectedTableResolver.test(tableName);
-                        boolean isSystem = TableUtils.isSystemTable(tableName, configuration);
-                        token = new TableToken(tableName, dirName, tableId, tableType == TableUtils.TABLE_TYPE_WAL, isSystem, isProtected);
+                        boolean isProtected = tableFlagResolver.isProtected(tableName);
+                        boolean isSystem = tableFlagResolver.isSystem(tableName);
+                        boolean isPublic = tableFlagResolver.isPublic(tableName);
+                        token = new TableToken(tableName, dirName, tableId, tableType == TableUtils.TABLE_TYPE_WAL, isSystem, isProtected, isPublic);
                     }
                     dirNameToTableTokenMap.put(dirName, ReverseTableMapItem.ofDropped(token));
                 }
@@ -468,9 +469,10 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                     // This can be BAU, remove record will follow
                     tableToCompact++;
                 } else {
-                    boolean isProtected = protectedTableResolver.test(tableName);
-                    boolean isSystem = TableUtils.isSystemTable(tableName, configuration);
-                    final TableToken token = new TableToken(tableName, dirName, tableId, tableType == TableUtils.TABLE_TYPE_WAL, isSystem, isProtected);
+                    boolean isProtected = tableFlagResolver.isProtected(tableName);
+                    boolean isSystem = tableFlagResolver.isSystem(tableName);
+                    boolean isPublic = tableFlagResolver.isPublic(tableName);
+                    final TableToken token = new TableToken(tableName, dirName, tableId, tableType == TableUtils.TABLE_TYPE_WAL, isSystem, isProtected, isPublic);
                     TableToken existing = tableNameToTableTokenMap.get(tableName);
 
                     if (existing != null) {

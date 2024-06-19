@@ -36,6 +36,7 @@ import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
 
 import java.util.ArrayDeque;
@@ -52,7 +53,6 @@ import java.util.Arrays;
  * </pre>
  */
 public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
-
     public static final int ADD = 14; // a + b
     public static final int AND = 6;  // a && b
     public static final int BINARY_HEADER_TYPE = 8;
@@ -651,21 +651,29 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return;
         }
 
-        if (PredicateType.SYMBOL == predicateContext.type) {
+        if (predicateContext.type == PredicateType.SYMBOL) {
             serializeSymbolConstant(offset, position, token);
             return;
         }
 
         if (Chars.isQuoted(token)) {
-            if (len == 3) {
-                if (PredicateType.CHAR != predicateContext.type) {
+            if (predicateContext.type == PredicateType.TIMESTAMP) {
+                try {
+                    long ts = IntervalUtils.parseFloorPartialTimestamp(token, 1, len - 1);
+                    putOperand(offset, IMM, I8_TYPE, ts);
+                } catch (NumericException e) {
+                    throw SqlException.invalidDate(token, position);
+                }
+                return;
+            } else if (len == 3) {
+                if (predicateContext.type != PredicateType.CHAR) {
                     throw SqlException.position(position).put("char constant in non-char expression: ").put(token);
                 }
                 // this is 'x' - char
                 putOperand(offset, IMM, I2_TYPE, token.charAt(1));
                 return;
             } else if (len == 2 + Uuid.UUID_LENGTH) {
-                if (PredicateType.UUID != predicateContext.type) {
+                if (predicateContext.type != PredicateType.UUID) {
                     throw SqlException.position(position).put("uuid constant in non-uuid expression: ").put(token);
                 }
                 try {
@@ -681,16 +689,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         if (SqlKeywords.isTrueKeyword(token)) {
-            if (PredicateType.BOOLEAN != predicateContext.type) {
+            if (predicateContext.type != PredicateType.BOOLEAN) {
                 throw SqlException.position(position).put("boolean constant in non-boolean expression: ").put(token);
             }
-
             putOperand(offset, IMM, I1_TYPE, 1);
             return;
         }
 
         if (SqlKeywords.isFalseKeyword(token)) {
-            if (PredicateType.BOOLEAN != predicateContext.type) {
+            if (predicateContext.type != PredicateType.BOOLEAN) {
                 throw SqlException.position(position).put("boolean constant in non-boolean expression: ").put(token);
             }
             putOperand(offset, IMM, I1_TYPE, 0);
@@ -698,7 +705,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         if (len > 1 && token.charAt(0) == '#') {
-            if (PredicateType.GEO_HASH != predicateContext.type) {
+            if (predicateContext.type != PredicateType.GEO_HASH) {
                 throw SqlException.position(position).put("geo hash constant in non-geo hash expression: ").put(token);
             }
             ConstantFunction geoConstant = GeoHashUtil.parseGeoHashConstant(position, token, len);
@@ -708,7 +715,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             }
         }
 
-        if (PredicateType.NUMERIC != predicateContext.type) {
+        if (predicateContext.type != PredicateType.NUMERIC && predicateContext.type != PredicateType.TIMESTAMP) {
             throw SqlException.position(position).put("numeric constant in non-numeric expression: ").put(token);
         }
         if (predicateContext.localTypesObserver.hasMixedSizes()) {
@@ -987,7 +994,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private enum PredicateType {
-        NUMERIC, CHAR, SYMBOL, BOOLEAN, GEO_HASH, UUID, IPv4
+        NUMERIC, CHAR, SYMBOL, BOOLEAN, GEO_HASH, UUID, IPv4, TIMESTAMP
     }
 
     private static class SqlWrapperException extends RuntimeException {
@@ -1312,6 +1319,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                                 .put(ColumnType.nameOf(columnTypeTag));
                     }
                     type = PredicateType.UUID;
+                    break;
+                case ColumnType.TIMESTAMP:
+                    if (type != null && type != PredicateType.TIMESTAMP) {
+                        throw SqlException.position(position)
+                                .put("non-timestamp column in timestamp expression: ")
+                                .put(ColumnType.nameOf(columnTypeTag));
+                    }
+                    type = PredicateType.TIMESTAMP;
                     break;
                 default:
                     if (type != null && type != PredicateType.NUMERIC) {
