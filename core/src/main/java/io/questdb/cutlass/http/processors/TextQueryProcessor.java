@@ -319,16 +319,18 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                         // fall through
 
                     case JsonQueryProcessorState.QUERY_METADATA:
-                        state.columnIndex = 0;
-                        while (state.columnIndex < columnCount) {
-                            if (state.columnIndex > 0) {
-                                response.putAscii(state.delimiter);
+                        if (!state.noMeta) {
+                            state.columnIndex = 0;
+                            while (state.columnIndex < columnCount) {
+                                if (state.columnIndex > 0) {
+                                    response.putAscii(state.delimiter);
+                                }
+                                response.putQuote().escapeJsonStr(state.metadata.getColumnName(state.columnIndex)).putQuote();
+                                state.columnIndex++;
+                                response.bookmark();
                             }
-                            response.putQuote().escapeJsonStr(state.metadata.getColumnName(state.columnIndex)).putQuote();
-                            state.columnIndex++;
-                            response.bookmark();
+                            response.putEOL();
                         }
-                        response.putEOL();
                         state.queryState = JsonQueryProcessorState.QUERY_RECORD_START;
                         response.bookmark();
                         // fall through

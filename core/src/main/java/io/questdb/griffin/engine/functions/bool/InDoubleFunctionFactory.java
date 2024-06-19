@@ -100,7 +100,9 @@ public class InDoubleFunctionFactory implements FunctionFactory {
         }
 
         if (runtimeConstCount == argCount || runtimeConstCount + constCount == argCount) {
-            return new InDoubleRuntimeConstFunction(args.getQuick(0), args, argPositions);
+            final IntList positions = new IntList();
+            positions.addAll(argPositions);
+            return new InDoubleRuntimeConstFunction(args.getQuick(0), new ObjList<>(args), positions);
         }
 
         // have to copy, args is mutable
@@ -112,9 +114,8 @@ public class InDoubleFunctionFactory implements FunctionFactory {
             IntList argPositions,
             DoubleList outDoubleList
     ) throws SqlException {
-        outDoubleList.extendAndSet(args.size() - 2, 0);
         for (int i = 1, n = args.size(); i < n; i++) {
-            outDoubleList.setQuick(i - 1, parseValue(argPositions, args.getQuick(i), i));
+            outDoubleList.add(parseValue(argPositions, args.getQuick(i), i));
         }
         outDoubleList.sort();
     }
@@ -179,41 +180,37 @@ public class InDoubleFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class InDoubleRuntimeConstFunction extends NegatableBooleanFunction implements UnaryFunction {
+    private static class InDoubleRuntimeConstFunction extends NegatableBooleanFunction implements MultiArgFunction {
+        private final DoubleList inList;
         private final Function keyFunction;
         private final IntList valueFunctionPositions;
         private final ObjList<Function> valueFunctions;
-        private final DoubleList values;
 
         public InDoubleRuntimeConstFunction(Function keyFunction, ObjList<Function> valueFunctions, IntList valueFunctionPositions) {
             this.keyFunction = keyFunction;
             // value functions also contain key function at 0 index.
             this.valueFunctions = valueFunctions;
             this.valueFunctionPositions = valueFunctionPositions;
-            this.values = new DoubleList(valueFunctions.size());
+            this.inList = new DoubleList(valueFunctions.size() - 1);
 
         }
 
         @Override
-        public Function getArg() {
-            return keyFunction;
+        public ObjList<Function> getArgs() {
+            return valueFunctions;
         }
 
         @Override
         public boolean getBool(Record rec) {
             double val = keyFunction.getDouble(rec);
-            return negated != values.binarySearch(val, BinarySearch.SCAN_UP) >= 0;
+            return negated != inList.binarySearch(val, BinarySearch.SCAN_UP) >= 0;
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            UnaryFunction.super.init(symbolTableSource, executionContext);
-            for (int i = 1, n = valueFunctions.size(); i < n; i++) {
-                Function valueFunction = valueFunctions.getQuick(i);
-                valueFunction.init(symbolTableSource, executionContext);
-            }
-            values.clear();
-            parseToDouble(valueFunctions, valueFunctionPositions, values);
+            MultiArgFunction.super.init(symbolTableSource, executionContext);
+            inList.clear();
+            parseToDouble(valueFunctions, valueFunctionPositions, inList);
         }
 
         @Override
@@ -222,7 +219,7 @@ public class InDoubleFunctionFactory implements FunctionFactory {
             if (negated) {
                 sink.val(" not");
             }
-            sink.val(" in ").val(values);
+            sink.val(" in ").val(inList);
         }
     }
 

@@ -99,6 +99,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_ENABLED("cairo.sql.parallel.groupby.presize.enabled"),
     CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_SIZE("cairo.sql.parallel.groupby.presize.max.size"),
     CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_HEAP_SIZE("cairo.sql.parallel.groupby.presize.max.heap.size"),
+    CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD("cairo.sql.parallel.work.stealing.threshold"),
     CAIRO_PAGE_FRAME_SHARD_COUNT("cairo.page.frame.shard.count"),
     CAIRO_PAGE_FRAME_TASK_POOL_CAPACITY("cairo.page.frame.task.pool.capacity"),
     CAIRO_SQL_JOIN_METADATA_PAGE_SIZE("cairo.sql.join.metadata.page.size"),
@@ -198,7 +199,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_WINDOW_TREE_MAX_PAGES("cairo.sql.window.tree.max.pages"),
     CAIRO_SQL_LEGACY_OPERATOR_PRECEDENCE("cairo.sql.legacy.operator.precedence"),
     CAIRO_O3_TXN_SCOREBOARD_ENTRY_COUNT("cairo.o3.txn.scoreboard.entry.count"),
-    CAIRO_LATESTBY_QUEUE_CAPACITY("cairo.latestby.queue.capacity"),
+    CAIRO_LATEST_ON_QUEUE_CAPACITY("cairo.latestby.queue.capacity"),
     CAIRO_O3_PARTITION_PURGE_LIST_INITIAL_CAPACITY("cairo.o3.partition.purge.list.initial.capacity"),
     CAIRO_O3_ENABLED("cairo.o3.enabled"),
     CAIRO_QUERY_CACHE_EVENT_QUEUE_CAPACITY("cairo.query.cache.event.queue.capacity"),
@@ -476,7 +477,6 @@ public enum PropertyKey implements ConfigPropertyKey {
     POSTHOG_API_KEY("posthog.api.key"),
     POSTHOG_ENABLED("posthog.enabled");
 
-
     private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;
     private final String envVarName;
@@ -531,6 +531,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     }
 
     static {
-        nameMapping = Arrays.stream(PropertyKey.values()).collect(Collectors.toMap(PropertyKey::getPropertyPath, k -> k));
+        nameMapping = Arrays
+                .stream(PropertyKey.values())
+                .collect(Collectors.toMap(PropertyKey::getPropertyPath, k -> k));
     }
 }

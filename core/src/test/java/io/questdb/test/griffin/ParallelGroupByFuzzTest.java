@@ -98,6 +98,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, PAGE_FRAME_COUNT);
         // Set the sharding threshold to a small value to test sharding.
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 2);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1);
         super.setUp();
         node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, enableParallelGroupBy);
     }
@@ -696,6 +697,34 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     LOG
             );
         });
+    }
+
+    @Test
+    public void testParallelKSumNSum() throws Exception {
+        testParallelStringAndVarcharKeyGroupBy(
+                "SELECT key, round(ksum(value)) ksum, round(nsum(value)) nsum " +
+                        "FROM tab " +
+                        "ORDER BY key",
+                "key\tksum\tnsum\n" +
+                        "k0\t3244000.0\t3244000.0\n" +
+                        "k1\t3237600.0\t3237600.0\n" +
+                        "k2\t3239200.0\t3239200.0\n" +
+                        "k3\t3240800.0\t3240800.0\n" +
+                        "k4\t3242400.0\t3242400.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelKSumNSum2() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT key, round(ksum(adouble),2) ksum, round(nsum(adouble),2) nsum FROM tab ORDER BY key DESC",
+                "key\tksum\tnsum\n" +
+                        "k4\t324.15000000000003\t324.15000000000003\n" +
+                        "k3\t338.48\t338.48\n" +
+                        "k2\t338.86\t338.86\n" +
+                        "k1\t350.17\t350.17\n" +
+                        "k0\t327.49\t327.49\n"
+        );
     }
 
     @Test

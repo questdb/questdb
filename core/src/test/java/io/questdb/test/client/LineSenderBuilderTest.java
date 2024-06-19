@@ -235,7 +235,6 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
     public void testConfString() throws Exception {
         assertMemoryLeak(() -> {
             assertConfStrError("foo", "invalid schema [schema=foo, supported-schemas=[http, https, tcp, tcps]]");
-            assertConfStrError("http::addr=bar", "invalid address [error=missing trailing semicolon at position 14]");
             assertConfStrError("badschema::addr=bar;", "invalid schema [schema=badschema, supported-schemas=[http, https, tcp, tcps]]");
             assertConfStrError("http::addr=localhost:-1;", "invalid port [port=-1]");
             assertConfStrError("http::auto_flush=on;", "addr is missing");
@@ -253,7 +252,6 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             assertConfStrError("tcp::addr=localhost;retry_timeout=;", "retry_timeout cannot be empty");
             assertConfStrError("tcp::addr=localhost;max_buf_size=;", "max_buf_size cannot be empty");
             assertConfStrError("tcp::addr=localhost;init_buf_size=;", "init_buf_size cannot be empty");
-            assertConfStrError("tcp::addr=localhost;invali=", "invalid parameter [error=missing trailing semicolon at position 27]");
             assertConfStrError("tcp::Řaddr=localhost;", "invalid configuration string [error=key must be consist of alpha-numerical ascii characters and underscore, not 'Ř' at position 5]");
             assertConfStrError("http::addr=localhost:8080;tls_verify=unsafe_off;", "TSL validation disabled, but TLS was not enabled");
             assertConfStrError("http::addr=localhost:8080;tls_verify=bad;", "invalid tls_verify [value=bad, allowed-values=[on, unsafe_off]]");
@@ -282,11 +280,25 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
             assertConfStrOk("addr=localhost", "auto_flush=on");
 
             runInContext(r -> {
-                String tcpAddr = "tcp::addr=localhost:" + bindPort + ";";
-                assertConfStrOk(tcpAddr + "auto_flush_bytes=1024;");
-                assertConfStrOk(tcpAddr + "init_buf_size=1024;");
-                assertConfStrOk(tcpAddr + "init_buf_size=1024;auto_flush_bytes=1024;");
-                assertConfStrOk(tcpAddr + "auto_flush_bytes=1024;init_buf_size=1024;");
+                String tcpAddr = "tcp::addr=localhost:" + bindPort;
+                assertConfStrOk(tcpAddr);
+
+                assertConfStrOk(tcpAddr + ";auto_flush_bytes=1024");
+                assertConfStrOk(tcpAddr + ";auto_flush_bytes=1024;");
+
+                assertConfStrOk(tcpAddr + ";init_buf_size=1024");
+                assertConfStrOk(tcpAddr + ";init_buf_size=1024;");
+
+                assertConfStrOk(tcpAddr + ";init_buf_size=1024;auto_flush_bytes=1024");
+                assertConfStrOk(tcpAddr + ";init_buf_size=1024;auto_flush_bytes=1024;");
+
+                assertConfStrOk(tcpAddr + ";auto_flush_bytes=1024;init_buf_size=1024");
+                assertConfStrOk(tcpAddr + ";auto_flush_bytes=1024;init_buf_size=1024;");
+
+                assertConfStrOk(tcpAddr + ";unknown=foo");
+                assertConfStrOk(tcpAddr + ";unknown=foo;");
+                assertConfStrOk(tcpAddr + ";unknown_empty=");
+                assertConfStrOk(tcpAddr + ";unknown_empty=;");
             });
             assertConfStrError("tcp::addr=localhost;auto_flush_bytes=1024;init_buf_size=2048;", "TCP transport requires init_buf_size and auto_flush_bytes to be set to the same value [init_buf_size=2048, auto_flush_bytes=1024]");
             assertConfStrError("tcp::addr=localhost;init_buf_size=1024;auto_flush_bytes=2048;", "TCP transport requires init_buf_size and auto_flush_bytes to be set to the same value [init_buf_size=1024, auto_flush_bytes=2048]");

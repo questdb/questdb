@@ -870,7 +870,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // Set txn number in the column version file to mark the transaction where the column is added
             long firstPartitionTsm = columnVersionWriter.getColumnTopPartitionTimestamp(existingColIndex);
-            if (firstPartitionTsm == Long.MIN_VALUE) {
+            if (firstPartitionTsm == Long.MIN_VALUE && txWriter.getPartitionCount() > 0) {
                 firstPartitionTsm = txWriter.getPartitionTimestampByIndex(0);
             }
             columnVersionWriter.upsertDefaultTxnName(columnIndex, columnNameTxn, firstPartitionTsm);
@@ -6184,13 +6184,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void processPartitionRemoveCandidates0(int n) {
         boolean anyReadersBeforeCommittedTxn = checkScoreboardHasReadersBeforeLastCommittedTxn();
         // This flag will determine to schedule O3PartitionPurgeJob at the end or all done already.
-        boolean scheduleAsyncPurge = anyReadersBeforeCommittedTxn;
+        boolean scheduleAsyncPurge = false;
+        long lastCommittedTxn = this.getTxn();
 
-        if (!anyReadersBeforeCommittedTxn) {
-            for (int i = 0; i < n; i += 2) {
-                try {
-                    final long timestamp = partitionRemoveCandidates.getQuick(i);
-                    final long txn = partitionRemoveCandidates.getQuick(i + 1);
+        for (int i = 0; i < n; i += 2) {
+            try {
+                final long timestamp = partitionRemoveCandidates.getQuick(i);
+                final long txn = partitionRemoveCandidates.getQuick(i + 1);
+                // txn >= lastCommittedTxn means there are some versions found in the table directory
+                // that are not attached to the table most likely as result of a rollback
+                if (!anyReadersBeforeCommittedTxn || txn >= lastCommittedTxn) {
                     setPathForPartition(
                             other,
                             partitionBy,
@@ -6204,9 +6207,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 .$(", errno=").$(ff.errno()).I$();
                         scheduleAsyncPurge = true;
                     }
-                } finally {
-                    other.trimTo(rootLen);
+                } else {
+                    scheduleAsyncPurge = true;
                 }
+            } finally {
+                other.trimTo(rootLen);
             }
         }
 
@@ -6737,12 +6742,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     txn = Numbers.parseLong(utf8Sink, txnSep + 1, utf8Sink.size());
                 }
                 long dirTimestamp = partitionDirFmt.parse(utf8Sink.asAsciiCharSequence(), 0, txnSep, DateFormatUtils.EN_LOCALE);
-                if (txn <= txWriter.txn &&
-                        (txWriter.attachedPartitionsContains(dirTimestamp) || txWriter.isActivePartition(dirTimestamp))) {
-                    return;
+                if (txn != txWriter.getPartitionNameTxnByPartitionTimestamp(dirTimestamp, -2)) {
+                    partitionRemoveCandidates.add(dirTimestamp, txn);
                 }
-                partitionRemoveCandidates.add(dirTimestamp, txn);
-                path.trimTo(rootLen).$();
             } catch (NumericException ignore) {
                 // not a date?
                 // ignore exception and leave the directory

@@ -93,7 +93,7 @@ public class PageFrameReduceTask implements Closeable {
     }
 
     public long getFrameRowCount() {
-        return this.frameSequence.getFrameRowCount(frameIndex);
+        return frameSequence.getFrameRowCount(frameIndex);
     }
 
     public PageFrameSequence<?> getFrameSequence() {

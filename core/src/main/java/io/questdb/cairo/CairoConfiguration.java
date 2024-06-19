@@ -302,6 +302,8 @@ public interface CairoConfiguration {
 
     int getPartitionPurgeListCapacity();
 
+    int getQueryCacheEventQueueCapacity();
+
     int getQueryRegistryPoolSize();
 
     @NotNull
@@ -435,6 +437,8 @@ public interface CairoConfiguration {
     int getSqlPageFrameMaxRows();
 
     int getSqlPageFrameMinRows();
+
+    int getSqlParallelWorkStealingThreshold();
 
     int getSqlSmallMapKeyCapacity();
 

@@ -515,6 +515,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getQueryCacheEventQueueCapacity() {
+        return 4;
+    }
+
+    @Override
     public int getQueryRegistryPoolSize() {
         return 8;
     }
@@ -764,6 +769,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlPageFrameMinRows() {
         return 1_000;
+    }
+
+    @Override
+    public int getSqlParallelWorkStealingThreshold() {
+        return 16;
     }
 
     @Override
