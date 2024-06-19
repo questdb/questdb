@@ -67,14 +67,14 @@ pub fn binary_to_page(
 
     let mut stats = BinaryMaxMin::new(&primitive_type);
     match encoding {
-        Encoding::Plain => Ok(encode_plain(offsets, data, &mut buffer, &mut stats)),
-        Encoding::DeltaLengthByteArray => Ok(encode_delta(
-            offsets,
-            data,
-            null_count,
-            &mut buffer,
-            &mut stats,
-        )),
+        Encoding::Plain => {
+            encode_plain(offsets, data, &mut buffer, &mut stats);
+            Ok(())
+        }
+        Encoding::DeltaLengthByteArray => {
+            encode_delta(offsets, data, null_count, &mut buffer, &mut stats);
+            Ok(())
+        }
         other => Err(ParquetError::OutOfSpec(format!(
             "Encoding binary as {:?}",
             other

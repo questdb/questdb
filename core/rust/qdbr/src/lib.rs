@@ -25,6 +25,7 @@
 mod parquet_read;
 mod parquet_write;
 
+extern crate core;
 pub extern crate jni;
 
 use jni::sys::jlong;

@@ -24,11 +24,9 @@
 
 package io.questdb.test.griffin.engine.table.parquet;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
-import io.questdb.std.Chars;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -36,6 +34,46 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class ParquetFileReaderFunctionTest extends AbstractCairoTest {
+
+    @Test
+    public void testData() throws Exception {
+        assertMemoryLeak(() -> {
+            final long rows = 1000000;
+            ddl("create table x as (select" +
+                    " case when x % 2 = 0 then cast(x as int) end id," +
+                    " rnd_int() as a_long" +
+                    " from long_sequence(" + rows + "))");
+
+            try (
+                    Path path = new Path();
+                    PartitionEncoder partitionEncoder = new PartitionEncoder();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet").$();
+                partitionEncoder.encode(reader, 0, path);
+
+                // Assert 0 rows, header only
+                assertSqlCursors("x", "select * from read_parquet('" + path + "')");
+            }
+        });
+    }
+
+    @Test
+    public void testFileDoesNotExist() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+                path.of(root).concat("x.parquet").$();
+
+                // Assert 0 rows, header only
+                try {
+                    select("select * from read_parquet('" + path + "')  where 1 = 2");
+                    Assert.fail();
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getMessage(), "could not open read-only");
+                }
+            }
+        });
+    }
 
     @Test
     public void testMetadata() throws Exception {
@@ -65,28 +103,8 @@ public class ParquetFileReaderFunctionTest extends AbstractCairoTest {
                 path.of(root).concat("x.parquet").$();
                 partitionEncoder.encode(reader, 0, path);
 
-
                 // Assert 0 rows, header only
                 assertSqlCursors("x where 1 = 2", "select * from read_parquet('" + path + "')  where 1 = 2");
-            }
-        });
-    }
-
-    @Test
-    public void testFileDoesNotExist() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    Path path = new Path();
-            ) {
-                path.of(root).concat("x.parquet").$();
-
-                // Assert 0 rows, header only
-                try {
-                    select("select * from read_parquet('" + path + "')  where 1 = 2");
-                    Assert.fail();
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getMessage(), "could not open read-only");
-                }
             }
         });
     }

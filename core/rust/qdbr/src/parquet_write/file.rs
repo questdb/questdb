@@ -48,6 +48,7 @@ pub struct ParquetWriter<W: Write> {
     row_group_size: Option<usize>,
     /// if `None` will be DEFAULT_PAGE_SIZE bytes
     data_page_size: Option<usize>,
+    version: Version,
     /// Sets sorting order of rows in the row group if any
     sorting_columns: Option<Vec<SortingColumn>>,
 }
@@ -65,16 +66,19 @@ impl<W: Write> ParquetWriter<W> {
             row_group_size: None,
             data_page_size: None,
             sorting_columns: None,
+            version: Version::V1,
         }
     }
 
     /// Set the compression used. Defaults to `Uncompressed`.
+    #[allow(dead_code)]
     pub fn with_compression(mut self, compression: CompressionOptions) -> Self {
         self.compression = compression;
         self
     }
 
     /// Compute and write statistic
+    #[allow(dead_code)]
     pub fn with_statistics(mut self, statistics: bool) -> Self {
         self.statistics = statistics;
         self
@@ -82,19 +86,28 @@ impl<W: Write> ParquetWriter<W> {
 
     /// Set the row group size (in number of rows) during writing. This can reduce memory pressure and improve
     /// writing performance.
+    #[allow(dead_code)]
     pub fn with_row_group_size(mut self, size: Option<usize>) -> Self {
         self.row_group_size = size;
         self
     }
 
     /// Sets the maximum bytes size of a data page. If `None` will be `DEFAULT_PAGE_SIZE` bytes.
+    #[allow(dead_code)]
     pub fn with_data_page_size(mut self, limit: Option<usize>) -> Self {
         self.data_page_size = limit;
         self
     }
 
+    /// Sets the maximum bytes size of a data page. If `None` will be `DEFAULT_PAGE_SIZE` bytes.
+    #[allow(dead_code)]
+    pub fn with_version(mut self, version: Version) -> Self {
+        self.version = version;
+        self
+    }
+
     /// Sets sorting order of rows in the row group if any
-    pub fn with_sorting_columns(mut self,  sorting_columns: Option<Vec<SortingColumn>>) -> Self {
+    pub fn with_sorting_columns(mut self, sorting_columns: Option<Vec<SortingColumn>>) -> Self {
         self.sorting_columns = sorting_columns;
         self
     }
@@ -103,7 +116,7 @@ impl<W: Write> ParquetWriter<W> {
         WriteOptions {
             write_statistics: self.statistics,
             compression: self.compression,
-            version: Version::V1,
+            version: self.version,
             row_group_size: self.row_group_size,
             data_page_size: self.data_page_size,
         }

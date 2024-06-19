@@ -78,13 +78,14 @@ pub fn varchar_to_page(
     let mut stats = BinaryMaxMin::new(&primitive_type);
 
     match encoding {
-        Encoding::Plain => Ok(encode_plain(&utf8_slices, &mut buffer, &mut stats)),
-        Encoding::DeltaLengthByteArray => Ok(encode_delta(
-            &utf8_slices,
-            null_count,
-            &mut buffer,
-            &mut stats,
-        )),
+        Encoding::Plain => {
+            encode_plain(&utf8_slices, &mut buffer, &mut stats);
+            Ok(())
+        }
+        Encoding::DeltaLengthByteArray => {
+            encode_delta(&utf8_slices, null_count, &mut buffer, &mut stats);
+            Ok(())
+        }
         other => Err(ParquetError::OutOfSpec(format!(
             "Encoding string as {:?}",
             other

@@ -52,7 +52,7 @@ fn encode_dict(
         // No symbol value used in the column data block, all were nulls
         return (dict_buffer, local_keys, 0);
     }
-    (dict_buffer, local_keys, (serialized_count - 1) as u32)
+    (dict_buffer, local_keys, serialized_count - 1)
 }
 
 pub fn symbol_to_pages(
@@ -110,7 +110,7 @@ pub fn symbol_to_pages(
         Encoding::RleDictionary,
     )?;
 
-    let uniq_vals = if dict_buffer.len() > 0 {
+    let uniq_vals = if !dict_buffer.is_empty() {
         max_key + 1
     } else {
         0
