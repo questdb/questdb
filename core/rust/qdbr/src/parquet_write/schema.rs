@@ -31,7 +31,7 @@ pub enum ColumnType {
     GeoLong = 17,
     Binary = 18,
     Uuid = 19,
-    Long128 = 20,
+    Long128 = 24,
     IPv4 = 25,
     Varchar = 26,
 }
@@ -255,6 +255,7 @@ pub struct Column {
 }
 
 impl Column {
+    #[allow(clippy::too_many_arguments)]
     pub fn from_raw_data(
         id: i32,
         name: &'static str,
@@ -324,7 +325,7 @@ pub fn to_parquet_schema(partition: &Partition) -> ParquetResult<SchemaDescripto
     let parquet_types = partition
         .columns
         .iter()
-        .map(|c| column_type_to_parquet_type(c.id, &c.name, c.data_type))
+        .map(|c| column_type_to_parquet_type(c.id, c.name, c.data_type))
         .collect::<ParquetResult<Vec<_>>>()?;
     Ok(SchemaDescriptor::new(
         partition.table.clone(),

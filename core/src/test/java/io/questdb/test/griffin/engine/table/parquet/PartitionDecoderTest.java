@@ -30,7 +30,6 @@ import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.std.Numbers;
-import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -38,53 +37,6 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class PartitionDecoderTest extends AbstractCairoTest {
-
-    @Test
-    public void testDecodeColumnChunk() throws Exception {
-        assertMemoryLeak(() -> {
-            final long rows = 1001;
-            ddl("create table x as (select" +
-                    " x::int an_int," +
-                    " timestamp_sequence(400000000000, 500) designated_ts" +
-                    " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month");
-
-            try (
-                    Path path = new Path();
-                    PartitionEncoder partitionEncoder = new PartitionEncoder();
-                    PartitionDecoder partitionDecoder = new PartitionDecoder(engine.getConfiguration().getFilesFacade());
-                    TableReader reader = engine.getReader("x")
-            ) {
-                path.of(root).concat("x.parquet").$();
-                partitionEncoder.encode(reader, 0, path);
-
-                partitionDecoder.of(path);
-                try (
-                        PartitionDecoder.ColumnChunkBuffers buffers = partitionDecoder.decodeColumnChunk(
-                                0,
-                                0,
-                                ColumnType.INT,
-                                0,
-                                0,
-                                0,
-                                0
-                        )
-                ) {
-                    Assert.assertTrue(buffers.dataPtr() != 0);
-                    Assert.assertEquals(rows * Integer.BYTES, buffers.dataPos());
-                    Assert.assertTrue(buffers.dataSize() >= buffers.dataPos());
-                    Assert.assertEquals(0, buffers.auxPtr());
-                    Assert.assertEquals(0, buffers.auxPos());
-                    Assert.assertTrue(buffers.auxSize() >= buffers.auxPos());
-
-                    for (int i = 0; i < rows; i++) {
-                        Assert.assertEquals(i + 1, Unsafe.getUnsafe().getInt(buffers.dataPtr() + (long) Integer.BYTES * i));
-                    }
-
-                    Unsafe.getUnsafe().freeMemory(buffers.dataPtr());
-                }
-            }
-        });
-    }
 
     @Test
     public void testMetadata() throws Exception {
@@ -177,8 +129,6 @@ public class PartitionDecoderTest extends AbstractCairoTest {
             case ColumnType.STRING:
             case ColumnType.SYMBOL:
                 return ColumnType.VARCHAR;
-            case ColumnType.LONG128:
-                return ColumnType.UUID;
             default:
                 return columnType;
         }

@@ -238,3 +238,77 @@ pub unsafe fn transmute_slice<T>(slice: &[u8]) -> &[T] {
     );
     slice::from_raw_parts(slice.as_ptr() as *const T, slice.len() / sizeof_t)
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::parquet_write::util::encode_bool_iter;
+    use parquet2::encoding::bitpacked;
+    use parquet2::encoding::hybrid_rle::{Decoder, HybridEncoded};
+
+    #[test]
+    fn decode_bitmap_v2() {
+        let bit_width = 1;
+        let expected = &[
+            false, false, true, false, true, false, true, false, true, false, false, false, true,
+            true,
+        ];
+        let expectedu8 = expected
+            .iter()
+            .map(|x| if *x { 1u8 } else { 0u8 })
+            .collect::<Vec<_>>();
+        let mut buff = vec![];
+        encode_bool_iter(
+            &mut buff,
+            expected.iter().cloned(),
+            parquet2::write::Version::V2,
+        )
+        .unwrap();
+
+        let mut decoder = Decoder::new(buff.as_slice(), 1);
+        let run = decoder.next().unwrap();
+
+        if let HybridEncoded::Bitpacked(values) = run.unwrap() {
+            let result = bitpacked::Decoder::<u8>::try_new(values, bit_width, expected.len())
+                .unwrap()
+                .collect::<Vec<_>>();
+            assert_eq!(result, expectedu8);
+        } else {
+            panic!()
+        };
+    }
+
+    #[test]
+    fn decode_bitmap_v1() {
+        let bit_width = 1;
+        let expected = &[
+            false, false, true, false, true, false, true, false, true, false, false, false, true,
+            true,
+        ];
+        let expectedu8 = expected
+            .iter()
+            .map(|x| if *x { 1u8 } else { 0u8 })
+            .collect::<Vec<_>>();
+        let mut buff = vec![];
+        encode_bool_iter(
+            &mut buff,
+            expected.iter().cloned(),
+            parquet2::write::Version::V1,
+        )
+        .unwrap();
+
+        let length = i32::from_le_bytes(buff[..4].try_into().unwrap()) as usize;
+        assert_eq!(length, buff.len() - 4);
+
+        let mut decoder = Decoder::new(&buff[4..], 1);
+        let run = decoder.next().unwrap();
+
+        if let HybridEncoded::Bitpacked(values) = run.unwrap() {
+            let result = bitpacked::Decoder::<u8>::try_new(values, bit_width, expected.len())
+                .unwrap()
+                .collect::<Vec<_>>();
+            assert_eq!(result, expectedu8);
+        } else {
+            panic!()
+        };
+    }
+}

@@ -140,7 +140,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         })?;
 
         let sorting_columns = if timestamp_index != -1 {
-            Some(vec![SortingColumn::new(timestamp_index as i32, false, false)])
+            Some(vec![SortingColumn::new(timestamp_index, false, false)])
         } else {
             None
         };

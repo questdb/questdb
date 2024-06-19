@@ -13,7 +13,7 @@ fn encode_plain_be<const N: usize>(
     buffer: &mut Vec<u8>,
     null_value: [u8; N],
 ) {
-    for x in data.into_iter().filter(|&&x| x != null_value) {
+    for x in data.iter().filter(|&&x| x != null_value) {
         buffer.extend(x.iter().rev());
     }
 }
@@ -24,7 +24,7 @@ fn encode_plain<const N: usize>(
     null_value: [u8; N],
     stats: &mut BinaryMaxMin,
 ) {
-    for x in data.into_iter().filter(|&&x| x != null_value) {
+    for x in data.iter().filter(|&&x| x != null_value) {
         buffer.extend_from_slice(x);
         stats.update(x);
     }

@@ -34,7 +34,7 @@ import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 
 public class ParquetFileRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final ParquetFileRecordCursor cursor;
+    private ParquetFileRecordCursor cursor;
     private Path path;
 
     public ParquetFileRecordCursorFactory(@Transient CharSequence path, RecordMetadata metadata, FilesFacade ff) {
@@ -57,5 +57,6 @@ public class ParquetFileRecordCursorFactory extends AbstractRecordCursorFactory 
     @Override
     protected void _close() {
         path = Misc.free(path);
+        cursor = Misc.free(cursor);
     }
 }

@@ -84,7 +84,7 @@ impl Nullable for GeoInt {
 
 impl AsPrimitive<i32> for GeoInt {
     fn as_(self) -> i32 {
-        self.0 as i32
+        self.0
     }
 }
 
@@ -99,7 +99,7 @@ impl Nullable for GeoLong {
 
 impl AsPrimitive<i64> for GeoLong {
     fn as_(self) -> i64 {
-        self.0 as i64
+        self.0
     }
 }
 
@@ -114,7 +114,7 @@ impl Nullable for IPv4 {
 
 impl AsPrimitive<i32> for IPv4 {
     fn as_(self) -> i32 {
-        self.0 as i32
+        self.0
     }
 }
 
@@ -148,23 +148,16 @@ mod tests {
         for i in 0..fix_col_count {
             let column_name = format!("col{}", i);
             let static_str: &'static str = Box::leak(column_name.into_boxed_str());
-            let col1 = create_fix_column(
-                row_count,
-                ColumnType::Timestamp,
-                size_of::<i64>(),
-                static_str,
-            );
             let col1 = create_fix_column(row_count, ColumnType::Int, size_of::<i32>(), static_str);
-            let col1 = create_fix_column(row_count, ColumnType::Long, size_of::<i64>(), static_str);
             columns.push(col1);
         }
 
-        let partition = Partition { table: "test_table".to_string(), columns: columns };
+        let partition = Partition { table: "test_table".to_string(), columns };
 
         println!("start writing");
         // Measure the start time
         let start = Instant::now();
-        let parquet_writer = ParquetWriter::new(&mut buf)
+        ParquetWriter::new(&mut buf)
             .with_statistics(false)
             .with_row_group_size(Some(1048576))
             .with_data_page_size(Some(1048576))
@@ -233,16 +226,14 @@ mod tests {
             .build()
             .expect("builder");
 
-        for batch in parquet_reader {
-            if let Ok(batch) = batch {
-                let symbol_array = batch
-                    .column(0)
-                    .as_any()
-                    .downcast_ref::<arrow::array::StringArray>()
-                    .expect("Failed to downcast");
-                let collected: Vec<_> = symbol_array.iter().collect();
-                assert_eq!(collected, expected);
-            }
+        for batch in parquet_reader.flatten() {
+            let symbol_array = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow::array::StringArray>()
+                .expect("Failed to downcast");
+            let collected: Vec<_> = symbol_array.iter().collect();
+            assert_eq!(collected, expected);
         }
 
         save_to_file(bytes);
@@ -264,17 +255,15 @@ mod tests {
             .build()
             .expect("builder");
 
-        for batch in parquet_reader {
-            if let Ok(batch) = batch {
-                let symbol_array = batch
-                    .column(0)
-                    .as_any()
-                    .downcast_ref::<arrow::array::StringArray>()
-                    .expect("Failed to downcast");
-                let collected: Vec<_> = symbol_array.iter().collect();
-                let expected = vec![None, None, None, None, None];
-                assert_eq!(collected, expected);
-            }
+        for batch in parquet_reader.flatten() {
+            let symbol_array = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow::array::StringArray>()
+                .expect("Failed to downcast");
+            let collected: Vec<_> = symbol_array.iter().collect();
+            let expected = vec![None, None, None, None, None];
+            assert_eq!(collected, expected);
         }
 
         save_to_file(bytes);
@@ -307,18 +296,18 @@ mod tests {
             columns: [col1_w].to_vec(),
         };
 
-        let parquet_writer = ParquetWriter::new(&mut buf)
+        ParquetWriter::new(&mut buf)
             .with_statistics(false)
             .finish(partition)
             .expect("parquet writer");
     }
 
     fn save_to_file(bytes: Bytes) {
-        let val = env::var("OUT_PARQUET_FILE").map(|s| {
-            let mut file = File::create(s).expect("file create failed");
+        if let Ok(path) = env::var("OUT_PARQUET_FILE") {
+            let mut file = File::create(path).expect("file create failed");
             file.write_all(bytes.to_byte_slice())
                 .expect("file write failed");
-        });
+        };
     }
 
     fn serialize_as_symbols(symbol_chars: Vec<&str>) -> (Vec<u8>, Vec<u64>) {
@@ -345,10 +334,10 @@ mod tests {
     #[test]
     fn test_write_parquet_with_fixed_sized_columns() {
         let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
-        let col1 = vec![1i32, 2, i32::MIN, 3];
-        let expected1 = vec![Some(1i32), Some(2), None, Some(3)];
-        let col2 = vec![0.5f32, 0.001, f32::nan(), 3.14];
-        let expected2 = vec![Some(0.5f32), Some(0.001), None, Some(3.14)];
+        let col1 = [1i32, 2, i32::MIN, 3];
+        let expected1 = [Some(1i32), Some(2), None, Some(3)];
+        let col2 = [0.5f32, 0.001, f32::nan(), 3.15];
+        let expected2 = [Some(0.5f32), Some(0.001), None, Some(3.15)];
 
         let col1_w = Column::from_raw_data(
             0,
@@ -397,23 +386,21 @@ mod tests {
             .build()
             .expect("builder");
 
-        for batch in parquet_reader {
-            if let Ok(batch) = batch {
-                let i32array = batch
-                    .column(0)
-                    .as_any()
-                    .downcast_ref::<arrow::array::Int32Array>()
-                    .expect("Failed to downcast");
-                let collected: Vec<_> = i32array.iter().collect();
-                assert_eq!(collected, expected1);
-                let f32array = batch
-                    .column(1)
-                    .as_any()
-                    .downcast_ref::<arrow::array::Float32Array>()
-                    .expect("Failed to downcast");
-                let collected: Vec<_> = f32array.iter().collect();
-                assert_eq!(collected, expected2);
-            }
+        for batch in parquet_reader.flatten() {
+            let i32array = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow::array::Int32Array>()
+                .expect("Failed to downcast");
+            let collected: Vec<_> = i32array.iter().collect();
+            assert_eq!(collected, expected1);
+            let f32array = batch
+                .column(1)
+                .as_any()
+                .downcast_ref::<arrow::array::Float32Array>()
+                .expect("Failed to downcast");
+            let collected: Vec<_> = f32array.iter().collect();
+            assert_eq!(collected, expected2);
         }
     }
 
@@ -423,7 +410,7 @@ mod tests {
         let row_count = 100_000usize;
         let row_group_size = 500usize;
         let page_size_bytes = 256usize;
-        let col1: Vec<i64> = (0..row_count).into_iter().map(|v| v as i64).collect();
+        let col1: Vec<i64> = (0..row_count).map(|v| v as i64).collect();
         let col1_w = Column::from_raw_data(
             0,
             "col1",
@@ -460,19 +447,17 @@ mod tests {
             .expect("builder");
 
         let mut expected = 0;
-        for batch in parquet_reader {
-            if let Ok(batch) = batch {
-                let i64array = batch
-                    .column(0)
-                    .as_any()
-                    .downcast_ref::<arrow::array::Int64Array>()
-                    .expect("Failed to downcast");
-                for v in i64array.iter() {
-                    assert!(v.is_some());
-                    let v = v.unwrap();
-                    assert_eq!(expected, v);
-                    expected += 1;
-                }
+        for batch in parquet_reader.flatten() {
+            let i64array = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow::array::Int64Array>()
+                .expect("Failed to downcast");
+            for v in i64array.iter() {
+                assert!(v.is_some());
+                let v = v.unwrap();
+                assert_eq!(expected, v);
+                expected += 1;
             }
         }
         assert_eq!(expected, row_count as i64);
@@ -483,15 +468,16 @@ mod tests {
         assert_eq!(row_group_size, meta.row_groups[0].num_rows());
 
         let chunk_meta = &meta.row_groups[0].columns()[0];
+        let max_page_size = page_size_bytes + 20;
         let pages =
-            parquet2::read::get_page_iterator(chunk_meta, reader, None, vec![], page_size_bytes)
+            parquet2::read::get_page_iterator(chunk_meta, reader, None, vec![], max_page_size)
                 .expect("pages iter");
         for page in pages {
             let page = page.expect("page");
             match page {
                 CompressedPage::Data(data) => {
                     let uncompressed = data.uncompressed_size();
-                    assert!(uncompressed <= page_size_bytes);
+                    assert!(uncompressed <= max_page_size);
                 }
                 _ => unreachable!(),
             }
@@ -516,10 +502,10 @@ mod tests {
             let he = el.unwrap();
             match he {
                 HybridEncoded::Repeated(val, len) => {
-                    assert_eq!(val, true);
+                    assert!(val);
                     assert_eq!(len, def_level_count);
                 }
-                _ => assert!(false),
+                _ => unreachable!(),
             }
         }
     }

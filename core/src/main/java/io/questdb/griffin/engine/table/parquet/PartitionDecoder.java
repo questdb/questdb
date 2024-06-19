@@ -42,7 +42,8 @@ public class PartitionDecoder implements QuietCloseable {
     public static final int FLOAT_PHYSICAL_TYPE = 4;
     public static final int INT32_PHYSICAL_TYPE = 1;
     public static final int INT64_PHYSICAL_TYPE = 2;
-    public static final int INT96_PHYSICAL_TYPE = 3;
+    private static final Long CHUNK_DATA_PTR_OFFSET;
+    private static final long CHUNK_ROW_GROUP_COUNT_PTR_OFFSET;
     private static final long COLUMNS_PTR_OFFSET;
     private static final long COLUMN_COUNT_OFFSET;
     private final static long COLUMN_IDS_OFFSET;
@@ -54,7 +55,6 @@ public class PartitionDecoder implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(PartitionDecoder.class);
     private static final long ROW_COUNT_OFFSET;
     private static final long ROW_GROUP_COUNT_OFFSET;
-    private final ColumnChunkBuffers chunkBuffers;
     private final ObjectPool<DirectString> directStringPool = new ObjectPool<>(DirectString::new, 16);
     private final FilesFacade ff;
     private final Metadata metadata = new Metadata();
@@ -65,7 +65,6 @@ public class PartitionDecoder implements QuietCloseable {
     public PartitionDecoder(FilesFacade ff) {
         this.ff = ff;
         try {
-            this.chunkBuffers = new ColumnChunkBuffers();
             this.path = new Path();
         } catch (Throwable th) {
             close();
@@ -73,31 +72,30 @@ public class PartitionDecoder implements QuietCloseable {
         }
     }
 
+    public static long getChunkDataPtr(long chunkPtr) {
+        return Unsafe.getUnsafe().getLong(chunkPtr + CHUNK_DATA_PTR_OFFSET);
+    }
+
+    public static long getRowGroupCount(long chunkPtr) {
+        return Unsafe.getUnsafe().getLong(chunkPtr + CHUNK_ROW_GROUP_COUNT_PTR_OFFSET);
+    }
+
     @Override
     public void close() {
         destroy();
         Misc.free(path);
-        chunkBuffers.free();
     }
 
-    public ColumnChunkBuffers decodeColumnChunk(
+    public long decodeColumnChunk(
             long rowGroup,
-            long column,
-            int columnType,
-            long dataPtr,
-            long dataSize,
-            long auxPtr,
-            long auxSize
+            long columnId
     ) {
         assert ptr != 0;
         try {
-            chunkBuffers.init();
-            decodeColumnChunk(
+            return decodeColumnChunk(
                     ptr,
                     rowGroup,
-                    column,
-                    columnType,
-                    chunkBuffers.ptr()
+                    columnId
             );
         } catch (Throwable th) {
             throw CairoException.critical(0).put("Could not decode partition: [path=").put(path)
@@ -105,7 +103,6 @@ public class PartitionDecoder implements QuietCloseable {
                     .put(", msg=").put(th.getMessage())
                     .put(']');
         }
-        return chunkBuffers;
     }
 
     public Metadata getMetadata() {
@@ -116,6 +113,7 @@ public class PartitionDecoder implements QuietCloseable {
     public void of(@Transient Path srcPath) {
         destroy();
         int fd = TableUtils.openRO(ff, srcPath, LOG);
+        path.of(srcPath);
         try {
             ptr = create(Files.detach(fd));
             columnsPtr = Unsafe.getUnsafe().getLong(ptr + COLUMNS_PTR_OFFSET);
@@ -126,6 +124,10 @@ public class PartitionDecoder implements QuietCloseable {
                     .put(']');
         }
     }
+
+    private static native long chunkDataPtrOffset();
+
+    private static native long chunkRowGroupCountPtrOffset();
 
     private static native long columnCountOffset();
 
@@ -145,12 +147,10 @@ public class PartitionDecoder implements QuietCloseable {
 
     private static native long create(int fd);
 
-    private static native void decodeColumnChunk(
-            long impl,
-            long rowGroup,
-            long column,
-            int columnType,
-            long buffersPtr
+    private static native long decodeColumnChunk(
+            long decoderPtr,
+            long columnId,
+            long rowGroup
     );
 
     private static native void destroy(long impl);
@@ -163,93 +163,6 @@ public class PartitionDecoder implements QuietCloseable {
         if (ptr != 0) {
             destroy(ptr);
             ptr = 0;
-        }
-    }
-
-    public static class ColumnChunkBuffers implements QuietCloseable {
-        private static final long DATA_PTR_OFFSET = 0;
-        private static final long DATA_SIZE_OFFSET = DATA_PTR_OFFSET + Long.BYTES;
-        private static final long DATA_POS_OFFSET = DATA_SIZE_OFFSET + Long.BYTES;
-        private static final long AUX_PTR_OFFSET = DATA_POS_OFFSET + Long.BYTES;
-        private static final long AUX_SIZE_OFFSET = AUX_PTR_OFFSET + Long.BYTES;
-        private static final long AUX_POS_OFFSET = AUX_SIZE_OFFSET + Long.BYTES;
-        private static final long SIZE = AUX_POS_OFFSET + Long.BYTES;
-
-        private long ptr;
-
-        public long auxPos() {
-            assert ptr != 0;
-            return Unsafe.getUnsafe().getLong(ptr + AUX_POS_OFFSET);
-        }
-
-        public long auxPtr() {
-            assert ptr != 0;
-            return Unsafe.getUnsafe().getLong(ptr + AUX_PTR_OFFSET);
-        }
-
-        public long auxSize() {
-            assert ptr != 0;
-            return Unsafe.getUnsafe().getLong(ptr + AUX_SIZE_OFFSET);
-        }
-
-        @Override
-        public void close() {
-            setDataPtr(0);
-            setDataSize(0);
-            setAuxPtr(0);
-            setAuxSize(0);
-        }
-
-        public long dataPos() {
-            assert ptr != 0;
-            return Unsafe.getUnsafe().getLong(ptr + DATA_POS_OFFSET);
-        }
-
-        public long dataPtr() {
-            assert ptr != 0;
-            return Unsafe.getUnsafe().getLong(ptr + DATA_PTR_OFFSET);
-        }
-
-        public long dataSize() {
-            assert ptr != 0;
-            return Unsafe.getUnsafe().getLong(ptr + DATA_SIZE_OFFSET);
-        }
-
-        private void free() {
-            if (ptr != 0) {
-                ptr = Unsafe.free(ptr, SIZE, MemoryTag.NATIVE_DEFAULT);
-            }
-        }
-
-        private void init() {
-            if (ptr == 0) {
-                ptr = Unsafe.malloc(SIZE, MemoryTag.NATIVE_DEFAULT);
-                Vect.memset(ptr, SIZE, 0);
-            }
-        }
-
-        private long ptr() {
-            return ptr;
-        }
-
-        private void setAuxPtr(long auxPtr) {
-            assert ptr != 0;
-            Unsafe.getUnsafe().putLong(ptr + AUX_PTR_OFFSET, auxPtr);
-        }
-
-        private void setAuxSize(long auxSize) {
-            assert ptr != 0;
-            Unsafe.getUnsafe().putLong(ptr + AUX_SIZE_OFFSET, auxSize);
-        }
-
-        private void setDataPtr(long dataPtr) {
-            assert ptr != 0;
-            Unsafe.getUnsafe().putLong(ptr + DATA_PTR_OFFSET, dataPtr);
-        }
-
-        private void setDataSize(long dataSize) {
-            assert ptr != 0;
-            Unsafe.getUnsafe().putLong(ptr + DATA_SIZE_OFFSET, dataSize);
         }
     }
 
@@ -322,6 +235,7 @@ public class PartitionDecoder implements QuietCloseable {
         COLUMN_PHYSICAL_TYPES_OFFSET = columnRecordPhysicalTypeOffset();
         ROW_GROUP_COUNT_OFFSET = rowGroupCountOffset();
         COLUMN_IDS_OFFSET = columnIdsOffset();
+        CHUNK_DATA_PTR_OFFSET = chunkDataPtrOffset();
+        CHUNK_ROW_GROUP_COUNT_PTR_OFFSET = chunkRowGroupCountPtrOffset();
     }
-
 }
