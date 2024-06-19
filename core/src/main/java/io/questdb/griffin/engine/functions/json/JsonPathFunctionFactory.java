@@ -72,6 +72,7 @@ public class JsonPathFunctionFactory implements FunctionFactory {
         switch (targetType) {
             case ColumnType.LONG:
             case ColumnType.DOUBLE:
+            case ColumnType.FLOAT:
             case ColumnType.BOOLEAN:
             case ColumnType.SHORT:
             case ColumnType.INT:
@@ -79,7 +80,7 @@ public class JsonPathFunctionFactory implements FunctionFactory {
             case ColumnType.VARCHAR:
                 return new JsonPathVarcharFunc(FUNCTION_NAME, json, path, pointer, maxSize, false);
             default:
-                throw new UnsupportedOperationException("nyi");
+                throw new UnsupportedOperationException("nyi");  // TODO: complete remaining types
         }
     }
 

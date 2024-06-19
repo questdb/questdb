@@ -140,6 +140,9 @@ public abstract class IntFunction implements ScalarFunction {
     @Override
     public final short getShort(Record rec) {
         final int value = getInt(rec);
+        if (value == Integer.MIN_VALUE) {
+            return Short.MIN_VALUE;
+        }
         final short narrowed = (short) value;
         if (narrowed != value) {
             throw new UnsupportedOperationException();  // TODO: What's the most appropriate exception to throw here?
