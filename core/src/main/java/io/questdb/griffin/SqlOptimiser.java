@@ -3819,13 +3819,13 @@ public class SqlOptimiser implements Mutable {
      * This disables invoking group by workers
      */
     private void rewriteGroupByForFirstLastMaxMinAggregateFunctions(QueryModel parent) {
-
         //base condition to stop recursion
         if (parent == null || parent.getNestedModel() == null)
             return;
 
         ObjList<QueryColumn> queryColumns = parent.getBottomUpColumns();
         QueryModel nestedModel = parent.getNestedModel();
+        QueryModel modifiedNestedModel = nestedModel;
         CharSequence designatedTimestampColumn = null;
 
         /**if FIRST/LAST/min/max(column) does not contain designated-timestamp column
@@ -3873,30 +3873,32 @@ public class SqlOptimiser implements Mutable {
          Call this recursively for nested models
          */
         if (optimisationType == 1 || optimisationType == 2) {
-            switch (optimisationType) {
-                case 1:
-                    ExpressionNode newTimestampNode = expressionNodePool.next();
-                    newTimestampNode.token = designatedTimestampColumn;
-                    nestedModel.addOrderBy(newTimestampNode, QueryModel.ORDER_DIRECTION_DESCENDING);
-                case 2:
+            QueryModel newNestedModel = queryModelPool.next();
+            ExpressionNode lowerLimitNode = expressionNodePool.next();
+            lowerLimitNode.token = "1";
+            lowerLimitNode.type = 2;
+            parent.setLimit(lowerLimitNode, null);
 
-                default:
-                    ExpressionNode lowerLimitNode = expressionNodePool.next();
-                    lowerLimitNode.token = "1";
-                    lowerLimitNode.type = 2;
-                    parent.setLimit(lowerLimitNode, null);
+            //change model type to select-choose
+            parent.setSelectModelType(1);
 
-                    //change model type to select-choose
-                    parent.setSelectModelType(1);
+            //change ast params
+            ast.token = rhs;
+            ast.paramCount = 0;
+            ast.type = 4;
 
-                    //change ast params
-                    ast.token = rhs;
-                    ast.paramCount = 0;
-                    ast.type = 4;
-            }
+            ExpressionNode newTimestampNode = expressionNodePool.next();
+            newTimestampNode.token = designatedTimestampColumn.toString();
+            if (optimisationType == 1)
+                newNestedModel.addOrderBy(newTimestampNode, QueryModel.ORDER_DIRECTION_DESCENDING);
+            newNestedModel.setTableNameExpr(nestedModel.getTableNameExpr());
+            newNestedModel.setModelType(nestedModel.getModelType());
+            newNestedModel.setTimestamp(nestedModel.getTimestamp());
+            newNestedModel.copyColumnsFrom(nestedModel, queryColumnPool, expressionNodePool);
+            parent.setNestedModel(newNestedModel);
+            modifiedNestedModel = newNestedModel;
         }
-
-        rewriteGroupByForFirstLastMaxMinAggregateFunctions(nestedModel);
+        rewriteGroupByForFirstLastMaxMinAggregateFunctions(modifiedNestedModel);
     }
 
     /**
