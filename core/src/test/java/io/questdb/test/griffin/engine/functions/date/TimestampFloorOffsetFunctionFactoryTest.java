@@ -71,6 +71,19 @@ public class TimestampFloorOffsetFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMinutesFloorWithStride() throws Exception {
+        assertMemoryLeak(() -> {
+                    assertSql("timestamp_floor_offset\n" +
+                                    "2016-02-10T16:18:00.000000Z\n",
+                            "select timestamp_floor_offset('6m', '2016-02-10T16:18:22.862145Z', '2016-02-10T16:00:00Z')");
+                    assertSql("timestamp_floor_offset\n" +
+                                    "2016-02-10T16:00:00.000000Z\n",
+                            "select timestamp_floor_offset('6m', '2016-02-10T16:02:00.000000Z', '2016-02-10T16:00:00Z')");
+                }
+        );
+    }
+
+    @Test
     public void testMonthsFloorWithStride() throws Exception {
         assertMemoryLeak(() -> {
                     assertSql("timestamp_floor_offset\n" +
@@ -109,6 +122,19 @@ public class TimestampFloorOffsetFunctionFactoryTest extends AbstractCairoTest {
                             "select timestamp_floor_offset('3w', '2016-03-10T16:18:22.862145Z', '2016-02-10T00:00:00Z')");
                 }
 
+        );
+    }
+
+    @Test
+    public void testYearsFloorWithStride() throws Exception {
+        assertMemoryLeak(() -> {
+                    assertSql("timestamp_floor_offset\n" +
+                                    "2016-02-10T16:00:00.000000Z\n",
+                            "select timestamp_floor_offset('2y', '2016-02-10T16:18:22.862145Z', '2016-02-10T16:00:00Z')");
+                    assertSql("timestamp_floor_offset\n" +
+                                    "2018-02-10T16:00:00.000000Z\n",
+                            "select timestamp_floor_offset('2y', '2019-02-10T16:02:00.000000Z', '2016-02-10T16:00:00Z')");
+                }
         );
     }
 }

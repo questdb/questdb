@@ -332,20 +332,9 @@ public final class Timestamps {
     }
 
     public static long floorMM(long micros, int stride, long offset) {
-        // first floor the offset
-        // then take the difference
-        // then floor the target
-        // and add the offset
         final long monthsDiff = getMonthsBetween(micros, offset);
         final long monthsToAdd = monthsDiff - (monthsDiff % stride);
         return addMonths(offset, (int) monthsToAdd);
-
-
-//
-//        final long flooredOffset = floorMM(offset, stride);
-//        final long flooredMicros = floorMM(micros, stride);
-//        int m = (int) getMonthsBetween(flooredOffset, flooredMicros);
-//        return addMonths(micros, m);
     }
 
     public static long floorMM(long micros, int stride) {
@@ -452,9 +441,9 @@ public final class Timestamps {
     }
 
     public static long floorYYYY(long micros, int stride, long offset) {
-        final int origin = getYear(offset);
-        int y = origin + ((getYear(micros) - origin) / stride) * stride;
-        return yearMicros(y, isLeapYear(y));
+        final long yearsDiff = getYearsBetween(micros, offset);
+        final long yearsToAdd = yearsDiff - (yearsDiff % stride);
+        return addYear(offset, (int) yearsToAdd);
     }
 
     public static int getCentury(long micros) {
