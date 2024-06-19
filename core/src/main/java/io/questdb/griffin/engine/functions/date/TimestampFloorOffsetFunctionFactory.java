@@ -53,8 +53,8 @@ public class TimestampFloorOffsetFunctionFactory implements FunctionFactory {
         final long offset = args.getQuick(2).getTimestamp(null);
 
         switch (unit) {
-//            case 'M':
-//                return new TimestampFloorFunctions.TimestampFloorMMFunction(timestamp, stride, offset);
+            case 'M':
+                return new TimestampFloorFunctions.TimestampFloorMMFunction(timestamp, stride, offset);
             case 'y':
                 return new TimestampFloorFunctions.TimestampFloorYYYYFunction(timestamp, stride, offset);
             case 'w':

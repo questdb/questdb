@@ -327,6 +327,27 @@ public final class Timestamps {
         return yearMicros(y = getYear(micros), l = isLeapYear(y)) + monthOfYearMicros(getMonthOfYear(micros, y, l), l);
     }
 
+    public static long floorMM(long micros, long offset) {
+        return floorMM(micros, 1, offset);
+    }
+
+    public static long floorMM(long micros, int stride, long offset) {
+        // first floor the offset
+        // then take the difference
+        // then floor the target
+        // and add the offset
+        final long monthsDiff = getMonthsBetween(micros, offset);
+        final long monthsToAdd = monthsDiff - (monthsDiff % stride);
+        return addMonths(offset, (int) monthsToAdd);
+
+
+//
+//        final long flooredOffset = floorMM(offset, stride);
+//        final long flooredMicros = floorMM(micros, stride);
+//        int m = (int) getMonthsBetween(flooredOffset, flooredMicros);
+//        return addMonths(micros, m);
+    }
+
     public static long floorMM(long micros, int stride) {
         final int origin = getYear(0);
         long m = (getMonthsBetween(0, micros) / stride) * stride;

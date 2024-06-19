@@ -253,7 +253,7 @@ final class TimestampFloorFunctions {
 
         @Override
         public long floor(long timestamp) {
-            return stride > 1 ? Timestamps.floorMM(timestamp, stride) : Timestamps.floorMM(timestamp);
+            return stride > 1 ? Timestamps.floorMM(timestamp, stride, offset) : Timestamps.floorMM(timestamp, offset);
         }
 
         @Override
