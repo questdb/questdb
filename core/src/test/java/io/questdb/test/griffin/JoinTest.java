@@ -3663,21 +3663,35 @@ public class JoinTest extends AbstractCairoTest {
                             ");"
             );
 
-            assertQueryNoLeakCheck(
+            final String query = "SELECT\n" +
+                    "  \"dim_ap_temperature\".category \"dim_ap_temperature__category\",\n" +
+                    "  timestamp_floor('d', to_timezone(\"fact_table\".date_time, 'UTC')) \"fact_table__date_time_day\"\n" +
+                    "FROM\n" +
+                    "  fact_table AS \"fact_table\"\n" +
+                    "  LEFT JOIN dim_apTemperature AS \"dim_ap_temperature\" ON \"fact_table\".id_aparent_temperature = \"dim_ap_temperature\".id\n" +
+                    "LIMIT 3;";
+            assertSql(
                     "dim_ap_temperature__category\tfact_table__date_time_day\n" +
                             "a\t1970-01-01T00:00:00.000000Z\n" +
                             "b\t1970-01-01T00:00:00.000000Z\n" +
                             "c\t1970-01-01T00:00:00.000000Z\n",
-                    "SELECT\n" +
-                            "  \"dim_ap_temperature\".category \"dim_ap_temperature__category\",\n" +
-                            "  timestamp_floor('d', to_timezone(\"fact_table\".date_time, 'UTC')) \"fact_table__date_time_day\"\n" +
-                            "FROM\n" +
-                            "  fact_table AS \"fact_table\"\n" +
-                            "  LEFT JOIN dim_apTemperature AS \"dim_ap_temperature\" ON \"fact_table\".id_aparent_temperature = \"dim_ap_temperature\".id\n" +
-                            "LIMIT 3;",
-                    null,
-                    false,
-                    false
+                    query
+            );
+            assertPlanNoLeakCheck(
+                    query,
+                    "Limit lo: 3\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [dim_ap_temperature__category,timestamp_floor('day',to_utc(date_time,1))]\n" +
+                            "        SelectedRecord\n" +
+                            "            Hash Outer Join Light\n" +
+                            "              condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: fact_table\n" +
+                            "                Hash\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: dim_apTemperature\n"
             );
         });
     }
