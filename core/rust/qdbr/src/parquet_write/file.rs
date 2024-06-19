@@ -131,7 +131,7 @@ impl<W: Write> ParquetWriter<W> {
             version: options.version,
         };
 
-        let created_by = Some("QuestDB".to_string());
+        let created_by = Some("QuestDB version 8.0".to_string());
         let writer = FileWriter::with_sorting_columns(
             self.writer,
             parquet_schema.clone(),
@@ -254,12 +254,26 @@ fn column_chunk_to_pages(
     };
 
     if matches!(column.data_type, ColumnType::Symbol) {
-        let keys: &[i32] =
-            unsafe { mem::transmute(&column.primary_data[chunk_offset..][..chunk_length]) };
+        let keys: &[i32] = unsafe { util::transmute_slice(column.primary_data) };
+
         let offsets = column.symbol_offsets;
         let data = column.secondary_data;
-        let column_top = column.column_top;
-        return symbol::symbol_to_pages(keys, offsets, data, column_top, options, primitive_type);
+        let orig_column_top = column.column_top;
+
+        let mut adjusted_column_top = 0;
+        let lower_bound = if chunk_offset < orig_column_top {
+            adjusted_column_top = orig_column_top - chunk_offset;
+            0
+        } else {
+            chunk_offset - orig_column_top
+        };
+        let upper_bound = if chunk_offset + chunk_length < orig_column_top {
+            adjusted_column_top = chunk_length;
+            0
+        } else {
+            chunk_offset + chunk_length - orig_column_top
+        };
+        return symbol::symbol_to_pages(&keys[lower_bound..upper_bound], offsets, data, adjusted_column_top, options, primitive_type);
     }
 
     let number_of_rows = chunk_length;
@@ -299,23 +313,28 @@ fn chunk_to_page(
     options: WriteOptions,
     encoding: Encoding,
 ) -> ParquetResult<Page> {
-    let column_top = column.column_top;
-    let lower_bound = if offset < column_top {
+    let orig_column_top = column.column_top;
+
+    let mut adjusted_column_top = 0;
+    let lower_bound = if offset < orig_column_top {
+        adjusted_column_top = orig_column_top - offset;
         0
     } else {
-        offset - column_top
+        offset - orig_column_top
     };
-    let upper_bound = if offset + length < column_top {
+    let upper_bound = if offset + length < orig_column_top {
+        adjusted_column_top = length;
         0
     } else {
-        offset + length - column_top
+        offset + length - orig_column_top
     };
+
     match column.data_type {
         ColumnType::Boolean => {
             let column = column.primary_data;
             boolean::slice_to_page(
                 &column[lower_bound..upper_bound],
-                column_top,
+                adjusted_column_top,
                 options,
                 primitive_type,
             )
@@ -324,7 +343,7 @@ fn chunk_to_page(
             let column: &[i8] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_notnull::<i8, i32>(
                 &column[lower_bound..upper_bound],
-                column_top,
+                adjusted_column_top,
                 options,
                 primitive_type,
                 encoding,
@@ -334,7 +353,7 @@ fn chunk_to_page(
             let column: &[i16] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_notnull::<i16, i32>(
                 &column[lower_bound..upper_bound],
-                column_top,
+                adjusted_column_top,
                 options,
                 primitive_type,
                 encoding,
@@ -344,7 +363,7 @@ fn chunk_to_page(
             let column: &[i32] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_nullable::<i32, i32>(
                 &column[lower_bound..upper_bound],
-                column_top,
+                adjusted_column_top,
                 options,
                 primitive_type,
                 encoding,
@@ -354,7 +373,7 @@ fn chunk_to_page(
             let column: &[IPv4] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_nullable::<IPv4, i32>(
                 &column[lower_bound..upper_bound],
-                column_top,
+                adjusted_column_top,
                 options,
                 primitive_type,
                 encoding,
@@ -364,7 +383,7 @@ fn chunk_to_page(
             let column: &[i64] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_nullable::<i64, i64>(
                 &column[lower_bound..upper_bound],
-                column_top,
+                adjusted_column_top,
                 options,
                 primitive_type,
                 encoding,
@@ -374,7 +393,7 @@ fn chunk_to_page(
             let column: &[GeoByte] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_nullable::<GeoByte, i32>(
                 &column[lower_bound..upper_bound],
-                column_top,
+                adjusted_column_top,
                 options,
                 primitive_type,
                 encoding,
@@ -384,7 +403,7 @@ fn chunk_to_page(
             let column: &[GeoShort] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_nullable::<GeoShort, i32>(
                 &column[lower_bound..upper_bound],
-                column_top,
+                adjusted_column_top,
                 options,
                 primitive_type,
                 encoding,
@@ -394,7 +413,7 @@ fn chunk_to_page(
             let column: &[GeoInt] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_nullable::<GeoInt, i32>(
                 &column[lower_bound..upper_bound],
-                column_top,
+                adjusted_column_top,
                 options,
                 primitive_type,
                 encoding,
@@ -404,7 +423,7 @@ fn chunk_to_page(
             let column: &[GeoLong] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_nullable::<GeoLong, i64>(
                 &column[lower_bound..upper_bound],
-                column_top,
+                adjusted_column_top,
                 options,
                 primitive_type,
                 encoding,
@@ -414,7 +433,7 @@ fn chunk_to_page(
             let column: &[f32] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::float_slice_to_page_plain::<f32, f32>(
                 &column[lower_bound..upper_bound],
-                column_top,
+                adjusted_column_top,
                 options,
                 primitive_type,
             )
@@ -423,7 +442,7 @@ fn chunk_to_page(
             let column: &[f64] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::float_slice_to_page_plain::<f64, f64>(
                 &column[lower_bound..upper_bound],
-                column_top,
+                adjusted_column_top,
                 options,
                 primitive_type,
             )
@@ -434,7 +453,7 @@ fn chunk_to_page(
             binary::binary_to_page(
                 &offsets[lower_bound..upper_bound],
                 data,
-                column_top,
+                adjusted_column_top,
                 options,
                 primitive_type,
                 encoding,
@@ -446,7 +465,7 @@ fn chunk_to_page(
             string::string_to_page(
                 &offsets[lower_bound..upper_bound],
                 data,
-                column_top,
+                adjusted_column_top,
                 options,
                 primitive_type,
                 encoding,
@@ -458,7 +477,7 @@ fn chunk_to_page(
             varchar::varchar_to_page(
                 &aux[lower_bound..upper_bound],
                 data,
-                column_top,
+                adjusted_column_top,
                 options,
                 primitive_type,
                 encoding,
@@ -470,7 +489,7 @@ fn chunk_to_page(
             fixed_len_bytes::bytes_to_page(
                 &column[lower_bound..upper_bound],
                 reversed,
-                column_top,
+                adjusted_column_top,
                 options,
                 primitive_type,
             )
@@ -480,7 +499,7 @@ fn chunk_to_page(
             fixed_len_bytes::bytes_to_page(
                 &column[lower_bound..upper_bound],
                 false,
-                column_top,
+                adjusted_column_top,
                 options,
                 primitive_type,
             )
