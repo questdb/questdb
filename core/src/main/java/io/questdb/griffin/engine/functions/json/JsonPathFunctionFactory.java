@@ -90,9 +90,6 @@ public class JsonPathFunctionFactory implements FunctionFactory {
         if (!defaultValueFn.isConstant()) {
             throw CairoException.nonCritical().put("default value must be constant");
         }
-        if (defaultValueFn.getType() != targetType) {
-            throw CairoException.nonCritical().put("default value type must match target type");
-        }
         switch (targetType) {
             case ColumnType.LONG:
                 fn.setDefaultLong(defaultValueFn.getLong(null));
