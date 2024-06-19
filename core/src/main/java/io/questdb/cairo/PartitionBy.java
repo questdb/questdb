@@ -63,7 +63,7 @@ public final class PartitionBy {
     private static final PartitionAddMethod ADD_HH = Timestamps::addHours;
     private static final PartitionAddMethod ADD_MM = Timestamps::addMonths;
     private static final PartitionAddMethod ADD_WW = Timestamps::addWeeks;
-    private static final PartitionAddMethod ADD_YYYY = Timestamps::addYear;
+    private static final PartitionAddMethod ADD_YYYY = Timestamps::addYears;
     private static final PartitionCeilMethod CEIL_DD = Timestamps::ceilDD;
     private static final PartitionCeilMethod CEIL_HH = Timestamps::ceilHH;
     private static final PartitionCeilMethod CEIL_MM = Timestamps::ceilMM;

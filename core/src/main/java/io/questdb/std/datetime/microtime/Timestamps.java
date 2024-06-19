@@ -146,7 +146,7 @@ public final class Timestamps {
             case 'M':
                 return Timestamps.addMonths(lo, period);
             case 'y':
-                return Timestamps.addYear(lo, period);
+                return Timestamps.addYears(lo, period);
             default:
                 return Numbers.LONG_NULL;
         }
@@ -160,7 +160,7 @@ public final class Timestamps {
         return micros + weeks * WEEK_MICROS;
     }
 
-    public static long addYear(long micros, int years) {
+    public static long addYears(long micros, int years) {
         if (years == 0) {
             return micros;
         }
@@ -443,7 +443,7 @@ public final class Timestamps {
     public static long floorYYYY(long micros, int stride, long offset) {
         final long yearsDiff = getYearsBetween(micros, offset);
         final long yearsToAdd = yearsDiff - (yearsDiff % stride);
-        return addYear(offset, (int) yearsToAdd);
+        return addYears(offset, (int) yearsToAdd);
     }
 
     public static int getCentury(long micros) {

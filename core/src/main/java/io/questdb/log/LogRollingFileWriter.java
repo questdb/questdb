@@ -330,7 +330,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     }
 
     private long getNextYearDeadline() {
-        return Timestamps.addYear(Timestamps.floorYYYY(clock.getTicks()), 1);
+        return Timestamps.addYears(Timestamps.floorYYYY(clock.getTicks()), 1);
     }
 
     private void openFile() {
