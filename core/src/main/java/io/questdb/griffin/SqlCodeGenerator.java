@@ -3491,10 +3491,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
                 columnExpr = qc.getAst();
 
-                // todo: may be also check that this is timestamp? We need to have test that calls "hour(int)" and
-                //     make sure we bypass this specialization
                 if (isHourKeyword(columnExpr.token) && columnExpr.paramCount == 1 && columnExpr.rhs.type == LITERAL) {
-                    hourIndex = i;
+                    // check the column type via aliasToColumnMap
+                    QueryColumn tableColumn = nested.getAliasToColumnMap().get(columnExpr.rhs.token);
+                    if (tableColumn != null && tableColumn.getColumnType() == ColumnType.TIMESTAMP) {
+                        hourIndex = i;
+                    }
                 }
             }
 

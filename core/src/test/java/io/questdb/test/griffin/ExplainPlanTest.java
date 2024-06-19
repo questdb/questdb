@@ -2544,8 +2544,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
-    @Test // special case
-    public void testGroupByHour2() throws Exception {
+    @Test
+    public void testGroupByHourAndFilterIsParallel() throws Exception {
         assertPlan(
                 "create table a (ts timestamp, d double)",
                 "select hour(ts), min(d) from a where d > 0 group by hour(ts)",
@@ -2559,6 +2559,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
+    @Test
+    public void testGroupByHourNonTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table a (ts timestamp, d double)");
+            assertException(
+                    "select hour(d), min(d) from a",
+                    7,
+                    "unexpected argument for function: hour. expected args: (TIMESTAMP). actual args: (DOUBLE)"
+            );
+        });
+    }
 
     @Test
     public void testGroupByInt1() throws Exception {
@@ -10545,6 +10556,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         }
     }
 
+    @SafeVarargs
     private <T> ObjList<T> list(T... values) {
         return new ObjList<>(values);
     }
