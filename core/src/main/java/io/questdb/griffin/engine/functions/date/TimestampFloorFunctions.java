@@ -104,7 +104,6 @@ final class TimestampFloorFunctions {
             this.offset = offset;
         }
 
-
         @Override
         public long floor(long timestamp) {
             return Timestamps.floorDD(timestamp, stride, offset);
@@ -162,13 +161,11 @@ final class TimestampFloorFunctions {
             this.offset = 0;
         }
 
-
         public TimestampFloorHHFunction(Function arg, int stride, long offset) {
             super(arg);
             this.stride = stride;
             this.offset = offset;
         }
-
 
         @Override
         public long floor(long timestamp) {
@@ -196,7 +193,6 @@ final class TimestampFloorFunctions {
             this.stride = stride;
             this.offset = offset;
         }
-
 
         @Override
         public long floor(long timestamp) {
@@ -417,7 +413,6 @@ final class TimestampFloorFunctions {
         public long floor(long timestamp) {
             return stride > 1 ? Timestamps.floorYYYY(timestamp, stride, offset) : Timestamps.floorYYYY(timestamp, offset);
         }
-
 
         @Override
         CharSequence getUnit() {

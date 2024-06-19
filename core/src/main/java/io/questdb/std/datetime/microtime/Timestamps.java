@@ -324,7 +324,6 @@ public final class Timestamps {
         return micros - ((micros - offset) % (stride * MINUTE_MICROS));
     }
 
-
     public static long floorMM(long micros) {
         int y;
         boolean l;
@@ -405,11 +404,9 @@ public final class Timestamps {
         return micros - micros % (stride * SECOND_MICROS);
     }
 
-
     public static long floorSS(long micros, int stride, long offset) {
         return micros - ((micros - offset) % (stride * SECOND_MICROS));
     }
-
 
     public static long floorWW(long micros) {
         return floorWW(micros, 1);
