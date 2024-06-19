@@ -3818,93 +3818,107 @@ public class SqlOptimiser implements Mutable {
      * SELECT timestamp from (SELECT timestamp from table_name) limit 1
      * This disables invoking group by workers
      */
-    private void rewriteGroupByForFirstLastMaxMinAggregateFunctions(QueryModel parent) {
+    private QueryModel rewriteGroupByForFirstLastMaxMinAggregateFunctions(QueryModel parent) {
         //base condition to stop recursion
-        if (parent == null || parent.getNestedModel() == null) {
-            return;
+        if (parent == null)
+            return parent;
+
+        QueryModel modifiedNestedModel = parent.getNestedModel();
+        if (parent.getNestedModel() != null) {
+            ObjList<QueryColumn> queryColumns = parent.getBottomUpColumns();
+            QueryModel nestedModel = parent.getNestedModel();
+            CharSequence designatedTimestampColumn = null;
+
+            /**if FIRST/LAST/min/max(column) does not contain designated-timestamp column
+             * OR
+             * another column present in select clause
+             * then don't apply optimisations to base model
+             */
+            if (nestedModel.getTimestamp() == null || queryColumns.size() > 1) {
+                rewriteGroupByForFirstLastMaxMinAggregateFunctions(nestedModel);
+                return parent;
+            }
+
+            //get designated timestamp column name
+            designatedTimestampColumn = nestedModel.getTimestamp().token;
+            QueryColumn column = queryColumns.get(0);
+            ExpressionNode ast = column.getAst();
+            CharSequence token = null;
+            CharSequence rhs = null;
+            if (ast != null) {
+                token = ast.token;
+                rhs = ast.rhs == null ? null : ast.rhs.token;
+            }
+
+            /**
+             Type 1 Optimisations: Will be optimised by adding order by clause and changing model type
+             Type 2 Optimisations: Will be done only by changing model type to prevent invoking group by workers
+             */
+            int optimisationType = 0;
+            if (rhs != null && ast.type == 8 && Chars.equals(designatedTimestampColumn, rhs)) {
+                if (Chars.equalsIgnoreCase(token, "LAST") || Chars.equalsIgnoreCase(token, "MAX"))
+                    optimisationType = 1;
+                else if (Chars.equalsIgnoreCase(token, "FIRST") || Chars.equalsIgnoreCase(token, "MIN"))
+                    optimisationType = 2;
+            }
+
+            /**
+             Core logic for issue #4231 will be applicable under two conditions
+             Condition1: QueryColumn contains FIRST/LAST/max/min function keyword
+             Condition2: QueryColumn for LAST/max keyword should be same as designatedTimestamp column
+             Core logic for changing query plan
+             - Add limit 1 via expressionNode to parent model
+             - Change model to select-choose from select-group-by
+             - Column alias by default is LAST/max if alias is not provided, replace with original column name
+             - Add order by clause to nested model
+             Call this recursively for nested models
+             */
+            if (optimisationType == 1 || optimisationType == 2) {
+                QueryModel newNestedModel = queryModelPool.next();
+                ExpressionNode lowerLimitNode = expressionNodePool.next();
+                lowerLimitNode.token = "1";
+                lowerLimitNode.type = 2;
+                parent.setLimit(lowerLimitNode, null);
+
+                //change model type to select-choose
+                parent.setSelectModelType(1);
+
+                //change ast params
+                ast.token = rhs;
+                ast.paramCount = 0;
+                ast.type = 4;
+
+                ExpressionNode newTimestampNode = expressionNodePool.next();
+                newTimestampNode.token = designatedTimestampColumn.toString();
+                if (optimisationType == 1)
+                    newNestedModel.addOrderBy(newTimestampNode, QueryModel.ORDER_DIRECTION_DESCENDING);
+                ObjList<QueryModel> joinModels = parent.getNestedModel().getJoinModels();
+                for (int i = 1, n = joinModels.size(); i < n; i++) {
+                    newNestedModel.addJoinModel(joinModels.getQuick(i));
+                }
+                newNestedModel.setTableNameExpr(nestedModel.getTableNameExpr());
+                newNestedModel.setModelType(nestedModel.getModelType());
+                newNestedModel.setTimestamp(nestedModel.getTimestamp());
+                newNestedModel.copyColumnsFrom(nestedModel, queryColumnPool, expressionNodePool);
+                parent.setNestedModel(newNestedModel);
+                modifiedNestedModel = newNestedModel;
+            }
         }
-
-        ObjList<QueryColumn> queryColumns = parent.getBottomUpColumns();
-        QueryModel nestedModel = parent.getNestedModel();
-        QueryModel modifiedNestedModel = nestedModel;
-        CharSequence designatedTimestampColumn = null;
-
-        /**if FIRST/LAST/min/max(column) does not contain designated-timestamp column
-         * OR
-         * another column present in select clause
-         * then don't apply optimisations to base model
-         */
-        if (nestedModel.getTimestamp() == null || queryColumns.size() > 1) {
-            rewriteGroupByForFirstLastMaxMinAggregateFunctions(nestedModel);
-            return;
-        }
-
-        //get designated timestamp column name
-        designatedTimestampColumn = nestedModel.getTimestamp().token;
-        QueryColumn column = queryColumns.get(0);
-        ExpressionNode ast = column.getAst();
-        CharSequence token = null;
-        CharSequence rhs = null;
-        if (ast != null) {
-            token = ast.token;
-            rhs = ast.rhs == null ? null : ast.rhs.token;
-        }
-
-        /**
-         Type 1 Optimisations: Will be optimised by adding order by clause and changing model type
-         Type 2 Optimisations: Will be done only by changing model type to prevent invoking group by workers
-         */
-        int optimisationType = 0;
-        if (rhs != null && ast.type == 8 && Chars.equals(designatedTimestampColumn, rhs)) {
-            if (Chars.equalsIgnoreCase(token, "LAST") || Chars.equalsIgnoreCase(token, "MAX"))
-                optimisationType = 1;
-            else if (Chars.equalsIgnoreCase(token, "FIRST") || Chars.equalsIgnoreCase(token, "MIN"))
-                optimisationType = 2;
-        }
-
-        /**
-         Core logic for issue #4231 will be applicable under two conditions
-         Condition1: QueryColumn contains FIRST/LAST/max/min function keyword
-         Condition2: QueryColumn for LAST/max keyword should be same as designatedTimestamp column
-         Core logic for changing query plan
-         - Add limit 1 via expressionNode to parent model
-         - Change model to select-choose from select-group-by
-         - Column alias by default is LAST/max if alias is not provided, replace with original column name
-         - Add order by clause to nested model
-         Call this recursively for nested models
-         */
-        if (optimisationType == 1 || optimisationType == 2) {
-            QueryModel newNestedModel = queryModelPool.next();
-            ExpressionNode lowerLimitNode = expressionNodePool.next();
-            lowerLimitNode.token = "1";
-            lowerLimitNode.type = 2;
-            parent.setLimit(lowerLimitNode, null);
-
-            //change model type to select-choose
-            parent.setSelectModelType(1);
-
-            //change ast params
-            ast.token = rhs;
-            ast.paramCount = 0;
-            ast.type = 4;
-
-            ExpressionNode newTimestampNode = expressionNodePool.next();
-            newTimestampNode.token = designatedTimestampColumn.toString();
-            if (optimisationType == 1)
-                newNestedModel.addOrderBy(newTimestampNode, QueryModel.ORDER_DIRECTION_DESCENDING);
-            newNestedModel.setTableNameExpr(nestedModel.getTableNameExpr());
-            newNestedModel.setModelType(nestedModel.getModelType());
-            newNestedModel.setTimestamp(nestedModel.getTimestamp());
-            newNestedModel.copyColumnsFrom(nestedModel, queryColumnPool, expressionNodePool);
-            parent.setNestedModel(newNestedModel);
-            modifiedNestedModel = newNestedModel;
-        }
-        rewriteGroupByForFirstLastMaxMinAggregateFunctions(modifiedNestedModel);
 
         final QueryModel union = parent.getUnionModel();
         if (union != null) {
-            rewriteGroupByForFirstLastMaxMinAggregateFunctions(union);
+            QueryModel modifiedUnionModel = rewriteGroupByForFirstLastMaxMinAggregateFunctions(union);
+            parent.setUnionModel(modifiedUnionModel);
         }
+
+        ObjList<QueryModel> joinModels = parent.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            QueryModel modifiedJoinModel = rewriteGroupByForFirstLastMaxMinAggregateFunctions(joinModels.getQuick(i));
+            joinModels.set(i, modifiedJoinModel);
+        }
+
+        rewriteGroupByForFirstLastMaxMinAggregateFunctions(modifiedNestedModel);
+        return parent;
     }
 
     /**
@@ -5802,7 +5816,7 @@ public class SqlOptimiser implements Mutable {
             enumerateTableColumns(rewrittenModel, sqlExecutionContext, sqlParserCallback);
             rewriteTopLevelLiteralsToFunctions(rewrittenModel);
             rewrittenModel = rewriteSampleBy(rewrittenModel);
-            rewriteGroupByForFirstLastMaxMinAggregateFunctions(rewrittenModel);
+            rewrittenModel = rewriteGroupByForFirstLastMaxMinAggregateFunctions(rewrittenModel);
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
             resolveJoinColumns(rewrittenModel);
             optimiseBooleanNot(rewrittenModel);

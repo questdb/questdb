@@ -552,6 +552,54 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testQueryPlanForJoinAndUnionQueryWithJoinOnDesignatedTimestampColumnWithLastFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y ( x int, ts timestamp) timestamp(ts);");
+            ddl("create table y1 ( x int, ts timestamp) timestamp(ts);");
+            ddl("create table y2 ( x int, ts timestamp) timestamp(ts);");
+            final String query = "select  * from y \n" +
+                    "left join \n" +
+                    "y1 on \n" +
+                    "y1.x = y.x\n" +
+                    "INNER join (select LAST(ts) from y2) as y2 \n" +
+                    "on y2.LAST = y1.ts";
+            String queryNew = query + " union \n" + query;
+            final QueryModel model = compileModel(queryNew);
+            TestUtils.assertEquals("select-choose [y.x x, y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST] y.x x, " +
+                    "y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST from (select [x, ts] from y timestamp (ts) left join " +
+                    "select [x, ts] from y1 timestamp (ts) on y1.x = y.x join select [LAST] from (select-choose " +
+                    "[ts LAST] ts LAST from (select [ts] from y2 timestamp (ts)) order by LAST desc limit 1) y2 on " +
+                    "y2.LAST = y1.ts) union select-choose [y.x x, y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST] y.x x," +
+                    " y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST from (select [x, ts] from y timestamp (ts) " +
+                    "left join select [x, ts] from y1 timestamp (ts) on y1.x = y.x join select [LAST] from " +
+                    "(select-choose [ts LAST] ts LAST from (select [ts] from y2 timestamp (ts)) order by LAST desc " +
+                    "limit 1) y2 on y2.LAST = y1.ts)", model.toString0());
+            assertPlanNoLeakCheck(
+                    query,
+                    "SelectedRecord\n" +
+                            "    Hash Join Light\n" +
+                            "      condition: y2.LAST=y1.ts\n" +
+                            "        Hash Outer Join Light\n" +
+                            "          condition: y1.x=y.x\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: y\n" +
+                            "            Hash\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: y1\n" +
+                            "        Hash\n" +
+                            "            Sort light lo: 1\n" +
+                            "              keys: [LAST desc]\n" +
+                            "                SelectedRecord\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: y2\n");
+
+        });
+    }
+
+    @Test
     public void testAliasAppearsInFuncArgs5() throws Exception {
         // test function on its own is caught
         assertMemoryLeak(() -> {
