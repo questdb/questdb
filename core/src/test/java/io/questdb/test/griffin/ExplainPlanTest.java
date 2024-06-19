@@ -8448,7 +8448,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( s symbol, ts timestamp);",
                 "select * from tab where ts in ( '2020-01-01', '2020-01-02' )",
-                "Async Filter workers: 1\n" +
+                "Async JIT Filter workers: 1\n" +
                         "  filter: ts in [1577836800000000,1577923200000000]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
@@ -8461,7 +8461,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( s symbol, ts timestamp);",
                 "select * from tab where ts in ( '2020-01-01', '2020-01-03' ) and s = 'ABC'",
-                "Async Filter workers: 1\n" +
+                "Async JIT Filter workers: 1\n" +
                         "  filter: (ts in [1577836800000000,1578009600000000] and s='ABC')\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
@@ -8474,7 +8474,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( s symbol, ts timestamp);",
                 "select * from tab where ts in ( '2020-01-01' ) and s = 'ABC'",
-                "Async Filter workers: 1\n" +
+                "Async JIT Filter workers: 1\n" +
                         "  filter: (ts in [1577836800000000,1577923199999999] and s='ABC')\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +

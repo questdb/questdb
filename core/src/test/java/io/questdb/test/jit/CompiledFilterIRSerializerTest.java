@@ -819,6 +819,8 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertIR("(i32 -1L)(i32 anint)(neg)(=)(ret)");
         serialize("anint NOT IN (1, 2, 3)");
         assertIR("(i32 3L)(i32 anint)(=)(i32 2L)(i32 anint)(=)(i32 1L)(i32 anint)(=)(||)(||)(!)(ret)");
+        serialize("atimestamp IN ('2020-01-01')");
+        assertIR("(i64 1577836800000000L)(i64 atimestamp)(=)(ret)");
     }
 
     @Test
@@ -846,7 +848,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test(expected = SqlException.class)
-    public void testTimestampIn() throws Exception {
+    public void testTimestampInLiteral() throws Exception {
         serialize("atimestamp in '2020-01-01'");
     }
 

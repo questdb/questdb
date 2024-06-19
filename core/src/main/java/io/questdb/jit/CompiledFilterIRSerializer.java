@@ -224,7 +224,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                             .put(node.token);
             }
         } else {
-            serializeOperator(node.position, node.token, argCount);
+            serializeOperator(node.position, node.token, argCount, node.type);
         }
 
         boolean predicateLeft = predicateContext.onNodeVisited(node);
@@ -870,8 +870,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
-    private void serializeOperator(int position, final CharSequence token, int argCount) throws SqlException {
-        if (SqlKeywords.isInKeyword(token)) {
+    private void serializeOperator(int position, final CharSequence token, int argCount, int type) throws SqlException {
+        if (SqlKeywords.isInKeyword(token) && type == ExpressionNode.FUNCTION) {
             serializeIn();
             return;
         }
