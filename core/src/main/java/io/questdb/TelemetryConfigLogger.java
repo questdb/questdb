@@ -45,9 +45,9 @@ import java.io.Closeable;
 
 public class TelemetryConfigLogger implements Closeable {
     public static final String OS_NAME = "os.name";
-    public static final CharSequence TELEMETRY_CONFIG_TABLE_NAME = "telemetry_config";
-    static final String QDB_PACKAGE = "QDB_PACKAGE";
+    public static final String TELEMETRY_CONFIG_TABLE_NAME = "telemetry_config";
     private static final Log LOG = LogFactory.getLog(TelemetryConfigLogger.class);
+    private static final String QDB_PACKAGE = "QDB_PACKAGE";
     private final CharSequence questDBVersion;
     private final TelemetryConfiguration telemetryConfiguration;
     private final SCSequence tempSequence = new SCSequence();
