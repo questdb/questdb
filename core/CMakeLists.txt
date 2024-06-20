@@ -340,3 +340,6 @@ else ()
     target_compile_options(questdb PRIVATE -fno-threadsafe-statics -ffunction-sections -fdata-sections)
     target_link_libraries(questdb rt -Wl,--gc-sections -Wl,--exclude-libs=ALL -static-libgcc _simdjson)
 endif ()
+
+#jemalloc
+include(${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/jemalloc-cmake/CMakeLists.txt)
