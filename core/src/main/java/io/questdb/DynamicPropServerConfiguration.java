@@ -265,13 +265,13 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
     @Override
     public void onFileEvent() {
         try (Path p = new Path()) {
-            p.of(this.confPath.toString()).$();
+            p.of(confPath.toString()).$();
 
             // Check that the file has been modified since the last trigger
             long newLastModified = Files.getLastModified(p);
-            if (newLastModified > this.lastModified) {
+            if (newLastModified > lastModified) {
                 // If it has, update the cached value
-                this.lastModified = newLastModified;
+                lastModified = newLastModified;
 
                 // Then load the config properties
                 Properties newProperties = new Properties();
@@ -279,58 +279,15 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
                     newProperties.load(is);
                 } catch (IOException exc) {
                     LOG.error().$(exc).$();
+                    return;
                 }
 
-
-                if (!newProperties.equals(this.properties)) {
-                    // Compare the new and existing properties
-                    AtomicBoolean changed = new AtomicBoolean(false);
-                    newProperties.forEach((k, v) -> {
-                        String key = (String) k;
-                        String oldVal = properties.getProperty(key);
-                        if (oldVal == null || !oldVal.equals(newProperties.getProperty(key))) {
-                            Optional<PropertyKey> prop = PropertyKey.getByString(key);
-                            if (!prop.isPresent()) {
-                                return;
-                            }
-
-                            if (reloadableProps.contains(prop.get())) {
-                                LOG.info().$("loaded new value of ").$(k).$();
-                                this.properties.setProperty(key, (String) v);
-                                changed.set(true);
-                            } else {
-                                LOG.advisory().$("property ").$(k).$(" was modified in the config file but cannot be reloaded. ignoring new value").$();
-                            }
-                        }
-                    });
-
-
-                    // Check for any old reloadable properties that have been removed in the new config
-                    properties.forEach((k, v) -> {
-                        if (!newProperties.containsKey(k)) {
-                            Optional<PropertyKey> prop = PropertyKey.getByString((String) k);
-                            if (!prop.isPresent()) {
-                                return;
-                            }
-                            if (reloadableProps.contains(prop.get())) {
-                                LOG.info().$("removed property ").$(k).$();
-                                this.properties.remove(k);
-                                changed.set(true);
-                            } else {
-                                LOG.advisory().$("property ").$(k).$(" was removed from the config file but cannot be reloaded. ignoring").$();
-                            }
-                        }
-                    });
-
-                    // If they are different, reload the config in place
-                    if (changed.get()) {
-                        this.reload(this.properties);
-                        LOG.info().$("config reloaded!").$();
-                        if (this.afterConfigReloaded != null) {
-                            afterConfigReloaded.run();
-                        }
+                if (updateSupportedProperties(properties, newProperties, reloadableProps)) {
+                    reload(properties);
+                    LOG.info().$("config reloaded!").$();
+                    if (afterConfigReloaded != null) {
+                        afterConfigReloaded.run();
                     }
-
                 }
             } else if (newLastModified == -1) {
                 LOG.critical().$("Server configuration file is inaccessible! This is dangerous as server will likely not boot on restart. Make sure the current user can access the configuration file [path=").$(this.confPath).I$();
@@ -358,6 +315,56 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
         }
 
         delegate.set(newConfig);
+    }
+
+    private static boolean updateSupportedProperties(
+            Properties oldProperties,
+            Properties newProperties,
+            Set<? extends ConfigPropertyKey> reloadableProps
+    ) {
+        if (newProperties.equals(oldProperties)) {
+            return false;
+        }
+
+        // Compare the new and existing properties
+        AtomicBoolean changed = new AtomicBoolean(false);
+        newProperties.forEach((k, v) -> {
+            String key = (String) k;
+            String oldVal = oldProperties.getProperty(key);
+            if (oldVal == null || !oldVal.equals(v)) {
+                Optional<PropertyKey> prop = PropertyKey.getByString(key);
+                if (!prop.isPresent()) {
+                    return;
+                }
+
+                if (reloadableProps.contains(prop.get())) {
+                    LOG.info().$("loaded new value of ").$(k).$();
+                    oldProperties.setProperty(key, (String) v);
+                    changed.set(true);
+                } else {
+                    LOG.advisory().$("property ").$(k).$(" was modified in the config file but cannot be reloaded. ignoring new value").$();
+                }
+            }
+        });
+
+
+        // Check for any old reloadable properties that have been removed in the new config
+        oldProperties.forEach((k, v) -> {
+            if (!newProperties.containsKey(k)) {
+                Optional<PropertyKey> prop = PropertyKey.getByString((String) k);
+                if (!prop.isPresent()) {
+                    return;
+                }
+                if (reloadableProps.contains(prop.get())) {
+                    LOG.info().$("removed property ").$(k).$();
+                    oldProperties.remove(k);
+                    changed.set(true);
+                } else {
+                    LOG.advisory().$("property ").$(k).$(" was removed from the config file but cannot be reloaded. ignoring").$();
+                }
+            }
+        });
+        return changed.get();
     }
 
 }
