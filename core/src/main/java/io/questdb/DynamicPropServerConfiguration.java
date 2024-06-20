@@ -114,9 +114,8 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
                 loadAdditionalConfigurations
         );
         this.delegate = new AtomicReference<>(serverConfig);
-
         this.confPath = Paths.get(this.getCairoConfiguration().getConfRoot().toString(), Bootstrap.CONFIG_FILE);
-
+        this.configReloadEnabled = serverConfig.isConfigReloadEnabled();
         try (Path p = new Path()) {
             // we assume the config file does exist, otherwise we should not
             // get to this code. This constructor is passed properties object,
@@ -124,7 +123,6 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
             p.of(confPath.toString()).$();
             lastModified = Files.getLastModified(p);
         }
-        this.configReloadEnabled = serverConfig.isConfigReloadEnabled();
     }
 
     public DynamicPropServerConfiguration(
