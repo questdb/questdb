@@ -77,16 +77,18 @@ public class JsonResult implements QuietCloseable {
         return impl;
     }
 
-    public void throwIfError(String culpritFunctionName, Utf8Sequence path) throws CairoException {
+    public void throwIfError(Utf8Sequence path) throws CairoException {
         final int error = getError();
         if (error != JsonError.SUCCESS) {
-            throw CairoException.nonCritical()
-                    .put(culpritFunctionName)
-                    .put("(.., ")
-                    .put('\'')
-                    .put(path)
-                    .put("'): ")
-                    .put(JsonError.getMessage(error));
+            throw formatError(path, getError());
         }
+    }
+
+    public static CairoException formatError(Utf8Sequence path, int error) {
+        return CairoException.nonCritical()
+                .put("json_path(.., '")
+                .put(path)
+                .put("'): ")
+                .put(JsonError.getMessage(error));
     }
 }

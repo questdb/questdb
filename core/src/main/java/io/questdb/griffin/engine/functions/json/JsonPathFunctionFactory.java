@@ -76,9 +76,9 @@ public class JsonPathFunctionFactory implements FunctionFactory {
             case ColumnType.BOOLEAN:
             case ColumnType.SHORT:
             case ColumnType.INT:
-                return new JsonConstPathPrimitiveFunc(targetType, FUNCTION_NAME, json, path, pointer, strict);
+                return new JsonConstPathPrimitiveFunc(targetType, json, path, pointer, strict);
             case ColumnType.VARCHAR:
-                return new JsonPathVarcharFunc(FUNCTION_NAME, json, path, pointer, maxSize, false);
+                return new JsonPathVarcharFunc(json, path, pointer, maxSize, false);
             default:
                 throw new UnsupportedOperationException("nyi");  // TODO: complete remaining types
         }

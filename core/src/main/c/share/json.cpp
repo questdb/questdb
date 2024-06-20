@@ -350,11 +350,6 @@ Java_io_questdb_std_json_JsonParser_queryPointerBoolean(
     auto doc = parser->iterate(json_buf);
     auto res = doc.at_pointer(pointer);
     result->from(res);
-    if (result->type == simdjson::ondemand::json_type::null) {
-        // We return the "on_error" default value.
-        // This is a bit quirky, but good enough in practice.
-        return default_value;
-    }
     auto bool_res = res.get_bool();
     if (!result->set_error(bool_res)) {
         return default_value;

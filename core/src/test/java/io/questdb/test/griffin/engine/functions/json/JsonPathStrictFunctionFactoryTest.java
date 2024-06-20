@@ -46,8 +46,10 @@ public class JsonPathStrictFunctionFactoryTest extends AbstractFunctionFactoryTe
 
     @Test
     public void testEmptyJson() {
-        final CairoException exc = Assert.assertThrows(CairoException.class, () -> call(utf8("{}"), utf8(".path")));
-        Assert.assertTrue(exc.getMessage().contains("json_path_strict(.., '.path'): NO_SUCH_FIELD:"));
+        final CairoException exc = Assert.assertThrows(
+                CairoException.class,
+                () -> call(utf8("{}"), utf8(".path")));
+        Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): NO_SUCH_FIELD:"));
     }
 
     @Test

@@ -31,12 +31,13 @@ import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
+import io.questdb.std.json.JsonError;
+import io.questdb.std.json.JsonResult;
 import io.questdb.std.str.*;
 import org.jetbrains.annotations.Nullable;
 
 public class JsonConstPathPrimitiveFunc implements ScalarFunction, BinaryFunction, JsonPathFunc {
     private final int columnType;
-    private final String functionName;
     private final Function json;
     private final Function path;
     private final DirectUtf8Sink pointer;
@@ -51,13 +52,11 @@ public class JsonConstPathPrimitiveFunc implements ScalarFunction, BinaryFunctio
 
     public JsonConstPathPrimitiveFunc(
             int columnType,
-            String functionName,
             Function json,
             Function path,
             DirectUtf8Sink pointer,
             boolean strict) {
         this.columnType = columnType;
-        this.functionName = functionName;
         this.json = json;
         this.path = path;
         this.pointer = pointer;
@@ -85,11 +84,16 @@ public class JsonConstPathPrimitiveFunc implements ScalarFunction, BinaryFunctio
     public boolean getBool(Record rec) {
         final Utf8Sequence jsonSeq = json.getVarcharA(rec);
         if (jsonSeq == null) {
-            return defaultBool;
+            if (strict) {
+                throw JsonResult.formatError(path.getVarcharA(rec), JsonError.NO_SUCH_FIELD);
+            }
+            else {
+                return defaultBool;
+            }
         }
         final boolean res = state.parser.queryPointerBoolean(state.initPaddedJson(jsonSeq), pointer, state.jsonResult, defaultBool);
-        if (strict && !state.jsonResult.isNull()) {
-            state.jsonResult.throwIfError(functionName, path.getVarcharA(null));
+        if (strict) {
+            state.jsonResult.throwIfError(path.getVarcharA(null));
         }
         return res;
     }
@@ -117,7 +121,7 @@ public class JsonConstPathPrimitiveFunc implements ScalarFunction, BinaryFunctio
         }
         final double res = state.parser.queryPointerDouble(state.initPaddedJson(jsonSeq), pointer, state.jsonResult, defaultDouble);
         if (strict && !state.jsonResult.isNull()) {
-            state.jsonResult.throwIfError(functionName, path.getVarcharA(null));
+            state.jsonResult.throwIfError(path.getVarcharA(null));
         }
         return res;
     }
@@ -130,7 +134,7 @@ public class JsonConstPathPrimitiveFunc implements ScalarFunction, BinaryFunctio
         }
         final float res = state.parser.queryPointerFloat(state.initPaddedJson(jsonSeq), pointer, state.jsonResult, defaultFloat);
         if (strict && !state.jsonResult.isNull()) {
-            state.jsonResult.throwIfError(functionName, path.getVarcharA(null));
+            state.jsonResult.throwIfError(path.getVarcharA(null));
         }
         return res;
     }
@@ -168,7 +172,7 @@ public class JsonConstPathPrimitiveFunc implements ScalarFunction, BinaryFunctio
         }
         final int res = state.parser.queryPointerInt(state.initPaddedJson(jsonSeq), pointer, state.jsonResult, defaultInt);
         if (strict && !state.jsonResult.isNull()) {
-            state.jsonResult.throwIfError(functionName, path.getVarcharA(null));
+            state.jsonResult.throwIfError(path.getVarcharA(null));
         }
         return res;
     }
@@ -186,7 +190,7 @@ public class JsonConstPathPrimitiveFunc implements ScalarFunction, BinaryFunctio
         }
         final long res = state.parser.queryPointerLong(state.initPaddedJson(jsonSeq), pointer, state.jsonResult, defaultLong);
         if (strict && !state.jsonResult.isNull()) {
-            state.jsonResult.throwIfError(functionName, path.getVarcharA(null));
+            state.jsonResult.throwIfError(path.getVarcharA(null));
         }
         return res;
     }
@@ -234,7 +238,7 @@ public class JsonConstPathPrimitiveFunc implements ScalarFunction, BinaryFunctio
         }
         final short res = state.parser.queryPointerShort(state.initPaddedJson(jsonSeq), pointer, state.jsonResult, defaultShort);
         if (strict && !state.jsonResult.isNull()) {
-            state.jsonResult.throwIfError(functionName, path.getVarcharA(null));
+            state.jsonResult.throwIfError(path.getVarcharA(null));
         }
         return res;
     }

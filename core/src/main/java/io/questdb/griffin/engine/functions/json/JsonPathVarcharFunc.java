@@ -41,7 +41,6 @@ class JsonPathVarcharFunc extends VarcharFunction implements BinaryFunction, Jso
     private final VarcharSupportingState a;
     private final VarcharSupportingState b;
     private final VarcharSupportingState copied;
-    private final String functionName;
     private final Function json;
     private final int maxSize;
     private final Function path;
@@ -49,11 +48,10 @@ class JsonPathVarcharFunc extends VarcharFunction implements BinaryFunction, Jso
     private final boolean strict;
     private DirectUtf8Sink defaultVarchar = null;
 
-    public JsonPathVarcharFunc(String functionName, Function json, Function path, DirectUtf8Sink pointer, int maxSize, boolean strict) {
+    public JsonPathVarcharFunc(Function json, Function path, DirectUtf8Sink pointer, int maxSize, boolean strict) {
         this.a = new VarcharSupportingState(new DirectUtf8Sink(maxSize));
         this.b = new VarcharSupportingState(new DirectUtf8Sink(maxSize));
         this.copied = new VarcharSupportingState();
-        this.functionName = functionName;
         this.json = json;
         this.path = path;
         this.pointer = pointer;
@@ -79,7 +77,7 @@ class JsonPathVarcharFunc extends VarcharFunction implements BinaryFunction, Jso
 
     @Override
     public String getName() {
-        return functionName;
+        return "json_path";
     }
 
     @Override
@@ -95,7 +93,7 @@ class JsonPathVarcharFunc extends VarcharFunction implements BinaryFunction, Jso
             }
             copied.destSink = (DirectUtf8Sink) utf8Sink;
             copied.closeDestSink = false;
-            jsonPointer(functionName, json.getVarcharA(rec), pointer, Objects.requireNonNull(path.getVarcharA(null)), copied);
+            jsonPointer(json.getVarcharA(rec), pointer, Objects.requireNonNull(path.getVarcharA(null)), copied);
         } else {
             if (copied.destSink == null) {
                 copied.destSink = new DirectUtf8Sink(maxSize);
@@ -104,19 +102,19 @@ class JsonPathVarcharFunc extends VarcharFunction implements BinaryFunction, Jso
                 copied.destSink.clear();
                 copied.destSink.reserve(maxSize);
             }
-            jsonPointer(functionName, json.getVarcharA(rec), pointer, Objects.requireNonNull(path.getVarcharA(null)), copied);
+            jsonPointer(json.getVarcharA(rec), pointer, Objects.requireNonNull(path.getVarcharA(null)), copied);
             utf8Sink.put(copied.destSink);
         }
     }
 
     @Override
     public @Nullable DirectUtf8Sink getVarcharA(Record rec) {
-        return jsonPointer(functionName, json.getVarcharA(rec), pointer, Objects.requireNonNull(path.getVarcharA(null)), a);
+        return jsonPointer(json.getVarcharA(rec), pointer, Objects.requireNonNull(path.getVarcharA(null)), a);
     }
 
     @Override
     public @Nullable DirectUtf8Sink getVarcharB(Record rec) {
-        return jsonPointer(functionName, json.getVarcharB(rec), pointer, Objects.requireNonNull(path.getVarcharB(null)), b);
+        return jsonPointer(json.getVarcharB(rec), pointer, Objects.requireNonNull(path.getVarcharB(null)), b);
     }
 
     @Override
@@ -161,7 +159,6 @@ class JsonPathVarcharFunc extends VarcharFunction implements BinaryFunction, Jso
     }
 
     private @Nullable DirectUtf8Sink jsonPointer(
-            String functionName,
             @Nullable Utf8Sequence json,
             @NotNull DirectUtf8Sequence pointer,
             @NotNull Utf8Sequence path,
@@ -182,7 +179,7 @@ class JsonPathVarcharFunc extends VarcharFunction implements BinaryFunction, Jso
         if (state.jsonResult.hasValue()) {
             return state.destSink;
         } else if (strict && !state.jsonResult.isNull()) {
-            state.jsonResult.throwIfError(functionName, path);
+            state.jsonResult.throwIfError(path);
         }
         return defaultVarchar;  // usually null
     }

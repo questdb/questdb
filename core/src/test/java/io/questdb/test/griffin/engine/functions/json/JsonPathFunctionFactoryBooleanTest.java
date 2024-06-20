@@ -39,7 +39,7 @@ import java.util.Arrays;
 import static io.questdb.griffin.engine.functions.json.JsonPathFunc.DEFAULT_VALUE_ON_ERROR;
 import static io.questdb.griffin.engine.functions.json.JsonPathFunc.FAIL_ON_ERROR;
 
-public class JsonPathFunctionFactoryShortTest extends AbstractFunctionFactoryTest {
+public class JsonPathFunctionFactoryBooleanTest extends AbstractFunctionFactoryTest {
 
     @Override
     public Invocation call(Object... args) {
@@ -48,51 +48,73 @@ public class JsonPathFunctionFactoryShortTest extends AbstractFunctionFactoryTes
 
     @Test
     public void test10000() throws SqlException {
-        callFn(utf8("{\"path\": 10000}"), utf8(".path")).andAssert((short)10000);
-        callFn(utf8("{\"path\": 10000}"), dirUtf8(".path")).andAssert((short)10000);
-        callFn(dirUtf8("{\"path\": 10000}"), utf8(".path")).andAssert((short)10000);
-        callFn(dirUtf8("{\"path\": 10000}"), dirUtf8(".path")).andAssert((short)10000);
+        callFn(utf8("{\"path\": 10000}"), utf8(".path")).andAssert(false);
+        callFn(utf8("{\"path\": 10000}"), dirUtf8(".path")).andAssert(false);
+        callFn(dirUtf8("{\"path\": 10000}"), utf8(".path")).andAssert(false);
+        callFn(dirUtf8("{\"path\": 10000}"), dirUtf8(".path")).andAssert(false);
     }
 
     @Test
     public void testBigNumber() throws SqlException {
-        callFn(utf8("{\"path\": 100000000000000000000000000}"), utf8(".path")).andAssert(Short.MIN_VALUE);
+        callFn(utf8("{\"path\": 100000000000000000000000000}"), utf8(".path")).andAssert(false);
     }
 
     @Test
     public void testDefaultDifferentType() throws SqlException {
-        callFn(utf8("{\"path\": \"abc\"}"), utf8(".path"), DEFAULT_VALUE_ON_ERROR, 42).andAssert((short)42);
+        callFn(utf8("{\"path\": \"abc\"}"), utf8(".path"), DEFAULT_VALUE_ON_ERROR, false).andAssert(false);
+        callFn(utf8("{\"path\": \"abc\"}"), utf8(".path"), DEFAULT_VALUE_ON_ERROR, true).andAssert(true);
     }
 
     @Test
     public void testDefaultNullJsonValue() throws SqlException {
-        callFn(utf8("{\"path\": null}"), utf8(".path"), DEFAULT_VALUE_ON_ERROR, 42).andAssert(Short.MIN_VALUE);
+        callFn(utf8("{\"path\": null}"), utf8(".path"), DEFAULT_VALUE_ON_ERROR, true).andAssert(true);
+        callFn(utf8("{\"path\": null}"), utf8(".path"), DEFAULT_VALUE_ON_ERROR, false).andAssert(false);
     }
 
     @Test
     public void testDifferentType() throws SqlException {
-        callFn(utf8("{\"path\": \"abc\"}"), utf8(".path")).andAssert(Short.MIN_VALUE);
-        callFn(dirUtf8("{\"path\": \"abc\"}"), dirUtf8(".path")).andAssert(Short.MIN_VALUE);
+        callFn(utf8("{\"path\": \"abc\"}"), utf8(".path")).andAssert(false);
+        callFn(dirUtf8("{\"path\": \"abc\"}"), dirUtf8(".path")).andAssert(false);
     }
 
     @Test
     public void testEmptyJson() throws SqlException {
-        callFn(utf8("{}"), utf8(".path")).andAssert(Short.MIN_VALUE);
+        callFn(utf8("{}"), utf8(".path")).andAssert(false);
+    }
+
+    @Test
+    public void testFalse() throws SqlException {
+        callFn(utf8("{\"path\": false}"), utf8(".path")).andAssert(false);
+    }
+
+    @Test
+    public void testFalseDefault() throws SqlException {
+        callFn(utf8("{\"path\": false}"), utf8(".path"), DEFAULT_VALUE_ON_ERROR, true).andAssert(false);
+    }
+
+    @Test
+    public void testFalseDefaultStrict() throws SqlException {
+        callFn(utf8("{\"path\": false}"), utf8(".path"), FAIL_ON_ERROR, true).andAssert(false);
+    }
+
+    @Test
+    public void testFalseStrict() throws SqlException {
+        callFn(utf8("{\"path\": false}"), utf8(".path"), FAIL_ON_ERROR).andAssert(false);
     }
 
     @Test
     public void testFloat() throws SqlException {
-        callFn(dirUtf8("{\"path\": 123.45}"), dirUtf8(".path")).andAssert(Short.MIN_VALUE);
+        callFn(dirUtf8("{\"path\": 123.45}"), dirUtf8(".path")).andAssert(false);
     }
 
     @Test
     public void testInString() throws SqlException {
-        callFn(utf8("{\"path\": \"123\"}"), utf8(".path")).andAssert((short)123);
+        callFn(utf8("{\"path\": \"123\"}"), utf8(".path")).andAssert(false);
     }
 
     @Test
     public void testNegative() throws SqlException {
-        callFn(utf8("{\"path\": -123}"), utf8(".path")).andAssert((short)-123);
+        callFn(utf8("{\"path\": -123}"), utf8(".path")).andAssert(false);
     }
 
     @Test
@@ -100,29 +122,34 @@ public class JsonPathFunctionFactoryShortTest extends AbstractFunctionFactoryTes
         callFn(
                 utf8(null),
                 utf8(".path")
-        ).andAssert(Short.MIN_VALUE);
+        ).andAssert(false);
+        callFn(
+                utf8(null),
+                utf8(".path"),
+                DEFAULT_VALUE_ON_ERROR,
+                true
+        ).andAssert(true);
         callFn(
                 utf8(null),
                 dirUtf8(".path")
-        ).andAssert(Short.MIN_VALUE);
+        ).andAssert(false);
+        callFn(
+                utf8(null),
+                dirUtf8(".path"),
+                DEFAULT_VALUE_ON_ERROR,
+                true
+        ).andAssert(true);
     }
 
     @Test
     public void testNullJsonValue() throws SqlException {
-        callFn(utf8("{\"path\": null}"), utf8(".path")).andAssert(Short.MIN_VALUE);
-        callFn(utf8("{\"path\": null}"), dirUtf8(".path")).andAssert(Short.MIN_VALUE);
-        callFn(dirUtf8("{\"path\": null}"), utf8(".path")).andAssert(Short.MIN_VALUE);
-        callFn(dirUtf8("{\"path\": null}"), dirUtf8(".path")).andAssert(Short.MIN_VALUE);
+        callFn(utf8("{\"path\": null}"), utf8(".path")).andAssert(false);
+        callFn(utf8("{\"path\": null}"), utf8(".path"), DEFAULT_VALUE_ON_ERROR, true).andAssert(true);
     }
 
     @Test
     public void testOne() throws SqlException {
-        callFn(utf8("{\"path\": 1}"), utf8(".path")).andAssert((short)1);
-    }
-
-    @Test
-    public void testStrict10000() throws SqlException {
-        callFn(utf8("{\"path\": 10000}"), utf8(".path"), FAIL_ON_ERROR).andAssert((short)10000);
+        callFn(utf8("{\"path\": 1}"), utf8(".path")).andAssert(false);
     }
 
     @Test
@@ -144,7 +171,11 @@ public class JsonPathFunctionFactoryShortTest extends AbstractFunctionFactoryTes
 
     @Test
     public void testStrictDefaultNullJsonValue() throws SqlException {
-        callFn(utf8("{\"path\": null}"), utf8(".path"), FAIL_ON_ERROR, 42).andAssert(Short.MIN_VALUE);
+        final CairoException exc = Assert.assertThrows(
+                CairoException.class,
+                () -> callFn(utf8("{\"path\": null}"), utf8(".path"), FAIL_ON_ERROR, 42)
+        );
+        Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): INCORRECT_TYPE:"));
     }
 
     @Test
@@ -172,84 +203,86 @@ public class JsonPathFunctionFactoryShortTest extends AbstractFunctionFactoryTes
     }
 
     @Test
-    public void testStrictNegative() throws SqlException {
-        callFn(utf8("{\"path\": -123\n}"), utf8(".path"), FAIL_ON_ERROR).andAssert((short)-123);
-    }
-
-    @Test
     public void testStrictNullJson() throws SqlException {
-        callFn(utf8(null), utf8(".path"), FAIL_ON_ERROR).andAssert(Short.MIN_VALUE);
+        final CairoException exc = Assert.assertThrows(
+                CairoException.class,
+                () -> callFn(utf8(null), utf8(".path"), FAIL_ON_ERROR)
+        );
+        Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): NO_SUCH_FIELD:"));
     }
 
     @Test
     public void testStrictNullJsonValue() throws SqlException {
-        callFn(utf8("{\"path\": null}"), utf8(".path"), FAIL_ON_ERROR).andAssert(Short.MIN_VALUE);
+        final CairoException exc = Assert.assertThrows(
+                CairoException.class,
+                () -> callFn(utf8("{\"path\": null}"), utf8(".path"), FAIL_ON_ERROR)
+        );
+        Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): INCORRECT_TYPE:"));
     }
 
     @Test
     public void testStrictOne() throws SqlException {
-        callFn(utf8("{\"path\": 1}"), utf8(".path"), FAIL_ON_ERROR).andAssert((short)1);
-    }
-
-    @Test
-    public void testStrictOobNeg() throws SqlException {
-        // -(2^15) -1: The first neg number that requires a 32-bit range.
         final CairoException exc = Assert.assertThrows(
                 CairoException.class,
-                () -> callFn(utf8("{\"path\": -32769\n}"), utf8(".path"), FAIL_ON_ERROR)
-        );
-        Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): NUMBER_OUT_OF_RANGE"));
-    }
-
-    @Test
-    public void testStrictOobPos() throws SqlException {
-        // 2^15: The first pos number that requires a 32-bit range.
-        final CairoException exc = Assert.assertThrows(
-                CairoException.class,
-                () -> callFn(utf8("{\"path\": 32768\n}"), utf8(".path"), FAIL_ON_ERROR)
-        );
-        Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): NUMBER_OUT_OF_RANGE"));
-    }
-
-    @Test
-    public void testStrictUnsigned64Bit() throws SqlException {
-        final CairoException exc = Assert.assertThrows(
-                CairoException.class,
-                () -> callFn(utf8("{\"path\": 9999999999999999999}"), utf8(".path"), FAIL_ON_ERROR)
+                () -> callFn(utf8("{\"path\": 1}"), utf8(".path"), FAIL_ON_ERROR)
         );
         Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): INCORRECT_TYPE:"));
     }
 
     @Test
     public void testStrictZero() throws SqlException {
-        callFn(utf8("{\"path\": 0}"), utf8(".path"), FAIL_ON_ERROR).andAssert((short)0);
+        final CairoException exc = Assert.assertThrows(
+                CairoException.class,
+                () -> callFn(utf8("{\"path\": 0}"), utf8(".path"), FAIL_ON_ERROR)
+        );
+        Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): INCORRECT_TYPE:"));
+    }
+
+    @Test
+    public void testTrue() throws SqlException {
+        callFn(utf8("{\"path\": true}"), utf8(".path")).andAssert(true);
+    }
+
+    @Test
+    public void testTrueDefault() throws SqlException {
+        callFn(utf8("{\"path\": true}"), utf8(".path"), DEFAULT_VALUE_ON_ERROR, false).andAssert(true);
+    }
+
+    @Test
+    public void testTrueDefaultStrict() throws SqlException {
+        callFn(utf8("{\"path\": true}"), utf8(".path"), FAIL_ON_ERROR, false).andAssert(true);
+    }
+
+    @Test
+    public void testTrueStrict() throws SqlException {
+        callFn(utf8("{\"path\": true}"), utf8(".path"), FAIL_ON_ERROR).andAssert(true);
     }
 
     @Test
     public void testUnsigned64Bit() throws SqlException {
-        callFn(utf8("{\"path\": 9999999999999999999}"), utf8(".path")).andAssert(Short.MIN_VALUE);
+        callFn(utf8("{\"path\": 9999999999999999999}"), utf8(".path")).andAssert(false);
     }
 
     @Test
     public void testViaSql() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select '{\"path\": 2}'::varchar as path from long_sequence(10));");
+            ddl("create table x as (select '{\"path\": true}'::varchar as path from long_sequence(10));");
         });
 
         assertMemoryLeak(() -> {
             assertSql(
                     "json_path\n" +
-                            "2\n" +
-                            "2\n" +
-                            "2\n" +
-                            "2\n" +
-                            "2\n" +
-                            "2\n" +
-                            "2\n" +
-                            "2\n" +
-                            "2\n" +
-                            "2\n",
-                    "select json_path(path, '.path', " + ColumnType.SHORT + ") from x"
+                            "true\n" +
+                            "true\n" +
+                            "true\n" +
+                            "true\n" +
+                            "true\n" +
+                            "true\n" +
+                            "true\n" +
+                            "true\n" +
+                            "true\n" +
+                            "true\n",
+                    "select json_path(path, '.path', " + ColumnType.BOOLEAN + ") from x"
             );
         });
     }
@@ -259,62 +292,6 @@ public class JsonPathFunctionFactoryShortTest extends AbstractFunctionFactoryTes
         callFn(utf8("{\"path\": 0}"), utf8(".path")).andAssert(0);
     }
 
-    @Test
-    public void testTrue() throws SqlException {
-        callFn(utf8("{\"path\": true}"), utf8(".path")).andAssert(Short.MIN_VALUE);
-    }
-
-    @Test
-    public void testTrueStrict() throws SqlException {
-        final CairoException exc = Assert.assertThrows(
-                CairoException.class,
-                () -> callFn(utf8("{\"path\": true}"), utf8(".path"), FAIL_ON_ERROR)
-        );
-        Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): INCORRECT_TYPE:"));
-    }
-
-    @Test
-    public void testTrueDefault() throws SqlException {
-        callFn(utf8("{\"path\": true}"), utf8(".path"), DEFAULT_VALUE_ON_ERROR, 7).andAssert((short)7);
-    }
-
-    @Test
-    public void testTrueDefaultStrict() throws SqlException {
-        final CairoException exc = Assert.assertThrows(
-                CairoException.class,
-                () -> callFn(utf8("{\"path\": true}"), utf8(".path"), FAIL_ON_ERROR, false)
-        );
-        Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): INCORRECT_TYPE:"));
-    }
-
-    @Test
-    public void testFalse() throws SqlException {
-        callFn(utf8("{\"path\": false}"), utf8(".path")).andAssert(Short.MIN_VALUE);
-    }
-
-    @Test
-    public void testFalseStrict() throws SqlException {
-        CairoException exc = Assert.assertThrows(
-                CairoException.class,
-                () -> callFn(utf8("{\"path\": false}"), utf8(".path"), FAIL_ON_ERROR)
-        );
-        Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): INCORRECT_TYPE:"));
-    }
-
-    @Test
-    public void testFalseDefault() throws SqlException {
-        callFn(utf8("{\"path\": false}"), utf8(".path"), DEFAULT_VALUE_ON_ERROR, 4).andAssert((short)4);
-    }
-
-    @Test
-    public void testFalseDefaultStrict() throws SqlException {
-        CairoException exc = Assert.assertThrows(
-                CairoException.class,
-                () -> callFn(utf8("{\"path\": false}"), utf8(".path"), FAIL_ON_ERROR, 4)
-        );
-        Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): INCORRECT_TYPE:"));
-    }
-
     private Invocation callFn(Utf8Sequence json, Utf8Sequence path, Object... args) throws SqlException {
         final boolean[] forceConstants = new boolean[args.length + 3];
         Arrays.fill(forceConstants, true);
@@ -322,7 +299,7 @@ public class JsonPathFunctionFactoryShortTest extends AbstractFunctionFactoryTes
         final Object[] newArgs = new Object[args.length + 3];
         newArgs[0] = json;
         newArgs[1] = path;
-        newArgs[2] = (int) ColumnType.SHORT;
+        newArgs[2] = (int) ColumnType.BOOLEAN;
         System.arraycopy(args, 0, newArgs, 3, args.length);
         return callCustomised(
                 null,

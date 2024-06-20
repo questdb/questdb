@@ -48,6 +48,6 @@ public class JsonPathLongStrictFunctionFactory implements FunctionFactory {
         final Function json = args.getQuick(0);
         final Function path = args.getQuick(1);
         final DirectUtf8Sink pointer = SupportingState.varcharConstantToJsonPointer(path);
-        return new JsonConstPathPrimitiveFunc(ColumnType.LONG, FUNCTION_NAME, json, path, pointer, true);
+        return new JsonConstPathPrimitiveFunc(ColumnType.LONG, json, path, pointer, true);
     }
 }

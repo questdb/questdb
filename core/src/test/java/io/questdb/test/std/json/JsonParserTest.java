@@ -106,11 +106,13 @@ public class JsonParserTest {
         TestUtils.assertMemoryLeak(() -> {
             final boolean res = parser.queryPointerBoolean(json, path2Pointer(".nothing"), result, false);
             Assert.assertFalse(res);
+            Assert.assertEquals(result.getError(), JsonError.INCORRECT_TYPE);
             Assert.assertEquals(result.getType(), JsonType.NULL);
         });
         TestUtils.assertMemoryLeak(() -> {
             final boolean res = parser.queryPointerBoolean(json, path2Pointer(".nothing"), result, true);
             Assert.assertTrue(res);
+            Assert.assertEquals(result.getError(), JsonError.INCORRECT_TYPE);
             Assert.assertEquals(result.getType(), JsonType.NULL);
         });
     }

@@ -91,6 +91,10 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             return ColumnType.CHAR;
         }
 
+        if (arg instanceof Boolean) {
+            return ColumnType.BOOLEAN;
+        }
+
         Assert.fail("Unsupported type: " + arg.getClass());
         return -1;
     }
