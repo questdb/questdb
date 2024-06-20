@@ -220,8 +220,11 @@ public class TableSequencerImpl implements TableSequencer {
         sink.clear();
 
         int compressedColumnCount = 0;
+        boolean reorderNeeded = false;
+        int lastOrder = -1;
         for (int i = 0; i < columnCount; i++) {
             int columnType = metadata.getColumnType(i);
+            int columnOrder = metadata.getReadColumnOrder().getQuick(i);
             sink.addColumn(
                     metadata.getColumnName(i),
                     columnType,
@@ -229,9 +232,12 @@ public class TableSequencerImpl implements TableSequencer {
                     metadata.getIndexValueBlockCapacity(i),
                     metadata.isSymbolTableStatic(i),
                     i,
-                    metadata.isDedupKey(i)
+                    metadata.isDedupKey(i),
+                    columnOrder
             );
             if (columnType > -1) {
+                reorderNeeded |= lastOrder > columnOrder;
+                lastOrder = columnOrder;
                 if (i == timestampIndex) {
                     compressedTimestampIndex = compressedColumnCount;
                 }
@@ -246,7 +252,8 @@ public class TableSequencerImpl implements TableSequencer {
                 compressedTimestampIndex,
                 metadata.isSuspended(),
                 metadata.getMetadataVersion(),
-                compressedColumnCount
+                compressedColumnCount,
+                reorderNeeded ? metadata.getReadColumnOrder() : null
         );
 
         return tableTransactionLog.lastTxn();

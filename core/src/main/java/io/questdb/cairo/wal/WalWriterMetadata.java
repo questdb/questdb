@@ -34,10 +34,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cairo.wal.seq.TableRecordMetadataSink;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.LongList;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
@@ -103,7 +100,8 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
             int indexValueBlockCapacity,
             boolean symbolTableStatic,
             int writerIndex,
-            boolean isDedupKey
+            boolean isDedupKey,
+            int order
     ) {
         addColumn0(columnName, columnType);
     }
@@ -151,7 +149,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     }
 
     @Override
-    public void of(TableToken tableToken, int tableId, int timestampIndex, int compressedTimestampIndex, boolean suspended, long structureVersion, int columnCount) {
+    public void of(TableToken tableToken, int tableId, int timestampIndex, int compressedTimestampIndex, boolean suspended, long structureVersion, int columnCount, @Transient IntList readColumnOrder) {
         this.tableToken = tableToken;
         this.tableId = tableId;
         this.timestampIndex = timestampIndex;

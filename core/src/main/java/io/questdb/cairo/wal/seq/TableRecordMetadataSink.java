@@ -25,7 +25,9 @@
 package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.TableToken;
+import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
+import io.questdb.std.Transient;
 
 public interface TableRecordMetadataSink extends Mutable {
 
@@ -36,7 +38,8 @@ public interface TableRecordMetadataSink extends Mutable {
             int indexValueBlockCapacity,
             boolean symbolTableStatic,
             int writerIndex,
-            boolean isDedupKey
+            boolean isDedupKey,
+            int order
     );
 
     void of(
@@ -46,6 +49,7 @@ public interface TableRecordMetadataSink extends Mutable {
             int compressedTimestampIndex,
             boolean suspended,
             long structureVersion,
-            int columnCount
+            int columnCount,
+            @Transient IntList readColumnOrder
     );
 }
