@@ -436,15 +436,18 @@ public final class Timestamps {
     }
 
     public static long floorYYYY(long micros) {
-        return floorYYYY(micros, 1, 0);
+        int y;
+        return yearMicros(y = getYear(micros), isLeapYear(y));
+    }
+
+    public static long floorYYYY(long micros, int stride) {
+        final int origin = getYear(0);
+        int y = origin + ((getYear(micros) - origin) / stride) * stride;
+        return yearMicros(y, isLeapYear(y));
     }
 
     public static long floorYYYY(long micros, long offset) {
         return floorYYYY(micros, 1, offset);
-    }
-
-    public static long floorYYYY(long micros, int stride) {
-        return floorYYYY(micros, stride, 0);
     }
 
     public static long floorYYYY(long micros, int stride, long offset) {
