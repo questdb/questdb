@@ -212,7 +212,7 @@ public class AsyncJitFilteredRecordCursorV2Factory extends AbstractRecordCursorF
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
-        return true;
+        return false;
     }
 
     @Override

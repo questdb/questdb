@@ -316,7 +316,6 @@ public class StringTypeDriver implements ColumnTypeDriver {
             long srcHi,
             long dstAddr,
             long dstAddrSize
-
     ) {
         assert (srcHi - srcLo + 2) * 8 <= dstAddrSize;
         // +2 because

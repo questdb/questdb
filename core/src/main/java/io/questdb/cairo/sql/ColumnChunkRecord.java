@@ -57,14 +57,14 @@ public class ColumnChunkRecord implements Record, Closeable {
     public BinarySequence getBin(int columnIndex) {
         final MemoryR auxMem = getAuxMem(columnIndex);
         final MemoryR dataMem = getDataMem(columnIndex);
-        return dataMem.getBin(auxMem.getLong(rowIndex));
+        return dataMem.getBin(auxMem.getLong(rowIndex << 3));
     }
 
     @Override
     public long getBinLen(int columnIndex) {
         final MemoryR auxMem = getAuxMem(columnIndex);
         final MemoryR dataMem = getDataMem(columnIndex);
-        return dataMem.getBinLen(auxMem.getLong(rowIndex));
+        return dataMem.getBinLen(auxMem.getLong(rowIndex << 3));
     }
 
     @Override
@@ -82,19 +82,19 @@ public class ColumnChunkRecord implements Record, Closeable {
     @Override
     public char getChar(int columnIndex) {
         final MemoryR dataMem = getDataMem(columnIndex);
-        return dataMem.getChar(rowIndex);
+        return dataMem.getChar(rowIndex << 1);
     }
 
     @Override
     public double getDouble(int columnIndex) {
         final MemoryR dataMem = getDataMem(columnIndex);
-        return dataMem.getDouble(rowIndex);
+        return dataMem.getDouble(rowIndex << 3);
     }
 
     @Override
     public float getFloat(int columnIndex) {
         final MemoryR dataMem = getDataMem(columnIndex);
-        return dataMem.getFloat(rowIndex);
+        return dataMem.getFloat(rowIndex << 2);
     }
 
     @Override
@@ -125,70 +125,70 @@ public class ColumnChunkRecord implements Record, Closeable {
     @Override
     public int getInt(int columnIndex) {
         final MemoryR dataMem = getDataMem(columnIndex);
-        return dataMem.getInt(rowIndex);
+        return dataMem.getInt(rowIndex << 2);
     }
 
     @Override
     public long getLong(int columnIndex) {
         final MemoryR dataMem = getDataMem(columnIndex);
-        return dataMem.getLong(rowIndex);
+        return dataMem.getLong(rowIndex << 3);
     }
 
     @Override
     public long getLong128Hi(int columnIndex) {
         final MemoryR dataMem = getDataMem(columnIndex);
-        return dataMem.getLong(rowIndex + 1);
+        return dataMem.getLong((rowIndex << 4) + 8);
     }
 
     @Override
     public long getLong128Lo(int columnIndex) {
         final MemoryR dataMem = getDataMem(columnIndex);
-        return dataMem.getLong(rowIndex);
+        return dataMem.getLong(rowIndex << 4);
     }
 
     @Override
     public void getLong256(int columnIndex, CharSink<?> sink) {
         final MemoryR dataMem = getDataMem(columnIndex);
-        dataMem.getLong256(rowIndex, sink);
+        dataMem.getLong256(rowIndex << 5, sink);
     }
 
     @Override
     public Long256 getLong256A(int columnIndex) {
         final MemoryR dataMem = getDataMem(columnIndex);
-        return dataMem.getLong256A(rowIndex);
+        return dataMem.getLong256A(rowIndex << 5);
     }
 
     @Override
     public Long256 getLong256B(int columnIndex) {
         final MemoryR dataMem = getDataMem(columnIndex);
-        return dataMem.getLong256B(rowIndex);
+        return dataMem.getLong256B(rowIndex << 5);
     }
 
     @Override
     public short getShort(int columnIndex) {
         final MemoryR dataMem = getDataMem(columnIndex);
-        return dataMem.getShort(rowIndex);
+        return dataMem.getShort(rowIndex << 1);
     }
 
     @Override
     public CharSequence getStrA(int columnIndex) {
         final MemoryR auxMem = getAuxMem(columnIndex);
         final MemoryR dataMem = getDataMem(columnIndex);
-        return dataMem.getStrA(auxMem.getLong(rowIndex));
+        return dataMem.getStrA(auxMem.getLong(rowIndex << 3));
     }
 
     @Override
     public CharSequence getStrB(int columnIndex) {
         final MemoryR auxMem = getAuxMem(columnIndex);
         final MemoryR dataMem = getDataMem(columnIndex);
-        return dataMem.getStrB(auxMem.getLong(rowIndex));
+        return dataMem.getStrB(auxMem.getLong(rowIndex << 3));
     }
 
     @Override
     public int getStrLen(int columnIndex) {
         final MemoryR auxMem = getAuxMem(columnIndex);
         final MemoryR dataMem = getDataMem(columnIndex);
-        return dataMem.getStrLen(auxMem.getLong(rowIndex));
+        return dataMem.getStrLen(auxMem.getLong(rowIndex << 3));
     }
 
     @Override

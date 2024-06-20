@@ -90,6 +90,10 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
         final ObjList<MemoryCARW> columnChunks = task.getColumnChunks();
         columnChunks.clear();
 
+        if (rows.size() == 0) {
+            return;
+        }
+
         for (int i = 0; i < columnTypes.size(); i++) {
             final int columnType = columnTypes.getQuick(i);
 
@@ -101,6 +105,7 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
 
             switch (ColumnType.tagOf(columnType)) {
                 case ColumnType.BOOLEAN:
+                    dataMem.jumpTo(0);
                     for (long p = 0, n = rows.size(); p < n; p++) {
                         long r = rows.get(p);
                         record.setRowIndex(r);
@@ -109,6 +114,7 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
                     break;
                 case ColumnType.BYTE:
                 case ColumnType.GEOBYTE:
+                    dataMem.jumpTo(0);
                     for (long p = 0, n = rows.size(); p < n; p++) {
                         long r = rows.get(p);
                         record.setRowIndex(r);
@@ -118,6 +124,7 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
                 case ColumnType.SHORT:
                 case ColumnType.GEOSHORT:
                 case ColumnType.CHAR: // for memory copying purposes chars are same as shorts
+                    dataMem.jumpTo(0);
                     for (long p = 0, n = rows.size(); p < n; p++) {
                         long r = rows.get(p);
                         record.setRowIndex(r);
@@ -129,6 +136,7 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
                 case ColumnType.IPv4:
                 case ColumnType.SYMBOL:
                 case ColumnType.FLOAT: // for memory copying purposes floats are same as ints
+                    dataMem.jumpTo(0);
                     for (long p = 0, n = rows.size(); p < n; p++) {
                         long r = rows.get(p);
                         record.setRowIndex(r);
@@ -140,6 +148,7 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
                 case ColumnType.DATE:
                 case ColumnType.TIMESTAMP:
                 case ColumnType.DOUBLE: // for memory copying purposes doubles are same as longs
+                    dataMem.jumpTo(0);
                     for (long p = 0, n = rows.size(); p < n; p++) {
                         long r = rows.get(p);
                         record.setRowIndex(r);
@@ -147,6 +156,7 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
                     }
                     break;
                 case ColumnType.UUID:
+                    dataMem.jumpTo(0);
                     for (long p = 0, n = rows.size(); p < n; p++) {
                         long r = rows.get(p);
                         record.setRowIndex(r);
@@ -154,6 +164,7 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
                     }
                     break;
                 case ColumnType.LONG256:
+                    dataMem.jumpTo(0);
                     for (long p = 0, n = rows.size(); p < n; p++) {
                         long r = rows.get(p);
                         record.setRowIndex(r);
@@ -163,6 +174,9 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
                     break;
                 case ColumnType.STRING:
                     assert auxMem != null;
+                    auxMem.jumpTo(0);
+                    dataMem.jumpTo(0);
+                    StringTypeDriver.INSTANCE.configureAuxMemO3RSS(auxMem);
                     for (long p = 0, n = rows.size(); p < n; p++) {
                         long r = rows.get(p);
                         record.setRowIndex(r);
@@ -172,6 +186,8 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
                     break;
                 case ColumnType.VARCHAR:
                     assert auxMem != null;
+                    auxMem.jumpTo(0);
+                    dataMem.jumpTo(0);
                     for (long p = 0, n = rows.size(); p < n; p++) {
                         long r = rows.get(p);
                         record.setRowIndex(r);
@@ -181,6 +197,9 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
                     break;
                 case ColumnType.BINARY:
                     assert auxMem != null;
+                    auxMem.jumpTo(0);
+                    dataMem.jumpTo(0);
+                    BinaryTypeDriver.INSTANCE.configureAuxMemO3RSS(auxMem);
                     for (long p = 0, n = rows.size(); p < n; p++) {
                         long r = rows.get(p);
                         record.setRowIndex(r);
