@@ -9874,6 +9874,51 @@ create table tab as (
         });
     }
 
+    /*
+        use sqlx::postgres::PgPoolOptions;
+        
+        #[async_std::main]
+        async fn main() -> Result<(), sqlx::Error> {
+            let pool = PgPoolOptions::new()
+                .max_connections(5)
+                .connect("postgresql://admin:quest@localhost:8812/qdb")
+                .await?;
+        
+            let row: (String,) = sqlx::query_as("SELECT id from x").fetch_one(&pool).await?;
+            assert_eq!(row.0, "D");
+            Ok(())
+        }
+
+        --------------------------------------
+        [dependencies]
+        async-std = { version = "1.12.0", features = [ "attributes" ] }
+        sqlx = { version = "0.7", features = [ "runtime-async-std", "postgres" ] }
+    */
+    @Test
+    public void testVarcharBinaryType() throws Exception {
+        skipOnWalRun();
+        engine.ddl("create table x (id varchar)", sqlExecutionContext);
+        engine.insert("insert into x values ('entry')", sqlExecutionContext);
+
+        final String script =
+                ">0000006b00030000757365720061646d696e0064617461626173650071646200446174655374796c650049534f2c204d445900636c69656e745f656e636f64696e6700555446380054696d655a6f6e65005554430065787472615f666c6f61745f64696769747300320000\n" +
+                        "<520000000800000003\n" +
+                        ">700000000a717565737400\n" +
+                        "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549\n" +
+                        ">5300000004\n" +
+                        "<5a0000000549\n" +
+                        ">500000002073716c785f735f310053454c4543542069642066726f6d2078000000440000000e5373716c785f735f31005300000004\n" +
+                        "<310000000474000000060000540000001b000169640000000000000100000413ffffffffffff00005a0000000549\n" +
+                        ">42000000180073716c785f735f31000001000100000001000145000000090000000001430000000650005300000004\n" +
+                        "<3200000004440000000f000100000005656e747279730000000433000000045a0000000549\n" +
+                        ">5300000004\n" +
+                        "<5a0000000549\n";
+
+        assertHexScript(
+                NetworkFacadeImpl.INSTANCE, script, new Port0PGWireConfiguration()
+        );
+    }
+
     @Test
     public void testVarcharBindVarMixedAscii() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
