@@ -44,7 +44,7 @@ public class PageFrameReduceTask implements Closeable {
     private static final String exceptionMessage = "unexpected filter error";
     private final ObjList<MemoryCARW> columnChunks = new ObjList<>();
     private final ObjectPool<MemoryCARWImpl> columnChunksPool = new ObjectPool<>(
-            () -> (MemoryCARWImpl) Vm.getCARWInstance(Numbers.SIZE_1MB, Integer.MAX_VALUE, MemoryTag.NATIVE_OFFLOAD),
+            () -> (MemoryCARWImpl) Vm.getCARWInstance(128 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_OFFLOAD),
             256
     );
     // Used to pass the list of column page frame addresses to a JIT-compiled filter.
@@ -76,8 +76,8 @@ public class PageFrameReduceTask implements Closeable {
         Misc.free(filteredRows);
         Misc.free(columns);
         Misc.free(varSizeAux);
-        Misc.freeObjListAndClear(columnChunks);
-        columnChunksPool.clear();
+        columnChunks.clear();
+        columnChunksPool.closeAndClear();
     }
 
     public ObjList<MemoryCARW> getColumnChunks() {
@@ -157,7 +157,7 @@ public class PageFrameReduceTask implements Closeable {
         if (type == TYPE_FILTER) {
             filteredRows.clear();
         }
-        Misc.freeObjListAndClear(columnChunks);
+        columnChunks.clear();
         columnChunksPool.clear();
     }
 
@@ -193,8 +193,8 @@ public class PageFrameReduceTask implements Closeable {
         filteredRows.resetCapacity();
         columns.resetCapacity();
         varSizeAux.resetCapacity();
-        Misc.freeObjListAndClear(columnChunks);
-        columnChunksPool.clear();
+        columnChunks.clear();
+        columnChunksPool.closeAndClear();
     }
 
     public void setErrorMsg(Throwable th) {

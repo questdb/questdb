@@ -97,7 +97,6 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
         for (int i = 0; i < columnTypes.size(); i++) {
             final int columnType = columnTypes.getQuick(i);
 
-            // TODO: reuse the memory objects within the same query
             final MemoryCARW dataMem = task.nextColumnChunk();
             columnChunks.add(dataMem);
             final MemoryCARW auxMem = ColumnType.isVarSize(columnType) ? task.nextColumnChunk() : null;
