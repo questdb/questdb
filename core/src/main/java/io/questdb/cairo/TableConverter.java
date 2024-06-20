@@ -36,8 +36,6 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 
-import java.util.function.Predicate;
-
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.CONVERT_FILE_NAME;
 
@@ -47,7 +45,7 @@ public class TableConverter {
     public static ObjList<TableToken> convertTables(
             CairoConfiguration configuration,
             TableSequencerAPI tableSequencerAPI,
-            Predicate<CharSequence> protectedTableResolver
+            TableFlagResolver tableFlagResolver
     ) {
         final ObjList<TableToken> convertedTables = new ObjList<>();
         if (!configuration.isTableTypeConversionEnabled()) {
@@ -93,9 +91,10 @@ public class TableConverter {
                                 }
 
                                 final int tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
-                                boolean isProtected = protectedTableResolver.test(tableName);
-                                boolean isSystem = TableUtils.isSystemTable(tableName, configuration);
-                                final TableToken token = new TableToken(tableName, dirName, tableId, walEnabled, isSystem, isProtected);
+                                boolean isProtected = tableFlagResolver.isProtected(tableName);
+                                boolean isSystem = tableFlagResolver.isSystem(tableName);
+                                boolean isPublic = tableFlagResolver.isPublic(tableName);
+                                final TableToken token = new TableToken(tableName, dirName, tableId, walEnabled, isSystem, isProtected, isPublic);
 
                                 if (txWriter == null) {
                                     txWriter = new TxWriter(ff, configuration);
