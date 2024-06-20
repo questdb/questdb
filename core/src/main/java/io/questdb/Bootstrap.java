@@ -454,8 +454,8 @@ public class Bootstrap {
     }
 
     private void createHelloFile(String helloMsg) {
-        final File helloFile = new File(rootDirectory, "log/hello.txt");
-        final File growingFile = new File(helloFile.getParentFile(), helloFile.getName() + ".tmp");
+        final File helloFile = new File(rootDirectory, "hello.txt");
+        final File growingFile = new File(rootDirectory, helloFile.getName() + ".tmp");
         try (Writer w = new FileWriter(growingFile)) {
             w.write(helloMsg);
         } catch (IOException e) {

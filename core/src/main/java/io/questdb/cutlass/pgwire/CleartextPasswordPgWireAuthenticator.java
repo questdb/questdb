@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.pgwire;
 
-
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
@@ -43,6 +42,8 @@ import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.cutlass.pgwire.PGConnectionContext.dumpBuffer;
+
 public class CleartextPasswordPgWireAuthenticator implements Authenticator {
     public static final char STATUS_IDLE = 'I';
     private static final int INIT_CANCEL_REQUEST = 80877102;
@@ -58,6 +59,7 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
     private final CharacterStore characterStore;
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private final int circuitBreakerId;
+    private final boolean dumpNetworkTraffic;
     private final DirectUtf8String dus = new DirectUtf8String();
     private final boolean matcherOwned;
     private final OptionsListener optionsListener;
@@ -97,6 +99,7 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
         this.serverVersion = configuration.getServerVersion();
         this.circuitBreaker = circuitBreaker;
         this.optionsListener = optionsListener;
+        this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
     }
 
     @Override
@@ -273,6 +276,8 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
     private void prepareBackendKeyData(ResponseSink responseSink) {
         responseSink.put('K');
         responseSink.putInt(Integer.BYTES * 3); // length of this message
+
+        // the below 8 bytes will not match when dumping PG traffic!
         responseSink.putInt(circuitBreakerId);
         responseSink.putInt(circuitBreaker.getSecret());
     }
@@ -462,6 +467,7 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
 
     private int readFromSocket() {
         int bytesRead = socket.recv(recvBufWritePos, (int) (recvBufEnd - recvBufWritePos));
+        dumpBuffer('>', recvBufWritePos, bytesRead, dumpNetworkTraffic);
         if (bytesRead < 0) {
             return Authenticator.NEEDS_DISCONNECT;
         }
@@ -472,6 +478,7 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
     private int writeToSocketAndAdvance(State nextState) {
         int toWrite = (int) (sendBufWritePos - sendBufReadPos);
         int n = socket.send(sendBufReadPos, toWrite);
+        dumpBuffer('<', sendBufReadPos, n, dumpNetworkTraffic);
         if (n < 0) {
             return Authenticator.NEEDS_DISCONNECT;
         }
