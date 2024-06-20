@@ -428,10 +428,10 @@ public final class Timestamps {
     public static long floorWW(long micros, int stride, long offset) {
         long numWeeksToAdd = getWeeksBetween(offset, micros);
         long modulo = numWeeksToAdd % stride;
-        if (numWeeksToAdd < 0) {
+        if (numWeeksToAdd < 1) {
             return offset;
         } else {
-            return offset + (numWeeksToAdd - modulo);
+            return addWeeks(offset, (int) (numWeeksToAdd - modulo));
         }
     }
 
