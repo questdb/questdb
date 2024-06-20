@@ -41,8 +41,6 @@ public interface FactoryProvider extends QuietCloseable {
     @NotNull
     HttpAuthenticatorFactory getHttpAuthenticatorFactory();
 
-    PgWireAuthenticatorFactory getPgWireAuthenticatorFactory();
-
     @NotNull
     HttpCookieHandler getHttpCookieHandler();
 
@@ -63,6 +61,9 @@ public interface FactoryProvider extends QuietCloseable {
 
     @NotNull
     SocketFactory getPGWireSocketFactory();
+
+    @NotNull
+    PgWireAuthenticatorFactory getPgWireAuthenticatorFactory();
 
     @NotNull
     default RejectProcessorFactory getRejectProcessorFactory() {
