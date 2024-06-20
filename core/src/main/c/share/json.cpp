@@ -24,7 +24,8 @@
 
 #include <jni.h>
 #include <simdjson.h>
-#include <utility>
+#include <limits>
+#include <cmath>
 #include "byte_sink.h"
 
 static_assert(
@@ -152,14 +153,14 @@ struct logical_null<jdouble> {
 
 using json_value = simdjson::simdjson_result<simdjson::ondemand::value>;
 
-auto get_int64(simdjson::ondemand::json_type ty, json_value& res) {
+auto get_int64(simdjson::ondemand::json_type ty, json_value &res) {
     if (ty == simdjson::ondemand::json_type::string) {
         return res.get_int64_in_string();
     }
     return res.get_int64();
 }
 
-auto get_double(simdjson::ondemand::json_type ty, json_value& res) {
+auto get_double(simdjson::ondemand::json_type ty, json_value &res) {
     if (ty == simdjson::ondemand::json_type::string) {
         return res.get_double_in_string();
     }
@@ -253,7 +254,7 @@ Java_io_questdb_std_json_JsonParser_queryPointer(
         json_result *result,
         questdb_byte_sink_t *dest_sink,
         int32_t max_size,
-        const char* default_chars,
+        const char *default_chars,
         size_t default_len
 ) {
     value_at_pointer(
@@ -307,7 +308,7 @@ Java_io_questdb_std_json_JsonParser_queryPointerString(
         json_result *result,
         questdb_byte_sink_t *dest_sink,
         int32_t max_size,
-        const char* default_chars,
+        const char *default_chars,
         size_t default_len
 ) {
     value_at_pointer(
