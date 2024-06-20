@@ -23,7 +23,6 @@
  ******************************************************************************/
 
 #include <jni.h>
-#define SIMDJSON_THREADS_ENABLED 0
 #include <simdjson.h>
 #include <limits>
 #include <cmath>

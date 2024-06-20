@@ -330,8 +330,8 @@ endif (ARCH_AARCH64)
 
 #simdjson
 include(${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/simdjson-cmake/CMakeLists.txt)
-target_compile_definitions(questdb PUBLIC SIMDJSON_THREADS_ENABLED=0)
-target_compile_definitions(_simdjson PUBLIC SIMDJSON_THREADS_ENABLED=0)
+target_compile_definitions(questdb PUBLIC SIMDJSON_ENABLE_THREADS=OFF)
+target_compile_definitions(_simdjson PUBLIC SIMDJSON_ENABLE_THREADS=OFF)
 
 if (OS_WINDOWS)
     target_link_libraries(questdb wsock32 ws2_32 secur32 shlwapi psapi -s -static-libgcc _simdjson)
