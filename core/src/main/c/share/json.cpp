@@ -23,6 +23,11 @@
  ******************************************************************************/
 
 #include <jni.h>
+
+#if defined(SIMDJSON_THREADS_ENABLED)
+#error "SIMDJSON_THREADS_ENABLED must not be defined"
+#endif
+
 #include <simdjson.h>
 #include <limits>
 #include <cmath>
