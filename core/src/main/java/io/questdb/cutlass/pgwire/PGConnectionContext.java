@@ -1433,7 +1433,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 throw PeerDisconnectedException.INSTANCE;
             }
 
-            dumpBuffer('<', sendBuffer + offset, m);
+            dumpBuffer('<', sendBuffer + offset, m, dumpNetworkTraffic);
 
             remaining -= m;
             offset += m;
@@ -1448,13 +1448,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             bufferRemainingOffset = offset;
             bufferRemainingSize = remaining;
             throw PeerIsSlowToReadException.INSTANCE;
-        }
-    }
-
-    private void dumpBuffer(char direction, long buffer, int len) {
-        if (dumpNetworkTraffic && len > 0) {
-            StdoutSink.INSTANCE.put(direction);
-            Net.dump(buffer, len);
         }
     }
 
@@ -2330,7 +2323,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         if (sendParameterDescription && n > 0 && activeBindVariableTypes.size() == 0) {
             activeBindVariableTypes.setPos(n);
             for (int i = 0; i < n; i++) {
-                activeBindVariableTypes.setQuick(i, Numbers.bswap(PGOids.getTypeOid(bindVariableService.getFunction(i).getType())));
+                final Function f = bindVariableService.getFunction(i);
+                activeBindVariableTypes.setQuick(i, Numbers.bswap(PGOids.getTypeOid(
+                        f != null ? f.getType() : ColumnType.UNDEFINED
+                )));
             }
         }
         if (isPortal) {
@@ -2793,16 +2789,23 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
+    static void dumpBuffer(char direction, long buffer, int len, boolean dumpNetworkTraffic) {
+        if (dumpNetworkTraffic && len > 0) {
+            StdoutSink.INSTANCE.put(direction);
+            Net.dump(buffer, len);
+        }
+    }
+
     int doReceive(int remaining) {
         final long data = recvBuffer + recvBufferWriteOffset;
         final int n = socket.recv(data, remaining);
-        dumpBuffer('>', data, n);
+        dumpBuffer('>', data, n, dumpNetworkTraffic);
         return n;
     }
 
     void doSend(int offset, int size) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final int n = socket.send(sendBuffer + offset, Math.min(size, forceSendFragmentationChunkSize));
-        dumpBuffer('<', sendBuffer + offset, n);
+        dumpBuffer('<', sendBuffer + offset, n, dumpNetworkTraffic);
         if (n < 0) {
             throw PeerDisconnectedException.INSTANCE;
         }
