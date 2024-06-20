@@ -9857,6 +9857,124 @@ create table tab as (
         });
     }
 
+    /*
+        package main
+        
+        import (
+            "database/sql"
+            "fmt"
+            "math"
+            "time"
+        
+            _ "github.com/lib/pq"
+        )
+        
+        const (
+            host     = "localhost"
+            port     = 8812
+            user     = "admin"
+            password = "quest"
+            dbname   = "qdb"
+        )
+        
+        func main() {
+            connStr := fmt.Sprintf(
+                "host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
+                host, port, user, password, dbname)
+            db, err := sql.Open("postgres", connStr)
+            checkErr(err)
+            defer db.Close()
+        
+            date, err := time.ParseInLocation("2006-01-02T15:04:05.999", "2022-01-12T12:01:01.120", time.UTC)
+            checkErr(err)
+            timestamp, err := time.ParseInLocation("2006-01-02T15:04:05.999999", "2020-02-13T10:11:12.123450", time.UTC)
+            checkErr(err)
+        
+            stmt, err := db.Prepare("INSERT INTO all_types values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, " +
+                "cast($13 as geohash(1c)), cast($14 as geohash(2c)) , cast($15  as geohash(4c)), cast($16 as geohash(8c)), $17, $18, cast('' || $19 as long256), $20)")
+            checkErr(err)
+            defer stmt.Close()
+        
+            var data = [][]interface{}{
+                {bool(false), int16(0), int16(0), nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, timestamp},
+                {bool(true), int16(1), int16(1), mkstring("a"), mkint32(4), mkint64(5), &date, &timestamp, mkfloat32(12.345), mkfloat64(1.0234567890123),
+                    mkstring("string"), mkstring("symbol"), mkstring("r"), mkstring("rj"), mkstring("rjtw"), mkstring("rjtwedd0"), mkstring("1.2.3.4"),
+                    mkstring("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"), mkstring("0x5dd94b8492b4be20632d0236ddb8f47c91efc2568b4d452847b4a645dbe4871a"), &timestamp},
+                {bool(true), int16(math.MaxInt8), int16(math.MaxInt16), mkstring("z"), mkint32(math.MaxInt32), mkint64(math.MaxInt64), &date, mktimestamp("1970-01-01T00:00:00.000000"),
+                    mkfloat32(math.MaxFloat32), mkfloat64(math.MaxFloat64), mkstring("XXX"), mkstring(" "), mkstring("e"), mkstring("ee"), mkstring("eeee"), mkstring("eeeeeeee"),
+                    mkstring("255.255.255.255"), mkstring("a0eebc99-ffff-ffff-ffff-ffffffffffff"), mkstring("0x5dd94b8492b4be20632d0236ddb8f47c91efc2568b4d452847b4a645dbefffff"), mktimestamp("2020-03-31T00:00:00.987654")}}
+        
+            for i := 0; i < len(data); i++ {
+                _, err = stmt.Exec(data[i]...)
+                checkErr(err)
+            }
+        }
+        
+        func checkErr(err error) {
+            if err != nil {
+                panic(err)
+            }
+        }
+        
+        func mktimestamp(s string) *time.Time {
+            timestamp, err := time.ParseInLocation("2006-01-02T15:04:05.999999", s, time.UTC)
+            checkErr(err)
+            return &timestamp
+        }
+        
+        func mkstring(s string) *string {
+            return &s
+        }
+        func mkfloat32(f float32) *float32 {
+            return &f
+        }
+        func mkfloat64(f float64) *float64 {
+            return &f
+        }
+        func mkint32(i int32) *int32 {
+            return &i
+        }
+        func mkint64(i int64) *int64 {
+            return &i
+        }
+        
+        ----------------------------
+        require (
+            github.com/lib/pq v1.10.9 // indirect
+        )
+     */
+    @Test
+    public void testVarargBindVariables() throws Exception {
+        skipOnWalRun();
+        engine.ddl("CREATE TABLE all_types (" +
+                "bool boolean,  byte_ byte,  short_ short,  char_ char,  int_ int,  long_ long,  date_ date, " +
+                "tstmp timestamp,   float_ float,  double_ double,  str string,  sym symbol, " +
+                "ge1 geohash(1c),  ge2 geohash(2c),  ge4 geohash(4c),  ge8 geohash(8c)," +
+                " ip ipv4,   uuid_ uuid,  l256 long256," +
+                " ts timestamp) TIMESTAMP(ts) PARTITION BY YEAR BYPASS WAL", sqlExecutionContext);
+
+        final String script =
+                ">0000005e00030000757365720061646d696e00636c69656e745f656e636f64696e6700555446380064617461626173650071646200646174657374796c650049534f2c204d44590065787472615f666c6f61745f64696769747300320000\n" +
+                        "<520000000800000003\n" +
+                        ">700000000a717565737400\n" +
+                        "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549\n" +
+                        ">50000000ee3100494e5345525420494e544f20616c6c5f74797065732076616c756573202824312c2024322c2024332c2024342c2024352c2024362c2024372c2024382c2024392c202431302c202431312c202431322c2063617374282431332061732067656f6861736828316329292c2063617374282431342061732067656f686173682832632929202c206361737428243135202061732067656f6861736828346329292c2063617374282431362061732067656f6861736828386329292c202431372c202431382c2063617374282727207c7c20243139206173206c6f6e67323536292c202432302900000044000000075331005300000004\n" +
+                        "<3100000004740000005600140000001000000015000000150000001200000017000000140000045a0000045a000002bc000002bd0000041300000413000004130000041300000413000004130000041300000b86000000000000045a6e000000045a0000000549\n" +
+                        ">420000007e003100000000140000000566616c736500000001300000000130ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000001a323032302d30322d31332031303a31313a31322e31323334355a0000450000000900000000005300000004\n" +
+                        "<3200000004430000000f494e5345525420302031005a0000000549\n" +
+                        ">420000015a0031000000001400000004747275650000000131000000013100000001610000000134000000013500000017323032322d30312d31322031323a30313a30312e31325a0000001a323032302d30322d31332031303a31313a31322e31323334355a0000001231322e3334353030303236373032383830390000000f312e3032333435363738393031323300000006737472696e670000000673796d626f6c000000017200000002726a00000004726a747700000008726a74776564643000000007312e322e332e340000002461306565626339392d396330622d346566382d626236642d366262396264333830613131000000423078356464393462383439326234626532303633326430323336646462386634376339316566633235363862346434353238343762346136343564626534383731610000001a323032302d30322d31332031303a31313a31322e31323334355a0000450000000900000000005300000004\n" +
+                        "<3200000004430000000f494e5345525420302031005a0000000549\n" +
+                        ">42000002b100310000000014000000047472756500000003313237000000053332373637000000017a0000000a32313437343833363437000000133932323333373230333638353437373538303700000017323032322d30312d31322031323a30313a30312e31325a00000014313937302d30312d30312030303a30303a30305a0000002733343032383233343636333835323838363030303030303030303030303030303030303030303000000135313739373639333133343836323331353730303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030000000035858580000000120000000016500000002656500000004656565650000000865656565656565650000000f3235352e3235352e3235352e3235350000002461306565626339392d666666662d666666662d666666662d666666666666666666666666000000423078356464393462383439326234626532303633326430323336646462386634376339316566633235363862346434353238343762346136343564626566666666660000001b323032302d30332d33312030303a30303a30302e3938373635345a0000450000000900000000005300000004\n" +
+                        "<3200000004430000000f494e5345525420302031005a0000000549\n" +
+                        ">43000000075331005300000004\n" +
+                        "<33000000045a0000000549\n" +
+                        ">5800000004\n";
+
+        assertHexScript(
+                NetworkFacadeImpl.INSTANCE, script, new Port0PGWireConfiguration()
+        );
+    }
+
     @Test
     public void testVarchar() throws Exception {
         skipOnWalRun();

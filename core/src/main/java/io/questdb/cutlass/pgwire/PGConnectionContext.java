@@ -2329,7 +2329,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         if (sendParameterDescription && n > 0 && activeBindVariableTypes.size() == 0) {
             activeBindVariableTypes.setPos(n);
             for (int i = 0; i < n; i++) {
-                activeBindVariableTypes.setQuick(i, Numbers.bswap(PGOids.getTypeOid(bindVariableService.getFunction(i).getType())));
+                final Function f = bindVariableService.getFunction(i);
+                activeBindVariableTypes.setQuick(i, Numbers.bswap(PGOids.getTypeOid(
+                        f != null ? f.getType() : ColumnType.UNDEFINED
+                )));
             }
         }
         if (isPortal) {
