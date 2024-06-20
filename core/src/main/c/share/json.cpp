@@ -22,11 +22,7 @@
  *
  ******************************************************************************/
 
-// Importing "thread" before "simdjson" since it uses threading functions without including <thread>
-// This is a Windows build work-around.
-
 #include <jni.h>
-#include <thread>
 #include <simdjson.h>
 #include <limits>
 #include <cmath>
