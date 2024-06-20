@@ -37,31 +37,45 @@
         <maven.javadoc.skip>true</maven.javadoc.skip>
         <maven.compiler.source>1.8</maven.compiler.source>
         <maven.compiler.target>1.8</maven.compiler.target>
-        <test.exclude>None</test.exclude>
-        <test.include>%regex[.*[^o].class]</test.include><!-- exclude module-info.class-->
+        <junit.version>4.13.2</junit.version>
+        <gson.version>2.9.1</gson.version>
+        <questdb.version>${project.version}</questdb.version>
+        <postgresql.version>42.5.4</postgresql.version>
+        <maven.shade.plugin.version>3.2.1</maven.shade.plugin.version>
+        <maven.clean.plugin.version>3.2.0</maven.clean.plugin.version>
+        <maven.deploy.plugin.version>2.8.2</maven.deploy.plugin.version>
+        <maven.install.plugin.version>2.5.1</maven.install.plugin.version>
+        <maven.jar.plugin.version>3.0.1</maven.jar.plugin.version>
+        <maven.javadoc.plugin.version>3.5.0</maven.javadoc.plugin.version>
+        <maven.resources.plugin.version>2.6</maven.resources.plugin.version>
+        <maven.source.plugin.version>3.0.1</maven.source.plugin.version>
+        <maven.surefire.plugin.version>2.17</maven.surefire.plugin.version>
+        <maven.compiler.plugin.version>3.8.1</maven.compiler.plugin.version>
+        <questdb.artifactid>questdb</questdb.artifactid>
+        <jdk.version>8</jdk.version>
     </properties>
 
     <dependencies>
         <dependency>
             <groupId>junit</groupId>
             <artifactId>junit</artifactId>
-            <version>4.13.2</version>
+            <version>${junit.version}</version>
             <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>com.google.code.gson</groupId>
             <artifactId>gson</artifactId>
-            <version>2.9.1</version>
+            <version>${gson.version}</version>
         </dependency>
         <dependency>
             <groupId>org.questdb</groupId>
-            <artifactId>questdb</artifactId>
-            <version>${project.version}</version>
+            <artifactId>${questdb.artifactid}</artifactId>
+            <version>${questdb.version}</version>
         </dependency>
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
-            <version>42.5.4</version>
+            <version>${postgresql.version}</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
@@ -71,98 +85,9 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
-                <version>3.2.1</version>
+                <version>${maven.shade.plugin.version}</version>
                 <executions>
                     <execution>
                         <phase>package</phase>
                         <goals>
-                            <goal>shade</goal>
-                        </goals>
-                    </execution>
-                </executions>
-            </plugin>
-        </plugins>
-        <pluginManagement>
-            <plugins>
-                <plugin>
-                    <artifactId>maven-clean-plugin</artifactId>
-                    <version>3.2.0</version>
-                </plugin>
-                <plugin>
-                    <artifactId>maven-deploy-plugin</artifactId>
-                    <version>2.8.2</version>
-                </plugin>
-                <plugin>
-                    <artifactId>maven-install-plugin</artifactId>
-                    <version>2.5.1</version>
-                </plugin>
-                <plugin>
-                    <artifactId>maven-jar-plugin</artifactId>
-                    <version>3.0.1</version>
-                </plugin>
-                <plugin>
-                    <artifactId>maven-javadoc-plugin</artifactId>
-                    <version>3.5.0</version>
-                </plugin>
-                <plugin>
-                    <artifactId>maven-resources-plugin</artifactId>
-                    <version>2.6</version>
-                </plugin>
-                <plugin>
-                    <artifactId>maven-source-plugin</artifactId>
-                    <version>3.0.1</version>
-                </plugin>
-                <plugin>
-                    <artifactId>maven-surefire-plugin</artifactId>
-                    <version>2.17</version>
-                    <configuration>
-                        <includes>
-                            <include>${test.include}</include>
-                        </includes>
-                        <excludes>
-                            <exclude>${test.exclude}</exclude>
-                        </excludes>
-                    </configuration>
-                </plugin>
-                <plugin>
-                    <artifactId>maven-compiler-plugin</artifactId>
-                    <version>3.8.1</version>
-                </plugin>
-            </plugins>
-        </pluginManagement>
-    </build>
-
-    <profiles>
-        <profile>
-            <id>java8</id>
-            <properties>
-                <jdk.version>8</jdk.version>
-                <java.enforce.version>1.8.0_242</java.enforce.version>
-                <questdb.artifactid>questdb-jdk8</questdb.artifactid>
-                <javac.compile.source>1.8</javac.compile.source>
-                <javac.compile.target>1.8</javac.compile.target>
-            </properties>
-            <activation>
-                <jdk>(,1.8]</jdk>
-            </activation>
-
-            <dependencies>
-                <dependency>
-                    <groupId>org.jetbrains</groupId>
-                    <artifactId>annotations</artifactId>
-                    <version>16.0.2</version>
-                    <scope>provided</scope>
-                </dependency>
-            </dependencies>
-        </profile>
-        <profile>
-            <id>java11+</id>
-            <properties>
-                <questdb.artifactid>questdb</questdb.artifactid>
-            </properties>
-            <activation>
-                <jdk>(1.8,)</jdk>
-            </activation>
-        </profile>
-    </profiles>
-</project>
+                            <goal>
