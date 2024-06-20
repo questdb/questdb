@@ -3818,15 +3818,25 @@ public class SqlOptimiser implements Mutable {
      * SELECT timestamp from (SELECT timestamp from table_name) limit 1
      * This disables invoking group by workers
      */
-    private QueryModel rewriteGroupByForFirstLastMaxMinAggregateFunctions(QueryModel parent) {
+    private void rewriteGroupByForFirstLastMaxMinAggregateFunctions(QueryModel parent) {
         //base condition to stop recursion
         if (parent == null)
-            return parent;
+            return;
 
-        QueryModel modifiedNestedModel = parent.getNestedModel();
-        if (parent.getNestedModel() != null) {
+        final QueryModel union = parent.getUnionModel();
+        if (union != null) {
+            rewriteGroupByForFirstLastMaxMinAggregateFunctions(union);
+        }
+
+        QueryModel nestedModel = parent.getNestedModel();
+        if (nestedModel != null
+                && nestedModel.getJoinModels().size() == 1
+                && nestedModel.getNestedModel() == null
+                && nestedModel.getTableName() != null
+                && parent.getSampleBy() == null
+                && parent.getGroupBy().size() == 0
+        ) {
             ObjList<QueryColumn> queryColumns = parent.getBottomUpColumns();
-            QueryModel nestedModel = parent.getNestedModel();
             CharSequence designatedTimestampColumn = null;
 
             /**if FIRST/LAST/min/max(column) does not contain designated-timestamp column
@@ -3836,7 +3846,7 @@ public class SqlOptimiser implements Mutable {
              */
             if (nestedModel.getTimestamp() == null || queryColumns.size() > 1) {
                 rewriteGroupByForFirstLastMaxMinAggregateFunctions(nestedModel);
-                return parent;
+                return;
             }
 
             //get designated timestamp column name
@@ -3877,16 +3887,16 @@ public class SqlOptimiser implements Mutable {
                 QueryModel newNestedModel = queryModelPool.next();
                 ExpressionNode lowerLimitNode = expressionNodePool.next();
                 lowerLimitNode.token = "1";
-                lowerLimitNode.type = 2;
+                lowerLimitNode.type = CONSTANT;
                 parent.setLimit(lowerLimitNode, null);
 
                 //change model type to select-choose
-                parent.setSelectModelType(1);
+                parent.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
 
                 //change ast params
                 ast.token = rhs;
                 ast.paramCount = 0;
-                ast.type = 4;
+                ast.type = LITERAL;
 
                 ExpressionNode newTimestampNode = expressionNodePool.next();
                 newTimestampNode.token = designatedTimestampColumn.toString();
@@ -3901,24 +3911,19 @@ public class SqlOptimiser implements Mutable {
                 newNestedModel.setTimestamp(nestedModel.getTimestamp());
                 newNestedModel.copyColumnsFrom(nestedModel, queryColumnPool, expressionNodePool);
                 parent.setNestedModel(newNestedModel);
-                modifiedNestedModel = newNestedModel;
+                return;
             }
+
         }
 
-        final QueryModel union = parent.getUnionModel();
-        if (union != null) {
-            QueryModel modifiedUnionModel = rewriteGroupByForFirstLastMaxMinAggregateFunctions(union);
-            parent.setUnionModel(modifiedUnionModel);
-        }
+        if (nestedModel != null)
+            rewriteGroupByForFirstLastMaxMinAggregateFunctions(nestedModel);
 
         ObjList<QueryModel> joinModels = parent.getJoinModels();
         for (int i = 1, n = joinModels.size(); i < n; i++) {
-            QueryModel modifiedJoinModel = rewriteGroupByForFirstLastMaxMinAggregateFunctions(joinModels.getQuick(i));
-            joinModels.set(i, modifiedJoinModel);
+            rewriteGroupByForFirstLastMaxMinAggregateFunctions(joinModels.getQuick(i));
         }
 
-        rewriteGroupByForFirstLastMaxMinAggregateFunctions(modifiedNestedModel);
-        return parent;
     }
 
     /**
@@ -5816,7 +5821,7 @@ public class SqlOptimiser implements Mutable {
             enumerateTableColumns(rewrittenModel, sqlExecutionContext, sqlParserCallback);
             rewriteTopLevelLiteralsToFunctions(rewrittenModel);
             rewrittenModel = rewriteSampleBy(rewrittenModel);
-            rewrittenModel = rewriteGroupByForFirstLastMaxMinAggregateFunctions(rewrittenModel);
+            rewriteGroupByForFirstLastMaxMinAggregateFunctions(rewrittenModel);
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
             resolveJoinColumns(rewrittenModel);
             optimiseBooleanNot(rewrittenModel);

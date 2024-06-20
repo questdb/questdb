@@ -552,6 +552,47 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testQueryPlanForNestedUnionQueryOnForMinMaxFirstLastOnAggregateTimestampColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y ( x int, ts timestamp) timestamp(ts);");
+            final String query = "select * from (select FIRST(ts) from y union select LAST(ts) from y union select min(ts) from y  " +
+                    "union select max(ts) from y)";
+            final QueryModel model = compileModel(query);
+            TestUtils.assertEquals("select-choose FIRST from (select-choose [ts FIRST] ts FIRST from (select" +
+                    " [ts] from y timestamp (ts)) limit 1 union select-choose [ts LAST] ts LAST from (select " +
+                    "[ts] from y timestamp (ts)) order by LAST desc limit 1 union select-choose [ts min] ts min " +
+                    "from (select [ts] from y timestamp (ts)) limit 1 union select-choose [ts max] ts max from " +
+                    "(select [ts] from y timestamp (ts)) order by max desc limit 1)", model.toString0());
+            assertPlanNoLeakCheck(
+                    query,
+                    "Union\n" +
+                            "    Union\n" +
+                            "        Union\n" +
+                            "            Limit lo: 1\n" +
+                            "                SelectedRecord\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: y\n" +
+                            "            Limit lo: 1\n" +
+                            "                SelectedRecord\n" +
+                            "                    DataFrame\n" +
+                            "                        Row backward scan\n" +
+                            "                        Frame backward scan on: y\n" +
+                            "        Limit lo: 1\n" +
+                            "            SelectedRecord\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: y\n" +
+                            "    Limit lo: 1\n" +
+                            "        SelectedRecord\n" +
+                            "            DataFrame\n" +
+                            "                Row backward scan\n" +
+                            "                Frame backward scan on: y\n");
+
+        });
+    }
+
+    @Test
     public void testQueryPlanForJoinAndUnionQueryWithJoinOnDesignatedTimestampColumnWithLastFunction() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table y ( x int, ts timestamp) timestamp(ts);");
