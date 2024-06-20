@@ -380,8 +380,13 @@ final class TimestampFloorFunctions {
 
         @Override
         public long floor(long timestamp) {
-            return Timestamps.floorWW(timestamp, stride, offset);
+            if (offset == 0) {
+                return Timestamps.floorWW(timestamp, stride);
+            } else {
+                return Timestamps.floorWW(timestamp, stride, offset);
+            }
         }
+
 
         @Override
         CharSequence getUnit() {
