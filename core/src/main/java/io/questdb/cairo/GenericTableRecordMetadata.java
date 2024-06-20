@@ -52,8 +52,7 @@ public class GenericTableRecordMetadata extends GenericRecordMetadata implements
             int indexValueBlockCapacity,
             boolean symbolTableStatic,
             int writerIndex,
-            boolean isDedupKey,
-            int order
+            boolean isDedupKey
     ) {
         if (columnType > -1L) {
             add(

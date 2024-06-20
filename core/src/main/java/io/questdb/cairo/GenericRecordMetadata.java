@@ -122,18 +122,6 @@ public class GenericRecordMetadata extends AbstractRecordMetadata {
         throw CairoException.duplicateColumn(meta.getName());
     }
 
-    public GenericRecordMetadata insert(int i, TableColumnMetadata meta) {
-        int name_map_index = columnNameIndexMap.keyIndex(meta.getName());
-        if (name_map_index > -1) {
-            columnNameIndexMap.putAt(name_map_index, meta.getName(), i);
-
-            columnMetadata.insert(i, 1, meta);
-            columnCount++;
-            return this;
-        }
-        throw CairoException.duplicateColumn(meta.getName());
-    }
-
     public void setTimestampIndex(int index) {
         this.timestampIndex = index;
     }

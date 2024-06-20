@@ -100,8 +100,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
             int indexValueBlockCapacity,
             boolean symbolTableStatic,
             int writerIndex,
-            boolean isDedupKey,
-            int order
+            boolean isDedupKey
     ) {
         addColumn0(columnName, columnType);
     }
