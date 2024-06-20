@@ -87,13 +87,11 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
      */
     public void copyToColumnChunks(PageAddressCacheRecord record, PageFrameReduceTask task) {
         final DirectLongList rows = task.getFilteredRows();
-        final ObjList<MemoryCARW> columnChunks = task.getColumnChunks();
-        columnChunks.clear();
-
         if (rows.size() == 0) {
             return;
         }
 
+        final ObjList<MemoryCARW> columnChunks = task.getColumnChunks();
         for (int i = 0; i < columnTypes.size(); i++) {
             final int columnType = columnTypes.getQuick(i);
 
