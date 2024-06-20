@@ -62,43 +62,43 @@ public class DynamicUsernamePasswordMatcher implements UsernamePasswordMatcher, 
 
     @Override
     public void close() {
-        Misc.free(this.defaultPassword);
-        Misc.free(this.readOnlyPassword);
+        Misc.free(defaultPassword);
+        Misc.free(readOnlyPassword);
     }
 
     @Override
     public boolean verifyPassword(CharSequence username, long passwordPtr, int passwordLen) {
-        if (this.serverConfiguration != null && this.serverConfiguration.getPGWireConfiguration() != this.pgwireConfiguration) {
+        if (serverConfiguration != null && serverConfiguration.getPGWireConfiguration() != pgwireConfiguration) {
 
-            if (this.lock.writeLock().tryLock()) {
+            if (lock.writeLock().tryLock()) {
                 try {
                     // Update the cached pgwire config
-                    this.pgwireConfiguration = this.serverConfiguration.getPGWireConfiguration();
+                    pgwireConfiguration = serverConfiguration.getPGWireConfiguration();
                     // Update the default and readonly user password sinks
-                    this.defaultPassword.clear();
-                    this.defaultPassword.put(this.pgwireConfiguration.getDefaultPassword());
-                    this.readOnlyPassword.clear();
-                    this.readOnlyPassword.put(this.pgwireConfiguration.getReadOnlyPassword());
+                    defaultPassword.clear();
+                    defaultPassword.put(pgwireConfiguration.getDefaultPassword());
+                    readOnlyPassword.clear();
+                    readOnlyPassword.put(pgwireConfiguration.getReadOnlyPassword());
                 } finally {
-                    this.lock.writeLock().unlock();
+                    lock.writeLock().unlock();
                 }
             }
         }
 
-        this.lock.readLock().lock();
+        lock.readLock().lock();
         try {
             if (username.length() == 0) {
                 return false;
             }
-            if (Chars.equals(username, this.pgwireConfiguration.getDefaultUsername())) {
+            if (Chars.equals(username, pgwireConfiguration.getDefaultUsername())) {
                 return Utf8s.equals(defaultPassword, passwordPtr, passwordLen);
-            } else if (this.pgwireConfiguration.isReadOnlyUserEnabled() && Chars.equals(username, this.pgwireConfiguration.getReadOnlyUsername())) {
+            } else if (pgwireConfiguration.isReadOnlyUserEnabled() && Chars.equals(username, pgwireConfiguration.getReadOnlyUsername())) {
                 return Utf8s.equals(readOnlyPassword, passwordPtr, passwordLen);
             } else {
                 return false;
             }
         } finally {
-            this.lock.readLock().unlock();
+            lock.readLock().unlock();
         }
     }
 }
