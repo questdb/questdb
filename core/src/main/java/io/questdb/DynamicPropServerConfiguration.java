@@ -50,11 +50,23 @@ import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 
 
 public class DynamicPropServerConfiguration implements DynamicServerConfiguration {
 
+    private static final Function<String, ? extends ConfigPropertyKey> KEY_RESOLVER = (k) -> {
+        Optional<PropertyKey> prop = PropertyKey.getByString(k);
+        return prop.orElse(null);
+    };
     private static final Log LOG = LogFactory.getLog(DynamicPropServerConfiguration.class);
+    private static final Set<PropertyKey> RELOADABLE_PROPS = new HashSet<>(Arrays.asList(
+            PropertyKey.PG_USER,
+            PropertyKey.PG_PASSWORD,
+            PropertyKey.PG_RO_USER_ENABLED,
+            PropertyKey.PG_RO_USER,
+            PropertyKey.PG_RO_PASSWORD
+    ));
     private final BuildInformation buildInformation;
     private final java.nio.file.Path confPath;
     private final boolean configReloadEnabled;
@@ -66,13 +78,6 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
     private final Log log;
     private final MicrosecondClock microsecondClock;
     private final Properties properties;
-    private final Set<PropertyKey> reloadableProps = new HashSet<>(Arrays.asList(
-            PropertyKey.PG_USER,
-            PropertyKey.PG_PASSWORD,
-            PropertyKey.PG_RO_USER_ENABLED,
-            PropertyKey.PG_RO_USER,
-            PropertyKey.PG_RO_PASSWORD
-    ));
     private final String root;
     private Runnable afterConfigReloaded;
     private long lastModified;
@@ -191,6 +196,58 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
         this.afterConfigReloaded = afterConfigFileChanged;
     }
 
+    public static boolean updateSupportedProperties(
+            Properties oldProperties,
+            Properties newProperties,
+            Set<? extends ConfigPropertyKey> reloadableProps,
+            Function<String, ? extends ConfigPropertyKey> keyResolver,
+            Log log
+    ) {
+        if (newProperties.equals(oldProperties)) {
+            return false;
+        }
+
+        // Compare the new and existing properties
+        AtomicBoolean changed = new AtomicBoolean(false);
+        newProperties.forEach((k, v) -> {
+            String key = (String) k;
+            String oldVal = oldProperties.getProperty(key);
+            if (oldVal == null || !oldVal.equals(v)) {
+                ConfigPropertyKey config = keyResolver.apply(key);
+                if (config == null) {
+                    return;
+                }
+
+                if (reloadableProps.contains(config)) {
+                    log.info().$("loaded new value of ").$(k).$();
+                    oldProperties.setProperty(key, (String) v);
+                    changed.set(true);
+                } else {
+                    log.advisory().$("property ").$(k).$(" was modified in the config file but cannot be reloaded. ignoring new value").$();
+                }
+            }
+        });
+
+
+        // Check for any old reloadable properties that have been removed in the new config
+        oldProperties.forEach((k, v) -> {
+            if (!newProperties.containsKey(k)) {
+                ConfigPropertyKey prop = keyResolver.apply((String) k);
+                if (prop == null) {
+                    return;
+                }
+                if (reloadableProps.contains(prop)) {
+                    log.info().$("removed property ").$(k).$();
+                    oldProperties.remove(k);
+                    changed.set(true);
+                } else {
+                    log.advisory().$("property ").$(k).$(" was removed from the config file but cannot be reloaded. ignoring").$();
+                }
+            }
+        });
+        return changed.get();
+    }
+
     @Override
     public CairoConfiguration getCairoConfiguration() {
         return delegate.get().getCairoConfiguration();
@@ -261,7 +318,6 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
         return configReloadEnabled;
     }
 
-
     @Override
     public void onFileEvent() {
         try (Path p = new Path()) {
@@ -282,7 +338,7 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
                     return;
                 }
 
-                if (updateSupportedProperties(properties, newProperties, reloadableProps)) {
+                if (updateSupportedProperties(properties, newProperties, RELOADABLE_PROPS, KEY_RESOLVER, LOG)) {
                     reload(properties);
                     LOG.info().$("config reloaded!").$();
                     if (afterConfigReloaded != null) {
@@ -315,56 +371,6 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
         }
 
         delegate.set(newConfig);
-    }
-
-    private static boolean updateSupportedProperties(
-            Properties oldProperties,
-            Properties newProperties,
-            Set<? extends ConfigPropertyKey> reloadableProps
-    ) {
-        if (newProperties.equals(oldProperties)) {
-            return false;
-        }
-
-        // Compare the new and existing properties
-        AtomicBoolean changed = new AtomicBoolean(false);
-        newProperties.forEach((k, v) -> {
-            String key = (String) k;
-            String oldVal = oldProperties.getProperty(key);
-            if (oldVal == null || !oldVal.equals(v)) {
-                Optional<PropertyKey> prop = PropertyKey.getByString(key);
-                if (!prop.isPresent()) {
-                    return;
-                }
-
-                if (reloadableProps.contains(prop.get())) {
-                    LOG.info().$("loaded new value of ").$(k).$();
-                    oldProperties.setProperty(key, (String) v);
-                    changed.set(true);
-                } else {
-                    LOG.advisory().$("property ").$(k).$(" was modified in the config file but cannot be reloaded. ignoring new value").$();
-                }
-            }
-        });
-
-
-        // Check for any old reloadable properties that have been removed in the new config
-        oldProperties.forEach((k, v) -> {
-            if (!newProperties.containsKey(k)) {
-                Optional<PropertyKey> prop = PropertyKey.getByString((String) k);
-                if (!prop.isPresent()) {
-                    return;
-                }
-                if (reloadableProps.contains(prop.get())) {
-                    LOG.info().$("removed property ").$(k).$();
-                    oldProperties.remove(k);
-                    changed.set(true);
-                } else {
-                    LOG.advisory().$("property ").$(k).$(" was removed from the config file but cannot be reloaded. ignoring").$();
-                }
-            }
-        });
-        return changed.get();
     }
 
 }
