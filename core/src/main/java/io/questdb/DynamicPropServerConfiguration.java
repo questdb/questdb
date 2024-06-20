@@ -121,8 +121,8 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
             // we assume the config file does exist, otherwise we should not
             // get to this code. This constructor is passed properties object,
             // loaded from the same file. We are not expecting races here either.
-            p.of(this.confPath.toString()).$();
-            this.lastModified = Files.getLastModified(p);
+            p.of(confPath.toString()).$();
+            lastModified = Files.getLastModified(p);
         }
         this.configReloadEnabled = serverConfig.isConfigReloadEnabled();
     }
@@ -331,7 +331,7 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
 
                 // Then load the config properties
                 Properties newProperties = new Properties();
-                try (InputStream is = java.nio.file.Files.newInputStream(this.confPath)) {
+                try (InputStream is = java.nio.file.Files.newInputStream(confPath)) {
                     newProperties.load(is);
                 } catch (IOException exc) {
                     LOG.error().$(exc).$();
@@ -346,7 +346,7 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
                     }
                 }
             } else if (newLastModified == -1) {
-                LOG.critical().$("Server configuration file is inaccessible! This is dangerous as server will likely not boot on restart. Make sure the current user can access the configuration file [path=").$(this.confPath).I$();
+                LOG.critical().$("Server configuration file is inaccessible! This is dangerous as server will likely not boot on restart. Make sure the current user can access the configuration file [path=").$(confPath).I$();
             }
         }
     }
@@ -355,18 +355,18 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
         PropServerConfiguration newConfig;
         try {
             newConfig = new PropServerConfiguration(
-                    this.root,
+                    root,
                     properties,
-                    this.env,
-                    this.log,
-                    this.buildInformation,
-                    this.filesFacade,
-                    this.microsecondClock,
-                    this.fpf,
-                    this.loadAdditionalConfigurations
+                    env,
+                    log,
+                    buildInformation,
+                    filesFacade,
+                    microsecondClock,
+                    fpf,
+                    loadAdditionalConfigurations
             );
         } catch (ServerConfigurationException | JsonException e) {
-            this.log.error().$(e);
+            log.error().$(e);
             return;
         }
 
