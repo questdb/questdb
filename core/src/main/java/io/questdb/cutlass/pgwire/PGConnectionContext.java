@@ -892,6 +892,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     appendIPv4Col(record, i);
                     break;
                 case ColumnType.VARCHAR:
+                case BINARY_TYPE_VARCHAR:
                     appendVarcharColumn(record, i);
                     break;
                 case ColumnType.STRING:
