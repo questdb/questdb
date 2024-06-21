@@ -106,7 +106,7 @@ final class TimestampFloorFunctions {
 
         @Override
         public long floor(long timestamp) {
-            return Timestamps.floorDD(timestamp, stride, offset);
+            return offset == 0 ? Timestamps.floorDD(timestamp, stride) : Timestamps.floorDD(timestamp, stride, offset);
         }
 
         @Override
@@ -169,7 +169,7 @@ final class TimestampFloorFunctions {
 
         @Override
         public long floor(long timestamp) {
-            return Timestamps.floorHH(timestamp, stride, offset);
+            return offset == 0 ? Timestamps.floorHH(timestamp, stride) : Timestamps.floorHH(timestamp, stride, offset);
         }
 
         @Override
@@ -227,7 +227,7 @@ final class TimestampFloorFunctions {
 
         @Override
         public long floor(long timestamp) {
-            return Timestamps.floorMI(timestamp, stride, offset);
+            return offset == 0 ? Timestamps.floorMI(timestamp, stride) : Timestamps.floorMI(timestamp, stride, offset);
         }
 
         @Override
@@ -294,7 +294,7 @@ final class TimestampFloorFunctions {
 
         @Override
         public long floor(long timestamp) {
-            return Timestamps.floorMS(timestamp, stride, offset);
+            return offset == 0 ? Timestamps.floorMS(timestamp, stride) : Timestamps.floorMS(timestamp, stride, offset);
         }
 
         @Override
@@ -358,7 +358,7 @@ final class TimestampFloorFunctions {
 
         @Override
         public long floor(long timestamp) {
-            return Timestamps.floorSS(timestamp, stride, offset);
+            return offset == 0 ? Timestamps.floorSS(timestamp, stride) : Timestamps.floorSS(timestamp, stride, offset);
         }
 
         @Override
@@ -385,11 +385,7 @@ final class TimestampFloorFunctions {
 
         @Override
         public long floor(long timestamp) {
-            if (offset == 0) {
-                return Timestamps.floorWW(timestamp, stride);
-            } else {
-                return Timestamps.floorWW(timestamp, stride, offset);
-            }
+            return offset == 0 ? Timestamps.floorWW(timestamp, stride) : Timestamps.floorWW(timestamp, stride, offset);
         }
 
 
@@ -421,7 +417,11 @@ final class TimestampFloorFunctions {
 
         @Override
         public long floor(long timestamp) {
-            return stride > 1 ? Timestamps.floorYYYY(timestamp, stride, offset) : Timestamps.floorYYYY(timestamp, offset);
+            if (offset == 0) {
+                return stride > 1 ? Timestamps.floorYYYY(timestamp, stride) : Timestamps.floorYYYY(timestamp);
+            } else {
+                return stride > 1 ? Timestamps.floorYYYY(timestamp, stride, offset) : Timestamps.floorYYYY(timestamp, offset);
+            }
         }
 
         @Override
