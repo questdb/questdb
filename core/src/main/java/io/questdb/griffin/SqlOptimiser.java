@@ -5200,7 +5200,6 @@ public class SqlOptimiser implements Mutable {
         // check if innerVirtualModel is trivial, e.g, it does not contain any arithmetic
         if (useInnerModel) {
             useInnerModel = false;
-            // hour(column) is the only function key in supported by Rosti, so we need to detect it
             final ObjList<QueryColumn> innerColumns = innerVirtualModel.getBottomUpColumns();
             for (int i = 0, k = innerColumns.size(); i < k; i++) {
                 QueryColumn qc = innerColumns.getQuick(i);
