@@ -191,8 +191,11 @@ public class BwdAsOfJoinTest extends AbstractCairoTest {
             String query = "select * from t2\n" +
                     "asof join t1\n" +
                     "order by ts desc";
-
-            assertException(query, 17, "mismatched ordering of tables in time series join. left: DESC right: ASC");
+            assertQuery("ts\ti\ts\tts1\ti1\ts1\n" +
+                    "2023-10-06T01:00:00.000000Z\t7\th\t2022-10-10T01:01:00.000000Z\t3\td\n" +
+                    "2023-10-05T09:00:00.000000Z\t6\tg\t2022-10-10T01:01:00.000000Z\t3\td\n" +
+                    "2022-10-05T08:19:00.000000Z\t5\tf\t2022-10-05T08:17:00.000000Z\t1\tb\n" +
+                    "2022-10-05T08:18:00.000000Z\t4\te\t2022-10-05T08:17:00.000000Z\t1\tb\n", query, "ts###desc", true, true);
         });
     }
 
