@@ -48,7 +48,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Paths;
 import java.util.*;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 
@@ -205,45 +204,46 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
             return false;
         }
 
+        boolean changed = false;
         // Compare the new and existing properties
-        AtomicBoolean changed = new AtomicBoolean(false);
-        newProperties.forEach((k, v) -> {
-            String key = (String) k;
+        for (Map.Entry<Object, Object> entry : newProperties.entrySet()) {
+            String key = (String) entry.getKey();
             String oldVal = oldProperties.getProperty(key);
-            if (oldVal == null || !oldVal.equals(v)) {
+            if (oldVal == null || !oldVal.equals(entry.getValue())) {
                 ConfigPropertyKey config = keyResolver.apply(key);
                 if (config == null) {
-                    return;
+                    return false;
                 }
 
                 if (reloadableProps.contains(config)) {
-                    log.info().$("loaded new value of ").$(k).$();
-                    oldProperties.setProperty(key, (String) v);
-                    changed.set(true);
+                    log.info().$("loaded new value of ").$(entry.getKey()).$();
+                    oldProperties.setProperty(key, (String) entry.getValue());
+                    changed = true;
                 } else {
-                    log.advisory().$("property ").$(k).$(" was modified in the config file but cannot be reloaded. ignoring new value").$();
+                    log.advisory().$("property ").$(entry.getKey()).$(" was modified in the config file but cannot be reloaded. ignoring new value").$();
                 }
             }
-        });
-
+        }
 
         // Check for any old reloadable properties that have been removed in the new config
-        oldProperties.forEach((k, v) -> {
-            if (!newProperties.containsKey(k)) {
-                ConfigPropertyKey prop = keyResolver.apply((String) k);
+        Iterator<Object> oldPropsIter = oldProperties.keySet().iterator();
+        while (oldPropsIter.hasNext()) {
+            Object key = oldPropsIter.next();
+            if (!newProperties.containsKey(key)) {
+                ConfigPropertyKey prop = keyResolver.apply((String) key);
                 if (prop == null) {
-                    return;
+                    continue;
                 }
                 if (reloadableProps.contains(prop)) {
-                    log.info().$("removed property ").$(k).$();
-                    oldProperties.remove(k);
-                    changed.set(true);
+                    log.info().$("removed property ").$(key).$();
+                    oldPropsIter.remove();
+                    changed = true;
                 } else {
-                    log.advisory().$("property ").$(k).$(" was removed from the config file but cannot be reloaded. ignoring").$();
+                    log.advisory().$("property ").$(key).$(" was removed from the config file but cannot be reloaded. ignoring").$();
                 }
             }
-        });
-        return changed.get();
+        }
+        return changed;
     }
 
     @Override
