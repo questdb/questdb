@@ -68,6 +68,7 @@ import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.str;
 
 public class PropServerConfiguration implements ServerConfiguration {
 
+    public static final String ACL_ENABLED = "acl.enabled";
     public static final long COMMIT_INTERVAL_DEFAULT = 2000;
     public static final String CONFIG_DIRECTORY = "conf";
     public static final String DB_DIRECTORY = "db";
@@ -239,6 +240,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final PropPGWireDispatcherConfiguration propPGWireDispatcherConfiguration = new PropPGWireDispatcherConfiguration();
     private final String publicDirectory;
     private final PublicPassthroughConfiguration publicPassthroughConfiguration = new PropPublicPassthroughConfiguration();
+    private final int queryCacheEventQueueCapacity;
     private final long queryTimeout;
     private final int readerPoolMaxSegments;
     private final int repeatMigrationFromVersion;
@@ -515,7 +517,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long pgWorkerNapThreshold;
     private long pgWorkerSleepThreshold;
     private long pgWorkerYieldThreshold;
-    private int queryCacheEventQueueCapacity;
     private boolean stringToCharCastAllowed;
     private long symbolCacheWaitUsBeforeReload;
 
@@ -3051,7 +3052,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         public void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
             settings.put(RELEASE_TYPE, str(getReleaseType()));
             settings.put(RELEASE_VERSION, str(getBuildInformation().getSwVersion()));
-            settings.put("acl.enabled", Boolean.toString(!Chars.empty(httpUsername)));
+            settings.put(ACL_ENABLED, Boolean.toString(!Chars.empty(httpUsername)));
         }
     }
 

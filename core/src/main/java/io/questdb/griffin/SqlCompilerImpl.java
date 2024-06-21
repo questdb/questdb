@@ -1666,8 +1666,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     break;
                 default:
                     final InsertModel insertModel = (InsertModel) executionModel;
+                    QueryProgress.logStart(sqlId, sqlText, executionContext);
                     if (insertModel.getQueryModel() != null) {
-                        QueryProgress.logStart(sqlId, sqlText, executionContext);
                         sqlId = queryRegistry.register(sqlText, executionContext);
                         executeWithRetries(
                                 insertAsSelectMethod,
@@ -1676,7 +1676,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 executionContext
                         );
                     } else {
-                        QueryProgress.logStart(sqlId, sqlText, executionContext);
                         insert(executionModel, executionContext);
                         compiledQuery.getInsertOperation().setInsertSql(sqlText);
                     }
