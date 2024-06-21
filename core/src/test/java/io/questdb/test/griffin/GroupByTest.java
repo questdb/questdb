@@ -1451,18 +1451,16 @@ public class GroupByTest extends AbstractCairoTest {
                             "        GroupBy vectorized: false\n" +
                             "          keys: [dim_ap_temperature__category,fact_table__date_time_day]\n" +
                             "          values: [avg(radiation),avg(energy_power)]\n" +
-                            "            VirtualRecord\n" +
-                            "              functions: [dim_ap_temperature__category,timestamp_floor('day',to_utc(date_time,1)),radiation,energy_power]\n" +
-                            "                SelectedRecord\n" +
-                            "                    Hash Outer Join Light\n" +
-                            "                      condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
+                            "            SelectedRecord\n" +
+                            "                Hash Outer Join Light\n" +
+                            "                  condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: fact_table\n" +
+                            "                    Hash\n" +
                             "                        DataFrame\n" +
                             "                            Row forward scan\n" +
-                            "                            Frame forward scan on: fact_table\n" +
-                            "                        Hash\n" +
-                            "                            DataFrame\n" +
-                            "                                Row forward scan\n" +
-                            "                                Frame forward scan on: dim_apTemperature\n"
+                            "                            Frame forward scan on: dim_apTemperature\n"
             );
 
             // With no aliases in GROUP BY clause - 1
@@ -1491,18 +1489,16 @@ public class GroupByTest extends AbstractCairoTest {
                             "        GroupBy vectorized: false\n" +
                             "          keys: [category,timestamp_floor]\n" +
                             "          values: [avg(radiation),avg(energy_power)]\n" +
-                            "            VirtualRecord\n" +
-                            "              functions: [category,timestamp_floor('day',to_utc(date_time,1)),radiation,energy_power]\n" +
-                            "                SelectedRecord\n" +
-                            "                    Hash Outer Join Light\n" +
-                            "                      condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
+                            "            SelectedRecord\n" +
+                            "                Hash Outer Join Light\n" +
+                            "                  condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: fact_table\n" +
+                            "                    Hash\n" +
                             "                        DataFrame\n" +
                             "                            Row forward scan\n" +
-                            "                            Frame forward scan on: fact_table\n" +
-                            "                        Hash\n" +
-                            "                            DataFrame\n" +
-                            "                                Row forward scan\n" +
-                            "                                Frame forward scan on: dim_apTemperature\n"
+                            "                            Frame forward scan on: dim_apTemperature\n"
             );
 
             // With no aliases in GROUP BY clause - 2
@@ -1531,18 +1527,16 @@ public class GroupByTest extends AbstractCairoTest {
                             "        GroupBy vectorized: false\n" +
                             "          keys: [category,timestamp_floor]\n" +
                             "          values: [avg(radiation),avg(energy_power)]\n" +
-                            "            VirtualRecord\n" +
-                            "              functions: [category,timestamp_floor('day',to_utc(date_time,1)),radiation,energy_power]\n" +
-                            "                SelectedRecord\n" +
-                            "                    Hash Outer Join Light\n" +
-                            "                      condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
+                            "            SelectedRecord\n" +
+                            "                Hash Outer Join Light\n" +
+                            "                  condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: fact_table\n" +
+                            "                    Hash\n" +
                             "                        DataFrame\n" +
                             "                            Row forward scan\n" +
-                            "                            Frame forward scan on: fact_table\n" +
-                            "                        Hash\n" +
-                            "                            DataFrame\n" +
-                            "                                Row forward scan\n" +
-                            "                                Frame forward scan on: dim_apTemperature\n"
+                            "                            Frame forward scan on: dim_apTemperature\n"
             );
 
             // Without GROUP BY clause
@@ -1566,18 +1560,16 @@ public class GroupByTest extends AbstractCairoTest {
                             "    GroupBy vectorized: false\n" +
                             "      keys: [dim_ap_temperature__category,fact_table__date_time_day]\n" +
                             "      values: [avg(radiation),avg(energy_power)]\n" +
-                            "        VirtualRecord\n" +
-                            "          functions: [dim_ap_temperature__category,timestamp_floor('day',to_utc(date_time,1)),radiation,energy_power]\n" +
-                            "            SelectedRecord\n" +
-                            "                Hash Outer Join Light\n" +
-                            "                  condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
+                            "        SelectedRecord\n" +
+                            "            Hash Outer Join Light\n" +
+                            "              condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: fact_table\n" +
+                            "                Hash\n" +
                             "                    DataFrame\n" +
                             "                        Row forward scan\n" +
-                            "                        Frame forward scan on: fact_table\n" +
-                            "                    Hash\n" +
-                            "                        DataFrame\n" +
-                            "                            Row forward scan\n" +
-                            "                            Frame forward scan on: dim_apTemperature\n"
+                            "                        Frame forward scan on: dim_apTemperature\n"
             );
         });
     }

@@ -5199,34 +5199,15 @@ public class SqlOptimiser implements Mutable {
 
         // check if innerVirtualModel is trivial, e.g, it does not contain any arithmetic
         if (useInnerModel) {
-            final ObjList<QueryColumn> innerColumns = innerVirtualModel.getBottomUpColumns();
             useInnerModel = false;
-            boolean columnsAndFunctionsOnly = true;
             // hour(column) is the only function key in supported by Rosti, so we need to detect it
-            int totalFunctionKeyCount = 0;
+            final ObjList<QueryColumn> innerColumns = innerVirtualModel.getBottomUpColumns();
             for (int i = 0, k = innerColumns.size(); i < k; i++) {
                 QueryColumn qc = innerColumns.getQuick(i);
                 if (qc.getAst().type != LITERAL) {
                     useInnerModel = true;
+                    break;
                 }
-                if (qc.getAst().type != LITERAL && qc.getAst().type != FUNCTION && qc.getAst().type != OPERATION) {
-                    columnsAndFunctionsOnly = false;
-                }
-                if (qc.getAst().type == FUNCTION || qc.getAst().type == OPERATION) {
-                    totalFunctionKeyCount++;
-                }
-            }
-            boolean singleHourFunctionKey = totalFunctionKeyCount == 1;
-            if (
-                    useInnerModel
-                            && useGroupByModel && groupByModel.getSampleBy() == null
-                            && columnsAndFunctionsOnly && !singleHourFunctionKey
-                            && SqlUtil.isPlainSelect(baseModel)
-            ) {
-                // we can "steal" all keys from inner model in case of group-by
-                // this is necessary in case of further parallel execution
-                groupByModel.mergePartially(innerVirtualModel, queryColumnPool);
-                useInnerModel = false;
             }
         }
 
