@@ -8,11 +8,7 @@ use crate::parquet_write::ParquetResult;
 
 use super::util::BinaryMaxMin;
 
-fn encode_plain_be<const N: usize>(
-    data: &[[u8; N]],
-    buffer: &mut Vec<u8>,
-    null_value: [u8; N],
-) {
+fn encode_plain_be<const N: usize>(data: &[[u8; N]], buffer: &mut Vec<u8>, null_value: [u8; N]) {
     for x in data.iter().filter(|&&x| x != null_value) {
         buffer.extend(x.iter().rev());
     }

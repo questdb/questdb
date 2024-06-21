@@ -1,5 +1,4 @@
 use std::io::Write;
-use std::mem;
 
 use parquet2::compression::CompressionOptions;
 use parquet2::encoding::Encoding;
@@ -273,7 +272,14 @@ fn column_chunk_to_pages(
         } else {
             chunk_offset + chunk_length - orig_column_top
         };
-        return symbol::symbol_to_pages(&keys[lower_bound..upper_bound], offsets, data, adjusted_column_top, options, primitive_type);
+        return symbol::symbol_to_pages(
+            &keys[lower_bound..upper_bound],
+            offsets,
+            data,
+            adjusted_column_top,
+            options,
+            primitive_type,
+        );
     }
 
     let number_of_rows = chunk_length;

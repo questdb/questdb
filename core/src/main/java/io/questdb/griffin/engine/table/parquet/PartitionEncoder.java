@@ -33,6 +33,17 @@ import io.questdb.std.str.Path;
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
 
 public class PartitionEncoder implements QuietCloseable {
+    public static int PARQUET_VERSION_V1 = 1;
+    public static int PARQUET_VERSION_V2 = 2;
+    public static int COMPRESSION_UNCOMPRESSED = 0;
+    public static int COMPRESSION_SNAPPY = 1;
+    public static int COMPRESSION_GZIP = 2;
+    public static int COMPRESSION_LZO = 3;
+    public static int COMPRESSION_BROTLI = 4;
+    public static int COMPRESSION_LZ4 = 5;
+    public static int COMPRESSION_ZSTD = 6;
+    public static int COMPRESSION_LZ4_RAW = 7;
+
     private DirectLongList columnAddrs = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
     private DirectIntList columnIds = new DirectIntList(16, MemoryTag.NATIVE_DEFAULT);
     private DirectIntList columnNameLengths = new DirectIntList(16, MemoryTag.NATIVE_DEFAULT);
@@ -62,7 +73,33 @@ public class PartitionEncoder implements QuietCloseable {
         symbolOffsetsSizes = Misc.free(symbolOffsetsSizes);
     }
 
-    public void encode(TableReader tableReader, int partitionIndex, Path destPath) {
+    public void encode(
+            TableReader tableReader,
+            int partitionIndex,
+            Path destPath
+    ) {
+        encodeWithOptions(
+            tableReader,
+            partitionIndex,
+            destPath,
+            COMPRESSION_UNCOMPRESSED,
+            true,
+            0, // DEFAULT_ROW_GROUP_SIZE
+            0, // DEFAULT_DATA_PAGE_SIZE
+            PARQUET_VERSION_V1
+        );
+    }
+
+    public void encodeWithOptions(
+            TableReader tableReader,
+            int partitionIndex,
+            Path destPath,
+            long compressionCodec,
+            boolean statisticsEnabled,
+            long rowGroupSize,
+            long dataPageSize,
+            int version
+    ) {
         final long partitionSize = tableReader.openPartition(partitionIndex);
         assert partitionSize != 0;
 
@@ -130,7 +167,12 @@ public class PartitionEncoder implements QuietCloseable {
                     symbolOffsetsSizes.getAddress(),
                     partitionSize,
                     destPath.ptr(),
-                    destPath.size()
+                    destPath.size(),
+                    compressionCodec,
+                    statisticsEnabled,
+                    rowGroupSize,
+                    dataPageSize,
+                    version
             );
         } catch (Throwable th) {
             throw CairoException.critical(0).put("Could not encode partition: [table=").put(tableReader.getTableToken().getTableName())
@@ -162,7 +204,12 @@ public class PartitionEncoder implements QuietCloseable {
             long symbolOffsetsSizesPtr,
             long rowCount,
             long destPathPtr,
-            int destPathLength
+            int destPathLength,
+            long compressionCodec,
+            boolean statisticsEnabled,
+            long rowGroupSize,
+            long dataPageSize,
+            int version
     );
 
     private void clear() {
