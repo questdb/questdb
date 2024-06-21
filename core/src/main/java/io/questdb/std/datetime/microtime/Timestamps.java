@@ -251,6 +251,9 @@ public final class Timestamps {
     }
 
     public static long floorDD(long micros, int stride, long offset) {
+        if (micros < offset) {
+            return offset;
+        }
         long result = micros - getTimeMicros(micros, stride, offset);
         return Math.min(result, micros);
     }
@@ -294,6 +297,9 @@ public final class Timestamps {
     }
 
     public static long floorHH(long micros, int stride, long offset) {
+        if (micros < offset) {
+            return offset;
+        }
         return (micros - ((micros - offset) % (stride * HOUR_MICROS)));
     }
 
@@ -309,6 +315,9 @@ public final class Timestamps {
     }
 
     public static long floorMC(long micros, int stride, long offset) {
+        if (micros < offset) {
+            return offset;
+        }
         return micros - ((micros - offset) % stride);
     }
 
@@ -321,6 +330,9 @@ public final class Timestamps {
     }
 
     public static long floorMI(long micros, int stride, long offset) {
+        if (micros < offset) {
+            return offset;
+        }
         return micros - ((micros - offset) % (stride * MINUTE_MICROS));
     }
 
@@ -335,6 +347,9 @@ public final class Timestamps {
     }
 
     public static long floorMM(long micros, int stride, long offset) {
+        if (micros < offset) {
+            return offset;
+        }
         final long monthsDiff = getMonthsBetween(micros, offset);
         final long monthsToAdd = monthsDiff - (monthsDiff % stride);
         return addMonths(offset, (int) monthsToAdd);
@@ -350,6 +365,9 @@ public final class Timestamps {
     }
 
     public static long floorMS(long micros, int stride, long offset) {
+        if (micros < offset) {
+            return offset;
+        }
         long result = micros - ((micros - offset) % (stride * MILLI_MICROS));
         return Math.min(result, micros);
     }
@@ -405,6 +423,9 @@ public final class Timestamps {
     }
 
     public static long floorSS(long micros, int stride, long offset) {
+        if (micros < offset) {
+            return offset;
+        }
         return micros - ((micros - offset) % (stride * SECOND_MICROS));
     }
 
@@ -426,6 +447,9 @@ public final class Timestamps {
     }
 
     public static long floorWW(long micros, int stride, long offset) {
+        if (micros < offset) {
+            return offset;
+        }
         long numWeeksToAdd = getWeeksBetween(offset, micros);
         long modulo = numWeeksToAdd % stride;
         if (numWeeksToAdd < 1) {
@@ -451,6 +475,9 @@ public final class Timestamps {
     }
 
     public static long floorYYYY(long micros, int stride, long offset) {
+        if (micros < offset) {
+            return offset;
+        }
         final long yearsDiff = getYearsBetween(micros, offset);
         final long yearsToAdd = yearsDiff - (yearsDiff % stride);
         return addYears(offset, (int) yearsToAdd);
