@@ -33,6 +33,7 @@ public final class HttpConstants {
     public static final String CONTENT_TYPE_TEXT = "text/plain; charset=utf-8";
 
     public static final char COOKIE_VALUE_SEPARATOR = '=';
+    public static final Utf8String HEADER_AUTHORIZATION = new Utf8String("Authorization");
     public static final Utf8String HEADER_CONNECTION = new Utf8String("Connection");
     public static final Utf8String HEADER_CONTENT_ACCEPT_ENCODING = new Utf8String("Accept-Encoding");
     public static final Utf8String HEADER_CONTENT_DISPOSITION = new Utf8String("Content-Disposition");

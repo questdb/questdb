@@ -994,11 +994,7 @@ public class O3Test extends AbstractO3Test {
         o3ColumnMemorySize = (int) Files.PAGE_SIZE * 1024 * 4;
         executeWithPool(
                 0,
-                (
-                        CairoEngine engine,
-                        SqlCompiler compiler,
-                        SqlExecutionContext sqlExecutionContext
-                ) -> {
+                (engine, compiler, sqlExecutionContext) -> {
                     int longsPerO3Page = o3ColumnMemorySize / 8;
                     int half = longsPerO3Page / 2;
                     engine.ddl(
@@ -1074,17 +1070,14 @@ public class O3Test extends AbstractO3Test {
 
     @Test
     public void testVarColumnCopyLargePrefix() throws Exception {
-        Assume.assumeTrue(Os.type != Os.WINDOWS);
-
         partitionO3SplitThreshold = 100 * (1L << 30); // 100GB, effectively no partition split
 
         ConcurrentLinkedQueue<Long> writeLen = new ConcurrentLinkedQueue<>();
-        executeWithPool(0,
-                (
-                        CairoEngine engine,
-                        SqlCompiler compiler,
-                        SqlExecutionContext sqlExecutionContext
-                ) -> {
+        executeWithPool(
+                0,
+                (engine, compiler, sqlExecutionContext) -> {
+                    Assume.assumeTrue(engine.getConfiguration().isWriterMixedIOEnabled());
+
                     String strColVal =
                             "2022-09-22T17:06:37.036305Z I i.q.c.O3CopyJob o3 copy [blockType=2, columnType=131080, dstFixFd=397, dstFixSize=1326000000, dstFixOffset=0, dstVarFd=0, dstVarSize=0, dstVarOffset=0, srcDataLo=0, srcDataHi=164458776, srcDataMax=165250000, srcOooLo=0, srcOooHi=0, srcOooMax=500000, srcOooPartitionLo=0, srcOooPartitionHi=499999, mixedIOFlag=true]";
                     int len = getStorageLength(strColVal);
@@ -1133,11 +1126,7 @@ public class O3Test extends AbstractO3Test {
         dataAppendPageSize = (int) Files.PAGE_SIZE;
         executeWithPool(
                 0,
-                (
-                        CairoEngine engine,
-                        SqlCompiler compiler,
-                        SqlExecutionContext sqlExecutionContext
-                ) -> {
+                (engine, compiler, sqlExecutionContext) -> {
                     int longsPerPage = dataAppendPageSize / 8;
                     int hi = (longsPerPage + 8) * 2;
                     int lo = (longsPerPage - 8) * 2;
@@ -1155,11 +1144,7 @@ public class O3Test extends AbstractO3Test {
         dataAppendPageSize = (int) Files.PAGE_SIZE;
         executeWithPool(
                 0,
-                (
-                        CairoEngine engine,
-                        SqlCompiler compiler,
-                        SqlExecutionContext sqlExecutionContext
-                ) -> {
+                (engine, compiler, sqlExecutionContext) -> {
                     int longsPerPage = dataAppendPageSize / 8;
                     int hi = (longsPerPage + 8) * 2;
                     int lo = (longsPerPage - 8) * 2;
@@ -1177,11 +1162,7 @@ public class O3Test extends AbstractO3Test {
         dataAppendPageSize = (int) Files.PAGE_SIZE;
         executeWithPool(
                 0,
-                (
-                        CairoEngine engine,
-                        SqlCompiler compiler,
-                        SqlExecutionContext sqlExecutionContext
-                ) -> {
+                (engine, compiler, sqlExecutionContext) -> {
                     int longsPerPage = dataAppendPageSize / 8;
                     int hi = (longsPerPage + 8) * 2;
                     int lo = (longsPerPage - 8) * 2;
