@@ -3483,16 +3483,8 @@ public class SqlOptimiser implements Mutable {
         // if there's a join, we need to handle it differently.
         if (jm2 != null) {
             final int joinType = jm2.getJoinType();
-            if (joinType == QueryModel.JOIN_ASOF) {// For asof join, we only propagate advice if its ordered beginning with the designated timestamp
-                CharSequence token = advice.getQuick(0).token;
-                QueryColumn qc = jm1.getAliasToColumnMap().get(token);
-                // if there is a matching column, and it is the designated timestamp, then propagate advice
-                if (qc != null
-                        && qc.getColumnType() == ColumnType.TIMESTAMP
-                        && Chars.equalsIgnoreCase(jm1.getTimestamp().token, qc.getAst().token)) {
-                    setAndCopyAdvice(jm1, advice, orderByMnemonic, orderByDirectionAdvice);
-                }
-            } else {
+            // don't push down to asof join, all joined tables must be asc or desc and a higher level order by can screw this up
+            if (joinType != QueryModel.JOIN_ASOF) {
                 setAndCopyAdvice(jm1, advice, orderByMnemonic, orderByDirectionAdvice);
             }
         } else {
