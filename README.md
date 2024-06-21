@@ -87,11 +87,12 @@ questdb stop  // To stop questdb
 The [QuestDB downloads page](https://questdb.io/get-questdb/) provides direct downloads for binaries and has details for
 other installation and deployment methods.
 
-### QuestDB Cloud
+### QuestDB Enterprise
 
-QuestDB Cloud is the fully managed version of QuestDB, with additional features such as Role-based access control,
-Cloud-native Replication, Compression, monitoring and cloud-native snapshots.
-[Get started with $200 credits](https://cloud.questdb.com).
+QuestDB Enterprise (self-hosted or BYOC) allows your organization to run the database at scale, securely.
+Additional features include multi-primary ingestion, read replica(s), cold storage integration,  such as Role-based access control,
+monitoring, TLS, and more.
+[More info about QuestDB Enterprise](https://questdb.io/enterprise/).
 
 ### Connect to QuestDB
 
@@ -114,12 +115,16 @@ Below are the official QuestDB clients for ingesting data via the InfluxDB Line 
 - [Python](https://py-questdb-client.readthedocs.io/en/latest/)
 - [Rust](https://docs.rs/crate/questdb-rs/latest)
 
+### Configure QuestDB for production workloads
+
+Find our [capacity planning](https://questdb.io/docs/deployment/capacity-planning/) to fine-tune QuestDB for production workloads.
+
 ### End-to-end quickstart
 
 Want to walk through everything, from streaming ingestion to visualization with Grafana? Check out
 our multi-path [quickstart repository](https://github.com/questdb/questdb-quickstart).
 
-## How QuestDB compares to other open source TSDBs
+## How QuestDB compares to other open-source TSDBs
 
 Checkout [our benchmark blog post](https://questdb.io/blog/2024/02/26/questdb-versus-influxdb/)
 which compares QuestDB and InfluxDB across functionality, maturity and performance.
