@@ -45,12 +45,13 @@ public class BwdAsOfJoinTest extends AbstractCairoTest {
         "2023-10-06T01:00:00.000000Z",7,"h"
      */
 
-
-    static final String ORACLE = "ts\ti\ts\tts1\ti1\ts1\n" +
-            "2023-10-06T01:00:00.000000Z\t7\th\t2022-10-10T01:01:00.000000Z\t3\td\n" +
-            "2023-10-05T09:00:00.000000Z\t6\tg\t2022-10-10T01:01:00.000000Z\t3\td\n" +
-            "2022-10-05T08:19:00.000000Z\t5\tf\t2022-10-05T08:17:00.000000Z\t1\tb\n" +
-            "2022-10-05T08:18:00.000000Z\t4\te\t2022-10-05T08:17:00.000000Z\t1\tb\n";
+    static final String HEADER = "ts\ti\ts\tts1\ti1\ts1\n";
+    static final String[] ORACLES = {"2023-10-06T01:00:00.000000Z\t7\th\t2022-10-10T01:01:00.000000Z\t3\td\n",
+            "2023-10-05T09:00:00.000000Z\t6\tg\t2022-10-10T01:01:00.000000Z\t3\td\n",
+            "2022-10-05T08:19:00.000000Z\t5\tf\t2022-10-05T08:17:00.000000Z\t1\tb\n",
+            "2022-10-05T08:18:00.000000Z\t4\te\t2022-10-05T08:17:00.000000Z\t1\tb\n"
+    };
+    static final String ORACLE = HEADER + ORACLES[0] + ORACLES[1] + ORACLES[2] + ORACLES[3];
 
     public void createTables() throws Exception {
         assertMemoryLeak(() -> {
@@ -238,6 +239,53 @@ public class BwdAsOfJoinTest extends AbstractCairoTest {
                     "                Frame forward scan on: t1\n");
 
             assertQuery(ORACLE, query, "ts###desc", true, true);
+        });
+    }
+
+    @Test
+    public void testBwdAsofJoinWithLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            String query = "select * from (select * from t2 order by ts desc)\n" +
+                    "asof join (select * from t1 order by ts desc)\n" +
+                    "limit 2";
+
+            assertPlanNoLeakCheck(query, "Limit lo: 2\n" +
+                    "    SelectedRecord\n" +
+                    "        Bwd AsOf Join\n" +
+                    "            DataFrame\n" +
+                    "                Row backward scan\n" +
+                    "                Frame backward scan on: t2\n" +
+                    "            DataFrame\n" +
+                    "                Row backward scan\n" +
+                    "                Frame backward scan on: t1\n");
+
+            assertQuery(HEADER + ORACLES[0] + ORACLES[1], query, "ts###desc", false, false);
+        });
+    }
+
+    @Test
+    public void testBwdAsofJoinWithLimitAndSort() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            String query = "select * from (\n" +
+                    "select * from (select * from t2 order by ts desc)\n" +
+                    "asof join (select * from t1 order by ts desc)\n" +
+                    "limit 2 ) order by ts asc";
+
+            assertPlanNoLeakCheck(query, "Sort\n" +
+                    "  keys: [ts]\n" +
+                    "    Limit lo: 2\n" +
+                    "        SelectedRecord\n" +
+                    "            Bwd AsOf Join\n" +
+                    "                DataFrame\n" +
+                    "                    Row backward scan\n" +
+                    "                    Frame backward scan on: t2\n" +
+                    "                DataFrame\n" +
+                    "                    Row backward scan\n" +
+                    "                    Frame backward scan on: t1\n");
+
+            assertQuery(HEADER + ORACLES[1] + ORACLES[0], query, "ts", true, true);
         });
     }
 }
