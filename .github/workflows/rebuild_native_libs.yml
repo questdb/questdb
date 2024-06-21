@@ -273,7 +273,7 @@ jobs:
       - name: Build Windows CXX Library
         run: |
           cd core
-          cmake --build cmake-build-release-win64 --config Release
+          cmake --build cmake-build-release-win64 --config Release --verbose
           mkdir -p src/main/resources/io/questdb/bin/windows-amd64/
           cp target/classes/io/questdb/bin-local/libquestdb.dll src/main/resources/io/questdb/bin/windows-amd64/
       - name: Check CXX runtime dependency
