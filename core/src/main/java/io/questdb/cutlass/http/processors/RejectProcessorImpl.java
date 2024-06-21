@@ -30,6 +30,7 @@ import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 
 import static io.questdb.cairo.SecurityContext.AUTH_TYPE_NONE;
+import static java.net.HttpURLConnection.HTTP_UNAUTHORIZED;
 
 public class RejectProcessorImpl implements RejectProcessor {
     protected final HttpConnectionContext httpConnectionContext;
@@ -64,8 +65,13 @@ public class RejectProcessorImpl implements RejectProcessor {
 
     @Override
     public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        httpConnectionContext.simpleResponse().sendStatusWithCookie(rejectCode, rejectMessage, rejectCookieName, rejectCookieValue);
-        httpConnectionContext.reset();
+        if (rejectCode == HTTP_UNAUTHORIZED) {
+            httpConnectionContext.simpleResponse().sendStatusTextContent(HTTP_UNAUTHORIZED);
+            httpConnectionContext.reset();
+        } else {
+            httpConnectionContext.simpleResponse().sendStatusWithCookie(rejectCode, rejectMessage, rejectCookieName, rejectCookieValue);
+            httpConnectionContext.reset();
+        }
     }
 
     @Override
