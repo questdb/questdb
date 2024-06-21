@@ -225,7 +225,7 @@ fn compression_from_i64(value: i64) -> Result<CompressionOptions, ParquetError> 
         7 => CompressionOptions::Lz4Raw,
         _ => {
             return Err(ParquetError::OutOfSpec(
-                "Invalid value for CompressionCodec".to_string()
+                "Invalid value for CompressionCodec".to_string(),
             ))
         }
     })

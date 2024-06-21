@@ -1,6 +1,5 @@
 use std::fs::File;
 use std::mem::{offset_of, size_of};
-use std::os::fd::FromRawFd;
 
 use crate::parquet_read::{ColumnChunkBuffers, ColumnMeta, ParquetDecoder};
 use jni::objects::JClass;
@@ -16,6 +15,22 @@ pub const DOUBLE: u32 = 5;
 pub const BYTE_ARRAY: u32 = 6;
 pub const FIXED_LEN_BYTE_ARRAY: u32 = 7;
 
+fn from_raw_file_descriptor(raw: i32) -> File {
+    unsafe {
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::{FromRawFd, RawFd};
+            File::from_raw_fd(raw as RawFd)
+        }
+
+        #[cfg(windows)]
+        {
+            use std::os::windows::io::{FromRawHandle, RawHandle};
+            File::from_raw_handle(raw as usize as RawHandle)
+        }
+    }
+}
+
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_create(
     mut env: JNIEnv,
@@ -23,8 +38,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     raw_fd: i32,
 ) -> *mut ParquetDecoder {
     let init = || -> anyhow::Result<ParquetDecoder> {
-        let file = unsafe { File::from_raw_fd(raw_fd) };
-        ParquetDecoder::read(file)
+        ParquetDecoder::read(from_raw_file_descriptor(raw_fd))
     };
 
     match init() {
