@@ -148,12 +148,12 @@ public class BwdAsOfJoinTest extends AbstractCairoTest {
             ddl("create table t2 as (select x as id, cast(x as timestamp) ts from long_sequence(5)) timestamp(ts) partition by day;");
             ddl("create table t3 (id long, ts timestamp) timestamp(ts) partition by day;");
 
-            final String query = "SELECT *\n" +
-                    "FROM (\n" +
-                    "  (t1 INNER JOIN t2 ON id) \n" +
-                    "  ASOF JOIN (SELECT * FROM t3 ORDER BY ts DESC) ON id\n" +
-                    "ORDER BY t1.ts DESC" +
-                    ");";
+            final String query =
+                    "SELECT *\n" +
+                            "FROM (\n" +
+                            "  (SELECT * FROM t1 INNER JOIN t2 ON id) \n" +
+                            "  ASOF JOIN (SELECT * FROM t3) ON id\n" +
+                            ") ORDER BY ts DESC;";
             final String expected = "id\tts\tid1\tts1\tid2\tts2\n" +
                     "5\t1970-01-01T00:00:00.000005Z\t5\t1970-01-01T00:00:00.000005Z\tnull\t\n" +
                     "4\t1970-01-01T00:00:00.000004Z\t4\t1970-01-01T00:00:00.000004Z\tnull\t\n" +
@@ -161,25 +161,26 @@ public class BwdAsOfJoinTest extends AbstractCairoTest {
                     "2\t1970-01-01T00:00:00.000002Z\t2\t1970-01-01T00:00:00.000002Z\tnull\t\n" +
                     "1\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\tnull\t\n";
 
-            assertPlanNoLeakCheck(query, "SelectedRecord\n" +
-                    "    AsOf Join Light\n" +
-                    "      condition: _xQdbA3.id=t1.id\n" +
-                    "        Hash Join Light\n" +
-                    "          condition: t2.id=t1.id\n" +
-                    "            DataFrame\n" +
-                    "                Row backward scan\n" +
-                    "                Frame backward scan on: t1\n" +
-                    "            Hash\n" +
-                    "                DataFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Frame forward scan on: t2\n" +
-                    "        Sort light\n" +
-                    "          keys: [ts desc]\n" +
+            assertPlanNoLeakCheck(query, "Sort\n" +
+                    "  keys: [ts desc]\n" +
+                    "    SelectedRecord\n" +
+                    "        AsOf Join Light\n" +
+                    "          condition: _xQdbA4.id=_xQdbA3.id\n" +
+                    "            SelectedRecord\n" +
+                    "                Hash Join Light\n" +
+                    "                  condition: t2.id=t1.id\n" +
+                    "                    DataFrame\n" +
+                    "                        Row forward scan\n" +
+                    "                        Frame forward scan on: t1\n" +
+                    "                    Hash\n" +
+                    "                        DataFrame\n" +
+                    "                            Row forward scan\n" +
+                    "                            Frame forward scan on: t2\n" +
                     "            DataFrame\n" +
                     "                Row forward scan\n" +
                     "                Frame forward scan on: t3\n");
 
-            printSqlResult(expected, query, "ts###desc", false, true);
+            printSqlResult(expected, query, "ts###desc", true, true);
         });
     }
 
