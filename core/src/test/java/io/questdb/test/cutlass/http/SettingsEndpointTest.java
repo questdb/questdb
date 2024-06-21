@@ -46,16 +46,17 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
     private static final String OSS_PAYLOAD = "{" +
             "\"release.type\":\"OSS\"," +
             "\"release.version\":\"[DEVELOPMENT]\"," +
-            "\"posthog.enabled\":false,"+
-            "\"posthog.api.key\":null"+
+            "\"acl.enabled\":false," +
+            "\"posthog.enabled\":false," +
+            "\"posthog.api.key\":null" +
             "}";
 
     private static final String TEST_PAYLOAD = "{" +
             "\"cairo.snapshot.instance.id\":\"db\"," +
             "\"cairo.max.file.name.length\":127," +
             "\"cairo.wal.supported\":true," +
-            "\"posthog.enabled\":false,"+
-            "\"posthog.api.key\":null"+
+            "\"posthog.enabled\":false," +
+            "\"posthog.api.key\":null" +
             "}";
 
     @Before
