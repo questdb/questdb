@@ -31,17 +31,17 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
-public class AsOfJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFactory {
-    private final AsOfLightJoinRecordCursor cursor;
+public class BwdAsOfJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFactory {
+    private final BwdAsOfLightJoinRecordCursor cursor;
 
-    public AsOfJoinNoKeyRecordCursorFactory(
+    public BwdAsOfJoinNoKeyRecordCursorFactory(
             RecordMetadata metadata,
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
             int columnSplit
     ) {
         super(metadata, null, masterFactory, slaveFactory);
-        this.cursor = new AsOfLightJoinRecordCursor(
+        this.cursor = new BwdAsOfLightJoinRecordCursor(
                 columnSplit,
                 NullRecordFactory.getInstance(slaveFactory.getMetadata()),
                 masterFactory.getMetadata().getTimestampIndex(),
@@ -56,8 +56,8 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFa
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        assert masterFactory.getScanDirection() == SCAN_DIRECTION_FORWARD
-                && slaveFactory.getScanDirection() == SCAN_DIRECTION_FORWARD;
+        assert masterFactory.getScanDirection() == SCAN_DIRECTION_BACKWARD
+                && slaveFactory.getScanDirection() == SCAN_DIRECTION_BACKWARD;
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
         RecordCursor slaveCursor = null;
         try {
@@ -83,7 +83,7 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFa
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("AsOf Join");
+        sink.type("Bwd AsOf Join");
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }
@@ -95,7 +95,7 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFa
         Misc.free(slaveFactory);
     }
 
-    private static class AsOfLightJoinRecordCursor extends AbstractJoinCursor {
+    private static class BwdAsOfLightJoinRecordCursor extends AbstractJoinCursor {
         private final int masterTimestampIndex;
         private final OuterJoinRecord record;
         private final int slaveTimestampIndex;
@@ -107,7 +107,7 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFa
         private Record slaveRecB;
         private long slaveTimestamp = Long.MIN_VALUE;
 
-        public AsOfLightJoinRecordCursor(
+        public BwdAsOfLightJoinRecordCursor(
                 int columnSplit,
                 Record nullRecord,
                 int masterTimestampIndex,
@@ -138,7 +138,7 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFa
             if (masterHasNext) {
                 // great, we have a record no matter what
                 final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
-                if (masterTimestamp < slaveTimestamp) {
+                if (masterTimestamp > slaveTimestamp) {
                     isMasterHasNextPending = true;
                     return true;
                 }
@@ -156,7 +156,7 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFa
 
         @Override
         public void toTop() {
-            slaveTimestamp = Long.MIN_VALUE;
+            slaveTimestamp = Long.MAX_VALUE;
             latestSlaveRowID = Long.MIN_VALUE;
             record.hasSlave(false);
             masterCursor.toTop();
@@ -167,14 +167,14 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFa
         private void nextSlave(long masterTimestamp) {
             while (true) {
                 boolean slaveHasNext = slaveCursor.hasNext();
-                if (latestSlaveRowID != Long.MIN_VALUE) {
+                if (latestSlaveRowID == Long.MIN_VALUE) {
                     record.hasSlave(true);
                     slaveCursor.recordAt(slaveRecB, latestSlaveRowID);
                 }
                 if (slaveHasNext) {
                     slaveTimestamp = slaveRecA.getTimestamp(slaveTimestampIndex);
                     latestSlaveRowID = slaveRecA.getRowId();
-                    if (slaveTimestamp > masterTimestamp) {
+                    if (slaveTimestamp < masterTimestamp) {
                         break;
                     }
                 } else {
@@ -187,12 +187,12 @@ public class AsOfJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFa
         private void of(RecordCursor masterCursor, RecordCursor slaveCursor) {
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
-            slaveTimestamp = Long.MIN_VALUE;
+            slaveTimestamp = Long.MAX_VALUE;
             latestSlaveRowID = Long.MIN_VALUE;
             masterRecord = masterCursor.getRecord();
             slaveRecA = slaveCursor.getRecord();
             slaveRecB = slaveCursor.getRecordB();
-            record.of(masterRecord, slaveRecB);
+            record.of(masterRecord, slaveRecA);
             record.hasSlave(false);
             isMasterHasNextPending = true;
         }

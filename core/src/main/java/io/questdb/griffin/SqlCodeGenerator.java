@@ -1961,12 +1961,22 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                     masterMetadata.getColumnCount()
                                             );
                                         } else {
-                                            master = new AsOfJoinNoKeyRecordCursorFactory(
-                                                    createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
-                                                    master,
-                                                    slave,
-                                                    masterMetadata.getColumnCount()
-                                            );
+                                            if (master.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
+                                                master = new AsOfJoinNoKeyRecordCursorFactory(
+                                                        createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                                        master,
+                                                        slave,
+                                                        masterMetadata.getColumnCount()
+                                                );
+                                            } else {
+                                                assert master.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
+                                                master = new BwdAsOfJoinNoKeyRecordCursorFactory(
+                                                        createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                                        master,
+                                                        slave,
+                                                        masterMetadata.getColumnCount()
+                                                );
+                                            }
                                         }
                                     }
                                 } else {
@@ -5322,6 +5332,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return -1;
     }
 
+    private CharSequence getScanName(int scanDirection) throws SqlException {
+        switch (scanDirection) {
+            case RecordCursorFactory.SCAN_DIRECTION_OTHER:
+                return "OTHER";
+            case RecordCursorFactory.SCAN_DIRECTION_FORWARD:
+                return "ASC";
+            case RecordCursorFactory.SCAN_DIRECTION_BACKWARD:
+                return "DESC";
+            default:
+                throw SqlException.$(-1, "");
+        }
+    }
+
     private int getTimestampIndex(QueryModel model, RecordCursorFactory factory) throws SqlException {
         return getTimestampIndex(model, factory.getMetadata());
     }
@@ -5563,28 +5586,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return func;
     }
 
-    private IntList toOrderIndices(RecordMetadata m, ObjList<ExpressionNode> orderBy, IntList orderByDirection) throws SqlException {
-        final IntList indices = intListPool.next();
-        for (int i = 0, n = orderBy.size(); i < n; i++) {
-            ExpressionNode tok = orderBy.getQuick(i);
-            int index = m.getColumnIndexQuiet(tok.token);
-            if (index == -1) {
-                throw SqlException.invalidColumn(tok.position, tok.token);
-            }
-
-            // shift index by 1 to use sign as sort direction
-            index++;
-
-            // negative column index means descending order of sort
-            if (orderByDirection.getQuick(i) == QueryModel.ORDER_DIRECTION_DESCENDING) {
-                index = -index;
-            }
-
-            indices.add(index);
-        }
-        return indices;
-    }
-
     // UNION_CAST_MATRIX captures all the combinations of "left" and "right" column types
     // in a set operation (UNION etc.), providing the desired output type. Since there are many
     // special cases in the conversion logic, we decided to use a matrix of literals instead.
@@ -5618,13 +5619,38 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 //        return colType >= ColumnType.GEOBYTE && colType <= ColumnType.GEOLONG;
 //    }
 
+    private IntList toOrderIndices(RecordMetadata m, ObjList<ExpressionNode> orderBy, IntList orderByDirection) throws SqlException {
+        final IntList indices = intListPool.next();
+        for (int i = 0, n = orderBy.size(); i < n; i++) {
+            ExpressionNode tok = orderBy.getQuick(i);
+            int index = m.getColumnIndexQuiet(tok.token);
+            if (index == -1) {
+                throw SqlException.invalidColumn(tok.position, tok.token);
+            }
+
+            // shift index by 1 to use sign as sort direction
+            index++;
+
+            // negative column index means descending order of sort
+            if (orderByDirection.getQuick(i) == QueryModel.ORDER_DIRECTION_DESCENDING) {
+                index = -index;
+            }
+
+            indices.add(index);
+        }
+        return indices;
+    }
+
     private void validateBothTimestampOrders(RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory, int position) throws SqlException {
-        if (masterFactory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
-            throw SqlException.$(position, "left side of time series join doesn't have ASC timestamp order");
+        if (masterFactory.getScanDirection() != slaveFactory.getScanDirection()) {
+            throw SqlException.$(position, "mismatched ordering of tables in time series join. left: " +
+                    getScanName(masterFactory.getScanDirection())
+                    + " right: "
+                    + getScanName(slaveFactory.getScanDirection()));
         }
 
-        if (slaveFactory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
-            throw SqlException.$(position, "right side of time series join doesn't have ASC timestamp order");
+        if (masterFactory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_OTHER) {
+            throw SqlException.$(position, "time series join is only supported for ASC or DESC orders");
         }
     }
 
