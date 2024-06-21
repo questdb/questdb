@@ -338,7 +338,7 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
 
                 if (updateSupportedProperties(properties, newProperties, RELOADABLE_PROPS, KEY_RESOLVER, LOG)) {
                     reload(properties);
-                    LOG.info().$("config reloaded!").$();
+                    LOG.info().$("QuestDB configuration reloaded, [file=").$(confPath).$(", modifiedAt=").$ts(newLastModified * 1000).$(']').$();
                     if (afterConfigReloaded != null) {
                         afterConfigReloaded.run();
                     }
