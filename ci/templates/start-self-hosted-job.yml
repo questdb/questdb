@@ -44,3 +44,52 @@ jobs:
           echo "Agent found ..."
         name: "Check_agent"
         displayName: "Check agent"
+
+  - job: StartX64ZfsAgent
+    displayName: "Start X64Zfs Agent"
+    pool:
+      vmImage: "ubuntu-latest"
+    steps:
+      - checkout: none
+      - bash: |
+          echo "buildno: $(System.StageName)$(Build.BuildId)"
+          echo ${AZURE_DEVOPS_CLI_PAT} | az devops login
+        env:
+          AZURE_DEVOPS_CLI_PAT: $(System.AccessToken)
+        displayName: "Login Azure DevOps Extension"
+      - bash:
+          az devops configure --defaults
+          organization=$(System.TeamFoundationCollectionUri)
+          project=$(System.TeamProject) --use-git-aliases true
+        displayName: "Set default Azure DevOps organization and project"
+      - task: LambdaInvokeFunction@1
+        displayName: "Start Agent 1"
+        name: "Start_Agent1"
+        inputs:
+          awsCredentials: "ondemand-dev"
+          regionName: "eu-west-1"
+          functionName: "ondemand-pipeline"
+          payload: |
+            {
+              "pool": "amd64-zfs",
+              "buildid": "$(System.StageName)$(Build.BuildId)",
+              "instancetype": "c6a.xlarge",
+              "ami": "ami-0e93be55518876452",
+              "devicename": "/dev/xvdb"
+            }
+          outputVariable: "functionResult"
+      - bash: |
+          echo "Instance: $(functionResult)"
+        name: "Display_Instance"
+        displayName: "Display Instance"
+      - bash: |
+          echo "Starting agent... for pool amd64-zfs"
+          POOLID=$(az pipelines pool list | jq '.[]| select(.name == "amd64-zfs") | .id' -r)
+          while [ "$(az pipelines agent list --pool-id $POOLID | jq '.[]| select(.name == "amd64-zfs-$(System.StageName)$(Build.BuildId)") | .enabled' -r)" != "true" ]
+          do
+            echo "Still waiting for agent amd64-zfs-$(System.StageName)$(Build.BuildId) ... "
+            sleep 3
+          done
+          echo "Agent found ..."
+        name: "Check_agent"
+        displayName: "Check agent"

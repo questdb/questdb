@@ -139,6 +139,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final PropHttpMinIODispatcherConfiguration httpMinIODispatcherConfiguration = new PropHttpMinIODispatcherConfiguration();
     private final boolean httpMinServerEnabled;
     private final boolean httpNetConnectionHint;
+    private final String httpPassword;
     private final boolean httpPessimisticHealthCheckEnabled;
     private final boolean httpReadOnlySecurityContext;
     private final int httpRecvBufferSize;
@@ -149,6 +150,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int httpSqlCacheBlockCount;
     private final boolean httpSqlCacheEnabled;
     private final int httpSqlCacheRowCount;
+    private final String httpUsername;
     private final WaitProcessorConfiguration httpWaitProcessorConfiguration = new PropWaitProcessorConfiguration();
     private final int[] httpWorkerAffinity;
     private final int httpWorkerCount;
@@ -513,6 +515,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long pgWorkerNapThreshold;
     private long pgWorkerSleepThreshold;
     private long pgWorkerYieldThreshold;
+    private int queryCacheEventQueueCapacity;
     private boolean stringToCharCastAllowed;
     private long symbolCacheWaitUsBeforeReload;
 
@@ -822,6 +825,15 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpReadOnlySecurityContext = getBoolean(properties, env, PropertyKey.HTTP_SECURITY_READONLY, false);
             this.maxHttpQueryResponseRowLimit = getLong(properties, env, PropertyKey.HTTP_SECURITY_MAX_RESPONSE_ROWS, Long.MAX_VALUE);
             this.interruptOnClosedConnection = getBoolean(properties, env, PropertyKey.HTTP_SECURITY_INTERRUPT_ON_CLOSED_CONNECTION, true);
+            this.httpUsername = getString(properties, env, PropertyKey.HTTP_USER, "");
+            this.httpPassword = getString(properties, env, PropertyKey.HTTP_PASSWORD, "");
+            if (!Chars.empty(httpUsername) && Chars.empty(httpPassword)) {
+                throw new ServerConfigurationException("HTTP username is set but password is missing. " +
+                        "Use the '" + PropertyKey.HTTP_PASSWORD.getPropertyPath() + "' configuration property to set a password. [user=" + httpUsername + "]");
+            } else if (Chars.empty(httpUsername) && !Chars.empty(httpPassword)) {
+                throw new ServerConfigurationException("HTTP password is set but username is missing. " +
+                        "Use the '" + PropertyKey.HTTP_USER.getPropertyPath() + "' configuration property to set a username.");
+            }
 
             if (loadAdditionalConfigurations && httpServerEnabled) {
                 this.jsonQueryConnectionCheckFrequency = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_CONNECTION_CHECK_FREQUENCY, 1_000_000);
@@ -1125,7 +1137,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.cairoSqlLegacyOperatorPrecedence = getBoolean(properties, env, PropertyKey.CAIRO_SQL_LEGACY_OPERATOR_PRECEDENCE, false);
             this.sqlWindowInitialRangeBufferSize = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_INITIAL_RANGE_BUFFER_SIZE, 32);
             this.sqlTxnScoreboardEntryCount = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_O3_TXN_SCOREBOARD_ENTRY_COUNT, 16384));
-            this.latestByQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_LATESTBY_QUEUE_CAPACITY, 32));
+            this.latestByQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_LATEST_ON_QUEUE_CAPACITY, 32));
             this.telemetryEnabled = getBoolean(properties, env, PropertyKey.TELEMETRY_ENABLED, true);
             this.telemetryDisableCompletely = getBoolean(properties, env, PropertyKey.TELEMETRY_DISABLE_COMPLETELY, false);
             this.telemetryQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.TELEMETRY_QUEUE_CAPACITY, 512));
@@ -1274,6 +1286,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpSqlCacheEnabled = getBoolean(properties, env, PropertyKey.HTTP_QUERY_CACHE_ENABLED, true);
             this.httpSqlCacheBlockCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_BLOCK_COUNT, 8 * effectiveHttpWorkerCount);
             this.httpSqlCacheRowCount = getInt(properties, env, PropertyKey.HTTP_QUERY_CACHE_ROW_COUNT, 2 * effectiveHttpWorkerCount);
+            this.queryCacheEventQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_QUERY_CACHE_EVENT_QUEUE_CAPACITY, 4));
 
             this.sqlCompilerPoolCapacity = 2 * (httpWorkerCount + pgWorkerCount + sharedWorkerCount + walApplyWorkerCount);
 
@@ -1793,7 +1806,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             registerDeprecated(PropertyKey.PG_INSERT_POOL_CAPACITY);
             registerDeprecated(PropertyKey.LINE_UDP_TIMESTAMP);
             registerDeprecated(PropertyKey.LINE_TCP_TIMESTAMP);
-            registerDeprecated(PropertyKey.CAIRO_QUERY_CACHE_EVENT_QUEUE_CAPACITY);
             registerDeprecated(PropertyKey.CAIRO_SQL_JIT_ROWS_THRESHOLD);
             registerDeprecated(PropertyKey.CAIRO_COMPACT_MAP_LOAD_FACTOR);
             registerDeprecated(PropertyKey.CAIRO_DEFAULT_MAP_TYPE);
@@ -2418,6 +2430,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getQueryCacheEventQueueCapacity() {
+            return queryCacheEventQueueCapacity;
+        }
+
+        @Override
         public int getQueryRegistryPoolSize() {
             return sqlQueryRegistryPoolSize;
         }
@@ -3034,6 +3051,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         public void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
             settings.put(RELEASE_TYPE, str(getReleaseType()));
             settings.put(RELEASE_VERSION, str(getBuildInformation().getSwVersion()));
+            settings.put("acl.enabled", Boolean.toString(!Chars.empty(httpUsername)));
         }
     }
 
@@ -3410,6 +3428,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public String getPassword() {
+            return httpPassword;
+        }
+
+        @Override
         public String getPoolName() {
             return "http";
         }
@@ -3442,6 +3465,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public StaticContentProcessorConfiguration getStaticContentProcessorConfiguration() {
             return staticContentProcessorConfiguration;
+        }
+
+        @Override
+        public String getUsername() {
+            return httpUsername;
         }
 
         @Override

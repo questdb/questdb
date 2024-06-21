@@ -1303,7 +1303,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     "from long_sequence(48L)");
 
             assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts > 'invalid'");
-            assertTimestampTtFailedQuery("STRING constant expected", "select min(nts), max(nts) from tt where '2020-01-01' in ( NaN)");
+            assertTimestampTtFailedQuery("cannot compare STRING with type DOUBLE", "select min(nts), max(nts) from tt where '2020-01-01' in ( NaN)");
         });
     }
 

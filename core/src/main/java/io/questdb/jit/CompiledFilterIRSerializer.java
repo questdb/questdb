@@ -36,6 +36,7 @@ import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
 
 import java.util.ArrayDeque;
@@ -52,7 +53,6 @@ import java.util.Arrays;
  * </pre>
  */
 public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
-
     public static final int ADD = 14; // a + b
     public static final int AND = 6;  // a && b
     public static final int BINARY_HEADER_TYPE = 8;
@@ -121,6 +121,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             throw SqlException.position(node.position)
                     .put("non-null token expected: ")
                     .put(node.token);
+        }
+
+        if (predicateContext.inOperationNode != null && !predicateContext.currentInSerialization) {
+            return false;
         }
 
         // Check if we're at the start of an arithmetic expression
@@ -220,7 +224,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                             .put(node.token);
             }
         } else {
-            serializeOperator(node.position, node.token, argCount);
+            serializeOperator(node.position, node.token, argCount, node.type);
         }
 
         boolean predicateLeft = predicateContext.onNodeVisited(node);
@@ -338,6 +342,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
         if (node.paramCount < 2) {
             return false;
+        }
+        if (SqlKeywords.isInKeyword(token)) {
+            return true;
         }
         if (Chars.equals(token, "=")) {
             return true;
@@ -651,21 +658,29 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return;
         }
 
-        if (PredicateType.SYMBOL == predicateContext.type) {
+        if (predicateContext.type == PredicateType.SYMBOL) {
             serializeSymbolConstant(offset, position, token);
             return;
         }
 
         if (Chars.isQuoted(token)) {
-            if (len == 3) {
-                if (PredicateType.CHAR != predicateContext.type) {
+            if (predicateContext.type == PredicateType.TIMESTAMP) {
+                try {
+                    long ts = IntervalUtils.parseFloorPartialTimestamp(token, 1, len - 1);
+                    putOperand(offset, IMM, I8_TYPE, ts);
+                } catch (NumericException e) {
+                    throw SqlException.invalidDate(token, position);
+                }
+                return;
+            } else if (len == 3) {
+                if (predicateContext.type != PredicateType.CHAR) {
                     throw SqlException.position(position).put("char constant in non-char expression: ").put(token);
                 }
                 // this is 'x' - char
                 putOperand(offset, IMM, I2_TYPE, token.charAt(1));
                 return;
             } else if (len == 2 + Uuid.UUID_LENGTH) {
-                if (PredicateType.UUID != predicateContext.type) {
+                if (predicateContext.type != PredicateType.UUID) {
                     throw SqlException.position(position).put("uuid constant in non-uuid expression: ").put(token);
                 }
                 try {
@@ -681,16 +696,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         if (SqlKeywords.isTrueKeyword(token)) {
-            if (PredicateType.BOOLEAN != predicateContext.type) {
+            if (predicateContext.type != PredicateType.BOOLEAN) {
                 throw SqlException.position(position).put("boolean constant in non-boolean expression: ").put(token);
             }
-
             putOperand(offset, IMM, I1_TYPE, 1);
             return;
         }
 
         if (SqlKeywords.isFalseKeyword(token)) {
-            if (PredicateType.BOOLEAN != predicateContext.type) {
+            if (predicateContext.type != PredicateType.BOOLEAN) {
                 throw SqlException.position(position).put("boolean constant in non-boolean expression: ").put(token);
             }
             putOperand(offset, IMM, I1_TYPE, 0);
@@ -698,7 +712,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         if (len > 1 && token.charAt(0) == '#') {
-            if (PredicateType.GEO_HASH != predicateContext.type) {
+            if (predicateContext.type != PredicateType.GEO_HASH) {
                 throw SqlException.position(position).put("geo hash constant in non-geo hash expression: ").put(token);
             }
             ConstantFunction geoConstant = GeoHashUtil.parseGeoHashConstant(position, token, len);
@@ -708,7 +722,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             }
         }
 
-        if (PredicateType.NUMERIC != predicateContext.type) {
+        if (predicateContext.type != PredicateType.NUMERIC && predicateContext.type != PredicateType.TIMESTAMP) {
             throw SqlException.position(position).put("numeric constant in non-numeric expression: ").put(token);
         }
         if (predicateContext.localTypesObserver.hasMixedSizes()) {
@@ -856,7 +870,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
-    private void serializeOperator(int position, final CharSequence token, int argCount) throws SqlException {
+    private void serializeOperator(int position, final CharSequence token, int argCount, int type) throws SqlException {
+        if (SqlKeywords.isInKeyword(token) && type == ExpressionNode.FUNCTION) {
+            serializeIn();
+            return;
+        }
         if (SqlKeywords.isNotKeyword(token)) {
             putOperator(NOT);
             return;
@@ -986,8 +1004,33 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         throw SqlException.position(position).put("unexpected non-numeric constant: ").put(token);
     }
 
+    private void serializeIn() throws SqlException {
+        predicateContext.currentInSerialization = true;
+
+        final ObjList<ExpressionNode> args = predicateContext.inOperationNode.args;
+        final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
+
+        if (args.size() < 3) {
+            traverseAlgo.traverse(predicateContext.inOperationNode.rhs, this);
+            traverseAlgo.traverse(predicateContext.inOperationNode.lhs, this);
+            putOperator(EQ);
+        }
+
+        int orCount = -1;
+        for (int i = 0; i < predicateContext.inOperationNode.args.size() - 1; ++i) {
+            traverseAlgo.traverse(args.get(i), this);
+            traverseAlgo.traverse(args.getLast(), this);
+            putOperator(EQ);
+            orCount++;
+        }
+
+        for (int i = 0; i < orCount; ++i) {
+            putOperator(OR);
+        }
+    }
+
     private enum PredicateType {
-        NUMERIC, CHAR, SYMBOL, BOOLEAN, GEO_HASH, UUID, IPv4
+        NUMERIC, CHAR, SYMBOL, BOOLEAN, GEO_HASH, UUID, IPv4, TIMESTAMP
     }
 
     private static class SqlWrapperException extends RuntimeException {
@@ -1160,6 +1203,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         StaticSymbolTable symbolTable; // used for known symbol constant lookups
         PredicateType type;
         private ExpressionNode rootNode;
+        private ExpressionNode inOperationNode = null;
+        private boolean currentInSerialization = false;
 
         @Override
         public void clear() {
@@ -1185,6 +1230,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     singleBooleanColumn = true;
                 }
             }
+
+            if (SqlKeywords.isInKeyword(node.token)) {
+                inOperationNode = node;
+            }
         }
 
         public boolean onNodeVisited(final ExpressionNode node) throws SqlException {
@@ -1193,6 +1242,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 // We left the predicate.
                 rootNode = null;
                 predicateLeft = true;
+            }
+
+            if (node == inOperationNode) {
+                inOperationNode = null;
+                currentInSerialization = false;
             }
 
             switch (node.type) {
@@ -1258,6 +1312,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             singleBooleanColumn = false;
             hasArithmeticOperations = false;
             localTypesObserver.clear();
+            currentInSerialization = false;
+            inOperationNode = null;
         }
 
         private void updateType(int position, int columnTypeTag) throws SqlException {
@@ -1312,6 +1368,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                                 .put(ColumnType.nameOf(columnTypeTag));
                     }
                     type = PredicateType.UUID;
+                    break;
+                case ColumnType.TIMESTAMP:
+                    if (type != null && type != PredicateType.TIMESTAMP) {
+                        throw SqlException.position(position)
+                                .put("non-timestamp column in timestamp expression: ")
+                                .put(ColumnType.nameOf(columnTypeTag));
+                    }
+                    type = PredicateType.TIMESTAMP;
                     break;
                 default:
                     if (type != null && type != PredicateType.NUMERIC) {

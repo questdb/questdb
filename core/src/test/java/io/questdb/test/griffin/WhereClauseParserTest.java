@@ -3475,7 +3475,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select * from testVarcharPracticalParsing where\n" +
                             "ts = '2024-02-29' or ts <= '2024-03-01'",
-                    "Async Filter workers: 1\n" +
+                    "Async JIT Filter workers: 1\n" +
                             "  filter: (ts=1709164800000000 or 1709251200000000>=ts)\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +

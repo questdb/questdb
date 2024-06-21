@@ -72,10 +72,11 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             }
             if (!func.isConstant()) {
                 allConst = false;
-            }
 
-            if (!func.isRuntimeConstant()) {
-                allRuntimeConst = false;
+                // allRuntimeConst can mean a mix of constants and runtime constants
+                if (!func.isRuntimeConstant()) {
+                    allRuntimeConst = false;
+                }
             }
         }
 
@@ -350,5 +351,4 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             sink.val(args, 1);
         }
     }
-
 }
