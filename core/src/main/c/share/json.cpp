@@ -36,9 +36,9 @@
 static_assert(
         simdjson::SIMDJSON_VERSION_MAJOR == 3 &&
         simdjson::SIMDJSON_VERSION_MINOR == 9 &&
-        simdjson::SIMDJSON_VERSION_REVISION == 1,
+        simdjson::SIMDJSON_VERSION_REVISION == 4,
         "You've upgraded the simdjson dependency. "
-        "Ensure that the error codes in JsonException are up to date, "
+        "Ensure that the error codes in JsonError are up to date, "
         "then update this expected version static assert.");
 
 // See `JsonResult.java` for the `Unsafe` access to the fields.
