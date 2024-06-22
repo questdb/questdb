@@ -40,6 +40,13 @@ public final class SwarUtils {
     }
 
     /**
+     * Broadcasts the given single-byte long to a long.
+     */
+    public static long broadcast(long b) {
+        return 0x101010101010101L * b;
+    }
+
+    /**
      * Returns index of lowest (LE) non-zero byte in the input number
      * or 8 in case if the number is zero.
      */

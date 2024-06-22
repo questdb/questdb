@@ -30,7 +30,6 @@ final class Unordered8MapValue implements MapValue {
     private final Long256Impl long256 = new Long256Impl();
     private final long[] valueOffsets;
     private final long valueSize;
-    private long limit;
     private boolean newValue;
     private Unordered8MapRecord record; // double-linked
     private long startAddress; // key-value pair start address
@@ -312,13 +311,11 @@ final class Unordered8MapValue implements MapValue {
 
     void linkRecord(Unordered8MapRecord record) {
         this.record = record;
-        record.setLimit(limit);
     }
 
-    Unordered8MapValue of(long startAddress, long limit, boolean newValue) {
+    Unordered8MapValue of(long startAddress, boolean newValue) {
         this.startAddress = startAddress;
         this.valueAddress = startAddress + Unordered8Map.KEY_SIZE;
-        this.limit = limit;
         this.newValue = newValue;
         return this;
     }

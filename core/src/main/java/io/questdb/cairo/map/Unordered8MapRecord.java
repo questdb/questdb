@@ -45,7 +45,6 @@ final class Unordered8MapRecord implements MapRecord {
     private final Unordered8MapValue value;
     private final long[] valueOffsets;
     private final long valueSize;
-    private long limit;
     private long startAddress;
     private IntList symbolTableIndex;
     private RecordCursor symbolTableResolver;
@@ -286,7 +285,7 @@ final class Unordered8MapRecord implements MapRecord {
 
     @Override
     public MapValue getValue() {
-        return value.of(startAddress, limit, false);
+        return value.of(startAddress, false);
     }
 
     @Override
@@ -296,10 +295,6 @@ final class Unordered8MapRecord implements MapRecord {
 
     public void of(long address) {
         this.startAddress = address;
-    }
-
-    public void setLimit(long limit) {
-        this.limit = limit;
     }
 
     @Override

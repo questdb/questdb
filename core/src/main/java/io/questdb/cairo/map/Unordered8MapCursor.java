@@ -33,11 +33,10 @@ public final class Unordered8MapCursor implements MapRecordCursor {
     private final Unordered8MapRecord recordA;
     private final Unordered8MapRecord recordB;
     private long address;
-    private int count;
-    private long limit;
-    private int remaining;
-    private long topAddress;
-    private long zeroKeyAddress; // set to 0 when there is no zero
+    private long capacity;
+    private long count;
+    private long index;
+    private long remaining;
 
     Unordered8MapCursor(Unordered8MapRecord record, Unordered8Map map) {
         this.recordA = record;
@@ -71,15 +70,12 @@ public final class Unordered8MapCursor implements MapRecordCursor {
 
     @Override
     public boolean hasNext() {
+        // TODO iterate with SWAR
         if (remaining > 0) {
-            if (remaining == 1 && zeroKeyAddress != 0) {
-                recordA.of(zeroKeyAddress);
-                remaining--;
-                return true;
+            recordA.of(address + index * entrySize);
+            if (--remaining > 0) {
+                skipToExistingKey();
             }
-            recordA.of(address);
-            skipToNonZeroKey();
-            remaining--;
             return true;
         }
         return false;
@@ -97,27 +93,26 @@ public final class Unordered8MapCursor implements MapRecordCursor {
 
     @Override
     public void toTop() {
-        address = topAddress;
+        index = 0;
         remaining = count;
-        if (count > 0 && (zeroKeyAddress == 0 || count > 1) && map.isZeroKey(address)) {
-            skipToNonZeroKey();
+        if (count > 0 && map.isEmptyKey(index)) {
+            skipToExistingKey();
         }
     }
 
-    private void skipToNonZeroKey() {
-        do {
-            address += entrySize;
-        } while (address < limit && map.isZeroKey(address));
+    private void skipToExistingKey() {
+        while (++index < capacity) {
+            if (!map.isEmptyKey(index)) {
+                break;
+            }
+        }
     }
 
-    Unordered8MapCursor init(long address, long limit, long zeroKeyAddress, int count) {
-        this.topAddress = address;
-        this.limit = limit;
+    Unordered8MapCursor init(long address, long count, long capacity) {
+        this.address = address;
         this.count = count;
-        this.zeroKeyAddress = zeroKeyAddress;
+        this.capacity = capacity;
         toTop();
-        recordA.setLimit(limit);
-        recordB.setLimit(limit);
         return this;
     }
 }
