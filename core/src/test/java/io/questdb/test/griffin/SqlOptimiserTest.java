@@ -475,6 +475,89 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         });
     }
 
+    @Test
+    public void testQueryPlanForWhereClauseOnNestedModelWithLastAggregateFunctionOnParentModel() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y ( x int, ts timestamp) timestamp(ts);");
+            final String query = "select LAST(ts) from (select * from y where x = 3)";
+            final QueryModel model = compileModel(query);
+            TestUtils.assertEquals("select-group-by LAST(ts) LAST from (select-choose [ts] x, ts from " +
+                    "(select [ts, x] from y timestamp (ts) where x = 3))", model.toString0());
+            assertPlanNoLeakCheck(
+                    query,
+                    "GroupBy vectorized: false\n" +
+                            "  values: [last(ts)]\n" +
+                            "    SelectedRecord\n" +
+                            "        Async JIT Filter workers: 1\n" +
+                            "          filter: x=3\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: y\n");
+        });
+    }
+
+    @Test
+    public void testQueryPlanForWhereClauseOnNestedModelWithFirstAggregateFunctionOnParentModel() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y ( x int, ts timestamp) timestamp(ts);");
+            final String query = "select FIRST(ts) from (select * from y where x = 3)";
+            final QueryModel model = compileModel(query);
+            TestUtils.assertEquals("select-group-by FIRST(ts) FIRST from (select-choose [ts] x, ts from " +
+                    "(select [ts, x] from y timestamp (ts) where x = 3))", model.toString0());
+            assertPlanNoLeakCheck(
+                    query,
+                    "GroupBy vectorized: false\n" +
+                            "  values: [first(ts)]\n" +
+                            "    SelectedRecord\n" +
+                            "        Async JIT Filter workers: 1\n" +
+                            "          filter: x=3\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: y\n");
+        });
+    }
+
+    @Test
+    public void testQueryPlanForWhereClauseOnNestedModelWithMinAggregateFunctionOnParentModel() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y ( x int, ts timestamp) timestamp(ts);");
+            final String query = "select MIN(ts) from (select * from y where x = 3)";
+            final QueryModel model = compileModel(query);
+            TestUtils.assertEquals("select-group-by MIN(ts) MIN from (select-choose [ts] x, ts from " +
+                    "(select [ts, x] from y timestamp (ts) where x = 3))", model.toString0());
+            assertPlanNoLeakCheck(
+                    query,
+                    "GroupBy vectorized: false\n" +
+                            "  values: [min(ts)]\n" +
+                            "    SelectedRecord\n" +
+                            "        Async JIT Filter workers: 1\n" +
+                            "          filter: x=3\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: y\n");
+        });
+    }
+
+    @Test
+    public void testQueryPlanForWhereClauseOnNestedModelWithMaxAggregateFunctionOnParentModel() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y ( x int, ts timestamp) timestamp(ts);");
+            final String query = "select MAX(ts) from (select * from y where x = 3)";
+            final QueryModel model = compileModel(query);
+            TestUtils.assertEquals("select-group-by MAX(ts) MAX from (select-choose [ts] x, ts from " +
+                    "(select [ts, x] from y timestamp (ts) where x = 3))", model.toString0());
+            assertPlanNoLeakCheck(
+                    query,
+                    "GroupBy vectorized: false\n" +
+                            "  values: [max(ts)]\n" +
+                            "    SelectedRecord\n" +
+                            "        Async JIT Filter workers: 1\n" +
+                            "          filter: x=3\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: y\n");
+        });
+    }
 
     @Test
     public void testQueryPlanForWhereClauseWithFirstAggregateFunctions() throws Exception {
@@ -675,6 +758,10 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
         });
     }
+
+    /*TODO: Line 722 and 723 are doing a forward scan on selected model y2 whereas it should be a backward scan
+        Suspected issue is with SqlOptimiser.optimiseOrderBy() , raise a github issue for the same
+     */
 
     @Test
     public void testQueryPlanForJoinAndUnionQueryWithJoinOnDesignatedTimestampColumnWithLastFunction() throws Exception {
