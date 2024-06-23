@@ -3909,6 +3909,7 @@ public class SqlOptimiser implements Mutable {
                 newNestedModel.setTableNameExpr(nestedModel.getTableNameExpr());
                 newNestedModel.setModelType(nestedModel.getModelType());
                 newNestedModel.setTimestamp(nestedModel.getTimestamp());
+                newNestedModel.setWhereClause(nestedModel.getWhereClause());
                 newNestedModel.copyColumnsFrom(nestedModel, queryColumnPool, expressionNodePool);
                 parent.setNestedModel(newNestedModel);
                 return;
