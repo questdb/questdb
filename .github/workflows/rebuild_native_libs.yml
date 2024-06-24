@@ -248,7 +248,7 @@ jobs:
             core/src/main/bin/linux-aarch64/libjemalloc.so
           key: nativelibs-armlinux-${{ github.sha }}
   build-cxx-windows:
-    runs-on: buntu-24.04
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
