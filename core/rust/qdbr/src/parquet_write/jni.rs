@@ -154,8 +154,6 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             None
         };
 
-        eprintln!("row_group_size: {:?}", row_group_size);
-        eprintln!("data_page_size: {:?}", data_page_size);
         let version = version_from_i32(version).context("Version")?;
 
         let mut file = File::create(dest_path).with_context(|| {
