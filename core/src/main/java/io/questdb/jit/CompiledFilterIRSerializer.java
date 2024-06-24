@@ -123,6 +123,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     .put(node.token);
         }
 
+        if (predicateContext.inOperationNode != null && !predicateContext.currentInSerialization) {
+            return false;
+        }
+
         // Check if we're at the start of an arithmetic expression
         predicateContext.onNodeDescended(node);
 
@@ -220,7 +224,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                             .put(node.token);
             }
         } else {
-            serializeOperator(node.position, node.token, argCount);
+            serializeOperator(node.position, node.token, argCount, node.type);
         }
 
         boolean predicateLeft = predicateContext.onNodeVisited(node);
@@ -338,6 +342,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
         if (node.paramCount < 2) {
             return false;
+        }
+        if (SqlKeywords.isInKeyword(token)) {
+            return true;
         }
         if (Chars.equals(token, "=")) {
             return true;
@@ -863,7 +870,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
-    private void serializeOperator(int position, final CharSequence token, int argCount) throws SqlException {
+    private void serializeOperator(int position, final CharSequence token, int argCount, int type) throws SqlException {
+        if (SqlKeywords.isInKeyword(token) && type == ExpressionNode.FUNCTION) {
+            serializeIn();
+            return;
+        }
         if (SqlKeywords.isNotKeyword(token)) {
             putOperator(NOT);
             return;
@@ -991,6 +1002,31 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
 
         throw SqlException.position(position).put("unexpected non-numeric constant: ").put(token);
+    }
+
+    private void serializeIn() throws SqlException {
+        predicateContext.currentInSerialization = true;
+
+        final ObjList<ExpressionNode> args = predicateContext.inOperationNode.args;
+        final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
+
+        if (args.size() < 3) {
+            traverseAlgo.traverse(predicateContext.inOperationNode.rhs, this);
+            traverseAlgo.traverse(predicateContext.inOperationNode.lhs, this);
+            putOperator(EQ);
+        }
+
+        int orCount = -1;
+        for (int i = 0; i < predicateContext.inOperationNode.args.size() - 1; ++i) {
+            traverseAlgo.traverse(args.get(i), this);
+            traverseAlgo.traverse(args.getLast(), this);
+            putOperator(EQ);
+            orCount++;
+        }
+
+        for (int i = 0; i < orCount; ++i) {
+            putOperator(OR);
+        }
     }
 
     private enum PredicateType {
@@ -1167,6 +1203,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         StaticSymbolTable symbolTable; // used for known symbol constant lookups
         PredicateType type;
         private ExpressionNode rootNode;
+        private ExpressionNode inOperationNode = null;
+        private boolean currentInSerialization = false;
 
         @Override
         public void clear() {
@@ -1192,6 +1230,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     singleBooleanColumn = true;
                 }
             }
+
+            if (SqlKeywords.isInKeyword(node.token)) {
+                inOperationNode = node;
+            }
         }
 
         public boolean onNodeVisited(final ExpressionNode node) throws SqlException {
@@ -1200,6 +1242,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 // We left the predicate.
                 rootNode = null;
                 predicateLeft = true;
+            }
+
+            if (node == inOperationNode) {
+                inOperationNode = null;
+                currentInSerialization = false;
             }
 
             switch (node.type) {
@@ -1265,6 +1312,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             singleBooleanColumn = false;
             hasArithmeticOperations = false;
             localTypesObserver.clear();
+            currentInSerialization = false;
+            inOperationNode = null;
         }
 
         private void updateType(int position, int columnTypeTag) throws SqlException {

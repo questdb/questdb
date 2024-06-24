@@ -199,26 +199,6 @@ public class SqlOptimiser implements Mutable {
         constNameToToken.clear();
     }
 
-    public CharSequence findColumnByAst(ObjList<ExpressionNode> groupByNodes, ObjList<CharSequence> groupByAliases, ExpressionNode node) {
-        for (int i = 0, max = groupByNodes.size(); i < max; i++) {
-            ExpressionNode n = groupByNodes.getQuick(i);
-            if (ExpressionNode.compareNodesExact(node, n)) {
-                return groupByAliases.getQuick(i);
-            }
-        }
-        return null;
-    }
-
-    public int findColumnIdxByAst(ObjList<ExpressionNode> groupByNodes, ExpressionNode node) {
-        for (int i = 0, max = groupByNodes.size(); i < max; i++) {
-            ExpressionNode n = groupByNodes.getQuick(i);
-            if (ExpressionNode.compareNodesExact(node, n)) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
     private static boolean isOrderedByDesignatedTimestamp(QueryModel model) {
         return model.getTimestamp() != null && model.getOrderBy().size() == 1
                 && Chars.equals(model.getOrderBy().getQuick(0).token, model.getTimestamp().token);
@@ -427,7 +407,6 @@ public class SqlOptimiser implements Mutable {
             QueryModel outerVirtualModel,
             QueryModel distinctModel
     ) throws SqlException {
-
         // Adds what intended to be a function (rather than a literal) to the
         // inner virtual model. It is possible that the function will have
         // the same alias as the existing table columns. We will "temporarily"
@@ -463,7 +442,7 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    //add table prefix to all column references to make it easier to compare expressions
+    // add table prefix to all column references to make it easier to compare expressions
     private void addMissingTablePrefixes(ExpressionNode node, QueryModel baseModel) throws SqlException {
         sqlNodeStack.clear();
 
@@ -1687,7 +1666,6 @@ public class SqlOptimiser implements Mutable {
             @Nullable QueryModel innerModel,
             QueryModel validatingModel
     ) throws SqlException {
-
         final LowerCaseCharSequenceObjHashMap<CharSequence> map = translatingModel.getColumnNameToAliasMap();
         int index = map.keyIndex(node.token);
         final CharSequence alias;
@@ -1858,7 +1836,6 @@ public class SqlOptimiser implements Mutable {
 
         while (!sqlNodeStack.isEmpty() || node != null) {
             if (node != null) {
-
                 if (node.rhs != null) {
                     final ExpressionNode n = replaceIfCursor(
                             node.rhs,
@@ -1897,7 +1874,7 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    //warning: this method replaces literal with aliases (changes node)
+    // warning: this method replaces literal with aliases (changes node)
     private void emitLiterals(
             @Transient ExpressionNode node,
             QueryModel translatingModel,
@@ -2105,6 +2082,26 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return Long.MAX_VALUE;
+    }
+
+    private CharSequence findColumnByAst(ObjList<ExpressionNode> groupByNodes, ObjList<CharSequence> groupByAliases, ExpressionNode node) {
+        for (int i = 0, max = groupByNodes.size(); i < max; i++) {
+            ExpressionNode n = groupByNodes.getQuick(i);
+            if (ExpressionNode.compareNodesExact(node, n)) {
+                return groupByAliases.getQuick(i);
+            }
+        }
+        return null;
+    }
+
+    private int findColumnIdxByAst(ObjList<ExpressionNode> groupByNodes, ExpressionNode node) {
+        for (int i = 0, max = groupByNodes.size(); i < max; i++) {
+            ExpressionNode n = groupByNodes.getQuick(i);
+            if (ExpressionNode.compareNodesExact(node, n)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private CharSequence findQueryColumnByAst(ObjList<QueryColumn> bottomUpColumns, ExpressionNode node) {
@@ -2378,7 +2375,6 @@ public class SqlOptimiser implements Mutable {
         // check if we are merging a.x = b.x to a.y = b.y
         // or a.x = b.x to a.x = b.y, e.g. one of columns in the same table
         for (int i = 0, n = b.aNames.size(); i < n; i++) {
-
             CharSequence ban = b.aNames.getQuick(i);
             int bai = b.aIndexes.getQuick(i);
             ExpressionNode bao = b.aNodes.getQuick(i);
@@ -3689,7 +3685,6 @@ public class SqlOptimiser implements Mutable {
                 return expressionNodePool.next().of(LITERAL, prefixedCol, node.precedence, node.position);
             }
         }
-
         return node;
     }
 
@@ -4792,7 +4787,6 @@ public class SqlOptimiser implements Mutable {
             SqlExecutionContext sqlExecutionContext,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-
         if (model.getUnionModel() != null) {
             QueryModel rewrittenUnionModel = rewriteSelectClause(
                     model.getUnionModel(),
@@ -4883,8 +4877,8 @@ public class SqlOptimiser implements Mutable {
 
         // cursor model should have all columns that base model has to properly resolve duplicate names
         cursorModel.getAliasToColumnMap().putAll(baseModel.getAliasToColumnMap());
-        // create virtual columns from select list
 
+        // take a look at the select list
         for (int i = 0, k = columns.size(); i < k; i++) {
             QueryColumn qc = columns.getQuick(i);
             final boolean window = qc.isWindowColumn();
@@ -4944,20 +4938,20 @@ public class SqlOptimiser implements Mutable {
         boolean explicitGroupBy = groupBy.size() > 0;
 
         if (explicitGroupBy) {
-            // Outer model is not needed only if select clauses is the same as group by plus aggregate function calls
+            // Outer model is not needed only if select clause is the same as group by plus aggregate function calls
             for (int i = 0, n = groupBy.size(); i < n; i++) {
                 ExpressionNode node = groupBy.getQuick(i);
                 CharSequence alias = null;
                 int originalNodePosition = -1;
 
-                //group by select clause alias
+                // group by select clause alias
                 if (node.type == LITERAL) {
                     // If literal is select clause alias then use its AST //sym1 -> ccy x -> a
                     // NOTE: this is merely a shortcut and doesn't mean that alias exists at group by stage !
                     // while
-                    //   select a as d  from t group by d
+                    //   select a as d from t group by d;
                     // works, the following does not
-                    //  select a as d  from t group by d + d
+                    //   select a as d from t group by d + d;
                     QueryColumn qc = model.getAliasToColumnMap().get(node.token);
                     if (qc != null && (qc.getAst().type != LITERAL || !Chars.equals(node.token, qc.getAst().token))) {
                         originalNodePosition = node.position;
@@ -5199,15 +5193,25 @@ public class SqlOptimiser implements Mutable {
                         continue;
                     }
 
-                    addMissingTablePrefixes(qc.getAst(), baseModel);
                     final int beforeSplit = groupByModel.getBottomUpColumns().size();
+
+                    final ExpressionNode originalNode = qc.getAst();
+                    // if the alias is in groupByAliases, it means that we've already seen
+                    // the column in the GROUP BY clause and emitted literals for it to
+                    // the inner models; in this case, if we add a missing table prefix to
+                    // column's nodes, it may break the references; to avoid that, clone the node
+                    ExpressionNode node = groupByAliases.indexOf(qc.getAlias()) != -1
+                            ? deepClone(expressionNodePool, originalNode)
+                            : originalNode;
+                    addMissingTablePrefixes(node, baseModel);
+
                     // if there is explicit GROUP BY clause then we've to replace matching expressions with aliases in outer virtual model
-                    ExpressionNode en = rewriteGroupBySelectExpression(qc.getAst(), groupByModel, groupByNodes, groupByAliases);
-                    if (qc.getAst() == en) {
+                    node = rewriteGroupBySelectExpression(node, groupByModel, groupByNodes, groupByAliases);
+                    if (originalNode == node) {
                         useOuterModel = true;
                     } else {
-                        if (Chars.equalsIgnoreCase(qc.getAst().token, qc.getAlias())) {
-                            int idx = groupByAliases.indexOf(qc.getAst().token);
+                        if (Chars.equalsIgnoreCase(originalNode.token, qc.getAlias())) {
+                            int idx = groupByAliases.indexOf(originalNode.token);
                             if (i != idx) {
                                 useOuterModel = true;
                             }
@@ -5215,7 +5219,7 @@ public class SqlOptimiser implements Mutable {
                         } else {
                             useOuterModel = true;
                         }
-                        qc.of(qc.getAlias(), en, qc.isIncludeIntoWildcard(), qc.getColumnType());
+                        qc.of(qc.getAlias(), node, qc.isIncludeIntoWildcard(), qc.getColumnType());
                     }
 
                     emitCursors(qc.getAst(), cursorModel, innerVirtualModel, translatingModel, baseModel, sqlExecutionContext, sqlParserCallback);
