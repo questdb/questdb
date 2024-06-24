@@ -64,9 +64,10 @@ public class ParquetTest extends AbstractTest {
     private final static Log LOG = LogFactory.getLog(ParquetTest.class);
     private final static int NUMERIC_MIN = -10;
     private final static int NUMERIC_MAX = 10;
-    private final static long DEFAULT_ROW_GROUP_SIZE = 512*512;
-    private final static long INITIAL_ROWS = DEFAULT_ROW_GROUP_SIZE * 2;
-    private final static long UPDATE_ROWS = DEFAULT_ROW_GROUP_SIZE  * 4;
+    private final static long ROW_GROUP_SIZE = 64;
+    private final static long DATA_PAGE_SIZE = 128; // bytes
+    private final static long INITIAL_ROWS = ROW_GROUP_SIZE * 2;
+    private final static long UPDATE_ROWS = ROW_GROUP_SIZE * 4;
 
     @Test
     public void testAllTypes() throws Exception {
@@ -167,7 +168,17 @@ public class ParquetTest extends AbstractTest {
                 parquetPathStr = path.toString();
                 long start = System.nanoTime();
                 int partitionIndex = 0;
-                partitionEncoder.encode(reader, partitionIndex, path);
+                partitionEncoder.encodeWithOptions(
+                        reader,
+                        partitionIndex,
+                        path,
+                        PartitionEncoder.COMPRESSION_UNCOMPRESSED,
+                        true,
+                        ROW_GROUP_SIZE,
+                        DATA_PAGE_SIZE,
+                        PartitionEncoder.PARQUET_VERSION_V1
+                );
+
                 LOG.info().$("Took: ").$((System.nanoTime() - start) / 1_000_000).$("ms").$();
                 long partitionRowCount = reader.getPartitionRowCount(partitionIndex);
                 Configuration configuration = new Configuration();
@@ -421,7 +432,11 @@ public class ParquetTest extends AbstractTest {
             for (int i = 0; i < rowGroups.size(); i++) {
                BlockMetaData blockMetaData = rowGroups.get(i);
                 long blockRowCount = blockMetaData.getRowCount();
-                Assert.assertTrue(blockRowCount <= DEFAULT_ROW_GROUP_SIZE);
+                if (i == rowGroups.size() - 1) {
+                    Assert.assertTrue(blockRowCount <= ROW_GROUP_SIZE);
+                } else {
+                    Assert.assertEquals(ROW_GROUP_SIZE, blockRowCount);
+                }
                 rowCount += blockRowCount;
                 List<ColumnChunkMetaData> chunks = blockMetaData.getColumns();
                 // an_int
