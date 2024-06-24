@@ -36,50 +36,18 @@ elseif (WIN32)
     set(OS_WINDOWS 1)
 endif (APPLE)
 
+# Adding new source files
 set(
-        VCL_FILES
-        src/main/c/share/vec_agg.cpp
-        src/main/c/share/vec_ts_agg.cpp
-        src/main/c/share/ooo_dispatch.cpp
-        src/main/c/share/geohash_dispatch.cpp
+        NEW_SOURCE_FILES
+        src/main/c/share/new_feature.cpp
+        src/main/c/share/another_feature.cpp
 )
 
-set(
-        VCL_FILES_SSE2
-        src/main/c/share/vcl/instrset_detect.cpp
-        src/main/c/share/rosti.cpp
-        src/main/c/share/vec_agg_vanilla.cpp
-        src/main/c/share/vec_agg.cpp
-        src/main/c/share/vec_int_key_agg.cpp
-        src/main/c/share/vec_ts_agg.cpp
-        src/main/c/share/ooo_dispatch.cpp
-        src/main/c/share/geohash_dispatch.cpp
-)
-
+# Merge new source files with existing source files
 set(
         SOURCE_FILES
-        src/main/c/share/simd.h
-        src/main/c/share/files.h
-        src/main/c/share/zip.h
-        src/main/c/share/net.h
-        src/main/c/share/zip.c
-        src/main/c/share/os.h
-        src/main/c/share/vec_agg_vanilla.h
-        src/main/c/share/util.cpp
-        src/main/c/share/ooo.cpp
-        src/main/c/share/txn_board.cpp
-        src/main/c/share/bitmap_index_utils.h
-        src/main/c/share/bitmap_index_utils.cpp
-        src/main/c/share/geohash.cpp
-        src/main/c/share/jit/compiler.h
-        src/main/c/share/jit/compiler.cpp
-        src/main/c/share/cpprt_overrides.h
-        src/main/c/share/cpprt_overrides.cpp
-        src/main/c/share/dedup.cpp
-        src/main/c/share/byte_sink.cpp
-        src/main/c/share/byte_sink.h
-        src/main/c/share/converters.cpp
-        src/main/c/share/converters.h
+        ${SOURCE_FILES}
+        ${NEW_SOURCE_FILES}
 )
 
 # JNI includes
@@ -337,4 +305,38 @@ else ()
     target_link_libraries(questdb rt -Wl,--gc-sections -Wl,--exclude-libs=ALL -static-libgcc)
 endif ()
 
-include(${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/jemalloc-cmake/CMakeLists.txt)
+# Adding GoogleTest for testing
+FetchContent_Declare(
+    googletest
+    GIT_REPOSITORY https://github.com/google/googletest.git
+    GIT_TAG release-1.12.1
+)
+
+FetchContent_GetProperties(googletest)
+if (NOT googletest_POPULATED)
+    FetchContent_Populate(googletest)
+    add_subdirectory(${googletest_SOURCE_DIR} ${googletest_BINARY_DIR})
+endif()
+
+enable_testing()
+
+# Add tests
+add_executable(
+    runUnitTests
+    test/test_main.cpp
+    test/test_feature.cpp
+)
+target_link_libraries(
+    runUnitTests
+    GTest::gtest_main
+    questdb
+)
+
+include(GoogleTest)
+gtest_discover_tests(runUnitTests)
+
+# Installation rules
+install(TARGETS questdb DESTINATION lib)
+install(DIRECTORY include/ DESTINATION include)
+install(FILES src/main/c/share/simd.h DESTINATION include)
+install(FILES src/main/c/share/files.h DESTINATION include)
