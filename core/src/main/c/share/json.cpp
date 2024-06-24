@@ -68,6 +68,9 @@ static_assert(sizeof(simdjson::error_code) == 4, "Unexpected size of simdjson::e
 static_assert(sizeof(simdjson::ondemand::json_type) == 4, "Unexpected size of simdjson::ondemand::json_type");
 static_assert(sizeof(json_result) == 8, "Unexpected size of json_result");
 
+static_assert(sizeof(size_t) == 8);
+static_assert(sizeof(jlong) == 8);
+
 constexpr std::byte BYTE_0x80 = std::byte(0x80); // 10000000
 constexpr std::byte BYTE_0xC0 = std::byte(0xC0); // 11000000
 constexpr std::byte BYTE_0xE0 = std::byte(0xE0); // 11100000

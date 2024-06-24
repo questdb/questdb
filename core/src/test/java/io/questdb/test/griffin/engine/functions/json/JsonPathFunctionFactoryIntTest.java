@@ -96,6 +96,11 @@ public class JsonPathFunctionFactoryIntTest extends AbstractFunctionFactoryTest 
     }
 
     @Test
+    public void testNegativeStrict() throws SqlException {
+        callFn(utf8("{\"path\": -123}"), utf8(".path"), FAIL_ON_ERROR).andAssert(-123);
+    }
+
+    @Test
     public void testNullJson() throws SqlException {
         callFn(
                 utf8(null),
@@ -139,6 +144,7 @@ public class JsonPathFunctionFactoryIntTest extends AbstractFunctionFactoryTest 
         final CairoException exc = Assert.assertThrows(
                 CairoException.class,
                 () -> callFn(utf8("{\"path\": \"abc\"}"), utf8(".path"), FAIL_ON_ERROR, 42));
+        System.err.println(exc.getMessage());
         Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): INCORRECT_TYPE:"));
     }
 

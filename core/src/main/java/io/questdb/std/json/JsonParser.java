@@ -169,7 +169,7 @@ public class JsonParser implements QuietCloseable {
     private static native int queryPointerInt(
             long impl,
             long jsonPtr,
-            int jsonLen,
+            long jsonLen,
             long jsonTailPadding,
             long pointerPtr,
             long pointerLen,
