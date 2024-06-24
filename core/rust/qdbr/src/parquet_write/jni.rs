@@ -143,8 +143,19 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         let compression_options =
             compression_from_i64(compression_codec).context("CompressionCodec")?;
         let statistics_enabled = statistics_enabled != 0;
-        let row_group_size = row_group_size.try_into().ok();
-        let data_page_size = data_page_size.try_into().ok();
+        let row_group_size = if row_group_size > 0 {
+            Some(row_group_size as usize)
+        } else {
+            None
+        };
+        let data_page_size = if data_page_size > 0 {
+            Some(data_page_size as usize)
+        } else {
+            None
+        };
+
+        eprintln!("row_group_size: {:?}", row_group_size);
+        eprintln!("data_page_size: {:?}", data_page_size);
         let version = version_from_i32(version).context("Version")?;
 
         let mut file = File::create(dest_path).with_context(|| {
