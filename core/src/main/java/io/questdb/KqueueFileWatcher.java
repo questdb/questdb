@@ -96,6 +96,10 @@ public class KqueueFileWatcher extends FileWatcher {
             }
 
             long fds = KqueueAccessor.pipe();
+            if (fds < 0) {
+                throw CairoException.critical(Os.errno()).put("could not create pipe");
+            }
+            
             this.readEndFd = (int) (fds >>> 32);
             this.writeEndFd = (int) fds;
             Files.bumpFileCount(this.readEndFd);
