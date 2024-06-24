@@ -24,28 +24,37 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
-import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
-import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
-import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.std.ObjList;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.Nullable;
 
-public interface HttpServerConfiguration extends WorkerPoolConfiguration, HttpMinServerConfiguration {
-    String DEFAULT_PROCESSOR_URL = "*";
-    int MIN_SEND_BUFFER_SIZE = 128;
+public final class StaticHttpAuthenticator implements HttpAuthenticator {
+    private final Utf8Sequence expectedHeader;
+    private final String username;
 
-    JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration();
+    public StaticHttpAuthenticator(String username, Utf8Sequence expectedAuthHeader) {
+        this.username = username;
+        this.expectedHeader = expectedAuthHeader;
+    }
 
-    LineHttpProcessorConfiguration getLineHttpProcessorConfiguration();
+    @Override
+    public boolean authenticate(HttpRequestHeader headers) {
+        final DirectUtf8Sequence header = headers.getHeader(HttpConstants.HEADER_AUTHORIZATION);
+        if (header == null) {
+            return false;
+        }
+        return Utf8s.equals(expectedHeader, header);
+    }
 
-    String getPassword();
+    @Override
+    public @Nullable ObjList<CharSequence> getGroups() {
+        return null;
+    }
 
-    int getQueryCacheBlockCount();
-
-    int getQueryCacheRowCount();
-
-    StaticContentProcessorConfiguration getStaticContentProcessorConfiguration();
-
-    String getUsername();
-
-    boolean isQueryCacheEnabled();
+    @Override
+    public CharSequence getPrincipal() {
+        return username;
+    }
 }

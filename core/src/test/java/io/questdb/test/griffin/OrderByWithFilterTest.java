@@ -463,7 +463,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     "    Sort light\n" +
                     "      keys: [mta_tax]\n" +
                     "        SelectedRecord\n" +
-                    "            Async Filter workers: 1\n" +
+                    "            Async JIT Filter workers: 1\n" +
                     "              filter: vendor_id in [A1,A2]\n" +
                     "                DataFrame\n" +
                     "                    Row forward scan\n" +
@@ -514,7 +514,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     "                    Interval forward scan on: t1\n" +
                     "                      intervals: [(\"2019-06-30T00:00:00.000000Z\",\"MAX\")]\n" +
                     "                Hash\n" +
-                    "                    Async Filter workers: 1\n" +
+                    "                    Async JIT Filter workers: 1\n" +
                     "                      filter: vendor_id in [A1,A2]\n" +
                     "                        DataFrame\n" +
                     "                            Row forward scan\n" +

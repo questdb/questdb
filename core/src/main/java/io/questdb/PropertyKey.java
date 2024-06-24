@@ -210,6 +210,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     CIRCUIT_BREAKER_BUFFER_SIZE("circuit.breaker.buffer.size"),
     CONFIG_VALIDATION_STRICT("config.validation.strict"),
     HTTP_MIN_ENABLED("http.min.enabled"),
+    HTTP_USER("http.user"),
+    HTTP_PASSWORD("http.password", true),
     HTTP_MIN_WORKER_AFFINITY("http.min.worker.affinity"),
     HTTP_MIN_WORKER_YIELD_THRESHOLD("http.min.worker.yield.threshold"),
     HTTP_MIN_WORKER_NAP_THRESHOLD("http.min.worker.nap.threshold"),

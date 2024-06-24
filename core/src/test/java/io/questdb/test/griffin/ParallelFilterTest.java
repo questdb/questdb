@@ -406,6 +406,16 @@ public class ParallelFilterTest extends AbstractCairoTest {
         testStrBindVariable("VARCHAR", SqlJitMode.JIT_MODE_ENABLED);
     }
 
+    @Test
+    public void testInJitDisabled() throws Exception {
+        testIn(SqlJitMode.JIT_MODE_DISABLED);
+    }
+
+    @Test
+    public void testInJitEnabled() throws Exception {
+        testIn(SqlJitMode.JIT_MODE_ENABLED);
+    }
+
     private static boolean assertCursor(
             CharSequence expected,
             RecordCursorFactory factory,
@@ -753,6 +763,34 @@ public class ParallelFilterTest extends AbstractCairoTest {
                                     "1970-01-01T00:00:00.000038Z\tt3\t0.7664256753596138\n" +
                                     "1970-01-01T00:00:00.000043Z\tt3\t0.05048190020054388\n" +
                                     "1970-01-01T00:00:00.000048Z\tt3\t0.8001121139739173\n"
+                    );
+                },
+                configuration,
+                LOG
+        );
+    }
+
+    private void testIn(int jitMode) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
+
+        WorkerPool pool = new WorkerPool((() -> 4));
+        TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                    ddl(compiler, "CREATE TABLE tab (\n" +
+                            "  ts TIMESTAMP," +
+                            "  type INT," +
+                            "  value SYMBOL) timestamp (ts) PARTITION BY DAY;", sqlExecutionContext);
+                    insert(compiler, "insert into tab select x::timestamp, x%10, 't' || (x%10) from long_sequence(10)", sqlExecutionContext);
+
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "select * from tab where type IN (2, 3, 4, 6) limit 10",
+                            sink,
+                            "ts\ttype\tvalue\n" +
+                                    "1970-01-01T00:00:00.000002Z\t2\tt2\n" +
+                                    "1970-01-01T00:00:00.000003Z\t3\tt3\n" +
+                                    "1970-01-01T00:00:00.000004Z\t4\tt4\n" +
+                                    "1970-01-01T00:00:00.000006Z\t6\tt6\n"
                     );
                 },
                 configuration,
