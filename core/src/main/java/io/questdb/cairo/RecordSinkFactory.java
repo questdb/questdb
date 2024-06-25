@@ -36,40 +36,28 @@ public class RecordSinkFactory {
     public static RecordSink getInstance(
             BytecodeAssembler asm,
             ColumnTypes columnTypes,
-            @Transient @NotNull ColumnFilter columnFilter,
-            boolean symAsString
+            @Transient @NotNull ColumnFilter columnFilter
     ) {
-        return getInstance(asm, columnTypes, columnFilter, null, symAsString, null, null);
+        return getInstance(asm, columnTypes, columnFilter, null, null, null, null);
     }
 
     public static RecordSink getInstance(
             BytecodeAssembler asm,
             ColumnTypes columnTypes,
             @Transient @NotNull ColumnFilter columnFilter,
-            boolean symAsString,
-            BitSet writeAsVarchar
+            @Nullable BitSet writeSymbolAsString
     ) {
-        return getInstance(asm, columnTypes, columnFilter, null, symAsString, null, writeAsVarchar);
+        return getInstance(asm, columnTypes, columnFilter, null, null, writeSymbolAsString, null);
     }
 
     public static RecordSink getInstance(
             BytecodeAssembler asm,
             ColumnTypes columnTypes,
             @Transient @NotNull ColumnFilter columnFilter,
-            @Nullable ObjList<Function> keyFunctions,
-            boolean symAsString
+            @Nullable BitSet writeSymbolAsString,
+            @Nullable BitSet writeStringAsVarchar
     ) {
-        return getInstance(asm, columnTypes, columnFilter, keyFunctions, symAsString, null, null);
-    }
-
-    public static RecordSink getInstance(
-            BytecodeAssembler asm,
-            ColumnTypes columnTypes,
-            @Transient @NotNull ColumnFilter columnFilter,
-            boolean symAsString,
-            @Transient @Nullable IntList skewIndex
-    ) {
-        return getInstance(asm, columnTypes, columnFilter, null, symAsString, skewIndex, null);
+        return getInstance(asm, columnTypes, columnFilter, null, null, writeSymbolAsString, writeStringAsVarchar);
     }
 
     public static RecordSink getInstance(
@@ -77,20 +65,40 @@ public class RecordSinkFactory {
             ColumnTypes columnTypes,
             @Transient @NotNull ColumnFilter columnFilter,
             @Nullable ObjList<Function> keyFunctions,
-            boolean symAsString,
-            @Transient @Nullable IntList skewIndex
+            @Nullable BitSet writeSymbolAsString
     ) {
-        return getInstance(asm, columnTypes, columnFilter, keyFunctions, symAsString, skewIndex, null);
+        return getInstance(asm, columnTypes, columnFilter, keyFunctions, null, writeSymbolAsString, null);
     }
 
     public static RecordSink getInstance(
             BytecodeAssembler asm,
             ColumnTypes columnTypes,
             @Transient @NotNull ColumnFilter columnFilter,
-            @Nullable ObjList<Function> keyFunctions,
-            boolean symAsString,
             @Transient @Nullable IntList skewIndex,
-            @Nullable BitSet writeAsVarchar
+            @Nullable BitSet writeSymbolAsString
+    ) {
+        return getInstance(asm, columnTypes, columnFilter, null, skewIndex, writeSymbolAsString, null);
+    }
+
+    public static RecordSink getInstance(
+            BytecodeAssembler asm,
+            ColumnTypes columnTypes,
+            @Transient @NotNull ColumnFilter columnFilter,
+            @Nullable ObjList<Function> keyFunctions,
+            @Nullable BitSet writeSymbolAsString,
+            @Transient @Nullable IntList skewIndex
+    ) {
+        return getInstance(asm, columnTypes, columnFilter, keyFunctions, skewIndex, writeSymbolAsString, null);
+    }
+
+    public static RecordSink getInstance(
+            BytecodeAssembler asm,
+            ColumnTypes columnTypes,
+            @Transient @NotNull ColumnFilter columnFilter,
+            @Nullable ObjList<Function> keyFunctions,
+            @Transient @Nullable IntList skewIndex,
+            @Nullable BitSet writeSymbolAsString,
+            @Nullable BitSet writeStringAsVarchar
     ) {
         asm.init(RecordSink.class);
         asm.setupPool();
@@ -218,7 +226,8 @@ public class RecordSinkFactory {
                     continue;
                 }
             }
-            boolean strAsVarchar = writeAsVarchar != null && writeAsVarchar.get(index);
+            final boolean symAsString = writeSymbolAsString != null && writeSymbolAsString.get(index);
+            final boolean strAsVarchar = writeStringAsVarchar != null && writeStringAsVarchar.get(index);
             switch (factor * ColumnType.tagOf(type)) {
                 case ColumnType.INT:
                     asm.aload(2);

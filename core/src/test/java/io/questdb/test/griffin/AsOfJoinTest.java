@@ -1245,6 +1245,252 @@ public class AsOfJoinTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testSelfJoinOnSymbolKey1() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE trades (pair SYMBOL, ts TIMESTAMP, price INT) TIMESTAMP(ts) PARTITION BY DAY");
+
+            insert(
+                    "INSERT INTO trades VALUES " +
+                            "('BTC-USD', '2000-01-01T00:00:00.000000Z', 1)," +
+                            "('BTC-USD', '2001-01-01T00:00:01.000000Z', 2)," +
+                            "('BTC-USD', '2002-01-01T00:00:03.000000Z', 3)," +
+                            "('ETH-USD', '2001-01-01T00:00:00.000000Z', 4)," +
+                            "('ETH-USD', '2001-01-01T00:00:01.000000Z', 5)," +
+                            "('ETH-USD', '2001-01-01T00:00:03.000000Z', 6)"
+            );
+
+            // ASOF JOIN
+            String query = "SELECT * FROM trades t1 ASOF JOIN trades t2 ON (pair)";
+            String expected = "pair\tts\tprice\tpair1\tts1\tprice1\n" +
+                    "BTC-USD\t2000-01-01T00:00:00.000000Z\t1\tBTC-USD\t2000-01-01T00:00:00.000000Z\t1\n" +
+                    "ETH-USD\t2001-01-01T00:00:00.000000Z\t4\tETH-USD\t2001-01-01T00:00:00.000000Z\t4\n" +
+                    "BTC-USD\t2001-01-01T00:00:01.000000Z\t2\tBTC-USD\t2001-01-01T00:00:01.000000Z\t2\n" +
+                    "ETH-USD\t2001-01-01T00:00:01.000000Z\t5\tETH-USD\t2001-01-01T00:00:01.000000Z\t5\n" +
+                    "ETH-USD\t2001-01-01T00:00:03.000000Z\t6\tETH-USD\t2001-01-01T00:00:03.000000Z\t6\n" +
+                    "BTC-USD\t2002-01-01T00:00:03.000000Z\t3\tBTC-USD\t2002-01-01T00:00:03.000000Z\t3\n";
+            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+
+            // LT JOIN
+            query = "SELECT * FROM trades t1 LT JOIN trades t2 ON (pair)";
+            expected = "pair\tts\tprice\tpair1\tts1\tprice1\n" +
+                    "BTC-USD\t2000-01-01T00:00:00.000000Z\t1\t\t\tnull\n" +
+                    "ETH-USD\t2001-01-01T00:00:00.000000Z\t4\t\t\tnull\n" +
+                    "BTC-USD\t2001-01-01T00:00:01.000000Z\t2\tBTC-USD\t2000-01-01T00:00:00.000000Z\t1\n" +
+                    "ETH-USD\t2001-01-01T00:00:01.000000Z\t5\tETH-USD\t2001-01-01T00:00:00.000000Z\t4\n" +
+                    "ETH-USD\t2001-01-01T00:00:03.000000Z\t6\tETH-USD\t2001-01-01T00:00:01.000000Z\t5\n" +
+                    "BTC-USD\t2002-01-01T00:00:03.000000Z\t3\tBTC-USD\t2001-01-01T00:00:01.000000Z\t2\n";
+            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+
+            // SPLICE JOIN
+            query = "SELECT * FROM trades t1 SPLICE JOIN trades t2 ON (pair)";
+            expected = "pair\tts\tprice\tpair1\tts1\tprice1\n" +
+                    "BTC-USD\t2000-01-01T00:00:00.000000Z\t1\tBTC-USD\t2000-01-01T00:00:00.000000Z\t1\n" +
+                    "ETH-USD\t2001-01-01T00:00:00.000000Z\t4\tETH-USD\t2001-01-01T00:00:00.000000Z\t4\n" +
+                    "BTC-USD\t2001-01-01T00:00:01.000000Z\t2\tBTC-USD\t2001-01-01T00:00:01.000000Z\t2\n" +
+                    "ETH-USD\t2001-01-01T00:00:01.000000Z\t5\tETH-USD\t2001-01-01T00:00:01.000000Z\t5\n" +
+                    "ETH-USD\t2001-01-01T00:00:03.000000Z\t6\tETH-USD\t2001-01-01T00:00:03.000000Z\t6\n" +
+                    "BTC-USD\t2002-01-01T00:00:03.000000Z\t3\tBTC-USD\t2002-01-01T00:00:03.000000Z\t3\n";
+            assertQueryNoLeakCheck(expected, query, null, false, false);
+        });
+    }
+
+    @Test
+    public void testSelfJoinOnSymbolKey2() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE trades (pair SYMBOL, ts TIMESTAMP, price INT) TIMESTAMP(ts) PARTITION BY DAY");
+
+            insert(
+                    "INSERT INTO trades VALUES " +
+                            "('BTC-USD', '2000-01-01T00:00:00.000000Z', 1)," +
+                            "('BTC-USD', '2001-01-01T00:00:01.000000Z', 2)," +
+                            "('BTC-USD', '2002-01-01T00:00:03.000000Z', 3)," +
+                            "('ETH-USD', '2001-01-01T00:00:00.000000Z', 4)," +
+                            "('ETH-USD', '2001-01-01T00:00:01.000000Z', 5)," +
+                            "('ETH-USD', '2001-01-01T00:00:03.000000Z', 6)"
+            );
+
+            // ASOF JOIN
+            String query = "SELECT * FROM (select pair p1, ts, price from trades) t1 " +
+                    "ASOF JOIN (select ts, price, pair p2 from trades) t2 ON t1.p1 = t2.p2";
+            String expected = "p1\tts\tprice\tts1\tprice1\tp2\n" +
+                    "BTC-USD\t2000-01-01T00:00:00.000000Z\t1\t2000-01-01T00:00:00.000000Z\t1\tBTC-USD\n" +
+                    "ETH-USD\t2001-01-01T00:00:00.000000Z\t4\t2001-01-01T00:00:00.000000Z\t4\tETH-USD\n" +
+                    "BTC-USD\t2001-01-01T00:00:01.000000Z\t2\t2001-01-01T00:00:01.000000Z\t2\tBTC-USD\n" +
+                    "ETH-USD\t2001-01-01T00:00:01.000000Z\t5\t2001-01-01T00:00:01.000000Z\t5\tETH-USD\n" +
+                    "ETH-USD\t2001-01-01T00:00:03.000000Z\t6\t2001-01-01T00:00:03.000000Z\t6\tETH-USD\n" +
+                    "BTC-USD\t2002-01-01T00:00:03.000000Z\t3\t2002-01-01T00:00:03.000000Z\t3\tBTC-USD\n";
+            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+
+            // LT JOIN
+            query = "SELECT * FROM (select pair p1, ts, price from trades) t1 " +
+                    "LT JOIN (select ts, price, pair p2 from trades) t2 ON t1.p1 = t2.p2";
+            expected = "p1\tts\tprice\tts1\tprice1\tp2\n" +
+                    "BTC-USD\t2000-01-01T00:00:00.000000Z\t1\t\tnull\t\n" +
+                    "ETH-USD\t2001-01-01T00:00:00.000000Z\t4\t\tnull\t\n" +
+                    "BTC-USD\t2001-01-01T00:00:01.000000Z\t2\t2000-01-01T00:00:00.000000Z\t1\tBTC-USD\n" +
+                    "ETH-USD\t2001-01-01T00:00:01.000000Z\t5\t2001-01-01T00:00:00.000000Z\t4\tETH-USD\n" +
+                    "ETH-USD\t2001-01-01T00:00:03.000000Z\t6\t2001-01-01T00:00:01.000000Z\t5\tETH-USD\n" +
+                    "BTC-USD\t2002-01-01T00:00:03.000000Z\t3\t2001-01-01T00:00:01.000000Z\t2\tBTC-USD\n";
+            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+
+            // SPLICE JOIN
+            query = "SELECT * FROM (select pair p1, ts, price from trades) t1 " +
+                    "SPLICE JOIN (select ts, price, pair p2 from trades) t2 ON t1.p1 = t2.p2";
+            expected = "p1\tts\tprice\tts1\tprice1\tp2\n" +
+                    "BTC-USD\t2000-01-01T00:00:00.000000Z\t1\t2000-01-01T00:00:00.000000Z\t1\tBTC-USD\n" +
+                    "ETH-USD\t2001-01-01T00:00:00.000000Z\t4\t2001-01-01T00:00:00.000000Z\t4\tETH-USD\n" +
+                    "BTC-USD\t2001-01-01T00:00:01.000000Z\t2\t2001-01-01T00:00:01.000000Z\t2\tBTC-USD\n" +
+                    "ETH-USD\t2001-01-01T00:00:01.000000Z\t5\t2001-01-01T00:00:01.000000Z\t5\tETH-USD\n" +
+                    "ETH-USD\t2001-01-01T00:00:03.000000Z\t6\t2001-01-01T00:00:03.000000Z\t6\tETH-USD\n" +
+                    "BTC-USD\t2002-01-01T00:00:03.000000Z\t3\t2002-01-01T00:00:03.000000Z\t3\tBTC-USD\n";
+            assertQueryNoLeakCheck(expected, query, null, false, false);
+        });
+    }
+
+    @Test
+    public void testSelfJoinOnSymbolKey3() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE trades (pair SYMBOL, side SYMBOL, ts TIMESTAMP, price INT) TIMESTAMP(ts) PARTITION BY DAY");
+
+            insert(
+                    "INSERT INTO trades VALUES " +
+                            "('BTC-USD', 'sell', '2000-01-01T00:00:00.000000Z', 1)," +
+                            "('BTC-USD', 'buy', '2001-01-01T00:00:01.000000Z', 2)," +
+                            "('BTC-USD', 'sell', '2002-01-01T00:00:03.000000Z', 3)," +
+                            "('ETH-USD', 'sell', '2001-01-01T00:00:00.000000Z', 4)," +
+                            "('ETH-USD', 'buy', '2001-01-01T00:00:01.000000Z', 5)," +
+                            "('ETH-USD', 'sell', '2001-01-01T00:00:03.000000Z', 6)"
+            );
+
+            // ASOF JOIN
+            String query = "SELECT * FROM trades t1 ASOF JOIN trades t2 ON(pair, side)";
+            String expected = "pair\tside\tts\tprice\tpair1\tside1\tts1\tprice1\n" +
+                    "BTC-USD\tsell\t2000-01-01T00:00:00.000000Z\t1\tBTC-USD\tsell\t2000-01-01T00:00:00.000000Z\t1\n" +
+                    "ETH-USD\tsell\t2001-01-01T00:00:00.000000Z\t4\tETH-USD\tsell\t2001-01-01T00:00:00.000000Z\t4\n" +
+                    "BTC-USD\tbuy\t2001-01-01T00:00:01.000000Z\t2\tBTC-USD\tbuy\t2001-01-01T00:00:01.000000Z\t2\n" +
+                    "ETH-USD\tbuy\t2001-01-01T00:00:01.000000Z\t5\tETH-USD\tbuy\t2001-01-01T00:00:01.000000Z\t5\n" +
+                    "ETH-USD\tsell\t2001-01-01T00:00:03.000000Z\t6\tETH-USD\tsell\t2001-01-01T00:00:03.000000Z\t6\n" +
+                    "BTC-USD\tsell\t2002-01-01T00:00:03.000000Z\t3\tBTC-USD\tsell\t2002-01-01T00:00:03.000000Z\t3\n";
+            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+
+            // LT JOIN
+            query = "SELECT * FROM trades t1 LT JOIN trades t2 ON(pair, side)";
+            expected = "pair\tside\tts\tprice\tpair1\tside1\tts1\tprice1\n" +
+                    "BTC-USD\tsell\t2000-01-01T00:00:00.000000Z\t1\t\t\t\tnull\n" +
+                    "ETH-USD\tsell\t2001-01-01T00:00:00.000000Z\t4\t\t\t\tnull\n" +
+                    "BTC-USD\tbuy\t2001-01-01T00:00:01.000000Z\t2\t\t\t\tnull\n" +
+                    "ETH-USD\tbuy\t2001-01-01T00:00:01.000000Z\t5\t\t\t\tnull\n" +
+                    "ETH-USD\tsell\t2001-01-01T00:00:03.000000Z\t6\tETH-USD\tsell\t2001-01-01T00:00:00.000000Z\t4\n" +
+                    "BTC-USD\tsell\t2002-01-01T00:00:03.000000Z\t3\tBTC-USD\tsell\t2000-01-01T00:00:00.000000Z\t1\n";
+            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+
+            // SPLICE JOIN
+            query = "SELECT * FROM trades t1 SPLICE JOIN trades t2 ON(pair, side)";
+            expected = "pair\tside\tts\tprice\tpair1\tside1\tts1\tprice1\n" +
+                    "BTC-USD\tsell\t2000-01-01T00:00:00.000000Z\t1\tBTC-USD\tsell\t2000-01-01T00:00:00.000000Z\t1\n" +
+                    "ETH-USD\tsell\t2001-01-01T00:00:00.000000Z\t4\tETH-USD\tsell\t2001-01-01T00:00:00.000000Z\t4\n" +
+                    "BTC-USD\tbuy\t2001-01-01T00:00:01.000000Z\t2\tBTC-USD\tbuy\t2001-01-01T00:00:01.000000Z\t2\n" +
+                    "ETH-USD\tbuy\t2001-01-01T00:00:01.000000Z\t5\tETH-USD\tbuy\t2001-01-01T00:00:01.000000Z\t5\n" +
+                    "ETH-USD\tsell\t2001-01-01T00:00:03.000000Z\t6\tETH-USD\tsell\t2001-01-01T00:00:03.000000Z\t6\n" +
+                    "BTC-USD\tsell\t2002-01-01T00:00:03.000000Z\t3\tBTC-USD\tsell\t2002-01-01T00:00:03.000000Z\t3\n";
+            assertQueryNoLeakCheck(expected, query, null, false, false);
+        });
+    }
+
+    @Test
+    public void testSelfJoinOnSymbolKey4() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE x (sym1 SYMBOL, sym2 SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            insert(
+                    "INSERT INTO x VALUES " +
+                            "('1', '2', '2000-01-01T00:00:00.000000Z')," +
+                            "('3', '4', '2000-01-01T00:00:00.000000Z')," +
+                            "('1', '1', '2000-01-01T00:00:00.000000Z')," +
+                            "('2', '2', '2000-01-01T00:00:00.000000Z')," +
+                            "('4', '3', '2000-01-01T00:00:00.000000Z')"
+            );
+
+            // ASOF JOIN
+            String query = "SELECT * FROM (select sym1 s, ts from x) x1 " +
+                    "ASOF JOIN (select sym2 s, ts from x) x2 ON(s)";
+            String expected = "s\tts\ts1\tts1\n" +
+                    "1\t2000-01-01T00:00:00.000000Z\t1\t2000-01-01T00:00:00.000000Z\n" +
+                    "3\t2000-01-01T00:00:00.000000Z\t3\t2000-01-01T00:00:00.000000Z\n" +
+                    "1\t2000-01-01T00:00:00.000000Z\t1\t2000-01-01T00:00:00.000000Z\n" +
+                    "2\t2000-01-01T00:00:00.000000Z\t2\t2000-01-01T00:00:00.000000Z\n" +
+                    "4\t2000-01-01T00:00:00.000000Z\t4\t2000-01-01T00:00:00.000000Z\n";
+            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+
+            // LT JOIN
+            query = "SELECT * FROM (select sym1 s, ts from x) x1 " +
+                    "LT JOIN (select sym2 s, ts from x) x2 ON(s)";
+            expected = "s\tts\ts1\tts1\n" +
+                    "1\t2000-01-01T00:00:00.000000Z\t\t\n" +
+                    "3\t2000-01-01T00:00:00.000000Z\t\t\n" +
+                    "1\t2000-01-01T00:00:00.000000Z\t\t\n" +
+                    "2\t2000-01-01T00:00:00.000000Z\t\t\n" +
+                    "4\t2000-01-01T00:00:00.000000Z\t\t\n";
+            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+
+            // SPLICE JOIN
+            query = "SELECT * FROM (select sym1 s, ts from x) x1 " +
+                    "SPLICE JOIN (select sym2 s, ts from x) x2 ON(s)";
+            expected = "s\tts\ts1\tts1\n" +
+                    "1\t2000-01-01T00:00:00.000000Z\t\t\n" +
+                    "3\t2000-01-01T00:00:00.000000Z\t\t\n" +
+                    "1\t2000-01-01T00:00:00.000000Z\t1\t2000-01-01T00:00:00.000000Z\n" +
+                    "2\t2000-01-01T00:00:00.000000Z\t2\t2000-01-01T00:00:00.000000Z\n" +
+                    "4\t2000-01-01T00:00:00.000000Z\t\t\n";
+            assertQueryNoLeakCheck(expected, query, null, false, false);
+        });
+    }
+
+    @Test
+    public void testSelfJoinOnSymbolKey5() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE trades (pair SYMBOL, ts TIMESTAMP, price INT) TIMESTAMP(ts) PARTITION BY DAY");
+
+            insert(
+                    "INSERT INTO trades VALUES " +
+                            "('BTC-USD', '2000-01-01T00:00:00.000000Z', 1)," +
+                            "('BTC-USD', '2001-01-01T00:00:01.000000Z', 2)," +
+                            "('BTC-USD', '2002-01-01T00:00:03.000000Z', 3)," +
+                            "('ETH-USD', '2001-01-01T00:00:00.000000Z', 4)," +
+                            "('ETH-USD', '2001-01-01T00:00:01.000000Z', 5)," +
+                            "('ETH-USD', '2001-01-01T00:00:03.000000Z', 6)"
+            );
+
+            // ASOF JOIN
+            String query = "SELECT * FROM (select * from trades where pair = 'BTC-USD') t1 " +
+                    "ASOF JOIN (select * from trades where pair = 'BTC-USD') t2 ON(pair)";
+            String expected = "pair\tts\tprice\tpair1\tts1\tprice1\n" +
+                    "BTC-USD\t2000-01-01T00:00:00.000000Z\t1\tBTC-USD\t2000-01-01T00:00:00.000000Z\t1\n" +
+                    "BTC-USD\t2001-01-01T00:00:01.000000Z\t2\tBTC-USD\t2001-01-01T00:00:01.000000Z\t2\n" +
+                    "BTC-USD\t2002-01-01T00:00:03.000000Z\t3\tBTC-USD\t2002-01-01T00:00:03.000000Z\t3\n";
+            assertQueryNoLeakCheck(expected, query, "ts", false, false);
+
+            // LT JOIN
+            query = "SELECT * FROM (select * from trades where pair = 'BTC-USD') t1 " +
+                    "LT JOIN (select * from trades where pair = 'BTC-USD') t2 ON(pair)";
+            expected = "pair\tts\tprice\tpair1\tts1\tprice1\n" +
+                    "BTC-USD\t2000-01-01T00:00:00.000000Z\t1\t\t\tnull\n" +
+                    "BTC-USD\t2001-01-01T00:00:01.000000Z\t2\tBTC-USD\t2000-01-01T00:00:00.000000Z\t1\n" +
+                    "BTC-USD\t2002-01-01T00:00:03.000000Z\t3\tBTC-USD\t2001-01-01T00:00:01.000000Z\t2\n";
+            assertQueryNoLeakCheck(expected, query, "ts", false, false);
+
+            // SPLICE JOIN
+            query = "SELECT * FROM (select * from trades where pair = 'BTC-USD') t1 " +
+                    "SPLICE JOIN (select * from trades where pair = 'BTC-USD') t2 ON(pair)";
+            expected = "pair\tts\tprice\tpair1\tts1\tprice1\n" +
+                    "BTC-USD\t2000-01-01T00:00:00.000000Z\t1\tBTC-USD\t2000-01-01T00:00:00.000000Z\t1\n" +
+                    "BTC-USD\t2001-01-01T00:00:01.000000Z\t2\tBTC-USD\t2001-01-01T00:00:01.000000Z\t2\n" +
+                    "BTC-USD\t2002-01-01T00:00:03.000000Z\t3\tBTC-USD\t2002-01-01T00:00:03.000000Z\t3\n";
+            assertQueryNoLeakCheck(expected, query, null, false, false);
+        });
+    }
+
     private void testExplicitTimestampIsNotNecessaryWhenJoining(String joinType, String timestamp) throws Exception {
         assertQuery(
                 "ts\ty\tts1\ty1\n",
