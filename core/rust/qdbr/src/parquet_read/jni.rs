@@ -2,6 +2,7 @@ use std::fs::File;
 use std::mem::{offset_of, size_of};
 
 use crate::parquet_read::{ColumnChunkBuffers, ColumnMeta, ParquetDecoder};
+use crate::parquet_write::schema::ColumnType;
 use jni::objects::JClass;
 use jni::JNIEnv;
 
@@ -72,17 +73,30 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     decoder: *mut ParquetDecoder,
     row_group: usize,
     column: usize,
-    column_type: i32,
+    to_column_type: i32,
 ) -> *const ColumnChunkBuffers {
     assert!(!decoder.is_null(), "decoder pointer is null");
     let decoder = unsafe { &mut *decoder };
 
-    match decoder.decode_column_chunk(row_group, column, column_type) {
-        Ok(_) => (),
-        Err(err) => {
-            throw_state_ex(&mut env, "decode_column_chunk", err, ());
-        }
-    };
+    let column_type = decoder.columns[column].typ;
+    if Ok(column_type) != ColumnType::try_from(to_column_type) {
+        throw_state_msg(
+            &mut env,
+            "decode_column_chunk",
+            &format!(
+                "requested column type {} does not match file column type {:?}",
+                to_column_type, column_type
+            ),
+            (),
+        );
+    } else {
+        match decoder.decode_column_chunk(row_group, column, column_type) {
+            Ok(_) => (),
+            Err(err) => {
+                throw_state_ex(&mut env, "decode_column_chunk", err, ());
+            }
+        };
+    }
 
     let buffer = &decoder.column_buffers[column];
     buffer as *const ColumnChunkBuffers
@@ -209,5 +223,12 @@ fn throw_state_ex<T>(env: &mut JNIEnv, method_name: &str, err: anyhow::Error, de
         env.throw_new("java/lang/RuntimeException", msg)
             .expect("failed to throw exception");
     }
+    def
+}
+
+fn throw_state_msg<T>(env: &mut JNIEnv, method_name: &str, err: &String, def: T) -> T {
+    let msg = format!("error while {}: {}", method_name, err);
+    env.throw_new("java/lang/RuntimeException", msg)
+        .expect("failed to throw exception");
     def
 }

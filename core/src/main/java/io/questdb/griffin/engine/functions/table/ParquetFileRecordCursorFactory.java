@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.table;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
@@ -58,5 +59,10 @@ public class ParquetFileRecordCursorFactory extends AbstractRecordCursorFactory 
     protected void _close() {
         path = Misc.free(path);
         cursor = Misc.free(cursor);
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("parquet file sequential scan");
     }
 }

@@ -39,11 +39,12 @@ public class ParquetFileReaderFunctionTest extends AbstractCairoTest {
     @Test
     public void testData() throws Exception {
         assertMemoryLeak(() -> {
-            final long rows = 1000000;
+            final long rows = 1000_000;
             ddl("create table x as (select" +
                     " case when x % 2 = 0 then cast(x as int) end id," +
                     " rnd_int() as a_long," +
-//                    " rnd_str('a ad fadf ', 'basdf', 'cdd ddf d') as a_str" +
+                    " rnd_str(4,4,4,2) as a_str," +
+                    " rnd_varchar(1, 40, 1) as a_varchar" +
                     " from long_sequence(" + rows + "))");
 
             try (
@@ -120,6 +121,7 @@ public class ParquetFileReaderFunctionTest extends AbstractCairoTest {
 
                 // Assert 0 rows, header only
                 assertSqlCursors("x where 1 = 2", "select * from read_parquet('" + path + "')  where 1 = 2");
+                assertPlanNoLeakCheck("select * from read_parquet('" + path + "')", "parquet file sequential scan\n");
             }
         });
     }

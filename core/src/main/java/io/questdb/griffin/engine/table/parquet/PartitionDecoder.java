@@ -42,7 +42,8 @@ public class PartitionDecoder implements QuietCloseable {
     public static final int FLOAT_PHYSICAL_TYPE = 4;
     public static final int INT32_PHYSICAL_TYPE = 1;
     public static final int INT64_PHYSICAL_TYPE = 2;
-    private static final Long CHUNK_DATA_PTR_OFFSET;
+    private static final long CHUNK_AUX_PTR_OFFSET;
+    private static final long CHUNK_DATA_PTR_OFFSET;
     private static final long CHUNK_ROW_GROUP_COUNT_PTR_OFFSET;
     private static final long COLUMNS_PTR_OFFSET;
     private static final long COLUMN_COUNT_OFFSET;
@@ -72,6 +73,10 @@ public class PartitionDecoder implements QuietCloseable {
         }
     }
 
+    public static long getChunkAuxPtr(long chunkPtr) {
+        return Unsafe.getUnsafe().getLong(chunkPtr + CHUNK_AUX_PTR_OFFSET);
+    }
+
     public static long getChunkDataPtr(long chunkPtr) {
         return Unsafe.getUnsafe().getLong(chunkPtr + CHUNK_DATA_PTR_OFFSET);
     }
@@ -88,14 +93,16 @@ public class PartitionDecoder implements QuietCloseable {
 
     public long decodeColumnChunk(
             long rowGroup,
-            long columnId
+            long columnId,
+            int columnType
     ) {
         assert ptr != 0;
         try {
             return decodeColumnChunk(
                     ptr,
                     rowGroup,
-                    columnId
+                    columnId,
+                    columnType
             );
         } catch (Throwable th) {
             throw CairoException.critical(0).put("Could not decode partition: [path=").put(path)
@@ -125,6 +132,8 @@ public class PartitionDecoder implements QuietCloseable {
         }
     }
 
+    private static native long chunkAuxPtrOffset();
+
     private static native long chunkDataPtrOffset();
 
     private static native long chunkRowGroupCountPtrOffset();
@@ -150,7 +159,8 @@ public class PartitionDecoder implements QuietCloseable {
     private static native long decodeColumnChunk(
             long decoderPtr,
             long columnId,
-            long rowGroup
+            long rowGroup,
+            int columnType
     );
 
     private static native void destroy(long impl);
@@ -236,6 +246,7 @@ public class PartitionDecoder implements QuietCloseable {
         ROW_GROUP_COUNT_OFFSET = rowGroupCountOffset();
         COLUMN_IDS_OFFSET = columnIdsOffset();
         CHUNK_DATA_PTR_OFFSET = chunkDataPtrOffset();
+        CHUNK_AUX_PTR_OFFSET = chunkAuxPtrOffset();
         CHUNK_ROW_GROUP_COUNT_PTR_OFFSET = chunkRowGroupCountPtrOffset();
     }
 }

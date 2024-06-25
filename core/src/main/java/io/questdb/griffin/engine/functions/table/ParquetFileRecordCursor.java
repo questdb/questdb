@@ -25,22 +25,26 @@
 package io.questdb.griffin.engine.functions.table;
 
 import io.questdb.cairo.DataUnavailableException;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.vm.Vm;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.Path;
+import io.questdb.std.str.*;
+import org.jetbrains.annotations.Nullable;
 
 public class ParquetFileRecordCursor implements NoRandomAccessRecordCursor {
-    private final RecordMetadata metadata;
-    private final Path path;
     private final LongList columnChunkBufferPtrs = new LongList();
     private final PartitionDecoder decoder;
+    private final RecordMetadata metadata;
+    private final Path path;
     private final ParquetRecord record;
     private int currentRowInRowGroup;
     private int rowGroup;
@@ -84,15 +88,15 @@ public class ParquetFileRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     @Override
+    public long size() throws DataUnavailableException {
+        return 0;
+    }
+
+    @Override
     public void toTop() {
         rowGroup = -1;
         rowGroupRowCount = -1;
         currentRowInRowGroup = -1;
-    }
-
-    @Override
-    public long size() throws DataUnavailableException {
-        return 0;
     }
 
     private boolean switchToNextRowGroup() {
@@ -100,7 +104,7 @@ public class ParquetFileRecordCursor implements NoRandomAccessRecordCursor {
         if (++rowGroup < decoder.getMetadata().rowGroupCount()) {
             rowGroupRowCount = -1;
             for (int columnId = 0, n = metadata.getColumnCount(); columnId < n; columnId++) {
-                long columnChunkBufferPtr = decoder.decodeColumnChunk(rowGroup, columnId);
+                long columnChunkBufferPtr = decoder.decodeColumnChunk(rowGroup, columnId, metadata.getColumnType(columnId));
                 columnChunkBufferPtrs.add(columnChunkBufferPtr);
                 long rowCount = PartitionDecoder.getRowGroupCount(columnChunkBufferPtr);
                 if (rowGroupRowCount == -1) {
@@ -116,11 +120,77 @@ public class ParquetFileRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     private class ParquetRecord implements Record {
+        private final DirectString directCharSequenceA = new DirectString();
+        private final DirectString directCharSequenceB = new DirectString();
+        private final Utf8SplitString utf8SplitViewA = new Utf8SplitString(false);
+        private final Utf8SplitString utf8SplitViewB = new Utf8SplitString(false);
+
         @Override
         public int getInt(int col) {
             long chunkPtr = columnChunkBufferPtrs.getQuick(col);
             long dataPtr = PartitionDecoder.getChunkDataPtr(chunkPtr);
             return Unsafe.getUnsafe().getInt(dataPtr + currentRowInRowGroup * 4L);
+        }
+
+        @Override
+        public long getLong(int col) {
+            long chunkPtr = columnChunkBufferPtrs.getQuick(col);
+            long dataPtr = PartitionDecoder.getChunkDataPtr(chunkPtr);
+            return Unsafe.getUnsafe().getLong(dataPtr + currentRowInRowGroup * 8L);
+        }
+
+        @Override
+        public CharSequence getStrA(int col) {
+            long chunkPtr = columnChunkBufferPtrs.getQuick(col);
+            long auxPtr = PartitionDecoder.getChunkAuxPtr(chunkPtr);
+            long data_offset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
+            long dataPtr = PartitionDecoder.getChunkDataPtr(chunkPtr);
+            return getStr(dataPtr + data_offset, directCharSequenceA);
+        }
+
+        @Override
+        public CharSequence getStrB(int col) {
+            long chunkPtr = columnChunkBufferPtrs.getQuick(col);
+            long auxPtr = PartitionDecoder.getChunkAuxPtr(chunkPtr);
+            long data_offset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
+            long dataPtr = PartitionDecoder.getChunkDataPtr(chunkPtr);
+            return getStr(dataPtr + data_offset, directCharSequenceB);
+        }
+
+        @Override
+        public int getStrLen(int col) {
+            long chunkPtr = columnChunkBufferPtrs.getQuick(col);
+            long auxPtr = PartitionDecoder.getChunkAuxPtr(chunkPtr);
+            long data_offset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
+            long dataPtr = PartitionDecoder.getChunkDataPtr(chunkPtr);
+            return Unsafe.getUnsafe().getInt(dataPtr + data_offset);
+        }
+
+        @Nullable
+        @Override
+        public Utf8Sequence getVarcharA(int col) {
+            long chunkPtr = columnChunkBufferPtrs.getQuick(col);
+            long auxPtr = PartitionDecoder.getChunkAuxPtr(chunkPtr);
+            long dataPtr = PartitionDecoder.getChunkDataPtr(chunkPtr);
+            return VarcharTypeDriver.getSplitValue(auxPtr, dataPtr, currentRowInRowGroup, utf8SplitViewA);
+        }
+
+        @Nullable
+        @Override
+        public Utf8Sequence getVarcharB(int col) {
+            long chunkPtr = columnChunkBufferPtrs.getQuick(col);
+            long auxPtr = PartitionDecoder.getChunkAuxPtr(chunkPtr);
+            long dataPtr = PartitionDecoder.getChunkDataPtr(chunkPtr);
+            return VarcharTypeDriver.getSplitValue(auxPtr, dataPtr, currentRowInRowGroup, utf8SplitViewB);
+        }
+
+        private DirectString getStr(long addr, DirectString view) {
+            assert addr > 0;
+            final int len = Unsafe.getUnsafe().getInt(addr);
+            if (len != TableUtils.NULL_LEN) {
+                return view.of(addr + Vm.STRING_LENGTH_BYTES, len);
+            }
+            return null;
         }
     }
 }

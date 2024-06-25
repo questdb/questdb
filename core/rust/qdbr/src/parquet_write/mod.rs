@@ -10,7 +10,7 @@ pub mod schema;
 mod string;
 mod symbol;
 mod util;
-mod varchar;
+pub mod varchar;
 
 pub(crate) type ParquetResult<T> = parquet2::error::Result<T>;
 pub(crate) type ParquetError = parquet2::error::Error;

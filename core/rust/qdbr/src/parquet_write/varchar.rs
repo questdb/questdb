@@ -13,8 +13,23 @@ use super::util::ExactSizedIter;
 const HEADER_FLAG_INLINED: u8 = 1 << 0;
 const _HEADER_FLAG_ASCII: u8 = 1 << 1;
 const HEADER_FLAG_NULL: u8 = 1 << 2;
-
 const HEADER_FLAGS_WIDTH: u32 = 4;
+const VARCHAR_MAX_BYTES_FULLY_INLINED: usize = 9;
+const VARCHAR_INLINED_PREFIX_BYTES: usize = 6;
+const LENGTH_LIMIT_BYTES: usize = 1usize << 28;
+const VARCHAR_MAX_COLUMN_SIZE: usize = 1usize << 48;
+const VARCHAR_HEADER_FLAG_NULL: [u8; 10] = [
+    HEADER_FLAG_NULL,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+    0u8,
+];
 
 #[repr(C, packed)]
 struct AuxEntryInlined {
@@ -64,6 +79,9 @@ pub fn varchar_to_page(
                 let header = entry.header;
                 let size = (header >> HEADER_FLAGS_WIDTH) as usize;
                 let offset = entry.offset_lo as usize | (entry.offset_hi as usize) << 16;
+                if offset + size > data.len() {
+                    println!("disaster!");
+                }
                 Some(&data[offset..][..size])
             }
         })
@@ -145,4 +163,35 @@ fn is_null(header: u8) -> bool {
 #[inline(always)]
 fn is_inlined(header: u8) -> bool {
     (header & HEADER_FLAG_INLINED) == HEADER_FLAG_INLINED
+}
+
+pub fn append_varchar(aux_mem: &mut Vec<u8>, data_mem: &mut Vec<u8>, value: &[u8]) {
+    let size = value.len();
+    if size <= VARCHAR_MAX_BYTES_FULLY_INLINED {
+        let flags = HEADER_FLAG_INLINED;
+        let header = (size << HEADER_FLAGS_WIDTH) as u8 | flags;
+        aux_mem.push(header);
+        aux_mem.extend_from_slice(value);
+        // Add zeroes to align to 16 bytes.
+        aux_mem.resize(aux_mem.len() + VARCHAR_MAX_BYTES_FULLY_INLINED - size, 0u8);
+        append_offset(aux_mem, data_mem.len());
+    } else {
+        assert!(size <= LENGTH_LIMIT_BYTES);
+        let header = (size as u32) << HEADER_FLAGS_WIDTH;
+        aux_mem.extend_from_slice(&header.to_le_bytes());
+        aux_mem.extend_from_slice(&value[0..VARCHAR_INLINED_PREFIX_BYTES]);
+        data_mem.extend_from_slice(value);
+        append_offset(aux_mem, data_mem.len() - size);
+    }
+}
+
+pub fn append_varchar_null(aux_mem: &mut Vec<u8>, data_mem: &mut [u8]) {
+    aux_mem.extend_from_slice(&VARCHAR_HEADER_FLAG_NULL);
+    append_offset(aux_mem, data_mem.len());
+}
+
+fn append_offset(aux_mem: &mut Vec<u8>, offset: usize) {
+    assert!(offset < VARCHAR_MAX_COLUMN_SIZE);
+    aux_mem.extend_from_slice(&(offset as u16).to_le_bytes());
+    aux_mem.extend_from_slice(&((offset >> 16) as u32).to_le_bytes());
 }

@@ -51,6 +51,7 @@ import io.questdb.griffin.engine.functions.lt.LtIPv4StrFunctionFactory;
 import io.questdb.griffin.engine.functions.lt.LtStrIPv4FunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndIPv4CCFunctionFactory;
+import io.questdb.griffin.engine.functions.table.ParquetFileReaderFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory;
 import io.questdb.griffin.engine.table.DataFrameRecordCursorFactory;
 import io.questdb.griffin.model.WindowColumn;
@@ -2262,8 +2263,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                     FunctionFactoryDescriptor descriptor = value.get(i);
                     FunctionFactory factory = descriptor.getFactory();
-                    if (factory instanceof InUuidFunctionFactory) {
-                        System.out.println("ok");
+                    if (factory instanceof ParquetFileReaderFunctionFactory) {
+                        continue;
                     }
                     int sigArgCount = descriptor.getSigArgCount();
 
