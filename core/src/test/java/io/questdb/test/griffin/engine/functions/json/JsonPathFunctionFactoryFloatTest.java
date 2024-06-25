@@ -244,6 +244,23 @@ public class JsonPathFunctionFactoryFloatTest extends AbstractFunctionFactoryTes
     }
 
     @Test
+    public void testViaSqlDefault() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as (select '{\"path\": 2.5}'::varchar as path from long_sequence(3));");
+        });
+
+        assertMemoryLeak(() -> {
+            assertSql(
+                    "json_path\n" +
+                            "10.2500\n" +
+                            "10.2500\n" +
+                            "10.2500\n",
+                    "select json_path(path, '.bad[0].path', " + ColumnType.FLOAT + ", " + DEFAULT_VALUE_ON_ERROR + ", cast(10.25 as float)) from x"
+            );
+        });
+    }
+
+    @Test
     public void testZero() throws SqlException {
         callFn(utf8("{\"path\": 0}"), utf8(".path")).andAssert(0.0f, DELTA_F);
     }

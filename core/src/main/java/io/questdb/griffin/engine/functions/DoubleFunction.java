@@ -69,7 +69,7 @@ public abstract class DoubleFunction implements ScalarFunction {
 
     @Override
     public final float getFloat(Record rec) {
-        return (float) getDouble(rec);
+        throw new UnsupportedOperationException();
     }
 
     @Override
