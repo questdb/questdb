@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.table.parquet;
 
 import io.questdb.cairo.TableReader;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.std.str.Path;
@@ -41,7 +42,8 @@ public class ParquetFileReaderFunctionTest extends AbstractCairoTest {
             final long rows = 1000000;
             ddl("create table x as (select" +
                     " case when x % 2 = 0 then cast(x as int) end id," +
-                    " rnd_int() as a_long" +
+                    " rnd_int() as a_long," +
+//                    " rnd_str('a ad fadf ', 'basdf', 'cdd ddf d') as a_str" +
                     " from long_sequence(" + rows + "))");
 
             try (
@@ -56,6 +58,19 @@ public class ParquetFileReaderFunctionTest extends AbstractCairoTest {
                 assertSqlCursors("x", "select * from read_parquet('" + path + "')");
             }
         });
+    }
+
+    protected static void assertSqlCursors(CharSequence expectedSql, CharSequence actualSql) throws SqlException {
+        try (SqlCompiler sqlCompiler = engine.getSqlCompiler()) {
+            TestUtils.assertSqlCursors(
+                    sqlCompiler,
+                    sqlExecutionContext,
+                    expectedSql,
+                    actualSql,
+                    LOG,
+                    true
+            );
+        }
     }
 
     @Test

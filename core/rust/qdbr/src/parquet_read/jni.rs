@@ -177,6 +177,14 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 }
 
 #[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_chunkAuxPtrOffset(
+    _env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    offset_of!(ColumnChunkBuffers, aux_ptr)
+}
+
+#[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_chunkRowGroupCountPtrOffset(
     _env: JNIEnv,
     _class: JClass,
