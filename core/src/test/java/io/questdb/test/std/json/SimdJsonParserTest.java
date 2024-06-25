@@ -26,7 +26,7 @@ package io.questdb.test.std.json;
 
 import io.questdb.log.LogFactory;
 import io.questdb.std.json.JsonError;
-import io.questdb.std.json.JsonParser;
+import io.questdb.std.json.SimdJsonParser;
 import io.questdb.std.json.JsonResult;
 import io.questdb.std.json.JsonType;
 import io.questdb.std.str.DirectUtf8Sink;
@@ -36,7 +36,7 @@ import org.junit.*;
 
 import java.nio.charset.StandardCharsets;
 
-public class JsonParserTest {
+public class SimdJsonParserTest {
     private static final JsonResult result = new JsonResult();
     private static final String testUnicodeChars = "ðãµ¶Āڜ💩🦞";
     private static final String description = (
@@ -60,13 +60,13 @@ public class JsonParserTest {
             "  \"description\": \"" + description + "\"\n" +
             "}";
     private static DirectUtf8Sink json;
-    private static JsonParser parser;
+    private static SimdJsonParser parser;
 
     @BeforeClass
     public static void setUp() {
-        json = new DirectUtf8Sink(jsonStr.getBytes(StandardCharsets.UTF_8).length + JsonParser.SIMDJSON_PADDING);
+        json = new DirectUtf8Sink(jsonStr.getBytes(StandardCharsets.UTF_8).length + SimdJsonParser.SIMDJSON_PADDING);
         json.put(jsonStr);
-        parser = new JsonParser();
+        parser = new SimdJsonParser();
     }
 
     @AfterClass
@@ -82,7 +82,7 @@ public class JsonParserTest {
 
     private static GcUtf8String path2Pointer(String path) {
         try (DirectUtf8Sink dest = new DirectUtf8Sink(100)) {
-            JsonParser.convertJsonPathToPointer(new GcUtf8String(path), dest);
+            SimdJsonParser.convertJsonPathToPointer(new GcUtf8String(path), dest);
             return new GcUtf8String(dest.toString());
         }
     }
@@ -120,7 +120,7 @@ public class JsonParserTest {
     @Test
     public void testConstructDestruct() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            JsonParser parser = new JsonParser();
+            SimdJsonParser parser = new SimdJsonParser();
             parser.close();
         });
     }
@@ -129,7 +129,7 @@ public class JsonParserTest {
     public void testConvertPathToPointer() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (DirectUtf8Sink dest = new DirectUtf8Sink(100)) {
-                JsonParser.convertJsonPathToPointer(new GcUtf8String(".name[0]"), dest);
+                SimdJsonParser.convertJsonPathToPointer(new GcUtf8String(".name[0]"), dest);
                 Assert.assertEquals("/name/0", dest.toString());
             }
         });
@@ -305,6 +305,6 @@ public class JsonParserTest {
     static {
         // log is needed to greedily allocate logger infra and
         // exclude it from leak detector
-        LogFactory.getLog(JsonParserTest.class);
+        LogFactory.getLog(SimdJsonParserTest.class);
     }
 }

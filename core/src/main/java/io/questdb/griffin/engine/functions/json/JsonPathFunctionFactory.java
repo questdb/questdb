@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -48,21 +49,22 @@ public class JsonPathFunctionFactory implements FunctionFactory {
     public Function newInstance(
             int position, ObjList<Function> args, IntList argPositions,
             CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext
-    ) {
+    ) throws SqlException {
         final Function json = args.getQuick(0);
         final Function path = args.getQuick(1);
-        final int targetType = parseTargetType(args.getQuiet(2));
-        final int onError = parseOnError(args.getQuiet(3));
+        final int targetType = parseTargetType(position, args.getQuiet(2));
+        final int onError = parseOnError(position, args.getQuiet(3));
         final Function defaultValueFn = args.getQuiet(4);
         final DirectUtf8Sink pointer = SupportingState.varcharConstantToJsonPointer(path);
         final int maxSize = configuration.getStrFunctionMaxBufferLength();
         final boolean strict = onError == JsonPathFunc.FAIL_ON_ERROR;
-        final JsonPathFunc fn = buildFunction(json, path, targetType, pointer, maxSize, strict);
-        applyDefault(fn, targetType, onError, defaultValueFn);
+        final JsonPathFunc fn = buildFunction(position, json, path, targetType, pointer, maxSize, strict);
+        applyDefault(position, fn, targetType, onError, defaultValueFn);
         return fn;
     }
 
     private static @NotNull JsonPathFunc buildFunction(
+            int position,
             Function json,
             Function path,
             int targetType,
@@ -76,20 +78,20 @@ public class JsonPathFunctionFactory implements FunctionFactory {
             case ColumnType.BOOLEAN:
             case ColumnType.SHORT:
             case ColumnType.INT:
-                return new JsonConstPathPrimitiveFunc(targetType, json, path, pointer, strict);
+                return new JsonConstPathPrimitiveFunc(position, targetType, json, path, pointer, strict);
             case ColumnType.VARCHAR:
-                return new JsonPathVarcharFunc(json, path, pointer, maxSize, strict);
+                return new JsonPathVarcharFunc(position, json, path, pointer, maxSize, strict);
             default:
                 throw new UnsupportedOperationException("nyi");  // TODO: complete remaining types
         }
     }
 
-    private static void applyDefault(JsonPathFunc fn, int targetType, int onError, Function defaultValueFn) {
+    private static void applyDefault(int position, JsonPathFunc fn, int targetType, int onError, Function defaultValueFn) {
         if ((defaultValueFn == null) || (onError == JsonPathFunc.FAIL_ON_ERROR)) {
             return;
         }
         if (!defaultValueFn.isConstant()) {
-            throw CairoException.nonCritical().put("default value must be constant");
+            throw CairoException.nonCritical().position(position).put("default value must be constant");
         }
         switch (targetType) {
             case ColumnType.LONG:
@@ -118,43 +120,43 @@ public class JsonPathFunctionFactory implements FunctionFactory {
                 break;
             default:
                 // TODO: Better error messaging to use the name of the type, e.g. "DATE" instead of "7".
-                throw CairoException.nonCritical().put("unsupported target type: ").put(targetType);
+                throw CairoException.nonCritical().position(position).put("unsupported target type: ").put(targetType);
         }
     }
 
-    private static int parseOnError(Function onErrorFn) {
+    private static int parseOnError(int position, Function onErrorFn) {
         if (onErrorFn == null) {
             // If the behaviour is unspecified,
             // default to returning null or the default value.
             return JsonPathFunc.DEFAULT_VALUE_ON_ERROR;
         }
         if (!onErrorFn.isConstant()) {
-            throw CairoException.nonCritical().put("onError must be constant");
+            throw CairoException.nonCritical().position(position).put("onError must be constant");
         }
         // TODO: This isn't _really_ a int, it's supposed to be an enum constant.
         //       Valid values: 0 (FAIL_ON_ERROR), 1 (DEFAULT_VALUE_ON_ERROR)
         if (onErrorFn.getType() != ColumnType.INT) {
-            throw CairoException.nonCritical().put("onError must be INT");
+            throw CairoException.nonCritical().position(position).put("onError must be INT");
         }
         final int onError = onErrorFn.getInt(null);
         if (onError != JsonPathFunc.FAIL_ON_ERROR && onError != JsonPathFunc.DEFAULT_VALUE_ON_ERROR) {
             // TODO: Better error messaging to use the name of the enum constant, e.g. "FAIL_ON_ERROR" instead of "0".
-            throw CairoException.nonCritical().put("unsupported onError value: ").put(onError);
+            throw CairoException.nonCritical().position(position).put("unsupported onError value: ").put(onError);
         }
         return onError;
     }
 
-    private static int parseTargetType(Function targetTypeFn) {
+    private static int parseTargetType(int position, Function targetTypeFn) throws SqlException {
         if (targetTypeFn == null) {
             return ColumnType.VARCHAR;
         }
         if (!targetTypeFn.isConstant()) {
-            throw CairoException.nonCritical().put("target type must be constant");
+            throw CairoException.nonCritical().position(position).put("target type must be constant");
         }
         // TODO: This isn't _really_ a int, it's supposed to be a type constant.
         //       Make it so in the parser.
         if (targetTypeFn.getType() != ColumnType.INT) {
-            throw CairoException.nonCritical().put("target type must be INT");
+            throw CairoException.nonCritical().position(position).put("target type must be INT");
         }
         final int targetType = targetTypeFn.getInt(null);
         switch (targetType) {
@@ -169,7 +171,7 @@ public class JsonPathFunctionFactory implements FunctionFactory {
                 return targetType;
             default:
                 // TODO: Better error messaging to use the name of the type, e.g. "DATE" instead of "7".
-                throw CairoException.nonCritical().put("unsupported target type: ").put(targetTypeFn.getInt(null));
+                throw SqlException.position(position).put("unsupported target type: ").put(targetType);
         }
     }
 }

@@ -30,11 +30,11 @@ import io.questdb.std.bytes.NativeByteSink;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8Sink;
 
-public class JsonParser implements QuietCloseable {
+public class SimdJsonParser implements QuietCloseable {
     public static final int SIMDJSON_PADDING;
     private long impl;
 
-    public JsonParser() {
+    public SimdJsonParser() {
         impl = create();
     }
 
@@ -57,17 +57,14 @@ public class JsonParser implements QuietCloseable {
         }
     }
 
-    /**
-     * Get a pointer value and force the result to a string, regardless of the type.
-     */
-    public void queryPointer(DirectUtf8Sequence json, DirectUtf8Sequence pointer, JsonResult result, DirectUtf8Sink dest, int maxSize, long defaultValuePtr, long defaultValueSize) {
+    public void queryPointerString(DirectUtf8Sequence json, DirectUtf8Sequence pointer, JsonResult result, DirectUtf8Sink dest, int maxSize, long defaultValuePtr, long defaultValueSize) {
         assert json.tailPadding() >= SIMDJSON_PADDING;
         final long nativeByteSinkPtr = dest.borrowDirectByteSink().ptr();
         if (!(dest.capacity() - dest.size() >= maxSize)) {
             throw new IllegalArgumentException("Destination buffer is too small");
         }
         assert dest.capacity() - dest.size() >= maxSize;  // Without this guarantee we'd need to close `NativeByteSink.close`.
-        queryPointer(impl, json.ptr(), json.size(), json.tailPadding(), pointer.ptr(), pointer.size(), result.ptr(), nativeByteSinkPtr, maxSize, defaultValuePtr, defaultValueSize);
+        queryPointerString(impl, json.ptr(), json.size(), json.tailPadding(), pointer.ptr(), pointer.size(), result.ptr(), nativeByteSinkPtr, maxSize, defaultValuePtr, defaultValueSize);
     }
 
     public boolean queryPointerBoolean(DirectUtf8Sequence json, DirectUtf8Sequence pointer, JsonResult result, boolean defaultValue) {
@@ -100,13 +97,6 @@ public class JsonParser implements QuietCloseable {
         return queryPointerShort(impl, json.ptr(), json.size(), json.tailPadding(), pointer.ptr(), pointer.size(), result.ptr(), defaultValue);
     }
 
-    public void queryPointerString(DirectUtf8Sequence json, DirectUtf8Sequence pointer, JsonResult result, DirectUtf8Sink dest, int maxSize, long defaultValuePtr, long defaultValueSize) {
-        assert json.tailPadding() >= SIMDJSON_PADDING;
-        final long nativeByteSinkPtr = dest.borrowDirectByteSink().ptr();
-        assert dest.capacity() - dest.size() >= maxSize;  // Without this guarantee we'd need to close `NativeByteSink.close`.
-        queryPointerString(impl, json.ptr(), json.size(), json.tailPadding(), pointer.ptr(), pointer.size(), result.ptr(), nativeByteSinkPtr, maxSize, defaultValuePtr, defaultValueSize);
-    }
-
     private static native void convertJsonPathToPointer(
             long pathPtr,
             long pathLen,
@@ -118,20 +108,6 @@ public class JsonParser implements QuietCloseable {
     private static native void destroy(long impl);
 
     private native static int getSimdJsonPadding();
-
-    private static native void queryPointer(
-            long impl,
-            long jsonPtr,
-            long jsonLen,
-            long jsonTailPadding,
-            long pointerPtr,
-            long pointerLen,
-            long resultPtr,
-            long destPtr,
-            int maxSize,
-            long defaultPtr,
-            long defaultLen
-    );
 
     private static native boolean queryPointerBoolean(
             long impl,

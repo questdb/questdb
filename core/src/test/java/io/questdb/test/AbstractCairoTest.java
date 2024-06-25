@@ -46,7 +46,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.json.JsonParser;
+import io.questdb.std.json.SimdJsonParser;
 import io.questdb.std.str.*;
 import io.questdb.test.cairo.CairoTestConfiguration;
 import io.questdb.test.cairo.Overrides;
@@ -463,7 +463,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     public static DirectUtf8Sequence dirUtf8(CharSequence value) {
-        return dirUtf8(value, JsonParser.SIMDJSON_PADDING);
+        return dirUtf8(value, SimdJsonParser.SIMDJSON_PADDING);
     }
 
     public static DirectUtf8Sequence dirUtf80(CharSequence value) {

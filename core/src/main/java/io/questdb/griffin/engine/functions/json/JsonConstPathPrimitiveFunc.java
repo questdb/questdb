@@ -37,6 +37,7 @@ import io.questdb.std.str.*;
 import org.jetbrains.annotations.Nullable;
 
 public class JsonConstPathPrimitiveFunc implements ScalarFunction, BinaryFunction, JsonPathFunc {
+    private final int position;
     private final int columnType;
     private final Function json;
     private final Function path;
@@ -51,11 +52,13 @@ public class JsonConstPathPrimitiveFunc implements ScalarFunction, BinaryFunctio
     private float defaultFloat = Float.NaN;
 
     public JsonConstPathPrimitiveFunc(
+            int position,
             int columnType,
             Function json,
             Function path,
             DirectUtf8Sink pointer,
             boolean strict) {
+        this.position = position;
         this.columnType = columnType;
         this.json = json;
         this.path = path;

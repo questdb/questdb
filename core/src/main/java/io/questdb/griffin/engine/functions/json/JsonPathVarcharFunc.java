@@ -38,6 +38,7 @@ import org.jetbrains.annotations.Nullable;
 import java.util.Objects;
 
 class JsonPathVarcharFunc extends VarcharFunction implements BinaryFunction, JsonPathFunc {
+    private final int position;
     private final VarcharSupportingState a;
     private final VarcharSupportingState b;
     private final VarcharSupportingState copied;
@@ -48,7 +49,14 @@ class JsonPathVarcharFunc extends VarcharFunction implements BinaryFunction, Jso
     private final boolean strict;
     private DirectUtf8Sink defaultVarchar = null;
 
-    public JsonPathVarcharFunc(Function json, Function path, DirectUtf8Sink pointer, int maxSize, boolean strict) {
+    public JsonPathVarcharFunc(
+            int position,
+            Function json,
+            Function path,
+            DirectUtf8Sink pointer,
+            int maxSize,
+            boolean strict) {
+        this.position = position;
         this.a = new VarcharSupportingState(new DirectUtf8Sink(maxSize));
         this.b = new VarcharSupportingState(new DirectUtf8Sink(maxSize));
         this.copied = new VarcharSupportingState();
@@ -118,7 +126,7 @@ class JsonPathVarcharFunc extends VarcharFunction implements BinaryFunction, Jso
     }
 
     @Override
-    public void setDefaultLong(long aLong) {
+    public void setDefaultBool(boolean bool) {
         throw new UnsupportedOperationException();
     }
 
@@ -128,17 +136,7 @@ class JsonPathVarcharFunc extends VarcharFunction implements BinaryFunction, Jso
     }
 
     @Override
-    public void setDefaultBool(boolean bool) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void setDefaultSymbol(CharSequence symbol) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void setDefaultShort(short aShort) {
+    public void setDefaultFloat(float aFloat) {
         throw new UnsupportedOperationException();
     }
 
@@ -148,7 +146,17 @@ class JsonPathVarcharFunc extends VarcharFunction implements BinaryFunction, Jso
     }
 
     @Override
-    public void setDefaultFloat(float aFloat) {
+    public void setDefaultLong(long aLong) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setDefaultShort(short aShort) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setDefaultSymbol(CharSequence symbol) {
         throw new UnsupportedOperationException();
     }
 
@@ -175,7 +183,7 @@ class JsonPathVarcharFunc extends VarcharFunction implements BinaryFunction, Jso
             defaultValuePtr = defaultVarchar.ptr();
             defaultValueSize = defaultVarchar.size();
         }
-        state.parser.queryPointer(state.initPaddedJson(json), pointer, state.jsonResult, state.destSink, maxSize, defaultValuePtr, defaultValueSize);
+        state.parser.queryPointerString(state.initPaddedJson(json), pointer, state.jsonResult, state.destSink, maxSize, defaultValuePtr, defaultValueSize);
         if (state.jsonResult.hasValue()) {
             return state.destSink;
         } else if (strict && !state.jsonResult.isNull()) {
@@ -185,8 +193,8 @@ class JsonPathVarcharFunc extends VarcharFunction implements BinaryFunction, Jso
     }
 
     private static class VarcharSupportingState extends SupportingState {
-        public @Nullable DirectUtf8Sink destSink;
         public boolean closeDestSink;
+        public @Nullable DirectUtf8Sink destSink;
 
         public VarcharSupportingState() {
             this.destSink = null;
