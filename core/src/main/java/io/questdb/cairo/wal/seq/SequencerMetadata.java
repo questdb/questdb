@@ -30,10 +30,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cairo.wal.WalUtils;
-import io.questdb.std.Chars;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -51,6 +48,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
     private volatile boolean suspended;
     private int tableId;
     private TableToken tableToken;
+    private final IntList readColumnOrder = new IntList();
 
     public SequencerMetadata(FilesFacade ff) {
         this(ff, false);
@@ -69,11 +67,14 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
 
     public void addColumn(CharSequence columnName, int columnType) {
         addColumn0(columnName, columnType);
+        readColumnOrder.add(columnMetadata.size() - 1);
         structureVersion.incrementAndGet();
     }
 
     public void changeColumnType(CharSequence columnName, int newType) {
-        TableUtils.changeColumnTypeInMetadata(columnName, newType, columnNameIndexMap, columnMetadata);
+        int existingColumnIndex = TableUtils.changeColumnTypeInMetadata(columnName, newType, columnNameIndexMap, columnMetadata);
+        int readIndex = readColumnOrder.get(existingColumnIndex);
+        readColumnOrder.add(readIndex);
         columnCount++;
         structureVersion.incrementAndGet();
     }
@@ -113,6 +114,10 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
 
     public void enableDeduplicationWithUpsertKeys() {
         structureVersion.incrementAndGet();
+    }
+
+    public IntList getReadColumnOrder() {
+        return readColumnOrder;
     }
 
     @Override
@@ -229,6 +234,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
             final CharSequence name = tableStruct.getColumnName(i);
             final int type = tableStruct.getColumnType(i);
             addColumn0(name, type);
+            readColumnOrder.add(i);
         }
 
         this.structureVersion.set(0);
@@ -238,14 +244,16 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
     private void loadSequencerMetadata(MemoryMR metaMem) {
         columnMetadata.clear();
         columnNameIndexMap.clear();
+        readColumnOrder.clear();
 
         try {
-            final long memSize = checkMemSize(metaMem, SEQ_META_OFFSET_COLUMNS);
+            final long memSize = Math.min(checkMemSize(metaMem, SEQ_META_OFFSET_COLUMNS), metaMem.getInt(SEQ_META_OFFSET_WAL_LENGTH));
             validateMetaVersion(metaMem, SEQ_META_OFFSET_WAL_VERSION, WAL_FORMAT_VERSION);
             final int columnCount = TableUtils.getColumnCount(metaMem, SEQ_META_OFFSET_COLUMN_COUNT);
             final int timestampIndex = TableUtils.getTimestampIndex(metaMem, SEQ_META_OFFSET_TIMESTAMP_INDEX, columnCount);
 
             // load column types and names
+            long checkSum = columnCount;
             long offset = SEQ_META_OFFSET_COLUMNS;
             for (int i = 0; i < columnCount; i++) {
                 final int type = TableUtils.getColumnType(metaMem, memSize, offset, i);
@@ -263,6 +271,9 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                 } else {
                     columnMetadata.add(new TableColumnMetadata(name, type));
                 }
+                readColumnOrder.add(i);
+                checkSum = checkSum * 31 + type;
+                checkSum = checkSum * 31 + name.hashCode();
             }
 
             // validate designated timestamp column
@@ -270,6 +281,24 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                 final int timestampType = columnMetadata.getQuick(timestampIndex).getType();
                 if (!ColumnType.isTimestamp(timestampType)) {
                     throw validationException(metaMem).put("Timestamp column must be TIMESTAMP, but found ").put(ColumnType.nameOf(timestampType));
+                }
+            }
+
+            if (memSize > offset + 8 + 4) {
+                long optionalSectionCheckSum = metaMem.getLong(offset);
+                offset += Long.BYTES;
+                if (optionalSectionCheckSum == checkSum) {
+                    long records = metaMem.getInt(offset);
+                    offset += Integer.BYTES;
+
+                    // Optional section about column order
+                    if (memSize - offset >= records * Integer.BYTES) {
+                        readColumnOrder.clear();
+                        for (int i = 0; i < records; i++) {
+                            readColumnOrder.add(metaMem.getInt(offset));
+                            offset += Integer.BYTES;
+                        }
+                    }
                 }
             }
         } catch (Throwable e) {
@@ -282,6 +311,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
     private void reset() {
         columnMetadata.clear();
         columnNameIndexMap.clear();
+        readColumnOrder.clear();
         columnCount = 0;
         timestampIndex = -1;
         tableToken = null;
@@ -318,10 +348,20 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         metaMem.putInt(timestampIndex);
         metaMem.putInt(tableId);
         metaMem.putBool(suspended);
+        long checkSum = columnCount;
         for (int i = 0; i < columnCount; i++) {
             final int columnType = getColumnType(i);
             metaMem.putInt(columnType);
             metaMem.putStr(getColumnName(i));
+            checkSum = checkSum * 31 + columnType;
+            checkSum = checkSum * 31 + getColumnName(i).hashCode();
+        }
+
+        // write column order
+        metaMem.putLong(checkSum);
+        metaMem.putInt(readColumnOrder.size());
+        for (int i = 0, n = readColumnOrder.size(); i < n; i++) {
+            metaMem.putInt(readColumnOrder.get(i));
         }
 
         // update metadata size
