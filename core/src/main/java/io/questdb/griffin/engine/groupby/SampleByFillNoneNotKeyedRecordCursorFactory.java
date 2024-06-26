@@ -29,20 +29,16 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.Plannable;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.constants.NullConstant;
-import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
-import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 
 public class SampleByFillNoneNotKeyedRecordCursorFactory extends AbstractSampleByNotKeyedRecordCursorFactory {
     private final SampleByFillNoneNotKeyedRecordCursor cursor;
-    private final ExpressionNode fromLo;
-    private final ExpressionNode fromHi;
+    private final Function fromHiFunc;
+    private final Function fromLoFunc;
 
     public SampleByFillNoneNotKeyedRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -58,8 +54,10 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory extends AbstractSampleB
             int timezoneNameFuncPos,
             Function offsetFunc,
             int offsetFuncPos,
-            ExpressionNode fromLo,
-            ExpressionNode fromHi
+            Function fromLoFunc,
+            int fromLoFuncPos,
+            Function fromHiFunc,
+            int fromHiFuncPos
     ) {
         super(base, groupByMetadata, recordFunctions);
         final SimpleMapValue simpleMapValue = new SimpleMapValue(valueCount);
@@ -75,24 +73,21 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory extends AbstractSampleB
                 timezoneNameFunc,
                 timezoneNameFuncPos,
                 offsetFunc,
-                offsetFuncPos
+                offsetFuncPos,
+                fromLoFunc,
+                fromLoFuncPos,
+                fromHiFunc,
+                fromHiFuncPos
         );
-        this.fromLo = fromLo;
-        this.fromHi = fromHi;
+        this.fromLoFunc = fromLoFunc;
+        this.fromHiFunc = fromHiFunc;
     }
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("SampleBy");
-        ObjList<Sinkable> tmp = null;
-
-        if (fromLo != null) {
-            tmp = new ObjList<>(fromLo);
-            if (fromHi != null) {
-                tmp.add(fromHi);
-            }
-        }
-        sink.optAttr("from", tmp);
+        sink.type("Sample By");
+        sink.optAttr("lo", fromLoFunc);
+        sink.optAttr("hi", fromHiFunc);
         sink.optAttr("values", cursor.groupByFunctions, true);
         sink.child(base);
     }

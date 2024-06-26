@@ -47,7 +47,11 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
             Function offsetFunc,
-            int offsetFuncPos
+            int offsetFuncPos,
+            Function fromLoFunc,
+            int fromLoFuncPos,
+            Function fromHiFunc,
+            int fromHiFuncPos
     ) {
         super(
                 configuration,
@@ -60,7 +64,11 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
                 timezoneNameFunc,
                 timezoneNameFuncPos,
                 offsetFunc,
-                offsetFuncPos
+                offsetFuncPos,
+                fromLoFunc,
+                fromLoFuncPos,
+                fromHiFunc,
+                fromHiFuncPos
         );
         this.simpleMapValue = simpleMapValue;
         record.of(simpleMapValue);

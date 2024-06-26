@@ -44,7 +44,11 @@ public abstract class AbstractSplitVirtualRecordSampleByCursor extends AbstractN
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
             Function offsetFunc,
-            int offsetFuncPos
+            int offsetFuncPos,
+            Function fromLoFunc,
+            int fromLoFuncPos,
+            Function fromHiFunc,
+            int fromHiFuncPos
     ) {
         super(
                 configuration,
@@ -56,7 +60,11 @@ public abstract class AbstractSplitVirtualRecordSampleByCursor extends AbstractN
                 timezoneNameFunc,
                 timezoneNameFuncPos,
                 offsetFunc,
-                offsetFuncPos
+                offsetFuncPos,
+                fromLoFunc,
+                fromLoFuncPos,
+                fromHiFunc,
+                fromHiFuncPos
         );
         record = new SplitVirtualRecord(recordFunctions, placeholderFunctions);
         assert recordFunctions.size() == placeholderFunctions.size();

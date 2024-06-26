@@ -54,7 +54,11 @@ public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSample
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
             Function offsetFunc,
-            int offsetFuncPos
+            int offsetFuncPos,
+            Function fromLoFunc,
+            int fromLoFuncPos,
+            Function fromHiFunc,
+            int fromHiFuncPos
     ) throws SqlException {
         super(base, groupByMetadata, recordFunctions);
         try {
@@ -81,7 +85,12 @@ public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSample
                     timezoneNameFunc,
                     timezoneNameFuncPos,
                     offsetFunc,
-                    offsetFuncPos
+                    offsetFuncPos,
+                    fromLoFunc,
+                    fromLoFuncPos,
+                    fromHiFunc,
+                    fromHiFuncPos
+
             );
             peeker.setCursor(cursor);
         } catch (Throwable e) {

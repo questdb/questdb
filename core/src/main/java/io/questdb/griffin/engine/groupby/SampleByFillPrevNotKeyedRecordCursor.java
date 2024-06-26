@@ -43,7 +43,11 @@ public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordS
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
             Function offsetFunc,
-            int offsetFuncPos
+            int offsetFuncPos,
+            Function fromLoFunc,
+            int fromLoFuncPos,
+            Function fromHiFunc,
+            int fromHiFuncPos
     ) {
         super(
                 configuration,
@@ -55,7 +59,11 @@ public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordS
                 timezoneNameFunc,
                 timezoneNameFuncPos,
                 offsetFunc,
-                offsetFuncPos
+                offsetFuncPos,
+                fromLoFunc,
+                fromLoFuncPos,
+                fromHiFunc,
+                fromHiFuncPos
         );
         this.simpleMapValue = simpleMapValue;
         this.record.of(simpleMapValue);

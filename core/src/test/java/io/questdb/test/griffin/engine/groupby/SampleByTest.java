@@ -64,46 +64,6 @@ public class SampleByTest extends AbstractCairoTest {
     private static final Log LOG = LogFactory.getLog(SampleByTest.class);
 
     @Test
-    public void testSampleByFromPlans() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table tbl (\n" +
-                    "  ts timestamp,\n" +
-                    "  price double\n" +
-                    ") timestamp(ts) partition by day wal;");
-            drainWalQueue();
-            assertPlanNoLeakCheck(
-                    "select ts, avg(price) from tbl sample by 5m from '2018' to '2019' align to first observation",
-                    "SampleBy\n" +
-                            "  from: ['2018','2019']\n" +
-                            "  values: [avg(price)]\n" +
-                            "    DataFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: tbl\n"
-            );
-
-            assertPlanNoLeakCheck(
-                    "select ts, avg(price) from tbl sample by 5m from '2018' align to first observation",
-                    "SampleBy\n" +
-                            "  from: ['2018']\n" +
-                            "  values: [avg(price)]\n" +
-                            "    DataFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: tbl\n"
-            );
-
-            assertPlanNoLeakCheck(
-                    "select ts, avg(price) from tbl sample by 5m align to first observation",
-                    "SampleBy\n" +
-                            "  values: [avg(price)]\n" +
-                            "    DataFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: tbl\n"
-            );
-        });
-
-    }
-
-    @Test
     public void testBadFunction() throws Exception {
         assertException(
                 "select b, sum(a), sum(c), k from x sample by 3h fill(20.56)",
@@ -3700,7 +3660,11 @@ public class SampleByTest extends AbstractCairoTest {
                     0,
                     0,
                     getSymbolFilter(),
-                    -1
+                    -1,
+                    null,
+                    0,
+                    null,
+                    0
             ).close();
             Assert.fail();
         } catch (SqlException e) {
@@ -3736,7 +3700,11 @@ public class SampleByTest extends AbstractCairoTest {
                     0,
                     0,
                     getSymbolFilter(),
-                    -1
+                    -1,
+                    null,
+                    0,
+                    null,
+                    0
             ).close();
             Assert.fail();
         } catch (SqlException e) {
@@ -3777,6 +3745,47 @@ public class SampleByTest extends AbstractCairoTest {
                 true,
                 false
         );
+    }
+
+    @Test
+    public void testSampleByFromPlans() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tbl (\n" +
+                    "  ts timestamp,\n" +
+                    "  price double\n" +
+                    ") timestamp(ts) partition by day wal;");
+            drainWalQueue();
+            assertPlanNoLeakCheck(
+                    "select ts, avg(price) from tbl sample by 5m from '2018' to '2019' align to first observation",
+                    "Sample By\n" +
+                            "  lo: '2018'\n" +
+                            "  hi: '2019'\n" +
+                            "  values: [avg(price)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tbl\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select ts, avg(price) from tbl sample by 5m from '2018' align to first observation",
+                    "Sample By\n" +
+                            "  lo: '2018'\n" +
+                            "  values: [avg(price)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tbl\n"
+            );
+
+            assertPlanNoLeakCheck(
+                    "select ts, avg(price) from tbl sample by 5m align to first observation",
+                    "Sample By\n" +
+                            "  values: [avg(price)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tbl\n"
+            );
+        });
+
     }
 
     @Test

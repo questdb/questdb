@@ -52,7 +52,11 @@ public class SampleByFillPrevNotKeyedRecordCursorFactory extends AbstractSampleB
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
             Function offsetFunc,
-            int offsetFuncPos
+            int offsetFuncPos,
+            Function fromLoFunc,
+            int fromLoFuncPos,
+            Function fromHiFunc,
+            int fromHiFuncPos
     ) {
         super(base, groupByMetadata, recordFunctions);
         try {
@@ -69,7 +73,11 @@ public class SampleByFillPrevNotKeyedRecordCursorFactory extends AbstractSampleB
                     timezoneNameFunc,
                     timezoneNameFuncPos,
                     offsetFunc,
-                    offsetFuncPos
+                    offsetFuncPos,
+                    fromLoFunc,
+                    fromLoFuncPos,
+                    fromHiFunc,
+                    fromHiFuncPos
             );
         } catch (Throwable e) {
             Misc.freeObjList(recordFunctions);

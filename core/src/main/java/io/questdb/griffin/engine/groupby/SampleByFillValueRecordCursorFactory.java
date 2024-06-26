@@ -63,7 +63,11 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
             Function offsetFunc,
-            int offsetFuncPos
+            int offsetFuncPos,
+            Function fromLoFunc,
+            int fromLoFuncPos,
+            Function fromHiFunc,
+            int fromHiFuncPos
     ) throws SqlException {
         super(
                 asm,
@@ -98,7 +102,11 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
                     timezoneNameFunc,
                     timezoneNameFuncPos,
                     offsetFunc,
-                    offsetFuncPos
+                    offsetFuncPos,
+                    fromLoFunc,
+                    fromLoFuncPos,
+                    fromHiFunc,
+                    fromHiFuncPos
             );
         } catch (Throwable e) {
             Misc.freeObjList(recordFunctions);

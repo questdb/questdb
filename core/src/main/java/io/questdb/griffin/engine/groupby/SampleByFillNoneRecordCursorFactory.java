@@ -59,7 +59,11 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
             Function offsetFunc,
-            int offsetFuncPos
+            int offsetFuncPos,
+            Function fromLoFunc,
+            int fromLoFuncPos,
+            Function fromHiFunc,
+            int fromHiFuncPos
     ) {
         super(base, groupByMetadata, recordFunctions);
         try {
@@ -80,7 +84,11 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
                     timezoneNameFunc,
                     timezoneNameFuncPos,
                     offsetFunc,
-                    offsetFuncPos
+                    offsetFuncPos,
+                    fromLoFunc,
+                    fromLoFuncPos,
+                    fromHiFunc,
+                    fromHiFuncPos
             );
         } catch (Throwable th) {
             close();
