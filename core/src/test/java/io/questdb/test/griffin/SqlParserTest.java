@@ -6303,6 +6303,17 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSampleByFromBasicSyntax() throws SqlException {
+        assertQuery(
+                "select-group-by ts, avg(price) avg from (select [ts, price] from tbl timestamp (ts)) sample by 5m from '2018' to '2019'",
+                "select ts, avg(price) from tbl sample by 5m from '2018' to '2019' align to first observation",
+                modelOf("tbl")
+                        .timestamp("ts")
+                        .col("price", ColumnType.DOUBLE)
+        );
+    }
+
+    @Test
     public void testNonWindowFunctionInWindowContext() throws Exception {
         assertException(
                 "select max(price) over (partition by symbol) from trades",

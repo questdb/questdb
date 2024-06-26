@@ -3040,7 +3040,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             timezoneNameFunc,
                             timezoneNameFuncPos,
                             offsetFunc,
-                            offsetFuncPos
+                            offsetFuncPos,
+                            model.getSampleByFromLo(),
+                            model.getSampleByFromHi()
                     );
                 }
 

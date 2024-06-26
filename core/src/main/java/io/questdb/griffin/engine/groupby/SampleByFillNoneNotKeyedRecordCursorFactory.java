@@ -29,14 +29,20 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.constants.NullConstant;
+import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
+import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 
 public class SampleByFillNoneNotKeyedRecordCursorFactory extends AbstractSampleByNotKeyedRecordCursorFactory {
     private final SampleByFillNoneNotKeyedRecordCursor cursor;
+    private final ExpressionNode fromLo;
+    private final ExpressionNode fromHi;
 
     public SampleByFillNoneNotKeyedRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -51,7 +57,9 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory extends AbstractSampleB
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
             Function offsetFunc,
-            int offsetFuncPos
+            int offsetFuncPos,
+            ExpressionNode fromLo,
+            ExpressionNode fromHi
     ) {
         super(base, groupByMetadata, recordFunctions);
         final SimpleMapValue simpleMapValue = new SimpleMapValue(valueCount);
@@ -69,11 +77,22 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory extends AbstractSampleB
                 offsetFunc,
                 offsetFuncPos
         );
+        this.fromLo = fromLo;
+        this.fromHi = fromHi;
     }
 
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("SampleBy");
+        ObjList<Sinkable> tmp = null;
+
+        if (fromLo != null) {
+            tmp = new ObjList<>(fromLo);
+            if (fromHi != null) {
+                tmp.add(fromHi);
+            }
+        }
+        sink.optAttr("from", tmp);
         sink.optAttr("values", cursor.groupByFunctions, true);
         sink.child(base);
     }
