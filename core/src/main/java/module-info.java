@@ -120,6 +120,7 @@ open module io.questdb {
     exports io.questdb.griffin.engine.functions.finance;
     exports io.questdb.std.json;
     exports io.questdb.griffin.engine.functions.json;
+    exports io.questdb.std.filewatch;
 
     provides FunctionFactory with
 
