@@ -38,7 +38,6 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.Os;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
@@ -120,8 +119,7 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                 CairoConfiguration cairoConfig = qdb.getConfiguration().getCairoConfiguration();
 
                 TableToken tableToken = createPopulateTable(cairoConfig, engine, defaultCompiler, defaultContext, tableName);
-                // wait for the rows to end up in the table
-                waitForData(tableName, defaultCompiler, defaultContext);
+                engine.awaitTable(tableName, 30, TimeUnit.SECONDS);
 
                 String finallyExpected = replaceSizeToMatchOS(EXPECTED, dbPath, tableToken.getTableName(), engine);
                 assertShowPartitions(finallyExpected, tableToken, defaultCompiler, defaultContext);
@@ -182,23 +180,6 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                 cursor0.toTop();
                 AbstractCairoTest.assertCursor(finallyExpected, false, true, false, cursor1, meta, sink, rows, false);
                 cursor1.toTop();
-            }
-        }
-    }
-
-    private static void waitForData(String tableName, SqlCompiler defaultCompiler, SqlExecutionContext defaultContext) throws SqlException {
-        long time = System.currentTimeMillis();
-        StringSink sink = new StringSink();
-        while (true) {
-            try {
-                TestUtils.assertSql(defaultCompiler, defaultContext, "select count() from " + tableName, sink, "count\n" +
-                        "1000000\n");
-                break;
-            } catch (AssertionError e) {
-                if (System.currentTimeMillis() - time > 5000) {
-                    throw e;
-                }
-                Os.sleep(5);
             }
         }
     }
