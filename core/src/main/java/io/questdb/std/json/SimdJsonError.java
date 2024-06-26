@@ -29,38 +29,38 @@ import io.questdb.std.Os;
 // Port of the C++ `simdjson::error_code` enum.
 public class SimdJsonError {
     public static final int SUCCESS = 0;
-    public static final int CAPACITY = 1;
-    public static final int MEMALLOC = 2;
-    public static final int TAPE_ERROR = 3;
-    public static final int DEPTH_ERROR = 4;
-    public static final int STRING_ERROR = 5;
-    public static final int T_ATOM_ERROR = 6;
-    public static final int F_ATOM_ERROR = 7;
-    public static final int N_ATOM_ERROR = 8;
-    public static final int NUMBER_ERROR = 9;
-    public static final int BIGINT_ERROR = 10;
-    public static final int UTF8_ERROR = 11;
-    public static final int UNINITIALIZED = 12;
-    public static final int EMPTY = 13;
-    public static final int UNESCAPED_CHARS = 14;
-    public static final int UNCLOSED_STRING = 15;
-    public static final int UNSUPPORTED_ARCHITECTURE = 16;
-    public static final int INCORRECT_TYPE = 17;
-    public static final int NUMBER_OUT_OF_RANGE = 18;
-    public static final int INDEX_OUT_OF_BOUNDS = 19;
-    public static final int NO_SUCH_FIELD = 20;
-    public static final int IO_ERROR = 21;
-    public static final int INVALID_JSON_POINTER = 22;
-    public static final int INVALID_URI_FRAGMENT = 23;
-    public static final int UNEXPECTED_ERROR = 24;
-    public static final int PARSER_IN_USE = 25;
-    public static final int OUT_OF_ORDER_ITERATION = 26;
-    public static final int INSUFFICIENT_PADDING = 27;
-    public static final int INCOMPLETE_ARRAY_OR_OBJECT = 28;
-    public static final int SCALAR_DOCUMENT_AS_VALUE = 29;
-    public static final int OUT_OF_BOUNDS = 30;
-    public static final int TRAILING_CONTENT = 31;
-    public static final int NUM_ERROR_CODES = 32;
+    public static final int CAPACITY = SUCCESS + 1;
+    public static final int MEMALLOC = CAPACITY + 1;
+    public static final int TAPE_ERROR = MEMALLOC + 1;
+    public static final int DEPTH_ERROR = TAPE_ERROR + 1;
+    public static final int STRING_ERROR = DEPTH_ERROR + 1;
+    public static final int T_ATOM_ERROR = STRING_ERROR + 1;
+    public static final int F_ATOM_ERROR = T_ATOM_ERROR + 1;
+    public static final int N_ATOM_ERROR = F_ATOM_ERROR + 1;
+    public static final int NUMBER_ERROR = N_ATOM_ERROR + 1;
+    public static final int BIGINT_ERROR = NUMBER_ERROR + 1;
+    public static final int UTF8_ERROR = BIGINT_ERROR + 1;
+    public static final int UNINITIALIZED = UTF8_ERROR + 1;
+    public static final int EMPTY = UNINITIALIZED + 1;
+    public static final int UNESCAPED_CHARS = EMPTY + 1;
+    public static final int UNCLOSED_STRING = UNESCAPED_CHARS + 1;
+    public static final int UNSUPPORTED_ARCHITECTURE = UNCLOSED_STRING + 1;
+    public static final int INCORRECT_TYPE = UNSUPPORTED_ARCHITECTURE + 1;
+    public static final int NUMBER_OUT_OF_RANGE = INCORRECT_TYPE + 1;
+    public static final int INDEX_OUT_OF_BOUNDS = NUMBER_OUT_OF_RANGE + 1;
+    public static final int NO_SUCH_FIELD = INDEX_OUT_OF_BOUNDS + 1;
+    public static final int IO_ERROR = NO_SUCH_FIELD + 1;
+    public static final int INVALID_JSON_POINTER = IO_ERROR + 1;
+    public static final int INVALID_URI_FRAGMENT = INVALID_JSON_POINTER + 1;
+    public static final int UNEXPECTED_ERROR = INVALID_URI_FRAGMENT + 1;
+    public static final int PARSER_IN_USE = UNEXPECTED_ERROR + 1;
+    public static final int OUT_OF_ORDER_ITERATION = PARSER_IN_USE + 1;
+    public static final int INSUFFICIENT_PADDING = OUT_OF_ORDER_ITERATION + 1;
+    public static final int INCOMPLETE_ARRAY_OR_OBJECT = INSUFFICIENT_PADDING + 1;
+    public static final int SCALAR_DOCUMENT_AS_VALUE = INCOMPLETE_ARRAY_OR_OBJECT + 1;
+    public static final int OUT_OF_BOUNDS = SCALAR_DOCUMENT_AS_VALUE + 1;
+    public static final int TRAILING_CONTENT = OUT_OF_BOUNDS + 1;
+    public static final int NUM_ERROR_CODES = TRAILING_CONTENT + 1;
 
     private static final String[] messages = new String[NUM_ERROR_CODES];
 
@@ -71,6 +71,9 @@ public class SimdJsonError {
         return messages[code];
     }
 
+    public static void init() {
+    }
+
     private static native String errorMessage(int code);
 
     static {
@@ -79,6 +82,4 @@ public class SimdJsonError {
             messages[i] = errorMessage(i);
         }
     }
-
-    public static void init() {}
 }
