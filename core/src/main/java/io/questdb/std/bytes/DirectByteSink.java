@@ -206,7 +206,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
     /**
      * Ensure that the buffer has at least `minCapacity`.
      * <p>
-     * After this call, `capacity() >= minCapacity` is guaranteed.
+     * After this call, `capacity() &gt;= minCapacity` is guaranteed.
      */
     public void reserve(long minCapacity) {
         final long cap = capacity();

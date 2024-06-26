@@ -145,7 +145,7 @@ public abstract class IntFunction implements ScalarFunction {
         }
         final short narrowed = (short) value;
         if (narrowed != value) {
-            throw new UnsupportedOperationException();  // TODO: What's the most appropriate exception to throw here?
+            throw new UnsupportedOperationException();
         }
         return narrowed;
     }
