@@ -204,7 +204,7 @@ public final class TableUtils {
         return (int) (checkSum ^ (checkSum >>> 32));
     }
 
-    public static void changeColumnTypeInMetadata(CharSequence columnName, int newType, LowerCaseCharSequenceIntHashMap columnNameIndexMap, ObjList<TableColumnMetadata> columnMetadata) {
+    public static int changeColumnTypeInMetadata(CharSequence columnName, int newType, LowerCaseCharSequenceIntHashMap columnNameIndexMap, ObjList<TableColumnMetadata> columnMetadata) {
         int existingIndex = columnNameIndexMap.get(columnName);
         if (existingIndex < 0) {
             throw CairoException.nonCritical().put("cannot change type, column '").put(columnName).put("' does not exist");
@@ -225,6 +225,7 @@ public final class TableUtils {
         );
         columnMetadata.getQuick(existingIndex).markDeleted();
         columnNameIndexMap.put(columnNameStr, columnIndex);
+        return existingIndex;
     }
 
     public static Path charFileName(Path path, CharSequence columnName, long columnNameTxn) {

@@ -152,6 +152,10 @@ public final class Os {
     public static void init() {
     }
 
+    public static boolean isFreeBSD() {
+        return type == Os.FREEBSD;
+    }
+
     public static boolean isLinux() {
         return type == LINUX;
     }
