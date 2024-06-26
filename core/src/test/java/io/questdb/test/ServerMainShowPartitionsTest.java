@@ -37,20 +37,18 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -130,9 +128,9 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
 
                 int numThreads = 5;
                 SOCountDownLatch completed = new SOCountDownLatch(numThreads);
-                AtomicReference<List<Throwable>> errors = new AtomicReference<>(new ArrayList<>());
-                List<SqlCompiler> compilers = new ArrayList<>(numThreads);
-                List<SqlExecutionContext> contexts = new ArrayList<>(numThreads);
+                AtomicReference<Throwable> errors = new AtomicReference<>();
+                ObjList<SqlCompiler> compilers = new ObjList<>(numThreads);
+                ObjList<SqlExecutionContext> contexts = new ObjList<>(numThreads);
                 for (int i = 0; i < numThreads; i++) {
                     SqlCompiler compiler = qdb.getEngine().getSqlCompiler();
                     SqlExecutionContext context = createSqlExecutionCtx(qdb.getEngine());
@@ -142,26 +140,24 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                         try {
                             assertShowPartitions(finallyExpected, tableToken, compiler, context);
                         } catch (Throwable err) {
-                            errors.get().add(err);
+                            errors.compareAndSet(null, err);
                         } finally {
                             completed.countDown();
                         }
                     }).start();
                 }
-                if (!completed.await(TimeUnit.SECONDS.toNanos(3L))) {
+                if (!completed.await(TimeUnit.MINUTES.toNanos(1))) {
+                    errors.compareAndSet(null, new AssertionError("Timed out waiting for threads to complete"));
                     TestListener.dumpThreadStacks();
                 }
                 dropTable(defaultCompiler, defaultContext, tableToken);
-                for (int i = 0; i < numThreads; i++) {
-                    compilers.get(i).close();
-                    contexts.get(i).close();
-                }
-                compilers.clear();
-                contexts.clear();
+                Misc.freeObjListAndClear(compilers);
+                Misc.freeObjListAndClear(contexts);
 
                 // fail on first error found
-                for (Throwable t : errors.get()) {
-                    Assert.fail(t.getMessage());
+                Throwable firstError = errors.get();
+                if (firstError != null) {
+                    throw new AssertionError(firstError);
                 }
             }
         });
