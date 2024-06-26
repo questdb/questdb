@@ -31,6 +31,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.json.JsonPathFunctionFactory;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -136,7 +137,7 @@ public class JsonPathFunctionFactoryIntTest extends AbstractFunctionFactoryTest 
                 CairoException.class,
                 () -> callFn(utf8("{\"path\": 100000000000000000000000000}"), utf8(".path"), FAIL_ON_ERROR)
         );
-        Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): INCORRECT_TYPE:"));
+        TestUtils.assertContains(exc.getMessage(), "json_path(.., '.path'): INCORRECT_TYPE:");
     }
 
     @Test
@@ -145,7 +146,7 @@ public class JsonPathFunctionFactoryIntTest extends AbstractFunctionFactoryTest 
                 CairoException.class,
                 () -> callFn(utf8("{\"path\": \"abc\"}"), utf8(".path"), FAIL_ON_ERROR, 42));
         System.err.println(exc.getMessage());
-        Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): INCORRECT_TYPE:"));
+        TestUtils.assertContains(exc.getMessage(), "json_path(.., '.path'): INCORRECT_TYPE:");
     }
 
     @Test
@@ -158,7 +159,7 @@ public class JsonPathFunctionFactoryIntTest extends AbstractFunctionFactoryTest 
         final CairoException exc = Assert.assertThrows(
                 CairoException.class,
                 () -> callFn(utf8("{\"path\": \"abc\"}"), utf8(".path"), FAIL_ON_ERROR));
-        Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): INCORRECT_TYPE:"));
+        TestUtils.assertContains(exc.getMessage(), "json_path(.., '.path'): INCORRECT_TYPE:");
     }
 
     @Test
@@ -166,7 +167,7 @@ public class JsonPathFunctionFactoryIntTest extends AbstractFunctionFactoryTest 
         final CairoException exc = Assert.assertThrows(
                 CairoException.class,
                 () -> callFn(utf8("{}"), utf8(".path"), FAIL_ON_ERROR));
-        Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): NO_SUCH_FIELD:"));
+        TestUtils.assertContains(exc.getMessage(), "json_path(.., '.path'): NO_SUCH_FIELD:");
     }
 
     @Test
@@ -174,7 +175,7 @@ public class JsonPathFunctionFactoryIntTest extends AbstractFunctionFactoryTest 
         final CairoException exc = Assert.assertThrows(
                 CairoException.class,
                 () -> callFn(utf8("{\"path\": 123.45}"), utf8(".path"), FAIL_ON_ERROR));
-        Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): INCORRECT_TYPE:"));
+        TestUtils.assertContains(exc.getMessage(), "json_path(.., '.path'): INCORRECT_TYPE:");
     }
 
     @Test
@@ -204,7 +205,7 @@ public class JsonPathFunctionFactoryIntTest extends AbstractFunctionFactoryTest 
                 CairoException.class,
                 () -> callFn(utf8("{\"path\": -2147483649\n}"), utf8(".path"), FAIL_ON_ERROR)
         );
-        Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): NUMBER_OUT_OF_RANGE"));
+        TestUtils.assertContains(exc.getMessage(), "json_path(.., '.path'): NUMBER_OUT_OF_RANGE");
     }
 
     @Test
@@ -214,7 +215,7 @@ public class JsonPathFunctionFactoryIntTest extends AbstractFunctionFactoryTest 
                 CairoException.class,
                 () -> callFn(utf8("{\"path\": 2147483648\n}"), utf8(".path"), FAIL_ON_ERROR)
         );
-        Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): NUMBER_OUT_OF_RANGE"));
+        TestUtils.assertContains(exc.getMessage(), "json_path(.., '.path'): NUMBER_OUT_OF_RANGE");
     }
 
     @Test
@@ -223,7 +224,7 @@ public class JsonPathFunctionFactoryIntTest extends AbstractFunctionFactoryTest 
                 CairoException.class,
                 () -> callFn(utf8("{\"path\": 9999999999999999999}"), utf8(".path"), FAIL_ON_ERROR)
         );
-        Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): INCORRECT_TYPE:"));
+        TestUtils.assertContains(exc.getMessage(), "json_path(.., '.path'): INCORRECT_TYPE:");
     }
 
     @Test

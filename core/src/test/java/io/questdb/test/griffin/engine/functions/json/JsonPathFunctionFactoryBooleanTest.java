@@ -31,6 +31,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.json.JsonPathFunctionFactory;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -158,7 +159,7 @@ public class JsonPathFunctionFactoryBooleanTest extends AbstractFunctionFactoryT
                 CairoException.class,
                 () -> callFn(utf8("{\"path\": 100000000000000000000000000}"), utf8(".path"), FAIL_ON_ERROR)
         );
-        Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): INCORRECT_TYPE:"));
+        TestUtils.assertContains(exc.getMessage(), "json_path(.., '.path'): INCORRECT_TYPE:");
     }
 
     @Test
@@ -166,7 +167,7 @@ public class JsonPathFunctionFactoryBooleanTest extends AbstractFunctionFactoryT
         final CairoException exc = Assert.assertThrows(
                 CairoException.class,
                 () -> callFn(utf8("{\"path\": \"abc\"}"), utf8(".path"), FAIL_ON_ERROR, 42));
-        Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): INCORRECT_TYPE:"));
+        TestUtils.assertContains(exc.getMessage(), "json_path(.., '.path'): INCORRECT_TYPE:");
     }
 
     @Test
@@ -175,7 +176,7 @@ public class JsonPathFunctionFactoryBooleanTest extends AbstractFunctionFactoryT
                 CairoException.class,
                 () -> callFn(utf8("{\"path\": null}"), utf8(".path"), FAIL_ON_ERROR, 42)
         );
-        Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): INCORRECT_TYPE:"));
+        TestUtils.assertContains(exc.getMessage(), "json_path(.., '.path'): INCORRECT_TYPE:");
     }
 
     @Test
@@ -183,7 +184,7 @@ public class JsonPathFunctionFactoryBooleanTest extends AbstractFunctionFactoryT
         final CairoException exc = Assert.assertThrows(
                 CairoException.class,
                 () -> callFn(utf8("{\"path\": \"abc\"}"), utf8(".path"), FAIL_ON_ERROR));
-        Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): INCORRECT_TYPE:"));
+        TestUtils.assertContains(exc.getMessage(), "json_path(.., '.path'): INCORRECT_TYPE:");
     }
 
     @Test
@@ -191,7 +192,7 @@ public class JsonPathFunctionFactoryBooleanTest extends AbstractFunctionFactoryT
         final CairoException exc = Assert.assertThrows(
                 CairoException.class,
                 () -> callFn(utf8("{}"), utf8(".path"), FAIL_ON_ERROR));
-        Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): NO_SUCH_FIELD:"));
+        TestUtils.assertContains(exc.getMessage(), "json_path(.., '.path'): NO_SUCH_FIELD:");
     }
 
     @Test
@@ -199,7 +200,7 @@ public class JsonPathFunctionFactoryBooleanTest extends AbstractFunctionFactoryT
         final CairoException exc = Assert.assertThrows(
                 CairoException.class,
                 () -> callFn(utf8("{\"path\": 123.45}"), utf8(".path"), FAIL_ON_ERROR));
-        Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): INCORRECT_TYPE:"));
+        TestUtils.assertContains(exc.getMessage(), "json_path(.., '.path'): INCORRECT_TYPE:");
     }
 
     @Test
@@ -208,7 +209,7 @@ public class JsonPathFunctionFactoryBooleanTest extends AbstractFunctionFactoryT
                 CairoException.class,
                 () -> callFn(utf8(null), utf8(".path"), FAIL_ON_ERROR)
         );
-        Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): NO_SUCH_FIELD:"));
+        TestUtils.assertContains(exc.getMessage(), "json_path(.., '.path'): NO_SUCH_FIELD:");
     }
 
     @Test
@@ -217,7 +218,7 @@ public class JsonPathFunctionFactoryBooleanTest extends AbstractFunctionFactoryT
                 CairoException.class,
                 () -> callFn(utf8("{\"path\": null}"), utf8(".path"), FAIL_ON_ERROR)
         );
-        Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): INCORRECT_TYPE:"));
+        TestUtils.assertContains(exc.getMessage(), "json_path(.., '.path'): INCORRECT_TYPE:");
     }
 
     @Test
@@ -226,7 +227,7 @@ public class JsonPathFunctionFactoryBooleanTest extends AbstractFunctionFactoryT
                 CairoException.class,
                 () -> callFn(utf8("{\"path\": 1}"), utf8(".path"), FAIL_ON_ERROR)
         );
-        Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): INCORRECT_TYPE:"));
+        TestUtils.assertContains(exc.getMessage(), "json_path(.., '.path'): INCORRECT_TYPE:");
     }
 
     @Test
@@ -235,7 +236,7 @@ public class JsonPathFunctionFactoryBooleanTest extends AbstractFunctionFactoryT
                 CairoException.class,
                 () -> callFn(utf8("{\"path\": 0}"), utf8(".path"), FAIL_ON_ERROR)
         );
-        Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): INCORRECT_TYPE:"));
+        TestUtils.assertContains(exc.getMessage(), "json_path(.., '.path'): INCORRECT_TYPE:");
     }
 
     @Test

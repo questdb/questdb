@@ -31,6 +31,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.json.JsonPathFunctionFactory;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -157,7 +158,7 @@ public class JsonPathFunctionFactoryVarcharTest extends AbstractFunctionFactoryT
         final CairoException exc = Assert.assertThrows(
                 CairoException.class,
                 () -> callFn(utf8("{}"), utf8(".path"), FAIL_ON_ERROR));
-        Assert.assertTrue(exc.getMessage().contains("json_path(.., '.path'): NO_SUCH_FIELD:"));
+        TestUtils.assertContains(exc.getMessage(), "json_path(.., '.path'): NO_SUCH_FIELD:");
     }
 
     @Test
