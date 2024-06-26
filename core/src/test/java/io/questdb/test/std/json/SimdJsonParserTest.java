@@ -25,10 +25,10 @@
 package io.questdb.test.std.json;
 
 import io.questdb.log.LogFactory;
-import io.questdb.std.json.JsonError;
+import io.questdb.std.json.SimdJsonError;
 import io.questdb.std.json.SimdJsonParser;
-import io.questdb.std.json.JsonResult;
-import io.questdb.std.json.JsonType;
+import io.questdb.std.json.SimdJsonResult;
+import io.questdb.std.json.SimdJsonType;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.GcUtf8String;
 import io.questdb.test.tools.TestUtils;
@@ -37,7 +37,7 @@ import org.junit.*;
 import java.nio.charset.StandardCharsets;
 
 public class SimdJsonParserTest {
-    private static final JsonResult result = new JsonResult();
+    private static final SimdJsonResult result = new SimdJsonResult();
     private static final String testUnicodeChars = "ðãµ¶Āڜ💩🦞";
     private static final String description = (
             "Hello, I'm John. I live in New York. I have a dog named Max and a cat named Whiskers. " +
@@ -92,12 +92,12 @@ public class SimdJsonParserTest {
         TestUtils.assertMemoryLeak(() -> {
             final boolean res = parser.queryPointerBoolean(json, path2Pointer(".nonexistent"), result, false);
             Assert.assertFalse(res);
-            Assert.assertEquals(result.getType(), JsonType.UNSET);
+            Assert.assertEquals(result.getType(), SimdJsonType.UNSET);
         });
         TestUtils.assertMemoryLeak(() -> {
             final boolean res = parser.queryPointerBoolean(json, path2Pointer(".nonexistent"), result, true);
             Assert.assertTrue(res);
-            Assert.assertEquals(result.getType(), JsonType.UNSET);
+            Assert.assertEquals(result.getType(), SimdJsonType.UNSET);
         });
     }
 
@@ -106,14 +106,14 @@ public class SimdJsonParserTest {
         TestUtils.assertMemoryLeak(() -> {
             final boolean res = parser.queryPointerBoolean(json, path2Pointer(".nothing"), result, false);
             Assert.assertFalse(res);
-            Assert.assertEquals(result.getError(), JsonError.INCORRECT_TYPE);
-            Assert.assertEquals(result.getType(), JsonType.NULL);
+            Assert.assertEquals(result.getError(), SimdJsonError.INCORRECT_TYPE);
+            Assert.assertEquals(result.getType(), SimdJsonType.NULL);
         });
         TestUtils.assertMemoryLeak(() -> {
             final boolean res = parser.queryPointerBoolean(json, path2Pointer(".nothing"), result, true);
             Assert.assertTrue(res);
-            Assert.assertEquals(result.getError(), JsonError.INCORRECT_TYPE);
-            Assert.assertEquals(result.getType(), JsonType.NULL);
+            Assert.assertEquals(result.getError(), SimdJsonError.INCORRECT_TYPE);
+            Assert.assertEquals(result.getType(), SimdJsonType.NULL);
         });
     }
 
@@ -140,12 +140,12 @@ public class SimdJsonParserTest {
         TestUtils.assertMemoryLeak(() -> {
             final double res = parser.queryPointerDouble(json, path2Pointer(".nonexistent"), result, Double.NaN);
             Assert.assertTrue(Double.isNaN(res));
-            Assert.assertEquals(result.getType(), JsonType.UNSET);
+            Assert.assertEquals(result.getType(), SimdJsonType.UNSET);
         });
         TestUtils.assertMemoryLeak(() -> {
             final double res = parser.queryPointerDouble(json, path2Pointer(".nonexistent"), result, -1);
             Assert.assertEquals(-1, res, 0.0);
-            Assert.assertEquals(result.getType(), JsonType.UNSET);
+            Assert.assertEquals(result.getType(), SimdJsonType.UNSET);
         });
     }
 
@@ -154,12 +154,12 @@ public class SimdJsonParserTest {
         TestUtils.assertMemoryLeak(() -> {
             final double res = parser.queryPointerDouble(json, path2Pointer(".nothing"), result, Double.NaN);
             Assert.assertTrue(Double.isNaN(res));
-            Assert.assertEquals(result.getType(), JsonType.NULL);
+            Assert.assertEquals(result.getType(), SimdJsonType.NULL);
         });
         TestUtils.assertMemoryLeak(() -> {
             final double res = parser.queryPointerDouble(json, path2Pointer(".nothing"), result, 42.5);
             Assert.assertTrue(Double.isNaN(res));
-            Assert.assertEquals(result.getType(), JsonType.NULL);
+            Assert.assertEquals(result.getType(), SimdJsonType.NULL);
         });
     }
 
@@ -168,8 +168,8 @@ public class SimdJsonParserTest {
         TestUtils.assertMemoryLeak(() -> {
             try (DirectUtf8Sink dest = new DirectUtf8Sink(100)) {
                 parser.queryPointerString(json, path2Pointer("£$£%£%invalid path!!"), result, dest, 100, 0, 0);
-                Assert.assertEquals(result.getError(), JsonError.INVALID_JSON_POINTER);
-                Assert.assertEquals(result.getType(), JsonType.UNSET);
+                Assert.assertEquals(result.getError(), SimdJsonError.INVALID_JSON_POINTER);
+                Assert.assertEquals(result.getType(), SimdJsonType.UNSET);
             }
         });
     }
@@ -179,12 +179,12 @@ public class SimdJsonParserTest {
         TestUtils.assertMemoryLeak(() -> {
             final long res = parser.queryPointerLong(json, path2Pointer(".nonexistent"), result, Long.MIN_VALUE);
             Assert.assertEquals(Long.MIN_VALUE, res);
-            Assert.assertEquals(result.getType(), JsonType.UNSET);
+            Assert.assertEquals(result.getType(), SimdJsonType.UNSET);
         });
         TestUtils.assertMemoryLeak(() -> {
             final long res = parser.queryPointerLong(json, path2Pointer(".nonexistent"), result, -42);
             Assert.assertEquals(-42, res);
-            Assert.assertEquals(result.getType(), JsonType.UNSET);
+            Assert.assertEquals(result.getType(), SimdJsonType.UNSET);
         });
     }
 
@@ -193,12 +193,12 @@ public class SimdJsonParserTest {
         TestUtils.assertMemoryLeak(() -> {
             final long res = parser.queryPointerLong(json, path2Pointer(".nothing"), result, Long.MIN_VALUE);
             Assert.assertEquals(Long.MIN_VALUE, res);
-            Assert.assertEquals(result.getType(), JsonType.NULL);
+            Assert.assertEquals(result.getType(), SimdJsonType.NULL);
         });
         TestUtils.assertMemoryLeak(() -> {
             final long res = parser.queryPointerLong(json, path2Pointer(".nothing"), result, -42);
             Assert.assertEquals(Long.MIN_VALUE, res);  // The "error" value is not picked up, this is by design.
-            Assert.assertEquals(result.getType(), JsonType.NULL);
+            Assert.assertEquals(result.getType(), SimdJsonType.NULL);
         });
     }
 
@@ -207,7 +207,7 @@ public class SimdJsonParserTest {
         TestUtils.assertMemoryLeak(() -> {
             Assert.assertFalse(parser.queryPointerBoolean(json, path2Pointer(".hasChildren"), result, false));
             Assert.assertTrue(parser.queryPointerBoolean(json, path2Pointer(".pets[1].scratches"), result, false));
-            Assert.assertEquals(result.getType(), JsonType.BOOLEAN);
+            Assert.assertEquals(result.getType(), SimdJsonType.BOOLEAN);
         });
     }
 
@@ -215,7 +215,7 @@ public class SimdJsonParserTest {
     public void testQueryPathDouble() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Assert.assertEquals(5.6, parser.queryPointerDouble(json, path2Pointer(".height"), result, Double.NaN), 0.0001);
-            Assert.assertEquals(result.getType(), JsonType.NUMBER);
+            Assert.assertEquals(result.getType(), SimdJsonType.NUMBER);
         });
     }
 
@@ -223,7 +223,7 @@ public class SimdJsonParserTest {
     public void testQueryPathLong() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Assert.assertEquals(30, parser.queryPointerLong(json, path2Pointer(".age"), result, Long.MIN_VALUE));
-            Assert.assertEquals(result.getType(), JsonType.NUMBER);
+            Assert.assertEquals(result.getType(), SimdJsonType.NUMBER);
         });
     }
 
@@ -232,8 +232,8 @@ public class SimdJsonParserTest {
         TestUtils.assertMemoryLeak(() -> {
             final long res = parser.queryPointerLong(json, path2Pointer(".bignum"), result, Long.MIN_VALUE);
             Assert.assertEquals(Long.MIN_VALUE, res);
-            Assert.assertEquals(result.getError(), JsonError.INCORRECT_TYPE);
-            Assert.assertEquals(result.getType(), JsonType.NUMBER);
+            Assert.assertEquals(result.getError(), SimdJsonError.INCORRECT_TYPE);
+            Assert.assertEquals(result.getType(), SimdJsonType.NUMBER);
         });
     }
 
@@ -242,8 +242,8 @@ public class SimdJsonParserTest {
         TestUtils.assertMemoryLeak(() -> {
             final long res = parser.queryPointerLong(json, path2Pointer(".u64_val"), result, Long.MIN_VALUE);
             Assert.assertEquals(Long.MIN_VALUE, res);
-            Assert.assertEquals(result.getError(), JsonError.INCORRECT_TYPE);
-            Assert.assertEquals(result.getType(), JsonType.NUMBER);
+            Assert.assertEquals(result.getError(), SimdJsonError.INCORRECT_TYPE);
+            Assert.assertEquals(result.getType(), SimdJsonType.NUMBER);
         });
     }
 
@@ -286,7 +286,7 @@ public class SimdJsonParserTest {
             try (DirectUtf8Sink dest = new DirectUtf8Sink(100)) {
                 parser.queryPointerString(json, path2Pointer(".nonexistent"), result, dest, 100, 0, 0);
                 Assert.assertEquals("", dest.toString());
-                Assert.assertEquals(result.getType(), JsonType.UNSET);
+                Assert.assertEquals(result.getType(), SimdJsonType.UNSET);
             }
         });
     }
@@ -297,7 +297,7 @@ public class SimdJsonParserTest {
             try (DirectUtf8Sink dest = new DirectUtf8Sink(100)) {
                 parser.queryPointerString(json, path2Pointer(".nothing"), result, dest, 100, 0, 0);
                 Assert.assertEquals("", dest.toString());
-                Assert.assertEquals(result.getType(), JsonType.NULL);
+                Assert.assertEquals(result.getType(), SimdJsonType.NULL);
             }
         });
     }

@@ -26,8 +26,8 @@ package io.questdb.std.json;
 
 
 // Maps to the constants of the `simdjson::ondemand::json_type` enum.
-public class JsonType {
-    /** An unset `JsonType` or the result of accessing a non-existent path. */
+public class SimdJsonType {
+    /** An unset `SimdJsonType` or the result of accessing a non-existent path. */
     public static final int UNSET = 0;
 
     /** A JSON array   ( [ 1, 2, 3 ... ] ) */

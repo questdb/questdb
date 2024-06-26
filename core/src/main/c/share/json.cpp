@@ -208,7 +208,7 @@ Java_io_questdb_std_json_SimdJsonParser_getSimdJsonPadding(
 }
 
 JNIEXPORT jstring JNICALL
-Java_io_questdb_std_json_JsonError_errorMessage(
+Java_io_questdb_std_json_SimdJsonError_errorMessage(
         JNIEnv *env,
         jclass /*cl*/,
         jint code

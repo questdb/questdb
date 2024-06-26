@@ -27,7 +27,7 @@ package io.questdb.griffin.engine.functions.json;
 import io.questdb.cairo.sql.Function;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.json.SimdJsonParser;
-import io.questdb.std.json.JsonResult;
+import io.questdb.std.json.SimdJsonResult;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8Sequence;
@@ -35,7 +35,7 @@ import org.jetbrains.annotations.NotNull;
 
 class SupportingState implements QuietCloseable {
     public SimdJsonParser parser = new SimdJsonParser();
-    public JsonResult jsonResult = new JsonResult();
+    public SimdJsonResult simdJsonResult = new SimdJsonResult();
     private DirectUtf8Sink jsonSink = null;
     public DirectUtf8Sequence jsonSeq = null;
 
@@ -59,7 +59,7 @@ class SupportingState implements QuietCloseable {
             jsonSink.close();
         }
 
-        jsonResult.close();
+        simdJsonResult.close();
     }
 
     public DirectUtf8Sequence initPaddedJson(@NotNull Utf8Sequence json) {

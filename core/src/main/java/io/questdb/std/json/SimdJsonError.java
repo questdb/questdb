@@ -27,7 +27,7 @@ package io.questdb.std.json;
 import io.questdb.std.Os;
 
 // Port of the C++ `simdjson::error_code` enum.
-public class JsonError {
+public class SimdJsonError {
     public static final int SUCCESS = 0;
     public static final int CAPACITY = 1;
     public static final int MEMALLOC = 2;

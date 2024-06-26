@@ -30,12 +30,12 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
 
-public class JsonResult implements QuietCloseable {
+public class SimdJsonResult implements QuietCloseable {
     private static final int JSON_RESULT_STRUCT_SIZE = 8;
     private static final int JSON_RESULT_STRUCT_TYPE_OFFSET = 4;
     private long impl;
 
-    public JsonResult() {
+    public SimdJsonResult() {
         this.impl = Unsafe.calloc(JSON_RESULT_STRUCT_SIZE, MemoryTag.NATIVE_DEFAULT);
     }
 
@@ -52,12 +52,12 @@ public class JsonResult implements QuietCloseable {
         impl = 0;
     }
 
-    // See constants in `JsonError` for possible values.
+    // See constants in `SimdJsonError` for possible values.
     public int getError() {
         return Unsafe.getUnsafe().getInt(impl);
     }
 
-    // See constants in `JsonType` for possible values.
+    // See constants in `SimdJsonType` for possible values.
     public int getType() {
         return Unsafe.getUnsafe().getInt(impl + JSON_RESULT_STRUCT_TYPE_OFFSET);
     }
@@ -66,11 +66,11 @@ public class JsonResult implements QuietCloseable {
      * Is not an error (e.g. NO_SUCH_FIELD) and is not a null
      */
     public boolean hasValue() {
-        return getError() == JsonError.SUCCESS;
+        return getError() == SimdJsonError.SUCCESS;
     }
 
     public boolean isNull() {
-        return getType() == JsonType.NULL;
+        return getType() == SimdJsonType.NULL;
     }
 
     public long ptr() {
@@ -79,7 +79,7 @@ public class JsonResult implements QuietCloseable {
 
     public void throwIfError(Utf8Sequence path) throws CairoException {
         final int error = getError();
-        if (error != JsonError.SUCCESS) {
+        if (error != SimdJsonError.SUCCESS) {
             throw formatError(path, getError());
         }
     }
@@ -89,6 +89,6 @@ public class JsonResult implements QuietCloseable {
                 .put("json_path(.., '")
                 .put(path)
                 .put("'): ")
-                .put(JsonError.getMessage(error));
+                .put(SimdJsonError.getMessage(error));
     }
 }

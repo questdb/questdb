@@ -24,36 +24,36 @@
 
 package io.questdb.test.std.json;
 
-import io.questdb.std.json.JsonError;
+import io.questdb.std.json.SimdJsonError;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class JsonExceptionTest {
     @Test
     public void testSuccess() {
-        Assert.assertEquals("SUCCESS: No error", JsonError.getMessage(JsonError.SUCCESS));
+        Assert.assertEquals("SUCCESS: No error", SimdJsonError.getMessage(SimdJsonError.SUCCESS));
     }
 
     @Test
     public void testMemAlloc() {
-        Assert.assertEquals("MEMALLOC: Error allocating memory, we're most likely out of memory", JsonError.getMessage(JsonError.MEMALLOC));
+        Assert.assertEquals("MEMALLOC: Error allocating memory, we're most likely out of memory", SimdJsonError.getMessage(SimdJsonError.MEMALLOC));
     }
 
     @Test
     public void testNegErrorCode() {
-        Assert.assertEquals("Unknown error code -1", JsonError.getMessage(-1));
+        Assert.assertEquals("Unknown error code -1", SimdJsonError.getMessage(-1));
     }
 
     @Test
     public void testLastErrorCode() {
-        Assert.assertEquals("TRAILING_CONTENT: Unexpected trailing content in the JSON input.", JsonError.getMessage(JsonError.TRAILING_CONTENT));
+        Assert.assertEquals("TRAILING_CONTENT: Unexpected trailing content in the JSON input.", SimdJsonError.getMessage(SimdJsonError.TRAILING_CONTENT));
     }
 
     @Test
     public void testOnePastLastErrorCode() {
-        final int onePast = JsonError.TRAILING_CONTENT + 1;
-        Assert.assertEquals(JsonError.NUM_ERROR_CODES, onePast);
-        Assert.assertEquals("Unknown error code " + onePast, JsonError.getMessage(onePast));
+        final int onePast = SimdJsonError.TRAILING_CONTENT + 1;
+        Assert.assertEquals(SimdJsonError.NUM_ERROR_CODES, onePast);
+        Assert.assertEquals("Unknown error code " + onePast, SimdJsonError.getMessage(onePast));
     }
 
 }

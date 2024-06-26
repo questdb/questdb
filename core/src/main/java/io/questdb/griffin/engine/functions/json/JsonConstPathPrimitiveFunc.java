@@ -31,8 +31,8 @@ import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
-import io.questdb.std.json.JsonError;
-import io.questdb.std.json.JsonResult;
+import io.questdb.std.json.SimdJsonError;
+import io.questdb.std.json.SimdJsonResult;
 import io.questdb.std.str.*;
 import org.jetbrains.annotations.Nullable;
 
@@ -88,15 +88,15 @@ public class JsonConstPathPrimitiveFunc implements ScalarFunction, BinaryFunctio
         final Utf8Sequence jsonSeq = json.getVarcharA(rec);
         if (jsonSeq == null) {
             if (strict) {
-                throw JsonResult.formatError(path.getVarcharA(rec), JsonError.NO_SUCH_FIELD);
+                throw SimdJsonResult.formatError(path.getVarcharA(rec), SimdJsonError.NO_SUCH_FIELD);
             }
             else {
                 return defaultBool;
             }
         }
-        final boolean res = state.parser.queryPointerBoolean(state.initPaddedJson(jsonSeq), pointer, state.jsonResult, defaultBool);
+        final boolean res = state.parser.queryPointerBoolean(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult, defaultBool);
         if (strict) {
-            state.jsonResult.throwIfError(path.getVarcharA(null));
+            state.simdJsonResult.throwIfError(path.getVarcharA(null));
         }
         return res;
     }
@@ -122,9 +122,9 @@ public class JsonConstPathPrimitiveFunc implements ScalarFunction, BinaryFunctio
         if (jsonSeq == null) {
             return Double.NaN;
         }
-        final double res = state.parser.queryPointerDouble(state.initPaddedJson(jsonSeq), pointer, state.jsonResult, defaultDouble);
-        if (strict && !state.jsonResult.isNull()) {
-            state.jsonResult.throwIfError(path.getVarcharA(null));
+        final double res = state.parser.queryPointerDouble(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult, defaultDouble);
+        if (strict && !state.simdJsonResult.isNull()) {
+            state.simdJsonResult.throwIfError(path.getVarcharA(null));
         }
         return res;
     }
@@ -135,9 +135,9 @@ public class JsonConstPathPrimitiveFunc implements ScalarFunction, BinaryFunctio
         if (jsonSeq == null) {
             return Float.NaN;
         }
-        final float res = state.parser.queryPointerFloat(state.initPaddedJson(jsonSeq), pointer, state.jsonResult, defaultFloat);
-        if (strict && !state.jsonResult.isNull()) {
-            state.jsonResult.throwIfError(path.getVarcharA(null));
+        final float res = state.parser.queryPointerFloat(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult, defaultFloat);
+        if (strict && !state.simdJsonResult.isNull()) {
+            state.simdJsonResult.throwIfError(path.getVarcharA(null));
         }
         return res;
     }
@@ -173,9 +173,9 @@ public class JsonConstPathPrimitiveFunc implements ScalarFunction, BinaryFunctio
         if (jsonSeq == null) {
             return Integer.MIN_VALUE;
         }
-        final int res = state.parser.queryPointerInt(state.initPaddedJson(jsonSeq), pointer, state.jsonResult, defaultInt);
-        if (strict && !state.jsonResult.isNull()) {
-            state.jsonResult.throwIfError(path.getVarcharA(null));
+        final int res = state.parser.queryPointerInt(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult, defaultInt);
+        if (strict && !state.simdJsonResult.isNull()) {
+            state.simdJsonResult.throwIfError(path.getVarcharA(null));
         }
         return res;
     }
@@ -191,9 +191,9 @@ public class JsonConstPathPrimitiveFunc implements ScalarFunction, BinaryFunctio
         if (jsonSeq == null) {
             return Long.MIN_VALUE;
         }
-        final long res = state.parser.queryPointerLong(state.initPaddedJson(jsonSeq), pointer, state.jsonResult, defaultLong);
-        if (strict && !state.jsonResult.isNull()) {
-            state.jsonResult.throwIfError(path.getVarcharA(null));
+        final long res = state.parser.queryPointerLong(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult, defaultLong);
+        if (strict && !state.simdJsonResult.isNull()) {
+            state.simdJsonResult.throwIfError(path.getVarcharA(null));
         }
         return res;
     }
@@ -239,9 +239,9 @@ public class JsonConstPathPrimitiveFunc implements ScalarFunction, BinaryFunctio
         if (jsonSeq == null) {
             return Short.MIN_VALUE;
         }
-        final short res = state.parser.queryPointerShort(state.initPaddedJson(jsonSeq), pointer, state.jsonResult, defaultShort);
-        if (strict && !state.jsonResult.isNull()) {
-            state.jsonResult.throwIfError(path.getVarcharA(null));
+        final short res = state.parser.queryPointerShort(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult, defaultShort);
+        if (strict && !state.simdJsonResult.isNull()) {
+            state.simdJsonResult.throwIfError(path.getVarcharA(null));
         }
         return res;
     }

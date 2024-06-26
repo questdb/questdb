@@ -183,11 +183,11 @@ class JsonPathVarcharFunc extends VarcharFunction implements BinaryFunction, Jso
             defaultValuePtr = defaultVarchar.ptr();
             defaultValueSize = defaultVarchar.size();
         }
-        state.parser.queryPointerString(state.initPaddedJson(json), pointer, state.jsonResult, state.destSink, maxSize, defaultValuePtr, defaultValueSize);
-        if (state.jsonResult.hasValue()) {
+        state.parser.queryPointerString(state.initPaddedJson(json), pointer, state.simdJsonResult, state.destSink, maxSize, defaultValuePtr, defaultValueSize);
+        if (state.simdJsonResult.hasValue()) {
             return state.destSink;
-        } else if (strict && !state.jsonResult.isNull()) {
-            state.jsonResult.throwIfError(path);
+        } else if (strict && !state.simdJsonResult.isNull()) {
+            state.simdJsonResult.throwIfError(path);
         }
         return defaultVarchar;  // usually null
     }
