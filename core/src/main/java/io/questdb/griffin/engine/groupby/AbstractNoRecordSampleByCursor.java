@@ -133,6 +133,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         rowId = 0;
         isNotKeyedLoopInitialized = false;
         areTimestampsInitialized = false;
+
     }
 
     private void kludge(long newTzOffset) {
@@ -250,8 +251,9 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         }
 
         long next = timestampSampler.nextTimestamp(localEpoch);
+        long timestamp = -1;
         while (baseCursor.hasNext()) {
-            long timestamp = getBaseRecordTimestamp();
+            timestamp = getBaseRecordTimestamp();
             if (timestamp < next) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
 
@@ -271,6 +273,19 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
             }
         }
         // opportunity, after we stream map that's it
+
+        // we may need to post fill, depending on the sample by from clause
+        if (fromLoFunc != null) {
+            final long upperBound = fromHiFunc.getTimestamp(null);
+            if (next < upperBound) {
+                // if we have stuff to fill, we need to reset again
+                // we need to somehow make the condition swap from A to B so it fills gaps afterwards.
+                //groupByFunctionsUpdater.updateNew(mapValue, DoubleConstant.NULL.getRecord(baseRecord), rowId++);
+                nextSamplePeriod(next);
+                isNotKeyedLoopInitialized = false;
+                return true;
+            }
+        }
         baseRecord = null;
         isNotKeyedLoopInitialized = false;
         return true;
