@@ -156,7 +156,7 @@ public class JsonPathFunctionFactory implements FunctionFactory {
         // TODO: This isn't _really_ a int, it's supposed to be a type constant.
         //       Make it so in the parser.
         if (targetTypeFn.getType() != ColumnType.INT) {
-            throw CairoException.nonCritical().position(position).put("target type must be INT");
+            throw SqlException.position(position).put("target type must be INT");
         }
         final int targetType = targetTypeFn.getInt(null);
         switch (targetType) {
