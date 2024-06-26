@@ -183,6 +183,48 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testChangeTypePreservesInsertColDefaultOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(
+                    "create table x as (" +
+                            "select" +
+                            " rnd_str(5,5,2) c," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 timestamp," +
+                            " from long_sequence(1)" +
+                            ") timestamp (timestamp) PARTITION BY HOUR" + (walEnabled ? "  WAL" : " BYPASS WAL")
+            );
+
+            drainWalQueue();
+            ddl("alter table x alter column c type varchar", sqlExecutionContext);
+            drainWalQueue();
+
+            insert("insert into x values('abc', '2024-06-20T17:18:27.752076Z')", sqlExecutionContext);
+            drainWalQueue();
+
+            assertSql("c\nabc\n", "select c from x limit -1");
+
+            ddl("alter table x alter column c type string", sqlExecutionContext);
+            drainWalQueue();
+            engine.releaseInactive();
+
+            insert("insert into x values('def', '2024-06-20T17:18:27.752076Z')", sqlExecutionContext);
+            drainWalQueue();
+            assertSql("c\ndef\n", "select c from x limit -1");
+
+            ddl("insert into x select * from x");
+            drainWalQueue();
+
+            assertSql("c\ttimestamp\n" +
+                    "TJWCP\t2018-01-01T00:00:07.200000Z\n" +
+                    "TJWCP\t2018-01-01T00:00:07.200000Z\n" +
+                    "abc\t2024-06-20T17:18:27.752076Z\n" +
+                    "abc\t2024-06-20T17:18:27.752076Z\n" +
+                    "def\t2024-06-20T17:18:27.752076Z\n" +
+                    "def\t2024-06-20T17:18:27.752076Z\n", "x order by timestamp, c");
+        });
+    }
+
+    @Test
     public void testChangeMultipleTimesReleaseWriters() throws Exception {
         assertMemoryLeak(() -> {
             createX();
