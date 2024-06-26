@@ -58,7 +58,7 @@ public class ParquetFileReaderFunctionFactory implements FunctionFactory {
         if (checkPathIsSafeToRead(filePath, config)) {
             Path path = Path.getThreadLocal2(filePath);
             try (PartitionDecoder file = new PartitionDecoder(config.getFilesFacade())) {
-                file.of(path);
+                file.of(path.$());
                 GenericRecordMetadata metadata = new GenericRecordMetadata();
                 file.getMetadata().copyTo(metadata);
                 return new CursorFunction(new ParquetFileRecordCursorFactory(filePath, metadata, config.getFilesFacade()));

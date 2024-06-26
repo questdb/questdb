@@ -55,8 +55,9 @@ public class ParquetFileReaderFunctionTest extends AbstractCairoTest {
                 path.of(root).concat("x.parquet").$();
                 partitionEncoder.encode(reader, 0, path);
 
-                // Assert 0 rows, header only
-                assertSqlCursors("x", "select * from read_parquet('" + path + "')");
+                sink.clear();
+                sink.put("select * from read_parquet('").put(path).put("')");
+                assertSqlCursors("x", sink);
             }
         });
     }
@@ -120,8 +121,13 @@ public class ParquetFileReaderFunctionTest extends AbstractCairoTest {
                 partitionEncoder.encode(reader, 0, path);
 
                 // Assert 0 rows, header only
-                assertSqlCursors("x where 1 = 2", "select * from read_parquet('" + path + "')  where 1 = 2");
-                assertPlanNoLeakCheck("select * from read_parquet('" + path + "')", "parquet file sequential scan\n");
+                sink.clear();
+                sink.put("select * from read_parquet('").put(path).put("')");
+
+                assertPlanNoLeakCheck(sink, "parquet file sequential scan\n");
+
+                sink.put(" where 1 = 2");
+                assertSqlCursors("x where 1 = 2", sink);
             }
         });
     }
