@@ -2382,6 +2382,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 } else if (factory instanceof InUuidFunctionFactory && p == 1) {
                                     // this factory requires valid UUID string, otherwise it will fail
                                     args.add(new StrConstant("11111111-1111-1111-1111-111111111111"));
+                                } else if (Chars.equals(key, "json_path")) {
+                                    if (sigArgCount == 3 && p == 0) {
+                                        args.add(new VarcharConstant("{\"a\": 1}"));
+                                        args.add(new VarcharConstant(".a"));
+                                    }
                                 } else if (Chars.equals(key, "approx_count_distinct") && sigArgCount == 2 && p == 1 && sigArgType == ColumnType.INT) {
                                     args.add(new IntConstant(4)); // precision has to be in the range of 4 to 18
                                 } else if (!useConst) {

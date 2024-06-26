@@ -41,7 +41,10 @@ public class SimdJsonParser implements QuietCloseable {
     /**
      * Convert a JSON path to the SIMDJSON pointer format.
      */
-    public static void convertJsonPathToPointer(DirectUtf8Sequence path, DirectUtf8Sink dest) {
+    public static void convertJsonPathToPointer(
+            DirectUtf8Sequence path,
+            DirectUtf8Sink dest
+    ) {
         try (NativeByteSink destSink = dest.borrowDirectByteSink()) {
             if (path.size() > 0) {
                 convertJsonPathToPointer(path.ptr(), path.size(), destSink.ptr());
@@ -57,44 +60,148 @@ public class SimdJsonParser implements QuietCloseable {
         }
     }
 
-    public void queryPointerString(DirectUtf8Sequence json, DirectUtf8Sequence pointer, SimdJsonResult result, DirectUtf8Sink dest, int maxSize, long defaultValuePtr, long defaultValueSize) {
+    public boolean queryPointerBoolean(
+            DirectUtf8Sequence json,
+            DirectUtf8Sequence pointer,
+            SimdJsonResult result,
+            boolean defaultValue
+    ) {
+        assert json.tailPadding() >= SIMDJSON_PADDING;
+        return queryPointerBoolean(
+                impl,
+                json.ptr(),
+                json.size(),
+                json.tailPadding(),
+                pointer.ptr(),
+                pointer.size(),
+                result.ptr(),
+                defaultValue
+        );
+    }
+
+    public double queryPointerDouble(
+            DirectUtf8Sequence json,
+            DirectUtf8Sequence pointer,
+            SimdJsonResult result,
+            double defaultValue
+    ) {
+        assert json.tailPadding() >= SIMDJSON_PADDING;
+        return queryPointerDouble(
+                impl,
+                json.ptr(),
+                json.size(),
+                json.tailPadding(),
+                pointer.ptr(),
+                pointer.size(),
+                result.ptr(),
+                defaultValue
+        );
+    }
+
+    public float queryPointerFloat(
+            DirectUtf8Sequence json,
+            DirectUtf8Sequence pointer,
+            SimdJsonResult result,
+            float defaultValue
+    ) {
+        assert json.tailPadding() >= SIMDJSON_PADDING;
+        return queryPointerFloat(
+                impl,
+                json.ptr(),
+                json.size(),
+                json.tailPadding(),
+                pointer.ptr(),
+                pointer.size(),
+                result.ptr(),
+                defaultValue
+        );
+    }
+
+    public int queryPointerInt(
+            DirectUtf8Sequence json,
+            DirectUtf8Sink pointer,
+            SimdJsonResult result,
+            int defaultValue
+    ) {
+        assert json.tailPadding() >= SIMDJSON_PADDING;
+        return queryPointerInt(
+                impl,
+                json.ptr(),
+                json.size(),
+                json.tailPadding(),
+                pointer.ptr(),
+                pointer.size(),
+                result.ptr(),
+                defaultValue
+        );
+    }
+
+    public long queryPointerLong(
+            DirectUtf8Sequence json,
+            DirectUtf8Sequence pointer,
+            SimdJsonResult result,
+            long defaultValue
+    ) {
+        assert json.tailPadding() >= SIMDJSON_PADDING;
+        return queryPointerLong(
+                impl,
+                json.ptr(),
+                json.size(),
+                json.tailPadding(),
+                pointer.ptr(),
+                pointer.size(),
+                result.ptr(),
+                defaultValue
+        );
+    }
+
+    public short queryPointerShort(
+            DirectUtf8Sequence json,
+            DirectUtf8Sequence pointer,
+            SimdJsonResult result,
+            short defaultValue
+    ) {
+        assert json.tailPadding() >= SIMDJSON_PADDING;
+        return queryPointerShort(
+                impl,
+                json.ptr(),
+                json.size(),
+                json.tailPadding(),
+                pointer.ptr(),
+                pointer.size(),
+                result.ptr(),
+                defaultValue
+        );
+    }
+
+    public void queryPointerString(
+            DirectUtf8Sequence json,
+            DirectUtf8Sequence pointer,
+            SimdJsonResult result,
+            DirectUtf8Sink dest,
+            int maxSize,
+            long defaultValuePtr,
+            long defaultValueSize
+    ) {
         assert json.tailPadding() >= SIMDJSON_PADDING;
         final long nativeByteSinkPtr = dest.borrowDirectByteSink().ptr();
         if (!(dest.capacity() - dest.size() >= maxSize)) {
             throw new IllegalArgumentException("Destination buffer is too small");
         }
         assert dest.capacity() - dest.size() >= maxSize;  // Without this guarantee we'd need to close `NativeByteSink.close`.
-        queryPointerString(impl, json.ptr(), json.size(), json.tailPadding(), pointer.ptr(), pointer.size(), result.ptr(), nativeByteSinkPtr, maxSize, defaultValuePtr, defaultValueSize);
-    }
-
-    public boolean queryPointerBoolean(DirectUtf8Sequence json, DirectUtf8Sequence pointer, SimdJsonResult result, boolean defaultValue) {
-        assert json.tailPadding() >= SIMDJSON_PADDING;
-        return queryPointerBoolean(impl, json.ptr(), json.size(), json.tailPadding(), pointer.ptr(), pointer.size(), result.ptr(), defaultValue);
-    }
-
-    public double queryPointerDouble(DirectUtf8Sequence json, DirectUtf8Sequence pointer, SimdJsonResult result, double defaultValue) {
-        assert json.tailPadding() >= SIMDJSON_PADDING;
-        return queryPointerDouble(impl, json.ptr(), json.size(), json.tailPadding(), pointer.ptr(), pointer.size(), result.ptr(), defaultValue);
-    }
-
-    public float queryPointerFloat(DirectUtf8Sequence json, DirectUtf8Sequence pointer, SimdJsonResult result, float defaultValue) {
-        assert json.tailPadding() >= SIMDJSON_PADDING;
-        return queryPointerFloat(impl, json.ptr(), json.size(), json.tailPadding(), pointer.ptr(), pointer.size(), result.ptr(), defaultValue);
-    }
-
-    public int queryPointerInt(DirectUtf8Sequence json, DirectUtf8Sink pointer, SimdJsonResult result, int defaultValue) {
-        assert json.tailPadding() >= SIMDJSON_PADDING;
-        return queryPointerInt(impl, json.ptr(), json.size(), json.tailPadding(), pointer.ptr(), pointer.size(), result.ptr(), defaultValue);
-    }
-
-    public long queryPointerLong(DirectUtf8Sequence json, DirectUtf8Sequence pointer, SimdJsonResult result, long defaultValue) {
-        assert json.tailPadding() >= SIMDJSON_PADDING;
-        return queryPointerLong(impl, json.ptr(), json.size(), json.tailPadding(), pointer.ptr(), pointer.size(), result.ptr(), defaultValue);
-    }
-
-    public short queryPointerShort(DirectUtf8Sequence json, DirectUtf8Sequence pointer, SimdJsonResult result, short defaultValue) {
-        assert json.tailPadding() >= SIMDJSON_PADDING;
-        return queryPointerShort(impl, json.ptr(), json.size(), json.tailPadding(), pointer.ptr(), pointer.size(), result.ptr(), defaultValue);
+        queryPointerString(
+                impl,
+                json.ptr(),
+                json.size(),
+                json.tailPadding(),
+                pointer.ptr(),
+                pointer.size(),
+                result.ptr(),
+                nativeByteSinkPtr,
+                maxSize,
+                defaultValuePtr,
+                defaultValueSize
+        );
     }
 
     private static native void convertJsonPathToPointer(

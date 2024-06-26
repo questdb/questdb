@@ -38,6 +38,11 @@ import org.jetbrains.annotations.NotNull;
 
 public class JsonPathFunctionFactory implements FunctionFactory {
     private static final String FUNCTION_NAME = "json_path";
+    /**
+     * json_path(ØØ)
+     * json_path(ØØib)
+     * json_path(ØØibV)
+     */
     private static final String SIGNATURE = FUNCTION_NAME + "(ØøV)";
 
     @Override
