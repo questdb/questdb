@@ -32,8 +32,8 @@ import io.questdb.std.ObjList;
 public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualRecordSampleByCursor {
     private final SimpleMapValuePeeker peeker;
     private final SimpleMapValue simpleMapValue;
-    private boolean gapFill = false;
     private boolean firstRun = true;
+    private boolean gapFill = false;
 
     public SampleByFillValueNotKeyedRecordCursor(
             CairoConfiguration configuration,
@@ -81,6 +81,7 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
         initTimestamps();
 
         if (baseRecord == null && !gapFill) {
+            firstRun = true;
             return false;
         }
 
@@ -94,7 +95,7 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
         } else {
             expectedLocalEpoch = timestampSampler.nextTimestamp(nextSampleLocalEpoch);
         }
-          // is data timestamp ahead of next expected timestamp?
+        // is data timestamp ahead of next expected timestamp?
         if (expectedLocalEpoch < localEpoch) {
             setActiveB(expectedLocalEpoch);
             sampleLocalEpoch = expectedLocalEpoch;

@@ -275,9 +275,6 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         if (fromLoFunc != null) {
             final long upperBound = fromHiFunc.getTimestamp(null);
             if (next < upperBound) {
-                // if we have stuff to fill, we need to reset again
-                // we need to somehow make the condition swap from A to B so it fills gaps afterwards.
-                //groupByFunctionsUpdater.updateNew(mapValue, DoubleConstant.NULL.getRecord(baseRecord), rowId++);
                 nextSamplePeriod(upperBound);
                 isNotKeyedLoopInitialized = true;
                 return true;
