@@ -192,6 +192,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         }
 
         final long timestamp = baseRecord.getTimestamp(timestampIndex);
+
         if (rules != null) {
             tzOffset = rules.getOffset(timestamp);
             nextDstUtc = rules.getNextDST(timestamp);
@@ -199,13 +200,26 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
 
         if (tzOffset == 0 && fixedOffset == Long.MIN_VALUE) {
             // this is the default path, we align time intervals to the first observation
-            timestampSampler.setStart(timestamp);
+            if (fromLoFunc != null) {
+                timestampSampler.setStart(fromLoFunc.getTimestamp(null));
+            } else {
+                timestampSampler.setStart(timestamp);
+            }
         } else {
-            timestampSampler.setStart(fixedOffset != Long.MIN_VALUE ? fixedOffset : 0L);
+            if (fromLoFunc != null) {
+                timestampSampler.setStart(fixedOffset != Long.MIN_VALUE ? fromLoFunc.getTimestamp(null) : 0L);
+            } else {
+                timestampSampler.setStart(fixedOffset != Long.MIN_VALUE ? fixedOffset : 0L);
+            }
         }
         topTzOffset = tzOffset;
         topNextDst = nextDstUtc;
-        topLocalEpoch = localEpoch = timestampSampler.round(timestamp + tzOffset);
+        if (fromLoFunc != null) {
+            topLocalEpoch = localEpoch = timestampSampler.round(fromLoFunc.getTimestamp(null) + tzOffset);
+        } else {
+            topLocalEpoch = localEpoch = timestampSampler.round(timestamp + tzOffset);
+        }
+
         sampleLocalEpoch = nextSampleLocalEpoch = localEpoch;
         areTimestampsInitialized = true;
     }
@@ -228,8 +242,11 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
             // looks like we need to populate key map
             // at the start of this loop 'lastTimestamp' will be set to timestamp
             // of first record in base cursor
-            groupByFunctionsUpdater.updateNew(mapValue, baseRecord, rowId++);
-            isNotKeyedLoopInitialized = true;
+            final long currentTimestamp = getBaseRecordTimestamp();
+            if (sampleLocalEpoch < currentTimestamp && peekNextSamplePeriod(currentTimestamp) > currentTimestamp) { // don't add the first record if its not an appropriate bucket
+                groupByFunctionsUpdater.updateNew(mapValue, baseRecord, rowId++);
+                isNotKeyedLoopInitialized = true;
+            }
         }
 
         long next = timestampSampler.nextTimestamp(localEpoch);
@@ -257,6 +274,14 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         baseRecord = null;
         isNotKeyedLoopInitialized = false;
         return true;
+    }
+
+    protected long peekNextSamplePeriod(long timestamp) {
+        long ts = timestampSampler.round(timestamp);
+        if (ts - tzOffset < prevDst) {
+            ts += tzOffset;
+        }
+        return ts;
     }
 
     protected void updateValueWhenClockMovesBack(MapValue value) {
