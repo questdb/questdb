@@ -133,7 +133,6 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         rowId = 0;
         isNotKeyedLoopInitialized = false;
         areTimestampsInitialized = false;
-
     }
 
     private void kludge(long newTzOffset) {
@@ -216,12 +215,13 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         topTzOffset = tzOffset;
         topNextDst = nextDstUtc;
         if (fromLoFunc != null) {
-            topLocalEpoch = localEpoch = timestampSampler.round(fromLoFunc.getTimestamp(null) + tzOffset);
+            topLocalEpoch = timestampSampler.round(fromLoFunc.getTimestamp(null) + tzOffset);
+            localEpoch = timestampSampler.round(timestamp + tzOffset);
         } else {
             topLocalEpoch = localEpoch = timestampSampler.round(timestamp + tzOffset);
         }
 
-        sampleLocalEpoch = nextSampleLocalEpoch = localEpoch;
+        sampleLocalEpoch = nextSampleLocalEpoch = topLocalEpoch;
         areTimestampsInitialized = true;
     }
 
@@ -243,11 +243,8 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
             // looks like we need to populate key map
             // at the start of this loop 'lastTimestamp' will be set to timestamp
             // of first record in base cursor
-            final long currentTimestamp = getBaseRecordTimestamp();
-            if (sampleLocalEpoch < currentTimestamp && peekNextSamplePeriod(currentTimestamp) > currentTimestamp) { // don't add the first record if its not an appropriate bucket
-                groupByFunctionsUpdater.updateNew(mapValue, baseRecord, rowId++);
-                isNotKeyedLoopInitialized = true;
-            }
+            groupByFunctionsUpdater.updateNew(mapValue, baseRecord, rowId++);
+            isNotKeyedLoopInitialized = true;
         }
 
         long next = timestampSampler.nextTimestamp(localEpoch);
@@ -281,7 +278,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
                 // if we have stuff to fill, we need to reset again
                 // we need to somehow make the condition swap from A to B so it fills gaps afterwards.
                 //groupByFunctionsUpdater.updateNew(mapValue, DoubleConstant.NULL.getRecord(baseRecord), rowId++);
-                nextSamplePeriod(next);
+                nextSamplePeriod(upperBound);
                 isNotKeyedLoopInitialized = false;
                 return true;
             }

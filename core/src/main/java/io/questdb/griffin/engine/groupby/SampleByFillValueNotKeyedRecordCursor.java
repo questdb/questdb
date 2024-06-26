@@ -33,6 +33,7 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
     private final SimpleMapValuePeeker peeker;
     private final SimpleMapValue simpleMapValue;
     private boolean gapFill = false;
+    private boolean firstRun = true;
 
     public SampleByFillValueNotKeyedRecordCursor(
             CairoConfiguration configuration,
@@ -86,8 +87,14 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
         // the next sample epoch could be different from current sample epoch due to DST transition,
         // e.g. clock going backward
         // we need to ensure we do not fill time transition
-        final long expectedLocalEpoch = timestampSampler.nextTimestamp(nextSampleLocalEpoch);
-        // is data timestamp ahead of next expected timestamp?
+        long expectedLocalEpoch;
+        if (firstRun) {
+            expectedLocalEpoch = nextSampleLocalEpoch;
+            firstRun = false;
+        } else {
+            expectedLocalEpoch = timestampSampler.nextTimestamp(nextSampleLocalEpoch);
+        }
+          // is data timestamp ahead of next expected timestamp?
         if (expectedLocalEpoch < localEpoch) {
             setActiveB(expectedLocalEpoch);
             sampleLocalEpoch = expectedLocalEpoch;
