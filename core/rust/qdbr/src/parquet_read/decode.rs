@@ -2,6 +2,7 @@ use crate::parquet_read::{ColumnChunkBuffers, ParquetDecoder};
 use crate::parquet_write::schema::ColumnType;
 use crate::parquet_write::varchar::{append_varchar, append_varchar_null};
 use anyhow::{anyhow, Context};
+use parquet2::encoding::bitpacked::Unpackable;
 use parquet2::encoding::hybrid_rle::HybridEncoded;
 use parquet2::encoding::{bitpacked, delta_bitpacked, hybrid_rle, Encoding};
 use parquet2::page::{split_buffer, DataPage, DictPage, Page};
@@ -104,7 +105,7 @@ pub fn decoder_page(
                                 version,
                                 buffers,
                                 def_levels,
-                                &values_buffer,
+                                values_buffer,
                                 size_of::<i32>(),
                                 row_count,
                                 &i32::MIN.to_le_bytes(),
@@ -116,7 +117,7 @@ pub fn decoder_page(
                                 version,
                                 buffers,
                                 def_levels,
-                                &values_buffer,
+                                values_buffer,
                                 size_of::<i64>(),
                                 row_count,
                                 &i64::MIN.to_le_bytes(),
@@ -154,11 +155,86 @@ pub fn decoder_page(
                     )?;
                     Ok(row_count)
                 }
+
+                (Encoding::RleDictionary, Some(dict_page), ColumnType::Varchar) => {
+                    decode_rle_dict_to_varchar(
+                        version,
+                        buffers,
+                        def_levels,
+                        values_buffer,
+                        dict_page,
+                        row_count,
+                    )?;
+                    Ok(row_count)
+                }
                 _ => Err(anyhow!("encoding not supported")),
             }
         }
         _ => Err(anyhow!("deserialization not supported")),
     }
+}
+
+fn decode_rle_dict_to_varchar(
+    version: Version,
+    buffers: &mut ColumnChunkBuffers,
+    def_levels: &[u8],
+    values_buffer: &[u8],
+    dict_page: &DictPage,
+    row_count: usize,
+) -> anyhow::Result<()> {
+    let mut dict_values: Vec<&[u8]> = Vec::with_capacity(dict_page.num_values);
+    let mut offset = 0usize;
+    let dict_data = &dict_page.buffer;
+
+    for _i in 0..dict_page.num_values {
+        if offset + size_of::<u32>() > dict_data.len() {
+            return Err(anyhow!("dictionary data is too short to read length"));
+        }
+
+        let str_len =
+            unsafe { ptr::read_unaligned(dict_data.as_ptr().add(offset) as *const u32) } as usize;
+        offset += size_of::<u32>();
+
+        if offset + str_len > dict_data.len() {
+            return Err(anyhow!("dictionary data is too short to read value"));
+        }
+
+        let str_slice = &dict_data[offset..offset + str_len];
+        let _str = String::from_utf8(str_slice.to_vec())?;
+        dict_values.push(str_slice);
+        offset += str_len;
+    }
+
+    let bits_per_entry = values_buffer[0] as usize;
+    let mut rle_decoder = decode_rle_v2::<u32>(&values_buffer[1..], None, bits_per_entry)?;
+    let iter = decode_null_bitmap(version, def_levels, row_count)?;
+    let mut count = 0;
+
+    for value in iter {
+        if count < row_count {
+            if value == 1u8 {
+                let next = rle_decoder.next().expect("expected value of rle entry") as usize;
+                if next < dict_page.num_values {
+                    let ut8_slice = dict_values[next];
+                    append_varchar(&mut buffers.aux_vec, &mut buffers.data_vec, ut8_slice);
+                } else {
+                    return Err(anyhow!("dictionary no entry in the dictionary"));
+                }
+            } else {
+                append_varchar_null(&mut buffers.aux_vec, &mut buffers.data_vec);
+            }
+            count += 1;
+        } else {
+            break;
+        }
+    }
+    buffers.data_size = buffers.data_vec.len();
+    buffers.data_ptr = buffers.data_vec.as_mut_ptr();
+
+    buffers.aux_size = buffers.aux_vec.len();
+    buffers.aux_ptr = buffers.aux_vec.as_mut_ptr();
+
+    Ok(())
 }
 
 fn decode_delta_len_string_to_varchar(
@@ -286,7 +362,7 @@ fn decode_fixed_plain(
     version: Version,
     buffers: &mut ColumnChunkBuffers,
     def_levels: &[u8],
-    values_buffer: &&[u8],
+    values_buffer: &[u8],
     value_size: usize,
     row_count: usize,
     null_value: &[u8],
@@ -332,10 +408,19 @@ pub fn decode_null_bitmap(
 }
 
 fn decode_bitmap_v2(buffer: &[u8], count: usize) -> anyhow::Result<bitpacked::Decoder<u8>> {
-    let decoder = hybrid_rle::Decoder::new(buffer, 1usize);
+    decode_rle_v2::<u8>(buffer, Some(count), 1usize)
+}
+
+fn decode_rle_v2<T: Unpackable>(
+    buffer: &[u8],
+    count: Option<usize>,
+    num_bits: usize,
+) -> anyhow::Result<bitpacked::Decoder<T>> {
+    let decoder = hybrid_rle::Decoder::new(buffer, num_bits);
     for run in decoder {
         if let HybridEncoded::Bitpacked(values) = run? {
-            let inner_decoder = bitpacked::Decoder::<u8>::try_new(values, 1usize, count)?;
+            let count = count.unwrap_or(values.len() * 8 / num_bits);
+            let inner_decoder = bitpacked::Decoder::<T>::try_new(values, num_bits, count)?;
             return Ok(inner_decoder);
         }
     }
@@ -474,6 +559,7 @@ mod tests {
             &expected_string_aux_buff,
             ColumnType::String,
         ));
+
         expected_buffs.push((
             &expected_string_primary_buff,
             Some(&expected_string_aux_buff),
@@ -493,6 +579,29 @@ mod tests {
         expected_buffs.push((
             &expected_varchar_primary_buff,
             Some(&expected_varchar_aux_buff),
+            ColumnType::Varchar,
+        ));
+
+        let (
+            symbol_col_primary_buff,
+            symbol_col_chars_buff,
+            symbol_col_offsets_buff,
+            expected_symbol_col_varchar_data_buff,
+            expected_symbol_col_varchar_aux_buff,
+        ) = create_col_data_buff_symbol(row_count, 10);
+
+        columns.push(create_symbol_column(
+            columns.len() as i32,
+            row_count,
+            "string_col",
+            &symbol_col_primary_buff,
+            &symbol_col_chars_buff,
+            &symbol_col_offsets_buff,
+            ColumnType::Symbol,
+        ));
+        expected_buffs.push((
+            &expected_symbol_col_varchar_data_buff,
+            Some(&expected_symbol_col_varchar_aux_buff),
             ColumnType::Varchar,
         ));
 
@@ -644,15 +753,88 @@ mod tests {
         let mut rng = rand::thread_rng();
 
         let len = 1 + rng.gen_range(0..len - 1);
+
+        // 0x00A0..0xD7FF generates a random Unicode scalar value in a range that includes non-ASCII characters
+        let range = if rng.gen_bool(0.5) {
+            0x00A0..0xD7FF
+        } else {
+            33..126
+        };
+
         let random_string: String = (0..len)
             .map(|_| {
-                // Generate a random Unicode scalar value in a range that includes non-ASCII characters
-                let c = rng.gen_range(0x00A0..0xD7FF); // Example range excluding surrogate pairs
+                let c = rng.gen_range(range.clone());
                 char::from_u32(c).unwrap_or('�') // Use a replacement character for invalid values
             })
             .collect();
 
         random_string
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn create_col_data_buff_symbol(
+        row_count: usize,
+        distinct_values: usize,
+    ) -> (Vec<u8>, Vec<u8>, Vec<u64>, Vec<u8>, Vec<u8>) {
+        let mut symbol_data_buff = Vec::new();
+        let mut expected_aux_buff = Vec::new();
+        let mut expected_data_buff = Vec::new();
+
+        let str_values: Vec<String> = (0..distinct_values)
+            .map(|_| generate_random_unicode_string(10))
+            .collect();
+
+        let (symbol_chars_buff, symbol_offsets_buff) = serialize_as_symbols(&str_values);
+
+        let mut i = 0;
+        let null_sym_value = (i32::MIN).to_le_bytes();
+        while i < row_count {
+            let symbol_value = i % distinct_values;
+            symbol_data_buff.extend_from_slice(&(symbol_value as i32).to_le_bytes());
+
+            let str_value = &str_values[i % distinct_values];
+            append_varchar(
+                &mut expected_aux_buff,
+                &mut expected_data_buff,
+                str_value.as_bytes(),
+            );
+            i += 1;
+
+            if i < row_count {
+                symbol_data_buff.extend_from_slice(&null_sym_value);
+                append_varchar_null(&mut expected_aux_buff, &mut expected_data_buff);
+                i += 1;
+            }
+        }
+
+        (
+            symbol_data_buff,
+            symbol_chars_buff,
+            symbol_offsets_buff,
+            expected_data_buff,
+            expected_aux_buff,
+        )
+    }
+
+    fn serialize_as_symbols(symbol_chars: &Vec<String>) -> (Vec<u8>, Vec<u64>) {
+        let mut chars = vec![];
+        let mut offsets = vec![];
+
+        for s in symbol_chars {
+            let sym_chars: Vec<_> = s.encode_utf16().collect();
+            let len = sym_chars.len();
+            offsets.push(chars.len() as u64);
+            chars.extend_from_slice(&(len as u32).to_le_bytes());
+            let encoded: &[u8] = unsafe {
+                std::slice::from_raw_parts(
+                    sym_chars.as_ptr() as *const u8,
+                    sym_chars.len() * size_of::<u16>(),
+                )
+            };
+            chars.extend_from_slice(encoded);
+        }
+
+        (chars, offsets)
     }
 
     fn create_col_data_buff_varchar(
@@ -749,6 +931,31 @@ mod tests {
             aux_data.len(),
             null(),
             0,
+        )
+        .unwrap()
+    }
+
+    fn create_symbol_column(
+        id: i32,
+        row_count: usize,
+        name: &'static str,
+        primary_data: &[u8],
+        chars_data: &[u8],
+        offsets: &[u64],
+        col_type: ColumnType,
+    ) -> Column {
+        Column::from_raw_data(
+            id,
+            name,
+            col_type as i32,
+            0,
+            row_count,
+            primary_data.as_ptr(),
+            primary_data.len(),
+            chars_data.as_ptr(),
+            chars_data.len(),
+            offsets.as_ptr(),
+            offsets.len(),
         )
         .unwrap()
     }

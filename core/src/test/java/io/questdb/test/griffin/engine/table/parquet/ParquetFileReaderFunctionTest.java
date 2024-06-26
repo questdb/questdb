@@ -44,7 +44,8 @@ public class ParquetFileReaderFunctionTest extends AbstractCairoTest {
                     " case when x % 2 = 0 then cast(x as int) end id," +
                     " rnd_int() as a_long," +
                     " rnd_str(4,4,4,2) as a_str," +
-                    " rnd_varchar(1, 40, 1) as a_varchar" +
+                    " rnd_varchar(1, 40, 1) as a_varchar," +
+                    " rnd_symbol(4,4,4,2) as a_sym" +
                     " from long_sequence(" + rows + "))");
 
             try (

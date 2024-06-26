@@ -12,6 +12,12 @@ pub fn encode_u32<W: Write, I: Iterator<Item = u32>>(
     num_bits: u32,
 ) -> std::io::Result<()> {
     let num_bits = num_bits as u8;
+    encode_header(writer, &iterator)?;
+    bitpacked_encode_u32(writer, iterator, num_bits as usize)?;
+    Ok(())
+}
+
+fn encode_header<W: Write, T, I: Iterator<Item=T>>(writer: &mut W, iterator: &I) -> std::io::Result<()> {
     // the length of the iterator.
     let length = iterator.size_hint().1.unwrap();
 
@@ -22,9 +28,6 @@ pub fn encode_u32<W: Write, I: Iterator<Item = u32>>(
     let mut container = [0; 10];
     let used = uleb128::encode(header, &mut container);
     writer.write_all(&container[..used])?;
-
-    bitpacked_encode_u32(writer, iterator, num_bits as usize)?;
-
     Ok(())
 }
 
@@ -76,17 +79,7 @@ pub fn encode_bool<W: Write, I: Iterator<Item = bool>>(
     writer: &mut W,
     iterator: I,
 ) -> std::io::Result<()> {
-    // the length of the iterator.
-    let length = iterator.size_hint().1.unwrap();
-
-    // write the length + indicator
-    let mut header = ceil8(length) as u64;
-    header <<= 1;
-    header |= 1; // it is bitpacked => first bit is set
-    let mut container = [0; 10];
-    let used = uleb128::encode(header, &mut container);
-
-    writer.write_all(&container[..used])?;
+    encode_header(writer, &iterator)?;
 
     // encode the iterator
     bitpacked_encode(writer, iterator)

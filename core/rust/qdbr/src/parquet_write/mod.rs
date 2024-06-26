@@ -131,12 +131,12 @@ mod tests {
     use parquet2::encoding::{hybrid_rle, uleb128};
     use parquet2::page::CompressedPage;
     use parquet2::types;
+    use std::env;
     use std::fs::File;
     use std::io::{Cursor, Write};
     use std::mem::size_of;
     use std::ptr::null;
     use std::time::Instant;
-    use std::{env, mem};
 
     #[test]
     fn test_write_parquet_2m_rows() {
@@ -322,7 +322,7 @@ mod tests {
             let encoded: &[u8] = unsafe {
                 std::slice::from_raw_parts(
                     sym_chars.as_ptr() as *const u8,
-                    sym_chars.len() * mem::size_of::<u16>(),
+                    sym_chars.len() * size_of::<u16>(),
                 )
             };
             chars.extend_from_slice(encoded);

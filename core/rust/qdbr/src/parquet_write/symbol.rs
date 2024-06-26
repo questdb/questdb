@@ -71,7 +71,7 @@ pub fn symbol_to_pages(
             false
         } else {
             let key = column_values[i - column_top];
-            // -1 denotes a null value
+            // negative denotes a null value
             if key > -1 {
                 true
             } else {
