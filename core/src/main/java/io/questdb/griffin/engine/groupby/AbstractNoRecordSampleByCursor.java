@@ -279,7 +279,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
                 // we need to somehow make the condition swap from A to B so it fills gaps afterwards.
                 //groupByFunctionsUpdater.updateNew(mapValue, DoubleConstant.NULL.getRecord(baseRecord), rowId++);
                 nextSamplePeriod(upperBound);
-                isNotKeyedLoopInitialized = false;
+                isNotKeyedLoopInitialized = true;
                 return true;
             }
         }
