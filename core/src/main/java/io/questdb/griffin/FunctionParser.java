@@ -542,7 +542,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         final ObjList<FunctionFactoryDescriptor> overload = functionFactoryCache.getOverloadList(node.token);
         if (log) {
             LOG.info().$("FunctionParser.createFunction :: (A) id: ").$(id).$(" --> node.token: ").$(node.token).$(", args: ").$(args).$();
-            LOG.info().$("  functionFactoryCache: ").$(functionFactoryCache.summary()).$();
+            functionFactoryCache.logSummary();
         }
         if (overload == null) {
             if (log) {

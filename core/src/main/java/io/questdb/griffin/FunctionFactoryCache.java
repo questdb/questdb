@@ -144,38 +144,14 @@ public class FunctionFactoryCache {
         return name != null && windowFunctionNames.contains(name);
     }
 
-    public String summary() {
-        final StringBuilder sb = new StringBuilder();
-        sb.append("FunctionFactoryCache{factories=");
-        sb.append(factories.size());
-        sb.append(":[");
-        AtomicInteger count = new AtomicInteger(0);
+    public void logSummary() {
+        LOG.info().$("function factory cache [factories=").$(factories.size()).$(']').$();
         factories.forEach((name, overload) -> {
-            if (count.get() > 0) {
-                sb.append(", ");
-            }
-            sb.append(name);
-            sb.append("=[");
+            LOG.info().$("    name: ").$(name).$(", overloads:").$();
             for (int overloadIndex = 0, overloadSize = overload.size(); overloadIndex < overloadSize; overloadIndex++) {
-                if (overloadIndex > 0) {
-                    sb.append(", ");
-                }
-                sb.append(overload.getQuick(overloadIndex));
+                LOG.info().$("        ").$(overload.getQuick(overloadIndex)).$();
             }
-            sb.append("]");
-            count.incrementAndGet();
         });
-        sb.append("]");
-        sb.append(", cursorFunctionNames=");
-        sb.append(cursorFunctionNames.size());
-        sb.append(", groupByFunctionNames=");
-        sb.append(groupByFunctionNames.size());
-        sb.append(", runtimeConstantFunctionNames=");
-        sb.append(runtimeConstantFunctionNames.size());
-        sb.append(", windowFunctionNames=");
-        sb.append(windowFunctionNames.size());
-        sb.append('}');
-        return sb.toString();
     }
 
     private void addFactoryToList(LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> list, FunctionFactory factory) throws SqlException {
