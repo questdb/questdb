@@ -105,9 +105,9 @@ public class MapFactory {
         final int keySize = totalSize(keyTypes);
         final int valueSize = totalSize(valueTypes);
         if (keySize > 0) {
-            if (keySize <= Short.BYTES && valueSize <= maxEntrySize) {
+            if (keySize == Short.BYTES && valueSize <= maxEntrySize) {
                 return new Unordered2Map(keyTypes, valueTypes);
-            } else if (keySize <= Integer.BYTES && Integer.BYTES + valueSize <= maxEntrySize) {
+            } else if (keySize == Integer.BYTES && Integer.BYTES + valueSize <= maxEntrySize) {
                 return new Unordered4Map(
                         keyTypes,
                         valueTypes,
@@ -115,7 +115,7 @@ public class MapFactory {
                         configuration.getSqlFastMapLoadFactor(),
                         configuration.getSqlMapMaxResizes()
                 );
-            } else if (keySize <= Long.BYTES && Long.BYTES + valueSize <= maxEntrySize) {
+            } else if (keySize == Long.BYTES && Long.BYTES + valueSize <= maxEntrySize) {
                 return new Unordered8Map(
                         keyTypes,
                         valueTypes,
@@ -123,16 +123,12 @@ public class MapFactory {
                         configuration.getSqlFastMapLoadFactor(),
                         configuration.getSqlMapMaxResizes()
                 );
-            } else if (keySize <= 2 * Long.BYTES && 2 * Long.BYTES + valueSize <= maxEntrySize) {
-                return new Unordered16Map(
-                        keyTypes,
-                        valueTypes,
-                        keyCapacity,
-                        configuration.getSqlFastMapLoadFactor(),
-                        configuration.getSqlMapMaxResizes()
-                );
             }
-        } else if (keyTypes.getColumnCount() == 1 && keyTypes.getColumnType(0) == ColumnType.VARCHAR && 2 * Long.BYTES + valueSize <= maxEntrySize) {
+        }
+
+        if (keyTypes.getColumnCount() == 1
+                && keyTypes.getColumnType(0) == ColumnType.VARCHAR
+                && 2 * Long.BYTES + valueSize <= maxEntrySize) {
             return new UnorderedVarcharMap(
                     valueTypes,
                     keyCapacity,

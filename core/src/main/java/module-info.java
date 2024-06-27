@@ -117,6 +117,7 @@ open module io.questdb {
     exports io.questdb.client.impl;
     exports io.questdb.griffin.engine.groupby.hyperloglog;
     exports io.questdb.griffin.engine.functions.finance;
+    exports io.questdb.std.filewatch;
     exports io.questdb.griffin.engine.table.parquet;
 
     provides FunctionFactory with

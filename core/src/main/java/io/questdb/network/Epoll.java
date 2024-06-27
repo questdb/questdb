@@ -45,9 +45,11 @@ public final class Epoll implements Closeable {
     public Epoll(EpollFacade epf, int capacity) {
         this.epf = epf;
         this.capacity = capacity;
-        this.events = this._rPtr = Unsafe.calloc(EpollAccessor.SIZEOF_EVENT * (long) capacity, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
+        long size = EpollAccessor.SIZEOF_EVENT * (long) capacity;
+        this.events = this._rPtr = Unsafe.calloc(size, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
         this.epollFd = epf.epollCreate();
         if (epollFd < 0) {
+            Unsafe.free(events, size, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
             throw NetworkError.instance(epf.errno(), "could not create epoll");
         }
         Files.bumpFileCount(this.epollFd);
