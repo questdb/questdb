@@ -43,6 +43,8 @@ import io.questdb.griffin.*;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
+import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -64,6 +66,7 @@ import java.util.function.LongConsumer;
 
 import static io.questdb.cairo.BitmapIndexUtils.keyFileName;
 import static io.questdb.cairo.BitmapIndexUtils.valueFileName;
+import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.sql.AsyncWriterCommand.Error.*;
 import static io.questdb.std.Files.FILES_RENAME_OK;
@@ -2096,6 +2099,176 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
         return dropped;
+    }
+
+    @Override
+    public boolean convertPartition(long partitionTimestamp) {
+        final int memoryTag = MemoryTag.MMAP_TABLE_WRITER;
+
+        assert metadata.getTimestampIndex() > -1;
+        assert PartitionBy.isPartitioned(partitionBy);
+
+        if (inTransaction()) {
+            LOG.info()
+                    .$("committing open transaction before applying convert partition command [table=")
+                    .utf8(tableToken.getTableName())
+                    .$(", partition=").$ts(partitionTimestamp)
+                    .I$();
+            commit();
+        }
+
+        partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
+        int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+        if (partitionIndex < 0) {
+            assert !txWriter.attachedPartitionsContains(partitionTimestamp);
+            return false;
+        }
+
+        squashPartitionForce(partitionIndex);
+
+        assert txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndex + 1)) != partitionTimestamp;
+
+        long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
+
+        setPathForPartition(path.trimTo(rootLen), partitionBy, partitionTimestamp, partitionNameTxn);
+        final int partitionLen = path.size();
+
+        if (!ff.exists(path.$())) {
+            LOG.error().$("partition folder does not exist [path=").$(path).I$();
+            return false;
+        }
+
+        DirectIntList fileDescriptors = new DirectIntList(16, MemoryTag.NATIVE_DEFAULT);
+        try {
+            try (PartitionDescriptor partitionDescriptor = new PartitionDescriptor()) {
+
+                final long partitionRowCount = getPartitionSize(partitionIndex);
+                final int timestampIndex = metadata.getTimestampIndex();
+                partitionDescriptor.of(getTableToken().getTableName(), partitionRowCount, timestampIndex, true);
+
+                final int columnCount = metadata.getColumnCount();
+                for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                    final String columnName = metadata.getColumnName(columnIndex);
+                    final int columnType = metadata.getColumnType(columnIndex);
+                    final int columnId = metadata.getColumnMetadata(columnIndex).getWriterIndex();
+                    if (columnType > 0) {
+                        final long columnNameTxn = getColumnNameTxn(partitionTimestamp, columnIndex);
+                        final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
+                        final long columnRowCount = (columnTop != -1) ? partitionRowCount - columnTop : partitionRowCount;
+
+                        if (ColumnType.isSymbol(columnType)) {
+                            int columnFd = TableUtils.openRO(ff, dFile(path.trimTo(partitionLen), columnName, columnNameTxn), LOG);
+                            fileDescriptors.add(columnFd);
+
+                            long columnSize = columnRowCount * ColumnType.sizeOf(columnType);
+                            long columnAddr = TableUtils.mapAppendColumnBuffer(ff, columnFd, 0, columnSize, false, memoryTag);
+
+                            offsetFileName(path.trimTo(partitionLen), columnName, columnNameTxn);
+                            if (!ff.exists(path)) {
+                                LOG.error().$(path).$(" is not found").$();
+                                throw CairoException.critical(0).put("SymbolMap does not exist: ").put(path);
+                            }
+
+                            long fileLength = ff.length(path);
+                            if (fileLength < SymbolMapWriter.HEADER_SIZE) {
+                                LOG.error().$(path).$(" is too short [fileLength=").$(fileLength).$(']').$();
+                                throw CairoException.critical(0).put("SymbolMap is too short: ").put(path);
+                            }
+
+                            final int symbolCount = getSymbolMapWriter(columnIndex).getSymbolCount();
+                            final long offsetsMemSize = SymbolMapWriter.keyToOffset(symbolCount) + Long.BYTES;
+
+                            final int symbolOffsetsFd = TableUtils.openRO(ff, path, LOG);
+                            fileDescriptors.add(symbolOffsetsFd);
+
+                            long symbolOffsetsAddr = TableUtils.mapAppendColumnBuffer(ff, symbolOffsetsFd, HEADER_SIZE, offsetsMemSize, false, memoryTag);
+
+                            int columnSecondaryFd = TableUtils.openRO(ff, charFileName(path.trimTo(partitionLen), columnName, columnNameTxn), LOG);
+                            fileDescriptors.add(columnSecondaryFd);
+
+                            long columnSecondarySize = ff.length(columnSecondaryFd);
+                            long columnSecondaryAddr = TableUtils.mapAppendColumnBuffer(ff, columnSecondaryFd, 0, columnSecondarySize, false, memoryTag);
+
+                            partitionDescriptor.addColumn(
+                                    columnName,
+                                    columnType,
+                                    columnId,
+                                    columnTop,
+                                    columnAddr,
+                                    columnSize,
+                                    columnSecondaryAddr,
+                                    columnSecondarySize,
+                                    symbolOffsetsAddr,
+                                    symbolCount
+                            );
+
+                        } else if (ColumnType.isVarSize(columnType)) {
+                            int auxFd = TableUtils.openRO(ff, iFile(path.trimTo(partitionLen), columnName, columnNameTxn), LOG);
+                            fileDescriptors.add(auxFd);
+
+                            final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
+                            long auxVectorSize = columnTypeDriver.getAuxVectorSize(columnRowCount);
+                            long auxVectorAddr = TableUtils.mapAppendColumnBuffer(ff, auxFd, 0, auxVectorSize, false, memoryTag);
+
+                            long dataSize = columnTypeDriver.getDataVectorSizeAt(auxVectorAddr, columnRowCount - 1);
+                            if (dataSize < columnTypeDriver.getDataVectorMinEntrySize() || dataSize >= (1L << 40)) {
+                                LOG.critical().$("Invalid var len column size [column=").$(columnName).$(", size=").$(dataSize).$(", path=").$(path).I$();
+                                throw CairoException.critical(0).put("Invalid column size [column=").put(path).put(", size=").put(dataSize).put(']');
+                            }
+
+                            int dataFd = TableUtils.openRO(ff, dFile(path.trimTo(partitionLen), columnName, columnNameTxn), LOG);
+                            fileDescriptors.add(dataFd);
+
+                            long dataAddr = TableUtils.mapAppendColumnBuffer(ff, dataFd, 0, dataSize, false, memoryTag);
+                            partitionDescriptor.addColumn(
+                                    columnName,
+                                    columnType,
+                                    columnId,
+                                    columnTop,
+                                    auxVectorAddr,
+                                    auxVectorSize,
+                                    dataAddr,
+                                    dataSize,
+                                    0,
+                                    0
+                            );
+                        } else {
+                            int fixedFd = TableUtils.openRO(ff, dFile(path.trimTo(partitionLen), columnName, columnNameTxn), LOG);
+                            fileDescriptors.add(fixedFd);
+                            long mapBytes = columnRowCount * ColumnType.sizeOf(columnType);
+                            long fixedAddr = TableUtils.mapAppendColumnBuffer(ff, fixedFd, 0, mapBytes, false, memoryTag);
+                            partitionDescriptor.addColumn(
+                                    columnName,
+                                    columnType,
+                                    columnId,
+                                    columnTop,
+                                    fixedAddr,
+                                    mapBytes,
+                                    0,
+                                    0,
+                                    0,
+                                    0
+                            );
+                        }
+                    } else {
+                        LOG.info().$("unsupported column type [column=").$(columnName).$(", type=").$(columnType).I$();
+                    }
+                }
+
+                path.trimTo(partitionLen);
+                path.put(".parquet").$();
+                PartitionEncoder.encode(partitionDescriptor, path);
+            }
+        } finally {
+            path.trimTo(rootLen);
+            for (long i = 0, n = fileDescriptors.size(); i < n; i++) {
+                ff.close(fileDescriptors.get(i));
+            }
+        }
+
+        // TODO: detach and delete partition
+        // safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
+        return true;
     }
 
     @Override

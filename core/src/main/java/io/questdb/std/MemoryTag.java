@@ -41,9 +41,10 @@ public final class MemoryTag {
     public static final int MMAP_TX_LOG = MMAP_TABLE_WRITER + 1;
     public static final int MMAP_TX_LOG_CURSOR = MMAP_TX_LOG + 1;
     public static final int MMAP_UPDATE = MMAP_TX_LOG_CURSOR + 1;
+    public static final int MMAP_PARTITION_CONVERTER = MMAP_UPDATE + 1;
 
     // All malloc calls should use NATIVE_* tags
-    public static final int NATIVE_PATH = MMAP_UPDATE + 1;
+    public static final int NATIVE_PATH = MMAP_PARTITION_CONVERTER + 1;
     public static final int NATIVE_DEFAULT = NATIVE_PATH + 1;
     public static final int NATIVE_CB1 = NATIVE_DEFAULT + 1;
     public static final int NATIVE_CB2 = NATIVE_CB1 + 1;

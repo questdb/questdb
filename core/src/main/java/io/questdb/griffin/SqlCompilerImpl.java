@@ -548,19 +548,26 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final SecurityContext securityContext = executionContext.getSecurityContext();
 
         try (TableRecordMetadata tableMetadata = executionContext.getMetadataForWrite(tableToken)) {
-            final String expectedTokenDescription = "'add', 'alter', 'attach', 'detach', 'drop', 'resume', 'rename', 'set' or 'squash'";
+            final String expectedTokenDescription = "'add', 'alter', 'attach', 'detach', 'drop', 'convert', 'resume', 'rename', 'set' or 'squash'";
             tok = expectToken(lexer, expectedTokenDescription);
 
             if (SqlKeywords.isAddKeyword(tok)) {
                 securityContext.authorizeAlterTableAddColumn(tableToken);
                 alterTableAddColumn(executionContext.getSecurityContext(), tableNamePosition, tableToken, tableMetadata);
+            } else if (SqlKeywords.isConvertKeyword(tok)) {
+                tok = expectToken(lexer, "'partition'");
+                if (SqlKeywords.isPartitionKeyword(tok)) {
+                    alterTableDropConvertDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.CONVERT, executionContext);
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
+                }
             } else if (SqlKeywords.isDropKeyword(tok)) {
                 tok = expectToken(lexer, "'column' or 'partition'");
                 if (SqlKeywords.isColumnKeyword(tok)) {
                     alterTableDropColumn(executionContext.getSecurityContext(), tableNamePosition, tableToken, tableMetadata);
                 } else if (SqlKeywords.isPartitionKeyword(tok)) {
                     securityContext.authorizeAlterTableDropPartition(tableToken);
-                    alterTableDropDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.DROP, executionContext);
+                    alterTableDropConvertDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.DROP, executionContext);
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
                 }
@@ -575,7 +582,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 tok = expectToken(lexer, "'partition'");
                 if (SqlKeywords.isPartitionKeyword(tok)) {
                     securityContext.authorizeAlterTableAttachPartition(tableToken);
-                    alterTableDropDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.ATTACH, executionContext);
+                    alterTableDropConvertDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.ATTACH, executionContext);
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
                 }
@@ -583,7 +590,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 tok = expectToken(lexer, "'partition'");
                 if (SqlKeywords.isPartitionKeyword(tok)) {
                     securityContext.authorizeAlterTableDetachPartition(tableToken);
-                    alterTableDropDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.DETACH, executionContext);
+                    alterTableDropConvertDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.DETACH, executionContext);
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
                 }
@@ -1089,7 +1096,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
-    private void alterTableDropDetachOrAttachPartition(
+    private void alterTableDropConvertDetachOrAttachPartition(
             TableRecordMetadata tableMetadata,
             TableToken tableToken,
             int action,
@@ -1108,7 +1115,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             final CharSequence tok = expectToken(lexer, "'list' or 'where'");
             if (SqlKeywords.isListKeyword(tok)) {
-                alterTableDropDetachOrAttachPartitionByList(tableMetadata, tableToken, reader, pos, action);
+                alterTableDropConvertDetachOrAttachPartitionByList(tableMetadata, tableToken, reader, pos, action);
             } else if (SqlKeywords.isWhereKeyword(tok)) {
                 AlterOperationBuilder alterOperationBuilder;
                 switch (action) {
@@ -1161,7 +1168,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private void alterTableDropDetachOrAttachPartitionByList(
+    private void alterTableDropConvertDetachOrAttachPartitionByList(
             TableRecordMetadata tableMetadata,
             TableToken tableToken,
             @Nullable TableReader reader,
@@ -1170,6 +1177,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     ) throws SqlException {
         final AlterOperationBuilder alterOperationBuilder;
         switch (action) {
+            case PartitionAction.CONVERT:
+                alterOperationBuilder = this.alterOperationBuilder.ofConvertPartition(pos, tableToken, tableMetadata.getTableId());
+                break;
             case PartitionAction.DROP:
                 alterOperationBuilder = this.alterOperationBuilder.ofDropPartition(pos, tableToken, tableMetadata.getTableId());
                 break;
@@ -3143,6 +3153,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         public static final int ATTACH = 2;
         public static final int DETACH = 3;
         public static final int DROP = 1;
+        public static final int CONVERT = 4;
     }
 
     private static class TableStructureAdapter implements TableStructure {
