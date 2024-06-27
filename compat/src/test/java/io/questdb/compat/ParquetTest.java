@@ -28,6 +28,7 @@ import io.questdb.ServerMain;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -161,18 +162,18 @@ public class ParquetTest extends AbstractTest {
             final String parquetPathStr;
             try (
                     Path path = new Path();
-                    PartitionEncoder partitionEncoder = new PartitionEncoder();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
                     TableReader reader = serverMain.getEngine().getReader("x")
             ) {
                 path.of(root).concat("x.parquet").$();
                 parquetPathStr = path.toString();
                 long start = System.nanoTime();
                 int partitionIndex = 0;
-                partitionEncoder.encodeWithOptions(
-                        reader,
-                        partitionIndex,
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, partitionIndex);
+                PartitionEncoder.encodeWithOptions(
+                        partitionDescriptor,
                         path,
-                        PartitionEncoder.COMPRESSION_UNCOMPRESSED,
+                        (5L << 32) | PartitionEncoder.COMPRESSION_ZSTD,
                         true,
                         ROW_GROUP_SIZE,
                         DATA_PAGE_SIZE,

@@ -27,6 +27,7 @@ package io.questdb.test.griffin.engine.table.parquet;
 import io.questdb.cairo.TableReader;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -50,11 +51,12 @@ public class ParquetFileReaderFunctionTest extends AbstractCairoTest {
 
             try (
                     Path path = new Path();
-                    PartitionEncoder partitionEncoder = new PartitionEncoder();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
                     TableReader reader = engine.getReader("x")
             ) {
                 path.of(root).concat("x.parquet").$();
-                partitionEncoder.encode(reader, 0, path);
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
 
                 sink.clear();
                 sink.put("select * from read_parquet('").put(path).put("')");
@@ -115,11 +117,12 @@ public class ParquetFileReaderFunctionTest extends AbstractCairoTest {
 
             try (
                     Path path = new Path();
-                    PartitionEncoder partitionEncoder = new PartitionEncoder();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
                     TableReader reader = engine.getReader("x")
             ) {
                 path.of(root).concat("x.parquet").$();
-                partitionEncoder.encode(reader, 0, path);
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
 
                 // Assert 0 rows, header only
                 sink.clear();

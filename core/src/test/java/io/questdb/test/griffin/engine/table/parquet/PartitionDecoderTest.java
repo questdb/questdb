@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
@@ -72,12 +73,13 @@ public class PartitionDecoderTest extends AbstractCairoTest {
 
             try (
                     Path path = new Path();
-                    PartitionEncoder partitionEncoder = new PartitionEncoder();
                     PartitionDecoder partitionDecoder = new PartitionDecoder(engine.getConfiguration().getFilesFacade());
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
                     TableReader reader = engine.getReader("x")
             ) {
                 path.of(root).concat("x.parquet").$();
-                partitionEncoder.encode(reader, 0, path);
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
 
                 partitionDecoder.of(path);
                 Assert.assertEquals(24, partitionDecoder.getMetadata().columnCount());

@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.table.parquet;
 
 import io.questdb.cairo.TableReader;
+import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -48,12 +49,13 @@ public class PartitionEncoderTest extends AbstractCairoTest {
 
         try (
                 Path path = new Path();
-                PartitionEncoder partitionEncoder = new PartitionEncoder();
+                PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
                 TableReader reader = node2.getEngine().getReader("trades")
         ) {
             path.of(root2).concat("x.parquet").$();
             long start = System.nanoTime();
-            partitionEncoder.encode(reader, 0, path);
+            PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+            PartitionEncoder.encode(partitionDescriptor, path);
             LOG.info().$("Took: ").$((System.nanoTime() - start) / 1_000_000).$("ms").$();
         }
     }
@@ -91,12 +93,13 @@ public class PartitionEncoderTest extends AbstractCairoTest {
 
             try (
                     Path path = new Path();
-                    PartitionEncoder partitionEncoder = new PartitionEncoder();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
                     TableReader reader = engine.getReader("x")
             ) {
                 path.of(root).concat("x.parquet").$();
                 long start = System.nanoTime();
-                partitionEncoder.encode(reader, 0, path);
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
                 LOG.info().$("Took: ").$((System.nanoTime() - start) / 1_000_000).$("ms").$();
             }
         });
@@ -112,12 +115,13 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                     " from long_sequence(10)) timestamp(designated_ts) partition by month");
             try (
                     Path path = new Path();
-                    PartitionEncoder partitionEncoder = new PartitionEncoder();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
                     TableReader reader = engine.getReader("x")
             ) {
                 path.of(root).concat("x.parquet").$();
                 try {
-                    partitionEncoder.encodeWithOptions(reader, 0, path, PartitionEncoder.COMPRESSION_UNCOMPRESSED, false, 0, 0, 42);
+                    PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                    PartitionEncoder.encodeWithOptions(partitionDescriptor, path, PartitionEncoder.COMPRESSION_UNCOMPRESSED, false, 0, 0, 42);
                     Assert.fail();
                 } catch (Exception e) {
                     Assert.assertTrue(Chars.contains(e.getMessage(), "Invalid value for Version"));
@@ -136,12 +140,13 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                     " from long_sequence(10)) timestamp(designated_ts) partition by month");
             try (
                     Path path = new Path();
-                    PartitionEncoder partitionEncoder = new PartitionEncoder();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
                     TableReader reader = engine.getReader("x")
             ) {
                 path.of(root).concat("x.parquet").$();
                 try {
-                    partitionEncoder.encodeWithOptions(reader, 0, path, 42, false, 0, 0, PartitionEncoder.PARQUET_VERSION_V1);
+                    PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                    PartitionEncoder.encodeWithOptions(partitionDescriptor, path, 42, false, 0, 0, PartitionEncoder.PARQUET_VERSION_V1);
                     Assert.fail();
                 } catch (Exception e) {
                     Assert.assertTrue(Chars.contains(e.getMessage(), "Invalid value for CompressionCodec"));
