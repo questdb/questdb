@@ -124,6 +124,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final SOCountDownLatch indexLatch = new SOCountDownLatch();
     private final LongList indexSequences = new LongList();
     private final ObjList<ColumnIndexer> indexers;
+    private final O3MemoryPressureRegulator memoryPressureRegulator;
     // This is the same message bus. When TableWriter instance created via CairoEngine, message bus is shared
     // and is owned by the engine. Since TableWriter would not have ownership of the bus it must not free it up.
     // On other hand when TableWrite is created outside CairoEngine, primarily in tests, the ownership of the
@@ -219,6 +220,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long o3RowCount;
     private MemoryMAT o3TimestampMem;
     private MemoryARW o3TimestampMemCpy;
+    private volatile boolean o3oomObserved;
     private long partitionTimestampHi;
     private boolean performRecovery;
     private boolean processingQueue;
@@ -255,6 +257,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     ) {
         LOG.info().$("open '").utf8(tableToken.getTableName()).$('\'').$();
         this.configuration = configuration;
+        this.memoryPressureRegulator = new O3MemoryPressureRegulator(configuration.getRandom(), configuration.getMicrosecondClock());
         this.ddlListener = ddlListener;
         this.snapshotAgent = snapshotAgent;
         this.partitionFrameFactory = new PartitionFrameFactory(configuration);
@@ -411,6 +414,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public static long getTimestampIndexValue(long timestampIndex, long indexRow) {
         return Unsafe.getUnsafe().getLong(timestampIndex + indexRow * 16);
+    }
+
+    // todo: more elsewhere
+    public static boolean isCairoOomError(Throwable t) {
+        return t instanceof CairoException && ((CairoException) t).isOutOfMemory();
     }
 
     @Override
@@ -1043,7 +1051,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long committedRowCount = txWriter.getRowCount();
         final long walSegmentId = walTxnDetails.getWalSegmentId(seqTxn);
         boolean isLastSegmentUsage = walTxnDetails.isLastSegmentUsage(seqTxn);
-        boolean committed = processWalBlock(walPath, metadata.getTimestampIndex(), inOrder, rowLo, rowHi, o3TimestampMin, o3TimestampMax, mapDiffCursor, commitToTimestamp, walSegmentId, isLastSegmentUsage);
+        boolean committed;
+        try {
+            committed = processWalBlock(walPath, metadata.getTimestampIndex(), inOrder, rowLo, rowHi, o3TimestampMin, o3TimestampMax, mapDiffCursor, commitToTimestamp, walSegmentId, isLastSegmentUsage);
+        } catch (CairoException e) {
+            if (e.isOutOfMemory()) {
+                onIncreasedMemoryPressure();
+            }
+            throw e;
+        }
 
         if (committed) {
             // Useful for debugging
@@ -1667,8 +1683,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         throw new UnsupportedOperationException();
     }
 
-    public void o3BumpErrorCount() {
+    public void o3BumpErrorCount(boolean oom) {
         o3ErrorCount.incrementAndGet();
+        if (oom) {
+            o3oomObserved = true;
+        }
+    }
+
+    public void onDecreasedMemoryPressure() {
+        memoryPressureRegulator.onPressureDecreased();
     }
 
     public void openLastPartition() {
@@ -2349,6 +2372,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public void upsertColumnVersion(long partitionTimestamp, int columnIndex, long columnTop) {
         columnVersionWriter.upsert(partitionTimestamp, columnIndex, txWriter.txn, columnTop);
+    }
+
+    public boolean walBackoffRequested() {
+        return memoryPressureRegulator.shouldBackoff();
     }
 
     /**
@@ -5493,9 +5520,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         } while (this.o3PartitionUpdRemaining.get() > 0);
 
-        if (o3ErrorCount.get() == 0) {
-            o3ConsumePartitionUpdateSink();
-        }
+//        if (o3ErrorCount.get() == 0) {
+//            o3ConsumePartitionUpdateSink();
+//        }
     }
 
     private void o3CopySafe(
@@ -5612,6 +5639,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void o3TimestampSetter(long timestamp) {
         o3TimestampMem.putLong128(timestamp, getO3RowCount0());
         o3CommitBatchTimestampMin = Math.min(o3CommitBatchTimestampMin, timestamp);
+    }
+
+    private void onIncreasedMemoryPressure() {
+        memoryPressureRegulator.onPressureIncreased();
     }
 
     private void openColumnFiles(CharSequence name, long columnNameTxn, int columnIndex, int pathTrimToLen) {
@@ -5878,6 +5909,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long rowLo
     ) {
         o3ErrorCount.set(0);
+        o3oomObserved = false;
         lastErrno = 0;
         partitionRemoveCandidates.clear();
         o3ColumnCounters.clear();
@@ -5897,8 +5929,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             resizePartitionUpdateSink();
 
+            int partitionParallelism = memoryPressureRegulator.getMaxO3MergeParallelism();
+
             // One loop iteration per partition.
-            while (srcOoo < srcOooMax) {
+            for (int partitionCount = 1; srcOoo < srcOooMax; partitionCount++) {
                 try {
                     final long srcOooLo = srcOoo;
                     final long o3Timestamp = getTimestampIndexValue(sortedTimestampsAddr, srcOoo);
@@ -6022,7 +6056,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         try {
                             setAppendPosition(srcDataMax, false);
                         } catch (Throwable e) {
-                            o3BumpErrorCount();
+                            o3BumpErrorCount(TableWriter.isCairoOomError(e));
                             o3ClockDownPartitionUpdateCount();
                             o3CountDownDoneLatch();
                             throw e;
@@ -6132,6 +6166,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     success = false;
                     throw e;
                 }
+                if (partitionCount % partitionParallelism == 0) {
+                    o3ConsumePartitionUpdates();
+                    o3DoneLatch.await(latchCount);
+                }
             } // end while(srcOoo < srcOooMax)
 
             // at this point we should know the last partition row count
@@ -6148,12 +6186,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .I$();
 
             o3ConsumePartitionUpdates();
+            if (o3ErrorCount.get() == 0) {
+                o3ConsumePartitionUpdateSink();
+            }
             o3DoneLatch.await(latchCount);
 
             o3InError = !success || o3ErrorCount.get() > 0;
             if (success && o3ErrorCount.get() > 0) {
                 //noinspection ThrowFromFinallyBlock
-                throw CairoException.critical(0).put("bulk update failed and will be rolled back");
+                throw CairoException.critical(0).put("bulk update failed and will be rolled back").setOutOfMemory(o3oomObserved);
             }
         }
 
@@ -7100,6 +7141,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (doubleAllocate) {
                         dataMem.allocate(dataSizeBytes);
                     }
+                    LOG.infoW().$("setAppendPosition [column=").$(metadata.getColumnName(columnIndex)).$(", size=").$(size).$(", dataSizeBytes=").$(dataSizeBytes).$();
                     dataMem.jumpTo(dataSizeBytes);
 
                 }

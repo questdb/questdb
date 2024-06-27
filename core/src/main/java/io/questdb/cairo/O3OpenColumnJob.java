@@ -176,7 +176,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             TableWriter tableWriter,
             FilesFacade ff
     ) {
-        tableWriter.o3BumpErrorCount();
+        tableWriter.o3BumpErrorCount(false);
         if (columnCounter.decrementAndGet() == 0) {
             O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
             O3Utils.close(ff, srcTimestampFd);
@@ -487,7 +487,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             LOG.error().$("merge var error [table=").utf8(tableWriter.getTableToken().getTableName())
                     .$(", e=").$(e)
                     .I$();
-            tableWriter.o3BumpErrorCount();
+            tableWriter.o3BumpErrorCount(TableWriter.isCairoOomError(e));
             O3CopyJob.copyIdleQuick(
                     columnCounter,
                     timestampMergeIndexAddr,
@@ -2085,7 +2085,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             LOG.error().$("append new partition error [table=").utf8(tableWriter.getTableToken().getTableName())
                     .$(", e=").$(e)
                     .I$();
-            tableWriter.o3BumpErrorCount();
+            tableWriter.o3BumpErrorCount(TableWriter.isCairoOomError(e));
             final FilesFacade ff1 = tableWriter.getFilesFacade();
             O3Utils.unmapAndClose(ff1, dstFixFd, dstFixAddr, dstFixSize);
             O3Utils.unmapAndClose(ff1, dstVarFd, dstVarAddr, dstVarSize);
@@ -2438,7 +2438,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             O3Utils.unmapAndClose(ff, dstFixFd, dstFixAddr, dstFixSize);
             O3Utils.close(ff, dstKFd);
             O3Utils.close(ff, dstVFd);
-            tableWriter.o3BumpErrorCount();
+            tableWriter.o3BumpErrorCount(TableWriter.isCairoOomError(e));
             if (columnCounter.decrementAndGet() == 0) {
                 O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
                 O3Utils.close(ff, srcTimestampFd);

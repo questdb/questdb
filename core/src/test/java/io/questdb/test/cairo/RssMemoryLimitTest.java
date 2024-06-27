@@ -25,10 +25,12 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableToken;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
+import org.junit.Assert;
 import org.junit.Test;
 
 import static org.junit.Assert.fail;
@@ -68,6 +70,43 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateAtomicTable_wal() throws Exception {
+        long limitMiB = 5;
+        assertMemoryLeak(limitMiB, () -> {
+            int batchCount = 100;
+            int batchSize = 50_000;
+
+            ddl("create table x (ts timestamp) timestamp(ts) partition by day wal;");
+
+            for (int i = 0; i < batchCount; i++) {
+                insert("insert into x select" +
+                        " rnd_timestamp(to_timestamp('2024-01-01', 'yyyy-mm-dd'), to_timestamp('2025-01-01', 'yyyy-mm-dd'), 0) ts" +
+                        " from long_sequence(" + batchSize + ");");
+                System.out.println("Tx no. " + i + " done -----");
+            }
+
+
+            int expectedRowCount = batchCount * batchSize;
+            TestUtils.assertEventually(() -> {
+                drainWalQueue();
+
+                assertTableNotSuspended("x");
+
+                try {
+                    // cannot use assertQuery, because it clears CairoEngine - this closes all Table Writers and we
+                    // lose information about memory pressure
+                    assertQueryFullFatNoLeakCheck("count\n" +
+                                    expectedRowCount + "\n",
+                            "select count() from x", null, false, true, false);
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            }, 600);
+
+        });
+    }
+
+    @Test
     public void testSelect() throws Exception {
         assertMemoryLeak(14, () -> {
             ddl("create table test as (select rnd_str() a, rnd_double() b from long_sequence(1000000))");
@@ -80,5 +119,10 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
             capture.assertLoggedRE(" exe \\[.*, sql=`select a, sum\\(b\\) from test");
             capture.assertLoggedRE(" err \\[.*, sql=`select a, sum\\(b\\) from test");
         });
+    }
+
+    private static void assertTableNotSuspended(CharSequence tableName) {
+        TableToken tt = engine.getTableTokenIfExists(tableName);
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tt));
     }
 }

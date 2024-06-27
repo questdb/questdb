@@ -144,14 +144,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         return false;
     }
 
-    private static boolean removeOrLog(Path path, FilesFacade ff) {
-        if (!ff.removeQuiet(path.$())) {
-            LOG.info().$("could not remove, will retry [path=").utf8(", errno=").$(ff.errno()).I$();
-            return false;
-        }
-        return true;
-    }
-
     private static boolean matchesWalLock(Utf8Sequence name) {
         if (Utf8s.endsWithAscii(name, ".lock")) {
             for (int i = name.size() - ".lock".length() - 1; i > 0; i--) {
@@ -167,6 +159,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             if (b < '0' || b > '9') {
                 return false;
             }
+        }
+        return true;
+    }
+
+    private static boolean removeOrLog(Path path, FilesFacade ff) {
+        if (!ff.removeQuiet(path.$())) {
+            LOG.info().$("could not remove, will retry [path=").utf8(", errno=").$(ff.errno()).I$();
+            return false;
         }
         return true;
     }
@@ -204,7 +204,18 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         return false;
     }
 
-    // Returns true if the application is finished and false if it's early terminated
+    /**
+     * Iterates over all outstanding transactions in the WAL.
+     * Interrupts if time limit is reached or termination is requested.
+     * Returns true if the application is finished and false if it's early terminated.
+     *
+     * @param tableToken        table token
+     * @param writer            table writer
+     * @param engine            cairo engine
+     * @param operationExecutor operation executor
+     * @param tempPath          temporary path
+     * @param runStatus         run status
+     */
     private void applyOutstandingWalTransactions(
             TableToken tableToken,
             TableWriter writer,
@@ -237,6 +248,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 final long timeLimit = microClock.getTicks() + tableTimeQuotaMicros;
                 boolean firstRun = true;
                 WHILE_TRANSACTION_CURSOR:
+
                 while (!isTerminating && ((finishedAll = microClock.getTicks() <= timeLimit) || firstRun) && transactionLogCursor.hasNext()) {
                     firstRun = false;
                     final int walId = transactionLogCursor.getWalId();
@@ -508,7 +520,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
             try (TableWriter writer = engine.getWriterUnsafe(updatedToken, WAL_2_TABLE_WRITE_REASON)) {
                 assert writer.getMetadata().getTableId() == tableToken.getTableId();
+
+                if (writer.walBackoffRequested()) {
+                    engine.notifyWalTxnRepublisher(tableToken);
+                    return lastWriterTxn;
+                }
                 applyOutstandingWalTransactions(tableToken, writer, engine, operationCompiler, tempPath, runStatus);
+                writer.onDecreasedMemoryPressure();
                 lastWriterTxn = writer.getSeqTxn();
             } catch (EntryUnavailableException tableBusy) {
                 //noinspection StringEquality
@@ -534,6 +552,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 engine.notifyDropped(tableToken);
                 // Table is dropped, and we received cairo exception in the middle of apply
                 return tryDestroyDroppedTable(tableToken, null, engine, tempPath) ? Long.MAX_VALUE : WAL_APPLY_IGNORE_ERROR;
+            }
+            if (ex.isOutOfMemory()) {
+                engine.notifyWalTxnRepublisher(tableToken);
+                return lastWriterTxn;
             }
             telemetryFacade.store(TelemetrySystemEvent.WAL_APPLY_SUSPEND, TelemetryOrigin.WAL_APPLY);
             LOG.critical().$("job failed, table suspended [table=").utf8(tableToken.getDirName())
