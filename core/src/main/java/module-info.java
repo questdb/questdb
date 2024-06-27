@@ -852,7 +852,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.str.ReplaceStrFunctionFactory,
             io.questdb.griffin.engine.functions.str.ReplaceVarcharFunctionFactory,
 
-            // json_path* functions
+            // json_path()
             JsonPathFunctionFactory,
 
             // regexp_replace()
