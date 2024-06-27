@@ -2126,8 +2126,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         squashPartitionForce(partitionIndex);
 
-        assert txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndex + 1)) != partitionTimestamp;
-
         long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
 
         setPathForPartition(path.trimTo(rootLen), partitionBy, partitionTimestamp, partitionNameTxn);
@@ -2163,7 +2161,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             long columnSize = columnRowCount * ColumnType.sizeOf(columnType);
                             long columnAddr = TableUtils.mapAppendColumnBuffer(ff, columnFd, 0, columnSize, false, memoryTag);
 
-                            offsetFileName(path.trimTo(partitionLen), columnName, columnNameTxn);
+                            offsetFileName(path.trimTo(rootLen), columnName, columnNameTxn);
                             if (!ff.exists(path)) {
                                 LOG.error().$(path).$(" is not found").$();
                                 throw CairoException.critical(0).put("SymbolMap does not exist: ").put(path);
@@ -2183,7 +2181,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                             long symbolOffsetsAddr = TableUtils.mapAppendColumnBuffer(ff, symbolOffsetsFd, HEADER_SIZE, offsetsMemSize, false, memoryTag);
 
-                            int columnSecondaryFd = TableUtils.openRO(ff, charFileName(path.trimTo(partitionLen), columnName, columnNameTxn), LOG);
+                            int columnSecondaryFd = TableUtils.openRO(ff, charFileName(path.trimTo(rootLen), columnName, columnNameTxn), LOG);
                             fileDescriptors.add(columnSecondaryFd);
 
                             long columnSecondarySize = ff.length(columnSecondaryFd);
@@ -2202,6 +2200,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     symbolCount
                             );
 
+                            // recover partition path
+                            setPathForPartition(path.trimTo(rootLen), partitionBy, partitionTimestamp, partitionNameTxn);
                         } else if (ColumnType.isVarSize(columnType)) {
                             int auxFd = TableUtils.openRO(ff, iFile(path.trimTo(partitionLen), columnName, columnNameTxn), LOG);
                             fileDescriptors.add(auxFd);
