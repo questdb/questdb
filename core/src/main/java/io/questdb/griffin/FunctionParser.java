@@ -540,11 +540,14 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     ) throws SqlException {
         final boolean log = Chars.equals("json_path", node.token);
         final ObjList<FunctionFactoryDescriptor> overload = functionFactoryCache.getOverloadList(node.token);
-        if (log)
-            LOG.info().$("FunctionParser.createFunction :: (A) id: ").$(id).$(" -- node.token: ").$(node.token).$(", args: ").$(args).$();
+        if (log) {
+            LOG.info().$("FunctionParser.createFunction :: (A) id: ").$(id).$(" --> node.token: ").$(node.token).$(", args: ").$(args).$();
+            LOG.info().$("  functionFactoryCache: ").$(functionFactoryCache.summary()).$();
+        }
         if (overload == null) {
-            if (log)
+            if (log) {
                 LOG.info().$("FunctionParser.createFunction :: (B) id: ").$(id).$(" --  overload == null").$();
+            }
             throw invalidFunction(node, args);
         }
 
