@@ -2225,10 +2225,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     columnType,
                                     columnId,
                                     columnTop,
-                                    auxVectorAddr,
-                                    auxVectorSize,
                                     dataAddr,
                                     dataSize,
+                                    auxVectorAddr,
+                                    auxVectorSize,
                                     0,
                                     0
                             );
