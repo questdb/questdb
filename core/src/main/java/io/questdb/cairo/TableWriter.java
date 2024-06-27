@@ -2103,7 +2103,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public boolean convertPartition(long partitionTimestamp) {
-        final int memoryTag = MemoryTag.MMAP_TABLE_WRITER;
+        final int memoryTag = MemoryTag.MMAP_PARTITION_CONVERTER;
 
         assert metadata.getTimestampIndex() > -1;
         assert PartitionBy.isPartitioned(partitionBy);
@@ -2264,6 +2264,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             for (long i = 0, n = fileDescriptors.size(); i < n; i++) {
                 ff.close(fileDescriptors.get(i));
             }
+            fileDescriptors.close();
         }
 
         // TODO: detach and delete partition
