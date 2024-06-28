@@ -24,11 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.json;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.functions.json.JsonPathDefaultTypedExplicitDefaultFunctionFactory;
+import io.questdb.griffin.engine.functions.json.JsonPathDefaultTypedFunctionFactory;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.test.tools.TestUtils;
@@ -37,24 +36,11 @@ import org.junit.Test;
 
 import java.util.Arrays;
 
-public class JsonPathDefaultTypedExplicitDefaultFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class JsonPathDefaultTypedFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Override
     public Invocation call(Object... args) {
         throw new UnsupportedOperationException();
-    }
-
-    @Test
-    public void testNullDefaultBoolean() {
-        final SqlException exc = Assert.assertThrows(
-                SqlException.class,
-                () -> callFn(
-                        utf8("{\"path\": true}"),
-                        utf8(".path"),
-                        ColumnType.BOOLEAN,
-                        (Object) null
-                ));
-        TestUtils.assertContains(exc.getMessage(), "json_path's the default value cannot be NULL");
     }
 
     @Test
@@ -149,8 +135,8 @@ public class JsonPathDefaultTypedExplicitDefaultFunctionFactoryTest extends Abst
                 dirUtf8("{\"path\": 42}"),
                 dirUtf8(".path"),
                 ColumnType.SHORT,
-                (short)43
-        ).andAssert((short)42);
+                (short) 43
+        ).andAssert((short) 42);
     }
 
     @Test
@@ -167,6 +153,88 @@ public class JsonPathDefaultTypedExplicitDefaultFunctionFactoryTest extends Abst
                 ColumnType.VARCHAR,
                 dirUtf8("def")
         ).andAssert("abc");
+    }
+
+    @Test
+    public void testNullDefaultBoolean() {
+        final SqlException exc = Assert.assertThrows(
+                SqlException.class,
+                () -> callFn(
+                        utf8("{\"path\": true}"),
+                        utf8(".path"),
+                        ColumnType.BOOLEAN,
+                        (Object) null
+                ));
+        TestUtils.assertContains(
+                exc.getMessage(),
+                "json_path's default value cannot be NULL for the BOOLEAN"
+        );
+    }
+
+    @Test
+    public void testNullDefaultDouble() throws SqlException {
+        callFn(
+                utf8("{\"path\": \"baobab\"}"),
+                utf8(".path"),
+                ColumnType.DOUBLE,
+                (Object) null
+        ).andAssertDoubleNan();
+    }
+
+    @Test
+    public void testNullDefaultFloat() throws SqlException {
+        callFn(
+                utf8("{\"path\": \"baobab\"}"),
+                utf8(".path"),
+                ColumnType.FLOAT,
+                (Object) null
+        ).andAssertFloatNan();
+    }
+
+    @Test
+    public void testNullDefaultInt() throws SqlException {
+        callFn(
+                utf8("{\"path\": \"baobab\"}"),
+                utf8(".path"),
+                ColumnType.INT,
+                (Object) null
+        ).andAssert(Integer.MIN_VALUE);
+    }
+
+    @Test
+    public void testNullDefaultLong() throws SqlException {
+        callFn(
+                utf8("{\"path\": \"baobab\"}"),
+                utf8(".path"),
+                ColumnType.LONG,
+                (Object) null
+        ).andAssert(Long.MIN_VALUE);
+    }
+
+    @Test
+    public void testNullDefaultShort() {
+        final SqlException exc = Assert.assertThrows(
+                SqlException.class,
+                () -> callFn(
+                        utf8("{\"path\": true}"),
+                        utf8(".path"),
+                        ColumnType.SHORT,
+                        (Object) null
+                ));
+        TestUtils.assertContains(
+                exc.getMessage(),
+                "json_path's default value cannot be NULL for the SHORT"
+        );
+    }
+
+    @Test
+    public void testNullDefaultVarchar() throws SqlException {
+        callFn(
+                utf8("{\"path\": \"baobab\"}"),
+                utf8(".another.path.that.does.not.exist"),
+                ColumnType.VARCHAR,
+                (Object) null
+        ).andAssert(null);
     }
 
     private Invocation callFn(Utf8Sequence json, Utf8Sequence path, int targetType, Object... args) throws SqlException {
@@ -187,6 +255,6 @@ public class JsonPathDefaultTypedExplicitDefaultFunctionFactoryTest extends Abst
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new JsonPathDefaultTypedExplicitDefaultFunctionFactory();
+        return new JsonPathDefaultTypedFunctionFactory();
     }
 }

@@ -854,8 +854,7 @@ open module io.questdb {
 
             // json_path() & json_path_s()
             io.questdb.griffin.engine.functions.json.JsonPathDefaultVarcharFunctionFactory,
-            io.questdb.griffin.engine.functions.json.JsonPathDefaultTypedFunctionFactory,
-            io.questdb.griffin.engine.functions.json.JsonPathDefaultTypedExplicitDefaultFunctionFactory,
+            JsonPathDefaultTypedFunctionFactory,
             io.questdb.griffin.engine.functions.json.JsonPathStrictVarcharFunctionFactory,
             io.questdb.griffin.engine.functions.json.JsonPathStrictTypedFunctionFactory,
 

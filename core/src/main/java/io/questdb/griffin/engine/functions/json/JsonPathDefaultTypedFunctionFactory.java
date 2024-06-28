@@ -24,10 +24,75 @@
 
 package io.questdb.griffin.engine.functions.json;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
+
 public class JsonPathDefaultTypedFunctionFactory extends JsonPathFunctionFactoryBase {
+
+    @Override
+    public JsonPathFunction newInstance(
+            int position, ObjList<Function> args, IntList argPositions,
+            CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        final JsonPathFunction fn = super.newInstance(
+                position,
+                args,
+                argPositions,
+                configuration,
+                sqlExecutionContext
+        );
+
+        // Supply an explicit default value in case of execution errors, if one was provided.
+        final int targetType = fn.getType();
+        final Function defaultValueFn = parseDefaultValueFunction(position, targetType, args);
+        if (defaultValueFn != null) {
+            fn.applyDefault(position, targetType, defaultValueFn);
+        }
+        return fn;
+    }
+
+    private Function parseDefaultValueFunction(int position, int targetType, ObjList<Function> args) throws SqlException {
+        if (args.size() > 4) {
+            throw SqlException
+                    .position(position)
+                    .put("supplied ")
+                    .put(args.size())
+                    .put(" arguments to the json_path function, expected 4");
+        }
+        final Function defaultValueFn = args.getQuiet(3);
+
+        final boolean isNullDefault = (defaultValueFn == null) || (defaultValueFn.getType() == ColumnType.NULL);
+
+        if (isNullDefault && !ColumnType.isNullable(targetType)) {
+            final String message = (args.size() == 3)
+                    ? "json_path's default value must be specified for the "
+                    : "json_path's default value cannot be NULL for the ";
+            throw SqlException
+                    .position(position)
+                    .put(message)
+                    .put(ColumnType.nameOf(targetType))
+                    .put(" target type");
+        }
+
+        if (isNullDefault) {
+            return null;
+        }
+
+        if (!defaultValueFn.isConstant()) {
+            throw SqlException.position(position).put("json_path's default value must be a constant");
+        }
+
+        return defaultValueFn;
+    }
+
     @Override
     protected String getArguments() {
-        return "Øøi";
+        return "ØøiV";
     }
 
     @Override
