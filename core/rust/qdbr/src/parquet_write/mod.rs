@@ -143,14 +143,32 @@ mod tests {
         let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
         let row_count = 1_000_000;
         let fix_col_count = 3;
-        let mut columns = Vec::new();
 
-        for i in 0..fix_col_count {
-            let column_name = format!("col{}", i);
-            let static_str: &'static str = Box::leak(column_name.into_boxed_str());
-            let col1 = create_fix_column(row_count, ColumnType::Int, size_of::<i32>(), static_str);
-            columns.push(col1);
-        }
+        let buffers: Vec<Vec<i32>> = (0..fix_col_count)
+            .map(|_| (0..row_count).collect())
+            .collect();
+
+        let columns: Vec<Column> = buffers
+            .iter()
+            .enumerate()
+            .map(|(i, buffer)| {
+                let column_name = format!("col{}", i);
+                let name: &'static str = Box::leak(column_name.into_boxed_str());
+                Column::from_raw_data(
+                    i as i32,
+                    name,
+                    ColumnType::Int as i32,
+                    0,
+                    row_count as usize,
+                    buffer.as_ptr() as *const u8,
+                    buffer.len() * size_of::<i32>(),
+                    null(),
+                    0,
+                    null(),
+                    0,
+                ).expect("column")
+            })
+            .collect();
 
         let partition = Partition { table: "test_table".to_string(), columns };
 
@@ -172,40 +190,6 @@ mod tests {
         let bytes: Bytes = buf.into_inner().into();
 
         save_to_file(bytes);
-    }
-
-    fn create_fix_column(
-        row_count: usize,
-        col_type: ColumnType,
-        value_size: usize,
-        name: &'static str,
-    ) -> Column {
-        let mut buff = vec![0u8; row_count * value_size];
-        for i in 0..row_count {
-            let value = i as i32;
-            let offset = i * value_size;
-            buff[offset..offset + size_of::<i32>()].copy_from_slice(&value.to_le_bytes());
-        }
-        let col_type_i32 = col_type as i32;
-        assert_eq!(
-            col_type,
-            ColumnType::try_from(col_type_i32).expect("invalid colum type")
-        );
-
-        Column::from_raw_data(
-            0,
-            name,
-            col_type as i32,
-            0,
-            row_count,
-            buff.as_ptr(),
-            buff.len(),
-            null(),
-            0,
-            null(),
-            0,
-        )
-        .unwrap()
     }
 
     #[test]
