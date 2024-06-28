@@ -28,17 +28,17 @@ jobs:
           path: $(CARGO_HOME)/registry
         displayName: "Cache ~/.cargo/registry"
       - script: |
-          cd questdb/core/rust/qdbr
+          cd core/rust/qdbr
           cargo test --all-targets --all-features
         displayName: "cargo test"
         # We run these as part of the other CI runs anyway through the rust-maven-plugin,
         # but if the Rust tests fail it's easier to see the output here
         # since it doesn't get buried thousands of lines deep in the Java test logs.
       - script: |
-          cd questdb/core/rust/qdbr
+          cd core/rust/qdbr
           cargo clippy --all-targets --all-features -- -D warnings
         displayName: "cargo clippy"
       - script: |
-          cd questdb-ent/rust/qdb-ent
+          cd core/rust/qdbr
           cargo fmt --check
         displayName: "cargo fmt"
