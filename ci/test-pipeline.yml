@@ -24,11 +24,11 @@ stages:
       - template: templates/check-changes-job.yml
 
   - stage: RustTestAndLint
-      displayName: "Rust Test and Lint"
-      dependsOn:
-        - CheckChanges
-      jobs:
-        - template: rust-test-and-lint.yaml
+    displayName: "Rust Test and Lint"
+    dependsOn:
+      - CheckChanges
+    jobs:
+      - template: rust-test-and-lint.yaml
 
   - stage: SelfHostedRunGriffin
     displayName: "SelfHosted Griffin tests"
