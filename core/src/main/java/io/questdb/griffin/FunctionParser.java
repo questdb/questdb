@@ -45,7 +45,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayDeque;
-import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.griffin.SqlKeywords.isNullKeyword;
 import static io.questdb.griffin.SqlKeywords.startsWithGeoHashKeyword;
@@ -70,8 +69,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     private RecordMetadata metadata;
     private SqlCodeGenerator sqlCodeGenerator;
     private SqlExecutionContext sqlExecutionContext;
-    private static final AtomicLong ID_GENERATOR = new AtomicLong(0);
-    private final long id = ID_GENERATOR.incrementAndGet();
 
     public FunctionParser(CairoConfiguration configuration, FunctionFactoryCache functionFactoryCache) {
         this.configuration = configuration;
@@ -538,21 +535,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             @Transient ObjList<Function> args,
             @Transient IntList argPositions
     ) throws SqlException {
-        final boolean log = Chars.equals("json_path", node.token);
         final ObjList<FunctionFactoryDescriptor> overload = functionFactoryCache.getOverloadList(node.token);
-        if (log) {
-            LOG.info().$("FunctionParser.createFunction :: (A) id: ").$(id).$(" --> node.token: ").$(node.token).$(", args: ").$(args).$();
-            functionFactoryCache.logSummary();
-        }
         if (overload == null) {
-            if (log) {
-                LOG.info().$("FunctionParser.createFunction :: (B) id: ").$(id).$(" --  overload == null").$();
-            }
             throw invalidFunction(node, args);
         }
-
-        if (log)
-            LOG.info().$("FunctionParser.createFunction :: (C) id: ").$(id).$(" --  node.token: ").$(node.token).$();
 
         final int argCount = args == null ? 0 : args.size();
         FunctionFactory candidate = null;
@@ -637,17 +623,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 candidateDescriptor = descriptor;
             }
 
-            if (log)
-                LOG.info().$("FunctionParser.createFunction :: (D) id: ").$(id).$(" --  factory: ").$(factory).$(", sigArgCount: ").$(sigArgCount).$();
-
             // otherwise, is number of arguments the same?
             if (sigArgCount == argCount || (sigVarArg && argCount >= sigArgCount)) {
                 int match = sigArgCount == 0 ? MATCH_EXACT_MATCH : MATCH_NO_MATCH;
                 int sigArgTypeScore = 0;
                 for (int argIdx = 0; argIdx < sigArgCount; argIdx++) {
                     final Function arg = args.getQuick(argIdx);
-                    if (log)
-                        LOG.info().$("FunctionParser.createFunction :: (E) id: ").$(id).$(" --  argIdx: ").$(argIdx).$(", arg: ").$(arg).$();
                     final int sigArgTypeMask = descriptor.getArgTypeMask(argIdx);
 
                     if (FunctionFactoryDescriptor.isConstant(sigArgTypeMask) && !arg.isConstant()) {
@@ -669,9 +650,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
                     if (sigArgTypeTag == argTypeTag ||
                             (argTypeTag == ColumnType.CHAR &&              // 'a' could also be a string literal, so it should count as proper match
-                                    sigArgTypeTag == ColumnType.STRING &&  // for both string and char, otherwise ? > 'a' matches char function even though    
-                                    arg.isConstant() &&                    // bind variable parameter might be a string and throw error during execution.     
-                                    arg != CharTypeConstant.INSTANCE) ||   // Ignore type constant to keep cast(X as char) working     
+                                    sigArgTypeTag == ColumnType.STRING &&  // for both string and char, otherwise ? > 'a' matches char function even though
+                                    arg.isConstant() &&                    // bind variable parameter might be a string and throw error during execution.
+                                    arg != CharTypeConstant.INSTANCE) ||   // Ignore type constant to keep cast(X as char) working
                             (sigArgTypeTag == ColumnType.GEOHASH && ColumnType.isGeoHash(argType))) {
                         switch (match) {
                             case MATCH_NO_MATCH: // was it no match
@@ -687,13 +668,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         continue;
                     }
 
-                    if (log)
-                        LOG.info().$("FunctionParser.createFunction :: (F) id: ").$(id).$(" --  match: ").$(match).$();
-
                     boolean overloadPossible = false;
-                    boolean overloadWasPossible = false;
                     // we do not want to use any overload when checking the output of a cast() function.
-                    // the output must be the exact type as specified by a user. that's the whole point of casting. 
+                    // the output must be the exact type as specified by a user. that's the whole point of casting.
                     // for all other functions, else, we want to explore possible casting opportunities
                     //
                     // output of a cast() function is always the 2nd argument in a function signature
@@ -715,88 +692,50 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
                         sigArgTypeScore += overloadDistance;
                         // Overload with cast to higher precision
-                        if (log && (overloadDistance != ColumnType.OVERLOAD_NONE))
-                            LOG.info().$("FunctionParser.createFunction :: (G) id: ").$(id).$(" --  overloadPossible flipped true, overloadDistance: ").$(overloadDistance).$();
                         overloadPossible = overloadDistance != ColumnType.OVERLOAD_NONE;
-                        overloadWasPossible = overloadPossible;
 
                         // Overload when arg is double NaN to func which accepts INT, LONG
                         overloadPossible |= argTypeTag == ColumnType.DOUBLE &&
                                 arg.isConstant() &&
                                 Numbers.isNull(arg.getDouble(null)) &&
                                 (sigArgTypeTag == ColumnType.LONG || sigArgTypeTag == ColumnType.INT);
-                        if (log && (overloadPossible != overloadWasPossible))
-                            LOG.info().$("FunctionParser.createFunction :: (H) id: ").$(id).$(" --  overloadPossible flipped true").$();
-                        overloadWasPossible = overloadPossible;
 
                         // Implicit cast from CHAR to STRING
                         overloadPossible |= argTypeTag == ColumnType.CHAR &&
                                 sigArgTypeTag == ColumnType.STRING;
-                        if (log && (overloadPossible != overloadWasPossible))
-                            LOG.info().$("FunctionParser.createFunction :: (I) id: ").$(id).$(" --  overloadPossible flipped true").$();
-                        overloadWasPossible = overloadPossible;
 
                         // Implicit cast from CHAR to VARCHAR
                         overloadPossible |= argTypeTag == ColumnType.CHAR &&
                                 sigArgTypeTag == ColumnType.VARCHAR;
-                        if (log && (overloadPossible != overloadWasPossible))
-                            LOG.info().$("FunctionParser.createFunction :: (J) id: ").$(id).$(" --  overloadPossible flipped true").$();
-                        overloadWasPossible = overloadPossible;
 
                         // Implicit cast from STRING to TIMESTAMP
                         overloadPossible |= argTypeTag == ColumnType.STRING && arg.isConstant() &&
                                 sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
-                        if (log && (overloadPossible != overloadWasPossible))
-                            LOG.info().$("FunctionParser.createFunction :: (K) id: ").$(id).$(" --  overloadPossible flipped true").$();
-                        overloadWasPossible = overloadPossible;
 
                         // Implicit cast from STRING to DATE
                         overloadPossible |= argTypeTag == ColumnType.STRING && arg.isConstant() &&
                                 sigArgTypeTag == ColumnType.DATE && !factory.isGroupBy();
-                        if (log && (overloadPossible != overloadWasPossible))
-                            LOG.info().$("FunctionParser.createFunction :: (L) id: ").$(id).$(" --  overloadPossible flipped true").$();
-                        overloadWasPossible = overloadPossible;
 
                         // Implicit cast from STRING to GEOHASH
                         overloadPossible |= argTypeTag == ColumnType.STRING &&
                                 sigArgTypeTag == ColumnType.GEOHASH && !factory.isGroupBy();
-                        if (log && (overloadPossible != overloadWasPossible))
-                            LOG.info().$("FunctionParser.createFunction :: (M) id: ").$(id).$(" --  overloadPossible flipped true").$();
-                        overloadWasPossible = overloadPossible;
 
                         // Implicit cast from SYMBOL to TIMESTAMP
                         overloadPossible |= argTypeTag == ColumnType.SYMBOL && arg.isConstant() &&
                                 sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
-                        if (log && (overloadPossible != overloadWasPossible))
-                            LOG.info().$("FunctionParser.createFunction :: (N) id: ").$(id).$(" --  overloadPossible flipped true").$();
-                        overloadWasPossible = overloadPossible;
 
                         // Implicit cast from VARCHAR to TIMESTAMP
                         overloadPossible |= argTypeTag == ColumnType.VARCHAR && arg.isConstant() && sigArgTypeTag == ColumnType.TIMESTAMP && !factory.isGroupBy();
-                        if (log && (overloadPossible != overloadWasPossible))
-                            LOG.info().$("FunctionParser.createFunction :: (O) id: ").$(id).$(" --  overloadPossible flipped true").$();
-                        overloadWasPossible = overloadPossible;
 
                         // Implicit cast from VARCHAR to STRING
                         overloadPossible |= argTypeTag == ColumnType.VARCHAR && arg.isConstant() && sigArgTypeTag == ColumnType.STRING && !factory.isGroupBy();
-                        if (log && (overloadPossible != overloadWasPossible))
-                            LOG.info().$("FunctionParser.createFunction :: (P) id: ").$(id).$(" --  overloadPossible flipped true").$();
-                        overloadWasPossible = overloadPossible;
 
                         // Implicit cast from VARCHAR to CHAR
                         overloadPossible |= argTypeTag == ColumnType.VARCHAR &&
                                 sigArgTypeTag == ColumnType.CHAR;
-                        if (log && (overloadPossible != overloadWasPossible))
-                            LOG.info().$("FunctionParser.createFunction :: (Q) id: ").$(id).$(" --  overloadPossible flipped true").$();
-                        overloadWasPossible = overloadPossible;
 
                         overloadPossible |= arg.isUndefined();
-                        if (log && (overloadPossible != overloadWasPossible))
-                            LOG.info().$("FunctionParser.createFunction :: (R) id: ").$(id).$(" --  overloadPossible flipped true").$();
                     }
-
-                    if (log)
-                        LOG.info().$("FunctionParser.createFunction :: (S) id: ").$(id).$(" --  overloadPossible: ").$(overloadPossible).$();
                     // can we use overload mechanism?
                     if (overloadPossible) {
                         switch (match) {
@@ -809,8 +748,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                                 break;
                             case MATCH_EXACT_MATCH: // was it full match so far? ? oh, well, fuzzy now
                                 match = MATCH_PARTIAL_MATCH; // downgrade
-                                if (log)
-                                    LOG.info().$("FunctionParser.createFunction :: (T) id: ").$(id).$(" --  match: MATCH_EXACT_MATCH -> MATCH_PARTIAL_MATCH").$();
                                 break;
                             default:
                                 break; // don't change match otherwise
@@ -822,12 +759,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     }
                 }
 
-                if (log)
-                    LOG.info().$("FunctionParser.createFunction :: (U) id: ").$(id).$(" --  exhausted arguments logic - match: ").$(match).$();
-
                 if (match == MATCH_NO_MATCH) {
-                    if (log)
-                        LOG.info().$("FunctionParser.createFunction :: (V) id: ").$(id).$(" --  match: MATCH_NO_MATCH").$();
                     continue;
                 }
 
@@ -876,9 +808,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 }
             }
         }
-
-        if (log)
-            LOG.info().$("FunctionParser.createFunction :: (W) id: ").$(id).$(" --  bestMatch: ").$(bestMatch).$(", candidate: ").$(candidate).$();
 
         if (candidate == null) {
             // no signature match
@@ -931,9 +860,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 args.setQuick(k, new CastUuidToStrFunctionFactory.Func(arg));
             }
         }
-
-        if (log)
-            LOG.info().$("FunctionParser.createFunction :: (X) id: ").$(id).$(" -- ").$();
         return checkAndCreateFunction(candidate, args, argPositions, node, configuration);
     }
 
