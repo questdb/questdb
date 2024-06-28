@@ -47,6 +47,8 @@ import io.questdb.griffin.engine.functions.constants.*;
 import io.questdb.griffin.engine.functions.date.*;
 import io.questdb.griffin.engine.functions.eq.*;
 import io.questdb.griffin.engine.functions.finance.LevelTwoPriceFunctionFactory;
+import io.questdb.griffin.engine.functions.json.JsonPathFunction;
+import io.questdb.griffin.engine.functions.json.JsonPathFunctionFactoryBase;
 import io.questdb.griffin.engine.functions.lt.LtIPv4StrFunctionFactory;
 import io.questdb.griffin.engine.functions.lt.LtStrIPv4FunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
@@ -2382,8 +2384,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 } else if (factory instanceof InUuidFunctionFactory && p == 1) {
                                     // this factory requires valid UUID string, otherwise it will fail
                                     args.add(new StrConstant("11111111-1111-1111-1111-111111111111"));
-                                } else if (Chars.equals(key, "json_path")) {
-                                    if (sigArgCount == 3 && p == 0) {
+                                } else if ((factory instanceof JsonPathFunctionFactoryBase)) {
+                                    if (p == 0) {
                                         args.add(new VarcharConstant("{\"a\": 1}"));
                                         args.add(new VarcharConstant(".a"));
                                     }
