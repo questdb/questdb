@@ -166,7 +166,8 @@ mod tests {
                     0,
                     null(),
                     0,
-                ).expect("column")
+                )
+                .expect("column")
             })
             .collect();
 
