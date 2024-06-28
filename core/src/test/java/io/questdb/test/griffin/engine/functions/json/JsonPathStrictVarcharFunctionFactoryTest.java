@@ -24,13 +24,17 @@
 
 package io.questdb.test.griffin.engine.functions.json;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.functions.json.JsonPathDefaultVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.json.JsonPathStrictVarcharFunctionFactory;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
-public class JsonPathDefaultVarcharFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class JsonPathStrictVarcharFunctionFactoryTest extends AbstractFunctionFactoryTest {
+
     @Test
     public void test10000() throws SqlException {
         call(utf8("{\"path\": 10000.5}"), utf8(".path")).andAssert("10000.5");
@@ -62,8 +66,12 @@ public class JsonPathDefaultVarcharFunctionFactoryTest extends AbstractFunctionF
     }
 
     @Test
-    public void testEmptyJson() throws SqlException {
-        call(utf8("{}"), utf8(".path")).andAssert((String) null);
+    public void testEmptyJson() {
+        final CairoException exc = Assert.assertThrows(
+                CairoException.class,
+                () -> call(utf8("{}"), utf8(".path")).andAssert((String) null)
+        );
+        TestUtils.assertContains(exc.getMessage(), "json_path_s(.., '.path'): NO_SUCH_FIELD");
     }
 
     @Test
@@ -124,6 +132,6 @@ public class JsonPathDefaultVarcharFunctionFactoryTest extends AbstractFunctionF
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new JsonPathDefaultVarcharFunctionFactory();
+        return new JsonPathStrictVarcharFunctionFactory();
     }
 }
