@@ -62,7 +62,7 @@ public class JsonPathDefaultTypedFunctionFactory extends JsonPathFunctionFactory
                     .position(position)
                     .put("supplied ")
                     .put(args.size())
-                    .put(" arguments to the json_path function, expected 4");
+                    .put(" arguments to the json_path function, expected either 3 or 4");
         }
         final Function defaultValueFn = args.getQuiet(3);
 
