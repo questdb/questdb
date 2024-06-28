@@ -29,7 +29,7 @@ jobs:
         displayName: "Cache ~/.cargo/registry"
       - script: |
           cd core/rust/qdbr
-          cargo test --all-targets --all-features
+          cargo test --all-targets --all-features --no-fail-fast
         displayName: "cargo test"
         # We run these as part of the other CI runs anyway through the rust-maven-plugin,
         # but if the Rust tests fail it's easier to see the output here
