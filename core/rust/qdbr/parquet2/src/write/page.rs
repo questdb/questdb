@@ -40,6 +40,7 @@ fn maybe_bytes(uncompressed: usize, compressed: usize) -> Result<(i32, i32)> {
 }
 
 /// Contains page write metrics.
+#[allow(dead_code)]
 pub struct PageWriteSpec {
     pub header: ParquetPageHeader,
     pub num_values: usize,
