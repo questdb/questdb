@@ -29,6 +29,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 
 public class SimdJsonResult implements QuietCloseable {
     private static final int JSON_RESULT_STRUCT_SIZE = 8;
@@ -37,6 +38,15 @@ public class SimdJsonResult implements QuietCloseable {
 
     public SimdJsonResult() {
         this.impl = Unsafe.calloc(JSON_RESULT_STRUCT_SIZE, MemoryTag.NATIVE_DEFAULT);
+    }
+
+    public static CairoException formatError(@NotNull String functionName, Utf8Sequence path, int error) {
+        return CairoException.nonCritical()
+                .put(functionName)
+                .put("(.., '")
+                .put(path)
+                .put("'): ")
+                .put(SimdJsonError.getMessage(error));
     }
 
     public void clear() {
@@ -75,20 +85,5 @@ public class SimdJsonResult implements QuietCloseable {
 
     public long ptr() {
         return impl;
-    }
-
-    public void throwIfError(Utf8Sequence path) throws CairoException {
-        final int error = getError();
-        if (error != SimdJsonError.SUCCESS) {
-            throw formatError(path, getError());
-        }
-    }
-
-    public static CairoException formatError(Utf8Sequence path, int error) {
-        return CairoException.nonCritical()
-                .put("json_path(.., '")
-                .put(path)
-                .put("'): ")
-                .put(SimdJsonError.getMessage(error));
     }
 }

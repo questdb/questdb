@@ -28,6 +28,8 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.VarcharFunction;
+import io.questdb.std.json.SimdJsonError;
+import io.questdb.std.json.SimdJsonResult;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8Sequence;
@@ -38,24 +40,27 @@ import org.jetbrains.annotations.Nullable;
 import java.util.Objects;
 
 class JsonPathVarcharFunc extends VarcharFunction implements BinaryFunction, JsonPathFunc {
-    private final int position;
     private final VarcharSupportingState a;
     private final VarcharSupportingState b;
     private final VarcharSupportingState copied;
+    private final @NotNull String functionName;
     private final Function json;
     private final int maxSize;
     private final Function path;
     private final DirectUtf8Sink pointer;
+    private final int position;
     private final boolean strict;
     private DirectUtf8Sink defaultVarchar = null;
 
     public JsonPathVarcharFunc(
+            @NotNull String functionName,
             int position,
             Function json,
             Function path,
             DirectUtf8Sink pointer,
             int maxSize,
             boolean strict) {
+        this.functionName = functionName;
         this.position = position;
         this.a = new VarcharSupportingState(new DirectUtf8Sink(maxSize));
         this.b = new VarcharSupportingState(new DirectUtf8Sink(maxSize));
@@ -85,7 +90,7 @@ class JsonPathVarcharFunc extends VarcharFunction implements BinaryFunction, Jso
 
     @Override
     public String getName() {
-        return "json_path";
+        return functionName;
     }
 
     @Override
@@ -183,11 +188,22 @@ class JsonPathVarcharFunc extends VarcharFunction implements BinaryFunction, Jso
             defaultValuePtr = defaultVarchar.ptr();
             defaultValueSize = defaultVarchar.size();
         }
-        state.parser.queryPointerString(state.initPaddedJson(json), pointer, state.simdJsonResult, state.destSink, maxSize, defaultValuePtr, defaultValueSize);
+        state.parser.queryPointerString(
+                state.initPaddedJson(json),
+                pointer,
+                state.simdJsonResult,
+                state.destSink,
+                maxSize,
+                defaultValuePtr,
+                defaultValueSize
+        );
         if (state.simdJsonResult.hasValue()) {
             return state.destSink;
         } else if (strict && !state.simdJsonResult.isNull()) {
-            state.simdJsonResult.throwIfError(path);
+            final int error = state.simdJsonResult.getError();
+            if (error != SimdJsonError.SUCCESS) {
+                throw SimdJsonResult.formatError(functionName, path, error);
+            }
         }
         return defaultVarchar;  // usually null
     }
