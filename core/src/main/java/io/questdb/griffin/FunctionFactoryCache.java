@@ -34,8 +34,6 @@ import io.questdb.std.*;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.TestOnly;
 
-import java.util.concurrent.atomic.AtomicInteger;
-
 public class FunctionFactoryCache {
 
     static final IntHashSet invalidFunctionNameChars = new IntHashSet();
@@ -142,16 +140,6 @@ public class FunctionFactoryCache {
 
     public boolean isWindow(CharSequence name) {
         return name != null && windowFunctionNames.contains(name);
-    }
-
-    public void logSummary() {
-        LOG.info().$("function factory cache [factories=").$(factories.size()).$(']').$();
-        factories.forEach((name, overload) -> {
-            LOG.info().$("    name: ").$(name).$(", overloads:").$();
-            for (int overloadIndex = 0, overloadSize = overload.size(); overloadIndex < overloadSize; overloadIndex++) {
-                LOG.info().$("        ").$(overload.getQuick(overloadIndex)).$();
-            }
-        });
     }
 
     private void addFactoryToList(LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> list, FunctionFactory factory) throws SqlException {

@@ -22,29 +22,25 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.json;
+package io.questdb.test.griffin.engine.functions.json;
 
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.json.JsonPathDefaultVarcharFunctionFactory;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
+import org.junit.Test;
 
-// Maps to the constants of the `simdjson::ondemand::json_type` enum.
-public class SimdJsonType {
-    /** An unset `SimdJsonType` or the result of accessing a non-existent path. */
-    public static final int UNSET = 0;
+public class JsonPathDefaultVarcharFunctionFactoryTest extends AbstractFunctionFactoryTest {
+    @Test
+    public void test10000() throws SqlException {
+        call(utf8("{\"path\": 10000.5}"), utf8(".path")).andAssert("10000.5");
+        call(utf8("{\"path\": 10000.5}"), dirUtf8(".path")).andAssert("10000.5");
+        call(dirUtf8("{\"path\": 10000.5}"), utf8(".path")).andAssert("10000.5");
+        call(dirUtf8("{\"path\": 10000.5}"), dirUtf8(".path")).andAssert("10000.5");
+    }
 
-    /** A JSON array   ( [ 1, 2, 3 ... ] ) */
-    public static final int ARRAY = UNSET + 1;
-
-    /** A JSON object  ( { "a": 1, "b" 2, ... } ) */
-    public static final int OBJECT = ARRAY + 1;
-
-    /** A JSON number  ( 1 or -2.3 or 4.5e6 ...) */
-    public static final int NUMBER = OBJECT + 1;
-
-    /** A JSON string  ( "a" or "hello world\n" ...) */
-    public static final int STRING = NUMBER + 1;
-
-    /** A JSON boolean (true or false) */
-    public static final int BOOLEAN = STRING + 1;
-
-    /** A JSON null    (null) */
-    public static final int NULL = BOOLEAN + 1;
+    @Override
+    protected FunctionFactory getFunctionFactory() {
+        return new JsonPathDefaultVarcharFunctionFactory();
+    }
 }

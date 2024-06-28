@@ -24,26 +24,14 @@
 
 package io.questdb.griffin.engine.functions.json;
 
-import io.questdb.cairo.sql.Function;
-import io.questdb.std.str.Utf8Sequence;
+public class JsonPathDefaultVarcharFunctionFactory extends JsonPathFunctionFactoryBase {
+    @Override
+    protected String getArguments() {
+        return "Øø";
+    }
 
-public interface JsonPathFunc extends Function {
-    int DEFAULT_VALUE_ON_ERROR = 0;
-    int FAIL_ON_ERROR = 1;
-
-    void setDefaultLong(long aLong);
-
-    void setDefaultDouble(double aDouble);
-
-    void setDefaultBool(boolean bool);
-
-    void setDefaultSymbol(CharSequence symbol);
-
-    void setDefaultShort(short aShort);
-
-    void setDefaultInt(int anInt);
-
-    void setDefaultFloat(float aFloat);
-
-    void setDefaultVarchar(Utf8Sequence varcharA);
+    @Override
+    protected boolean isStrict() {
+        return false;
+    }
 }

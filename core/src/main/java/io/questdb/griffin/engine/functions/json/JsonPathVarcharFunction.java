@@ -39,7 +39,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.Objects;
 
-class JsonPathVarcharFunc extends VarcharFunction implements BinaryFunction, JsonPathFunc {
+class JsonPathVarcharFunction extends VarcharFunction implements BinaryFunction, JsonPathFunction {
     private final VarcharSupportingState a;
     private final VarcharSupportingState b;
     private final VarcharSupportingState copied;
@@ -52,7 +52,7 @@ class JsonPathVarcharFunc extends VarcharFunction implements BinaryFunction, Jso
     private final boolean strict;
     private DirectUtf8Sink defaultVarchar = null;
 
-    public JsonPathVarcharFunc(
+    public JsonPathVarcharFunction(
             @NotNull String functionName,
             int position,
             Function json,

@@ -22,29 +22,16 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.json;
+package io.questdb.griffin.engine.functions.json;
 
+public class JsonPathStrictTypedFunctionFactory extends JsonPathFunctionFactoryBase {
+    @Override
+    protected String getArguments() {
+        return "Øøi";
+    }
 
-// Maps to the constants of the `simdjson::ondemand::json_type` enum.
-public class SimdJsonType {
-    /** An unset `SimdJsonType` or the result of accessing a non-existent path. */
-    public static final int UNSET = 0;
-
-    /** A JSON array   ( [ 1, 2, 3 ... ] ) */
-    public static final int ARRAY = UNSET + 1;
-
-    /** A JSON object  ( { "a": 1, "b" 2, ... } ) */
-    public static final int OBJECT = ARRAY + 1;
-
-    /** A JSON number  ( 1 or -2.3 or 4.5e6 ...) */
-    public static final int NUMBER = OBJECT + 1;
-
-    /** A JSON string  ( "a" or "hello world\n" ...) */
-    public static final int STRING = NUMBER + 1;
-
-    /** A JSON boolean (true or false) */
-    public static final int BOOLEAN = STRING + 1;
-
-    /** A JSON null    (null) */
-    public static final int NULL = BOOLEAN + 1;
+    @Override
+    protected boolean isStrict() {
+        return true;
+    }
 }

@@ -36,7 +36,7 @@ import io.questdb.std.json.SimdJsonResult;
 import io.questdb.std.str.*;
 import org.jetbrains.annotations.Nullable;
 
-public class JsonPathPrimitiveFunc implements ScalarFunction, BinaryFunction, JsonPathFunc {
+public class JsonPathPrimitiveFunction implements ScalarFunction, BinaryFunction, JsonPathFunction {
     private final int columnType;
     private final String functionName;
     private final Function json;
@@ -52,7 +52,7 @@ public class JsonPathPrimitiveFunc implements ScalarFunction, BinaryFunction, Js
     private long defaultLong = Long.MIN_VALUE;
     private short defaultShort = Short.MIN_VALUE;
 
-    public JsonPathPrimitiveFunc(
+    public JsonPathPrimitiveFunction(
             String functionName,
             int position,
             int columnType,

@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.functions.json;
 
-import io.questdb.cairo.sql.Function;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.json.SimdJsonParser;
 import io.questdb.std.json.SimdJsonResult;
@@ -34,22 +33,10 @@ import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
 class SupportingState implements QuietCloseable {
+    public DirectUtf8Sequence jsonSeq = null;
     public SimdJsonParser parser = new SimdJsonParser();
     public SimdJsonResult simdJsonResult = new SimdJsonResult();
     private DirectUtf8Sink jsonSink = null;
-    public DirectUtf8Sequence jsonSeq = null;
-
-    public static @NotNull DirectUtf8Sink varcharConstantToJsonPointer(Function fn) {
-        assert fn.isConstant();
-        final Utf8Sequence seq = fn.getVarcharA(null);
-        assert seq != null;
-        try (DirectUtf8Sink path = new DirectUtf8Sink(seq.size())) {
-            path.put(seq);
-            final DirectUtf8Sink pointer = new DirectUtf8Sink(seq.size());
-            SimdJsonParser.convertJsonPathToPointer(path, pointer);
-            return pointer;
-        }
-    }
 
     @Override
     public void close() {
@@ -65,8 +52,7 @@ class SupportingState implements QuietCloseable {
     public DirectUtf8Sequence initPaddedJson(@NotNull Utf8Sequence json) {
         if ((json instanceof DirectUtf8Sequence) && ((DirectUtf8Sequence) json).tailPadding() >= SimdJsonParser.SIMDJSON_PADDING) {
             jsonSeq = (DirectUtf8Sequence) json;
-        }
-        else {
+        } else {
             if (jsonSink == null) {
                 jsonSink = new DirectUtf8Sink(json.size() + SimdJsonParser.SIMDJSON_PADDING);
             } else {

@@ -22,13 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.engine.functions.json;
+package io.questdb.test.griffin.engine.functions.json.old;
 
+public class JsonPathFunctionFactoryVarcharTest {}
+
+/*
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.functions.json.JsonPathFunctionFactory;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.test.tools.TestUtils;
@@ -37,8 +39,8 @@ import org.junit.Test;
 
 import java.util.Arrays;
 
-import static io.questdb.griffin.engine.functions.json.JsonPathFunc.DEFAULT_VALUE_ON_ERROR;
-import static io.questdb.griffin.engine.functions.json.JsonPathFunc.FAIL_ON_ERROR;
+import static io.questdb.griffin.engine.functions.json.JsonPathFunction.DEFAULT_VALUE_ON_ERROR;
+import static io.questdb.griffin.engine.functions.json.JsonPathFunction.FAIL_ON_ERROR;
 
 public class JsonPathFunctionFactoryVarcharTest extends AbstractFunctionFactoryTest {
 
@@ -248,6 +250,7 @@ public class JsonPathFunctionFactoryVarcharTest extends AbstractFunctionFactoryT
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new JsonPathFunctionFactory();
+        return new JsonPathFunctionFactoryOld();
     }
 }
+*/
