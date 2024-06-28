@@ -26,7 +26,18 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.BitmapIndexReader;
 
+/**
+ * Represents a contiguous fragment of a table partition.
+ */
 public interface PageFrame {
+    /**
+     * Page frame belonging to a partition in native QDB format.
+     */
+    byte NATIVE_FORMAT = 0;
+    /**
+     * Page frame belonging to a partition in Apache Parquet format.
+     */
+    byte PARQUET_FORMAT = 1;
 
     BitmapIndexReader getBitmapIndexReader(int columnIndex, int dirForward);
 
@@ -39,7 +50,16 @@ public interface PageFrame {
     int getColumnShiftBits(int columnIndex);
 
     /**
-     * Index page for variable-length column types, such as String and Binary
+     * Returns page frame format.
+     * <p>
+     * Possible values: {@link #NATIVE_FORMAT} and {@link #PARQUET_FORMAT}.
+     */
+    byte getFormat();
+
+    /**
+     * Index page for variable-length column types, such as Varchar, String, and Binary.
+     * <p>
+     * Can be called only for frames in native format.
      *
      * @param columnIndex index of variable length column
      * @return contiguous memory address containing offsets for variable value entries
@@ -48,7 +68,10 @@ public interface PageFrame {
 
     /**
      * Return the address of the start of the page frame or if this page represents
-     * a column top (a column that was added to the table when other columns already had data) then return 0
+     * a column top (a column that was added to the table when other columns already
+     * had data) then return 0.
+     * <p>
+     * Can be called only for frames in native format.
      *
      * @param columnIndex index of column
      * @return address of column or 0 if column is empty
@@ -57,15 +80,26 @@ public interface PageFrame {
 
     /**
      * Return the size of the page frame column in bytes.
+     * <p>
+     * Can be called only for frames in native format.
      *
      * @param columnIndex index of column
      * @return size of column in bytes
      */
     long getPageSize(int columnIndex);
 
+    /**
+     * Return hi row index within the frame's partition, exclusive.
+     */
     long getPartitionHi();
 
+    /**
+     * Return index of the partition the frame belongs to.
+     */
     int getPartitionIndex();
 
+    /**
+     * Return lo row index within the frame's partition, inclusive.
+     */
     long getPartitionLo();
 }

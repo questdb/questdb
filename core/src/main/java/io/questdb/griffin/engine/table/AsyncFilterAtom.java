@@ -24,10 +24,9 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.sql.async.PageFrameReduceTask;
-import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
@@ -46,6 +45,7 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
     public static final LongAdder PRE_TOUCH_BLACK_HOLE = new LongAdder();
     private final IntList columnTypes;
     private final Function filter;
+    private final boolean forceDisablePreTouch;
     private final ObjList<Function> perWorkerFilters;
     private final PerWorkerLocks perWorkerLocks;
     private boolean preTouchEnabled;
@@ -54,7 +54,8 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
             @NotNull CairoConfiguration configuration,
             @NotNull Function filter,
             @Nullable ObjList<Function> perWorkerFilters,
-            @NotNull IntList columnTypes
+            @NotNull IntList columnTypes,
+            boolean forceDisablePreTouch
     ) {
         this.filter = filter;
         this.perWorkerFilters = perWorkerFilters;
@@ -64,6 +65,7 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
             perWorkerLocks = null;
         }
         this.columnTypes = columnTypes;
+        this.forceDisablePreTouch = forceDisablePreTouch;
     }
 
     public int acquireFilter(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
@@ -80,132 +82,6 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
     @Override
     public void close() {
         Misc.freeObjList(perWorkerFilters);
-    }
-
-    /**
-     * Copies column values for filtered rows into column memory chunks.
-     */
-    public void copyToColumnChunks(PageAddressCacheRecord record, PageFrameReduceTask task) {
-        final DirectLongList rows = task.getFilteredRows();
-        if (rows.size() == 0) {
-            return;
-        }
-
-        final ObjList<MemoryCARW> columnChunks = task.getColumnChunks();
-        for (int i = 0; i < columnTypes.size(); i++) {
-            final int columnType = columnTypes.getQuick(i);
-
-            final MemoryCARW dataMem = task.nextColumnChunk();
-            columnChunks.add(dataMem);
-            final MemoryCARW auxMem = ColumnType.isVarSize(columnType) ? task.nextColumnChunk() : null;
-            columnChunks.add(auxMem);
-
-            switch (ColumnType.tagOf(columnType)) {
-                case ColumnType.BOOLEAN:
-                    dataMem.jumpTo(0);
-                    for (long p = 0, n = rows.size(); p < n; p++) {
-                        long r = rows.get(p);
-                        record.setRowIndex(r);
-                        dataMem.putBool(record.getBool(i));
-                    }
-                    break;
-                case ColumnType.BYTE:
-                case ColumnType.GEOBYTE:
-                    dataMem.jumpTo(0);
-                    for (long p = 0, n = rows.size(); p < n; p++) {
-                        long r = rows.get(p);
-                        record.setRowIndex(r);
-                        dataMem.putByte(record.getByte(i));
-                    }
-                    break;
-                case ColumnType.SHORT:
-                case ColumnType.GEOSHORT:
-                case ColumnType.CHAR: // for memory copying purposes chars are same as shorts
-                    dataMem.jumpTo(0);
-                    for (long p = 0, n = rows.size(); p < n; p++) {
-                        long r = rows.get(p);
-                        record.setRowIndex(r);
-                        dataMem.putShort(record.getShort(i));
-                    }
-                    break;
-                case ColumnType.INT:
-                case ColumnType.GEOINT:
-                case ColumnType.IPv4:
-                case ColumnType.SYMBOL:
-                case ColumnType.FLOAT: // for memory copying purposes floats are same as ints
-                    dataMem.jumpTo(0);
-                    for (long p = 0, n = rows.size(); p < n; p++) {
-                        long r = rows.get(p);
-                        record.setRowIndex(r);
-                        dataMem.putInt(record.getInt(i));
-                    }
-                    break;
-                case ColumnType.LONG:
-                case ColumnType.GEOLONG:
-                case ColumnType.DATE:
-                case ColumnType.TIMESTAMP:
-                case ColumnType.DOUBLE: // for memory copying purposes doubles are same as longs
-                    dataMem.jumpTo(0);
-                    for (long p = 0, n = rows.size(); p < n; p++) {
-                        long r = rows.get(p);
-                        record.setRowIndex(r);
-                        dataMem.putLong(record.getLong(i));
-                    }
-                    break;
-                case ColumnType.UUID:
-                    dataMem.jumpTo(0);
-                    for (long p = 0, n = rows.size(); p < n; p++) {
-                        long r = rows.get(p);
-                        record.setRowIndex(r);
-                        dataMem.putLong128(record.getLong128Lo(i), record.getLong128Hi(i));
-                    }
-                    break;
-                case ColumnType.LONG256:
-                    dataMem.jumpTo(0);
-                    for (long p = 0, n = rows.size(); p < n; p++) {
-                        long r = rows.get(p);
-                        record.setRowIndex(r);
-                        Long256 l256 = record.getLong256A(i);
-                        dataMem.putLong256(l256);
-                    }
-                    break;
-                case ColumnType.STRING:
-                    assert auxMem != null;
-                    auxMem.jumpTo(0);
-                    dataMem.jumpTo(0);
-                    StringTypeDriver.INSTANCE.configureAuxMemO3RSS(auxMem);
-                    for (long p = 0, n = rows.size(); p < n; p++) {
-                        long r = rows.get(p);
-                        record.setRowIndex(r);
-                        CharSequence cs = record.getStrA(i);
-                        StringTypeDriver.appendValue(auxMem, dataMem, cs);
-                    }
-                    break;
-                case ColumnType.VARCHAR:
-                    assert auxMem != null;
-                    auxMem.jumpTo(0);
-                    dataMem.jumpTo(0);
-                    for (long p = 0, n = rows.size(); p < n; p++) {
-                        long r = rows.get(p);
-                        record.setRowIndex(r);
-                        Utf8Sequence us = record.getVarcharA(i);
-                        VarcharTypeDriver.appendValue(auxMem, dataMem, us);
-                    }
-                    break;
-                case ColumnType.BINARY:
-                    assert auxMem != null;
-                    auxMem.jumpTo(0);
-                    dataMem.jumpTo(0);
-                    BinaryTypeDriver.INSTANCE.configureAuxMemO3RSS(auxMem);
-                    for (long p = 0, n = rows.size(); p < n; p++) {
-                        long r = rows.get(p);
-                        record.setRowIndex(r);
-                        BinarySequence bs = record.getBin(i);
-                        BinaryTypeDriver.appendValue(auxMem, dataMem, bs);
-                    }
-                    break;
-            }
-        }
     }
 
     public Function getFilter(int filterId) {
@@ -251,7 +127,7 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
      * @param rows   rows to pre-touch
      */
     public void preTouchColumns(PageAddressCacheRecord record, DirectLongList rows) {
-        if (!preTouchEnabled) {
+        if (!preTouchEnabled || forceDisablePreTouch) {
             return;
         }
         // We use a LongAdder as a black hole to make sure that the JVM JIT compiler keeps the load instructions in place.

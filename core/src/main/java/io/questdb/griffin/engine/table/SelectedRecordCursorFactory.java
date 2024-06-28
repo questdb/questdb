@@ -152,6 +152,11 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public byte getFormat() {
+            return baseFrame.getFormat();
+        }
+
+        @Override
         public long getIndexPageAddress(int columnIndex) {
             return baseFrame.getIndexPageAddress(columnCrossIndex.getQuick(columnIndex));
         }

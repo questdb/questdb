@@ -31,10 +31,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.NullMemoryMR;
 import io.questdb.cairo.vm.api.MemoryR;
-import io.questdb.std.IntList;
-import io.questdb.std.LongList;
-import io.questdb.std.Misc;
-import io.questdb.std.Rows;
+import io.questdb.std.*;
 import org.jetbrains.annotations.Nullable;
 
 public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
@@ -43,6 +40,8 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
     private final LongList columnPageAddress = new LongList();
     private final LongList columnPageNextAddress = new LongList();
     private final IntList columnSizes;
+    // Holds PageFrame#*_FORMAT per each partition.
+    private final ByteList formats = new ByteList();
     private final TableReaderPageFrame frame = new TableReaderPageFrame();
     private final int pageFrameMaxRows;
     private final int pageFrameMinRows;
@@ -134,6 +133,8 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
         columnPageNextAddress.setAll(columnCount * 2, 0);
         pageRowsRemaining.setAll(columnCount, -1L);
         pageSizes.setAll(columnCount * 2, -1L);
+        formats.setAll(formats.size(), (byte) -1);
+        formats.clear();
         reenterDataFrame = false;
     }
 
@@ -195,6 +196,10 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
             }
         }
 
+        // TODO: we should get the format from table reader
+        // FIXME: current logic is for testing purposes only
+        formats.extendAndSet(reenterPartitionIndex, reenterPartitionIndex % 2 == 0 ? PageFrame.NATIVE_FORMAT : PageFrame.PARQUET_FORMAT);
+
         // it is possible that all columns in data frame are empty, but it doesn't mean
         // the data frame size is 0; sometimes we may want to imply nulls
         if (partitionLo < adjustedLo) {
@@ -224,6 +229,11 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
         @Override
         public int getColumnShiftBits(int columnIndex) {
             return columnSizes.getQuick(columnIndex);
+        }
+
+        @Override
+        public byte getFormat() {
+            return formats.getQuick(partitionIndex);
         }
 
         @Override

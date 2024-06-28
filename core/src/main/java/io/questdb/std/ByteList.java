@@ -31,54 +31,32 @@ import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 
-public class IntList implements Mutable, Sinkable {
+public class ByteList implements Mutable, Sinkable {
     private static final int DEFAULT_ARRAY_SIZE = 16;
-    private static final int NO_ENTRY_VALUE = -1;
+    private static final byte NO_ENTRY_VALUE = -1;
     private final int initialCapacity;
-    private int[] data;
+    private byte[] data;
     private int pos = 0;
 
-    public IntList() {
+    public ByteList() {
         this(DEFAULT_ARRAY_SIZE);
     }
 
-    public IntList(int capacity) {
+    public ByteList(int capacity) {
         this.initialCapacity = capacity;
-        this.data = new int[initialCapacity];
+        this.data = new byte[initialCapacity];
     }
 
-    public void add(int value) {
+    public void add(byte value) {
         checkCapacity(pos + 1);
         data[pos++] = value;
     }
 
-    public void addAll(IntList that) {
+    public void addAll(ByteList that) {
         int p = pos;
         int s = that.size();
         setPos(p + s);
         System.arraycopy(that.data, 0, this.data, p, s);
-    }
-
-    public void arrayCopy(int srcPos, int dstPos, int length) {
-        System.arraycopy(data, srcPos, data, dstPos, length);
-    }
-
-    public int binarySearchUniqueList(int v) {
-        int low = 0;
-        int high = pos - 1;
-        while (high - low > 65) {
-            int mid = (low + high) >>> 1;
-            int midVal = data[mid];
-
-            if (midVal < v)
-                low = mid + 1;
-            else if (midVal > v)
-                high = mid - 1;
-            else {
-                return mid;
-            }
-        }
-        return scanSearch(v, low, high + 1);
     }
 
     public int capacity() {
@@ -95,7 +73,7 @@ public class IntList implements Mutable, Sinkable {
         Arrays.fill(data, NO_ENTRY_VALUE);
     }
 
-    public boolean contains(int value) {
+    public boolean contains(byte value) {
         return indexOf(value, 0, pos) > -1;
     }
 
@@ -104,10 +82,10 @@ public class IntList implements Mutable, Sinkable {
      */
     @Override
     public boolean equals(Object that) {
-        return this == that || that instanceof IntList && equals((IntList) that);
+        return this == that || that instanceof ByteList && equals((ByteList) that);
     }
 
-    public void extendAndSet(int index, int value) {
+    public void extendAndSet(int index, byte value) {
         checkCapacity(index + 1);
         if (index >= pos) {
             pos = index + 1;
@@ -115,11 +93,11 @@ public class IntList implements Mutable, Sinkable {
         data[index] = value;
     }
 
-    public int get(int index) {
+    public byte get(int index) {
         return getQuick(index);
     }
 
-    public int getLast() {
+    public byte getLast() {
         if (pos > 0) {
             return data[pos - 1];
         }
@@ -135,14 +113,11 @@ public class IntList implements Mutable, Sinkable {
      * @param index of the element
      * @return element at the specified position.
      */
-    public int getQuick(int index) {
+    public byte getQuick(int index) {
         assert index < pos;
         return data[index];
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public int hashCode() {
         int hashCode = 1;
@@ -153,16 +128,7 @@ public class IntList implements Mutable, Sinkable {
         return hashCode;
     }
 
-    public void increment(int index) {
-        data[index] = data[index] + 1;
-    }
-
-    public void increment(int index, int delta) {
-        assert delta > -1;
-        data[index] = data[index] + delta;
-    }
-
-    public int indexOf(int v, int low, int high) {
+    public int indexOf(byte v, int low, int high) {
         assert high <= pos;
 
         for (int i = low; i < high; i++) {
@@ -174,20 +140,13 @@ public class IntList implements Mutable, Sinkable {
         return -1;
     }
 
-    public void insert(int index, int element) {
+    public void insert(int index, byte value) {
         setPos(++pos);
         System.arraycopy(data, index, data, index + 1, pos - index - 1);
-        data[index] = element;
+        data[index] = value;
     }
 
-    // increment at index and return previous value
-    public int postIncrement(int index) {
-        final int prev = data[index];
-        data[index] = prev + 1;
-        return prev;
-    }
-
-    public void remove(int key) {
+    public void remove(byte key) {
         for (int i = 0, n = size(); i < n; i++) {
             if (key == getQuick(i)) {
                 removeIndex(i);
@@ -209,19 +168,19 @@ public class IntList implements Mutable, Sinkable {
     }
 
     public void restoreInitialCapacity() {
-        data = new int[initialCapacity];
+        data = new byte[initialCapacity];
         pos = 0;
     }
 
-    public void set(int index, int element) {
+    public void set(int index, byte value) {
         if (index < pos) {
-            data[index] = element;
+            data[index] = value;
             return;
         }
         throw new ArrayIndexOutOfBoundsException(index);
     }
 
-    public void setAll(int capacity, int value) {
+    public void setAll(int capacity, byte value) {
         checkCapacity(capacity);
         pos = capacity;
         Arrays.fill(data, 0, pos, value);
@@ -232,7 +191,7 @@ public class IntList implements Mutable, Sinkable {
         pos = position;
     }
 
-    public void setQuick(int index, int value) {
+    public void setQuick(int index, byte value) {
         assert index < pos;
         data[index] = value;
     }
@@ -270,9 +229,6 @@ public class IntList implements Mutable, Sinkable {
         sink.putAscii(']');
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public String toString() {
         Utf16Sink b = Misc.getThreadLocalSink();
@@ -280,7 +236,7 @@ public class IntList implements Mutable, Sinkable {
         return b.toString();
     }
 
-    public void zero(int value) {
+    public void zero(byte value) {
         Arrays.fill(data, 0, pos, value);
     }
 
@@ -288,13 +244,13 @@ public class IntList implements Mutable, Sinkable {
         int l = data.length;
         if (capacity > l) {
             int newCap = Math.max(l << 1, capacity);
-            int[] buf = new int[newCap];
+            byte[] buf = new byte[newCap];
             System.arraycopy(data, 0, buf, 0, l);
             this.data = buf;
         }
     }
 
-    private boolean equals(IntList that) {
+    private boolean equals(ByteList that) {
         if (this.pos != that.pos) {
             return false;
         }
@@ -305,18 +261,5 @@ public class IntList implements Mutable, Sinkable {
             }
         }
         return true;
-    }
-
-    private int scanSearch(int v, int low, int high) {
-        for (int i = low; i < high; i++) {
-            int f = data[i];
-            if (f == v) {
-                return i;
-            }
-            if (f > v) {
-                return -(i + 1);
-            }
-        }
-        return -(high + 1);
     }
 }

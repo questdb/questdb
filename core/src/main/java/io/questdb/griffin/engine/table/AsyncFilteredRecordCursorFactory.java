@@ -83,7 +83,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             int columnType = base.getMetadata().getColumnType(i);
             columnTypes.add(columnType);
         }
-        AsyncFilterAtom atom = new AsyncFilterAtom(configuration, filter, perWorkerFilters, columnTypes);
+        AsyncFilterAtom atom = new AsyncFilterAtom(configuration, filter, perWorkerFilters, columnTypes, !preTouchColumns);
         this.frameSequence = new PageFrameSequence<>(configuration, messageBus, atom, REDUCER, reduceTaskFactory, workerCount, PageFrameReduceTask.TYPE_FILTER);
         this.limitLoFunction = limitLoFunction;
         this.limitLoPos = limitLoPos;

@@ -36,6 +36,9 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
+/**
+ * Can be used only for page frames of native partition format.
+ */
 public class PageAddressCacheRecord implements Record, Closeable {
 
     private final MemoryCR.ByteSequenceView bsview = new MemoryCR.ByteSequenceView();
@@ -49,7 +52,6 @@ public class PageAddressCacheRecord implements Record, Closeable {
     private int frameIndex;
     private PageAddressCache pageAddressCache;
     private long rowIndex;
-    // Makes it possible to determine real row id, not one relative to page.
     private SymbolTableSource symbolTableSource;
 
     public PageAddressCacheRecord(PageAddressCacheRecord other) {

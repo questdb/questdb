@@ -108,7 +108,8 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 compiledFilter,
                 bindVarMemory,
                 bindVarFunctions,
-                columnTypes
+                columnTypes,
+                !preTouchColumns
         );
         this.frameSequence = new PageFrameSequence<>(
                 configuration,
@@ -420,9 +421,10 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 CompiledFilter compiledFilter,
                 MemoryCARW bindVarMemory,
                 ObjList<Function> bindVarFunctions,
-                IntList columnTypes
+                IntList columnTypes,
+                boolean forceDisablePreTouch
         ) {
-            super(configuration, filter, perWorkerFilters, columnTypes);
+            super(configuration, filter, perWorkerFilters, columnTypes, forceDisablePreTouch);
             this.compiledFilter = compiledFilter;
             this.bindVarMemory = bindVarMemory;
             this.bindVarFunctions = bindVarFunctions;

@@ -28,6 +28,10 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.*;
 
+/**
+ * Can be used only for page frames of native partition format. For other partitions
+ * assumes all addresses to be zeroes.
+ */
 public class PageAddressCache implements Mutable {
 
     private final long cacheSizeThreshold;
@@ -37,6 +41,7 @@ public class PageAddressCache implements Mutable {
     private LongList auxPageAddresses = new LongList();
     private int columnCount;
     private LongList pageAddresses = new LongList();
+    // Makes it possible to determine real row id, not one relative to page.
     private LongList pageRowIdOffsets = new LongList();
     private LongList pageSizes = new LongList();
     private int varSizeColumnCount;
@@ -49,14 +54,17 @@ public class PageAddressCache implements Mutable {
         if (pageAddresses.size() >= columnCount * (frameIndex + 1)) {
             return; // The page frame is already cached
         }
+
+        final boolean nativeFormat = frame.getFormat() == PageFrame.NATIVE_FORMAT;
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            pageAddresses.add(frame.getPageAddress(columnIndex));
+            pageAddresses.add(nativeFormat ? frame.getPageAddress(columnIndex) : 0);
             int varSizeColumnIndex = varSizeColumnIndexes.getQuick(columnIndex);
             if (varSizeColumnIndex > -1) {
-                auxPageAddresses.add(frame.getIndexPageAddress(columnIndex));
-                pageSizes.add(frame.getPageSize(columnIndex));
+                auxPageAddresses.add(nativeFormat ? frame.getIndexPageAddress(columnIndex) : 0);
+                pageSizes.add(nativeFormat ? frame.getPageSize(columnIndex) : 0);
             }
         }
+
         pageRowIdOffsets.add(Rows.toRowID(frame.getPartitionIndex(), frame.getPartitionLo()));
     }
 

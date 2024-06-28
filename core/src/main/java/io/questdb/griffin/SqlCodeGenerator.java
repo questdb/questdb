@@ -1727,7 +1727,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             .$("JIT enabled for (sub)query [tableName=").utf8(model.getName())
                             .$(", fd=").$(executionContext.getRequestFd())
                             .I$();
-                    return new AsyncJitFilteredRecordCursorV2Factory(
+                    return new AsyncJitFilteredRecordCursorFactory(
                             configuration,
                             executionContext.getMessageBus(),
                             factory,
@@ -1744,6 +1744,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             ),
                             limitLoFunction,
                             limitLoPos,
+                            preTouchColumns,
                             executionContext.getSharedWorkerCount()
                     );
                 } catch (SqlException | LimitOverflowException ex) {
