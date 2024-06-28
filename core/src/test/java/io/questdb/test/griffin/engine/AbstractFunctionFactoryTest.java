@@ -71,6 +71,10 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             return ColumnType.VARCHAR;
         }
 
+        if (arg instanceof Short) {
+            return ColumnType.SHORT;
+        }
+
         if (arg instanceof Integer) {
             return ColumnType.INT;
         }
@@ -242,7 +246,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                 toTimestampRefs++;
                 break;
             case ColumnType.SHORT:
-                sink.put("cast(").put((Integer) value).put(" as short)");
+                sink.put("cast(").put(value.toString()).put(" as short)");
                 toShortRefs++;
                 break;
             case ColumnType.CHAR:

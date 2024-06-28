@@ -24,12 +24,15 @@
 
 package io.questdb.test.griffin.engine.functions.json;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.json.JsonPathDefaultTypedExplicitDefaultFunctionFactory;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.Arrays;
@@ -42,8 +45,60 @@ public class JsonPathDefaultTypedExplicitDefaultFunctionFactoryTest extends Abst
     }
 
     @Test
-    public void testMatchingTypeInt() throws SqlException {
+    public void testNullDefaultBoolean() {
+        final SqlException exc = Assert.assertThrows(
+                SqlException.class,
+                () -> callFn(
+                        utf8("{\"path\": true}"),
+                        utf8(".path"),
+                        ColumnType.BOOLEAN,
+                        (Object) null
+                ));
+        TestUtils.assertContains(exc.getMessage(), "json_path's the default value cannot be NULL");
+    }
 
+    @Test
+    public void testMatchingTypeBoolean() throws SqlException {
+        callFn(
+                utf8("{\"path\": false}"),
+                utf8(".path"),
+                ColumnType.BOOLEAN,
+                true
+        ).andAssert(false);
+    }
+
+    @Test
+    public void testMatchingTypeBoolean2() throws SqlException {
+        callFn(
+                utf8("{\"path\": true}"),
+                utf8(".path"),
+                ColumnType.BOOLEAN,
+                false
+        ).andAssert(true);
+    }
+
+    @Test
+    public void testMatchingTypeDouble() throws SqlException {
+        callFn(
+                utf8("{\"path\": 0.5}"),
+                utf8(".path"),
+                ColumnType.DOUBLE,
+                1.5
+        ).andAssert(.5, DELTA);
+    }
+
+    @Test
+    public void testMatchingTypeFloat() throws SqlException {
+        callFn(
+                utf8("{\"path\": 0.5}"),
+                utf8(".path"),
+                ColumnType.FLOAT,
+                1.5f
+        ).andAssert(.5f, DELTA_F);
+    }
+
+    @Test
+    public void testMatchingTypeInt() throws SqlException {
         callFn(
                 utf8("{\"path\": 42}"),
                 utf8(".path"),
@@ -56,6 +111,46 @@ public class JsonPathDefaultTypedExplicitDefaultFunctionFactoryTest extends Abst
                 ColumnType.INT,
                 43
         ).andAssert(42);
+    }
+
+    @Test
+    public void testMatchingTypeLong() throws SqlException {
+        callFn(
+                dirUtf8("{\"path\": 42}"),
+                dirUtf8(".path"),
+                ColumnType.LONG,
+                43L
+        ).andAssert(42L);
+    }
+
+    @Test
+    public void testMatchingTypeLong2() throws SqlException {
+        callFn(
+                dirUtf8("{\"path\": 42}"),
+                dirUtf8(".path"),
+                ColumnType.LONG,
+                43
+        ).andAssert(42L);
+    }
+
+    @Test
+    public void testMatchingTypeLong3() throws SqlException {
+        callFn(
+                dirUtf8("{\"path\": 42}"),
+                dirUtf8(".path"),
+                ColumnType.LONG,
+                (short) 43
+        ).andAssert(42L);
+    }
+
+    @Test
+    public void testMatchingTypeShort() throws SqlException {
+        callFn(
+                dirUtf8("{\"path\": 42}"),
+                dirUtf8(".path"),
+                ColumnType.SHORT,
+                (short)43
+        ).andAssert((short)42);
     }
 
     @Test
