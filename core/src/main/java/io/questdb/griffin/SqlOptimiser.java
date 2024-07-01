@@ -4575,28 +4575,41 @@ public class SqlOptimiser implements Mutable {
 
                 int timestampPos = model.getColumnAliasIndex(timestampAlias);
 
-                // create function ast
-                final ExpressionNode timestampFunc = expressionNodePool.next();
+                // look for FROM clause
+                QueryModel curr = model;
+                ExpressionNode fromLo = null;
+                while (curr != null && fromLo == null) {
+                    fromLo = curr.getSampleByFromLo();
+                    curr = curr.getNestedModel();
+                }
+
+                ExpressionNode timestampFunc = expressionNodePool.next();
                 timestampFunc.token = "timestamp_floor";
-                timestampFunc.paramCount = 2;
                 timestampFunc.type = FUNCTION;
+                timestampFunc.paramCount = fromLo != null ? 3 : 2;
 
                 CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
                 characterStoreEntry.put('\'').put(sampleBy.token).put('\'');
 
-                final ExpressionNode lhs = expressionNodePool.next();
-                lhs.token = characterStoreEntry.toImmutable();
-                lhs.paramCount = 0;
-                lhs.type = CONSTANT;
+                final ExpressionNode param1 = expressionNodePool.next();
+                param1.token = characterStoreEntry.toImmutable();
+                param1.paramCount = 0;
+                param1.type = CONSTANT;
 
-                final ExpressionNode rhs = expressionNodePool.next();
-                rhs.token = timestampColumn;
-                rhs.position = timestamp.position;
-                rhs.paramCount = 0;
-                rhs.type = LITERAL;
+                final ExpressionNode param2 = expressionNodePool.next();
+                param2.token = timestampColumn;
+                param2.position = timestamp.position;
+                param2.paramCount = 0;
+                param2.type = LITERAL;
 
-                timestampFunc.lhs = lhs;
-                timestampFunc.rhs = rhs;
+                if (fromLo != null) {
+                    timestampFunc.args.add(param1);
+                    timestampFunc.args.add(param2);
+                    timestampFunc.args.add(fromLo);
+                } else {
+                    timestampFunc.lhs = param1;
+                    timestampFunc.rhs = param2;
+                }
 
                 model.getBottomUpColumns().setQuick(
                         timestampPos,
@@ -5792,7 +5805,7 @@ public class SqlOptimiser implements Mutable {
             optimiseExpressionModels(rewrittenModel, sqlExecutionContext, sqlParserCallback);
             enumerateTableColumns(rewrittenModel, sqlExecutionContext, sqlParserCallback);
             rewriteTopLevelLiteralsToFunctions(rewrittenModel);
-            //rewrittenModel = rewriteSampleBy(rewrittenModel);
+            rewrittenModel = rewriteSampleBy(rewrittenModel);
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
             resolveJoinColumns(rewrittenModel);
             optimiseBooleanNot(rewrittenModel);
