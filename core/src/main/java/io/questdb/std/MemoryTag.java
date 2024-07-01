@@ -123,6 +123,7 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(NATIVE_JIT, "NATIVE_JIT");
         tagNameMap.extendAndSet(NATIVE_OFFLOAD, "NATIVE_OFFLOAD");
         tagNameMap.extendAndSet(MMAP_UPDATE, "MMAP_UPDATE");
+        tagNameMap.extendAndSet(MMAP_PARTITION_CONVERTER, "MMAP_PARTITION_CONVERTER");
         tagNameMap.extendAndSet(NATIVE_PATH, "NATIVE_PATH");
         tagNameMap.extendAndSet(NATIVE_TABLE_READER, "NATIVE_TABLE_READER");
         tagNameMap.extendAndSet(NATIVE_TABLE_WRITER, "NATIVE_TABLE_WRITER");
