@@ -40,8 +40,9 @@ public class SimdJsonResult implements QuietCloseable {
         this.impl = Unsafe.calloc(JSON_RESULT_STRUCT_SIZE, MemoryTag.NATIVE_DEFAULT);
     }
 
-    public static CairoException formatError(@NotNull String functionName, Utf8Sequence path, int error) {
+    public static CairoException formatError(int position, @NotNull String functionName, Utf8Sequence path, int error) {
         return CairoException.nonCritical()
+                .position(position)
                 .put(functionName)
                 .put("(.., '")
                 .put(path)

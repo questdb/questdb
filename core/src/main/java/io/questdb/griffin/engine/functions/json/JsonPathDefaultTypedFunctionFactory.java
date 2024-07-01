@@ -92,7 +92,7 @@ public class JsonPathDefaultTypedFunctionFactory extends JsonPathFunctionFactory
 
     @Override
     protected String getArguments() {
-        return "ØøiV";
+        return "ØØiV";
     }
 
     @Override

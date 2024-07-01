@@ -24,106 +24,187 @@
 
 package io.questdb.test.griffin.engine.functions.json;
 
-import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.functions.json.JsonPathDefaultVarcharFunctionFactory;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class JsonPathDefaultVarcharFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class JsonPathDefaultVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
-    public void test10000() throws SqlException {
-        call(utf8("{\"path\": 10000.5}"), utf8(".path")).andAssert("10000.5");
-        call(utf8("{\"path\": 10000.5}"), dirUtf8(".path")).andAssert("10000.5");
-        call(dirUtf8("{\"path\": 10000.5}"), utf8(".path")).andAssert("10000.5");
-        call(dirUtf8("{\"path\": 10000.5}"), dirUtf8(".path")).andAssert("10000.5");
+    public void test10000() throws Exception {
+        assertMemoryLeak(() -> {
+            final String json = "'{\"path\": 10000.5}'";
+            final String expected = "json_path\n" +
+                    "10000.5\n";
+            ddl("create table json_test as (select " + json + "::varchar text)");
+            assertSql(expected, "select json_path(" + json + ", '.path')");
+            assertSql(expected, "select json_path(text, '.path') from json_test"
+            );
+        });
     }
 
     @Test
-    public void testBigNumber() throws SqlException {
-        call(
-                utf8("{\"path\": 100000000000000000000000000}"),
-                utf8(".path")
-        ).andAssert("100000000000000000000000000");
+    public void testSort() throws Exception {
+        // todo: this test shows that VarcharFunction is broken. getVarcharA() and getVarcharB() under the covers use
+        //     the same buffer and corrupt the output
+        assertMemoryLeak(() -> {
+            ddl("create table json_test (text varchar)");
+            insert("insert into json_test values ('{\"path\": 10000.5}')");
+            insert("insert into json_test values ('{\"path\": 30000.5}')");
+            insert("insert into json_test values ('{\"path\": 20000.5}')");
+            insert("insert into json_test values ('{\"path\": 40000.5}')");
+            assertSql(
+                    "",
+                    "select json_path(text, '.path') x from json_test order by 1 desc"
+            );
+        });
     }
 
     @Test
-    public void testDblPrecision() throws SqlException {
-        call(
-                utf8("{\"path\": 0.0000000000000000000000000001}"),
-                utf8(".path")
-        ).andAssert("0.0000000000000000000000000001");
+    public void testArray() throws Exception {
+        assertMemoryLeak(() -> {
+            final String json = "'{\"path\": [1, 2, 3]}'";
+            final String expected = "json_path\n" +
+                    "[1, 2, 3]\n";
+            ddl("create table json_test as (select " + json + "::varchar text)");
+            assertSql(expected, "select json_path(" + json + ", '.path')");
+            assertSql(expected, "select json_path(text, '.path') from json_test"
+            );
+        });
     }
 
     @Test
-    public void testString() throws SqlException {
-        call(utf8("{\"path\": \"abc\"}"), utf8(".path")).andAssert("abc");
-        call(dirUtf8("{\"path\": \"abc\"}"), dirUtf8(".path")).andAssert("abc");
+    public void testBigNumber() throws Exception {
+        assertMemoryLeak(() -> {
+            final String json = "'{\"path\": 100000000000000000000000000}'";
+            final String expected = "json_path\n" +
+                    "100000000000000000000000000\n";
+            ddl("create table json_test as (select " + json + "::varchar text)");
+            assertSql(expected, "select json_path(" + json + ", '.path')");
+            assertSql(expected, "select json_path(text, '.path') from json_test"
+            );
+        });
     }
 
     @Test
-    public void testEmptyJson() throws SqlException {
-        call(utf8("{}"), utf8(".path")).andAssert((String) null);
+    public void testDblPrecision() throws Exception {
+        assertMemoryLeak(() -> {
+            final String json = "'{\"path\": 0.0000000000000000000000000001}'";
+            final String expected = "json_path\n" +
+                    "0.0000000000000000000000000001\n";
+            ddl("create table json_test as (select " + json + "::varchar text)");
+            assertSql(expected, "select json_path(" + json + ", '.path')");
+            assertSql(expected, "select json_path(text, '.path') from json_test"
+            );
+        });
+    }
+
+    @Test
+    public void testDict() throws Exception {
+        assertMemoryLeak(() -> {
+            final String json = "'{\"path\": {\"a\": 1, \"b\": 2}}'";
+            final String expected = "json_path\n" +
+                    "{\"a\": 1, \"b\": 2}\n";
+            ddl("create table json_test as (select " + json + "::varchar text)");
+            assertSql(expected, "select json_path(" + json + ", '.path')");
+            assertSql(expected, "select json_path(text, '.path') from json_test"
+            );
+        });
+    }
+
+    @Test
+    public void testEmptyJson() throws Exception {
+        assertMemoryLeak(() -> {
+            final String json = "'{}'";
+            final String expected = "json_path\n" +
+                    "\n";
+            ddl("create table json_test as (select " + json + "::varchar text)");
+            assertSql(expected, "select json_path(" + json + ", '.path')");
+            assertSql(expected, "select json_path(text, '.path') from json_test");
+        });
     }
 
     @Test
     public void testInt() throws SqlException {
-        call(dirUtf8("{\"path\": 123}"), dirUtf8(".path")).andAssert("123");
+        assertSql(
+                "json_path\n" +
+                        "123\n",
+                "select json_path('{\"path\": 123}'::varchar, '.path')"
+        );
     }
 
     @Test
-    public void testNegative() throws SqlException {
-        call(utf8("{\"path\": -123.5}"), utf8(".path")).andAssert("-123.5");
+    public void testNegative() throws Exception {
+        assertMemoryLeak(() -> {
+            final String json = "'{\"path\": -123.5}'";
+            final String expected = "json_path\n" +
+                    "-123.5\n";
+            ddl("create table json_test as (select " + json + "::varchar text)");
+            assertSql(expected, "select json_path(" + json + ", '.path')");
+            assertSql(expected, "select json_path(text, '.path') from json_test");
+        });
     }
 
     @Test
-    public void testNullJson() throws SqlException {
-        call(
-                utf8(null),
-                utf8(".path")
-        ).andAssert((String) null);
-        call(
-                utf8(null),
-                dirUtf8(".path")
-        ).andAssert((String) null);
+    public void testNullJson() throws Exception {
+        assertMemoryLeak(() -> {
+            final String json = "null";
+            final String expected = "json_path\n" +
+                    "\n";
+            ddl("create table json_test as (select " + json + "::varchar text)");
+            assertSql(expected, "select json_path(" + json + ", '.path')");
+            assertSql(expected, "select json_path(text, '.path') from json_test");
+        });
     }
 
     @Test
-    public void testNullJsonValue() throws SqlException {
-        call(utf8("{\"path\": null}"), utf8(".path")).andAssert((String) null);
-        call(utf8("{\"path\": null}"), dirUtf8(".path")).andAssert((String) null);
-        call(dirUtf8("{\"path\": null}"), utf8(".path")).andAssert((String) null);
-        call(dirUtf8("{\"path\": null}"), dirUtf8(".path")).andAssert((String) null);
+    public void testNullJsonValue() throws Exception {
+        assertMemoryLeak(() -> {
+            final String json = "'{\"path\": null}'";
+            final String expected = "json_path\n" +
+                    "\n";
+            ddl("create table json_test as (select " + json + "::varchar text)");
+            assertSql(expected, "select json_path(" + json + ", '.path')");
+            assertSql(expected, "select json_path(text, '.path') from json_test"
+            );
+        });
     }
 
     @Test
-    public void testOne() throws SqlException {
-        call(utf8("{\"path\": 1}"), utf8(".path")).andAssert("1");
+    public void testOne() throws Exception {
+        assertMemoryLeak(() -> {
+            final String json = "'{\"path\": 1}'";
+            final String expected = "json_path\n" +
+                    "1\n";
+            ddl("create table json_test as (select " + json + "::varchar text)");
+            assertSql(expected, "select json_path(" + json + ", '.path')");
+            assertSql(expected, "select json_path(text, '.path') from json_test"
+            );
+        });
     }
 
     @Test
-    public void testUnsigned64Bit() throws SqlException {
-        call(
-                utf8("{\"path\": 9999999999999999999}"),
-                utf8(".path")
-        ).andAssert("9999999999999999999");
+    public void testString() throws Exception {
+        assertMemoryLeak(() -> {
+            final String json = "'{\"path\": \"abc\"}'";
+            final String expected = "json_path\n" +
+                    "abc\n";
+            ddl("create table json_test as (select " + json + "::varchar text)");
+            assertSql(expected, "select json_path(" + json + ", '.path')");
+            assertSql(expected, "select json_path(text, '.path') from json_test"
+            );
+        });
     }
 
     @Test
-    public void testArray() throws SqlException {
-        call(utf8("{\"path\": [1, 2, 3]}"), utf8(".path")).andAssert("[1, 2, 3]");
-    }
-
-    @Test
-    public void testDict() throws SqlException {
-        call(
-                utf8("{\"path\": {\"a\": 1, \"b\": 2}}"),
-                utf8(".path")
-        ).andAssert("{\"a\": 1, \"b\": 2}");
-    }
-
-    @Override
-    protected FunctionFactory getFunctionFactory() {
-        return new JsonPathDefaultVarcharFunctionFactory();
+    public void testUnsigned64Bit() throws Exception {
+        assertMemoryLeak(() -> {
+            final String json = "'{\"path\": 9999999999999999999}'";
+            final String expected = "json_path\n" +
+                    "9999999999999999999\n";
+            ddl("create table json_test as (select " + json + "::varchar text)");
+            assertSql(expected, "select json_path(" + json + ", '.path')");
+            assertSql(expected, "select json_path(text, '.path') from json_test"
+            );
+        });
     }
 }

@@ -27,7 +27,7 @@ package io.questdb.griffin.engine.functions.json;
 public class JsonPathDefaultVarcharFunctionFactory extends JsonPathFunctionFactoryBase {
     @Override
     protected String getArguments() {
-        return "Øø";
+        return "ØØ";
     }
 
     @Override

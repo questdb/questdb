@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.functions.json;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
@@ -37,10 +36,11 @@ public interface JsonPathFunction extends Function {
     String DEFAULT_FUNCTION_NAME = "json_path";
     String STRICT_FUNCTION_NAME = "json_path_s";
 
-    static @NotNull DirectUtf8Sink varcharConstantToJsonPointer(Function fn) {
-        assert fn.isConstant();
+    static DirectUtf8Sink varcharConstantToJsonPointer(Function fn) {
         final Utf8Sequence seq = fn.getVarcharA(null);
-        assert seq != null;
+        if (seq == null) {
+            return null;
+        }
         try (DirectUtf8Sink path = new DirectUtf8Sink(seq.size())) {
             path.put(seq);
             final DirectUtf8Sink pointer = new DirectUtf8Sink(seq.size());

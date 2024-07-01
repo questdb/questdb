@@ -64,7 +64,6 @@ Java_io_questdb_griffin_ConvertersNative_fixedToFixed
     const auto srcColumnType = static_cast<ColumnType>(srcType);
     const auto dstColumnType = static_cast<ColumnType>(dstType);
 
-    ConversionError status;
     auto src = reinterpret_cast<void*>(srcMem);
     auto dst = reinterpret_cast<void*>(dstMem);
     auto row_count = static_cast<size_t>(rowCount);

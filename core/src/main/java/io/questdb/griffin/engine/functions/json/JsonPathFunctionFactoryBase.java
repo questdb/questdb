@@ -31,48 +31,14 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.DirectUtf8Sink;
-import org.jetbrains.annotations.NotNull;
 
 public abstract class JsonPathFunctionFactoryBase implements FunctionFactory {
-    private String signature;
+    private final String signature;
 
     public JsonPathFunctionFactoryBase() {
         signature = getFunctionName() + "(" + getArguments() + ")";
-    }
-
-    private static @NotNull JsonPathFunction buildFunction(
-            String functionName,
-            int position,
-            Function json,
-            Function path,
-            int targetType,
-            DirectUtf8Sink pointer,
-            int maxSize,
-            boolean strict) {
-        switch (targetType) {
-            case ColumnType.LONG:
-            case ColumnType.DOUBLE:
-            case ColumnType.FLOAT:
-            case ColumnType.BOOLEAN:
-            case ColumnType.SHORT:
-            case ColumnType.INT:
-                return new JsonPathPrimitiveFunction(functionName, position, targetType, json, path, pointer, strict);
-            case ColumnType.VARCHAR:
-                return new JsonPathVarcharFunction(functionName, position, json, path, pointer, maxSize, strict);
-            default:
-                throw new UnsupportedOperationException("nyi");  // TODO: complete remaining types
-        }
-    }
-
-    private static final String FUNCTION_NAME = JsonPathFunction.DEFAULT_FUNCTION_NAME;
-    private static final String SIGNATURE = FUNCTION_NAME + "(ØøiV)";
-
-    private String getFunctionName() {
-        return isStrict()
-                ? JsonPathFunction.STRICT_FUNCTION_NAME
-                : JsonPathFunction.DEFAULT_FUNCTION_NAME;
     }
 
     @Override
@@ -80,33 +46,58 @@ public abstract class JsonPathFunctionFactoryBase implements FunctionFactory {
         return signature;
     }
 
-    protected abstract String getArguments();
-
-    /**
-     * Function execution should fail on error, rather than return a default value.
-     */
-    protected abstract boolean isStrict();
-
     @Override
     public JsonPathFunction newInstance(
-            int position, ObjList<Function> args, IntList argPositions,
-            CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         final Function json = args.getQuick(0);
-        final int maxSize = configuration.getStrFunctionMaxBufferLength();
         final Function path = args.getQuick(1);
-        final DirectUtf8Sink pointer = JsonPathFunction.varcharConstantToJsonPointer(path);
+
+        if (path.getType() != ColumnType.UNDEFINED && !path.isConstant() && !path.isRuntimeConstant()) {
+            Misc.freeObjList(args);
+            throw SqlException.$(argPositions.getQuick(1), "constant or bind variable expected");
+        }
+
         final int targetType = parseTargetType(position, args.getQuiet(2));
-        return buildFunction(
-                getFunctionName(),
-                position,
-                json,
-                path,
-                targetType,
-                pointer,
-                maxSize,
-                isStrict()
-        );
+        String functionName = getFunctionName();
+        int maxSize = configuration.getStrFunctionMaxBufferLength();
+        switch (targetType) {
+            case ColumnType.LONG:
+            case ColumnType.DOUBLE:
+            case ColumnType.FLOAT:
+            case ColumnType.BOOLEAN:
+            case ColumnType.SHORT:
+            case ColumnType.INT:
+                return new JsonPathPrimitiveFunction(
+                        functionName,
+                        position,
+                        targetType,
+                        json,
+                        path,
+                        isStrict()
+                );
+            case ColumnType.VARCHAR:
+                return new JsonPathVarcharFunction(
+                        functionName,
+                        position,
+                        json,
+                        path,
+                        maxSize,
+                        isStrict()
+                );
+            default:
+                throw new UnsupportedOperationException("nyi");  // TODO: complete remaining types
+        }
+    }
+
+    private String getFunctionName() {
+        return isStrict()
+                ? JsonPathFunction.STRICT_FUNCTION_NAME
+                : JsonPathFunction.DEFAULT_FUNCTION_NAME;
     }
 
     private int parseTargetType(int position, Function targetTypeFn) throws SqlException {
@@ -137,4 +128,11 @@ public abstract class JsonPathFunctionFactoryBase implements FunctionFactory {
                 throw SqlException.position(position).put("unsupported target type: ").put(targetType);
         }
     }
+
+    protected abstract String getArguments();
+
+    /**
+     * Function execution should fail on error, rather than return a default value.
+     */
+    protected abstract boolean isStrict();
 }

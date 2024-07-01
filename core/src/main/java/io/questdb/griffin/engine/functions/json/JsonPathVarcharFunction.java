@@ -26,8 +26,11 @@ package io.questdb.griffin.engine.functions.json;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.VarcharFunction;
+import io.questdb.std.Misc;
 import io.questdb.std.json.SimdJsonError;
 import io.questdb.std.json.SimdJsonResult;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -37,9 +40,7 @@ import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.Objects;
-
-class JsonPathVarcharFunction extends VarcharFunction implements BinaryFunction, JsonPathFunction {
+class JsonPathVarcharFunction extends VarcharFunction implements JsonPathFunction {
     private final VarcharSupportingState a;
     private final VarcharSupportingState b;
     private final VarcharSupportingState copied;
@@ -47,19 +48,19 @@ class JsonPathVarcharFunction extends VarcharFunction implements BinaryFunction,
     private final Function json;
     private final int maxSize;
     private final Function path;
-    private final DirectUtf8Sink pointer;
     private final int position;
     private final boolean strict;
     private DirectUtf8Sink defaultVarchar = null;
+    private DirectUtf8Sink pointer;
 
     public JsonPathVarcharFunction(
             @NotNull String functionName,
             int position,
             Function json,
             Function path,
-            DirectUtf8Sink pointer,
             int maxSize,
-            boolean strict) {
+            boolean strict
+    ) {
         this.functionName = functionName;
         this.position = position;
         this.a = new VarcharSupportingState(new DirectUtf8Sink(maxSize));
@@ -67,7 +68,6 @@ class JsonPathVarcharFunction extends VarcharFunction implements BinaryFunction,
         this.copied = new VarcharSupportingState();
         this.json = json;
         this.path = path;
-        this.pointer = pointer;
         this.maxSize = maxSize;
         this.strict = strict;
     }
@@ -77,25 +77,13 @@ class JsonPathVarcharFunction extends VarcharFunction implements BinaryFunction,
         a.close();
         b.close();
         copied.close();
-        pointer.close();
-        if (defaultVarchar != null) {
-            defaultVarchar.close();
-        }
-    }
-
-    @Override
-    public Function getLeft() {
-        return json;
+        pointer = Misc.free(pointer);
+        defaultVarchar = Misc.free(defaultVarchar);
     }
 
     @Override
     public String getName() {
         return functionName;
-    }
-
-    @Override
-    public Function getRight() {
-        return path;
     }
 
     @Override
@@ -106,7 +94,7 @@ class JsonPathVarcharFunction extends VarcharFunction implements BinaryFunction,
             }
             copied.destSink = (DirectUtf8Sink) utf8Sink;
             copied.closeDestSink = false;
-            jsonPointer(json.getVarcharA(rec), pointer, Objects.requireNonNull(path.getVarcharA(null)), copied);
+            jsonPointer(json.getVarcharA(rec), pointer, copied);
         } else {
             if (copied.destSink == null) {
                 copied.destSink = new DirectUtf8Sink(maxSize);
@@ -115,19 +103,35 @@ class JsonPathVarcharFunction extends VarcharFunction implements BinaryFunction,
                 copied.destSink.clear();
                 copied.destSink.reserve(maxSize);
             }
-            jsonPointer(json.getVarcharA(rec), pointer, Objects.requireNonNull(path.getVarcharA(null)), copied);
+            jsonPointer(json.getVarcharA(rec), pointer, copied);
             utf8Sink.put(copied.destSink);
         }
     }
 
     @Override
     public @Nullable DirectUtf8Sink getVarcharA(Record rec) {
-        return jsonPointer(json.getVarcharA(rec), pointer, Objects.requireNonNull(path.getVarcharA(null)), a);
+        Utf8Sequence utf8Json = json.getVarcharA(rec);
+        if (utf8Json != null && pointer != null) {
+            return jsonPointer(utf8Json, pointer, a);
+        }
+        return null;
     }
 
     @Override
     public @Nullable DirectUtf8Sink getVarcharB(Record rec) {
-        return jsonPointer(json.getVarcharB(rec), pointer, Objects.requireNonNull(path.getVarcharB(null)), b);
+        Utf8Sequence utf8Json = json.getVarcharB(rec);
+        if (utf8Json != null && pointer != null) {
+            return jsonPointer(utf8Json, pointer, a);
+        }
+        return null;
+    }
+
+    @Override
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        json.init(symbolTableSource, executionContext);
+        path.init(symbolTableSource, executionContext);
+        pointer = Misc.free(pointer);
+        pointer = JsonPathFunction.varcharConstantToJsonPointer(path);
     }
 
     @Override
@@ -174,7 +178,6 @@ class JsonPathVarcharFunction extends VarcharFunction implements BinaryFunction,
     private @Nullable DirectUtf8Sink jsonPointer(
             @Nullable Utf8Sequence json,
             @NotNull DirectUtf8Sequence pointer,
-            @NotNull Utf8Sequence path,
             VarcharSupportingState state
     ) {
         if (json == null) {
@@ -202,7 +205,8 @@ class JsonPathVarcharFunction extends VarcharFunction implements BinaryFunction,
         } else if (strict && !state.simdJsonResult.isNull()) {
             final int error = state.simdJsonResult.getError();
             if (error != SimdJsonError.SUCCESS) {
-                throw SimdJsonResult.formatError(functionName, path, error);
+                // the path is constant or runtime constant, we're allowed to use null record
+                throw SimdJsonResult.formatError(position, functionName, path.getVarcharA(null), error);
             }
         }
         return defaultVarchar;  // usually null

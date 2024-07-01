@@ -24,24 +24,23 @@
 
 package io.questdb.griffin.engine.functions.json;
 
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cairo.sql.ScalarFunction;
-import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.cairo.sql.*;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
+import io.questdb.std.Misc;
 import io.questdb.std.json.SimdJsonError;
 import io.questdb.std.json.SimdJsonResult;
 import io.questdb.std.str.*;
 import org.jetbrains.annotations.Nullable;
 
-public class JsonPathPrimitiveFunction implements ScalarFunction, BinaryFunction, JsonPathFunction {
+public class JsonPathPrimitiveFunction implements ScalarFunction, JsonPathFunction {
     private final int columnType;
     private final String functionName;
     private final Function json;
     private final Function path;
-    private final DirectUtf8Sink pointer;
     private final int position;
     private final SupportingState state;
     private final boolean strict;
@@ -51,6 +50,7 @@ public class JsonPathPrimitiveFunction implements ScalarFunction, BinaryFunction
     private int defaultInt = Integer.MIN_VALUE;
     private long defaultLong = Long.MIN_VALUE;
     private short defaultShort = Short.MIN_VALUE;
+    private DirectUtf8Sink pointer;
 
     public JsonPathPrimitiveFunction(
             String functionName,
@@ -58,14 +58,13 @@ public class JsonPathPrimitiveFunction implements ScalarFunction, BinaryFunction
             int columnType,
             Function json,
             Function path,
-            DirectUtf8Sink pointer,
-            boolean strict) {
+            boolean strict
+    ) {
         this.functionName = functionName;
         this.position = position;
         this.columnType = columnType;
         this.json = json;
         this.path = path;
-        this.pointer = pointer;
         this.strict = strict;
         this.state = new SupportingState();
     }
@@ -73,7 +72,9 @@ public class JsonPathPrimitiveFunction implements ScalarFunction, BinaryFunction
     @Override
     public void close() {
         state.close();
-        pointer.close();
+        pointer = Misc.free(pointer);
+        json.close();
+        path.close();
     }
 
     @Override
@@ -91,7 +92,7 @@ public class JsonPathPrimitiveFunction implements ScalarFunction, BinaryFunction
         final Utf8Sequence jsonSeq = json.getVarcharA(rec);
         if (jsonSeq == null) {
             if (strict) {
-                throw SimdJsonResult.formatError(functionName, path.getVarcharA(rec), SimdJsonError.NO_SUCH_FIELD);
+                throw SimdJsonResult.formatError(position, functionName, path.getVarcharA(rec), SimdJsonError.NO_SUCH_FIELD);
             } else {
                 return defaultBool;
             }
@@ -100,7 +101,7 @@ public class JsonPathPrimitiveFunction implements ScalarFunction, BinaryFunction
         if (strict) {
             final int error = state.simdJsonResult.getError();
             if (error != SimdJsonError.SUCCESS) {
-                throw SimdJsonResult.formatError(functionName, path.getVarcharA(null), error);
+                throw SimdJsonResult.formatError(position, functionName, path.getVarcharA(null), error);
             }
         }
         return res;
@@ -131,7 +132,7 @@ public class JsonPathPrimitiveFunction implements ScalarFunction, BinaryFunction
         if (strict && !state.simdJsonResult.isNull()) {
             final int error = state.simdJsonResult.getError();
             if (error != SimdJsonError.SUCCESS) {
-                throw SimdJsonResult.formatError(functionName, path.getVarcharA(null), error);
+                throw SimdJsonResult.formatError(position, functionName, path.getVarcharA(null), error);
             }
         }
         return res;
@@ -147,7 +148,7 @@ public class JsonPathPrimitiveFunction implements ScalarFunction, BinaryFunction
         if (strict && !state.simdJsonResult.isNull()) {
             final int error = state.simdJsonResult.getError();
             if (error != SimdJsonError.SUCCESS) {
-                throw SimdJsonResult.formatError(functionName, path.getVarcharA(null), error);
+                throw SimdJsonResult.formatError(position, functionName, path.getVarcharA(null), error);
             }
         }
         return res;
@@ -188,15 +189,10 @@ public class JsonPathPrimitiveFunction implements ScalarFunction, BinaryFunction
         if (strict && !state.simdJsonResult.isNull()) {
             final int error = state.simdJsonResult.getError();
             if (error != SimdJsonError.SUCCESS) {
-                throw SimdJsonResult.formatError(functionName, path.getVarcharA(null), error);
+                throw SimdJsonResult.formatError(position, functionName, path.getVarcharA(null), error);
             }
         }
         return res;
-    }
-
-    @Override
-    public Function getLeft() {
-        return json;
     }
 
     @Override
@@ -209,7 +205,7 @@ public class JsonPathPrimitiveFunction implements ScalarFunction, BinaryFunction
         if (strict && !state.simdJsonResult.isNull()) {
             final int error = state.simdJsonResult.getError();
             if (error != SimdJsonError.SUCCESS) {
-                throw SimdJsonResult.formatError(functionName, path.getVarcharA(null), error);
+                throw SimdJsonResult.formatError(position, functionName, path.getVarcharA(null), error);
             }
         }
         return res;
@@ -251,11 +247,6 @@ public class JsonPathPrimitiveFunction implements ScalarFunction, BinaryFunction
     }
 
     @Override
-    public Function getRight() {
-        return path;
-    }
-
-    @Override
     public short getShort(Record rec) {
         final Utf8Sequence jsonSeq = json.getVarcharA(rec);
         if (jsonSeq == null) {
@@ -265,7 +256,7 @@ public class JsonPathPrimitiveFunction implements ScalarFunction, BinaryFunction
         if (strict && !state.simdJsonResult.isNull()) {
             final int error = state.simdJsonResult.getError();
             if (error != SimdJsonError.SUCCESS) {
-                throw SimdJsonResult.formatError(functionName, path.getVarcharA(null), error);
+                throw SimdJsonResult.formatError(position, functionName, path.getVarcharA(null), error);
             }
         }
         return res;
@@ -329,6 +320,14 @@ public class JsonPathPrimitiveFunction implements ScalarFunction, BinaryFunction
     @Override
     public int getVarcharSize(Record rec) {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        json.init(symbolTableSource, executionContext);
+        path.init(symbolTableSource, executionContext);
+        pointer = Misc.free(pointer);
+        pointer = JsonPathFunction.varcharConstantToJsonPointer(path);
     }
 
     @Override
