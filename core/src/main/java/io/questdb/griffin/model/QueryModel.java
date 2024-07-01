@@ -1713,11 +1713,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             if (sampleByFromLo != null) {
                 sink.putAscii(" from ");
                 sampleByFromLo.toSink(sink);
+            }
 
-                if (sampleByFromHi != null) {
-                    sink.putAscii(" to ");
-                    sampleByFromHi.toSink(sink);
-                }
+            if (sampleByFromHi != null) {
+                sink.putAscii(" to ");
+                sampleByFromHi.toSink(sink);
             }
 
             final int fillCount = sampleByFill.size();

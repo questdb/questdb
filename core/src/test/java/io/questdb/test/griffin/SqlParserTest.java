@@ -6303,17 +6303,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testSampleByFromBasicSyntax() throws SqlException {
-        assertQuery(
-                "select-group-by ts, avg(price) avg from (select [ts, price] from tbl timestamp (ts)) sample by 5m from '2018' to '2019'",
-                "select ts, avg(price) from tbl sample by 5m from '2018' to '2019' align to first observation",
-                modelOf("tbl")
-                        .timestamp("ts")
-                        .col("price", ColumnType.DOUBLE)
-        );
-    }
-
-    @Test
     public void testNonWindowFunctionInWindowContext() throws Exception {
         assertException(
                 "select max(price) over (partition by symbol) from trades",
@@ -7921,6 +7910,28 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSampleByFromBasicSyntax() throws SqlException {
+        assertQuery(
+                "select-group-by ts, avg(price) avg from (select [ts, price] from tbl timestamp (ts)) sample by 5m from '2018' to '2019'",
+                "select ts, avg(price) from tbl sample by 5m from '2018' to '2019' align to first observation",
+                modelOf("tbl")
+                        .timestamp("ts")
+                        .col("price", ColumnType.DOUBLE)
+        );
+    }
+
+    @Test
+    public void testSampleByFromOnItsOwn() throws SqlException {
+        assertQuery(
+                "select-group-by ts, avg(price) avg from (select [ts, price] from tbl timestamp (ts)) sample by 5m from '2018'",
+                "select ts, avg(price) from tbl sample by 5m from '2018' align to first observation",
+                modelOf("tbl")
+                        .timestamp("ts")
+                        .col("price", ColumnType.DOUBLE)
+        );
+    }
+
+    @Test
     public void testSampleByIncorrectPlacement() throws Exception {
         assertSyntaxError(
                 "select a, sum(b) from ((tab order by t) timestamp(t) sample by 10m align to first observation order by t) order by a",
@@ -8232,6 +8243,17 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 modelOf("tab2")
                         .col("x", ColumnType.INT)
                         .col("z", ColumnType.DOUBLE)
+        );
+    }
+
+    @Test
+    public void testSampleByToOnItsOwn() throws SqlException {
+        assertQuery(
+                "select-group-by ts, avg(price) avg from (select [ts, price] from tbl timestamp (ts)) sample by 5m to '2019'",
+                "select ts, avg(price) from tbl sample by 5m to '2019' align to first observation",
+                modelOf("tbl")
+                        .timestamp("ts")
+                        .col("price", ColumnType.DOUBLE)
         );
     }
 

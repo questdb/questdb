@@ -62,6 +62,12 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class SampleByTest extends AbstractCairoTest {
     private static final Log LOG = LogFactory.getLog(SampleByTest.class);
+    private static String DDL_FROMTO = "create table fromto as (\n" +
+            "  SELECT timestamp_sequence(\n" +
+            "            to_timestamp('2018-01-01T00:00:00', 'yyyy-MM-ddTHH:mm:ss'),\n" +
+            "            1800000000L) as ts, x\n" +
+            "FROM long_sequence(480)\n" +
+            ") timestamp(ts)";
 
     @Test
     public void testBadFunction() throws Exception {
@@ -3748,6 +3754,33 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByFromFillNull() throws Exception {
+        assertMemoryLeak(() -> {
+
+            ddl(DDL_FROMTO);
+            drainWalQueue();
+            assertSql(
+
+                    "ts\tavg\n" +
+                            "2018-01-05T04:00:54.775808Z\t221.0\n" +
+                            "2018-01-15T04:00:54.775808Z\t461.0\n",
+                    "select ts, avg(x) from fromto\n" +
+                            "sample by 5d"
+            );
+            assertSql(
+                    "ts\tavg\n" +
+                            "2017-12-20T00:00:00.000000Z\tnull\n" +
+                            "2017-12-25T00:00:00.000000Z\tnull\n" +
+                            "2017-12-30T00:00:00.000000Z\t72.5\n" +
+                            "2018-01-04T00:00:00.000000Z\t264.5\n" +
+                            "2018-01-09T00:00:00.000000Z\t432.5\n",
+                    "select ts, avg(x) from fromto\n" +
+                            "sample by 5d from '2017-12-20' fill(null)"
+            );
+        });
+    }
+
+    @Test
     public void testSampleByFromPlans() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tbl (\n" +
@@ -5486,7 +5519,6 @@ public class SampleByTest extends AbstractCairoTest {
                         "PFYX\tnull\t1970-01-04T06:00:00.000000Z\n" +
                         "QWPK\tnull\t1970-01-04T06:00:00.000000Z\n", true, true, false);
     }
-
 
     @Test
     public void testSampleCountFillLinearWithOffset() throws Exception {
