@@ -1206,7 +1206,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             createStandardNonWalTable(nonWalTable);
 
             assertAlterTableTypeFail("alter table " + nonWalTable + " resume wal", nonWalTable + " is not a WAL table");
-            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resum wal", "'add', 'alter', 'attach', 'detach', 'drop', 'resume', 'rename', 'set' or 'squash' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resum wal", AlterTableUtils.ALTER_TABLE_EXPECTED_TOKEN_DESCR);
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wall", "'wal' expected");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wal frol", "'from' expected");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wal from", "'transaction' or 'txn' expected");

@@ -2184,7 +2184,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         AbstractSqlParserTest.assertSyntaxError(
                 "ALTER TABLE tab foobar",
                 16,
-                "'add', 'alter', 'attach', 'detach', 'drop', 'resume', 'rename', 'set' or 'squash' expected",
+                AlterTableUtils.ALTER_TABLE_EXPECTED_TOKEN_DESCR,
                 tableModel
         );
     }
