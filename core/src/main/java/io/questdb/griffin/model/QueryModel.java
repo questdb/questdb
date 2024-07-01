@@ -170,8 +170,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private ExpressionNode outerJoinExpressionClause;
     private ExpressionNode postJoinWhereClause;
     private ExpressionNode sampleBy;
-    private ExpressionNode sampleByFromHi;
-    private ExpressionNode sampleByFromLo;
     private ExpressionNode sampleByOffset = ZERO_OFFSET;
     private ExpressionNode sampleByTimezoneName = null;
     private ExpressionNode sampleByUnit;
@@ -435,8 +433,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         explicitTimestamp = false;
         showKind = -1;
         sampleByOffset = ZERO_OFFSET;
-        sampleByFromLo = null;
-        sampleByFromHi = null;
     }
 
     public void clearColumnMapStructs() {
@@ -457,8 +453,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         sampleByFill.clear();
         sampleByTimezoneName = null;
         sampleByOffset = null;
-        sampleByFromLo = null;
-        sampleByFromHi = null;
     }
 
     public boolean containsJoin() {
@@ -617,8 +611,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && Objects.equals(timestamp, that.timestamp)
                 && Objects.equals(sampleBy, that.sampleBy)
                 && Objects.equals(sampleByUnit, that.sampleByUnit)
-                && Objects.equals(sampleByFromLo, that.sampleByFromLo)
-                && Objects.equals(sampleByFromHi, that.sampleByFromHi)
                 && Objects.equals(context, that.context)
                 && Objects.equals(joinCriteria, that.joinCriteria)
                 && Objects.equals(orderedJoinModels, that.orderedJoinModels)
@@ -839,14 +831,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return sampleByFill;
     }
 
-    public ExpressionNode getSampleByFromHi() {
-        return sampleByFromHi;
-    }
-
-    public ExpressionNode getSampleByFromLo() {
-        return sampleByFromLo;
-    }
-
     public ExpressionNode getSampleByOffset() {
         return sampleByOffset;
     }
@@ -955,7 +939,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 postJoinWhereClause, outerJoinExpressionClause, constWhereClause, nestedModel,
                 tableNameExpr, metadataVersion, tableNameFunction,
                 alias, timestamp, sampleBy,
-                sampleByUnit, sampleByFromLo, sampleByFromHi, context, joinCriteria,
+                sampleByUnit, context, joinCriteria,
                 joinType, joinKeywordPosition, orderedJoinModels,
                 limitLo, limitHi, limitPosition,
                 limitAdviceLo, limitAdviceHi, isLimitImplemented,
@@ -1099,8 +1083,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.sampleByFill.addAll(model.sampleByFill);
         this.sampleByTimezoneName = model.sampleByTimezoneName;
         this.sampleByOffset = model.sampleByOffset;
-        this.sampleByFromLo = model.sampleByFromLo;
-        this.sampleByFromHi = model.sampleByFromHi;
 
         // clear the source
         model.clearSampleBy();
@@ -1284,11 +1266,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public void setSampleBy(ExpressionNode sampleBy, ExpressionNode sampleByUnit) {
         this.sampleBy = sampleBy;
         this.sampleByUnit = sampleByUnit;
-    }
-
-    public void setSampleByFrom(ExpressionNode lo, ExpressionNode hi) {
-        this.sampleByFromLo = lo;
-        this.sampleByFromHi = hi;
     }
 
     public void setSampleByOffset(ExpressionNode sampleByOffset) {
@@ -1709,16 +1686,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         if (sampleBy != null) {
             sink.putAscii(" sample by ");
             sampleBy.toSink(sink);
-
-            if (sampleByFromLo != null) {
-                sink.putAscii(" from ");
-                sampleByFromLo.toSink(sink);
-
-                if (sampleByFromHi != null) {
-                    sink.putAscii(" to ");
-                    sampleByFromHi.toSink(sink);
-                }
-            }
 
             final int fillCount = sampleByFill.size();
             if (fillCount > 0) {
