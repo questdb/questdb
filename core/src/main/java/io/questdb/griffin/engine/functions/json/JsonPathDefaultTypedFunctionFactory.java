@@ -56,6 +56,40 @@ public class JsonPathDefaultTypedFunctionFactory extends JsonPathFunctionFactory
         return fn;
     }
 
+    private static boolean isEqualOrWidening(int targetType, int defaultType) {
+        switch (targetType) {
+            case ColumnType.BOOLEAN:
+                return defaultType == ColumnType.BOOLEAN;
+            case ColumnType.DOUBLE:
+                return defaultType == ColumnType.DOUBLE;
+            case ColumnType.FLOAT:
+                return (defaultType == ColumnType.FLOAT)
+                        || (defaultType == ColumnType.DOUBLE);
+            case ColumnType.INT:
+                return (defaultType == ColumnType.INT)
+                        || (defaultType == ColumnType.SHORT)
+                        || (defaultType == ColumnType.BYTE)
+                        || (defaultType == ColumnType.BOOLEAN);
+            case ColumnType.LONG:
+                return (defaultType == ColumnType.LONG)
+                        || (defaultType == ColumnType.INT)
+                        || (defaultType == ColumnType.SHORT)
+                        || (defaultType == ColumnType.BYTE)
+                        || (defaultType == ColumnType.BOOLEAN);
+            case ColumnType.SHORT:
+                return (defaultType == ColumnType.SHORT)
+                        || (defaultType == ColumnType.BYTE)
+                        || (defaultType == ColumnType.BOOLEAN);
+            case ColumnType.VARCHAR:
+                return (defaultType == ColumnType.VARCHAR)
+                        || (defaultType == ColumnType.STRING)
+                        || (defaultType == ColumnType.SYMBOL)
+                        || (defaultType == ColumnType.CHAR);
+            default:
+                return false;
+        }
+    }
+
     private Function parseDefaultValueFunction(int position, int targetType, ObjList<Function> args) throws SqlException {
         if (args.size() > 4) {
             throw SqlException
@@ -85,6 +119,15 @@ public class JsonPathDefaultTypedFunctionFactory extends JsonPathFunctionFactory
 
         if (!defaultValueFn.isConstant()) {
             throw SqlException.position(position).put("json_path's default value must be a constant");
+        }
+
+        if (!isEqualOrWidening(targetType, defaultValueFn.getType())) {
+            throw SqlException
+                    .position(position)
+                    .put("json_path's default value cannot be of type ")
+                    .put(ColumnType.nameOf(defaultValueFn.getType()))
+                    .put(", expected a value compatible with ")
+                    .put(ColumnType.nameOf(targetType));
         }
 
         return defaultValueFn;

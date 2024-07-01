@@ -35,12 +35,30 @@ import org.junit.Test;
 
 public class JsonPathStrictVarcharFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
+    private static final String doc1 = "{\n" +
+            "    \"hello\": \"world\",\n" +
+            "    \"list\": [\n" +
+            "        1,\n" +
+            "        2,\n" +
+            "        3\n" +
+            "     ],\n" +
+            "     \"list.of.dicts\": [\n" +
+            "         {\"hello\": \"world\"},\n" +
+            "         {\"hello\": \"bob\"}\n" +
+            "     ]\n" +
+            "}";
+
     @Test
     public void test10000() throws SqlException {
         call(utf8("{\"path\": 10000.5}"), utf8(".path")).andAssert("10000.5");
         call(utf8("{\"path\": 10000.5}"), dirUtf8(".path")).andAssert("10000.5");
         call(dirUtf8("{\"path\": 10000.5}"), utf8(".path")).andAssert("10000.5");
         call(dirUtf8("{\"path\": 10000.5}"), dirUtf8(".path")).andAssert("10000.5");
+    }
+
+    @Test
+    public void testArray() throws SqlException {
+        call(utf8("{\"path\": [1, 2, 3]}"), utf8(".path")).andAssert("[1, 2, 3]");
     }
 
     @Test
@@ -60,16 +78,25 @@ public class JsonPathStrictVarcharFunctionFactoryTest extends AbstractFunctionFa
     }
 
     @Test
-    public void testString() throws SqlException {
-        call(utf8("{\"path\": \"abc\"}"), utf8(".path")).andAssert("abc");
-        call(dirUtf8("{\"path\": \"abc\"}"), dirUtf8(".path")).andAssert("abc");
+    public void testDict() throws SqlException {
+        call(
+                utf8("{\"path\": {\"a\": 1, \"b\": 2}}"),
+                utf8(".path")
+        ).andAssert("{\"a\": 1, \"b\": 2}");
+    }
+
+    @Test
+    public void testDoc1() throws SqlException {
+        call(utf8(doc1), utf8(".list[0]")).andAssert("1");
+        call(utf8(doc1), utf8(".list[1]")).andAssert("2");
+        call(utf8(doc1), utf8(".list[2]")).andAssert("3");
     }
 
     @Test
     public void testEmptyJson() {
         final CairoException exc = Assert.assertThrows(
                 CairoException.class,
-                () -> call(utf8("{}"), utf8(".path")).andAssert((String) null)
+                () -> call(utf8("{}"), utf8(".path")).andAssert(null)
         );
         TestUtils.assertContains(exc.getMessage(), "json_path_s(.., '.path'): NO_SUCH_FIELD");
     }
@@ -89,19 +116,19 @@ public class JsonPathStrictVarcharFunctionFactoryTest extends AbstractFunctionFa
         call(
                 utf8(null),
                 utf8(".path")
-        ).andAssert((String) null);
+        ).andAssert(null);
         call(
                 utf8(null),
                 dirUtf8(".path")
-        ).andAssert((String) null);
+        ).andAssert(null);
     }
 
     @Test
     public void testNullJsonValue() throws SqlException {
-        call(utf8("{\"path\": null}"), utf8(".path")).andAssert((String) null);
-        call(utf8("{\"path\": null}"), dirUtf8(".path")).andAssert((String) null);
-        call(dirUtf8("{\"path\": null}"), utf8(".path")).andAssert((String) null);
-        call(dirUtf8("{\"path\": null}"), dirUtf8(".path")).andAssert((String) null);
+        call(utf8("{\"path\": null}"), utf8(".path")).andAssert(null);
+        call(utf8("{\"path\": null}"), dirUtf8(".path")).andAssert(null);
+        call(dirUtf8("{\"path\": null}"), utf8(".path")).andAssert(null);
+        call(dirUtf8("{\"path\": null}"), dirUtf8(".path")).andAssert(null);
     }
 
     @Test
@@ -110,24 +137,17 @@ public class JsonPathStrictVarcharFunctionFactoryTest extends AbstractFunctionFa
     }
 
     @Test
+    public void testString() throws SqlException {
+        call(utf8("{\"path\": \"abc\"}"), utf8(".path")).andAssert("abc");
+        call(dirUtf8("{\"path\": \"abc\"}"), dirUtf8(".path")).andAssert("abc");
+    }
+
+    @Test
     public void testUnsigned64Bit() throws SqlException {
         call(
                 utf8("{\"path\": 9999999999999999999}"),
                 utf8(".path")
         ).andAssert("9999999999999999999");
-    }
-
-    @Test
-    public void testArray() throws SqlException {
-        call(utf8("{\"path\": [1, 2, 3]}"), utf8(".path")).andAssert("[1, 2, 3]");
-    }
-
-    @Test
-    public void testDict() throws SqlException {
-        call(
-                utf8("{\"path\": {\"a\": 1, \"b\": 2}}"),
-                utf8(".path")
-        ).andAssert("{\"a\": 1, \"b\": 2}");
     }
 
     @Override
