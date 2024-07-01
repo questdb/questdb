@@ -98,6 +98,10 @@ impl ParquetDecoder {
             (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int16))) => {
                 Some(ColumnType::Short)
             }
+
+            (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::UInt16))) => {
+                Some(ColumnType::Char)
+            }
             (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int8))) => {
                 Some(ColumnType::Byte)
             }

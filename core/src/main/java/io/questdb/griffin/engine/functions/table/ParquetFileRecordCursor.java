@@ -140,6 +140,32 @@ public class ParquetFileRecordCursor implements NoRandomAccessRecordCursor {
         }
 
         @Override
+        public boolean getBool(int col) {
+            return getByte(col) == 1;
+        }
+
+        @Override
+        public byte getByte(int col) {
+            long chunkPtr = columnChunkBufferPtrs.getQuick(col);
+            long dataPtr = PartitionDecoder.getChunkDataPtr(chunkPtr);
+            return Unsafe.getUnsafe().getByte(dataPtr + currentRowInRowGroup);
+        }
+
+        @Override
+        public char getChar(int col) {
+            long chunkPtr = columnChunkBufferPtrs.getQuick(col);
+            long dataPtr = PartitionDecoder.getChunkDataPtr(chunkPtr);
+            return Unsafe.getUnsafe().getChar(dataPtr + currentRowInRowGroup * 2L);
+        }
+
+        @Override
+        public short getShort(int col) {
+            long chunkPtr = columnChunkBufferPtrs.getQuick(col);
+            long dataPtr = PartitionDecoder.getChunkDataPtr(chunkPtr);
+            return Unsafe.getUnsafe().getShort(dataPtr + currentRowInRowGroup * 2L);
+        }
+
+        @Override
         public CharSequence getStrA(int col) {
             long chunkPtr = columnChunkBufferPtrs.getQuick(col);
             long auxPtr = PartitionDecoder.getChunkAuxPtr(chunkPtr);

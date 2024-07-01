@@ -123,7 +123,6 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                 return ColumnType.INT;
             case ColumnType.GEOLONG:
                 return ColumnType.LONG;
-            case ColumnType.CHAR:
             case ColumnType.GEOSHORT:
                 return ColumnType.SHORT;
             case ColumnType.GEOBYTE:

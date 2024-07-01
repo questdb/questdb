@@ -95,12 +95,20 @@ pub fn column_type_to_parquet_type(
             Some(PrimitiveLogicalType::Integer(IntegerType::Int8)),
             Some(column_id),
         )?),
-        ColumnType::Short | ColumnType::Char => Ok(ParquetType::try_from_primitive(
+        ColumnType::Short => Ok(ParquetType::try_from_primitive(
             name,
             PhysicalType::Int32,
             Repetition::Required,
             Some(PrimitiveConvertedType::Int16),
             Some(PrimitiveLogicalType::Integer(IntegerType::Int16)),
+            Some(column_id),
+        )?),
+        ColumnType::Char => Ok(ParquetType::try_from_primitive(
+            name,
+            PhysicalType::Int32,
+            Repetition::Required,
+            Some(PrimitiveConvertedType::Int16),
+            Some(PrimitiveLogicalType::Integer(IntegerType::UInt16)),
             Some(column_id),
         )?),
         ColumnType::Int => Ok(ParquetType::try_from_primitive(

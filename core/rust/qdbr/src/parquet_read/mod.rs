@@ -5,6 +5,9 @@ use std::fs::File;
 mod decode;
 mod jni;
 mod meta;
+mod polars_utils;
+mod column_sink;
+mod slicer;
 
 // The metadata fields are accessed from Java.
 #[repr(C)]

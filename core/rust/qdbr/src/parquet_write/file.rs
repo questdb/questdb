@@ -355,7 +355,17 @@ fn chunk_to_page(
                 encoding,
             )
         }
-        ColumnType::Short | ColumnType::Char => {
+        ColumnType::Char => {
+            let column: &[u16] = unsafe { util::transmute_slice(column.primary_data) };
+            primitive::int_slice_to_page_notnull::<u16, i32>(
+                &column[lower_bound..upper_bound],
+                adjusted_column_top,
+                options,
+                primitive_type,
+                encoding,
+            )
+        }
+        ColumnType::Short => {
             let column: &[i16] = unsafe { util::transmute_slice(column.primary_data) };
             primitive::int_slice_to_page_notnull::<i16, i32>(
                 &column[lower_bound..upper_bound],

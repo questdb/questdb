@@ -47,6 +47,11 @@ public class ParquetFileReaderFunctionTest extends AbstractCairoTest {
                     " rnd_int() as a_long," +
                     " rnd_str(4,4,4,2) as a_str," +
                     " rnd_varchar(1, 40, 1) as a_varchar," +
+                    " rnd_boolean() a_boolean," +
+                    " rnd_short() a_short," +
+                    " rnd_byte() a_byte," +
+                    " rnd_char() a_char," +
+//                    " rnd_uuid4() a_uuid," +
                     " rnd_symbol(4,4,4,2) as a_sym" +
                     " from long_sequence(" + rows + "))");
 

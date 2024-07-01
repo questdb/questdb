@@ -1,16 +1,20 @@
+use std::collections::VecDeque;
 use crate::parquet_read::{ColumnChunkBuffers, ParquetDecoder};
 use crate::parquet_write::schema::ColumnType;
-use crate::parquet_write::varchar::{append_varchar, append_varchar_null};
-use anyhow::{anyhow, Context};
-use parquet2::encoding::bitpacked::Unpackable;
-use parquet2::encoding::hybrid_rle::HybridEncoded;
-use parquet2::encoding::{bitpacked, delta_bitpacked, hybrid_rle, Encoding};
+use anyhow::{anyhow};
+use parquet2::encoding::hybrid_rle::{BitmapIter, HybridEncoded};
+use parquet2::encoding::{bitpacked, hybrid_rle, Encoding};
 use parquet2::page::{split_buffer, DataPage, DictPage, Page};
 use parquet2::read::{decompress, get_page_iterator};
-use parquet2::schema::types::{PhysicalType, PrimitiveLogicalType};
+use parquet2::schema::types::{IntegerType, PhysicalType, PrimitiveLogicalType};
 use parquet2::write::Version;
-use std::mem::size_of;
 use std::ptr;
+use parquet2::deserialize::{FilteredHybridEncoded, FilteredHybridRleDecoderIter, HybridDecoderBitmapIter};
+use parquet2::error::Error;
+use parquet2::indexes::Interval;
+use crate::parquet_read::column_sink::{FixedColumnSink, PhysicalIntegerColumnSink, Pushable, StringColumnSink, VarcharColumnSink};
+use crate::parquet_read::slicer::{DataPageFixedSlicer, decode_rle, DeltaLengthArraySlicer, DictionarySlicer};
+use crate::parquet_write::ParquetResult;
 
 impl ColumnChunkBuffers {
     pub fn new() -> Self {
@@ -26,6 +30,7 @@ impl ColumnChunkBuffers {
     }
 }
 
+
 impl ParquetDecoder {
     pub fn decode_column_chunk(
         &mut self,
@@ -33,6 +38,7 @@ impl ParquetDecoder {
         column: usize,
         column_type: ColumnType,
     ) -> anyhow::Result<()> {
+        println!("Decoding column: {}, row_group {}", column, row_group);
         let columns = self.metadata.row_groups[row_group].columns();
         let column_metadata = &columns[column];
         let buffers = &mut self.column_buffers[column];
@@ -67,6 +73,12 @@ impl ParquetDecoder {
                 }
             };
         }
+
+        buffers.data_size = buffers.data_vec.len();
+        buffers.data_ptr = buffers.data_vec.as_mut_ptr();
+
+        buffers.aux_size = buffers.aux_vec.len();
+        buffers.aux_ptr = buffers.aux_vec.as_mut_ptr();
         buffers.row_count = row_count;
 
         Ok(())
@@ -80,7 +92,7 @@ pub fn decoder_page(
     buffers: &mut ColumnChunkBuffers,
     column_type: ColumnType,
 ) -> anyhow::Result<usize> {
-    let (_rep_levels, def_levels, values_buffer) = split_buffer(page)?;
+    let (_rep_levels, _, values_buffer) = split_buffer(page)?;
     let row_count = page.header().num_values();
 
     match (
@@ -89,342 +101,395 @@ pub fn decoder_page(
     ) {
         (typ, None) => match page.encoding() {
             Encoding::Plain => {
-                buffers.aux_size = 0;
+                buffers.aux_vec.clear();
                 buffers.aux_ptr = ptr::null_mut();
 
-                if def_levels.is_empty() {
-                    buffers.data_vec.resize(values_buffer.len(), 0);
-                    buffers.data_vec.clone_from_slice(values_buffer);
-                    buffers.data_size = values_buffer.len();
-                    buffers.data_ptr = buffers.data_vec.as_mut_ptr();
-                    Ok(row_count)
-                } else {
-                    match typ {
-                        PhysicalType::Int32 => {
-                            decode_fixed_plain(
-                                version,
-                                buffers,
-                                def_levels,
-                                values_buffer,
-                                size_of::<i32>(),
-                                row_count,
-                                &i32::MIN.to_le_bytes(),
-                            )?;
-                            Ok(row_count)
-                        }
-                        PhysicalType::Int64 => {
-                            decode_fixed_plain(
-                                version,
-                                buffers,
-                                def_levels,
-                                values_buffer,
-                                size_of::<i64>(),
-                                row_count,
-                                &i64::MIN.to_le_bytes(),
-                            )?;
+                match typ {
+                    PhysicalType::Int32 => {
+                        decode_page(
+                            version,
+                            page,
+                            row_count,
+                            &mut FixedColumnSink::new(&mut DataPageFixedSlicer::<4>::new(values_buffer, row_count), buffers, i32::MIN.to_le_bytes()),
+                        )?;
 
-                            Ok(row_count)
-                        }
-                        _ => Err(anyhow!("type not supported")),
+                        Ok(row_count)
                     }
+                    PhysicalType::Int64 => {
+                        decode_page(
+                            version,
+                            page,
+                            row_count,
+                            &mut FixedColumnSink::new(&mut DataPageFixedSlicer::<8>::new(values_buffer, row_count), buffers, i64::MIN.to_le_bytes()),
+                        )?;
+
+                        Ok(row_count)
+                    }
+                    PhysicalType::Double => {
+                        decode_page(
+                            version,
+                            page,
+                            row_count,
+                            &mut FixedColumnSink::new(&mut DataPageFixedSlicer::<8>::new(values_buffer, row_count), buffers, f64::NAN.to_le_bytes()),
+                        )?;
+
+                        Ok(row_count)
+                    }
+                    PhysicalType::Boolean => {
+                        decode_page_bool(
+                            version,
+                            page,
+                            values_buffer,
+                            row_count,
+                            buffers,
+                        )?;
+
+                        Ok(row_count)
+                    }
+
+                    _ => Err(anyhow!(format!("encoding {:?} not supported for type {:?}", page.encoding(), typ))),
                 }
             }
-            _ => Err(anyhow!("encoding not supported")),
+            _ => Err(anyhow!(format!("encoding {:?} not supported for type {:?}", page.encoding(), typ))),
+        },
+        (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(logical_type))) => match page.encoding() {
+            Encoding::Plain => {
+                match logical_type {
+                    IntegerType::Int16 | IntegerType::UInt16 => {
+                        decode_page(
+                            version,
+                            page,
+                            row_count,
+                            &mut PhysicalIntegerColumnSink::new(&mut DataPageFixedSlicer::<4>::new(values_buffer, row_count), buffers, i16::MIN.to_le_bytes()),
+                        )?;
+                        Ok(row_count)
+                    },
+                    IntegerType::Int8 | IntegerType::UInt8 => {
+                        decode_page(
+                            version,
+                            page,
+                            row_count,
+                            &mut PhysicalIntegerColumnSink::new(&mut DataPageFixedSlicer::<4>::new(values_buffer, row_count), buffers, [0u8]),
+                        )?;
+                        Ok(row_count)
+                    },
+                    _ => Err(anyhow!(format!("encoding not supported for type {:?}, {:?}", page.encoding(), logical_type))),
+                }
+            },
+            _ => Err(anyhow!(format!("encoding {:?} not supported for type {:?}", page.encoding(), logical_type))),
         },
         (PhysicalType::ByteArray, Some(PrimitiveLogicalType::String)) => {
             let encoding = page.encoding();
+
             match (encoding, dict, column_type) {
                 (Encoding::DeltaLengthByteArray, None, ColumnType::String) => {
-                    decode_delta_len_string_to_string(
+                    let mut slicer = DeltaLengthArraySlicer::try_new(values_buffer, row_count)?;
+                    decode_page(
                         version,
-                        buffers,
-                        def_levels,
-                        values_buffer,
+                        page,
                         row_count,
+                        &mut StringColumnSink::new(&mut slicer, buffers),
                     )?;
                     Ok(row_count)
                 }
 
                 (Encoding::DeltaLengthByteArray, None, ColumnType::Varchar) => {
-                    decode_delta_len_string_to_varchar(
+                    let mut slicer = DeltaLengthArraySlicer::try_new(values_buffer, row_count)?;
+                    decode_page(
                         version,
-                        buffers,
-                        def_levels,
-                        values_buffer,
+                        page,
                         row_count,
+                        &mut VarcharColumnSink::new(&mut slicer, buffers),
                     )?;
                     Ok(row_count)
                 }
 
                 (Encoding::RleDictionary, Some(dict_page), ColumnType::Varchar) => {
-                    decode_rle_dict_to_varchar(
-                        version,
-                        buffers,
-                        def_levels,
-                        values_buffer,
-                        dict_page,
-                        row_count,
-                    )?;
+                    let slicer = decode_rle(values_buffer, dict_page, row_count)?;
+                    match slicer {
+                        DictionarySlicer::Bitpacked(mut slicer) => {
+                            decode_page(
+                                version,
+                                page,
+                                row_count,
+                                &mut VarcharColumnSink::new(&mut slicer, buffers),
+                            )?;
+                        }
+                        DictionarySlicer::Rle(mut slicer) => {
+                            decode_page(
+                                version,
+                                page,
+                                row_count,
+                                &mut VarcharColumnSink::new(&mut slicer, buffers),
+                            )?;
+                        }
+                    }
                     Ok(row_count)
                 }
                 _ => Err(anyhow!("encoding not supported")),
             }
         }
-        _ => Err(anyhow!("deserialization not supported")),
+        _ => Err(anyhow!(format!("deserialization not supported; physical_type: {:?}, logical_type: {:?}", page.descriptor.primitive_type.physical_type, page.descriptor.primitive_type.logical_type))),
     }
 }
 
-fn decode_rle_dict_to_varchar(
+// fn decode_rle_dict_to_varchar<DIter: Iterator<Item=u8>>(
+//     values_buffer: &[u8],
+//     dict_page: &DictPage,
+//     def_levels_iter: DIter,
+//     buffers: &mut ColumnChunkBuffers,
+//     row_count: usize,
+// ) -> anyhow::Result<()> {
+//     let mut dict_values: Vec<&[u8]> = Vec::with_capacity(dict_page.num_values);
+//     let mut offset = 0usize;
+//     let dict_data = &dict_page.buffer;
+//
+//     for _i in 0..dict_page.num_values {
+//         if offset + size_of::<u32>() > dict_data.len() {
+//             return Err(anyhow!("dictionary data is too short to read length"));
+//         }
+//
+//         let str_len =
+//             unsafe { ptr::read_unaligned(dict_data.as_ptr().add(offset) as *const u32) } as usize;
+//         offset += size_of::<u32>();
+//
+//         if offset + str_len > dict_data.len() {
+//             return Err(anyhow!("dictionary data is too short to read value"));
+//         }
+//
+//         let str_slice = &dict_data[offset..offset + str_len];
+//         let _str = String::from_utf8(str_slice.to_vec())?;
+//         dict_values.push(str_slice);
+//         offset += str_len;
+//     }
+//
+//     let bits_per_entry = values_buffer[0] as usize;
+//     let mut rle_decoder = decode_rle_v2::<u32>(&values_buffer[1..], None, bits_per_entry)?;
+//     let mut count = 0;
+//
+//     for value in def_levels_iter {
+//         if count < row_count {
+//             if value == 1u8 {
+//                 let next = rle_decoder.next().expect("expected value of rle entry") as usize;
+//                 if next < dict_page.num_values {
+//                     let ut8_slice = dict_values[next];
+//                     append_varchar(&mut buffers.aux_vec, &mut buffers.data_vec, ut8_slice);
+//                 } else {
+//                     return Err(anyhow!("dictionary no entry in the dictionary"));
+//                 }
+//             } else {
+//                 append_varchar_null(&mut buffers.aux_vec, &mut buffers.data_vec);
+//             }
+//             count += 1;
+//         } else {
+//             break;
+//         }
+//     }
+//     buffers.data_size = buffers.data_vec.len();
+//     buffers.data_ptr = buffers.data_vec.as_mut_ptr();
+//
+//     buffers.aux_size = buffers.aux_vec.len();
+//     buffers.aux_ptr = buffers.aux_vec.as_mut_ptr();
+//
+//     Ok(())
+// }
+
+// fn decode_delta_len_string_to_varchar<DIter: Iterator<Item=u8>>(
+//     values_buffer: &[u8],
+//     def_levels_iter: DIter,
+//     buffers: &mut ColumnChunkBuffers,
+//     row_count: usize,
+// ) -> anyhow::Result<()> {
+//     let mut decoder = delta_bitpacked::Decoder::try_new(values_buffer)?;
+//     let mut count = 0;
+//
+//     let data_vec = &mut buffers.data_vec;
+//     let aux_vec = &mut buffers.aux_vec;
+//     aux_vec.reserve(row_count * size_of::<i64>());
+//
+//     let lengths: Vec<i64> = (decoder
+//         .by_ref()
+//         .collect::<Result<Vec<i64>, parquet2::error::Error>>())?;
+//     let mut data_offset = decoder.consumed_bytes();
+//     let mut non_null_count = 0usize;
+//
+//     for value in def_levels_iter {
+//         if count < row_count {
+//             if value == 1u8 {
+//                 let len = lengths[non_null_count] as usize;
+//                 non_null_count += 1;
+//                 let slice = &values_buffer[data_offset..data_offset + len];
+//                 append_varchar(aux_vec, data_vec, slice);
+//                 data_offset += len;
+//             } else {
+//                 append_varchar_null(aux_vec, data_vec);
+//             }
+//             count += 1;
+//         } else {
+//             break;
+//         }
+//     }
+//     buffers.data_size = data_vec.len();
+//     buffers.data_ptr = data_vec.as_mut_ptr();
+//
+//     buffers.aux_size = aux_vec.len();
+//     buffers.aux_ptr = buffers.aux_vec.as_mut_ptr();
+//
+//     Ok(())
+// }
+
+// fn decode_delta_len_string_to_string<DIter: Iterator<Item=u8>>(
+//     values_buffer: &[u8],
+//     def_levels_iter: DIter,
+//     buffers: &mut ColumnChunkBuffers,
+//     row_count: usize,
+// ) -> anyhow::Result<()> {
+//     let mut decoder = delta_bitpacked::Decoder::try_new(values_buffer)?;
+//     let data_vec = &mut buffers.data_vec;
+//     let aux_vec = &mut buffers.aux_vec;
+//     if aux_vec.is_empty() {
+//         aux_vec.extend_from_slice(&0u64.to_le_bytes());
+//     }
+//     aux_vec.reserve(row_count * size_of::<i64>());
+//     let null_value = (-1i32).to_le_bytes();
+//
+//     let lengths: Vec<i64> = (decoder
+//         .by_ref()
+//         .collect::<Result<Vec<i64>, parquet2::error::Error>>())?;
+//     let mut data_offset = decoder.consumed_bytes();
+//     let mut non_null_count = 0usize;
+//     let count = def_levels_iter.size_hint().0;
+//
+//     for value in def_levels_iter {
+//         if value == 1u8 {
+//             let len = lengths[non_null_count] as usize;
+//             non_null_count += 1;
+//             let slice = &values_buffer[data_offset..data_offset + len];
+//             data_offset += len;
+//
+//             let str = String::from_utf8(slice.to_vec())?;
+//             let utf16 = str.encode_utf16();
+//
+//             let pos = data_vec.len();
+//             data_vec.resize(pos + size_of::<i32>(), 0);
+//             let mut utf16_len: i32 = 0;
+//             utf16.for_each(|c| {
+//                 data_vec.extend_from_slice(&c.to_le_bytes());
+//                 utf16_len += 1;
+//             });
+//
+//             data_vec[pos..pos + size_of::<i32>()].copy_from_slice(&utf16_len.to_le_bytes());
+//             aux_vec.extend_from_slice(&(data_vec.len() as u64).to_le_bytes());
+//         } else {
+//             data_vec.extend_from_slice(&null_value);
+//             aux_vec.extend_from_slice(&(data_vec.len() as u64).to_le_bytes());
+//         }
+//     }
+//     buffers.data_size = data_vec.len();
+//     buffers.data_ptr = data_vec.as_mut_ptr();
+//
+//     if count == 0 {
+//         aux_vec.clear();
+//     }
+//     buffers.aux_size = aux_vec.len();
+//     buffers.aux_ptr = buffers.aux_vec.as_mut_ptr();
+//
+//     Ok(())
+// }
+
+fn decode_page<T: Pushable>(
     version: Version,
-    buffers: &mut ColumnChunkBuffers,
-    def_levels: &[u8],
-    values_buffer: &[u8],
-    dict_page: &DictPage,
+    page: &DataPage,
     row_count: usize,
-) -> anyhow::Result<()> {
-    let mut dict_values: Vec<&[u8]> = Vec::with_capacity(dict_page.num_values);
-    let mut offset = 0usize;
-    let dict_data = &dict_page.buffer;
+    sink: &mut T,
+) -> ParquetResult<()> {
+    sink.reserve();
+    let iter = decode_null_bitmap(version, page, row_count)?;
 
-    for _i in 0..dict_page.num_values {
-        if offset + size_of::<u32>() > dict_data.len() {
-            return Err(anyhow!("dictionary data is too short to read length"));
-        }
-
-        let str_len =
-            unsafe { ptr::read_unaligned(dict_data.as_ptr().add(offset) as *const u32) } as usize;
-        offset += size_of::<u32>();
-
-        if offset + str_len > dict_data.len() {
-            return Err(anyhow!("dictionary data is too short to read value"));
-        }
-
-        let str_slice = &dict_data[offset..offset + str_len];
-        let _str = String::from_utf8(str_slice.to_vec())?;
-        dict_values.push(str_slice);
-        offset += str_len;
-    }
-
-    let bits_per_entry = values_buffer[0] as usize;
-    let mut rle_decoder = decode_rle_v2::<u32>(&values_buffer[1..], None, bits_per_entry)?;
-    let iter = decode_null_bitmap(version, def_levels, row_count)?;
-    let mut count = 0;
-
-    for value in iter {
-        if count < row_count {
-            if value == 1u8 {
-                let next = rle_decoder.next().expect("expected value of rle entry") as usize;
-                if next < dict_page.num_values {
-                    let ut8_slice = dict_values[next];
-                    append_varchar(&mut buffers.aux_vec, &mut buffers.data_vec, ut8_slice);
-                } else {
-                    return Err(anyhow!("dictionary no entry in the dictionary"));
+    if let Some(iter) = iter {
+        for run in iter {
+            let run = run?;
+            match run {
+                FilteredHybridEncoded::Bitmap {
+                    values,
+                    offset,
+                    length,
+                } => {
+                    // consume `length` items
+                    let iter = BitmapIter::new(values, offset, length);
+                    for item in iter {
+                        if item {
+                            sink.push();
+                        } else {
+                            sink.push_null();
+                        }
+                    }
                 }
-            } else {
-                append_varchar_null(&mut buffers.aux_vec, &mut buffers.data_vec);
-            }
-            count += 1;
-        } else {
-            break;
-        }
-    }
-    buffers.data_size = buffers.data_vec.len();
-    buffers.data_ptr = buffers.data_vec.as_mut_ptr();
-
-    buffers.aux_size = buffers.aux_vec.len();
-    buffers.aux_ptr = buffers.aux_vec.as_mut_ptr();
-
-    Ok(())
-}
-
-fn decode_delta_len_string_to_varchar(
-    version: Version,
-    buffers: &mut ColumnChunkBuffers,
-    def_levels: &[u8],
-    values_buffer: &[u8],
-    row_count: usize,
-) -> anyhow::Result<()> {
-    let iter = decode_null_bitmap(version, def_levels, row_count)?;
-    let mut decoder = delta_bitpacked::Decoder::try_new(values_buffer)?;
-    let mut count = 0;
-
-    let data_vec = &mut buffers.data_vec;
-    let aux_vec = &mut buffers.aux_vec;
-    aux_vec.reserve(row_count * size_of::<i64>());
-
-    let lengths: Vec<i64> = (decoder
-        .by_ref()
-        .collect::<Result<Vec<i64>, parquet2::error::Error>>())?;
-    let mut data_offset = decoder.consumed_bytes();
-    let mut non_null_count = 0usize;
-
-    for value in iter {
-        if count < row_count {
-            if value == 1u8 {
-                let len = lengths[non_null_count] as usize;
-                non_null_count += 1;
-                let slice = &values_buffer[data_offset..data_offset + len];
-                append_varchar(aux_vec, data_vec, slice);
-                data_offset += len;
-            } else {
-                append_varchar_null(aux_vec, data_vec);
-            }
-            count += 1;
-        } else {
-            break;
-        }
-    }
-    buffers.data_size = data_vec.len();
-    buffers.data_ptr = data_vec.as_mut_ptr();
-
-    buffers.aux_size = aux_vec.len();
-    buffers.aux_ptr = buffers.aux_vec.as_mut_ptr();
-
-    Ok(())
-}
-
-fn decode_delta_len_string_to_string(
-    version: Version,
-    buffers: &mut ColumnChunkBuffers,
-    def_levels: &[u8],
-    values_buffer: &[u8],
-    row_count: usize,
-) -> anyhow::Result<()> {
-    let iter = decode_null_bitmap(version, def_levels, row_count)?;
-    let mut decoder = delta_bitpacked::Decoder::try_new(values_buffer)?;
-    let mut count = 0;
-
-    let data_vec = &mut buffers.data_vec;
-    let aux_vec = &mut buffers.aux_vec;
-    if aux_vec.is_empty() {
-        aux_vec.extend_from_slice(&0u64.to_le_bytes());
-    }
-    aux_vec.reserve(row_count * size_of::<i64>());
-    let null_value = (-1i32).to_le_bytes();
-
-    let lengths: Vec<i64> = (decoder
-        .by_ref()
-        .collect::<Result<Vec<i64>, parquet2::error::Error>>())?;
-    let mut data_offset = decoder.consumed_bytes();
-    let mut non_null_count = 0usize;
-
-    for value in iter {
-        if count < row_count {
-            if value == 1u8 {
-                let len = lengths[non_null_count] as usize;
-                non_null_count += 1;
-                let slice = &values_buffer[data_offset..data_offset + len];
-                data_offset += len;
-
-                let str = String::from_utf8(slice.to_vec()).with_context(|| {
-                    format!(
-                        "reading value {} at offset {}: {:?}",
-                        count,
-                        data_offset - len,
-                        slice
-                    )
-                })?;
-                let utf16 = str.encode_utf16();
-
-                let pos = data_vec.len();
-                data_vec.resize(pos + size_of::<i32>(), 0);
-                let mut utf16_len: i32 = 0;
-                utf16.for_each(|c| {
-                    data_vec.extend_from_slice(&c.to_le_bytes());
-                    utf16_len += 1;
-                });
-
-                data_vec[pos..pos + size_of::<i32>()].copy_from_slice(&utf16_len.to_le_bytes());
-                aux_vec.extend_from_slice(&(data_vec.len() as u64).to_le_bytes());
-            } else {
-                data_vec.extend_from_slice(&null_value);
-                aux_vec.extend_from_slice(&(data_vec.len() as u64).to_le_bytes());
-            }
-            count += 1;
-        } else {
-            break;
-        }
-    }
-    buffers.data_size = data_vec.len();
-    buffers.data_ptr = data_vec.as_mut_ptr();
-
-    if count == 0 {
-        aux_vec.clear();
-    }
-    buffers.aux_size = aux_vec.len();
-    buffers.aux_ptr = buffers.aux_vec.as_mut_ptr();
-
-    Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-fn decode_fixed_plain(
-    version: Version,
-    buffers: &mut ColumnChunkBuffers,
-    def_levels: &[u8],
-    values_buffer: &[u8],
-    value_size: usize,
-    row_count: usize,
-    null_value: &[u8],
-) -> anyhow::Result<()> {
-    let data_vec = &mut buffers.data_vec;
-    let offset = data_vec.len();
-    data_vec.resize(offset + row_count * value_size, 0);
-    let iter = decode_null_bitmap(version, def_levels, row_count)?;
-    let mut non_null_count = 0;
-    let mut count = 0;
-    for value in iter {
-        if count < row_count {
-            if value == 1u8 {
-                if non_null_count >= row_count {
-                    return Err(anyhow!("values buffer is too small"));
+                FilteredHybridEncoded::Repeated { is_set, length } => {
+                    if is_set {
+                        sink.push_slice(length);
+                    } else {
+                        sink.push_nulls(length);
+                    }
                 }
-                data_vec[offset + count * value_size..offset + (count + 1) * value_size]
-                    .copy_from_slice(
-                        &values_buffer
-                            [non_null_count * value_size..(non_null_count + 1) * value_size],
-                    );
-                non_null_count += 1;
-            } else {
-                data_vec[offset + count * value_size..offset + (count + 1) * value_size]
-                    .copy_from_slice(null_value);
-            }
-            count += 1;
-        } else {
-            break;
+                FilteredHybridEncoded::Skipped(valids) => { sink.skip(valids); }
+            };
         }
+    } else {
+        sink.push_slice(row_count);
     }
-    buffers.data_size = data_vec.len();
-    buffers.data_ptr = data_vec.as_mut_ptr();
-    Ok(())
+    sink.result()
 }
+
+fn decode_page_bool(
+    version: Version,
+    page: &DataPage,
+    values_buffer: &[u8],
+    row_count: usize,
+    buffers: &mut ColumnChunkBuffers,
+) -> ParquetResult<()> {
+    let iter = decode_null_bitmap(version, page, row_count)?;
+
+    if let Some(_iter) = iter {
+        return Err(Error::FeatureNotSupported("nullable boolean values are not supported yet".to_string()));
+    } else {
+        buffers.data_vec.reserve(row_count);
+        let iter = BitmapIter::new(values_buffer, 0, row_count);
+        for item in iter {
+            if item {
+                buffers.data_vec.push(1u8);
+            } else {
+                buffers.data_vec.push(0u8);
+            }
+        }
+        Ok(())
+    }
+}
+
 
 pub fn decode_null_bitmap(
     _version: Version,
-    buffer: &[u8],
+    page: &DataPage,
     count: usize,
-) -> anyhow::Result<bitpacked::Decoder<u8>> {
-    decode_bitmap_v2(buffer, count)
-}
-
-fn decode_bitmap_v2(buffer: &[u8], count: usize) -> anyhow::Result<bitpacked::Decoder<u8>> {
-    decode_rle_v2::<u8>(buffer, Some(count), 1usize)
-}
-
-fn decode_rle_v2<T: Unpackable>(
-    buffer: &[u8],
-    count: Option<usize>,
-    num_bits: usize,
-) -> anyhow::Result<bitpacked::Decoder<T>> {
-    let decoder = hybrid_rle::Decoder::new(buffer, num_bits);
-    for run in decoder {
-        if let HybridEncoded::Bitpacked(values) = run? {
-            let count = count.unwrap_or(values.len() * 8 / num_bits);
-            let inner_decoder = bitpacked::Decoder::<T>::try_new(values, num_bits, count)?;
-            return Ok(inner_decoder);
-        }
+) -> ParquetResult<Option<FilteredHybridRleDecoderIter>> {
+    let def_levels = split_buffer(page)?.1;
+    if def_levels.is_empty() {
+        return Ok(None);
     }
-    Err(anyhow::anyhow!("No data found"))
+
+    let iter = hybrid_rle::Decoder::new(def_levels, 1);
+    let iter = HybridDecoderBitmapIter::new(iter, count);
+    let selected_rows = get_selected_rows(page);
+    let iter = FilteredHybridRleDecoderIter::new(iter, selected_rows);
+    Ok(Some(iter))
+}
+
+pub fn get_selected_rows(page: &DataPage) -> VecDeque<Interval> {
+    page.selected_rows()
+        .unwrap_or(&[Interval::new(0, page.num_values())])
+        .iter()
+        .copied()
+        .collect()
 }
 
 fn _decode_bitmap_v1(buffer: &[u8], count: usize) -> anyhow::Result<bitpacked::Decoder<u8>> {
@@ -497,7 +562,7 @@ mod tests {
 
     // #[test]
     // fn test_decode_file() {
-    //     let file = File::open("/Users/alpel/temp/db/x.parquet").unwrap();
+    //     let file = File::open("/Users/alpel/temp/db/requests_log.parquet").unwrap();
     //     let mut decoder = ParquetDecoder::read(file).unwrap();
     //     let row_group_count = decoder.row_group_count as usize;
     //     let column_count = decoder.columns.len();
@@ -505,9 +570,10 @@ mod tests {
     //     for column_index in 0..column_count {
     //         let mut col_row_count = 0usize;
     //
+    //         let column_type = decoder.columns[column_index].typ;
     //         for row_group_index in 0..row_group_count {
     //             decoder
-    //                 .decode_column_chunk(row_group_index, column_index, 0)
+    //                 .decode_column_chunk(row_group_index, column_index, column_type)
     //                 .unwrap();
     //
     //             let ccb = &decoder.column_buffers[column_index];
@@ -528,7 +594,7 @@ mod tests {
         let version = Version::V1;
         let mut columns = Vec::new();
 
-        let mut expected_buffs = Vec::new();
+        let mut expected_buffs: Vec<(&[u8], Option<&[u8]>, ColumnType)> = Vec::new();
         let expected_int_buff = create_col_data_buff_int(row_count);
         columns.push(create_fix_column(
             columns.len() as i32,
@@ -605,6 +671,52 @@ mod tests {
             ColumnType::Varchar,
         ));
 
+        assert_columns(row_count, row_group_size, data_page_size, version, columns, &expected_buffs);
+    }
+
+    #[test]
+    fn test_decode_column_type2() {
+        let row_count = 10000;
+        let row_group_size = 1000;
+        let data_page_size = 1000;
+        let version = Version::V2;
+        let mut columns = Vec::new();
+        let mut expected_buffs: Vec<(&[u8], Option<&[u8]>, ColumnType)> = Vec::new();
+
+        // let expected_bool_buff = create_col_data_buff_bool(row_count);
+        // columns.push(create_fix_column(
+        //     columns.len() as i32,
+        //     row_count,
+        //     "bool_col",
+        //     &expected_bool_buff,
+        //     ColumnType::Boolean,
+        // ));
+        // expected_buffs.push((&expected_bool_buff, None, ColumnType::Boolean));
+        //
+        // let expected_bool_buff = create_col_data_buff::<i16, 2, _>(row_count, i16::MIN.to_le_bytes(), |short| short.to_le_bytes());
+        // columns.push(create_fix_column(
+        //     columns.len() as i32,
+        //     row_count,
+        //     "bool_short",
+        //     &expected_bool_buff,
+        //     ColumnType::Short,
+        // ));
+        // expected_buffs.push((&expected_bool_buff, None, ColumnType::Short));
+
+        let expected_bool_buff = create_col_data_buff::<i16, 2, _>(row_count, i16::MIN.to_le_bytes(), |short| short.to_le_bytes());
+        columns.push(create_fix_column(
+            columns.len() as i32,
+            row_count,
+            "bool_char",
+            &expected_bool_buff,
+            ColumnType::Char,
+        ));
+        expected_buffs.push((&expected_bool_buff, None, ColumnType::Char));
+
+        assert_columns(row_count, row_group_size, data_page_size, version, columns, &expected_buffs);
+    }
+
+    fn assert_columns(row_count: usize, row_group_size: usize, data_page_size: usize, version: Version, columns: Vec<Column>, expected_buffs: &Vec<(&[u8], Option<&[u8]>, ColumnType)>) {
         let column_count = columns.len();
         let file = write_cols_to_parquet_file(row_group_size, data_page_size, version, columns);
 
@@ -614,8 +726,9 @@ mod tests {
         let row_group_count = decoder.row_group_count as usize;
 
         for (column_index, (expected, expected_aux, column_type)) in
-            expected_buffs.into_iter().enumerate()
+        expected_buffs.into_iter().enumerate()
         {
+            let column_type = *column_type;
             let mut data_offset = 0usize;
             let mut col_row_count = 0usize;
 
@@ -727,6 +840,39 @@ mod tests {
 
             if offset + 2 * value_size <= buff.len() {
                 // buff[offset + value_size..offset + 2 * value_size].copy_from_slice(&value.to_le_bytes());
+                buff[offset + value_size..offset + 2 * value_size].copy_from_slice(&null_value);
+            }
+        }
+        buff
+    }
+
+    fn create_col_data_buff_bool(row_count: usize) -> Vec<u8>
+    {
+        let value_size = 1;
+        let mut buff = vec![0u8; row_count * value_size];
+        for i in 0..row_count {
+            let value = i % 3 == 0;
+            let offset = i * value_size;
+            let bval = if value { 1u8 } else { 0u8 };
+            buff[offset] = bval;
+        }
+        buff
+    }
+
+    fn create_col_data_buff<T, const N: usize, F>(row_count: usize, null_value: [u8; N], to_le_bytes: F)
+                                                  -> Vec<u8>
+        where
+            T: From<i16> + Copy,
+            F: Fn(T) -> [u8; N],
+    {
+        let value_size = N;
+        let mut buff = vec![0u8; row_count * value_size];
+        for i in 0..((row_count + 1) / 2) {
+            let value = T::from(i as i16);
+            let offset = 2 * i * value_size;
+            buff[offset..offset + value_size].copy_from_slice(&to_le_bytes(value));
+
+            if offset + 2 * value_size <= buff.len() {
                 buff[offset + value_size..offset + 2 * value_size].copy_from_slice(&null_value);
             }
         }
@@ -908,7 +1054,7 @@ mod tests {
             null(),
             0,
         )
-        .unwrap()
+            .unwrap()
     }
 
     fn create_var_column(
@@ -932,7 +1078,7 @@ mod tests {
             null(),
             0,
         )
-        .unwrap()
+            .unwrap()
     }
 
     fn create_symbol_column(
@@ -957,6 +1103,6 @@ mod tests {
             offsets.as_ptr(),
             offsets.len(),
         )
-        .unwrap()
+            .unwrap()
     }
 }

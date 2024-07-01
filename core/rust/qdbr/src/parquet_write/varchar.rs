@@ -185,7 +185,7 @@ pub fn append_varchar(aux_mem: &mut Vec<u8>, data_mem: &mut Vec<u8>, value: &[u8
     }
 }
 
-pub fn append_varchar_null(aux_mem: &mut Vec<u8>, data_mem: &mut [u8]) {
+pub fn append_varchar_null(aux_mem: &mut Vec<u8>, data_mem: &[u8]) {
     aux_mem.extend_from_slice(&VARCHAR_HEADER_FLAG_NULL);
     append_offset(aux_mem, data_mem.len());
 }
@@ -194,4 +194,11 @@ fn append_offset(aux_mem: &mut Vec<u8>, offset: usize) {
     assert!(offset < VARCHAR_MAX_COLUMN_SIZE);
     aux_mem.extend_from_slice(&(offset as u16).to_le_bytes());
     aux_mem.extend_from_slice(&((offset >> 16) as u32).to_le_bytes());
+}
+
+pub fn append_varchar_nulls(aux_mem: &mut Vec<u8>, data_mem: &[u8], count: usize) {
+    // TODO: optimize, inserting same values
+    for _ in 0..count {
+        append_varchar_null(aux_mem, data_mem);
+    }
 }

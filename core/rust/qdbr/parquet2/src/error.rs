@@ -34,7 +34,7 @@ pub enum Error {
 }
 
 impl Error {
-    pub(crate) fn oos<I: Into<String>>(message: I) -> Self {
+    pub fn oos<I: Into<String>>(message: I) -> Self {
         Self::OutOfSpec(message.into())
     }
 }
