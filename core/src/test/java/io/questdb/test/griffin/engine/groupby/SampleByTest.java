@@ -3756,11 +3756,9 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByFromFillNull() throws Exception {
         assertMemoryLeak(() -> {
-
             ddl(DDL_FROMTO);
             drainWalQueue();
             assertSql(
-
                     "ts\tavg\n" +
                             "2018-01-05T04:00:54.775808Z\t221.0\n" +
                             "2018-01-15T04:00:54.775808Z\t461.0\n",
@@ -3776,6 +3774,44 @@ public class SampleByTest extends AbstractCairoTest {
                             "2018-01-09T00:00:00.000000Z\t432.5\n",
                     "select ts, avg(x) from fromto\n" +
                             "sample by 5d from '2017-12-20' fill(null)"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFromNoFill() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(DDL_FROMTO);
+            drainWalQueue();
+//            assertSql(
+//                    "ts\tavg\n" +
+//                            "2017-12-30T00:00:00.000000Z\t72.5\n" +
+//                            "2018-01-04T00:00:00.000000Z\t264.5\n" +
+//                            "2018-01-09T00:00:00.000000Z\t432.5\n",
+//                    "select ts, avg(x) from fromto\n" +
+//                            "sample by 5d"
+//            );
+//            assertSql(
+//                    "ts\tavg\n" +
+//                            "2017-12-30T00:00:00.000000Z\t72.5\n" +
+//                            "2018-01-04T00:00:00.000000Z\t264.5\n" +
+//                            "2018-01-09T00:00:00.000000Z\t432.5\n",
+//                    "select ts, avg(x) from fromto\n" +
+//                            "sample by 5d from '2017-12-20'"
+//            );
+//            assertSql(
+//                    "ts\tavg\n" +
+//                            "2018-01-01T00:00:00.000000Z\t120.5\n" +
+//                            "2018-01-06T00:00:00.000000Z\t360.5\n",
+//                    "select ts, avg(x) from fromto\n" +
+//                            "sample by 5d from '2018-01-01'"
+//            );
+            assertSql(
+                    "ts\tavg\n" +
+                            "2018-01-01T00:00:00.000000Z\t120.5\n" +
+                            "2018-01-06T00:00:00.000000Z\t360.5\n",
+                    "select ts, avg(x) from fromto\n" +
+                            "sample by 5d from '2018-01-01' to '2018-01-31'"
             );
         });
     }

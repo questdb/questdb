@@ -34,6 +34,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
@@ -200,27 +201,26 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
 
         if (tzOffset == 0 && fixedOffset == Long.MIN_VALUE) {
             // this is the default path, we align time intervals to the first observation
-            if (fromLoFunc != null) {
-                timestampSampler.setStart(fromLoFunc.getTimestamp(null));
-            } else {
-                timestampSampler.setStart(timestamp);
-            }
+            timestampSampler.setStart(timestamp);
         } else {
-            if (fromLoFunc != null) {
+            // FROM-TO may apply to align to calendar queries, fixing the lower bound.
+            if (fromLoFunc != TimestampConstant.NULL) {
                 timestampSampler.setStart(fixedOffset != Long.MIN_VALUE ? fromLoFunc.getTimestamp(null) : 0L);
             } else {
                 timestampSampler.setStart(fixedOffset != Long.MIN_VALUE ? fixedOffset : 0L);
             }
         }
+
         topTzOffset = tzOffset;
         topNextDst = nextDstUtc;
-        if (fromLoFunc != null) {
+        if (fromLoFunc != TimestampConstant.NULL) {
+            // set the top epoch to be the lower limit
             topLocalEpoch = timestampSampler.round(fromLoFunc.getTimestamp(null) + tzOffset);
+            // set current epoch to be the floor of the starting timestamp
             localEpoch = timestampSampler.round(timestamp + tzOffset);
         } else {
             topLocalEpoch = localEpoch = timestampSampler.round(timestamp + tzOffset);
         }
-
         sampleLocalEpoch = nextSampleLocalEpoch = topLocalEpoch;
         areTimestampsInitialized = true;
     }
@@ -237,23 +237,38 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
     }
 
     protected boolean notKeyedLoop(MapValue mapValue) {
+
+
         if (!isNotKeyedLoopInitialized) {
             sampleLocalEpoch = localEpoch;
             nextSampleLocalEpoch = localEpoch;
-            // looks like we need to populate key map
-            // at the start of this loop 'lastTimestamp' will be set to timestamp
-            // of first record in base cursor
+        }
+
+        long next = timestampSampler.nextTimestamp(localEpoch);
+
+        // we may need to post fill, depending on the sample by from clause
+        if (fromHiFunc != TimestampConstant.NULL) {
+            final long upperBound = fromHiFunc.getTimestamp(null);
+            if (next > upperBound) {
+                baseRecord = null;
+                isNotKeyedLoopInitialized = false;
+                return true;
+            }
+        }
+
+        // looks like we need to populate key map
+        // at the start of this loop 'lastTimestamp' will be set to timestamp
+        // of first record in base cursor
+        if (!isNotKeyedLoopInitialized) {
             groupByFunctionsUpdater.updateNew(mapValue, baseRecord, rowId++);
             isNotKeyedLoopInitialized = true;
         }
 
-        long next = timestampSampler.nextTimestamp(localEpoch);
         long timestamp = -1;
         while (baseCursor.hasNext()) {
             timestamp = getBaseRecordTimestamp();
             if (timestamp < next) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
-
                 adjustDstInFlight(timestamp - tzOffset);
                 groupByFunctionsUpdater.updateExisting(mapValue, baseRecord, rowId++);
             } else {
@@ -272,14 +287,15 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         // opportunity, after we stream map that's it
 
         // we may need to post fill, depending on the sample by from clause
-        if (fromLoFunc != null) {
+        if (fromHiFunc != TimestampConstant.NULL) {
             final long upperBound = fromHiFunc.getTimestamp(null);
             if (next < upperBound) {
                 nextSamplePeriod(upperBound);
-                isNotKeyedLoopInitialized = true;
+                isNotKeyedLoopInitialized = false;
                 return true;
             }
         }
+
         baseRecord = null;
         isNotKeyedLoopInitialized = false;
         return true;
