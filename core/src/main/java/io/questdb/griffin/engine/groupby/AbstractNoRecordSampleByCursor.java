@@ -238,32 +238,17 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
 
     protected boolean notKeyedLoop(MapValue mapValue) {
 
-
         if (!isNotKeyedLoopInitialized) {
             sampleLocalEpoch = localEpoch;
             nextSampleLocalEpoch = localEpoch;
-        }
-
-        long next = timestampSampler.nextTimestamp(localEpoch);
-
-        // we may need to post fill, depending on the sample by from clause
-        if (fromHiFunc != TimestampConstant.NULL) {
-            final long upperBound = fromHiFunc.getTimestamp(null);
-            if (next > upperBound) {
-                baseRecord = null;
-                isNotKeyedLoopInitialized = false;
-                return true;
-            }
-        }
-
-        // looks like we need to populate key map
-        // at the start of this loop 'lastTimestamp' will be set to timestamp
-        // of first record in base cursor
-        if (!isNotKeyedLoopInitialized) {
+            // looks like we need to populate key map
+            // at the start of this loop 'lastTimestamp' will be set to timestamp
+            // of first record in base cursor
             groupByFunctionsUpdater.updateNew(mapValue, baseRecord, rowId++);
             isNotKeyedLoopInitialized = true;
         }
 
+        long next = timestampSampler.nextTimestamp(localEpoch);
         long timestamp = -1;
         while (baseCursor.hasNext()) {
             timestamp = getBaseRecordTimestamp();

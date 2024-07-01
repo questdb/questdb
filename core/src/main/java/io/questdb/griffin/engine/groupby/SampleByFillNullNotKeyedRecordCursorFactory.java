@@ -98,7 +98,7 @@ public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleB
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("SampleBy");
+        sink.type("Sample By");
         sink.attr("fill").val("null");
         sink.optAttr("lo", fromLoFunc);
         sink.optAttr("hi", fromHiFunc);
