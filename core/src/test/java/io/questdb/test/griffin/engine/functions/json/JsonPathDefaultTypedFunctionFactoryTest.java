@@ -228,7 +228,7 @@ public class JsonPathDefaultTypedFunctionFactoryTest extends AbstractFunctionFac
     }
 
     @Test
-    public void testBadDefaultIntVsChar() throws SqlException {
+    public void testBadDefaultIntVsChar() {
         final SqlException exc = Assert.assertThrows(
                 SqlException.class,
                 () -> callFn(
@@ -244,7 +244,7 @@ public class JsonPathDefaultTypedFunctionFactoryTest extends AbstractFunctionFac
     }
 
     @Test
-    public void testBadDefaultIntVsString() throws SqlException {
+    public void testBadDefaultIntVsString() {
         final SqlException exc = Assert.assertThrows(
                 SqlException.class,
                 () -> callFn(
@@ -256,6 +256,22 @@ public class JsonPathDefaultTypedFunctionFactoryTest extends AbstractFunctionFac
         TestUtils.assertContains(
                 exc.getMessage(),
                 "json_path's default value cannot be of type STRING, expected a value compatible with INT"
+        );
+    }
+
+    @Test
+    public void testBadDefaultIntVsDouble() {
+        final SqlException exc = Assert.assertThrows(
+                SqlException.class,
+                () -> callFn(
+                        utf8("{\"path\": \"baobab\"}"),
+                        utf8(".path"),
+                        ColumnType.INT,
+                        1.5
+                ));
+        TestUtils.assertContains(
+                exc.getMessage(),
+                "json_path's default value cannot be of type DOUBLE, expected a value compatible with INT"
         );
     }
 
