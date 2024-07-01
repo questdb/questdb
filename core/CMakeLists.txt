@@ -118,6 +118,7 @@ elseif (OS_LINUX)
             src/main/c/linux/accept.c
             src/main/c/linux/files.c
             src/main/c/linux/io_uring.c
+            src/main/c/linux/inotify.c
     )
 endif ()
 
@@ -135,6 +136,7 @@ if (OS_WINDOWS)
             src/main/c/windows/timer.c
             src/main/c/windows/timer.h
             src/main/c/windows/accept.c
+            src/main/c/windows/filewatch.c
             src/main/c/share/fs.h
     )
 else ()

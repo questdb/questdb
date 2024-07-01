@@ -22,27 +22,47 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire;
+package io.questdb.std.filewatch;
 
-import io.questdb.std.QuietCloseable;
+public final class LinuxAccessorFacadeImpl implements LinuxAccessorFacade {
+    public static final LinuxAccessorFacadeImpl INSTANCE = new LinuxAccessorFacadeImpl();
 
-public final class CustomCloseActionPasswordMatcherDelegate implements UsernamePasswordMatcher, QuietCloseable {
+    private LinuxAccessorFacadeImpl() {
 
-    private final Runnable closeAction;
-    private final UsernamePasswordMatcher delegate;
-
-    public CustomCloseActionPasswordMatcherDelegate(UsernamePasswordMatcher delegate, Runnable closeAction) {
-        this.delegate = delegate;
-        this.closeAction = closeAction;
     }
 
     @Override
-    public void close() {
-        closeAction.run();
+    public int inotifyAddWatch(int fd, long pathPtr, int flags) {
+        return LinuxAccessor.inotifyAddWatch(fd, pathPtr, flags);
     }
 
     @Override
-    public boolean verifyPassword(CharSequence username, long passwordPtr, int passwordLen) {
-        return delegate.verifyPassword(username, passwordPtr, passwordLen);
+    public int inotifyInit() {
+        return LinuxAccessor.inotifyInit();
+    }
+
+    @Override
+    public short inotifyRmWatch(int fd, int wd) {
+        return LinuxAccessor.inotifyRmWatch(fd, wd);
+    }
+
+    @Override
+    public long pipe() {
+        return LinuxAccessor.pipe();
+    }
+
+    @Override
+    public int readEvent(int fd, long buf, int bufSize) {
+        return LinuxAccessor.readEvent(fd, buf, bufSize);
+    }
+
+    @Override
+    public int readPipe(int fd) {
+        return LinuxAccessor.readPipe(fd);
+    }
+
+    @Override
+    public int writePipe(int fd) {
+        return LinuxAccessor.writePipe(fd);
     }
 }

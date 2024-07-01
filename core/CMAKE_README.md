@@ -9,7 +9,7 @@ required.
 To build in `./core` run:
 
 ```bash
-cmake -B build/release -DCMAKE_BUILD_TYPE=Release .
+cmake -B build/release -DCMAKE_BUILD_TYPE=Release
 cmake --build build/release --config Release
 ```
 

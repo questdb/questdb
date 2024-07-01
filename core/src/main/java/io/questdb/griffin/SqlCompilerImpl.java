@@ -2400,11 +2400,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         executionContext.setUseSimpleCircuitBreaker(true);
         try (
                 TableWriterAPI writer = engine.getTableWriterAPI(tableToken, "insertAsSelect");
-                RecordCursorFactory factory = generate(model.getQueryModel(), executionContext)
+                RecordCursorFactory factory = generate(model.getQueryModel(), executionContext);
+                TableMetadata writerMetadata = executionContext.getMetadataForWrite(tableToken)
         ) {
             final RecordMetadata cursorMetadata = factory.getMetadata();
             // Convert sparse writer metadata into dense
-            final RecordMetadata writerMetadata = GenericRecordMetadata.copyDense(writer.getMetadata());
             final int writerTimestampIndex = writerMetadata.getTimestampIndex();
             final int cursorTimestampIndex = cursorMetadata.getTimestampIndex();
             final int cursorColumnCount = cursorMetadata.getColumnCount();
