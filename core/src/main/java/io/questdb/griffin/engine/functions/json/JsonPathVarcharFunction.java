@@ -121,7 +121,7 @@ class JsonPathVarcharFunction extends VarcharFunction implements JsonPathFunctio
     public @Nullable DirectUtf8Sink getVarcharB(Record rec) {
         Utf8Sequence utf8Json = json.getVarcharB(rec);
         if (utf8Json != null && pointer != null) {
-            return jsonPointer(utf8Json, pointer, a);
+            return jsonPointer(utf8Json, pointer, b);
         }
         return null;
     }
@@ -217,7 +217,6 @@ class JsonPathVarcharFunction extends VarcharFunction implements JsonPathFunctio
         public @Nullable DirectUtf8Sink destSink;
 
         public VarcharSupportingState() {
-            this.destSink = null;
             this.closeDestSink = false;
         }
 
@@ -229,9 +228,8 @@ class JsonPathVarcharFunction extends VarcharFunction implements JsonPathFunctio
         @Override
         public void close() {
             super.close();
-
-            if (closeDestSink && destSink != null) {
-                destSink.close();
+            if (closeDestSink) {
+                destSink = Misc.free(destSink);
             }
         }
     }

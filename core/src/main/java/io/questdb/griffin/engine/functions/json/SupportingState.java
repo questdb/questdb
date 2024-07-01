@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.json;
 
+import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.json.SimdJsonParser;
 import io.questdb.std.json.SimdJsonResult;
@@ -40,13 +41,9 @@ class SupportingState implements QuietCloseable {
 
     @Override
     public void close() {
-        parser.close();
-
-        if (jsonSink != null) {
-            jsonSink.close();
-        }
-
-        simdJsonResult.close();
+        parser = Misc.free(parser);
+        jsonSink = Misc.free(jsonSink);
+        simdJsonResult = Misc.free(simdJsonResult);
     }
 
     public DirectUtf8Sequence initPaddedJson(@NotNull Utf8Sequence json) {

@@ -44,8 +44,6 @@ public class JsonPathDefaultVarcharFunctionFactoryTest extends AbstractCairoTest
 
     @Test
     public void testSort() throws Exception {
-        // todo: this test shows that VarcharFunction is broken. getVarcharA() and getVarcharB() under the covers use
-        //     the same buffer and corrupt the output
         assertMemoryLeak(() -> {
             ddl("create table json_test (text varchar)");
             insert("insert into json_test values ('{\"path\": 10000.5}')");
@@ -53,7 +51,11 @@ public class JsonPathDefaultVarcharFunctionFactoryTest extends AbstractCairoTest
             insert("insert into json_test values ('{\"path\": 20000.5}')");
             insert("insert into json_test values ('{\"path\": 40000.5}')");
             assertSql(
-                    "",
+                    "x\n" +
+                            "40000.5\n" +
+                            "30000.5\n" +
+                            "20000.5\n" +
+                            "10000.5\n",
                     "select json_path(text, '.path') x from json_test order by 1 desc"
             );
         });
