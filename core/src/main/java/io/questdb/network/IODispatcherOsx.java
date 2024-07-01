@@ -24,6 +24,7 @@
 
 package io.questdb.network;
 
+import io.questdb.KqueueAccessor;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.LongMatrix;
 import io.questdb.std.Misc;

@@ -27,6 +27,8 @@
 
 #define FD_TO_HANDLE(fd) (HANDLE) ((uintptr_t) fd)
 
+#define UTF8_MAX_PATH (MAX_PATH * 4)
+
 #define HANDLE_TO_FD(handle) (jint) ((uintptr_t) handle)
 
 #endif //WINDOWS_FILES_H

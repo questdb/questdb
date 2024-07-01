@@ -752,8 +752,6 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_rmdir
     return FALSE;
 }
 
-#define UTF8_MAX_PATH (MAX_PATH * 4)
-
 typedef struct {
     WIN32_FIND_DATAW *find_data;
     HANDLE hFind;
@@ -812,8 +810,16 @@ JNIEXPORT void JNICALL Java_io_questdb_std_Files_findClose
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_findName
         (JNIEnv *e, jclass cl, jlong findPtr) {
-    WideCharToMultiByte(CP_UTF8, 0, ((FIND *) findPtr)->find_data->cFileName, -1, ((FIND *) findPtr)->utf8Name,
-                        UTF8_MAX_PATH, NULL, NULL);
+    WideCharToMultiByte(
+            CP_UTF8,
+            0,
+            ((FIND *) findPtr)->find_data->cFileName,
+            -1,
+            ((FIND *) findPtr)->utf8Name,
+            UTF8_MAX_PATH,
+            NULL,
+            NULL
+    );
     return (jlong) ((FIND *) findPtr)->utf8Name;
 }
 
