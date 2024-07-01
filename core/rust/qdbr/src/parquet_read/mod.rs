@@ -2,11 +2,10 @@ use crate::parquet_write::schema::ColumnType;
 use parquet2::metadata::FileMetaData;
 use std::fs::File;
 
+mod column_sink;
 mod decode;
 mod jni;
 mod meta;
-mod polars_utils;
-mod column_sink;
 mod slicer;
 
 // The metadata fields are accessed from Java.
