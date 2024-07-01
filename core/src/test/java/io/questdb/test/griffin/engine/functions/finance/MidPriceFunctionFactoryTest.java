@@ -38,6 +38,23 @@ public class MidPriceFunctionFactoryTest extends AbstractFunctionFactoryTest {
         assertQuery("mid\n1.5\n", "select mid(1.0, 2.0)");
         assertQuery("mid\n1.625\n", "select mid(1.5, 1.75)");
         assertQuery("mid\n1.5550000000000002\n", "select mid(1.5, 1.61)");
+        assertQuery("mid\n0.0\n", "select mid(0.0,0.0)");
+    }
+
+    @Test
+    public void testNullBehavior() throws Exception {
+        final String expected = "mid\nnull\n";
+        assertQuery(expected, "select mid(NULL, 1.0)");
+        assertQuery(expected, "select mid(1.0, NULL)");
+        assertQuery(expected, "select mid(NULL, NULL)");
+
+    }
+
+    @Test
+    public void testThatOrderDoesNotMatter() throws Exception {
+        final String expected = "mid\n2.0\n";
+        assertQuery(expected, "select mid(1.0, 3.0)");
+        assertQuery(expected, "select mid(3.0, 1.0)");
     }
 
     @Override
