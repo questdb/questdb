@@ -5805,7 +5805,7 @@ public class SqlOptimiser implements Mutable {
             optimiseExpressionModels(rewrittenModel, sqlExecutionContext, sqlParserCallback);
             enumerateTableColumns(rewrittenModel, sqlExecutionContext, sqlParserCallback);
             rewriteTopLevelLiteralsToFunctions(rewrittenModel);
-            rewrittenModel = rewriteSampleBy(rewrittenModel);
+            //rewrittenModel = rewriteSampleBy(rewrittenModel);
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
             resolveJoinColumns(rewrittenModel);
             optimiseBooleanNot(rewrittenModel);
