@@ -308,6 +308,15 @@ public final class IntervalUtils {
         return false;
     }
 
+    public static void parseAndApplyIntervalEx(@Nullable CharSequence seq, LongList out, int position) throws SqlException {
+        if (seq != null) {
+            parseIntervalEx(seq, 0, seq.length(), position, out, IntervalOperation.INTERSECT);
+        } else {
+            addHiLoInterval(Numbers.LONG_NULL, Numbers.LONG_NULL, IntervalOperation.INTERSECT, out);
+        }
+        applyLastEncodedIntervalEx(out);
+    }
+
     public static long parseCCPartialDate(CharSequence seq, final int pos, int lim) throws NumericException {
         long ts;
         if (lim - pos < 4) {
@@ -978,15 +987,6 @@ public final class IntervalUtils {
             }
         }
         throw NumericException.INSTANCE;
-    }
-
-    public static void parseAndApplyIntervalEx(@Nullable CharSequence seq, LongList out, int position) throws SqlException {
-        if (seq != null) {
-            parseIntervalEx(seq, 0, seq.length(), position, out, IntervalOperation.INTERSECT);
-        } else {
-            addHiLoInterval(Numbers.LONG_NULL, Numbers.LONG_NULL, IntervalOperation.INTERSECT, out);
-        }
-        applyLastEncodedIntervalEx(out);
     }
 
     private static void parseRange(CharSequence seq, int lo, int p, int lim, int position, short operation, LongList out) throws SqlException {
