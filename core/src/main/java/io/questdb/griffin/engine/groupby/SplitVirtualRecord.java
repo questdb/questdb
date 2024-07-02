@@ -31,7 +31,6 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 
 public class SplitVirtualRecord implements Record {
     private final ObjList<? extends Function> functionsA;

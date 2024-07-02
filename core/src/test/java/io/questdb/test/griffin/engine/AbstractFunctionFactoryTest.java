@@ -40,7 +40,6 @@ import io.questdb.std.*;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.griffin.BaseFunctionFactoryTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -494,7 +493,6 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         private final Function function2;
         private final TestUtils.LeakCheck leakCheck;
         private final Record record;
-        private final Utf8StringSink utf8Sink = new Utf8StringSink();
 
         public Invocation(TestUtils.LeakCheck leakCheck, Function function1, Function function2, Record record) {
             this.leakCheck = leakCheck;

@@ -29,7 +29,10 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.*;
-import io.questdb.std.str.*;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.griffin.engine.TestBinarySequence;
 import org.jetbrains.annotations.NotNull;
@@ -509,11 +512,6 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         @Override
         public int getType() {
             return type;
-        }
-
-        private void getVarchar(Record rec, Utf8Sink utf8Sink) {
-            Assert.assertEquals(ColumnType.VARCHAR, type);
-            callCount++;
         }
 
         @Override

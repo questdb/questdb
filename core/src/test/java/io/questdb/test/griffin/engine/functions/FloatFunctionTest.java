@@ -26,7 +26,6 @@ package io.questdb.test.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.FloatFunction;
-import io.questdb.std.str.Utf16Sink;
 import org.junit.Test;
 
 public class FloatFunctionTest {
