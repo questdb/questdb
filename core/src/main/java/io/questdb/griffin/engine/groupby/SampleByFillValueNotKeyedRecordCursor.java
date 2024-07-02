@@ -80,7 +80,7 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
     public boolean hasNext() {
         initTimestamps();
 
-        if (baseRecord == null && !gapFill) {
+        if (baseRecord == null && !gapFill && !endFill) {
             firstRun = true;
             return false;
         }
@@ -100,6 +100,13 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
             setActiveB(expectedLocalEpoch);
             sampleLocalEpoch = expectedLocalEpoch;
             nextSampleLocalEpoch = expectedLocalEpoch;
+            return true;
+        }
+        if (endFill) {
+            sampleLocalEpoch = expectedLocalEpoch;
+            nextSampleLocalEpoch = expectedLocalEpoch;
+            endFill = false;
+            gapFill = false;
             return true;
         }
         if (setActiveA(expectedLocalEpoch)) {

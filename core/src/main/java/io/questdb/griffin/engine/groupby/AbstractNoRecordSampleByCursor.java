@@ -48,6 +48,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
     protected RecordCursor baseCursor;
     protected Record baseRecord;
     protected SqlExecutionCircuitBreaker circuitBreaker;
+    protected boolean endFill;
     // this epoch is generally the same as `sampleLocalEpoch` except for cases where
     // sampler passed thru Daytime Savings Transition date
     // diverging values tell `filling` implementations not to fill this gap
@@ -113,6 +114,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         rowId = 0;
         isNotKeyedLoopInitialized = false;
         areTimestampsInitialized = false;
+        endFill = false;
     }
 
     @Override
@@ -134,6 +136,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         rowId = 0;
         isNotKeyedLoopInitialized = false;
         areTimestampsInitialized = false;
+        endFill = false;
     }
 
     private void kludge(long newTzOffset) {
@@ -237,7 +240,6 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
     }
 
     protected boolean notKeyedLoop(MapValue mapValue) {
-
         if (!isNotKeyedLoopInitialized) {
             sampleLocalEpoch = localEpoch;
             nextSampleLocalEpoch = localEpoch;
@@ -249,7 +251,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         }
 
         long next = timestampSampler.nextTimestamp(localEpoch);
-        long timestamp = -1;
+        long timestamp;
         while (baseCursor.hasNext()) {
             timestamp = getBaseRecordTimestamp();
             if (timestamp < next) {
@@ -273,6 +275,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
 
         // we may need to post fill, depending on the sample by from clause
         if (fromHiFunc != TimestampConstant.NULL) {
+            endFill = true;
             final long upperBound = fromHiFunc.getTimestamp(null);
             if (next < upperBound) {
                 nextSamplePeriod(upperBound);
@@ -284,14 +287,6 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         baseRecord = null;
         isNotKeyedLoopInitialized = false;
         return true;
-    }
-
-    protected long peekNextSamplePeriod(long timestamp) {
-        long ts = timestampSampler.round(timestamp);
-        if (ts - tzOffset < prevDst) {
-            ts += tzOffset;
-        }
-        return ts;
     }
 
     protected void updateValueWhenClockMovesBack(MapValue value) {
