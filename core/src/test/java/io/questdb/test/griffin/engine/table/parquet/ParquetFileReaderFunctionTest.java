@@ -44,15 +44,25 @@ public class ParquetFileReaderFunctionTest extends AbstractCairoTest {
             final long rows = 1000_000;
             ddl("create table x as (select" +
                     " case when x % 2 = 0 then cast(x as int) end id," +
-                    " rnd_int() as a_long," +
-                    " rnd_str(4,4,4,2) as a_str," +
-                    " rnd_varchar(1, 40, 1) as a_varchar," +
-                    " rnd_boolean() a_boolean," +
-                    " rnd_short() a_short," +
-                    " rnd_byte() a_byte," +
-                    " rnd_char() a_char," +
-//                    " rnd_uuid4() a_uuid," +
-                    " rnd_symbol(4,4,4,2) as a_sym" +
+                    " case when x % 2 = 0 then rnd_int() end as a_long," +
+                    " case when x % 2 = 0 then rnd_str(4,4,4,2) end as a_str," +
+                    " case when x % 2 = 0 then rnd_varchar(1, 40, 1) end as a_varchar," +
+                    " case when x % 2 = 0 then rnd_boolean() end a_boolean," +
+                    " case when x % 2 = 0 then rnd_short() end a_short," +
+                    " case when x % 2 = 0 then rnd_byte() end a_byte," +
+                    " case when x % 2 = 0 then rnd_char() end a_char," +
+                    " case when x % 2 = 0 then rnd_uuid4() end a_uuid," +
+                    " case when x % 2 = 0 then rnd_double() end a_double," +
+                    " case when x % 2 = 0 then rnd_float() end a_float," +
+                    " case when x % 2 = 0 then rnd_symbol(4,4,4,2) end as a_sym," +
+                    " cast(rnd_timestamp('2015','2016',2) as date) as a_date," +
+                    " rnd_long256() a_long256," +
+                    " rnd_ipv4() a_ip," +
+                    " rnd_geohash(4) a_geo_byte," +
+                    " rnd_geohash(8) a_geo_short," +
+                    " rnd_geohash(16) a_geo_int," +
+                    " rnd_geohash(32) a_geo_long," +
+                    " rnd_timestamp('2015','2016',2) as a_ts," +
                     " from long_sequence(" + rows + "))");
 
             try (
@@ -66,23 +76,31 @@ public class ParquetFileReaderFunctionTest extends AbstractCairoTest {
                 Assert.assertTrue(Files.exists(path));
 
                 sink.clear();
-                sink.put("select * from read_parquet('").put(path).put("')");
+                sink.put("select " +
+                        "id," +
+                        "a_long," +
+                        "a_str," +
+                        "a_varchar," +
+                        "a_boolean," +
+                        "a_short," +
+                        "a_byte," +
+                        "a_char," +
+                        "a_uuid," +
+                        "a_double," +
+                        "a_float," +
+                        "a_sym," +
+                        "a_date," +
+                        "a_long256," +
+                        "cast(a_ip as IPV4) as a_ip," +
+                        "cast(a_geo_byte as geohash(4b)) as a_geo_byte," +
+                        "cast(a_geo_short as geohash(8b)) as a_geo_short," +
+                        "cast(a_geo_int as geohash(16b)) as a_geo_int," +
+                        "cast(a_geo_long as geohash(32b)) as a_geo_long," +
+                        "a_ts," +
+                        " from read_parquet('").put(path).put("')");
                 assertSqlCursors("x", sink);
             }
         });
-    }
-
-    protected static void assertSqlCursors(CharSequence expectedSql, CharSequence actualSql) throws SqlException {
-        try (SqlCompiler sqlCompiler = engine.getSqlCompiler()) {
-            TestUtils.assertSqlCursors(
-                    sqlCompiler,
-                    sqlExecutionContext,
-                    expectedSql,
-                    actualSql,
-                    LOG,
-                    true
-            );
-        }
     }
 
     @Test
@@ -141,5 +159,18 @@ public class ParquetFileReaderFunctionTest extends AbstractCairoTest {
                 assertSqlCursors("x where 1 = 2", sink);
             }
         });
+    }
+
+    protected static void assertSqlCursors(CharSequence expectedSql, CharSequence actualSql) throws SqlException {
+        try (SqlCompiler sqlCompiler = engine.getSqlCompiler()) {
+            TestUtils.assertSqlCursors(
+                    sqlCompiler,
+                    sqlExecutionContext,
+                    expectedSql,
+                    actualSql,
+                    LOG,
+                    true
+            );
+        }
     }
 }

@@ -50,7 +50,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
         try (
                 Path path = new Path();
                 PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
-                TableReader reader = node2.getEngine().getReader("trades")
+                TableReader reader = node2.getEngine().getReader("request_logs")
         ) {
             path.of(root2).concat("x.parquet").$();
             long start = System.nanoTime();
@@ -58,6 +58,29 @@ public class PartitionEncoderTest extends AbstractCairoTest {
             PartitionEncoder.encode(partitionDescriptor, path);
             LOG.info().$("Took: ").$((System.nanoTime() - start) / 1_000_000).$("ms").$();
         }
+    }
+
+    @Test
+    public void testUuid() throws Exception {
+        assertMemoryLeak(() -> {
+            final long rows = 1;
+            ddl("create table x as (select" +
+                    " cast('7c0bd97b-0593-47d2-be17-b8f3f89ca555' as uuid), " +
+                    " timestamp_sequence(400000000000, 500) designated_ts" +
+                    " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet").$();
+                long start = System.nanoTime();
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                LOG.info().$("Took: ").$((System.nanoTime() - start) / 1_000_000).$("ms").$();
+            }
+        });
     }
 
     @Test

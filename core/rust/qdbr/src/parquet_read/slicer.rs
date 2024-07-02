@@ -1,12 +1,12 @@
+use crate::parquet_read::slicer::RleIterator::Rle;
+use crate::parquet_write::ParquetResult;
+use parquet2::encoding::hybrid_rle::HybridEncoded;
+use parquet2::encoding::{bitpacked, delta_bitpacked, hybrid_rle};
+use parquet2::error::Error;
+use parquet2::page::DictPage;
 use std::marker::PhantomData;
 use std::mem::size_of;
 use std::ptr;
-use parquet2::encoding::{bitpacked, delta_bitpacked, hybrid_rle};
-use parquet2::encoding::hybrid_rle::{HybridEncoded};
-use parquet2::error::Error;
-use parquet2::page::DictPage;
-use crate::parquet_read::slicer::RleIterator::Rle;
-use crate::parquet_write::ParquetResult;
 
 pub trait DataPageSlicer {
     fn next(&mut self) -> &[u8];
@@ -95,16 +95,23 @@ impl<'a> DeltaLengthArraySlicer<'a> {
     pub fn try_new(data: &'a [u8], row_count: usize) -> ParquetResult<Self> {
         let mut decoder = delta_bitpacked::Decoder::try_new(data)?;
 
-        let lengths: Vec<i64> = decoder
-            .by_ref()
-            .collect::<Result<Vec<i64>, Error>>()?;
+        let lengths: Vec<i64> = decoder.by_ref().collect::<Result<Vec<i64>, Error>>()?;
 
         let data_offset = decoder.consumed_bytes();
-        Ok(Self { data: &data[data_offset..], row_count, index: 0, lengths, pos: 0 })
+        Ok(Self {
+            data: &data[data_offset..],
+            row_count,
+            index: 0,
+            lengths,
+            pos: 0,
+        })
     }
 }
 
-pub struct RleDictionarySlicer<'a, 'b, I> where I: Iterator<Item=u32> {
+pub struct RleDictionarySlicer<'a, 'b, I>
+where
+    I: Iterator<Item = u32>,
+{
     data: I,
     row_count: usize,
     dict: Vec<&'b [u8]>,
@@ -113,9 +120,9 @@ pub struct RleDictionarySlicer<'a, 'b, I> where I: Iterator<Item=u32> {
     _data: PhantomData<&'a u8>,
 }
 
-impl<I: Iterator<Item=u32>> DataPageSlicer for RleDictionarySlicer<'_, '_, I> {
+impl<I: Iterator<Item = u32>> DataPageSlicer for RleDictionarySlicer<'_, '_, I> {
     fn next(&mut self) -> &[u8] {
-        if !self.error.is_err() {
+        if self.error.is_ok() {
             let idx = self.data.next();
             if let Some(idx) = idx {
                 return self.dict[idx as usize];
@@ -159,8 +166,11 @@ pub enum DictionarySlicer<'a, 'b> {
     Rle(RleDictionarySlicer<'a, 'b, RepeatIterator>),
 }
 
-pub fn decode_rle<'a, 'b>(data: &'a [u8], dict_page: &'b DictPage, row_count: usize)
-                          -> ParquetResult<DictionarySlicer<'a, 'b>> {
+pub fn decode_rle<'a, 'b>(
+    data: &'a [u8],
+    dict_page: &'b DictPage,
+    row_count: usize,
+) -> ParquetResult<DictionarySlicer<'a, 'b>> {
     let mut dict_values: Vec<&[u8]> = Vec::with_capacity(dict_page.num_values);
     let mut offset = 0usize;
     let dict_data = &dict_page.buffer;
@@ -168,14 +178,21 @@ pub fn decode_rle<'a, 'b>(data: &'a [u8], dict_page: &'b DictPage, row_count: us
     let mut total_key_len = 0;
     for i in 0..dict_page.num_values {
         if offset + size_of::<u32>() > dict_data.len() {
-            return Err(Error::OutOfSpec(format!("dictionary data page is too short to read value length {}", i)));
+            return Err(Error::OutOfSpec(format!(
+                "dictionary data page is too short to read value length {}",
+                i
+            )));
         }
 
-        let str_len = unsafe { ptr::read_unaligned(dict_data.as_ptr().add(offset) as *const u32) } as usize;
+        let str_len =
+            unsafe { ptr::read_unaligned(dict_data.as_ptr().add(offset) as *const u32) } as usize;
         offset += size_of::<u32>();
 
         if offset + str_len > dict_data.len() {
-            return Err(Error::OutOfSpec(format!("dictionary data page is too short to read value {}", i)));
+            return Err(Error::OutOfSpec(format!(
+                "dictionary data page is too short to read value {}",
+                i
+            )));
         }
 
         let str_slice = &dict_data[offset..offset + str_len];
@@ -215,13 +232,10 @@ pub fn decode_rle<'a, 'b>(data: &'a [u8], dict_page: &'b DictPage, row_count: us
     }
 }
 
-fn decode_rle_v2(
-    buffer: &[u8],
-    num_bits: usize,
-) -> ParquetResult<RleIterator> {
+fn decode_rle_v2(buffer: &[u8], num_bits: usize) -> ParquetResult<RleIterator> {
     if num_bits > 0 {
-        let decoder = hybrid_rle::Decoder::new(buffer, num_bits);
-        for run in decoder {
+        let mut decoder = hybrid_rle::Decoder::new(buffer, num_bits);
+        if let Some(run) = decoder.next()  {
             let encoded = run?;
             if let HybridEncoded::Bitpacked(values) = encoded {
                 let count = values.len() * 8 / num_bits;
@@ -232,10 +246,15 @@ fn decode_rle_v2(
                 let iterator = std::iter::repeat(value).take(repeat);
                 return Ok(RleIterator::Rle(iterator));
             } else {
-                return Err(Error::FeatureNotSupported(format!("encoding not supported: {:?}", encoded)));
+                return Err(Error::FeatureNotSupported(format!(
+                    "encoding not supported: {:?}",
+                    encoded
+                )));
             }
         }
-        Err(Error::OutOfSpec("Hybrid rle not contain any bitpack or rle runs".to_string()))
+        Err(Error::OutOfSpec(
+            "Hybrid rle not contain any bitpack or rle runs".to_string(),
+        ))
     } else {
         let decoder = bitpacked::Decoder::<u32>::try_new(&[], 1, 0)?;
         Ok(RleIterator::Bitpacked(decoder))

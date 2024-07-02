@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.table;
 
 import io.questdb.cairo.DataUnavailableException;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
@@ -33,15 +34,14 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.LongList;
-import io.questdb.std.Misc;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.str.*;
 import org.jetbrains.annotations.Nullable;
 
 public class ParquetFileRecordCursor implements NoRandomAccessRecordCursor {
+    private final LongList auxPtrs = new LongList();
     private final LongList columnChunkBufferPtrs = new LongList();
+    private final LongList dataPtrs = new LongList();
     private final PartitionDecoder decoder;
     private final RecordMetadata metadata;
     private final Path path;
@@ -101,11 +101,16 @@ public class ParquetFileRecordCursor implements NoRandomAccessRecordCursor {
 
     private boolean switchToNextRowGroup() {
         columnChunkBufferPtrs.clear();
+        dataPtrs.clear();
+        auxPtrs.clear();
         if (++rowGroup < decoder.getMetadata().rowGroupCount()) {
             rowGroupRowCount = -1;
             for (int columnId = 0, n = metadata.getColumnCount(); columnId < n; columnId++) {
                 long columnChunkBufferPtr = decoder.decodeColumnChunk(rowGroup, columnId, metadata.getColumnType(columnId));
                 columnChunkBufferPtrs.add(columnChunkBufferPtr);
+                dataPtrs.add(PartitionDecoder.getChunkDataPtr(columnChunkBufferPtr));
+                auxPtrs.add(PartitionDecoder.getChunkAuxPtr(columnChunkBufferPtr));
+
                 long rowCount = PartitionDecoder.getRowGroupCount(columnChunkBufferPtr);
                 if (rowGroupRowCount == -1) {
                     rowGroupRowCount = rowCount;
@@ -122,22 +127,10 @@ public class ParquetFileRecordCursor implements NoRandomAccessRecordCursor {
     private class ParquetRecord implements Record {
         private final DirectString directCharSequenceA = new DirectString();
         private final DirectString directCharSequenceB = new DirectString();
+        private final Long256Impl long256A = new Long256Impl();
+        private final Long256Impl long256B = new Long256Impl();
         private final Utf8SplitString utf8SplitViewA = new Utf8SplitString(false);
         private final Utf8SplitString utf8SplitViewB = new Utf8SplitString(false);
-
-        @Override
-        public int getInt(int col) {
-            long chunkPtr = columnChunkBufferPtrs.getQuick(col);
-            long dataPtr = PartitionDecoder.getChunkDataPtr(chunkPtr);
-            return Unsafe.getUnsafe().getInt(dataPtr + currentRowInRowGroup * 4L);
-        }
-
-        @Override
-        public long getLong(int col) {
-            long chunkPtr = columnChunkBufferPtrs.getQuick(col);
-            long dataPtr = PartitionDecoder.getChunkDataPtr(chunkPtr);
-            return Unsafe.getUnsafe().getLong(dataPtr + currentRowInRowGroup * 8L);
-        }
 
         @Override
         public boolean getBool(int col) {
@@ -146,68 +139,136 @@ public class ParquetFileRecordCursor implements NoRandomAccessRecordCursor {
 
         @Override
         public byte getByte(int col) {
-            long chunkPtr = columnChunkBufferPtrs.getQuick(col);
-            long dataPtr = PartitionDecoder.getChunkDataPtr(chunkPtr);
+            long dataPtr = dataPtrs.get(col);
             return Unsafe.getUnsafe().getByte(dataPtr + currentRowInRowGroup);
         }
 
         @Override
         public char getChar(int col) {
-            long chunkPtr = columnChunkBufferPtrs.getQuick(col);
-            long dataPtr = PartitionDecoder.getChunkDataPtr(chunkPtr);
+            long dataPtr = dataPtrs.get(col);
             return Unsafe.getUnsafe().getChar(dataPtr + currentRowInRowGroup * 2L);
         }
 
         @Override
+        public double getDouble(int col) {
+            long dataPtr = dataPtrs.get(col);
+            return Unsafe.getUnsafe().getDouble(dataPtr + currentRowInRowGroup * 8L);
+        }
+
+        @Override
+        public float getFloat(int col) {
+            long dataPtr = dataPtrs.get(col);
+            return Unsafe.getUnsafe().getFloat(dataPtr + currentRowInRowGroup * 4L);
+        }
+
+        @Override
+        public int getInt(int col) {
+            long dataPtr = dataPtrs.get(col);
+            return Unsafe.getUnsafe().getInt(dataPtr + currentRowInRowGroup * 4L);
+        }
+
+        @Override
+        public long getLong(int col) {
+            long dataPtr = dataPtrs.get(col);
+            return Unsafe.getUnsafe().getLong(dataPtr + currentRowInRowGroup * 8L);
+        }
+
+        @Override
+        public long getLong128Hi(int col) {
+            long dataPtr = dataPtrs.get(col);
+            return Unsafe.getUnsafe().getLong(dataPtr + currentRowInRowGroup * 16L + 8);
+        }
+
+        @Override
+        public long getLong128Lo(int col) {
+            long dataPtr = dataPtrs.get(col);
+            return Unsafe.getUnsafe().getLong(dataPtr + currentRowInRowGroup * 16L);
+        }
+
+        @Override
+        public void getLong256(int col, CharSink<?> sink) {
+            long dataPtr = dataPtrs.get(col);
+            long offset = (long) currentRowInRowGroup * Long256.BYTES;
+            final long a = Unsafe.getUnsafe().getLong(dataPtr + offset);
+            final long b = Unsafe.getUnsafe().getLong(dataPtr + offset + Long.BYTES);
+            final long c = Unsafe.getUnsafe().getLong(dataPtr + offset + Long.BYTES * 2);
+            final long d = Unsafe.getUnsafe().getLong(dataPtr + offset + Long.BYTES * 3);
+            Numbers.appendLong256(a, b, c, d, sink);
+        }
+
+        @Override
+        public Long256 getLong256A(int col) {
+            long dataPtr = dataPtrs.get(col);
+            long offset = (long) currentRowInRowGroup * Long256.BYTES;
+            final long a = Unsafe.getUnsafe().getLong(dataPtr + offset);
+            final long b = Unsafe.getUnsafe().getLong(dataPtr + offset + Long.BYTES);
+            final long c = Unsafe.getUnsafe().getLong(dataPtr + offset + Long.BYTES * 2);
+            final long d = Unsafe.getUnsafe().getLong(dataPtr + offset + Long.BYTES * 3);
+            long256A.setAll(a, b, c, d);
+            return long256A;
+        }
+
+        @Override
+        public Long256 getLong256B(int col) {
+            long dataPtr = dataPtrs.get(col);
+            long offset = (long) currentRowInRowGroup * Long256.BYTES;
+            final long a = Unsafe.getUnsafe().getLong(dataPtr + offset);
+            final long b = Unsafe.getUnsafe().getLong(dataPtr + offset + Long.BYTES);
+            final long c = Unsafe.getUnsafe().getLong(dataPtr + offset + Long.BYTES * 2);
+            final long d = Unsafe.getUnsafe().getLong(dataPtr + offset + Long.BYTES * 3);
+            long256B.setAll(a, b, c, d);
+            return long256B;
+        }
+
+        @Override
         public short getShort(int col) {
-            long chunkPtr = columnChunkBufferPtrs.getQuick(col);
-            long dataPtr = PartitionDecoder.getChunkDataPtr(chunkPtr);
+            long dataPtr = dataPtrs.get(col);
             return Unsafe.getUnsafe().getShort(dataPtr + currentRowInRowGroup * 2L);
         }
 
         @Override
         public CharSequence getStrA(int col) {
-            long chunkPtr = columnChunkBufferPtrs.getQuick(col);
-            long auxPtr = PartitionDecoder.getChunkAuxPtr(chunkPtr);
+            long auxPtr = auxPtrs.get(col);
+            long dataPtr = dataPtrs.get(col);
             long data_offset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
-            long dataPtr = PartitionDecoder.getChunkDataPtr(chunkPtr);
             return getStr(dataPtr + data_offset, directCharSequenceA);
         }
 
         @Override
         public CharSequence getStrB(int col) {
-            long chunkPtr = columnChunkBufferPtrs.getQuick(col);
-            long auxPtr = PartitionDecoder.getChunkAuxPtr(chunkPtr);
+            long auxPtr = auxPtrs.get(col);
+            long dataPtr = dataPtrs.get(col);
             long data_offset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
-            long dataPtr = PartitionDecoder.getChunkDataPtr(chunkPtr);
             return getStr(dataPtr + data_offset, directCharSequenceB);
         }
 
         @Override
         public int getStrLen(int col) {
-            long chunkPtr = columnChunkBufferPtrs.getQuick(col);
-            long auxPtr = PartitionDecoder.getChunkAuxPtr(chunkPtr);
+            long auxPtr = auxPtrs.get(col);
+            long dataPtr = dataPtrs.get(col);
             long data_offset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
-            long dataPtr = PartitionDecoder.getChunkDataPtr(chunkPtr);
             return Unsafe.getUnsafe().getInt(dataPtr + data_offset);
         }
 
         @Nullable
         @Override
         public Utf8Sequence getVarcharA(int col) {
-            long chunkPtr = columnChunkBufferPtrs.getQuick(col);
-            long auxPtr = PartitionDecoder.getChunkAuxPtr(chunkPtr);
-            long dataPtr = PartitionDecoder.getChunkDataPtr(chunkPtr);
+            long auxPtr = auxPtrs.get(col);
+            long dataPtr = dataPtrs.get(col);
             return VarcharTypeDriver.getSplitValue(auxPtr, dataPtr, currentRowInRowGroup, utf8SplitViewA);
         }
 
         @Nullable
         @Override
         public Utf8Sequence getVarcharB(int col) {
-            long chunkPtr = columnChunkBufferPtrs.getQuick(col);
-            long auxPtr = PartitionDecoder.getChunkAuxPtr(chunkPtr);
-            long dataPtr = PartitionDecoder.getChunkDataPtr(chunkPtr);
+            long auxPtr = auxPtrs.get(col);
+            long dataPtr = dataPtrs.get(col);
             return VarcharTypeDriver.getSplitValue(auxPtr, dataPtr, currentRowInRowGroup, utf8SplitViewB);
+        }
+
+        private long getDataPtr(int col) {
+            long chunkPtr = columnChunkBufferPtrs.getQuick(col);
+            return PartitionDecoder.getChunkDataPtr(chunkPtr);
         }
 
         private DirectString getStr(long addr, DirectString view) {
