@@ -187,8 +187,7 @@ public class ReplaceVarcharFunctionFactory implements FunctionFactory {
             return replaceWith;
         }
 
-        @Override
-        public void getVarchar(Record rec, Utf8Sink sink) {
+        private void getVarchar(Record rec, Utf8Sink sink) {
             final Utf8Sequence value = this.value.getVarcharA(rec);
             if (value != null) {
                 replace(value, lookFor.getVarcharA(rec), replaceWith.getVarcharA(rec), sink, maxSize);

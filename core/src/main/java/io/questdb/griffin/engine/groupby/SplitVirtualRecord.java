@@ -188,11 +188,6 @@ public class SplitVirtualRecord implements Record {
     }
 
     @Override
-    public void getVarchar(int col, Utf8Sink utf8Sink) {
-        getFunction(col).getVarchar(base, utf8Sink);
-    }
-
-    @Override
     public Utf8Sequence getVarcharA(int col) {
         return getFunction(col).getVarcharA(base);
     }

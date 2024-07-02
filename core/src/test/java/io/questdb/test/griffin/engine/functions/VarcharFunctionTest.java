@@ -59,8 +59,7 @@ public class VarcharFunctionTest {
     };
 
     private static final VarcharFunction function = new VarcharFunction() {
-        @Override
-        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+        private void getVarchar(Record rec, Utf8Sink utf8Sink) {
         }
 
         @Override

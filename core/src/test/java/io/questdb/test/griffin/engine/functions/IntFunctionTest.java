@@ -180,11 +180,6 @@ public class IntFunctionTest {
         function.getVarcharB(null);
     }
 
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetVarcharUtf8Sink() {
-        function.getVarchar(null, null);
-    }
-
     private static @NotNull IntFunction makeIntFunction(int value) {
         return new IntFunction() {
             @Override

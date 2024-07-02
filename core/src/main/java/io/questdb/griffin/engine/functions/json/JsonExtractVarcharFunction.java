@@ -35,7 +35,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.json.SimdJsonError;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -70,28 +69,6 @@ class JsonExtractVarcharFunction extends VarcharFunction implements JsonExtractF
         b.close();
         copied.close();
         pointer = Misc.free(pointer);
-    }
-
-    @Override
-    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-        if (utf8Sink instanceof DirectUtf8Sink) {
-            if ((copied.destSink != null) && copied.closeDestSink) {
-                copied.destSink.close();
-            }
-            copied.destSink = (DirectUtf8Sink) utf8Sink;
-            copied.closeDestSink = false;
-            jsonPointer(json.getVarcharA(rec), copied);
-        } else {
-            if (copied.destSink == null) {
-                copied.destSink = new DirectUtf8Sink(maxSize);
-                copied.closeDestSink = true;
-            } else {
-                copied.destSink.clear();
-                copied.destSink.reserve(maxSize);
-            }
-            jsonPointer(json.getVarcharA(rec), copied);
-            utf8Sink.put(copied.destSink);
-        }
     }
 
     @Override

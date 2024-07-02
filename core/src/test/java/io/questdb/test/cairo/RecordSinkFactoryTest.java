@@ -511,8 +511,7 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
             return type;
         }
 
-        @Override
-        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+        private void getVarchar(Record rec, Utf8Sink utf8Sink) {
             Assert.assertEquals(ColumnType.VARCHAR, type);
             callCount++;
         }

@@ -628,12 +628,6 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             if (expected == null) {
                 Assert.assertNull(func.getVarcharA(record));
                 Assert.assertNull(func.getVarcharB(record));
-                utf8Sink.clear();
-                func.getVarchar(record, utf8Sink);
-                Assert.assertEquals(0, utf8Sink.size());
-                dirUtf8Sink.clear();
-                func.getVarchar(record, dirUtf8Sink);
-                Assert.assertEquals(0, dirUtf8Sink.size());
             } else {
                 Utf8Sequence a = func.getVarcharA(record);
                 Utf8Sequence b = func.getVarcharB(record);
@@ -646,22 +640,6 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                 // repeat call to make sure there is correct object reuse
                 TestUtils.assertEquals(expected, func.getVarcharA(record));
                 TestUtils.assertEquals(expected, func.getVarcharB(record));
-
-                utf8Sink.clear();
-                func.getVarchar(record, utf8Sink);
-                TestUtils.assertEquals(expected, utf8Sink);
-
-                utf8Sink.clear();
-                func.getVarchar(record, utf8Sink);
-                TestUtils.assertEquals(expected, utf8Sink);
-
-                dirUtf8Sink.clear();
-                func.getVarchar(record, dirUtf8Sink);
-                TestUtils.assertEquals(expected, dirUtf8Sink);
-
-                dirUtf8Sink.clear();
-                func.getVarchar(record, dirUtf8Sink);
-                TestUtils.assertEquals(expected, dirUtf8Sink);
             }
         }
 

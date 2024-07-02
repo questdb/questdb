@@ -37,7 +37,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.std.str.Utf8s.trim;
@@ -100,11 +99,6 @@ public class TrimVarcharFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-            utf8Sink.put(sink1);
-        }
-
-        @Override
         public @Nullable Utf8Sequence getVarcharA(Record rec) {
             return sink1;
         }
@@ -158,11 +152,6 @@ public class TrimVarcharFunctionFactory implements FunctionFactory {
                 default:
                     return "trim";
             }
-        }
-
-        @Override
-        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-            trim(type, getArg().getVarcharA(rec), utf8Sink);
         }
 
         @Override

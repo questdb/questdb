@@ -229,8 +229,7 @@ public class GroupByFunctionTest {
             return 0;
         }
 
-        @Override
-        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
+        private void getVarchar(Record rec, Utf8Sink utf8Sink) {
         }
 
         @Override

@@ -4902,7 +4902,7 @@ nodejs code:
             mayDrainWalQueue();
             sink.clear();
 
-            try (PreparedStatement ps = connection.prepareStatement("select sum(json_path(text, '.list[1]', 5)) from json_example;")) {
+            try (PreparedStatement ps = connection.prepareStatement("select sum(json_extract(text, '.list[1]', 5)) from json_example;")) {
                 try (ResultSet rs = ps.executeQuery()) {
                     // all rows, null = null is always true
                     assertResultSet(
@@ -4914,7 +4914,7 @@ nodejs code:
                 }
             }
 
-            try (PreparedStatement ps = connection.prepareStatement("select sum(json_path(text, '.list[1]')::int) from json_example;")) {
+            try (PreparedStatement ps = connection.prepareStatement("select sum(json_extract(text, '.list[1]')::int) from json_example;")) {
                 try (ResultSet rs = ps.executeQuery()) {
                     // all rows, null = null is always true
                     assertResultSet(
@@ -4927,7 +4927,7 @@ nodejs code:
             }
 
             sink.clear();
-            try (PreparedStatement ps = connection.prepareStatement("select sum(json_path(text, ?, 5)) from json_example;")) {
+            try (PreparedStatement ps = connection.prepareStatement("select sum(json_extract(text, ?, 5)) from json_example;")) {
                 ps.setString(1, ".list[1]");
                 try (ResultSet rs = ps.executeQuery()) {
                     assertResultSet(
@@ -4949,7 +4949,7 @@ nodejs code:
             }
 
             sink.clear();
-            try (PreparedStatement ps = connection.prepareStatement("select sum(json_path(text, ?)::int) from json_example;")) {
+            try (PreparedStatement ps = connection.prepareStatement("select sum(json_extract(text, ?)::int) from json_example;")) {
                 ps.setString(1, ".list[1]");
                 try (ResultSet rs = ps.executeQuery()) {
                     assertResultSet(
@@ -4972,7 +4972,7 @@ nodejs code:
             }
 
             sink.clear();
-            try (PreparedStatement ps = connection.prepareStatement("select json_path(?, ?, 5) p")) {
+            try (PreparedStatement ps = connection.prepareStatement("select json_extract(?, ?, 5) p")) {
                 ps.setString(1, "{\n" +
                         "    \"hello\": \"world\",\n" +
                         "    \"list\": [\n" +
