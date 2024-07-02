@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
@@ -44,9 +45,9 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testWalTablesQueryCache() throws Exception {
         assertMemoryLeak(() -> {
-            cloneCreateTable("A", false);
-            cloneCreateTable("B", true);
-            cloneCreateTable("C", true);
+            createTable("A", false);
+            createTable("B", true);
+            createTable("C", true);
 
             try (RecordCursorFactory factory = select("wal_tables()")) {
                 // RecordCursorFactory could be cached in QueryCache and reused
@@ -83,10 +84,10 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
         };
 
         assertMemoryLeak(filesFacade, () -> {
-            cloneCreateTable("A", false);
-            cloneCreateTable("B", true);
-            cloneCreateTable("C", true);
-            cloneCreateTable("D", true);
+            createTable("A", false);
+            createTable("B", true);
+            createTable("C", true);
+            createTable("D", true);
 
             insert("insert into B values (1, 'A', '2022-12-05T01', 'B')");
             compile("update B set x = 101");
@@ -116,12 +117,51 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
         });
     }
 
-    private void cloneCreateTable(final String tableName, boolean isWal) throws SqlException {
+    @Test
+    public void testWalTablesSuspendedWithErrorCode() throws Exception {
+        testWalTablesSuspendedWithError("alter table B suspend wal with " + (Os.isWindows() ? 8 : 12) + ", 'test error message'");
+    }
+
+    @Test
+    public void testWalTablesSuspendedWithErrorTag() throws Exception {
+        testWalTablesSuspendedWithError("alter table B suspend wal with 'OUT OF MEMORY', 'test error message'");
+    }
+
+    private void createTable(final String tableName, boolean isWal) throws SqlException {
         compile("create table " + tableName + " (" +
                 "x long," +
                 "sym symbol," +
                 "ts timestamp," +
                 "sym2 symbol" +
                 ") timestamp(ts) partition by DAY" + (isWal ? " WAL" : ""));
+    }
+
+    private void testWalTablesSuspendedWithError(String suspendSql) throws Exception {
+        assertMemoryLeak(() -> {
+            createTable("A", false);
+            createTable("B", true);
+
+            insert("insert into A values (1, 'A', '2022-12-05T01', 'A')");
+            insert("insert into B values (2, 'A', '2022-12-05T01', 'B')");
+            compile(suspendSql);
+            insert("insert into B values (3, 'C', '2022-12-05T02', 'D')");
+
+            drainWalQueue();
+
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("B")));
+
+            assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\n" +
+                    "B\ttrue\t2\t0\t2\tOUT OF MEMORY\ttest error message\n", "wal_tables()");
+
+            compile("alter table B resume wal");
+
+            drainWalQueue();
+
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("B")));
+
+            assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\n" +
+                    "B\tfalse\t2\t0\t2\t\t\n", "wal_tables()");
+
+        });
     }
 }

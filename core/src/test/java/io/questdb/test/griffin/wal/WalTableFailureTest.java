@@ -924,13 +924,19 @@ public class WalTableFailureTest extends AbstractCairoTest {
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspen wal", "'add', 'alter', 'attach', 'detach', 'drop', 'resume', 'rename', 'set' or 'squash' expected");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wall", "'wal' expected");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wal witj", "'with' expected");
-            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wal with", "error code expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wal with", "error code/tag expected");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wal with 24a", "invalid value [value=24a]");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wal with '24a'", "invalid value [value=24a]");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wal with 24", "',' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wal with 'DISK FULL'", "',' expected");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wal with 24 'test error'", "',' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wal with 'DISK FULL' 'test error'", "',' expected");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wal with 24,", "error message expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wal with 'DISK FULL',", "error message expected");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wal with 24, 'test error' hoppa", "unexpected token [token=hoppa]");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wal with 'DISK FULL', 'test error' hoppa", "unexpected token [token=hoppa]");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wal with 24, test error", "unexpected token [token=error]");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " suspend wal with 'DISK FULL', test error", "unexpected token [token=error]");
         });
     }
 

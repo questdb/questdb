@@ -1,5 +1,7 @@
 package io.questdb.cairo.wal;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.std.Chars;
 import io.questdb.std.Os;
 
 public enum WalErrorTag {
@@ -13,6 +15,24 @@ public enum WalErrorTag {
 
     WalErrorTag(String text) {
         this.text = text;
+    }
+
+    public static WalErrorTag resolveTag(CharSequence text) {
+        if (text == null) {
+            throw CairoException.nonCritical().put("Invalid WAL error tag [null]");
+        } else if (Chars.equals(text, DISK_FULL.text)) {
+            return DISK_FULL;
+        } else if (Chars.equals(text, TOO_MANY_OPEN_FILES.text)) {
+            return TOO_MANY_OPEN_FILES;
+        } else if (Chars.equals(text, OUT_OF_MEMORY.text)) {
+            return OUT_OF_MEMORY;
+        } else if (Chars.equals(text, FAILED_MEMORY_ALLOCATION.text)) {
+            return FAILED_MEMORY_ALLOCATION;
+        } else if (Chars.equals(text, OTHER.text)) {
+            return OTHER;
+        } else {
+            throw CairoException.nonCritical().put("Invalid WAL error tag [").put(text).put("]");
+        }
     }
 
     public static WalErrorTag resolveTag(int code) {
