@@ -272,7 +272,7 @@ Java_io_questdb_std_json_SimdJsonParser_destroy(
 }
 
 JNIEXPORT void JNICALL
-Java_io_questdb_std_json_SimdJsonParser_queryPointerString(
+Java_io_questdb_std_json_SimdJsonParser_queryPointerVarchar(
         JNIEnv * /*env*/,
         jclass /*cl*/,
         simdjson::ondemand::parser *parser,
