@@ -77,6 +77,28 @@ constexpr std::byte BYTE_0xE0 = std::byte(0xE0); // 11100000
 constexpr std::byte BYTE_0xF0 = std::byte(0xF0); // 11110000
 constexpr std::byte BYTE_0xF8 = std::byte(0xF8); // 11111000
 
+std::string_view trim(std::string_view str) {
+    const char* first = str.begin();
+    const char* const end = str.end();
+
+    // Trim leading whitespace.
+    for (;; ++first) {
+        if (first == end) {
+            return {};
+        }
+        if (!std::isspace(*first)) {
+            break;
+        }
+    }
+
+    // Trim trailing whitespace.
+    const char* last = end - 1;
+    for (; last > first && isspace(*last); --last);
+
+    auto len = static_cast<size_t>(std::distance(first, last)) + 1;
+    return {first, len};
+}
+
 static size_t utf8_char_size(std::byte first_byte) {
     size_t char_size = 0;
     if (first_byte < BYTE_0x80) {
@@ -102,7 +124,7 @@ std::byte *utf8_find_last_char_start(std::byte *end) {
 // Copy `src` to `dest` up to `max_dest_len` bytes.
 // If `src` is longer than `max_dest_len`, copy up to the last UTF-8 character that fits.
 // This function guarantees that there are no broken UTF-8 characters in the output.
-static void trimmed_utf8_copy(questdb_byte_sink_t &dest, std::string_view src, size_t max_dest_len) {
+static void truncated_utf8_copy(questdb_byte_sink_t &dest, std::string_view src, size_t max_dest_len) {
     if (max_dest_len == 0) {
         return;
     }
@@ -271,7 +293,7 @@ Java_io_questdb_std_json_SimdJsonParser_queryPointerString(
                 if (res.error() != simdjson::error_code::SUCCESS) {
                     if (default_chars != nullptr) {
                         const auto max_size_st = static_cast<size_t>(max_size);
-                        trimmed_utf8_copy(*dest_sink, {default_chars, default_len}, max_size_st);
+                        truncated_utf8_copy(*dest_sink, {default_chars, default_len}, max_size_st);
                     }
                     return logical_null<token_void>::value();
                 }
@@ -280,7 +302,7 @@ Java_io_questdb_std_json_SimdJsonParser_queryPointerString(
                         auto str_res = res.get_string();
                         const auto str = str_res.value_unsafe();
                         const auto max_size_st = static_cast<size_t>(max_size);
-                        trimmed_utf8_copy(*dest_sink, str, max_size_st);
+                        truncated_utf8_copy(*dest_sink, str, max_size_st);
                     }
                         return {};
                     case simdjson::ondemand::json_type::array:
@@ -292,8 +314,8 @@ Java_io_questdb_std_json_SimdJsonParser_queryPointerString(
                         if (!result->set_error(raw_res)) {
                             return logical_null<token_void>::value();
                         }
-                        auto raw = raw_res.value_unsafe();
-                        trimmed_utf8_copy(*dest_sink, raw, max_size_st);
+                        auto raw = trim(raw_res.value_unsafe());
+                        truncated_utf8_copy(*dest_sink, raw, max_size_st);
                     }
                         return {};
                     case simdjson::ondemand::json_type::null:

@@ -43,25 +43,6 @@ public class JsonPathDefaultVarcharFunctionFactoryTest extends AbstractCairoTest
     }
 
     @Test
-    public void testSort() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table json_test (text varchar)");
-            insert("insert into json_test values ('{\"path\": 10000.5}')");
-            insert("insert into json_test values ('{\"path\": 30000.5}')");
-            insert("insert into json_test values ('{\"path\": 20000.5}')");
-            insert("insert into json_test values ('{\"path\": 40000.5}')");
-            assertSql(
-                    "x\n" +
-                            "40000.5\n" +
-                            "30000.5\n" +
-                            "20000.5\n" +
-                            "10000.5\n",
-                    "select json_path(text, '.path') x from json_test order by 1 desc"
-            );
-        });
-    }
-
-    @Test
     public void testArray() throws Exception {
         assertMemoryLeak(() -> {
             final String json = "'{\"path\": [1, 2, 3]}'";
@@ -180,6 +161,68 @@ public class JsonPathDefaultVarcharFunctionFactoryTest extends AbstractCairoTest
             ddl("create table json_test as (select " + json + "::varchar text)");
             assertSql(expected, "select json_path(" + json + ", '.path')");
             assertSql(expected, "select json_path(text, '.path') from json_test"
+            );
+        });
+    }
+
+    /** Test that the raw returned token does not have surrounding whitespace. */
+    @Test
+    public void testRawTokenMinimal() throws Exception {
+        assertMemoryLeak(() -> {
+            final String json = "'{\"path1\": \"  abc  \", \"path2\": [  1,  2,   3 ], \"path4\": \n" +
+                    "[\r\n" +
+                    " 1,\r" +
+                    "2 ,\n" +
+                    "  3  \t, 4,\n" +
+                    "\n" +
+                    "5 \r\n" +
+                    " ]}'";
+            ddl("create table json_test as (select " + json + "::varchar text)");
+            final String[][] scenarios = new String[][]{
+                    // path, expected
+                    {".path1", "  abc  "},
+                    {".path2", "[  1,  2,   3 ]"},
+                    {".path2[0]", "1"},
+                    {".path2[1]", "2"},
+                    {".path2[2]", "3"},
+                    {".path4", "[\r\n" +
+                            " 1,\r" +
+                            "2 ,\n" +
+                            "  3  \t, 4,\n" +
+                            "\n" +
+                            "5 \r\n" +
+                            " ]"},
+                    {".path4[0]", "1"},
+                    {".path4[1]", "2"},
+                    {".path4[2]", "3"},
+                    {".path4[3]", "4"},
+                    {".path4[4]", "5"},
+            };
+            for (String[] scenario : scenarios) {
+                final String path = scenario[0];
+                final String expected = scenario[1];
+                assertSql(
+                        "json_path\n" + expected + "\n",
+                        "select json_path(text, '" + path + "') from json_test");
+            }
+        });
+    }
+
+    @Test
+    public void testSort() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table json_test (text varchar)");
+            insert("insert into json_test values ('{\"path\": 10000.5}')");
+            insert("insert into json_test values ('{\"path\": 30000.5}')");
+            insert("insert into json_test values ('{\"path\": 20000.5}')");
+            insert("insert into json_test values ('{\"path\": 40000.5}')");
+            assertSql(
+                    "x\n" +
+                            "40000.5\n" +
+                            "30000.5\n" +
+                            "20000.5\n" +
+                            "10000.5\n",
+                    "select json_path(text, '.path') x from json_test order by 1 desc"
             );
         });
     }
