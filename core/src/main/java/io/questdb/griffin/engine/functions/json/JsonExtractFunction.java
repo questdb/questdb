@@ -22,20 +22,31 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.engine.functions.json;
+package io.questdb.griffin.engine.functions.json;
 
-import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
+import io.questdb.std.json.SimdJsonParser;
+import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.Utf8Sequence;
 
-/**
- * Integer casts for ColumnType.
- */
-public interface TargetType {
-    int BOOLEAN = ColumnType.BOOLEAN;
-    int DOUBLE = ColumnType.DOUBLE;
-    int FLOAT = ColumnType.FLOAT;
-    int INT = ColumnType.INT;
-    int LONG = ColumnType.LONG;
-    int SHORT = ColumnType.SHORT;
-    int STRING = ColumnType.STRING;
-    int VARCHAR = ColumnType.VARCHAR;
+public interface JsonExtractFunction extends Function {
+    String DEFAULT_FUNCTION_NAME = "json_extract";
+
+    static DirectUtf8Sink varcharConstantToJsonPointer(Function fn) {
+        final Utf8Sequence seq = fn.getVarcharA(null);
+        if (seq == null) {
+            return null;
+        }
+        try (DirectUtf8Sink path = new DirectUtf8Sink(seq.size())) {
+            path.put(seq);
+            final DirectUtf8Sink pointer = new DirectUtf8Sink(seq.size());
+            SimdJsonParser.convertJsonPathToPointer(path, pointer);
+            return pointer;
+        }
+    }
+
+    @Override
+    default String getName() {
+        return DEFAULT_FUNCTION_NAME;
+    }
 }

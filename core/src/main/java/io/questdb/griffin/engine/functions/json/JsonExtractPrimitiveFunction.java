@@ -31,42 +31,30 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
-import io.questdb.std.json.SimdJsonError;
-import io.questdb.std.json.SimdJsonResult;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.*;
 import org.jetbrains.annotations.Nullable;
 
-public class JsonPathPrimitiveFunction implements ScalarFunction, JsonPathFunction {
+public class JsonExtractPrimitiveFunction implements ScalarFunction, JsonExtractFunction {
+    private static final boolean defaultBool = false;
     private final int columnType;
-    private final String functionName;
     private final Function json;
     private final Function path;
     private final int position;
-    private final SupportingState state;
-    private final boolean strict;
-    private boolean defaultBool = false;
-    private double defaultDouble = Double.NaN;
-    private float defaultFloat = Float.NaN;
-    private int defaultInt = Integer.MIN_VALUE;
-    private long defaultLong = Long.MIN_VALUE;
-    private short defaultShort = Short.MIN_VALUE;
+    private final JsonExtractSupportingState state;
     private DirectUtf8Sink pointer;
 
-    public JsonPathPrimitiveFunction(
-            String functionName,
+    public JsonExtractPrimitiveFunction(
             int position,
             int columnType,
             Function json,
-            Function path,
-            boolean strict
+            Function path
     ) {
-        this.functionName = functionName;
         this.position = position;
         this.columnType = columnType;
         this.json = json;
         this.path = path;
-        this.strict = strict;
-        this.state = new SupportingState();
+        this.state = new JsonExtractSupportingState();
     }
 
     @Override
@@ -91,20 +79,9 @@ public class JsonPathPrimitiveFunction implements ScalarFunction, JsonPathFuncti
     public boolean getBool(Record rec) {
         final Utf8Sequence jsonSeq = json.getVarcharA(rec);
         if (jsonSeq == null) {
-            if (strict) {
-                throw SimdJsonResult.formatError(position, functionName, path.getVarcharA(rec), SimdJsonError.NO_SUCH_FIELD);
-            } else {
-                return defaultBool;
-            }
+            return defaultBool;
         }
-        final boolean res = state.parser.queryPointerBoolean(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult, defaultBool);
-        if (strict) {
-            final int error = state.simdJsonResult.getError();
-            if (error != SimdJsonError.SUCCESS) {
-                throw SimdJsonResult.formatError(position, functionName, path.getVarcharA(null), error);
-            }
-        }
-        return res;
+        return state.parser.queryPointerBoolean(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult, defaultBool);
     }
 
     @Override
@@ -128,14 +105,7 @@ public class JsonPathPrimitiveFunction implements ScalarFunction, JsonPathFuncti
         if (jsonSeq == null) {
             return Double.NaN;
         }
-        final double res = state.parser.queryPointerDouble(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult, defaultDouble);
-        if (strict && !state.simdJsonResult.isNull()) {
-            final int error = state.simdJsonResult.getError();
-            if (error != SimdJsonError.SUCCESS) {
-                throw SimdJsonResult.formatError(position, functionName, path.getVarcharA(null), error);
-            }
-        }
-        return res;
+        return state.parser.queryPointerDouble(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult, Double.NaN);
     }
 
     @Override
@@ -144,14 +114,7 @@ public class JsonPathPrimitiveFunction implements ScalarFunction, JsonPathFuncti
         if (jsonSeq == null) {
             return Float.NaN;
         }
-        final float res = state.parser.queryPointerFloat(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult, defaultFloat);
-        if (strict && !state.simdJsonResult.isNull()) {
-            final int error = state.simdJsonResult.getError();
-            if (error != SimdJsonError.SUCCESS) {
-                throw SimdJsonResult.formatError(position, functionName, path.getVarcharA(null), error);
-            }
-        }
-        return res;
+        return state.parser.queryPointerFloat(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult, Float.NaN);
     }
 
     @Override
@@ -183,32 +146,18 @@ public class JsonPathPrimitiveFunction implements ScalarFunction, JsonPathFuncti
     public int getInt(Record rec) {
         final Utf8Sequence jsonSeq = json.getVarcharA(rec);
         if (jsonSeq == null) {
-            return Integer.MIN_VALUE;
+            return Numbers.INT_NULL;
         }
-        final int res = state.parser.queryPointerInt(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult, defaultInt);
-        if (strict && !state.simdJsonResult.isNull()) {
-            final int error = state.simdJsonResult.getError();
-            if (error != SimdJsonError.SUCCESS) {
-                throw SimdJsonResult.formatError(position, functionName, path.getVarcharA(null), error);
-            }
-        }
-        return res;
+        return state.parser.queryPointerInt(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult, Numbers.INT_NULL);
     }
 
     @Override
     public long getLong(Record rec) {
         final Utf8Sequence jsonSeq = json.getVarcharA(rec);
         if (jsonSeq == null) {
-            return Long.MIN_VALUE;
+            return Numbers.LONG_NULL;
         }
-        final long res = state.parser.queryPointerLong(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult, defaultLong);
-        if (strict && !state.simdJsonResult.isNull()) {
-            final int error = state.simdJsonResult.getError();
-            if (error != SimdJsonError.SUCCESS) {
-                throw SimdJsonResult.formatError(position, functionName, path.getVarcharA(null), error);
-            }
-        }
-        return res;
+        return state.parser.queryPointerLong(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult, Numbers.LONG_NULL);
     }
 
     @Override
@@ -237,11 +186,6 @@ public class JsonPathPrimitiveFunction implements ScalarFunction, JsonPathFuncti
     }
 
     @Override
-    public String getName() {
-        return functionName;
-    }
-
-    @Override
     public RecordCursorFactory getRecordCursorFactory() {
         throw new UnsupportedOperationException();
     }
@@ -250,16 +194,9 @@ public class JsonPathPrimitiveFunction implements ScalarFunction, JsonPathFuncti
     public short getShort(Record rec) {
         final Utf8Sequence jsonSeq = json.getVarcharA(rec);
         if (jsonSeq == null) {
-            return Short.MIN_VALUE;
+            return 0;
         }
-        final short res = state.parser.queryPointerShort(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult, defaultShort);
-        if (strict && !state.simdJsonResult.isNull()) {
-            final int error = state.simdJsonResult.getError();
-            if (error != SimdJsonError.SUCCESS) {
-                throw SimdJsonResult.formatError(position, functionName, path.getVarcharA(null), error);
-            }
-        }
-        return res;
+        return state.parser.queryPointerShort(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult, (short) 0);
     }
 
     @Override
@@ -327,46 +264,6 @@ public class JsonPathPrimitiveFunction implements ScalarFunction, JsonPathFuncti
         json.init(symbolTableSource, executionContext);
         path.init(symbolTableSource, executionContext);
         pointer = Misc.free(pointer);
-        pointer = JsonPathFunction.varcharConstantToJsonPointer(path);
-    }
-
-    @Override
-    public void setDefaultBool(boolean value) {
-        defaultBool = value;
-    }
-
-    @Override
-    public void setDefaultDouble(double value) {
-        defaultDouble = value;
-    }
-
-    @Override
-    public void setDefaultFloat(float value) {
-        defaultFloat = value;
-    }
-
-    @Override
-    public void setDefaultInt(int value) {
-        defaultInt = value;
-    }
-
-    @Override
-    public void setDefaultLong(long value) {
-        defaultLong = value;
-    }
-
-    @Override
-    public void setDefaultShort(short value) {
-        defaultShort = value;
-    }
-
-    @Override
-    public void setDefaultSymbol(CharSequence value) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void setDefaultVarchar(Utf8Sequence varcharA) {
-        throw new UnsupportedOperationException();
+        pointer = JsonExtractFunction.varcharConstantToJsonPointer(path);
     }
 }

@@ -34,20 +34,15 @@ import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
-public abstract class JsonPathFunctionFactoryBase implements FunctionFactory {
-    private final String signature;
-
-    public JsonPathFunctionFactoryBase() {
-        signature = getFunctionName() + "(" + getArguments() + ")";
-    }
+public class JsonExtractTypedFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return signature;
+        return JsonExtractFunction.DEFAULT_FUNCTION_NAME + "(ØØi)";
     }
 
     @Override
-    public JsonPathFunction newInstance(
+    public JsonExtractFunction newInstance(
             int position,
             ObjList<Function> args,
             IntList argPositions,
@@ -62,45 +57,15 @@ public abstract class JsonPathFunctionFactoryBase implements FunctionFactory {
             throw SqlException.$(argPositions.getQuick(1), "constant or bind variable expected");
         }
 
-        final int targetType = parseTargetType(position, args.getQuiet(2));
-        String functionName = getFunctionName();
-        int maxSize = configuration.getStrFunctionMaxBufferLength();
-        switch (targetType) {
-            case ColumnType.LONG:
-            case ColumnType.DOUBLE:
-            case ColumnType.FLOAT:
-            case ColumnType.BOOLEAN:
-            case ColumnType.SHORT:
-            case ColumnType.INT:
-                return new JsonPathPrimitiveFunction(
-                        functionName,
-                        position,
-                        targetType,
-                        json,
-                        path,
-                        isStrict()
-                );
-            case ColumnType.VARCHAR:
-                return new JsonPathVarcharFunction(
-                        functionName,
-                        position,
-                        json,
-                        path,
-                        maxSize,
-                        isStrict()
-                );
-            default:
-                throw new UnsupportedOperationException("nyi");  // TODO: complete remaining types
-        }
+        return new JsonExtractPrimitiveFunction(
+                position,
+                parseTargetType(position, args.getQuiet(2)),
+                json,
+                path
+        );
     }
 
-    private String getFunctionName() {
-        return isStrict()
-                ? JsonPathFunction.STRICT_FUNCTION_NAME
-                : JsonPathFunction.DEFAULT_FUNCTION_NAME;
-    }
-
-    private int parseTargetType(int position, Function targetTypeFn) throws SqlException {
+    private static int parseTargetType(int position, Function targetTypeFn) throws SqlException {
         if (targetTypeFn == null) {
             return ColumnType.VARCHAR;
         }
@@ -114,25 +79,15 @@ public abstract class JsonPathFunctionFactoryBase implements FunctionFactory {
         }
         final int targetType = targetTypeFn.getInt(null);
         switch (targetType) {
-            case ColumnType.LONG:
-            case ColumnType.DOUBLE:
             case ColumnType.BOOLEAN:
-            case ColumnType.SYMBOL:
             case ColumnType.SHORT:
             case ColumnType.INT:
+            case ColumnType.LONG:
             case ColumnType.FLOAT:
-            case ColumnType.VARCHAR:
+            case ColumnType.DOUBLE:
                 return targetType;
             default:
-                // TODO: Better error messaging to use the name of the type, e.g. "DATE" instead of "7".
                 throw SqlException.position(position).put("unsupported target type: ").put(targetType);
         }
     }
-
-    protected abstract String getArguments();
-
-    /**
-     * Function execution should fail on error, rather than return a default value.
-     */
-    protected abstract boolean isStrict();
 }

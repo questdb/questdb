@@ -33,7 +33,7 @@ import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
-class SupportingState implements QuietCloseable {
+class JsonExtractSupportingState implements QuietCloseable {
     public DirectUtf8Sequence jsonSeq = null;
     public SimdJsonParser parser = new SimdJsonParser();
     public SimdJsonResult simdJsonResult = new SimdJsonResult();

@@ -27,7 +27,7 @@ package io.questdb.test.griffin.engine.functions.json;
 import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.functions.json.JsonPathDefaultTypedFunctionFactory;
+import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.test.tools.TestUtils;
@@ -36,7 +36,7 @@ import org.junit.Test;
 
 import java.util.Arrays;
 
-public class JsonPathDefaultTypedFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class JsonExtractTypedFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Override
     public Invocation call(Object... args) {
@@ -333,6 +333,6 @@ public class JsonPathDefaultTypedFunctionFactoryTest extends AbstractFunctionFac
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new JsonPathDefaultTypedFunctionFactory();
+        return new JsonExtractTypedFunctionFactory();
     }
 }

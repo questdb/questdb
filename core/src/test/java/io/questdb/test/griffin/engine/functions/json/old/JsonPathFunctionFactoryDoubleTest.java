@@ -39,8 +39,8 @@ import org.junit.Test;
 
 import java.util.Arrays;
 
-import static io.questdb.griffin.engine.functions.json.JsonPathFunction.DEFAULT_VALUE_ON_ERROR;
-import static io.questdb.griffin.engine.functions.json.JsonPathFunction.FAIL_ON_ERROR;
+import static io.questdb.griffin.engine.functions.json.JsonExtractFunction.DEFAULT_VALUE_ON_ERROR;
+import static io.questdb.griffin.engine.functions.json.JsonExtractFunction.FAIL_ON_ERROR;
 
 public class JsonPathFunctionFactoryDoubleTest extends AbstractFunctionFactoryTest {
 
