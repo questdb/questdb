@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.std.ObjList;
 
 public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualRecordSampleByCursor {
@@ -113,7 +114,16 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
             return peeker.reset();
         }
 
-        return notKeyedLoop(simpleMapValue);
+        final boolean hasNext = notKeyedLoop(simpleMapValue);
+
+        if (baseRecord == null && fromHiFunc != TimestampConstant.NULL && !endFill) {
+            endFill = true;
+            final long upperBound = fromHiFunc.getTimestamp(null);
+            baseRecord = baseCursor.getRecord();
+            nextSamplePeriod(upperBound);
+        }
+
+        return hasNext;
     }
 
     private boolean setActiveA(long expectedLocalEpoch) {

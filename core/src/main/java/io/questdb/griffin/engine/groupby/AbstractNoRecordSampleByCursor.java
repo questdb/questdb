@@ -272,18 +272,6 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
             }
         }
         // opportunity, after we stream map that's it
-
-        // we may need to post fill, depending on the sample by from clause
-        if (fromHiFunc != TimestampConstant.NULL) {
-            endFill = true;
-            final long upperBound = fromHiFunc.getTimestamp(null);
-            if (next < upperBound) {
-                nextSamplePeriod(upperBound);
-                isNotKeyedLoopInitialized = false;
-                return true;
-            }
-        }
-
         baseRecord = null;
         isNotKeyedLoopInitialized = false;
         return true;
