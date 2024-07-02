@@ -75,6 +75,28 @@ public class VarcharFunctionsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testToDate() throws Exception {
+        assertQuery(
+                "c\n" +
+                        "1999-07-05\n",
+                "select c from x where to_date(c, 'yyyy-MM-dd') = to_date('1999-07-05', 'yyyy-MM-dd')",
+                "create table x as (select cast('1999-07-05' as varchar) c from long_sequence(1))",
+                null, true, false
+        );
+    }
+
+    @Test
+    public void testToPgDate() throws Exception {
+        assertQuery(
+                "c\n" +
+                        "1999-07-05\n",
+                "select c from x where to_pg_date(c) = to_date('1999-07-05', 'yyyy-MM-dd')",
+                "create table x as (select cast('1999-07-05' as varchar) c from long_sequence(1))",
+                null, true, false
+        );
+    }
+
+    @Test
     public void testLtrim() throws Exception {
         assertQuery(
                 "k\tltrim\n" +
