@@ -32,16 +32,13 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
-import io.questdb.std.str.Path;
 
 public class ParquetFileRecordCursorFactory extends AbstractRecordCursorFactory {
     private ParquetFileRecordCursor cursor;
-    private Path path;
 
     public ParquetFileRecordCursorFactory(@Transient CharSequence path, RecordMetadata metadata, FilesFacade ff) {
         super(metadata);
-        this.path = new Path().of(path);
-        this.cursor = new ParquetFileRecordCursor(ff, this.path, metadata);
+        this.cursor = new ParquetFileRecordCursor(ff, path, metadata);
     }
 
     @Override
@@ -57,7 +54,6 @@ public class ParquetFileRecordCursorFactory extends AbstractRecordCursorFactory 
 
     @Override
     protected void _close() {
-        path = Misc.free(path);
         cursor = Misc.free(cursor);
     }
 

@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.table;
 
 import io.questdb.cairo.DataUnavailableException;
-import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
@@ -50,8 +49,8 @@ public class ParquetFileRecordCursor implements NoRandomAccessRecordCursor {
     private int rowGroup;
     private long rowGroupRowCount;
 
-    public ParquetFileRecordCursor(FilesFacade ff, Path path, RecordMetadata metadata) {
-        this.path = path;
+    public ParquetFileRecordCursor(FilesFacade ff, @Transient CharSequence path, RecordMetadata metadata) {
+        this.path = new Path().of(path);
         this.metadata = metadata;
         this.decoder = new PartitionDecoder(ff);
         this.record = new ParquetRecord();
@@ -60,6 +59,7 @@ public class ParquetFileRecordCursor implements NoRandomAccessRecordCursor {
     @Override
     public void close() {
         Misc.free(decoder);
+        Misc.free(path);
     }
 
     @Override
@@ -264,11 +264,6 @@ public class ParquetFileRecordCursor implements NoRandomAccessRecordCursor {
             long auxPtr = auxPtrs.get(col);
             long dataPtr = dataPtrs.get(col);
             return VarcharTypeDriver.getSplitValue(auxPtr, dataPtr, currentRowInRowGroup, utf8SplitViewB);
-        }
-
-        private long getDataPtr(int col) {
-            long chunkPtr = columnChunkBufferPtrs.getQuick(col);
-            return PartitionDecoder.getChunkDataPtr(chunkPtr);
         }
 
         private DirectString getStr(long addr, DirectString view) {
