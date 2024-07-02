@@ -191,7 +191,7 @@ class JsonPathVarcharFunction extends VarcharFunction implements JsonPathFunctio
             defaultValuePtr = defaultVarchar.ptr();
             defaultValueSize = defaultVarchar.size();
         }
-        state.parser.queryPointerString(
+        state.parser.queryPointerVarchar(
                 state.initPaddedJson(json),
                 pointer,
                 state.simdJsonResult,

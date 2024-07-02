@@ -174,7 +174,7 @@ public class SimdJsonParser implements QuietCloseable {
         );
     }
 
-    public void queryPointerString(
+    public void queryPointerVarchar(
             DirectUtf8Sequence json,
             DirectUtf8Sequence pointer,
             SimdJsonResult result,
@@ -189,7 +189,7 @@ public class SimdJsonParser implements QuietCloseable {
             throw new IllegalArgumentException("Destination buffer is too small");
         }
         assert dest.capacity() - dest.size() >= maxSize;  // Without this guarantee we'd need to close `NativeByteSink.close`.
-        queryPointerString(
+        queryPointerVarchar(
                 impl,
                 json.ptr(),
                 json.size(),
@@ -282,7 +282,7 @@ public class SimdJsonParser implements QuietCloseable {
             short defaultValue
     );
 
-    private static native void queryPointerString(
+    private static native void queryPointerVarchar(
             long impl,
             long jsonPtr,
             long jsonLen,

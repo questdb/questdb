@@ -167,7 +167,7 @@ public class SimdJsonParserTest {
     public void testInvalidPath() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (DirectUtf8Sink dest = new DirectUtf8Sink(100)) {
-                parser.queryPointerString(json, path2Pointer("£$£%£%invalid path!!"), result, dest, 100, 0, 0);
+                parser.queryPointerVarchar(json, path2Pointer("£$£%£%invalid path!!"), result, dest, 100, 0, 0);
                 Assert.assertEquals(result.getError(), SimdJsonError.INVALID_JSON_POINTER);
                 Assert.assertEquals(result.getType(), SimdJsonType.UNSET);
             }
@@ -251,19 +251,19 @@ public class SimdJsonParserTest {
     public void testQueryPathString() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (DirectUtf8Sink dest = new DirectUtf8Sink(1000)) {
-                parser.queryPointerString(json, path2Pointer(".name"), result, dest, 100, 0, 0);
+                parser.queryPointerVarchar(json, path2Pointer(".name"), result, dest, 100, 0, 0);
                 Assert.assertEquals("John", dest.toString());
 
                 GcUtf8String descriptionPath = path2Pointer(".description");
                 dest.clear();
-                parser.queryPointerString(json, descriptionPath, result, dest, 100, 0, 0);
+                parser.queryPointerVarchar(json, descriptionPath, result, dest, 100, 0, 0);
                 Assert.assertEquals(description.substring(0, 100), dest.toString());
 
                 // The maxLen == 272 chops one of the unicode characters and unless
                 // the copy is handled with utf-8-aware logic it would produce a string
                 // with an invalid utf-8 sequence.
                 dest.clear();
-                parser.queryPointerString(json, descriptionPath, result, dest, 272, 0, 0);
+                parser.queryPointerVarchar(json, descriptionPath, result, dest, 272, 0, 0);
                 // The string is expected to be truncated at the last valid utf-8 sequence: 270 instead of 272.
                 Assert.assertEquals(dest.size(), 270);
 
@@ -284,7 +284,7 @@ public class SimdJsonParserTest {
     public void testStringAbsent() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (DirectUtf8Sink dest = new DirectUtf8Sink(100)) {
-                parser.queryPointerString(json, path2Pointer(".nonexistent"), result, dest, 100, 0, 0);
+                parser.queryPointerVarchar(json, path2Pointer(".nonexistent"), result, dest, 100, 0, 0);
                 Assert.assertEquals("", dest.toString());
                 Assert.assertEquals(result.getType(), SimdJsonType.UNSET);
             }
@@ -295,7 +295,7 @@ public class SimdJsonParserTest {
     public void testStringNull() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (DirectUtf8Sink dest = new DirectUtf8Sink(100)) {
-                parser.queryPointerString(json, path2Pointer(".nothing"), result, dest, 100, 0, 0);
+                parser.queryPointerVarchar(json, path2Pointer(".nothing"), result, dest, 100, 0, 0);
                 Assert.assertEquals("", dest.toString());
                 Assert.assertEquals(result.getType(), SimdJsonType.NULL);
             }

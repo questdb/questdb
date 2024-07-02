@@ -165,7 +165,9 @@ public class JsonPathDefaultVarcharFunctionFactoryTest extends AbstractCairoTest
         });
     }
 
-    /** Test that the raw returned token does not have surrounding whitespace. */
+    /**
+     * Test that the raw returned token does not have surrounding whitespace.
+     */
     @Test
     public void testRawTokenMinimal() throws Exception {
         assertMemoryLeak(() -> {
