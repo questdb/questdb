@@ -235,7 +235,7 @@ pub fn decode_rle<'a, 'b>(
 fn decode_rle_v2(buffer: &[u8], num_bits: usize) -> ParquetResult<RleIterator> {
     if num_bits > 0 {
         let mut decoder = hybrid_rle::Decoder::new(buffer, num_bits);
-        if let Some(run) = decoder.next()  {
+        if let Some(run) = decoder.next() {
             let encoded = run?;
             if let HybridEncoded::Bitpacked(values) = encoded {
                 let count = values.len() * 8 / num_bits;

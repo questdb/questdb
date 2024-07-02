@@ -240,9 +240,9 @@ pub fn decoder_page(
                     Ok(row_count)
                 }
                 Some(PrimitiveLogicalType::Timestamp {
-                         unit: _unit,
-                         is_adjusted_to_utc: _is_adjusted_to_utc,
-                     }) => {
+                    unit: _unit,
+                    is_adjusted_to_utc: _is_adjusted_to_utc,
+                }) => {
                     decode_page(
                         version,
                         page,
@@ -552,9 +552,10 @@ mod tests {
         let row_group_size = 50;
         let data_page_size = 50;
         let version = Version::V2;
-        let expected_buff = create_col_data_buff::<i32, 4, _>(row_count, i32::MIN.to_le_bytes(), |int| {
-            int.to_le_bytes()
-        });
+        let expected_buff =
+            create_col_data_buff::<i32, 4, _>(row_count, i32::MIN.to_le_bytes(), |int| {
+                int.to_le_bytes()
+            });
         let column_count = 1;
         let file = write_parquet_file(
             row_count,
@@ -619,9 +620,10 @@ mod tests {
         let mut columns = Vec::new();
 
         let mut expected_buffs: Vec<(ColumnBuffers, ColumnType)> = Vec::new();
-        let expected_int_buff = create_col_data_buff::<i32, 4, _>(row_count, i32::MIN.to_le_bytes(), |int| {
-            int.to_le_bytes()
-        });
+        let expected_int_buff =
+            create_col_data_buff::<i32, 4, _>(row_count, i32::MIN.to_le_bytes(), |int| {
+                int.to_le_bytes()
+            });
         columns.push(create_fix_column(
             columns.len() as i32,
             row_count,
@@ -631,9 +633,10 @@ mod tests {
         ));
         expected_buffs.push((expected_int_buff, ColumnType::Int));
 
-        let expected_long_buff = create_col_data_buff::<i64, 8, _>(row_count, i64::MIN.to_le_bytes(), |int| {
-            int.to_le_bytes()
-        });
+        let expected_long_buff =
+            create_col_data_buff::<i64, 8, _>(row_count, i64::MIN.to_le_bytes(), |int| {
+                int.to_le_bytes()
+            });
         columns.push(create_fix_column(
             columns.len() as i32,
             row_count,
@@ -654,8 +657,7 @@ mod tests {
         ));
         expected_buffs.push((string_buffers, ColumnType::String));
 
-        let string_buffers =
-            create_col_data_buff_varchar(row_count, 3);
+        let string_buffers = create_col_data_buff_varchar(row_count, 3);
         columns.push(create_var_column(
             columns.len() as i32,
             row_count,
@@ -664,7 +666,7 @@ mod tests {
             string_buffers.aux_vec.as_ref().unwrap(),
             ColumnType::Varchar,
         ));
-        expected_buffs.push((string_buffers, ColumnType::Varchar, ));
+        expected_buffs.push((string_buffers, ColumnType::Varchar));
 
         let symbol_buffs = create_col_data_buff_symbol(row_count, 10);
         columns.push(create_symbol_column(
@@ -770,13 +772,18 @@ mod tests {
         assert_eq!(decoder.row_count, row_count);
         let row_group_count = decoder.row_group_count as usize;
 
-        for (column_index, (column_buffs, column_type)) in expected_buffs.iter().enumerate()
-        {
+        for (column_index, (column_buffs, column_type)) in expected_buffs.iter().enumerate() {
             let column_type = *column_type;
             let mut data_offset = 0usize;
             let mut col_row_count = 0usize;
-            let expected = column_buffs.expected_data_buff.as_ref().unwrap_or(column_buffs.data_vec.as_ref());
-            let expected_aux = column_buffs.expected_aux_buff.as_ref().or(column_buffs.aux_vec.as_ref());
+            let expected = column_buffs
+                .expected_data_buff
+                .as_ref()
+                .unwrap_or(column_buffs.data_vec.as_ref());
+            let expected_aux = column_buffs
+                .expected_aux_buff
+                .as_ref()
+                .or(column_buffs.aux_vec.as_ref());
 
             for row_group_index in 0..row_group_count {
                 decoder
@@ -899,9 +906,9 @@ mod tests {
         null_value: [u8; N],
         to_le_bytes: F,
     ) -> ColumnBuffers
-        where
-            T: From<i16> + Copy,
-            F: Fn(T) -> [u8; N],
+    where
+        T: From<i16> + Copy,
+        F: Fn(T) -> [u8; N],
     {
         let value_size = N;
         let mut buff = vec![0u8; row_count * value_size];
@@ -946,7 +953,6 @@ mod tests {
         random_string
     }
 
-
     struct ColumnBuffers {
         data_vec: Vec<u8>,
         aux_vec: Option<Vec<u8>>,
@@ -956,10 +962,7 @@ mod tests {
         expected_aux_buff: Option<Vec<u8>>,
     }
 
-    fn create_col_data_buff_symbol(
-        row_count: usize,
-        distinct_values: usize,
-    ) -> ColumnBuffers {
+    fn create_col_data_buff_symbol(row_count: usize, distinct_values: usize) -> ColumnBuffers {
         let mut symbol_data_buff = Vec::new();
         let mut expected_aux_buff = Vec::new();
         let mut expected_data_buff = Vec::new();
@@ -1022,10 +1025,7 @@ mod tests {
         (chars, offsets)
     }
 
-    fn create_col_data_buff_varchar(
-        row_count: usize,
-        distinct_values: usize,
-    ) -> ColumnBuffers {
+    fn create_col_data_buff_varchar(row_count: usize, distinct_values: usize) -> ColumnBuffers {
         let mut aux_buff = Vec::new();
         let mut data_buff = Vec::new();
 
@@ -1107,7 +1107,7 @@ mod tests {
             null(),
             0,
         )
-            .unwrap()
+        .unwrap()
     }
 
     fn create_var_column(
@@ -1131,7 +1131,7 @@ mod tests {
             null(),
             0,
         )
-            .unwrap()
+        .unwrap()
     }
 
     fn create_symbol_column(
@@ -1156,6 +1156,6 @@ mod tests {
             offsets.as_ptr(),
             offsets.len(),
         )
-            .unwrap()
+        .unwrap()
     }
 }
