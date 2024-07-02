@@ -22,32 +22,27 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire;
+package io.questdb.std.filewatch;
 
-import io.questdb.std.Chars;
-import io.questdb.std.Vect;
+import io.questdb.FileEventCallback;
+import io.questdb.KqueueFileWatcher;
+import io.questdb.network.EpollFacadeImpl;
+import io.questdb.std.Os;
+import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 
-public class StaticUsernamePasswordMatcher implements UsernamePasswordMatcher {
-    private final int passwordLen;
-    private final long passwordPtr;
-    private final String username;
+public class FileWatcherFactory {
 
-    public StaticUsernamePasswordMatcher(String username, long passwordPtr, int passwordLen) {
-        assert !Chars.empty(username);
-        assert passwordPtr != 0;
-        assert passwordLen > 0;
-
-        this.username = username;
-        this.passwordPtr = passwordPtr;
-        this.passwordLen = passwordLen;
-    }
-
-    @Override
-    public boolean verifyPassword(CharSequence username, long passwordPtr, int passwordLen) {
-        return username != null
-                && this.username != null
-                && Chars.equals(this.username, username)
-                && this.passwordLen == passwordLen
-                && Vect.memeq(this.passwordPtr, passwordPtr, passwordLen);
+    public static FileWatcher getFileWatcher(@NotNull Utf8Sequence filePath, @NotNull FileEventCallback callback) {
+        if (filePath.size() == 0) {
+            throw new IllegalArgumentException("file to watch cannot be empty");
+        }
+        if (Os.isOSX() || Os.isFreeBSD()) {
+            return new KqueueFileWatcher(filePath, callback);
+        } else if (Os.isWindows()) {
+            return new FileWatcherWindows(WindowsAccessorImpl.INSTANCE, filePath, callback);
+        } else {
+            return new LinuxFileWatcher(LinuxAccessorFacadeImpl.INSTANCE, EpollFacadeImpl.INSTANCE, filePath, callback);
+        }
     }
 }

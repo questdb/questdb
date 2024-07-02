@@ -36,6 +36,7 @@ import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.Net;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.Path;
@@ -57,8 +58,8 @@ import static io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory.
 
 public class Bootstrap {
 
+    public static final String CONFIG_FILE = "/server.conf";
     public static final String SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION = "--use-default-log-factory-configuration";
-    private static final String CONFIG_FILE = "/server.conf";
     private static final String LOG_NAME = "server-main";
     private static final String PUBLIC_VERSION_TXT = "version.txt";
     private static final String PUBLIC_ZIP = "/io/questdb/site/public.zip";
@@ -153,7 +154,7 @@ public class Bootstrap {
                 final Properties properties = loadProperties();
                 final FilesFacade ffOverride = bootstrapConfiguration.getFilesFacade();
                 if (ffOverride == null) {
-                    config = new PropServerConfiguration(
+                    config = new DynamicPropServerConfiguration(
                             rootDirectory,
                             properties,
                             bootstrapConfiguration.getEnv(),
@@ -161,34 +162,30 @@ public class Bootstrap {
                             buildInformation
                     );
                 } else {
-                    config = new PropServerConfiguration(
+                    config = new DynamicPropServerConfiguration(
                             rootDirectory,
                             properties,
                             bootstrapConfiguration.getEnv(),
                             log,
-                            buildInformation
-                    ) {
-                        private CairoConfiguration cairoConf;
-
-                        @Override
-                        public CairoConfiguration getCairoConfiguration() {
-                            if (cairoConf == null) {
-                                cairoConf = new PropCairoConfiguration() {
-                                    @Override
-                                    public @NotNull FilesFacade getFilesFacade() {
-                                        return ffOverride;
-                                    }
-                                };
-                            }
-                            return cairoConf;
-                        }
-                    };
+                            buildInformation,
+                            ffOverride,
+                            MicrosecondClockImpl.INSTANCE,
+                            new FactoryProviderFactory() {
+                                @Override
+                                public @NotNull FactoryProvider getInstance(ServerConfiguration configuration, CairoEngine engine, FreeOnExit freeOnExit) {
+                                    return DefaultFactoryProvider.INSTANCE;
+                                }
+                            },
+                            true
+                    );
                 }
             } else {
                 config = configuration;
             }
             reportValidateConfig();
             reportCrashFiles(config.getCairoConfiguration(), log);
+        } catch (BootstrapException e) {
+            throw e;
         } catch (Throwable e) {
             log.errorW().$(e).$();
             throw new BootstrapException(e);
@@ -353,7 +350,12 @@ public class Bootstrap {
         final Properties properties = new Properties();
         java.nio.file.Path configFile = Paths.get(rootDirectory, PropServerConfiguration.CONFIG_DIRECTORY, CONFIG_FILE);
         log.advisoryW().$("Server config: ").$(configFile).$();
-
+        if (!java.nio.file.Files.exists(configFile)) {
+            throw new BootstrapException("Server configuration file does not exist! " + configFile, true);
+        }
+        if (!java.nio.file.Files.isReadable(configFile)) {
+            throw new BootstrapException("Server configuration file exists, but is not readable! Check file permissions. " + configFile, true);
+        }
         try (InputStream is = java.nio.file.Files.newInputStream(configFile)) {
             properties.load(is);
         }
@@ -454,8 +456,8 @@ public class Bootstrap {
     }
 
     private void createHelloFile(String helloMsg) {
-        final File helloFile = new File(rootDirectory, "log/hello.txt");
-        final File growingFile = new File(helloFile.getParentFile(), helloFile.getName() + ".tmp");
+        final File helloFile = new File(rootDirectory, "hello.txt");
+        final File growingFile = new File(rootDirectory, helloFile.getName() + ".tmp");
         try (Writer w = new FileWriter(growingFile)) {
             w.write(helloMsg);
         } catch (IOException e) {
@@ -673,12 +675,23 @@ public class Bootstrap {
     }
 
     public static class BootstrapException extends RuntimeException {
+        private boolean silentStacktrace = false;
+
         public BootstrapException(String message) {
+            this(message, false);
+        }
+
+        public BootstrapException(String message, boolean silentStacktrace) {
             super(message);
+            this.silentStacktrace = silentStacktrace;
         }
 
         public BootstrapException(Throwable thr) {
             super(thr);
+        }
+
+        public boolean isSilentStacktrace() {
+            return silentStacktrace;
         }
     }
 

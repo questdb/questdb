@@ -22,27 +22,20 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire;
+package io.questdb.std.filewatch;
 
-import io.questdb.std.QuietCloseable;
+public interface LinuxAccessorFacade {
+    int inotifyAddWatch(int fd, long pathPtr, int flags);
 
-public final class CustomCloseActionPasswordMatcherDelegate implements UsernamePasswordMatcher, QuietCloseable {
+    int inotifyInit();
 
-    private final Runnable closeAction;
-    private final UsernamePasswordMatcher delegate;
+    short inotifyRmWatch(int fd, int wd);
 
-    public CustomCloseActionPasswordMatcherDelegate(UsernamePasswordMatcher delegate, Runnable closeAction) {
-        this.delegate = delegate;
-        this.closeAction = closeAction;
-    }
+    long pipe();
 
-    @Override
-    public void close() {
-        closeAction.run();
-    }
+    int readEvent(int fd, long buf, int bufSize);
 
-    @Override
-    public boolean verifyPassword(CharSequence username, long passwordPtr, int passwordLen) {
-        return delegate.verifyPassword(username, passwordPtr, passwordLen);
-    }
+    int readPipe(int fd);
+
+    int writePipe(int fd);
 }

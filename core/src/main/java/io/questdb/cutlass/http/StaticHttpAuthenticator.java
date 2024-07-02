@@ -22,20 +22,39 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire;
+package io.questdb.cutlass.http;
 
-public class CombiningUsernamePasswordMatcher implements UsernamePasswordMatcher {
+import io.questdb.std.ObjList;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.Nullable;
 
-    private final UsernamePasswordMatcher first;
-    private final UsernamePasswordMatcher second;
+public final class StaticHttpAuthenticator implements HttpAuthenticator {
+    private final Utf8Sequence expectedHeader;
+    private final String username;
 
-    public CombiningUsernamePasswordMatcher(UsernamePasswordMatcher first, UsernamePasswordMatcher second) {
-        this.first = first;
-        this.second = second;
+    public StaticHttpAuthenticator(String username, Utf8Sequence expectedAuthHeader) {
+        this.username = username;
+        this.expectedHeader = expectedAuthHeader;
     }
 
     @Override
-    public boolean verifyPassword(CharSequence username, long passwordPtr, int passwordLen) {
-        return first.verifyPassword(username, passwordPtr, passwordLen) || second.verifyPassword(username, passwordPtr, passwordLen);
+    public boolean authenticate(HttpRequestHeader headers) {
+        final DirectUtf8Sequence header = headers.getHeader(HttpConstants.HEADER_AUTHORIZATION);
+        if (header == null) {
+            return false;
+        }
+        return Utf8s.equals(expectedHeader, header);
+    }
+
+    @Override
+    public @Nullable ObjList<CharSequence> getGroups() {
+        return null;
+    }
+
+    @Override
+    public CharSequence getPrincipal() {
+        return username;
     }
 }

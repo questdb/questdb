@@ -117,6 +117,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int commitMode;
     private final TimestampFormatCompiler compiler = new TimestampFormatCompiler();
     private final String confRoot;
+    private final boolean configReloadEnabled;
     private final int connectionPoolInitialCapacity;
     private final int connectionStringPoolCapacity;
     private final int createAsSelectRetryCount;
@@ -139,6 +140,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final PropHttpMinIODispatcherConfiguration httpMinIODispatcherConfiguration = new PropHttpMinIODispatcherConfiguration();
     private final boolean httpMinServerEnabled;
     private final boolean httpNetConnectionHint;
+    private final String httpPassword;
     private final boolean httpPessimisticHealthCheckEnabled;
     private final boolean httpReadOnlySecurityContext;
     private final int httpRecvBufferSize;
@@ -149,6 +151,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int httpSqlCacheBlockCount;
     private final boolean httpSqlCacheEnabled;
     private final int httpSqlCacheRowCount;
+    private final String httpUsername;
     private final WaitProcessorConfiguration httpWaitProcessorConfiguration = new PropWaitProcessorConfiguration();
     private final int[] httpWorkerAffinity;
     private final int httpWorkerCount;
@@ -823,6 +826,15 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpReadOnlySecurityContext = getBoolean(properties, env, PropertyKey.HTTP_SECURITY_READONLY, false);
             this.maxHttpQueryResponseRowLimit = getLong(properties, env, PropertyKey.HTTP_SECURITY_MAX_RESPONSE_ROWS, Long.MAX_VALUE);
             this.interruptOnClosedConnection = getBoolean(properties, env, PropertyKey.HTTP_SECURITY_INTERRUPT_ON_CLOSED_CONNECTION, true);
+            this.httpUsername = getString(properties, env, PropertyKey.HTTP_USER, "");
+            this.httpPassword = getString(properties, env, PropertyKey.HTTP_PASSWORD, "");
+            if (!Chars.empty(httpUsername) && Chars.empty(httpPassword)) {
+                throw new ServerConfigurationException("HTTP username is set but password is missing. " +
+                        "Use the '" + PropertyKey.HTTP_PASSWORD.getPropertyPath() + "' configuration property to set a password. [user=" + httpUsername + "]");
+            } else if (Chars.empty(httpUsername) && !Chars.empty(httpPassword)) {
+                throw new ServerConfigurationException("HTTP password is set but username is missing. " +
+                        "Use the '" + PropertyKey.HTTP_USER.getPropertyPath() + "' configuration property to set a username.");
+            }
 
             if (loadAdditionalConfigurations && httpServerEnabled) {
                 this.jsonQueryConnectionCheckFrequency = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_CONNECTION_CHECK_FREQUENCY, 1_000_000);
@@ -1312,6 +1324,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         this.posthogEnabled = getBoolean(properties, env, PropertyKey.POSTHOG_ENABLED, false);
         this.posthogApiKey = getString(properties, env, PropertyKey.POSTHOG_API_KEY, null);
+        this.configReloadEnabled = getBoolean(properties, env, PropertyKey.CONFIG_RELOAD_ENABLED, true);
     }
 
     public static String rootSubdir(CharSequence dbRoot, CharSequence subdir) {
@@ -1405,6 +1418,14 @@ public class PropServerConfiguration implements ServerConfiguration {
     @Override
     public void init(CairoEngine engine, FreeOnExit freeOnExit) {
         this.factoryProvider = fpf.getInstance(this, engine, freeOnExit);
+    }
+
+    public void init(ServerConfiguration config, CairoEngine engine, FreeOnExit freeOnExit) {
+        this.factoryProvider = fpf.getInstance(config, engine, freeOnExit);
+    }
+
+    public boolean isConfigReloadEnabled() {
+        return configReloadEnabled;
     }
 
     private int[] getAffinity(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, int workerCount) throws ServerConfigurationException {
@@ -3040,6 +3061,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         public void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
             settings.put(RELEASE_TYPE, str(getReleaseType()));
             settings.put(RELEASE_VERSION, str(getBuildInformation().getSwVersion()));
+            settings.put("acl.enabled", Boolean.toString(!Chars.empty(httpUsername)));
         }
     }
 
@@ -3416,6 +3438,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public String getPassword() {
+            return httpPassword;
+        }
+
+        @Override
         public String getPoolName() {
             return "http";
         }
@@ -3448,6 +3475,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public StaticContentProcessorConfiguration getStaticContentProcessorConfiguration() {
             return staticContentProcessorConfiguration;
+        }
+
+        @Override
+        public String getUsername() {
+            return httpUsername;
         }
 
         @Override
