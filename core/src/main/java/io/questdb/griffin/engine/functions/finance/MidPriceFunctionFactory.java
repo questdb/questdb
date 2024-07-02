@@ -73,6 +73,11 @@ public class MidPriceFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public String getName() {
+            return "mid";
+        }
+
+        @Override
         public Function getRight() {
             return ask;
         }

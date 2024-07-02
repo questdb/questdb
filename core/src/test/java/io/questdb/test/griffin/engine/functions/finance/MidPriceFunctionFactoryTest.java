@@ -42,6 +42,14 @@ public class MidPriceFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
+    public void testNonFiniteNumber() throws Exception {
+        final String expected = "mid\nnull\n";
+        assertQuery(expected, "select mid(NULL, 1.0)");
+        assertQuery(expected, "select mid(1.0, NULL)");
+        assertQuery(expected, "select mid(NULL, NULL)");
+    }
+
+    @Test
     public void testNullBehavior() throws Exception {
         final String expected = "mid\nnull\n";
         assertQuery(expected, "select mid(NULL, 1.0)");
