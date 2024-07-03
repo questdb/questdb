@@ -3097,6 +3097,8 @@ public class SqlOptimiser implements Mutable {
                 // Set artificial limit to trigger LimitRCF use, so that parent models don't use the followedOrderByAdvice flag and skip necessary sort
                 // Currently the only way to delineate order by advice is through use of factory that returns false for followedOrderByAdvice().
                 // TODO: factories should provide order metadata to enable better sort-skipping
+                // TODO: action what the hell is that concat?!
+
                 model.setLimit(expressionNodePool.next().of(CONSTANT, "" + Long.MAX_VALUE, Integer.MIN_VALUE, 0), null);
             }
         }

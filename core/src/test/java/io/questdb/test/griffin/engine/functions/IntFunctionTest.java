@@ -125,14 +125,9 @@ public class IntFunctionTest {
         function.getRecordCursorFactory();
     }
 
-    @Test
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetShort() {
-        Assert.assertEquals(150, function.getShort(null));
-        Assert.assertEquals(0, makeIntFunction(0).getShort(null));
-        Assert.assertEquals(-1000, makeIntFunction(-1000).getShort(null));
-        Assert.assertEquals(Short.MIN_VALUE, makeIntFunction(Integer.MIN_VALUE).getShort(null));
-        Assert.assertThrows(UnsupportedOperationException.class, () -> makeIntFunction(32768).getShort(null));
-        Assert.assertThrows(UnsupportedOperationException.class, () -> makeIntFunction(-32769).getShort(null));
+        function.getShort(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

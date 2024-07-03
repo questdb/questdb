@@ -67,6 +67,7 @@ public class SqlParser {
     private final ObjectPool<RenameTableModel> renameTableModelPool;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteConcat0Ref = this::rewriteConcat0;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCount0Ref = this::rewriteCount0;
+    private final PostOrderTreeTraversalAlgo.Visitor rewriteJsonExtractCast0Ref = this::rewriteJsonExtractCast0;
     private final PostOrderTreeTraversalAlgo.Visitor rewritePgCast0Ref = this::rewritePgCast0;
     private final ObjList<ExpressionNode> tempExprNodes = new ObjList<>();
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCase0Ref = this::rewriteCase0;
@@ -2665,12 +2666,72 @@ public class SqlParser {
         }
     }
 
+    private ExpressionNode rewriteJsonExtractCast(ExpressionNode parent) throws SqlException {
+        traversalAlgo.traverse(parent, rewriteJsonExtractCast0Ref);
+        return parent;
+    }
+
+    private void rewriteJsonExtractCast0(ExpressionNode node) {
+        if (node.type == ExpressionNode.FUNCTION && SqlKeywords.isCastKeyword(node.token)) {
+            if (node.lhs != null && Chars.equalsIgnoreCase(node.lhs.token, "json_extract") && node.lhs.paramCount == 2) {
+                // rewrite cast such as
+                // json_extract(json,path)::type -> json_extract(json,path,type)
+                // the ::type is already rewritten as
+                // cast(json_extract(json,path) as type)
+                //
+
+                // we remove the outer cast and let json_extract() do the cast
+                ExpressionNode jsonExtractNode = node.lhs;
+                // check if the type is a valid symbol
+                ExpressionNode typeNode = node.rhs;
+                if (typeNode != null) {
+                    if (Chars.equalsIgnoreCase(typeNode.token, "varchar")) {
+                        // redundant cast to varchar, just remove it
+                        node.token = jsonExtractNode.token;
+                        node.paramCount = jsonExtractNode.paramCount;
+                        node.type = jsonExtractNode.type;
+                        node.position = jsonExtractNode.position;
+                        node.lhs = jsonExtractNode.lhs;
+                        node.rhs = jsonExtractNode.rhs;
+                        node.args.clear();
+                    } else {
+                        int type = ColumnType.typeOf(typeNode.token);
+                        node.token = jsonExtractNode.token;
+                        node.paramCount = 3;
+                        node.type = jsonExtractNode.type;
+                        node.position = jsonExtractNode.position;
+                        node.lhs = null;
+                        node.rhs = null;
+                        node.args.clear();
+
+                        // args are added in reverse order
+
+                        // type integer
+                        CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
+                        characterStoreEntry.put(type);
+                        node.args.add(expressionNodePool.next().of(
+                                        ExpressionNode.CONSTANT,
+                                        characterStoreEntry.toImmutable(),
+                                        typeNode.precedence,
+                                        typeNode.position
+                                )
+                        );
+                        node.args.add(jsonExtractNode.rhs);
+                        node.args.add(jsonExtractNode.lhs);
+                    }
+                }
+            }
+        }
+    }
+
     private ExpressionNode rewriteKnownStatements(ExpressionNode parent) throws SqlException {
-        return rewritePgCast(
-                rewriteConcat(
-                        rewriteCase(
-                                rewriteCount(
-                                        parent
+        return rewriteJsonExtractCast(
+                rewritePgCast(
+                        rewriteConcat(
+                                rewriteCase(
+                                        rewriteCount(
+                                                parent
+                                        )
                                 )
                         )
                 )
