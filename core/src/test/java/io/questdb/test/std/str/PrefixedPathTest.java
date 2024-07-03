@@ -56,14 +56,16 @@ public class PrefixedPathTest {
     @Test
     public void testSimpleNoSlash() {
         try (PrefixedPath path = new PrefixedPath("/home/xterm/public")) {
-            Assert.assertEquals(transform("/home/xterm/public/"), path.$().toString());
+            path.$();
+            Assert.assertEquals(transform("/home/xterm/public/"), path.toString());
         }
     }
 
     @Test
     public void testSimpleSlash() {
         try (PrefixedPath path = new PrefixedPath("/home/xterm/public/")) {
-            Assert.assertEquals(transform("/home/xterm/public/"), path.$().toString());
+            path.$();
+            Assert.assertEquals(transform("/home/xterm/public/"), path.toString());
         }
     }
 
@@ -79,6 +81,7 @@ public class PrefixedPathTest {
     }
 
     private void assertThat(PrefixedPath path, String expected, CharSequence concat) {
-        Assert.assertEquals(transform(expected), path.rewind().concat(concat).$().toString());
+        path.rewind().concat(concat).$();
+        Assert.assertEquals(transform(expected), path.toString());
     }
 }

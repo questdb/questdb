@@ -194,7 +194,7 @@ public class NetTest {
     public void testSeek() {
         String msg = "Test ABC";
         StringSink sink = new StringSink();
-        try (Path msgSink = new Path().of(msg).$()) {
+        try (Path msgSink = new Path().of(msg)) {
             int msgLen = msgSink.size() + 1;
 
             int acceptFd = Net.socketTcp(true);

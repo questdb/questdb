@@ -123,7 +123,7 @@ public class TableReadFailTest extends AbstractCairoTest {
 
                 Assert.assertEquals(N, count);
 
-                mem.smallFile(configuration.getFilesFacade(), path, MemoryTag.MMAP_DEFAULT);
+                mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
 
                 // keep txn file parameters
                 long offset = configuration.getFilesFacade().length(mem.getFd());
@@ -147,7 +147,7 @@ public class TableReadFailTest extends AbstractCairoTest {
 
                 // restore txn file to its former glory
 
-                mem.smallFile(configuration.getFilesFacade(), path, MemoryTag.MMAP_DEFAULT);
+                mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
                 mem.jumpTo(recOffset + TableUtils.TX_OFFSET_TXN_64);
                 mem.putLong(txn + 2);
                 mem.jumpTo(offset);

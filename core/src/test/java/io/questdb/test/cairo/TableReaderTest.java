@@ -1856,12 +1856,12 @@ public class TableReaderTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> {
             try (Path temp = new Path()) {
-                temp.of(engine.getConfiguration().getRoot()).concat("dummy_non_existing_path").$();
+                temp.of(engine.getConfiguration().getRoot()).concat("dummy_non_existing_path");
                 ff = new TestFilesFacadeImpl() {
                     @Override
                     public int openRO(LPSZ name) {
                         if (Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME) && openCount.decrementAndGet() < 0) {
-                            return TestFilesFacadeImpl.INSTANCE.openRO(temp);
+                            return TestFilesFacadeImpl.INSTANCE.openRO(temp.$());
                         }
                         return TestFilesFacadeImpl.INSTANCE.openRO(name);
                     }
@@ -1899,7 +1899,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     @Override
                     public long length(int fd) {
                         if (fd == this.fd) {
-                            return Files.length(temp);
+                            return Files.length(temp.$());
                         }
                         return Files.length(fd);
                     }
@@ -1907,7 +1907,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     @Override
                     public long length(LPSZ name) {
                         if (Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME) && openCount.decrementAndGet() < 0) {
-                            return Files.length(temp);
+                            return Files.length(temp.$());
                         }
                         return Files.length(name);
                     }
@@ -1953,7 +1953,7 @@ public class TableReaderTest extends AbstractCairoTest {
                         Path path = getPath(tableName);
                         MemoryMARW mem = Vm.getMARWInstance(
                                 TestFilesFacadeImpl.INSTANCE,
-                                path,
+                                path.$(),
                                 -1,
                                 Files.PAGE_SIZE,
                                 MemoryTag.NATIVE_DEFAULT,
@@ -3464,7 +3464,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
     private static Path getPath(String tableName) {
         TableToken tableToken = engine.verifyTableName(tableName);
-        return new Path().of(engine.getConfiguration().getRoot()).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
+        return new Path().of(engine.getConfiguration().getRoot()).concat(tableToken).concat(TableUtils.META_FILE_NAME);
     }
 
     private static String padHexLong(long value) {

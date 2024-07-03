@@ -65,7 +65,7 @@ public class SnapshotWindowsTest extends AbstractCairoTest {
     public void tearDown() throws Exception {
         super.tearDown();
         path.trimTo(rootLen);
-        configuration.getFilesFacade().rmdir(path.slash$());
+        configuration.getFilesFacade().rmdir(path.slash());
     }
 
     @Test
