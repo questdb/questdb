@@ -4722,26 +4722,23 @@ public class SqlOptimiser implements Mutable {
         // construct an appropriate where clause
         if (sampleFrom != null && sampleTo != null) {
             ExpressionNode betweenNode = expressionNodePool.next().of(SET_OPERATION, "between", 11, 0);
-            betweenNode.args.add(sampleFrom);
             betweenNode.args.add(sampleTo);
+            betweenNode.args.add(sampleFrom);
             betweenNode.args.add(fromToModel.getTimestamp());
             betweenNode.paramCount = 3;
             intervalClause = betweenNode;
-            fromToModel.setWhereClause(betweenNode);
         } else if (sampleFrom != null) {
             ExpressionNode greaterThanOrEqualToNode = expressionNodePool.next().of(OPERATION, ">=", 12, 0);
             greaterThanOrEqualToNode.lhs = fromToModel.getTimestamp();
             greaterThanOrEqualToNode.rhs = sampleFrom;
             greaterThanOrEqualToNode.paramCount = 2;
             intervalClause = greaterThanOrEqualToNode;
-            fromToModel.setWhereClause(greaterThanOrEqualToNode);
         } else if (sampleTo != null) {
             ExpressionNode lesserThanNode = expressionNodePool.next().of(OPERATION, "<", 12, 0);
             lesserThanNode.lhs = fromToModel.getTimestamp();
             lesserThanNode.rhs = sampleTo;
             lesserThanNode.paramCount = 2;
             intervalClause = lesserThanNode;
-            fromToModel.setWhereClause(lesserThanNode);
         } else {
             // unreachable
             assert false;
