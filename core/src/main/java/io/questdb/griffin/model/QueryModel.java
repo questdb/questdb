@@ -1287,8 +1287,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     }
 
     public void setSampleByFrom(ExpressionNode lo, ExpressionNode hi) {
-        this.sampleByTo = lo;
-        this.sampleByFrom = hi;
+        this.sampleByFrom = lo;
+        this.sampleByTo = hi;
     }
 
     public void setSampleByOffset(ExpressionNode sampleByOffset) {
