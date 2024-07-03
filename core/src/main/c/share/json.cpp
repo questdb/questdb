@@ -308,8 +308,6 @@ Java_io_questdb_std_json_SimdJsonParser_queryPointerVarchar(
             parser, json_chars, json_len, tail_padding, pointer_chars, pointer_len, result,
             [result, dest_sink, max_size](json_value res) -> token_void {
                 switch (result->type) {
-                    case simdjson::ondemand::json_type::null:
-                        return {};
                     case simdjson::ondemand::json_type::string: {
                         auto str_res = res.get_string();
                         const auto str = str_res.value_unsafe();
@@ -505,38 +503,6 @@ Java_io_questdb_std_json_SimdJsonParser_queryPointerDouble(
                         [](double value) -> jdouble {
                             return value;
                         });
-            });
-}
-
-JNIEXPORT jfloat JNICALL
-Java_io_questdb_std_json_SimdJsonParser_queryPointerFloat(
-        JNIEnv * /*env*/,
-        jclass /*cl*/,
-        simdjson::ondemand::parser *parser,
-        const char *json_chars,
-        size_t json_len,
-        size_t tail_padding,
-        const char *pointer_chars,
-        size_t pointer_len,
-        json_result *result
-) {
-    return value_at_pointer(
-            parser, json_chars, json_len, tail_padding, pointer_chars, pointer_len, result,
-            [result](json_value res) -> jfloat {
-                auto double_res = get_double(result->type, res);
-                if (!result->set_error(double_res)) {
-                    return default_value<jfloat>::value();
-                }
-                const auto value = double_res.value_unsafe();
-                if (std::isnan(value)) {
-                    return default_value<jfloat>::value();
-                }
-
-                if (value < -std::numeric_limits<float>::max() || value > std::numeric_limits<float>::max()) {
-                    result->error = simdjson::error_code::NUMBER_OUT_OF_RANGE;
-                    return default_value<jfloat>::value();
-                }
-                return static_cast<float>(value);
             });
 }
 

@@ -38,7 +38,7 @@ import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
 
-public class JsonExtractTypedFunction implements ScalarFunction {
+public class JsonExtractPrimitiveFunction implements ScalarFunction {
     private static final boolean defaultBool = false;
     private final int columnType;
     private final Function json;
@@ -47,7 +47,7 @@ public class JsonExtractTypedFunction implements ScalarFunction {
     private final JsonExtractSupportingState state;
     private DirectUtf8Sink pointer;
 
-    public JsonExtractTypedFunction(
+    public JsonExtractPrimitiveFunction(
             int position,
             int columnType,
             Function json,
@@ -115,11 +115,7 @@ public class JsonExtractTypedFunction implements ScalarFunction {
 
     @Override
     public float getFloat(Record rec) {
-        final Utf8Sequence jsonSeq = json.getVarcharA(rec);
-        if (jsonSeq == null) {
-            return Float.NaN;
-        }
-        return state.parser.queryPointerFloat(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult);
+        return (float) getDouble(rec);
     }
 
     @Override

@@ -101,9 +101,7 @@ class JsonExtractVarcharFunction extends VarcharFunction {
                     pointer,
                     state.simdJsonResult,
                     state.destSink,
-                    maxSize,
-                    0,
-                    0
+                    maxSize
             );
 
             if (state.simdJsonResult.hasValue()) {

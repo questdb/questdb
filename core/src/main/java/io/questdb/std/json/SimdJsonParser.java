@@ -94,23 +94,6 @@ public class SimdJsonParser implements QuietCloseable {
         );
     }
 
-    public float queryPointerFloat(
-            DirectUtf8Sequence json,
-            DirectUtf8Sequence pointer,
-            SimdJsonResult result
-    ) {
-        assert json.tailPadding() >= SIMDJSON_PADDING;
-        return queryPointerFloat(
-                impl,
-                json.ptr(),
-                json.size(),
-                json.tailPadding(),
-                pointer.ptr(),
-                pointer.size(),
-                result.ptr()
-        );
-    }
-
     public int queryPointerInt(
             DirectUtf8Sequence json,
             DirectUtf8Sink pointer,
@@ -167,9 +150,7 @@ public class SimdJsonParser implements QuietCloseable {
             DirectUtf8Sequence pointer,
             SimdJsonResult result,
             DirectUtf8Sink dest,
-            int maxSize,
-            long defaultValuePtr,
-            long defaultValueSize
+            int maxSize
     ) {
         assert json.tailPadding() >= SIMDJSON_PADDING;
         final long nativeByteSinkPtr = dest.borrowDirectByteSink().ptr();
@@ -213,16 +194,6 @@ public class SimdJsonParser implements QuietCloseable {
     );
 
     private static native double queryPointerDouble(
-            long impl,
-            long jsonPtr,
-            long jsonLen,
-            long jsonTailPadding,
-            long pointerPtr,
-            long pointerLen,
-            long resultPtr
-    );
-
-    private static native float queryPointerFloat(
             long impl,
             long jsonPtr,
             long jsonLen,

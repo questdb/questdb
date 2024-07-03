@@ -84,10 +84,13 @@ class JsonExtractSupportingState implements QuietCloseable {
             case SimdJsonError.SUCCESS:
             case SimdJsonError.INDEX_OUT_OF_BOUNDS:
             case SimdJsonError.NO_SUCH_FIELD:
+            case SimdJsonError.INCORRECT_TYPE:
                 return;
             default:
-                throw CairoException.nonCritical().position(position).put(SimdJsonError.getMessage(simdJsonResult.getError()));
+                throw CairoException
+                        .nonCritical()
+                        .position(position)
+                        .put(SimdJsonError.getMessage(simdJsonResult.getError()));
         }
-
     }
 }

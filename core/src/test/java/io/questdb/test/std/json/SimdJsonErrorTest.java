@@ -28,7 +28,7 @@ import io.questdb.std.json.SimdJsonError;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class JsonExceptionTest {
+public class SimdJsonErrorTest {
     @Test
     public void testSuccess() {
         Assert.assertEquals("SUCCESS: No error", SimdJsonError.getMessage(SimdJsonError.SUCCESS));

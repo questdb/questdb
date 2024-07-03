@@ -57,12 +57,11 @@ public class JsonExtractTypedFunctionFactory implements FunctionFactory {
             throw SqlException.$(argPositions.getQuick(1), "constant or bind variable expected");
         }
 
-        return new JsonExtractTypedFunction(
-                argPositions.getQuick(0),
-                parseTargetType(position, args.getQuiet(2)),
-                json,
-                path
-        );
+        final int fnPosition = argPositions.getQuick(0);
+        final int targetType = parseTargetType(position, args.getQuick(2));
+        return (targetType == ColumnType.VARCHAR)
+            ? new JsonExtractVarcharFunction(fnPosition, json, path, configuration.getStrFunctionMaxBufferLength())
+            : new JsonExtractPrimitiveFunction(fnPosition, targetType, json, path);
     }
 
     private static int parseTargetType(int position, Function targetTypeFn) throws SqlException {
@@ -85,6 +84,7 @@ public class JsonExtractTypedFunctionFactory implements FunctionFactory {
             case ColumnType.LONG:
             case ColumnType.FLOAT:
             case ColumnType.DOUBLE:
+            case ColumnType.VARCHAR:
                 return targetType;
             default:
                 throw SqlException.position(position).put("unsupported target type: ").put(targetType);
