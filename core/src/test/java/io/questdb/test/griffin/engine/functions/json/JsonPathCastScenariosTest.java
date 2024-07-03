@@ -133,9 +133,7 @@ public class JsonPathCastScenariosTest extends AbstractCairoTest {
     @Before
     public void setUp() {
         try {
-            assertMemoryLeak(() -> {
-                ddl("create table json_test as (select '" + castsDoc + "'::varchar text)");
-            });
+            assertMemoryLeak(() -> ddl("create table json_test as (select '" + castsDoc + "'::varchar text)"));
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
@@ -148,7 +146,7 @@ public class JsonPathCastScenariosTest extends AbstractCairoTest {
 
         try {
             final String viaVarcharCast =
-                    "select cast(json_path(text, '[" + index + "]')::varchar as "
+                    "select cast(json_extract(text, '[" + index + "]')::varchar as "
                             + ColumnType.nameOf(type) + ") as x from json_test";
             assertSqlWithTypes(viaVarcharCast, expected);
         } catch (AssertionError e) {
@@ -162,7 +160,7 @@ public class JsonPathCastScenariosTest extends AbstractCairoTest {
 
         try {
             final String singleCastSql =
-                    "select json_path(text, '[" + index + "]')::" + ColumnType.nameOf(type) +
+                    "select json_extract(text, '[" + index + "]')::" + ColumnType.nameOf(type) +
                             " as x from json_test";
             assertSqlWithTypes(singleCastSql, expected);
         } catch (AssertionError e) {
@@ -185,12 +183,10 @@ public class JsonPathCastScenariosTest extends AbstractCairoTest {
     }
 
     private static int selectScenarioColumn(int type) {
-        switch (type) {
-            case ColumnType.BOOLEAN:
-                return 1;
-            default:
-                throw new RuntimeException("No scenario tests for type " + ColumnType.nameOf(type));
+        if (type == ColumnType.BOOLEAN) {
+            return 1;
         }
+        throw new RuntimeException("No scenario tests for type " + ColumnType.nameOf(type));
     }
 
     static {

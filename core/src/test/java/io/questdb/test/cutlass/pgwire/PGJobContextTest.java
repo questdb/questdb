@@ -4880,7 +4880,7 @@ nodejs code:
     }
 
     @Test
-    public void testJsonBindVariable() throws Exception {
+    public void testJsonExtractBindVariable() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             connection.prepareStatement("create table json_example as  (\n" +
@@ -4914,7 +4914,7 @@ nodejs code:
                 }
             }
 
-            try (PreparedStatement ps = connection.prepareStatement("select sum(json_extract(text, '.list[1]')::int) from json_example;")) {
+            try (PreparedStatement ps = connection.prepareStatement("select sum(json_extract(text, '.list[1]')::varchar::int) from json_example;")) {
                 try (ResultSet rs = ps.executeQuery()) {
                     // all rows, null = null is always true
                     assertResultSet(
@@ -4949,7 +4949,7 @@ nodejs code:
             }
 
             sink.clear();
-            try (PreparedStatement ps = connection.prepareStatement("select sum(json_extract(text, ?)::int) from json_example;")) {
+            try (PreparedStatement ps = connection.prepareStatement("select sum(json_extract(text, ?)::varchar::int) from json_example;")) {
                 ps.setString(1, ".list[1]");
                 try (ResultSet rs = ps.executeQuery()) {
                     assertResultSet(
@@ -4990,6 +4990,17 @@ nodejs code:
                     assertResultSet(
                             "p[INTEGER]\n" +
                                     "2\n",
+                            sink,
+                            rs
+                    );
+                }
+
+                // set json to null
+                ps.setString(1, null);
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "p[INTEGER]\n" +
+                                    "null\n",
                             sink,
                             rs
                     );
