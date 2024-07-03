@@ -33,108 +33,109 @@ import org.junit.Test;
 public class JsonExtractCastScenariosTest extends AbstractCairoTest {
     private static final String castsDoc;
     private static final String[][] scenarios = new String[][]{
-            // json token, ::boolean, ::short, ::long...
-            {"null", "false", "0"},
-            {"true", "true", "1"},
-            {"false", "false", "0"},
-            {"1", "false", "1"},
-            {"0", "false", "0"},
-            {"-1", "false", "-1"},
-            {"\"true\"", "false", "0"},
-            {"\"false\"", "false", "0"},
-            {"\"null\"", "false", "0"},
-            {"\"1\"", "false", "0"},
-            {"\"0\"", "false", "0"},
-            {"\"\"", "false", "0"},
-            {"\" \"", "false", "0"},
-            {"\"  \"", "false", "0"},
-            {"\"  true\"", "false", "0"},
-            {"\"true  \"", "false", "0"},
-            {"\"  true  \"", "false", "0"},
-            {"\"  false\"", "false", "0"},
-            {"\"false  \"", "false", "0"},
-            {"\"  false  \"", "false", "0"},
-            {"\"  null\"", "false", "0"},
-            {"\"null  \"", "false", "0"},
-            {"\"  null  \"", "false", "0"},
-            {"\"  abc\"", "false", "0"},
-            {"\"abc  \"", "false", "0"},
-            {"\"  abc  \"", "false", "0"},
-            {"0.0", "false", "0"},
-            {"1.0", "false", "1"},
-            {"1e1", "false", "10"},
-            {"1e+1", "false", "10"},
-            {"1e-1", "false", "0"},
-            {"1e01", "false", "10"},
-            {"1E1", "false", "10"},
-            {"1E+1", "false", "10"},
-            {"1E-1", "false", "0"},
-            {"1E01", "false", "10"},
-            {"1E+01", "false", "10"},
-            {"0.25", "false", "0"},
-            {"1.25", "false", "1"},
-            {"1.25e2", "false", "125"},
-            {"1.25e+2", "false", "125"},
-            {"1.25e-2", "false", "0"},
-            {"1.25e02", "false", "125"},
-            {"1.25e+02", "false", "125"},
-            {"1.25e-02", "false", "0"},
-            {"1.25e+02", "false", "125"},
-            {"2.0", "false", "2"},
-            {"2.5", "false", "2"},
-            {"2.75", "false", "2"},
-            {"-2.0", "false", "-2"},
-            {"-2.5", "false", "-2"},
-            {"-2.75", "false", "-2"},
-            {"-1.0", "false", "-1"},
-            {"-0.25", "false", "0"},
-            {"-1.25", "false", "-1"},
-            {"-1.25e2", "false", "-125"},
-            {"-1.25e+2", "false", "-125"},
-            {"-1.25e-2", "false", "0"},
-            {"-1.25e02", "false", "-125"},
-            {"-1.25e+02", "false", "-125"},
-            {"-1.25e-02", "false", "0"},
-            {"-1.25e+02", "false", "-125"},
-            {"1e308", "false", "0"},
-            {"1E308", "false", "0"},
-            {"127", "false", "127"},
-            {"128", "false", "128"},
-            {"-128", "false", "-128"},
-            {"-129", "false", "-129"},
-            {"255", "false", "255"},
-            {"256", "false", "256"},
-            {"-256", "false", "-256"},
-            {"-257", "false", "-257"},
-            {"32767", "false", "32767"},
-            {"32768", "false", "0"},
-            {"-32768", "false", "-32768"},
-            {"-32769", "false", "0"},
-            {"65535", "false", "0"},
-            {"65536", "false", "0"},
-            {"-65536", "false", "0"},
-            {"-65537", "false", "0"},
-            {"2147483647", "false", "0"},
-            {"2147483648", "false", "0"},
-            {"-2147483648", "false", "0"},
-            {"-2147483649", "false", "0"},
-            {"4294967295", "false", "0"},
-            {"4294967296", "false", "0"},
-            {"-4294967296", "false", "0"},
-            {"-4294967297", "false", "0"},
-            {"9223372036854775807", "false", "0"},
-            {"9223372036854775808", "false", "0"},
-            {"-9223372036854775808", "false", "0"},
-            {"-9223372036854775809", "false", "0"},
-            {"[]", "false", "0"},
-            {"[true]", "false", "0"},
-            {"[false]", "false", "0"},
-            {"[null]", "false", "0"},
-            {"[1]", "false", "0"},
-            {"[0]", "false", "0"},
-            {"[\"true\"]", "false", "0"},
-            {"[\"false\"]", "false", "0"},
-            {"[1, 2]", "false", "0"}
+            // json token, ::boolean, ::short, ::int...
+            {"null", "false", "0", "null"},
+            {"true", "true", "1", "1"},
+            {"false", "false", "0", "0"},
+            {"1", "false", "1", "1"},
+            {"0", "false", "0", "0"},
+            {"-1", "false", "-1", "-1"},
+            {"\"true\"", "false", "0", "null"},
+            {"\"false\"", "false", "0", "null"},
+            {"\"null\"", "false", "0", "null"},
+            {"\"1\"", "false", "0", "null"},
+            {"\"0\"", "false", "0", "null"},
+            {"\"\"", "false", "0", "null"},
+            {"\" \"", "false", "0", "null"},
+            {"\"  \"", "false", "0", "null"},
+            {"\"  true\"", "false", "0", "null"},
+            {"\"true  \"", "false", "0", "null"},
+            {"\"  true  \"", "false", "0", "null"},
+            {"\"  false\"", "false", "0", "null"},
+            {"\"false  \"", "false", "0", "null"},
+            {"\"  false  \"", "false", "0", "null"},
+            {"\"  null\"", "false", "0", "null"},
+            {"\"null  \"", "false", "0", "null"},
+            {"\"  null  \"", "false", "0", "null"},
+            {"\"  abc\"", "false", "0", "null"},
+            {"\"abc  \"", "false", "0", "null"},
+            {"\"  abc  \"", "false", "0", "null"},
+            {"0.0", "false", "0", "0"},
+            {"1.0", "false", "1", "1"},
+            {"1e1", "false", "10", "10"},
+            {"1e+1", "false", "10", "10"},
+            {"1e-1", "false", "0", "0"},
+            {"1e01", "false", "10", "10"},
+            {"1E1", "false", "10", "10"},
+            {"1E+1", "false", "10", "10"},
+            {"1E-1", "false", "0", "0"},
+            {"1E01", "false", "10", "10"},
+            {"1E+01", "false", "10", "10"},
+            {"0.25", "false", "0", "0"},
+            {"1.25", "false", "1", "1"},
+            {"1.25e2", "false", "125", "125"},
+            {"1.25e+2", "false", "125", "125"},
+            {"1.25e-2", "false", "0", "0"},
+            {"1.25e02", "false", "125", "125"},
+            {"1.25e+02", "false", "125", "125"},
+            {"1.25e-02", "false", "0", "0"},
+            {"1.25e+02", "false", "125", "125"},
+            {"2.0", "false", "2", "2"},
+            {"2.5", "false", "2", "2"},
+            {"2.75", "false", "2", "2"},
+            {"-2.0", "false", "-2", "-2"},
+            {"-2.5", "false", "-2", "-2"},
+            {"-2.75", "false", "-2", "-2"},
+            {"-1.0", "false", "-1", "-1"},
+            {"-0.25", "false", "0", "0"},
+            {"-1.25", "false", "-1", "-1"},
+            {"-1.25e2", "false", "-125", "-125"},
+            {"-1.25e2", "false", "-125", "-125"},
+            {"-1.25e+2", "false", "-125", "-125"},
+            {"-1.25e-2", "false", "0", "0"},
+            {"-1.25e02", "false", "-125", "-125"},
+            {"-1.25e+02", "false", "-125", "-125"},
+            {"-1.25e-02", "false", "0", "0"},
+            {"-1.25e+02", "false", "-125", "-125"},
+            {"1e308", "false", "0", "null"},
+            {"1E308", "false", "0", "null"},
+            {"127", "false", "127", "127"},
+            {"128", "false", "128", "128"},
+            {"-128", "false", "-128", "-128"},
+            {"-129", "false", "-129", "-129"},
+            {"255", "false", "255", "255"},
+            {"256", "false", "256", "256"},
+            {"-256", "false", "-256", "-256"},
+            {"-257", "false", "-257", "-257"},
+            {"32767", "false", "32767", "32767"},
+            {"32768", "false", "0", "32768"},
+            {"-32768", "false", "-32768", "-32768"},
+            {"-32769", "false", "0", "-32769"},
+            {"65535", "false", "0", "65535"},
+            {"65536", "false", "0", "65536"},
+            {"-65536", "false", "0", "-65536"},
+            {"-65537", "false", "0", "-65537"},
+            {"2147483647", "false", "0", "2147483647"},
+            {"2147483648", "false", "0", "null"},
+            {"-2147483648", "false", "0", "null"},
+            {"-2147483649", "false", "0", "null"},
+            {"4294967295", "false", "0", "null"},
+            {"4294967296", "false", "0", "null"},
+            {"-4294967296", "false", "0", "null"},
+            {"-4294967297", "false", "0", "null"},
+            {"9223372036854775807", "false", "0", "null"},
+            {"9223372036854775808", "false", "0", "null"},
+            {"-9223372036854775808", "false", "0", "null"},
+            {"-9223372036854775809", "false", "0", "null"},
+            {"[]", "false", "0", "null"},
+            {"[true]", "false", "0", "null"},
+            {"[false]", "false", "0", "null"},
+            {"[null]", "false", "0", "null"},
+            {"[1]", "false", "0", "null"},
+            {"[0]", "false", "0", "null"},
+            {"[\"true\"]", "false", "0", "null"},
+            {"[\"false\"]", "false", "0", "null"},
+            {"[1, 2]", "false", "0", "null"}
     };
 
     @Before
@@ -153,6 +154,24 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
+    }
+
+    @Test
+    public void testInt() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < scenarios.length; i++) {
+                testScenario(ColumnType.INT, i);
+            }
+        });
+    }
+
+    @Test
+    public void testSBoolean() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < scenarios.length; i++) {
+                testScenario(ColumnType.BOOLEAN, i);
+            }
+        });
     }
 
     public void testScenario(int type, int index) throws Exception {
@@ -174,16 +193,7 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testScenariosBoolean() throws Exception {
-        assertMemoryLeak(() -> {
-            for (int i = 0; i < scenarios.length; i++) {
-                testScenario(ColumnType.BOOLEAN, i);
-            }
-        });
-    }
-
-    @Test
-    public void testScenariosShort() throws Exception {
+    public void testShort() throws Exception {
         assertMemoryLeak(() -> {
             for (int i = 0; i < scenarios.length; i++) {
                 testScenario(ColumnType.SHORT, i);
@@ -197,6 +207,8 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
                 return 1;
             case ColumnType.SHORT:
                 return 2;
+            case ColumnType.INT:
+                return 3;
             default:
                 throw new RuntimeException("No scenario tests for type " + ColumnType.nameOf(type));
         }

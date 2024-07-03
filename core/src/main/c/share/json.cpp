@@ -427,17 +427,27 @@ Java_io_questdb_std_json_SimdJsonParser_queryPointerInt(
     return value_at_pointer(
             parser, json_chars, json_len, tail_padding, pointer_chars, pointer_len, result,
             [result](json_value res) -> jint {
-                auto int_res = get_int64(result->type, res);
-                if (!result->set_error(int_res)) {
-                    return default_value<jint>::value();
-                }
-                const auto int_res64 = int_res.value_unsafe();
-                const auto int_res32 = static_cast<int32_t>(int_res64);
-                if (static_cast<int64_t>(int_res32) != int_res64) {
-                    result->error = simdjson::error_code::NUMBER_OUT_OF_RANGE;
-                    return default_value<jint>::value();
-                }
-                return int_res32;
+                return extract_numeric<jint>(
+                        *result, result->type, res,
+                        [&result](int64_t value) -> jint {
+                            auto int_res = static_cast<jint>(value);
+                            if (value != int_res) {
+                                result->error = simdjson::error_code::NUMBER_OUT_OF_RANGE;
+                                return default_value<jint>::value();
+                            }
+                            return int_res;
+                        },
+                        [&result](uint64_t value) -> jint {
+                            result->error = simdjson::error_code::NUMBER_OUT_OF_RANGE;
+                            return default_value<jint>::value();
+                        },
+                        [&result](double value) -> jint {
+                            if (value < std::numeric_limits<jint>::min() || value > std::numeric_limits<jint>::max()) {
+                                result->error = simdjson::error_code::NUMBER_OUT_OF_RANGE;
+                                return default_value<jint>::value();
+                            }
+                            return static_cast<jint>(value);
+                        });
             });
 }
 
