@@ -7913,7 +7913,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testSampleByFromToBasicSyntax() throws SqlException {
         assertQuery(
                 "select-group-by ts, avg(price) avg from (select [ts, price] from tbl timestamp (ts)) sample by 5m from '2018' to '2019'",
-                "select ts, avg(price) from tbl sample by 5m from '2018' to '2019' align to first observation",
+                "select ts, avg(price) from tbl sample by 5m from '2018' to '2019'",
                 modelOf("tbl")
                         .timestamp("ts")
                         .col("price", ColumnType.DOUBLE)
@@ -7924,7 +7924,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testSampleByFromToJustFromOnItsOwn() throws SqlException {
         assertQuery(
                 "select-group-by ts, avg(price) avg from (select [ts, price] from tbl timestamp (ts)) sample by 5m from '2018'",
-                "select ts, avg(price) from tbl sample by 5m from '2018' align to first observation",
+                "select ts, avg(price) from tbl sample by 5m from '2018'",
                 modelOf("tbl")
                         .timestamp("ts")
                         .col("price", ColumnType.DOUBLE)
