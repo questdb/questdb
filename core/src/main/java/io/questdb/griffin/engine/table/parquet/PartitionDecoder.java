@@ -59,18 +59,12 @@ public class PartitionDecoder implements QuietCloseable {
     private final ObjectPool<DirectString> directStringPool = new ObjectPool<>(DirectString::new, 16);
     private final FilesFacade ff;
     private final Metadata metadata = new Metadata();
-    private final Path path;
     private long columnsPtr;
+    private int fd;
     private long ptr;
 
     public PartitionDecoder(FilesFacade ff) {
         this.ff = ff;
-        try {
-            this.path = new Path();
-        } catch (Throwable th) {
-            close();
-            throw th;
-        }
     }
 
     public static long getChunkAuxPtr(long chunkPtr) {
@@ -88,7 +82,8 @@ public class PartitionDecoder implements QuietCloseable {
     @Override
     public void close() {
         destroy();
-        Misc.free(path);
+        // parquet decoder will close the FD
+        fd = -1;
     }
 
     public long decodeColumnChunk(
@@ -105,7 +100,7 @@ public class PartitionDecoder implements QuietCloseable {
                     columnType
             );
         } catch (Throwable th) {
-            throw CairoException.critical(0).put("Could not decode partition: [path=").put(path)
+            throw CairoException.critical(0).put("Could not decode partition: [fd=").put(fd)
                     .put(", exception=").put(th.getClass().getSimpleName())
                     .put(", msg=").put(th.getMessage())
                     .put(']');
@@ -119,14 +114,13 @@ public class PartitionDecoder implements QuietCloseable {
 
     public void of(@Transient Path srcPath) {
         destroy();
-        int fd = TableUtils.openRO(ff, srcPath, LOG);
-        path.of(srcPath);
+        this.fd = TableUtils.openRO(ff, srcPath, LOG);
         try {
             ptr = create(Files.detach(fd));
             columnsPtr = Unsafe.getUnsafe().getLong(ptr + COLUMNS_PTR_OFFSET);
             metadata.init();
         } catch (Throwable th) {
-            throw CairoException.nonCritical().put("could not read parquet file: [path=").put(path)
+            throw CairoException.nonCritical().put("could not read parquet file: [path=").put(srcPath)
                     .put(", msg=").put(th.getMessage())
                     .put(']');
         }

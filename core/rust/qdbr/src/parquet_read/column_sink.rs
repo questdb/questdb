@@ -1,8 +1,8 @@
-use std::mem::size_of;
-use crate::parquet_read::ColumnChunkBuffers;
 use crate::parquet_read::slicer::DataPageSlicer;
-use crate::parquet_write::{ParquetError, ParquetResult};
+use crate::parquet_read::ColumnChunkBuffers;
 use crate::parquet_write::varchar::{append_varchar, append_varchar_null, append_varchar_nulls};
+use crate::parquet_write::{ParquetError, ParquetResult};
+use std::mem::size_of;
 
 pub trait Pushable {
     fn reserve(&mut self);
@@ -67,7 +67,11 @@ impl<const N: usize, T: DataPageSlicer> Pushable for FixedColumnSink<'_, N, T> {
 }
 
 impl<'a, const N: usize, T: DataPageSlicer> FixedColumnSink<'a, N, T> {
-    pub fn new(slicer: &'a mut T, buffers: &'a mut ColumnChunkBuffers, null_value: [u8; N]) -> Self {
+    pub fn new(
+        slicer: &'a mut T,
+        buffers: &'a mut ColumnChunkBuffers,
+        null_value: [u8; N],
+    ) -> Self {
         Self { slicer, buffers, null_value }
     }
 }
@@ -86,14 +90,22 @@ impl<T: DataPageSlicer> Pushable for VarcharColumnSink<'_, T> {
 
     #[inline]
     fn push(&mut self) {
-        append_varchar(&mut self.buffers.aux_vec, &mut self.buffers.data_vec, self.slicer.next());
+        append_varchar(
+            &mut self.buffers.aux_vec,
+            &mut self.buffers.data_vec,
+            self.slicer.next(),
+        );
     }
 
     #[inline]
     fn push_slice(&mut self, count: usize) {
         // TODO: optimize
         for _ in 0..count {
-            append_varchar(&mut self.buffers.aux_vec, &mut self.buffers.data_vec, self.slicer.next());
+            append_varchar(
+                &mut self.buffers.aux_vec,
+                &mut self.buffers.data_vec,
+                self.slicer.next(),
+            );
         }
     }
 
@@ -133,11 +145,15 @@ impl<T: DataPageSlicer> Pushable for StringColumnSink<'_, T> {
         let count = self.slicer.count();
         if count > 0 {
             self.buffers.aux_vec.reserve((count + 1) * STRING_AUX_SIZE);
-            if self.buffers.aux_vec.len() == 0 {
-                self.buffers.aux_vec.extend_from_slice(0u64.to_le_bytes().as_ref());
+            if self.buffers.aux_vec.is_empty() {
+                self.buffers
+                    .aux_vec
+                    .extend_from_slice(0u64.to_le_bytes().as_ref());
             }
         }
-        self.buffers.data_vec.reserve(2 * self.slicer.data_size() + size_of::<u32>() * count);
+        self.buffers
+            .data_vec
+            .reserve(2 * self.slicer.data_size() + size_of::<u32>() * count);
     }
 
     #[inline]
@@ -148,17 +164,21 @@ impl<T: DataPageSlicer> Pushable for StringColumnSink<'_, T> {
         match utf8_str {
             Ok(utf8_str) => {
                 let pos = self.buffers.data_vec.len();
-                self.buffers.data_vec.resize(self.buffers.data_vec.len() + 4, 0u8);
-                utf8_str.encode_utf16().for_each(|c|
-                    self.buffers.data_vec.extend_from_slice(&c.to_le_bytes())
-                );
+                self.buffers
+                    .data_vec
+                    .resize(self.buffers.data_vec.len() + 4, 0u8);
+                utf8_str
+                    .encode_utf16()
+                    .for_each(|c| self.buffers.data_vec.extend_from_slice(&c.to_le_bytes()));
 
                 // Set length in utf16 characters
                 let len = (self.buffers.data_vec.len() - pos - 4) as u32 / 2;
                 self.buffers.data_vec[pos..pos + 4].copy_from_slice(len.to_le_bytes().as_ref());
 
                 // set aux pointer
-                self.buffers.aux_vec.extend_from_slice(self.buffers.data_vec.len().to_le_bytes().as_ref());
+                self.buffers
+                    .aux_vec
+                    .extend_from_slice(self.buffers.data_vec.len().to_le_bytes().as_ref());
             }
             Err(utf8_str_err) => {
                 self.error = Err(ParquetError::OutOfSpec(utf8_str_err.to_string()));
@@ -177,9 +197,13 @@ impl<T: DataPageSlicer> Pushable for StringColumnSink<'_, T> {
 
     #[inline]
     fn push_null(&mut self) {
-        self.buffers.data_vec.extend_from_slice((-1i32).to_le_bytes().as_ref());
+        self.buffers
+            .data_vec
+            .extend_from_slice((-1i32).to_le_bytes().as_ref());
         // set aux pointer
-        self.buffers.aux_vec.extend_from_slice(self.buffers.data_vec.len().to_le_bytes().as_ref());
+        self.buffers
+            .aux_vec
+            .extend_from_slice(self.buffers.data_vec.len().to_le_bytes().as_ref());
     }
 
     #[inline]
@@ -218,7 +242,9 @@ impl<const N: usize, T: DataPageSlicer> Pushable for PhysicalIntegerColumnSink<'
 
     #[inline]
     fn push(&mut self) {
-        self.buffers.data_vec.extend_from_slice(&self.slicer.next()[0..N]);
+        self.buffers
+            .data_vec
+            .extend_from_slice(&self.slicer.next()[0..N]);
     }
 
     #[inline]
@@ -251,7 +277,69 @@ impl<const N: usize, T: DataPageSlicer> Pushable for PhysicalIntegerColumnSink<'
 }
 
 impl<'a, const N: usize, T: DataPageSlicer> PhysicalIntegerColumnSink<'a, N, T> {
-    pub fn new(slicer: &'a mut T, buffers: &'a mut ColumnChunkBuffers, null_value: [u8; N]) -> Self {
+    pub fn new(
+        slicer: &'a mut T,
+        buffers: &'a mut ColumnChunkBuffers,
+        null_value: [u8; N],
+    ) -> Self {
+        Self { slicer, buffers, null_value }
+    }
+}
+
+pub struct ReverseFixedColumnSink<'a, const N: usize, T: DataPageSlicer> {
+    slicer: &'a mut T,
+    buffers: &'a mut ColumnChunkBuffers,
+    null_value: [u8; N],
+}
+
+impl<const N: usize, T: DataPageSlicer> Pushable for ReverseFixedColumnSink<'_, N, T> {
+    fn reserve(&mut self) {
+        self.buffers.data_vec.reserve(self.slicer.count() * N);
+    }
+
+    #[inline]
+    fn push(&mut self) {
+        let slice = self.slicer.next();
+        for i in 0..N {
+            self.buffers.data_vec.push(slice[N - i - 1]);
+        }
+    }
+
+    #[inline]
+    fn push_slice(&mut self, count: usize) {
+        for _ in 0..count {
+            self.push();
+        }
+    }
+
+    #[inline]
+    fn push_null(&mut self) {
+        self.buffers.data_vec.extend_from_slice(&self.null_value);
+    }
+
+    #[inline]
+    fn push_nulls(&mut self, count: usize) {
+        for _ in 0..count {
+            self.buffers.data_vec.extend_from_slice(&self.null_value);
+        }
+    }
+
+    #[inline]
+    fn skip(&mut self, count: usize) {
+        self.slicer.skip(count);
+    }
+
+    fn result(&self) -> ParquetResult<()> {
+        Ok(())
+    }
+}
+
+impl<'a, const N: usize, T: DataPageSlicer> ReverseFixedColumnSink<'a, N, T> {
+    pub fn new(
+        slicer: &'a mut T,
+        buffers: &'a mut ColumnChunkBuffers,
+        null_value: [u8; N],
+    ) -> Self {
         Self { slicer, buffers, null_value }
     }
 }
