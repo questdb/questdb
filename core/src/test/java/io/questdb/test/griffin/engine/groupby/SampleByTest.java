@@ -61,48 +61,13 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class SampleByTest extends AbstractCairoTest {
-    private static final Log LOG = LogFactory.getLog(SampleByTest.class);
-    private static String DDL_FROMTO = "create table fromto as (\n" +
+    private static final String DDL_FROMTO = "create table fromto as (\n" +
             "  SELECT timestamp_sequence(\n" +
             "            to_timestamp('2018-01-01T00:00:00', 'yyyy-MM-ddTHH:mm:ss'),\n" +
-            "            1800000000L) as ts, x\n" +
+            "            1800000000L) as ts, x, x::varchar as s\n" +
             "FROM long_sequence(480)\n" +
             ") timestamp(ts)";
-
-    @Test
-    public void tesSampleByFromToBindVariables() throws Exception {
-        assertMemoryLeak(() -> {
-
-            ddl(DDL_FROMTO, sqlExecutionContext);
-
-            snapshotMemoryUsage();
-            try (
-                    final RecordCursorFactory factory = select(
-                            "select ts, avg(x) from fromto\n" +
-                                    "sample by 5d from $1 to $2 fill(42)")
-            ) {
-                final String expected = "ts\tavg\n" +
-                        "2017-12-20T00:00:00.000000Z\t42.0\n" +
-                        "2017-12-25T00:00:00.000000Z\t42.0\n" +
-                        "2017-12-30T00:00:00.000000Z\t72.5\n" +
-                        "2018-01-04T00:00:00.000000Z\t264.5\n" +
-                        "2018-01-09T00:00:00.000000Z\t432.5\n" +
-                        "2018-01-14T00:00:00.000000Z\t42.0\n" +
-                        "2018-01-19T00:00:00.000000Z\t42.0\n" +
-                        "2018-01-24T00:00:00.000000Z\t42.0\n" +
-                        "2018-01-29T00:00:00.000000Z\t42.0\n";
-
-                sqlExecutionContext.getBindVariableService().setStr(0, "2017-12-20");
-                sqlExecutionContext.getBindVariableService().setStr(1, "2018-01-31");
-
-                try (final RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    assertCursor(expected, cursor, factory.getMetadata(), true);
-                }
-
-                assertFactoryMemoryUsage();
-            }
-        });
-    }
+    private static final Log LOG = LogFactory.getLog(SampleByTest.class);
 
     @Test
     public void testBadFunction() throws Exception {
@@ -3789,7 +3754,42 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSampleByFromFillNull() throws Exception {
+    public void testSampleByFromToBindVariables() throws Exception {
+        assertMemoryLeak(() -> {
+
+            ddl(DDL_FROMTO, sqlExecutionContext);
+
+            snapshotMemoryUsage();
+            try (
+                    final RecordCursorFactory factory = select(
+                            "select ts, avg(x) from fromto\n" +
+                                    "sample by 5d from $1 to $2 fill(42)")
+            ) {
+                final String expected = "ts\tavg\n" +
+                        "2017-12-20T00:00:00.000000Z\t42.0\n" +
+                        "2017-12-25T00:00:00.000000Z\t42.0\n" +
+                        "2017-12-30T00:00:00.000000Z\t72.5\n" +
+                        "2018-01-04T00:00:00.000000Z\t264.5\n" +
+                        "2018-01-09T00:00:00.000000Z\t432.5\n" +
+                        "2018-01-14T00:00:00.000000Z\t42.0\n" +
+                        "2018-01-19T00:00:00.000000Z\t42.0\n" +
+                        "2018-01-24T00:00:00.000000Z\t42.0\n" +
+                        "2018-01-29T00:00:00.000000Z\t42.0\n";
+
+                sqlExecutionContext.getBindVariableService().setStr(0, "2017-12-20");
+                sqlExecutionContext.getBindVariableService().setStr(1, "2018-01-31");
+
+                try (final RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursor(expected, cursor, factory.getMetadata(), true);
+                }
+
+                assertFactoryMemoryUsage();
+            }
+        });
+    }
+
+    @Test
+    public void testSampleByFromToFillNull() throws Exception {
         assertMemoryLeak(() -> {
             ddl(DDL_FROMTO);
             drainWalQueue();
@@ -3829,33 +3829,44 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSampleByFromNoFill() throws Exception {
+    public void testSampleByFromToIsDisallowedForKeyedQueries() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(DDL_FROMTO);
+            assertException("select ts, avg(x), first(x), last(x), x from fromto\n" +
+                            "where s != '5'\n" +
+                            "sample by 5d from '2017-12-20' to '2018-01-31' fill(42)",
+                    0, "supported");
+        });
+    }
+
+    @Test
+    public void testSampleByFromToNoFill() throws Exception {
         assertMemoryLeak(() -> {
             ddl(DDL_FROMTO);
             drainWalQueue();
-//            assertSql(
-//                    "ts\tavg\n" +
-//                            "2017-12-30T00:00:00.000000Z\t72.5\n" +
-//                            "2018-01-04T00:00:00.000000Z\t264.5\n" +
-//                            "2018-01-09T00:00:00.000000Z\t432.5\n",
-//                    "select ts, avg(x) from fromto\n" +
-//                            "sample by 5d"
-//            );
-//            assertSql(
-//                    "ts\tavg\n" +
-//                            "2017-12-30T00:00:00.000000Z\t72.5\n" +
-//                            "2018-01-04T00:00:00.000000Z\t264.5\n" +
-//                            "2018-01-09T00:00:00.000000Z\t432.5\n",
-//                    "select ts, avg(x) from fromto\n" +
-//                            "sample by 5d from '2017-12-20'"
-//            );
-//            assertSql(
-//                    "ts\tavg\n" +
-//                            "2018-01-01T00:00:00.000000Z\t120.5\n" +
-//                            "2018-01-06T00:00:00.000000Z\t360.5\n",
-//                    "select ts, avg(x) from fromto\n" +
-//                            "sample by 5d from '2018-01-01'"
-//            );
+            assertSql(
+                    "ts\tavg\n" +
+                            "2017-12-30T00:00:00.000000Z\t72.5\n" +
+                            "2018-01-04T00:00:00.000000Z\t264.5\n" +
+                            "2018-01-09T00:00:00.000000Z\t432.5\n",
+                    "select ts, avg(x) from fromto\n" +
+                            "sample by 5d"
+            );
+            assertSql(
+                    "ts\tavg\n" +
+                            "2017-12-30T00:00:00.000000Z\t72.5\n" +
+                            "2018-01-04T00:00:00.000000Z\t264.5\n" +
+                            "2018-01-09T00:00:00.000000Z\t432.5\n",
+                    "select ts, avg(x) from fromto\n" +
+                            "sample by 5d from '2017-12-20'"
+            );
+            assertSql(
+                    "ts\tavg\n" +
+                            "2018-01-01T00:00:00.000000Z\t120.5\n" +
+                            "2018-01-06T00:00:00.000000Z\t360.5\n",
+                    "select ts, avg(x) from fromto\n" +
+                            "sample by 5d from '2018-01-01'"
+            );
             assertSql(
                     "ts\tavg\n" +
                             "2018-01-01T00:00:00.000000Z\t120.5\n" +
@@ -3867,7 +3878,7 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSampleByFromPlans() throws Exception {
+    public void testSampleByFromToPlans() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tbl (\n" +
                     "  ts timestamp,\n" +
@@ -3875,28 +3886,35 @@ public class SampleByTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by day wal;");
             drainWalQueue();
             assertPlanNoLeakCheck(
-                    "select ts, avg(price) from tbl sample by 5m from '2018' to '2019' align to first observation",
+                    "select ts, avg(price) from tbl sample by 5m from '2018' to '2019'",
                     "Sample By\n" +
-                            "  lo: '2018'\n" +
-                            "  hi: '2019'\n" +
+                            "  from: '2018'\n" +
+                            "  to: '2019'\n" +
                             "  values: [avg(price)]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tbl\n"
             );
-
             assertPlanNoLeakCheck(
-                    "select ts, avg(price) from tbl sample by 5m from '2018' align to first observation",
+                    "select ts, avg(price) from tbl sample by 5m from '2018'",
                     "Sample By\n" +
-                            "  lo: '2018'\n" +
+                            "  from: '2018'\n" +
                             "  values: [avg(price)]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tbl\n"
             );
-
             assertPlanNoLeakCheck(
-                    "select ts, avg(price) from tbl sample by 5m align to first observation",
+                    "select ts, avg(price) from tbl sample by 5m to '2019'",
+                    "Sample By\n" +
+                            "  to: '2019'\n" +
+                            "  values: [avg(price)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tbl\n"
+            );
+            assertPlanNoLeakCheck(
+                    "select ts, avg(price) from tbl sample by 5m",
                     "Sample By\n" +
                             "  values: [avg(price)]\n" +
                             "    DataFrame\n" +

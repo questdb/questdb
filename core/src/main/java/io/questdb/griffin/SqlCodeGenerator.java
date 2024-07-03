@@ -2821,6 +2821,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             sampleToFuncPos = 0;
         }
 
+        final boolean isFromTo = sampleFromFunc != TimestampConstant.NULL || sampleToFunc != TimestampConstant.NULL;
+
         RecordCursorFactory factory = null;
         // We require timestamp with asc order.
         final int timestampIndex;
@@ -3031,6 +3033,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     );
                 }
 
+                guardAgainstFromToWithKeyedSampleBy(isFromTo);
+
                 return new SampleByFillPrevRecordCursorFactory(
                         asm,
                         configuration,
@@ -3078,6 +3082,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     );
                 }
 
+                guardAgainstFromToWithKeyedSampleBy(isFromTo);
+
                 return new SampleByFillNoneRecordCursorFactory(
                         asm,
                         configuration,
@@ -3124,6 +3130,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             sampleToFuncPos
                     );
                 }
+
+                guardAgainstFromToWithKeyedSampleBy(isFromTo);
 
                 return new SampleByFillNullRecordCursorFactory(
                         asm,
@@ -3174,6 +3182,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         sampleToFuncPos
                 );
             }
+
+            guardAgainstFromToWithKeyedSampleBy(isFromTo);
 
             return new SampleByFillValueRecordCursorFactory(
                     asm,
@@ -5401,6 +5411,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (Chars.indexOf(advice.getQuick(i).token, '.') > -1) {
                 throw SqlException.$(advice.getQuick(i).position, "cannot use table-prefixed names in order by");
             }
+        }
+    }
+
+    private void guardAgainstFromToWithKeyedSampleBy(boolean isFromTo) throws SqlException {
+        if (isFromTo) {
+            throw SqlException.$(0, "FROM-TO intervals are not supported for keyed sample by queries");
         }
     }
 
