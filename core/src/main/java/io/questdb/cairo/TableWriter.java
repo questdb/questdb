@@ -2137,6 +2137,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         DirectIntList fileDescriptors = new DirectIntList(16, MemoryTag.NATIVE_DEFAULT);
+        long parquetFileLength = -1L;
         try {
             try (PartitionDescriptor partitionDescriptor = new PartitionDescriptor()) {
 
@@ -2258,6 +2259,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 path.trimTo(partitionLen);
                 path.put(".parquet").$();
                 PartitionEncoder.encode(partitionDescriptor, path);
+                parquetFileLength = ff.length(path);
             }
         } finally {
             path.trimTo(rootLen);
@@ -2266,7 +2268,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             fileDescriptors.close();
         }
-
+        txWriter.setPartitionParquetFormat(partitionTimestamp, parquetFileLength);
+        txWriter.bumpPartitionTableVersion();
+        txWriter.commit(denseSymbolMapWriters);
         // TODO: detach and delete partition
         // safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
         return true;

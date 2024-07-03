@@ -363,6 +363,23 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
+    public void setPartitionParquetFormat(long timestamp, long fileLength) {
+        int indexRaw = findAttachedPartitionRawIndex(timestamp);
+        if (indexRaw < 0) {
+            throw CairoException.nonCritical().put("bad partition index -1");
+        }
+        int offset = indexRaw + PARTITION_MASKED_SIZE_OFFSET;
+        long maskedSize = attachedPartitions.getQuick(offset);
+
+        maskedSize = updatePartitionHasParquetFormat(maskedSize, true);
+        maskedSize = updatePartitionIsReadOnly(maskedSize, true);
+
+        attachedPartitions.setQuick(offset, maskedSize);
+
+        int fileLenOffset = indexRaw + PARTITION_PARQUET_FILE_SIZE_OFFSET;
+        attachedPartitions.setQuick(fileLenOffset, fileLength);
+    }
+
     public void setPartitionReadOnly(int partitionIndex, boolean isReadOnly) {
         setPartitionReadOnlyByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, isReadOnly);
     }
@@ -396,7 +413,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
         attachedPartitions.setPos(indexRaw + LONGS_PER_TX_ATTACHED_PARTITION);
         long newTimestampLo = getPartitionTimestampByTimestamp(timestamp);
-        initPartitionAt(indexRaw, newTimestampLo, 0L, txn - 1, -1L);
+        initPartitionAt(indexRaw, newTimestampLo, 0L, txn - 1);
         transientRowCount = 0L;
         txPartitionCount++;
         if (extensionListener != null) {
@@ -408,7 +425,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         removeAllPartitions();
         if (!PartitionBy.isPartitioned(partitionBy)) {
             attachedPartitions.setPos(LONGS_PER_TX_ATTACHED_PARTITION);
-            initPartitionAt(0, DEFAULT_PARTITION_TIMESTAMP, 0L, -1L, columnVersion);
+            initPartitionAt(0, DEFAULT_PARTITION_TIMESTAMP, 0L, -1L);
         }
 
         writeAreaSize = calculateWriteSize();
@@ -472,10 +489,18 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     private static long updatePartitionIsReadOnly(long maskedSize, boolean isReadOnly) {
-        if (isReadOnly) {
-            maskedSize |= 1L << PARTITION_MASK_READ_ONLY_BIT_OFFSET;
+        return updatePartitionFlagAt(maskedSize, isReadOnly, PARTITION_MASK_READ_ONLY_BIT_OFFSET);
+    }
+
+    private static long updatePartitionHasParquetFormat(long maskedSize, boolean isParquetFormat) {
+        return updatePartitionFlagAt(maskedSize, isParquetFormat, PARTITION_MASK_PARQUET_FORMAT_BIT_OFFSET);
+    }
+
+    private static long updatePartitionFlagAt(long maskedSize, boolean flag, int bitOffset) {
+        if (flag) {
+            maskedSize |= 1L << bitOffset;
         } else {
-            maskedSize &= ~(1L << PARTITION_MASK_READ_ONLY_BIT_OFFSET);
+            maskedSize &= ~(1L << bitOffset);
         }
         return maskedSize;
     }
@@ -578,7 +603,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             extensionListener.onTableExtended(partitionTimestamp);
         }
         recordStructureVersion++;
-        initPartitionAt(index, partitionTimestamp, partitionSize, partitionNameTxn, -1L);
+        initPartitionAt(index, partitionTimestamp, partitionSize, partitionNameTxn);
     }
 
     private void openTxnFile(FilesFacade ff, LPSZ path) {

@@ -69,7 +69,21 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                             "insert into " + tableName + " values(5, '2024-06-15T00:00:00.000000Z')",
                             "insert into " + tableName + " values(6, '2024-06-12T00:00:02.000000Z')");
 
+                    assertQuery("index\tname\treadOnly\tisParquet\tparquetFileSize\n" +
+                            "0\t2024-06-10\tfalse\tfalse\t-1\n" +
+                            "1\t2024-06-11\tfalse\tfalse\t-1\n" +
+                            "2\t2024-06-12\tfalse\tfalse\t-1\n" +
+                            "3\t2024-06-15\tfalse\tfalse\t-1\n",
+                            "select index, name, readOnly, isParquet, parquetFileSize from table_partitions('" + tableName + "')",
+                            false, true);
                     ddl("alter table " + tableName + " convert partition where timestamp = to_timestamp('2024-06-12', 'yyyy-MM-dd')");
+                    assertQuery("index\tname\treadOnly\tisParquet\tparquetFileSize\n" +
+                                    "0\t2024-06-10\tfalse\tfalse\t-1\n" +
+                                    "1\t2024-06-11\tfalse\tfalse\t-1\n" +
+                                    "2\t2024-06-12\ttrue\ttrue\t554\n" +
+                                    "3\t2024-06-15\tfalse\tfalse\t-1\n",
+                            "select index, name, readOnly, isParquet, parquetFileSize from table_partitions('" + tableName + "')",
+                            false, true);
 
                     assertPartitionDoesntExists(tableName, "2024-06-10");
                     assertPartitionDoesntExists(tableName, "2024-06-11.0");
