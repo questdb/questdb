@@ -68,31 +68,35 @@ public class ReplaceVarcharFunctionFactory implements FunctionFactory {
                 return args.getQuick(0);
             }
         }
+
+        final int maxSize = configuration.getStrFunctionMaxBufferLength();
         final Function value = args.getQuick(0);
         if (value.isConstant()) {
-            int len = value.getVarcharSize(null);
-            if (len < 1) {
+            final Utf8Sequence valueValue = value.getVarcharA(null);
+            if (valueValue == null) {
                 return value;
             }
-        }
-        final int maxSize = configuration.getStrFunctionMaxBufferLength();
-        if (value.isConstant() && lookFor.isConstant() && replaceWith.isConstant()) {
-            try {
-                return new VarcharConstant(
-                        replace(
-                                value.getVarcharA(null),
-                                lookFor.getVarcharA(null),
-                                replaceWith.getVarcharA(null),
-                                new Utf8StringSink(4),
-                                maxSize
-                        ));
-            } catch (CairoException e) {
-                // We can get an exception if the output string exceeds the size limit.
-                // However, factory.newInstance() shouldn't throw it, so ignore the exception
-                // here and let the call proceed to return a non-constant function.
-                // The same exception will then pop up when the function is called.
+
+            if (lookFor.isConstant() && replaceWith.isConstant()) {
+                try {
+                    return new VarcharConstant(
+                            replace(
+                                    valueValue,
+                                    lookFor.getVarcharA(null),
+                                    replaceWith.getVarcharA(null),
+                                    new Utf8StringSink(4),
+                                    maxSize
+                            ));
+                } catch (CairoException e) {
+                    // We can get an exception if the output string exceeds the size limit.
+                    // However, factory.newInstance() shouldn't throw it, so ignore the exception
+                    // here and let the call proceed to return a non-constant function.
+                    // The same exception will then pop up when the function is called.
+                }
             }
+
         }
+
         return new Func(value, lookFor, replaceWith, maxSize);
     }
 
@@ -187,13 +191,6 @@ public class ReplaceVarcharFunctionFactory implements FunctionFactory {
             return replaceWith;
         }
 
-        private void getVarchar(Record rec, Utf8Sink sink) {
-            final Utf8Sequence value = this.value.getVarcharA(rec);
-            if (value != null) {
-                replace(value, lookFor.getVarcharA(rec), replaceWith.getVarcharA(rec), sink, maxSize);
-            }
-        }
-
         @Override
         public Utf8Sequence getVarcharA(Record rec) {
             final Utf8Sequence value = this.value.getVarcharA(rec);
@@ -223,6 +220,5 @@ public class ReplaceVarcharFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("replace(").val(value).val(',').val(lookFor).val(',').val(replaceWith).val(')');
         }
-
     }
 }

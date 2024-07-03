@@ -303,6 +303,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         });
     }
 
+    @Deprecated
     protected Invocation call(Object... args) throws SqlException {
         return callCustomised(false, true, args);
     }
