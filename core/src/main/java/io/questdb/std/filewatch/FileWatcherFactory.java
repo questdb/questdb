@@ -22,20 +22,27 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire;
+package io.questdb.std.filewatch;
 
-public class CombiningUsernamePasswordMatcher implements UsernamePasswordMatcher {
+import io.questdb.FileEventCallback;
+import io.questdb.KqueueFileWatcher;
+import io.questdb.network.EpollFacadeImpl;
+import io.questdb.std.Os;
+import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 
-    private final UsernamePasswordMatcher first;
-    private final UsernamePasswordMatcher second;
+public class FileWatcherFactory {
 
-    public CombiningUsernamePasswordMatcher(UsernamePasswordMatcher first, UsernamePasswordMatcher second) {
-        this.first = first;
-        this.second = second;
-    }
-
-    @Override
-    public boolean verifyPassword(CharSequence username, long passwordPtr, int passwordLen) {
-        return first.verifyPassword(username, passwordPtr, passwordLen) || second.verifyPassword(username, passwordPtr, passwordLen);
+    public static FileWatcher getFileWatcher(@NotNull Utf8Sequence filePath, @NotNull FileEventCallback callback) {
+        if (filePath.size() == 0) {
+            throw new IllegalArgumentException("file to watch cannot be empty");
+        }
+        if (Os.isOSX() || Os.isFreeBSD()) {
+            return new KqueueFileWatcher(filePath, callback);
+        } else if (Os.isWindows()) {
+            return new FileWatcherWindows(WindowsAccessorImpl.INSTANCE, filePath, callback);
+        } else {
+            return new LinuxFileWatcher(LinuxAccessorFacadeImpl.INSTANCE, EpollFacadeImpl.INSTANCE, filePath, callback);
+        }
     }
 }
