@@ -1455,7 +1455,7 @@ public class SqlParser {
                 tok = optTok(lexer);
             }
 
-            model.setSampleByFrom(fromNode, toNode);
+            model.setSampleByFromTo(fromNode, toNode);
 
             if (tok != null && isFillKeyword(tok)) {
                 expectTok(lexer, '(');

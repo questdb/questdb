@@ -2119,6 +2119,40 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         });
     }
 
+    @Test
+    public void testSampleByFromToBasicWhereOptimisationGreaterThanOrEqualTo() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(SampleByTest.DDL_FROMTO);
+            final String query = "select ts, avg(x) from fromto\n" +
+                    "sample by 5d from '2017-12-20'";
+            final String target = "select ts, avg(x) from fromto\n" +
+                    "where ts >= '2017-12-20'\n" +
+                    "sample by 5d from '2017-12-20'";
+
+            final String model = "select-group-by ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-20') sample by 5d from '2017-12-20' align to calendar with offset '00:00'";
+
+            assertModel(model, query, ExecutionModel.QUERY);
+            assertModel(model, target, ExecutionModel.QUERY);
+        });
+    }
+
+    @Test
+    public void testSampleByFromToBasicWhereOptimisationLesserThan() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(SampleByTest.DDL_FROMTO);
+            final String query = "select ts, avg(x) from fromto\n" +
+                    "sample by 5d to '2018-01-31'";
+            final String target = "select ts, avg(x) from fromto\n" +
+                    "where ts < '2018-01-31'\n" +
+                    "sample by 5d to '2018-01-31'";
+
+            final String model = "select-group-by ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts < '2018-01-31') sample by 5d to '2018-01-31' align to calendar with offset '00:00'";
+
+            assertModel(model, query, ExecutionModel.QUERY);
+            assertModel(model, target, ExecutionModel.QUERY);
+        });
+    }
+
     protected QueryModel compileModel(String query) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             ExecutionModel model = compiler.testCompileModel(query, sqlExecutionContext);
