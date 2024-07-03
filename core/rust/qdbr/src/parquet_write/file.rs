@@ -18,6 +18,9 @@ use crate::parquet_write::{
     ParquetResult,
 };
 
+use crate::POOL;
+use rayon::prelude::*;
+
 use super::{util, GeoByte, GeoInt, GeoLong, GeoShort, IPv4};
 
 const DEFAULT_PAGE_SIZE: usize = 1024 * 1024;
@@ -50,6 +53,8 @@ pub struct ParquetWriter<W: Write> {
     version: Version,
     /// Sets sorting order of rows in the row group if any
     sorting_columns: Option<Vec<SortingColumn>>,
+    /// Encode columns in parallel
+    parallel: bool,
 }
 
 impl<W: Write> ParquetWriter<W> {
@@ -66,6 +71,7 @@ impl<W: Write> ParquetWriter<W> {
             data_page_size: None,
             sorting_columns: None,
             version: Version::V1,
+            parallel: true,
         }
     }
 
@@ -111,6 +117,13 @@ impl<W: Write> ParquetWriter<W> {
         self
     }
 
+    /// Serialize columns in parallel
+    #[allow(dead_code)]
+    pub fn set_parallel(mut self, parallel: bool) -> Self {
+        self.parallel = parallel;
+        self
+    }
+
     fn write_options(&self) -> WriteOptions {
         WriteOptions {
             write_statistics: self.statistics,
@@ -125,6 +138,7 @@ impl<W: Write> ParquetWriter<W> {
         let parquet_schema = to_parquet_schema(partition)?;
         let encodings = to_encodings(partition);
         let options = self.write_options();
+        let parallel = self.parallel;
         let file_write_options = FileWriteOptions {
             write_statistics: options.write_statistics,
             version: options.version,
@@ -138,7 +152,13 @@ impl<W: Write> ParquetWriter<W> {
             created_by,
             self.sorting_columns,
         );
-        Ok(ChunkedWriter { writer, parquet_schema, encodings, options })
+        Ok(ChunkedWriter {
+            writer,
+            parquet_schema,
+            encodings,
+            options,
+            parallel,
+        })
     }
 
     /// Write the given `Partition` with the writer `W`. Returns the total size of the file.
@@ -154,6 +174,7 @@ pub struct ChunkedWriter<W: Write> {
     parquet_schema: SchemaDescriptor,
     encodings: Vec<Encoding>,
     options: WriteOptions,
+    parallel: bool,
 }
 
 impl<W: Write> ChunkedWriter<W> {
@@ -183,6 +204,7 @@ impl<W: Write> ChunkedWriter<W> {
                 schema.fields(),
                 &self.encodings,
                 self.options,
+                self.parallel,
             );
             self.writer.write(row_group?)?;
         }
@@ -203,6 +225,7 @@ fn create_row_group(
     column_types: &[ParquetType],
     encoding: &[Encoding],
     options: WriteOptions,
+    parallel: bool,
 ) -> ParquetResult<RowGroupIter<'static, ParquetError>> {
     let col_to_iter = move |((column, column_type), encoding): (
         (&Column, &ParquetType),
@@ -227,14 +250,25 @@ fn create_row_group(
             vec![],
         )))
     };
-
-    let columns = partition
-        .columns
-        .iter()
-        .zip(column_types)
-        .zip(encoding)
-        .flat_map(col_to_iter)
-        .collect::<Vec<_>>();
+    let columns = if parallel {
+        POOL.install(|| {
+            partition
+                .columns
+                .par_iter()
+                .zip(column_types)
+                .zip(encoding)
+                .flat_map(col_to_iter)
+                .collect::<Vec<_>>()
+        })
+    } else {
+        partition
+            .columns
+            .iter()
+            .zip(column_types)
+            .zip(encoding)
+            .flat_map(col_to_iter)
+            .collect::<Vec<_>>()
+    };
 
     Ok(DynIter::new(columns.into_iter().map(Ok)))
 }
