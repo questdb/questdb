@@ -39,11 +39,10 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
-import io.questdb.std.datetime.millitime.DateFormatCompiler;
+import io.questdb.std.datetime.millitime.DateFormatFactory;
 import io.questdb.std.str.Utf8Sequence;
 
 public class VarcharToDateFunctionFactory implements FunctionFactory {
-    private static final ThreadLocal<DateFormatCompiler> tlCompiler = ThreadLocal.withInitial(DateFormatCompiler::new);
 
     @Override
     public String getSignature() {
@@ -57,7 +56,48 @@ public class VarcharToDateFunctionFactory implements FunctionFactory {
         if (pattern == null) {
             throw SqlException.$(argPositions.getQuick(1), "pattern is required");
         }
-        return new ToDateFunction(arg, tlCompiler.get().compile(pattern), configuration.getDefaultDateLocale(), pattern);
+        DateLocale defaultDateLocale = configuration.getDefaultDateLocale();
+        if ("en".equals(defaultDateLocale.getName()) || (defaultDateLocale.getName() != null && defaultDateLocale.getName().startsWith("en-"))) {
+            return new ToAsciiDateFunction(arg, DateFormatFactory.INSTANCE.get(pattern), defaultDateLocale, pattern);
+        }
+        return new ToDateFunction(arg, DateFormatFactory.INSTANCE.get(pattern), defaultDateLocale, pattern);
+    }
+
+    private static final class ToAsciiDateFunction extends DateFunction implements UnaryFunction {
+
+        private final Function arg;
+        private final DateFormat dateFormat;
+        private final DateLocale locale;
+        private final CharSequence pattern;
+
+        public ToAsciiDateFunction(Function arg, DateFormat dateFormat, DateLocale locale, CharSequence pattern) {
+            this.arg = arg;
+            this.dateFormat = dateFormat;
+            this.locale = locale;
+            this.pattern = pattern;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public long getDate(Record rec) {
+            Utf8Sequence value = arg.getVarcharA(rec);
+            try {
+                if (value != null && value.isAscii()) {
+                    return dateFormat.parse(value.asAsciiCharSequence(), locale);
+                }
+            } catch (NumericException ignore) {
+            }
+            return Numbers.LONG_NULL;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("to_date(").val(arg).val(',').val(pattern).val(')');
+        }
     }
 
     private static final class ToDateFunction extends DateFunction implements UnaryFunction {
@@ -81,11 +121,9 @@ public class VarcharToDateFunctionFactory implements FunctionFactory {
 
         @Override
         public long getDate(Record rec) {
-            Utf8Sequence value = arg.getVarcharA(rec);
+            CharSequence value = arg.getStrA(rec);
             try {
-                if (value != null && value.isAscii()) {
-                    return dateFormat.parse(value.asAsciiCharSequence(), locale);
-                }
+                return dateFormat.parse(value, locale);
             } catch (NumericException ignore) {
             }
             return Numbers.LONG_NULL;
