@@ -37,11 +37,11 @@ import io.questdb.std.ObjList;
 public class JsonExtractVarcharFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return JsonExtractFunction.DEFAULT_FUNCTION_NAME + "(ØØ)";
+        return JsonExtractSupportingState.EXTRACT_FUNCTION_NAME + "(ØØ)";
     }
 
     @Override
-    public JsonExtractFunction newInstance(
+    public Function newInstance(
             int position,
             ObjList<Function> args,
             IntList argPositions,

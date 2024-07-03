@@ -38,16 +38,20 @@ import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
 
-public class JsonExtractPrimitiveFunction implements ScalarFunction, JsonExtractFunction {
+public class JsonExtractTypedFunction implements ScalarFunction {
     private static final boolean defaultBool = false;
     private final int columnType;
     private final Function json;
     private final Function path;
+    // todo: test error scenarios, for example:
+    //     - unclosed JSON string
+    //     - bad type situation (whatever is appropriate)
+    //     validate that error position is accurate with regards to SQL text
     private final int position;
     private final JsonExtractSupportingState state;
     private DirectUtf8Sink pointer;
 
-    public JsonExtractPrimitiveFunction(
+    public JsonExtractTypedFunction(
             int position,
             int columnType,
             Function json,
@@ -258,10 +262,15 @@ public class JsonExtractPrimitiveFunction implements ScalarFunction, JsonExtract
     }
 
     @Override
+    public String getName() {
+        return JsonExtractSupportingState.EXTRACT_FUNCTION_NAME;
+    }
+
+    @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         json.init(symbolTableSource, executionContext);
         path.init(symbolTableSource, executionContext);
         pointer = Misc.free(pointer);
-        pointer = JsonExtractFunction.varcharConstantToJsonPointer(path);
+        pointer = JsonExtractSupportingState.varcharConstantToJsonPointer(path);
     }
 }

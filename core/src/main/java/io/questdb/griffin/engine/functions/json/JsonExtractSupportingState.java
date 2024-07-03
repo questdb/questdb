@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.json;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.json.SimdJsonParser;
@@ -34,10 +35,24 @@ import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
 class JsonExtractSupportingState implements QuietCloseable {
+    public static final String EXTRACT_FUNCTION_NAME = "json_extract";
     public DirectUtf8Sequence jsonSeq = null;
     public SimdJsonParser parser = new SimdJsonParser();
     public SimdJsonResult simdJsonResult = new SimdJsonResult();
     private DirectUtf8Sink jsonSink = null;
+
+    public static DirectUtf8Sink varcharConstantToJsonPointer(Function fn) {
+        final Utf8Sequence seq = fn.getVarcharA(null);
+        if (seq == null) {
+            return null;
+        }
+        try (DirectUtf8Sink path = new DirectUtf8Sink(seq.size())) {
+            path.put(seq);
+            final DirectUtf8Sink pointer = new DirectUtf8Sink(seq.size());
+            SimdJsonParser.convertJsonPathToPointer(path, pointer);
+            return pointer;
+        }
+    }
 
     @Override
     public void close() {
