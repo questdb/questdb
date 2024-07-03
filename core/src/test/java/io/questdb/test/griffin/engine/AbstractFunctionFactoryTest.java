@@ -49,7 +49,6 @@ import java.util.Arrays;
 
 public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTest {
     public static final double DELTA = 0.000000000000001;
-    public static final float DELTA_F = 0.000000000000001f;
 
     private static int toByteRefs = 0;
     private static int toDateRefs = 0;
@@ -549,18 +548,6 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         public void andAssertDate(long expected) {
             Assert.assertEquals(expected, function1.getDate(record));
             Assert.assertEquals(expected, function2.getDate(record));
-            cleanup();
-        }
-
-        public void andAssertDoubleNan() {
-            Assert.assertTrue(Double.isNaN(function1.getDouble(record)));
-            Assert.assertTrue(Double.isNaN(function2.getDouble(record)));
-            cleanup();
-        }
-
-        public void andAssertFloatNan() {
-            Assert.assertTrue(Float.isNaN(function1.getFloat(record)));
-            Assert.assertTrue(Float.isNaN(function2.getFloat(record)));
             cleanup();
         }
 
