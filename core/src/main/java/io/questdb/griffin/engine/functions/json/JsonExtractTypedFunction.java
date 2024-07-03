@@ -88,7 +88,7 @@ public class JsonExtractTypedFunction implements ScalarFunction {
         if (jsonSeq == null) {
             return defaultBool;
         }
-        return state.parser.queryPointerBoolean(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult, defaultBool);
+        return state.parser.queryPointerBoolean(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult);
     }
 
     @Override
@@ -112,7 +112,7 @@ public class JsonExtractTypedFunction implements ScalarFunction {
         if (jsonSeq == null) {
             return Double.NaN;
         }
-        return state.parser.queryPointerDouble(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult, Double.NaN);
+        return state.parser.queryPointerDouble(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult);
     }
 
     @Override
@@ -121,7 +121,7 @@ public class JsonExtractTypedFunction implements ScalarFunction {
         if (jsonSeq == null) {
             return Float.NaN;
         }
-        return state.parser.queryPointerFloat(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult, Float.NaN);
+        return state.parser.queryPointerFloat(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult);
     }
 
     @Override
@@ -155,7 +155,7 @@ public class JsonExtractTypedFunction implements ScalarFunction {
         if (jsonSeq == null) {
             return Numbers.INT_NULL;
         }
-        return state.parser.queryPointerInt(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult, Numbers.INT_NULL);
+        return state.parser.queryPointerInt(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult);
     }
 
     @Override
@@ -164,7 +164,7 @@ public class JsonExtractTypedFunction implements ScalarFunction {
         if (jsonSeq == null) {
             return Numbers.LONG_NULL;
         }
-        return state.parser.queryPointerLong(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult, Numbers.LONG_NULL);
+        return state.parser.queryPointerLong(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult);
     }
 
     @Override
@@ -203,7 +203,7 @@ public class JsonExtractTypedFunction implements ScalarFunction {
         if (jsonSeq == null) {
             return 0;
         }
-        return state.parser.queryPointerShort(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult, (short) 0);
+        return state.parser.queryPointerShort(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult);
     }
 
     @Override
