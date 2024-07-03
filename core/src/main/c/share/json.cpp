@@ -147,41 +147,71 @@ struct token_void {
 };
 
 template<typename T>
-struct logical_null;
+struct default_value;
 
 template<>
-struct logical_null<token_void> {
+struct default_value<token_void> {
     static token_void value() { return {}; }
 };
 
 template<>
-struct logical_null<jshort> {
-    static jshort value() { return std::numeric_limits<jshort>::min(); }
+struct default_value<jshort> {
+    static jshort value() { return 0; }
 };
 
 template<>
-struct logical_null<jint> {
+struct default_value<jint> {
     static jint value() { return std::numeric_limits<jint>::min(); }
 };
 
 template<>
-struct logical_null<jlong> {
+struct default_value<jlong> {
     static jlong value() { return std::numeric_limits<jlong>::min(); }
 };
 
 template<>
-struct logical_null<jfloat> {
+struct default_value<jfloat> {
     // TODO: Is the C++ bit representation for quiet NaN the same as the Java one?
     static jfloat value() { return std::numeric_limits<float>::quiet_NaN(); }
 };
 
 template<>
-struct logical_null<jdouble> {
+struct default_value<jdouble> {
     // TODO: Is the C++ bit representation for quiet NaN the same as the Java one?
     static jdouble value() { return std::numeric_limits<double>::quiet_NaN(); }
 };
 
 using json_value = simdjson::simdjson_result<simdjson::ondemand::value>;
+
+template <typename T, typename Int64ExtractorT, typename DoubleExtractorT, typename Uint64ExtractorT>
+auto extract_numeric(
+        json_result& result,
+        simdjson::ondemand::json_type ty,
+        json_value res,
+        Int64ExtractorT int64_extractor,
+        Uint64ExtractorT uint64_extractor,
+        DoubleExtractorT double_extractor) -> T {
+    switch (ty) {
+        case simdjson::ondemand::json_type::null:
+            return default_value<T>::value();
+        case simdjson::ondemand::json_type::boolean:
+            return static_cast<T>(res.get_bool().value_unsafe());
+        case simdjson::ondemand::json_type::number:
+            switch (res.get_number_type().value_unsafe()) {
+                case simdjson::ondemand::number_type::signed_integer:
+                    return int64_extractor(res.get_int64().value_unsafe());
+                case simdjson::ondemand::number_type::unsigned_integer:
+                    return uint64_extractor(res.get_uint64().value_unsafe());
+                case simdjson::ondemand::number_type::floating_point_number:
+                    return double_extractor(res.get_double().value_unsafe());
+                case simdjson::ondemand::number_type::big_integer:
+                    return default_value<T>::value();
+            }
+        default:
+            result.error = simdjson::error_code::INCORRECT_TYPE;
+            return default_value<T>::value();
+    }
+}
 
 auto get_int64(simdjson::ondemand::json_type ty, json_value &res) {
     if (ty == simdjson::ondemand::json_type::string) {
@@ -214,7 +244,7 @@ auto value_at_pointer(
     auto res = doc.at_pointer(pointer);
     result->from(res);
     if (result->type == simdjson::ondemand::json_type::null) {
-        return logical_null<decltype(std::forward<F>(extractor)(json_value{}))>::value();
+        return default_value<decltype(std::forward<F>(extractor)(json_value{}))>::value();
     }
     return std::forward<F>(extractor)(res);
 }
@@ -295,7 +325,7 @@ Java_io_questdb_std_json_SimdJsonParser_queryPointerVarchar(
                         const auto max_size_st = static_cast<size_t>(max_size);
                         truncated_utf8_copy(*dest_sink, {default_chars, default_len}, max_size_st);
                     }
-                    return logical_null<token_void>::value();
+                    return default_value<token_void>::value();
                 }
                 switch (result->type) {
                     case simdjson::ondemand::json_type::string: {
@@ -312,16 +342,16 @@ Java_io_questdb_std_json_SimdJsonParser_queryPointerVarchar(
                         const auto max_size_st = static_cast<size_t>(max_size);
                         auto raw_res = res.raw_json();
                         if (!result->set_error(raw_res)) {
-                            return logical_null<token_void>::value();
+                            return default_value<token_void>::value();
                         }
                         auto raw = trim(raw_res.value_unsafe());
                         truncated_utf8_copy(*dest_sink, raw, max_size_st);
                     }
                         return {};
                     case simdjson::ondemand::json_type::null:
-                        return logical_null<token_void>::value();
+                        return default_value<token_void>::value();
                 }
-                return logical_null<token_void>::value();
+                return default_value<token_void>::value();
             });
 }
 
@@ -335,8 +365,7 @@ Java_io_questdb_std_json_SimdJsonParser_queryPointerBoolean(
         size_t tail_padding,
         const char *pointer_chars,
         size_t pointer_len,
-        json_result *result,
-        jboolean default_value
+        json_result *result
 ) {
     // Can't reuse `value_at_pointer` because booleans don't have a value to represent nulls.
     const simdjson::padded_string_view json_buf{json_chars, json_len, json_len + tail_padding};
@@ -344,11 +373,13 @@ Java_io_questdb_std_json_SimdJsonParser_queryPointerBoolean(
     auto doc = parser->iterate(json_buf);
     auto res = doc.at_pointer(pointer);
     result->from(res);
-    auto bool_res = res.get_bool();
-    if (!result->set_error(bool_res)) {
-        return default_value;
+    if (result->type == simdjson::ondemand::json_type::boolean) {
+        return res.get_bool().value_unsafe();
     }
-    return bool_res.value_unsafe();
+    else {
+        result->error = simdjson::error_code::INCORRECT_TYPE;
+        return false;
+    }
 }
 
 JNIEXPORT jshort JNICALL
@@ -361,23 +392,32 @@ Java_io_questdb_std_json_SimdJsonParser_queryPointerShort(
         size_t tail_padding,
         const char *pointer_chars,
         size_t pointer_len,
-        json_result *result,
-        jshort default_value
+        json_result *result
 ) {
     return value_at_pointer(
             parser, json_chars, json_len, tail_padding, pointer_chars, pointer_len, result,
-            [result, default_value](json_value res) -> jshort {
-                auto int_res = get_int64(result->type, res);
-                if (!result->set_error(int_res)) {
-                    return default_value;
-                }
-                const auto int_res64 = int_res.value_unsafe();
-                const auto int_res16 = static_cast<int16_t>(int_res64);
-                if (static_cast<int64_t>(int_res16) != int_res64) {
-                    result->error = simdjson::error_code::NUMBER_OUT_OF_RANGE;
-                    return default_value;
-                }
-                return int_res16;
+            [result](json_value res) -> jshort {
+                return extract_numeric<jshort>(
+                        *result, result->type, res,
+                        [&result](int64_t value) -> jshort {
+                            auto short_res = static_cast<jshort>(value);
+                            if (value != short_res) {
+                                result->error = simdjson::error_code::NUMBER_OUT_OF_RANGE;
+                                return default_value<jshort>::value();
+                            }
+                            return short_res;
+                        },
+                        [&result](uint64_t value) -> jshort {
+                            result->error = simdjson::error_code::NUMBER_OUT_OF_RANGE;
+                            return default_value<jshort>::value();
+                        },
+                        [&result](double value) -> jshort {
+                            if (value < std::numeric_limits<short>::min() || value > std::numeric_limits<short>::max()) {
+                                result->error = simdjson::error_code::NUMBER_OUT_OF_RANGE;
+                                return default_value<jshort>::value();
+                            }
+                            return static_cast<jshort>(value);
+                        });
             });
 }
 
@@ -391,21 +431,20 @@ Java_io_questdb_std_json_SimdJsonParser_queryPointerInt(
         size_t tail_padding,
         const char *pointer_chars,
         size_t pointer_len,
-        json_result *result,
-        jint default_value
+        json_result *result
 ) {
     return value_at_pointer(
             parser, json_chars, json_len, tail_padding, pointer_chars, pointer_len, result,
-            [result, default_value](json_value res) -> jint {
+            [result](json_value res) -> jint {
                 auto int_res = get_int64(result->type, res);
                 if (!result->set_error(int_res)) {
-                    return default_value;
+                    return default_value<jint>::value();
                 }
                 const auto int_res64 = int_res.value_unsafe();
                 const auto int_res32 = static_cast<int32_t>(int_res64);
                 if (static_cast<int64_t>(int_res32) != int_res64) {
                     result->error = simdjson::error_code::NUMBER_OUT_OF_RANGE;
-                    return default_value;
+                    return default_value<jint>::value();
                 }
                 return int_res32;
             });
@@ -421,15 +460,14 @@ Java_io_questdb_std_json_SimdJsonParser_queryPointerLong(
         size_t tail_padding,
         const char *pointer_chars,
         size_t pointer_len,
-        json_result *result,
-        jlong default_value
+        json_result *result
 ) {
     return value_at_pointer(
             parser, json_chars, json_len, tail_padding, pointer_chars, pointer_len, result,
-            [result, default_value](json_value res) -> jlong {
+            [result](json_value res) -> jlong {
                 auto int_res = get_int64(result->type, res);
                 if (!result->set_error(int_res)) {
-                    return default_value;
+                    return default_value<jlong>::value();
                 }
                 return int_res.value_unsafe();
             });
@@ -445,15 +483,14 @@ Java_io_questdb_std_json_SimdJsonParser_queryPointerDouble(
         size_t tail_padding,
         const char *pointer_chars,
         size_t pointer_len,
-        json_result *result,
-        jdouble default_value
+        json_result *result
 ) {
     return value_at_pointer(
             parser, json_chars, json_len, tail_padding, pointer_chars, pointer_len, result,
-            [result, default_value](json_value res) -> jdouble {
+            [result](json_value res) -> jdouble {
                 auto double_res = get_double(result->type, res);
                 if (!result->set_error(double_res)) {
-                    return default_value;
+                    return default_value<jdouble>::value();
                 }
                 return double_res.value_unsafe();
             });
@@ -469,24 +506,23 @@ Java_io_questdb_std_json_SimdJsonParser_queryPointerFloat(
         size_t tail_padding,
         const char *pointer_chars,
         size_t pointer_len,
-        json_result *result,
-        jfloat default_value
+        json_result *result
 ) {
     return value_at_pointer(
             parser, json_chars, json_len, tail_padding, pointer_chars, pointer_len, result,
-            [result, default_value](json_value res) -> jfloat {
+            [result](json_value res) -> jfloat {
                 auto double_res = get_double(result->type, res);
                 if (!result->set_error(double_res)) {
-                    return default_value;
+                    return default_value<jfloat>::value();
                 }
                 const auto value = double_res.value_unsafe();
                 if (std::isnan(value)) {
-                    return logical_null<jfloat>::value();
+                    return default_value<jfloat>::value();
                 }
 
                 if (value < -std::numeric_limits<float>::max() || value > std::numeric_limits<float>::max()) {
                     result->error = simdjson::error_code::NUMBER_OUT_OF_RANGE;
-                    return default_value;
+                    return default_value<jfloat>::value();
                 }
                 return static_cast<float>(value);
             });

@@ -63,8 +63,7 @@ public class SimdJsonParser implements QuietCloseable {
     public boolean queryPointerBoolean(
             DirectUtf8Sequence json,
             DirectUtf8Sequence pointer,
-            SimdJsonResult result,
-            boolean defaultValue
+            SimdJsonResult result
     ) {
         assert json.tailPadding() >= SIMDJSON_PADDING;
         return queryPointerBoolean(
@@ -74,16 +73,14 @@ public class SimdJsonParser implements QuietCloseable {
                 json.tailPadding(),
                 pointer.ptr(),
                 pointer.size(),
-                result.ptr(),
-                defaultValue
+                result.ptr()
         );
     }
 
     public double queryPointerDouble(
             DirectUtf8Sequence json,
             DirectUtf8Sequence pointer,
-            SimdJsonResult result,
-            double defaultValue
+            SimdJsonResult result
     ) {
         assert json.tailPadding() >= SIMDJSON_PADDING;
         return queryPointerDouble(
@@ -93,16 +90,14 @@ public class SimdJsonParser implements QuietCloseable {
                 json.tailPadding(),
                 pointer.ptr(),
                 pointer.size(),
-                result.ptr(),
-                defaultValue
+                result.ptr()
         );
     }
 
     public float queryPointerFloat(
             DirectUtf8Sequence json,
             DirectUtf8Sequence pointer,
-            SimdJsonResult result,
-            float defaultValue
+            SimdJsonResult result
     ) {
         assert json.tailPadding() >= SIMDJSON_PADDING;
         return queryPointerFloat(
@@ -112,16 +107,14 @@ public class SimdJsonParser implements QuietCloseable {
                 json.tailPadding(),
                 pointer.ptr(),
                 pointer.size(),
-                result.ptr(),
-                defaultValue
+                result.ptr()
         );
     }
 
     public int queryPointerInt(
             DirectUtf8Sequence json,
             DirectUtf8Sink pointer,
-            SimdJsonResult result,
-            int defaultValue
+            SimdJsonResult result
     ) {
         assert json.tailPadding() >= SIMDJSON_PADDING;
         return queryPointerInt(
@@ -131,16 +124,14 @@ public class SimdJsonParser implements QuietCloseable {
                 json.tailPadding(),
                 pointer.ptr(),
                 pointer.size(),
-                result.ptr(),
-                defaultValue
+                result.ptr()
         );
     }
 
     public long queryPointerLong(
             DirectUtf8Sequence json,
             DirectUtf8Sequence pointer,
-            SimdJsonResult result,
-            long defaultValue
+            SimdJsonResult result
     ) {
         assert json.tailPadding() >= SIMDJSON_PADDING;
         return queryPointerLong(
@@ -150,16 +141,14 @@ public class SimdJsonParser implements QuietCloseable {
                 json.tailPadding(),
                 pointer.ptr(),
                 pointer.size(),
-                result.ptr(),
-                defaultValue
+                result.ptr()
         );
     }
 
     public short queryPointerShort(
             DirectUtf8Sequence json,
             DirectUtf8Sequence pointer,
-            SimdJsonResult result,
-            short defaultValue
+            SimdJsonResult result
     ) {
         assert json.tailPadding() >= SIMDJSON_PADDING;
         return queryPointerShort(
@@ -169,8 +158,7 @@ public class SimdJsonParser implements QuietCloseable {
                 json.tailPadding(),
                 pointer.ptr(),
                 pointer.size(),
-                result.ptr(),
-                defaultValue
+                result.ptr()
         );
     }
 
@@ -198,9 +186,7 @@ public class SimdJsonParser implements QuietCloseable {
                 pointer.size(),
                 result.ptr(),
                 nativeByteSinkPtr,
-                maxSize,
-                defaultValuePtr,
-                defaultValueSize
+                maxSize
         );
     }
 
@@ -223,8 +209,7 @@ public class SimdJsonParser implements QuietCloseable {
             long jsonTailPadding,
             long pointerPtr,
             long pointerLen,
-            long resultPtr,
-            boolean defaultValue
+            long resultPtr
     );
 
     private static native double queryPointerDouble(
@@ -234,8 +219,7 @@ public class SimdJsonParser implements QuietCloseable {
             long jsonTailPadding,
             long pointerPtr,
             long pointerLen,
-            long resultPtr,
-            double defaultValue
+            long resultPtr
     );
 
     private static native float queryPointerFloat(
@@ -245,8 +229,7 @@ public class SimdJsonParser implements QuietCloseable {
             long jsonTailPadding,
             long pointerPtr,
             long pointerLen,
-            long resultPtr,
-            float defaultValue
+            long resultPtr
     );
 
     private static native int queryPointerInt(
@@ -256,8 +239,7 @@ public class SimdJsonParser implements QuietCloseable {
             long jsonTailPadding,
             long pointerPtr,
             long pointerLen,
-            long resultPtr,
-            int defaultValue
+            long resultPtr
     );
 
     private static native long queryPointerLong(
@@ -267,8 +249,7 @@ public class SimdJsonParser implements QuietCloseable {
             long jsonTailPadding,
             long pointerPtr,
             long pointerLen,
-            long resultPtr,
-            long defaultValue
+            long resultPtr
     );
 
     private static native short queryPointerShort(
@@ -278,8 +259,7 @@ public class SimdJsonParser implements QuietCloseable {
             long jsonTailPadding,
             long pointerPtr,
             long pointerLen,
-            long resultPtr,
-            short defaultValue
+            long resultPtr
     );
 
     private static native void queryPointerVarchar(
@@ -291,9 +271,7 @@ public class SimdJsonParser implements QuietCloseable {
             long pointerLen,
             long resultPtr,
             long destPtr,
-            int maxSize,
-            long defaultPtr,
-            long defaultLen
+            int maxSize
     );
 
     static {
