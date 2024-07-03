@@ -388,6 +388,64 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinOnSymbolKey() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE x (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            ddl("CREATE TABLE y (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            insert(
+                    "INSERT INTO x VALUES " +
+                            "('1', '2000-01-01T00:00:00.000000Z')," +
+                            "('3', '2000-01-01T00:00:01.000000Z')," +
+                            "('1', '2000-01-01T00:00:02.000000Z')," +
+                            "('2', '2000-01-01T00:00:03.000000Z')," +
+                            "('4', '2000-01-01T00:00:04.000000Z')"
+            );
+            insert(
+                    "INSERT INTO y VALUES " +
+                            "('2', '2000-01-01T00:00:00.000000Z')," +
+                            "('4', '2000-01-01T00:00:01.000000Z')," +
+                            "('1', '2000-01-01T00:00:02.000000Z')," +
+                            "('2', '2000-01-01T00:00:03.000000Z')," +
+                            "('3', '2000-01-01T00:00:04.000000Z')"
+            );
+
+            // ASOF JOIN
+            String query = "SELECT * FROM (select sym, ts from x) x " +
+                    "ASOF JOIN (select sym, ts from y) y ON(sym)";
+            String expected = "sym\tts\tsym1\tts1\n" +
+                    "1\t2000-01-01T00:00:00.000000Z\t\t\n" +
+                    "3\t2000-01-01T00:00:01.000000Z\t\t\n" +
+                    "1\t2000-01-01T00:00:02.000000Z\t1\t2000-01-01T00:00:02.000000Z\n" +
+                    "2\t2000-01-01T00:00:03.000000Z\t2\t2000-01-01T00:00:03.000000Z\n" +
+                    "4\t2000-01-01T00:00:04.000000Z\t4\t2000-01-01T00:00:01.000000Z\n";
+            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+
+            // LT JOIN
+            query = "SELECT * FROM (select sym, ts from x) x " +
+                    "LT JOIN (select sym, ts from y) y ON(sym)";
+            expected = "sym\tts\tsym1\tts1\n" +
+                    "1\t2000-01-01T00:00:00.000000Z\t\t\n" +
+                    "3\t2000-01-01T00:00:01.000000Z\t\t\n" +
+                    "1\t2000-01-01T00:00:02.000000Z\t\t\n" +
+                    "2\t2000-01-01T00:00:03.000000Z\t2\t2000-01-01T00:00:00.000000Z\n" +
+                    "4\t2000-01-01T00:00:04.000000Z\t4\t2000-01-01T00:00:01.000000Z\n";
+            assertQueryNoLeakCheck(expected, query, "ts", false, true);
+
+            // SPLICE JOIN
+            query = "SELECT * FROM (select sym, ts from x) x " +
+                    "SPLICE JOIN (select sym, ts from y) y ON(sym)";
+            expected = "sym\tts\tsym1\tts1\n" +
+                    "1\t2000-01-01T00:00:00.000000Z\t\t\n" +
+                    "3\t2000-01-01T00:00:01.000000Z\t\t\n" +
+                    "1\t2000-01-01T00:00:02.000000Z\t1\t2000-01-01T00:00:02.000000Z\n" +
+                    "2\t2000-01-01T00:00:03.000000Z\t2\t2000-01-01T00:00:03.000000Z\n" +
+                    "4\t2000-01-01T00:00:04.000000Z\t\t\n";
+            assertQueryNoLeakCheck(expected, query, null, false, false);
+        });
+    }
+
+    @Test
     public void testLtJoin2TablesKeyed() throws Exception {
         assertMemoryLeak(() -> {
             //tabY
@@ -1406,21 +1464,21 @@ public class AsOfJoinTest extends AbstractCairoTest {
             insert(
                     "INSERT INTO x VALUES " +
                             "('1', '2', '2000-01-01T00:00:00.000000Z')," +
-                            "('3', '4', '2000-01-01T00:00:00.000000Z')," +
-                            "('1', '1', '2000-01-01T00:00:00.000000Z')," +
-                            "('2', '2', '2000-01-01T00:00:00.000000Z')," +
-                            "('4', '3', '2000-01-01T00:00:00.000000Z')"
+                            "('3', '4', '2000-01-01T00:00:01.000000Z')," +
+                            "('1', '1', '2000-01-01T00:00:02.000000Z')," +
+                            "('2', '2', '2000-01-01T00:00:03.000000Z')," +
+                            "('4', '3', '2000-01-01T00:00:04.000000Z')"
             );
 
             // ASOF JOIN
             String query = "SELECT * FROM (select sym1 s, ts from x) x1 " +
                     "ASOF JOIN (select sym2 s, ts from x) x2 ON(s)";
             String expected = "s\tts\ts1\tts1\n" +
-                    "1\t2000-01-01T00:00:00.000000Z\t1\t2000-01-01T00:00:00.000000Z\n" +
-                    "3\t2000-01-01T00:00:00.000000Z\t3\t2000-01-01T00:00:00.000000Z\n" +
-                    "1\t2000-01-01T00:00:00.000000Z\t1\t2000-01-01T00:00:00.000000Z\n" +
-                    "2\t2000-01-01T00:00:00.000000Z\t2\t2000-01-01T00:00:00.000000Z\n" +
-                    "4\t2000-01-01T00:00:00.000000Z\t4\t2000-01-01T00:00:00.000000Z\n";
+                    "1\t2000-01-01T00:00:00.000000Z\t\t\n" +
+                    "3\t2000-01-01T00:00:01.000000Z\t\t\n" +
+                    "1\t2000-01-01T00:00:02.000000Z\t1\t2000-01-01T00:00:02.000000Z\n" +
+                    "2\t2000-01-01T00:00:03.000000Z\t2\t2000-01-01T00:00:03.000000Z\n" +
+                    "4\t2000-01-01T00:00:04.000000Z\t4\t2000-01-01T00:00:01.000000Z\n";
             assertQueryNoLeakCheck(expected, query, "ts", false, true);
 
             // LT JOIN
@@ -1428,10 +1486,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "LT JOIN (select sym2 s, ts from x) x2 ON(s)";
             expected = "s\tts\ts1\tts1\n" +
                     "1\t2000-01-01T00:00:00.000000Z\t\t\n" +
-                    "3\t2000-01-01T00:00:00.000000Z\t\t\n" +
-                    "1\t2000-01-01T00:00:00.000000Z\t\t\n" +
-                    "2\t2000-01-01T00:00:00.000000Z\t\t\n" +
-                    "4\t2000-01-01T00:00:00.000000Z\t\t\n";
+                    "3\t2000-01-01T00:00:01.000000Z\t\t\n" +
+                    "1\t2000-01-01T00:00:02.000000Z\t\t\n" +
+                    "2\t2000-01-01T00:00:03.000000Z\t2\t2000-01-01T00:00:00.000000Z\n" +
+                    "4\t2000-01-01T00:00:04.000000Z\t4\t2000-01-01T00:00:01.000000Z\n";
             assertQueryNoLeakCheck(expected, query, "ts", false, true);
 
             // SPLICE JOIN
@@ -1439,10 +1497,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "SPLICE JOIN (select sym2 s, ts from x) x2 ON(s)";
             expected = "s\tts\ts1\tts1\n" +
                     "1\t2000-01-01T00:00:00.000000Z\t\t\n" +
-                    "3\t2000-01-01T00:00:00.000000Z\t\t\n" +
-                    "1\t2000-01-01T00:00:00.000000Z\t1\t2000-01-01T00:00:00.000000Z\n" +
-                    "2\t2000-01-01T00:00:00.000000Z\t2\t2000-01-01T00:00:00.000000Z\n" +
-                    "4\t2000-01-01T00:00:00.000000Z\t\t\n";
+                    "3\t2000-01-01T00:00:01.000000Z\t\t\n" +
+                    "1\t2000-01-01T00:00:02.000000Z\t1\t2000-01-01T00:00:02.000000Z\n" +
+                    "2\t2000-01-01T00:00:03.000000Z\t2\t2000-01-01T00:00:03.000000Z\n" +
+                    "4\t2000-01-01T00:00:04.000000Z\t\t\n";
             assertQueryNoLeakCheck(expected, query, null, false, false);
         });
     }
