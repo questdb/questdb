@@ -201,7 +201,7 @@ public class SimdJsonParserTest {
         TestUtils.assertMemoryLeak(() -> {
             final long res = parser.queryPointerLong(json, path2Pointer(".bignum"), result);
             Assert.assertEquals(Long.MIN_VALUE, res);
-            Assert.assertEquals(result.getError(), SimdJsonError.INCORRECT_TYPE);
+            Assert.assertEquals(result.getError(), SimdJsonError.NUMBER_OUT_OF_RANGE);
             Assert.assertEquals(result.getType(), SimdJsonType.NUMBER);
         });
     }
@@ -211,7 +211,7 @@ public class SimdJsonParserTest {
         TestUtils.assertMemoryLeak(() -> {
             final long res = parser.queryPointerLong(json, path2Pointer(".u64_val"), result);
             Assert.assertEquals(Long.MIN_VALUE, res);
-            Assert.assertEquals(result.getError(), SimdJsonError.INCORRECT_TYPE);
+            Assert.assertEquals(result.getError(), SimdJsonError.NUMBER_OUT_OF_RANGE);
             Assert.assertEquals(result.getType(), SimdJsonType.NUMBER);
         });
     }
