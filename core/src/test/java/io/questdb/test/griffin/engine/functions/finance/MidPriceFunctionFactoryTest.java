@@ -39,6 +39,10 @@ public class MidPriceFunctionFactoryTest extends AbstractFunctionFactoryTest {
         assertQuery("mid\n1.625\n", "select mid(1.5, 1.75)");
         assertQuery("mid\n1.5550000000000002\n", "select mid(1.5, 1.61)");
         assertQuery("mid\n0.0\n", "select mid(0.0,0.0)");
+        assertQuery("mid\n0.0\n", "select mid(-1.0,1.0)");
+        assertQuery("mid\n-0.5\n", "select mid(-1.0,0.0)");
+        assertQuery("mid\n-1.5\n", "select mid(-2.0,-1.0)");
+        assertQuery("mid\n-1.6666655000000001\n", "select mid(-2.22222,-1.111111)");
     }
 
     @Test
