@@ -1286,9 +1286,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.sampleByUnit = sampleByUnit;
     }
 
-    public void setSampleByFrom(ExpressionNode lo, ExpressionNode hi) {
-        this.sampleByFrom = lo;
-        this.sampleByTo = hi;
+    public void setSampleByFromTo(ExpressionNode from, ExpressionNode to) {
+        this.sampleByFrom = from;
+        this.sampleByTo = to;
     }
 
     public void setSampleByOffset(ExpressionNode sampleByOffset) {
@@ -1710,14 +1710,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             sink.putAscii(" sample by ");
             sampleBy.toSink(sink);
 
-            if (sampleByTo != null) {
+            if (sampleByFrom != null) {
                 sink.putAscii(" from ");
-                sampleByTo.toSink(sink);
+                sampleByFrom.toSink(sink);
             }
 
-            if (sampleByFrom != null) {
+            if (sampleByTo != null) {
                 sink.putAscii(" to ");
-                sampleByFrom.toSink(sink);
+                sampleByTo.toSink(sink);
             }
 
             final int fillCount = sampleByFill.size();
