@@ -209,13 +209,6 @@ auto extract_numeric(
     }
 }
 
-auto get_int64(simdjson::ondemand::json_type ty, json_value &res) {
-    if (ty == simdjson::ondemand::json_type::string) {
-        return res.get_int64_in_string();
-    }
-    return res.get_int64();
-}
-
 auto get_double(simdjson::ondemand::json_type ty, json_value &res) {
     if (ty == simdjson::ondemand::json_type::string) {
         return res.get_double_in_string();
@@ -466,11 +459,22 @@ Java_io_questdb_std_json_SimdJsonParser_queryPointerLong(
     return value_at_pointer(
             parser, json_chars, json_len, tail_padding, pointer_chars, pointer_len, result,
             [result](json_value res) -> jlong {
-                auto int_res = get_int64(result->type, res);
-                if (!result->set_error(int_res)) {
-                    return default_value<jlong>::value();
-                }
-                return int_res.value_unsafe();
+                return extract_numeric<jlong>(
+                        *result, result->type, res,
+                        [](int64_t value) -> jlong {
+                            return value;
+                        },
+                        [&result](uint64_t value) -> jlong {
+                            result->error = simdjson::error_code::NUMBER_OUT_OF_RANGE;
+                            return default_value<jlong>::value();
+                        },
+                        [&result](double value) -> jlong {
+                            if (value < std::numeric_limits<jlong>::min() || value > std::numeric_limits<jlong>::max()) {
+                                result->error = simdjson::error_code::NUMBER_OUT_OF_RANGE;
+                                return default_value<jlong>::value();
+                            }
+                            return static_cast<jlong>(value);
+                        });
             });
 }
 
