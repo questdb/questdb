@@ -115,6 +115,8 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         isNotKeyedLoopInitialized = false;
         areTimestampsInitialized = false;
         endFill = false;
+        sampleFromFunc.init(null, executionContext);
+        sampleToFunc.init(null, executionContext);
     }
 
     @Override

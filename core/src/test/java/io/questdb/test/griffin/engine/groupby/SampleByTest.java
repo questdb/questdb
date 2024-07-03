@@ -70,6 +70,41 @@ public class SampleByTest extends AbstractCairoTest {
             ") timestamp(ts)";
 
     @Test
+    public void tesSampleByFromToBindVariables() throws Exception {
+        assertMemoryLeak(() -> {
+
+            ddl(DDL_FROMTO, sqlExecutionContext);
+
+            snapshotMemoryUsage();
+            try (
+                    final RecordCursorFactory factory = select(
+                            "select ts, avg(x) from fromto\n" +
+                                    "sample by 5d from $1 to $2 fill(42)")
+            ) {
+                final String expected = "ts\tavg\n" +
+                        "2017-12-20T00:00:00.000000Z\t42.0\n" +
+                        "2017-12-25T00:00:00.000000Z\t42.0\n" +
+                        "2017-12-30T00:00:00.000000Z\t72.5\n" +
+                        "2018-01-04T00:00:00.000000Z\t264.5\n" +
+                        "2018-01-09T00:00:00.000000Z\t432.5\n" +
+                        "2018-01-14T00:00:00.000000Z\t42.0\n" +
+                        "2018-01-19T00:00:00.000000Z\t42.0\n" +
+                        "2018-01-24T00:00:00.000000Z\t42.0\n" +
+                        "2018-01-29T00:00:00.000000Z\t42.0\n";
+
+                sqlExecutionContext.getBindVariableService().setStr(0, "2017-12-20");
+                sqlExecutionContext.getBindVariableService().setStr(1, "2018-01-31");
+
+                try (final RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursor(expected, cursor, factory.getMetadata(), true);
+                }
+
+                assertFactoryMemoryUsage();
+            }
+        });
+    }
+
+    @Test
     public void testBadFunction() throws Exception {
         assertException(
                 "select b, sum(a), sum(c), k from x sample by 3h fill(20.56)",
