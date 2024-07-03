@@ -67,7 +67,7 @@ public class VarcharToPgDateFunctionFactory implements FunctionFactory {
         public long getDate(Record rec) {
             Utf8Sequence value = arg.getVarcharA(rec);
             try {
-                if (value != null &&  value.isAscii()) {
+                if (value != null && value.isAscii()) {
                     return DateFormatUtils.PG_DATE_FORMAT.parse(value.asAsciiCharSequence(), DateFormatUtils.EN_LOCALE);
                 }
             } catch (NumericException ignore) {
