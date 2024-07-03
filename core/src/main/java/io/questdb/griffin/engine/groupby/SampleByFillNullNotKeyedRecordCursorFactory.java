@@ -40,8 +40,8 @@ import org.jetbrains.annotations.NotNull;
 public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleByNotKeyedRecordCursorFactory {
 
     private final SampleByFillValueNotKeyedRecordCursor cursor;
-    private final Function fromHiFunc;
-    private final Function fromLoFunc;
+    private final Function sampleFromFunc;
+    private final Function sampleToFunc;
 
     public SampleByFillNullNotKeyedRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -58,18 +58,18 @@ public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleB
             int timezoneNameFuncPos,
             Function offsetFunc,
             int offsetFuncPos,
-            Function fromLoFunc,
-            int fromLoFuncPos,
-            Function fromHiFunc,
-            int fromHiFuncPos
+            Function sampleFromFunc,
+            int sampleFromFuncPos,
+            Function sampleToFunc,
+            int sampleToFuncPos
     ) throws SqlException {
         super(base, groupByMetadata, recordFunctions);
         try {
             final SimpleMapValue simpleMapValue = new SimpleMapValue(valueCount);
             final SimpleMapValuePeeker peeker = new SimpleMapValuePeeker(simpleMapValue, new SimpleMapValue(valueCount));
             final GroupByFunctionsUpdater groupByFunctionsUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
-            this.fromLoFunc = fromLoFunc;
-            this.fromHiFunc = fromHiFunc;
+            this.sampleFromFunc = sampleFromFunc;
+            this.sampleToFunc = sampleToFunc;
             cursor = new SampleByFillValueNotKeyedRecordCursor(
                     configuration,
                     groupByFunctions,
@@ -84,10 +84,10 @@ public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleB
                     timezoneNameFuncPos,
                     offsetFunc,
                     offsetFuncPos,
-                    fromLoFunc,
-                    fromLoFuncPos,
-                    fromHiFunc,
-                    fromHiFuncPos
+                    sampleFromFunc,
+                    sampleFromFuncPos,
+                    sampleToFunc,
+                    sampleToFuncPos
             );
             peeker.setCursor(cursor);
         } catch (Throwable th) {
@@ -100,8 +100,8 @@ public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleB
     public void toPlan(PlanSink sink) {
         sink.type("Sample By");
         sink.attr("fill").val("null");
-        sink.optAttr("lo", fromLoFunc);
-        sink.optAttr("hi", fromHiFunc);
+        sink.optAttr("lo", sampleFromFunc);
+        sink.optAttr("hi", sampleToFunc);
         sink.optAttr("values", cursor.groupByFunctions, true);
         sink.child(base);
     }

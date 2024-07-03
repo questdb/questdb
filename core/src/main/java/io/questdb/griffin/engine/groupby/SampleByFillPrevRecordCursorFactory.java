@@ -56,10 +56,10 @@ public class SampleByFillPrevRecordCursorFactory extends AbstractSampleByFillRec
             int timezoneNameFuncPos,
             Function offsetFunc,
             int offsetFuncPos,
-            Function fromLoFunc,
-            int fromLoFuncPos,
-            Function fromHiFunc,
-            int fromHiFuncPos
+            Function sampleFromFunc,
+            int sampleFromFuncPos,
+            Function sampleToFunc,
+            int sampleToFuncPos
     ) {
         super(
                 asm,
@@ -86,10 +86,10 @@ public class SampleByFillPrevRecordCursorFactory extends AbstractSampleByFillRec
                 timezoneNameFuncPos,
                 offsetFunc,
                 offsetFuncPos,
-                fromLoFunc,
-                fromLoFuncPos,
-                fromHiFunc,
-                fromHiFuncPos
+                sampleFromFunc,
+                sampleFromFuncPos,
+                sampleToFunc,
+                sampleToFuncPos
         );
     }
 

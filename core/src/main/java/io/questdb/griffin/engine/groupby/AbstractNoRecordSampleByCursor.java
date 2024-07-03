@@ -72,12 +72,12 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
             int timezoneNameFuncPos,
             Function offsetFunc,
             int offsetFuncPos,
-            Function fromLoFunc,
-            int fromLoFuncPos,
-            Function fromHiFunc,
-            int fromHiFuncPos
+            Function sampleFromFunc,
+            int sampleFromFuncPos,
+            Function sampleToFunc,
+            int sampleToFuncPos
     ) {
-        super(timestampSampler, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos, fromLoFunc, fromLoFuncPos, fromHiFunc, fromHiFuncPos);
+        super(timestampSampler, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos, sampleFromFunc, sampleFromFuncPos, sampleToFunc, sampleToFuncPos);
         this.timestampIndex = timestampIndex;
         this.recordFunctions = recordFunctions;
         this.groupByFunctions = groupByFunctions;
@@ -207,8 +207,8 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
             timestampSampler.setStart(timestamp);
         } else {
             // FROM-TO may apply to align to calendar queries, fixing the lower bound.
-            if (fromLoFunc != TimestampConstant.NULL) {
-                timestampSampler.setStart(fixedOffset != Long.MIN_VALUE ? fromLoFunc.getTimestamp(null) : 0L);
+            if (sampleFromFunc != TimestampConstant.NULL) {
+                timestampSampler.setStart(fixedOffset != Long.MIN_VALUE ? sampleFromFunc.getTimestamp(null) : 0L);
             } else {
                 timestampSampler.setStart(fixedOffset != Long.MIN_VALUE ? fixedOffset : 0L);
             }
@@ -216,9 +216,9 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
 
         topTzOffset = tzOffset;
         topNextDst = nextDstUtc;
-        if (fromLoFunc != TimestampConstant.NULL) {
+        if (sampleFromFunc != TimestampConstant.NULL) {
             // set the top epoch to be the lower limit
-            topLocalEpoch = timestampSampler.round(fromLoFunc.getTimestamp(null) + tzOffset);
+            topLocalEpoch = timestampSampler.round(sampleFromFunc.getTimestamp(null) + tzOffset);
             // set current epoch to be the floor of the starting timestamp
             localEpoch = timestampSampler.round(timestamp + tzOffset);
         } else {

@@ -37,8 +37,8 @@ import org.jetbrains.annotations.NotNull;
 
 public class SampleByFillNoneNotKeyedRecordCursorFactory extends AbstractSampleByNotKeyedRecordCursorFactory {
     private final SampleByFillNoneNotKeyedRecordCursor cursor;
-    private final Function fromHiFunc;
-    private final Function fromLoFunc;
+    private final Function sampleFromFunc;
+    private final Function sampleToFunc;
 
     public SampleByFillNoneNotKeyedRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -54,10 +54,10 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory extends AbstractSampleB
             int timezoneNameFuncPos,
             Function offsetFunc,
             int offsetFuncPos,
-            Function fromLoFunc,
-            int fromLoFuncPos,
-            Function fromHiFunc,
-            int fromHiFuncPos
+            Function sampleFromFunc,
+            int sampleFromFuncPos,
+            Function sampleToFunc,
+            int sampleToFuncPos
     ) {
         super(base, groupByMetadata, recordFunctions);
         final SimpleMapValue simpleMapValue = new SimpleMapValue(valueCount);
@@ -74,20 +74,20 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory extends AbstractSampleB
                 timezoneNameFuncPos,
                 offsetFunc,
                 offsetFuncPos,
-                fromLoFunc,
-                fromLoFuncPos,
-                fromHiFunc,
-                fromHiFuncPos
+                sampleFromFunc,
+                sampleFromFuncPos,
+                sampleToFunc,
+                sampleToFuncPos
         );
-        this.fromLoFunc = fromLoFunc;
-        this.fromHiFunc = fromHiFunc;
+        this.sampleFromFunc = sampleFromFunc;
+        this.sampleToFunc = sampleToFunc;
     }
 
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Sample By");
-        sink.optAttr("lo", fromLoFunc);
-        sink.optAttr("hi", fromHiFunc);
+        sink.optAttr("lo", sampleFromFunc);
+        sink.optAttr("hi", sampleToFunc);
         sink.optAttr("values", cursor.groupByFunctions, true);
         sink.child(base);
     }

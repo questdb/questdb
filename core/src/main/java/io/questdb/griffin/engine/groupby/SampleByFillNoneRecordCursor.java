@@ -58,10 +58,10 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
             int timezoneNameFuncPos,
             Function offsetFunc,
             int offsetFuncPos,
-            Function fromLoFunc,
-            int fromLoFuncPos,
-            Function fromHiFunc,
-            int fromHiFuncPos
+            Function sampleFromFunc,
+            int sampleFromFuncPos,
+            Function sampleToFunc,
+            int sampleToFuncPos
     ) {
         super(
                 configuration,
@@ -74,10 +74,10 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
                 timezoneNameFuncPos,
                 offsetFunc,
                 offsetFuncPos,
-                fromLoFunc,
-                fromLoFuncPos,
-                fromHiFunc,
-                fromHiFuncPos
+                sampleFromFunc,
+                sampleFromFuncPos,
+                sampleToFunc,
+                sampleToFuncPos
         );
         this.map = map;
         this.keyMapSink = keyMapSink;

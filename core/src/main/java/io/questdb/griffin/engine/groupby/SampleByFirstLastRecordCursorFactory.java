@@ -72,10 +72,10 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             int timestampIndex,
             SingleSymbolFilter symbolFilter,
             int configPageSize,
-            Function fromLoFunc,
-            int fromLoFuncPos,
-            Function fromHiFunc,
-            int fromHiFuncPos
+            Function sampleFromFunc,
+            int sampleFromFuncPos,
+            Function sampleToFunc,
+            int sampleToFuncPos
     ) throws SqlException {
         super(groupByMetadata);
         try {
@@ -102,10 +102,10 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                     timezoneNameFuncPos,
                     offsetFunc,
                     offsetFuncPos,
-                    fromLoFunc,
-                    fromLoFuncPos,
-                    fromHiFunc,
-                    fromHiFuncPos
+                    sampleFromFunc,
+                    sampleFromFuncPos,
+                    sampleToFunc,
+                    sampleToFuncPos
             );
         } catch (Throwable th) {
             close();
@@ -290,12 +290,12 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 int timezoneNameFuncPos,
                 Function offsetFunc,
                 int offsetFuncPos,
-                Function fromLoFunc,
-                int fromLoFuncPos,
-                Function fromHiFunc,
-                int fromHiFuncPos
+                Function sampleFromFunc,
+                int sampleFromFuncPos,
+                Function sampleToFunc,
+                int sampleToFuncPos
         ) {
-            super(timestampSampler, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos, fromLoFunc, fromLoFuncPos, fromHiFunc, fromHiFuncPos);
+            super(timestampSampler, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos, sampleFromFunc, sampleFromFuncPos, sampleToFunc, sampleToFuncPos);
         }
 
         @Override

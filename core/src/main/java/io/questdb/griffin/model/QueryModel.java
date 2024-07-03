@@ -170,10 +170,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private ExpressionNode outerJoinExpressionClause;
     private ExpressionNode postJoinWhereClause;
     private ExpressionNode sampleBy;
-    private ExpressionNode sampleByFromHi;
-    private ExpressionNode sampleByFromLo;
+    private ExpressionNode sampleByFrom;
     private ExpressionNode sampleByOffset = ZERO_OFFSET;
     private ExpressionNode sampleByTimezoneName = null;
+    private ExpressionNode sampleByTo;
     private ExpressionNode sampleByUnit;
     private int selectModelType = SELECT_MODEL_NONE;
     private int setOperationType;
@@ -435,8 +435,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         explicitTimestamp = false;
         showKind = -1;
         sampleByOffset = ZERO_OFFSET;
-        sampleByFromLo = null;
-        sampleByFromHi = null;
+        sampleByTo = null;
+        sampleByFrom = null;
     }
 
     public void clearColumnMapStructs() {
@@ -457,8 +457,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         sampleByFill.clear();
         sampleByTimezoneName = null;
         sampleByOffset = null;
-        sampleByFromLo = null;
-        sampleByFromHi = null;
+        sampleByTo = null;
+        sampleByFrom = null;
     }
 
     public boolean containsJoin() {
@@ -617,8 +617,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && Objects.equals(timestamp, that.timestamp)
                 && Objects.equals(sampleBy, that.sampleBy)
                 && Objects.equals(sampleByUnit, that.sampleByUnit)
-                && Objects.equals(sampleByFromLo, that.sampleByFromLo)
-                && Objects.equals(sampleByFromHi, that.sampleByFromHi)
+                && Objects.equals(sampleByTo, that.sampleByTo)
+                && Objects.equals(sampleByFrom, that.sampleByFrom)
                 && Objects.equals(context, that.context)
                 && Objects.equals(joinCriteria, that.joinCriteria)
                 && Objects.equals(orderedJoinModels, that.orderedJoinModels)
@@ -839,12 +839,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return sampleByFill;
     }
 
-    public ExpressionNode getSampleByFromHi() {
-        return sampleByFromHi;
-    }
-
-    public ExpressionNode getSampleByFromLo() {
-        return sampleByFromLo;
+    public ExpressionNode getSampleByFrom() {
+        return sampleByFrom;
     }
 
     public ExpressionNode getSampleByOffset() {
@@ -853,6 +849,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public ExpressionNode getSampleByTimezoneName() {
         return sampleByTimezoneName;
+    }
+
+    public ExpressionNode getSampleByTo() {
+        return sampleByTo;
     }
 
     public ExpressionNode getSampleByUnit() {
@@ -955,7 +955,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 postJoinWhereClause, outerJoinExpressionClause, constWhereClause, nestedModel,
                 tableNameExpr, metadataVersion, tableNameFunction,
                 alias, timestamp, sampleBy,
-                sampleByUnit, sampleByFromLo, sampleByFromHi, context, joinCriteria,
+                sampleByUnit, sampleByTo, sampleByFrom, context, joinCriteria,
                 joinType, joinKeywordPosition, orderedJoinModels,
                 limitLo, limitHi, limitPosition,
                 limitAdviceLo, limitAdviceHi, isLimitImplemented,
@@ -1099,8 +1099,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.sampleByFill.addAll(model.sampleByFill);
         this.sampleByTimezoneName = model.sampleByTimezoneName;
         this.sampleByOffset = model.sampleByOffset;
-        this.sampleByFromLo = model.sampleByFromLo;
-        this.sampleByFromHi = model.sampleByFromHi;
+        this.sampleByTo = model.sampleByTo;
+        this.sampleByFrom = model.sampleByFrom;
 
         // clear the source
         model.clearSampleBy();
@@ -1287,8 +1287,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     }
 
     public void setSampleByFrom(ExpressionNode lo, ExpressionNode hi) {
-        this.sampleByFromLo = lo;
-        this.sampleByFromHi = hi;
+        this.sampleByTo = lo;
+        this.sampleByFrom = hi;
     }
 
     public void setSampleByOffset(ExpressionNode sampleByOffset) {
@@ -1710,14 +1710,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             sink.putAscii(" sample by ");
             sampleBy.toSink(sink);
 
-            if (sampleByFromLo != null) {
+            if (sampleByTo != null) {
                 sink.putAscii(" from ");
-                sampleByFromLo.toSink(sink);
+                sampleByTo.toSink(sink);
             }
 
-            if (sampleByFromHi != null) {
+            if (sampleByFrom != null) {
                 sink.putAscii(" to ");
-                sampleByFromHi.toSink(sink);
+                sampleByFrom.toSink(sink);
             }
 
             final int fillCount = sampleByFill.size();

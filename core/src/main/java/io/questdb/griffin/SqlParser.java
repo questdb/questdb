@@ -1504,7 +1504,7 @@ public class SqlParser {
                 } else if (isFirstKeyword(tok)) {
                     expectObservation(lexer);
 
-                    if (model.getSampleByFromLo() != null || model.getSampleByFromHi() != null) {
+                    if (model.getSampleByTo() != null || model.getSampleByFrom() != null) {
                         throw SqlException.$(lexer.getPosition(), "ALIGN TO FIRST OBSERVATION is incompatible with FROM-TO");
                     }
 

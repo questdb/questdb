@@ -4579,7 +4579,7 @@ public class SqlOptimiser implements Mutable {
                 QueryModel curr = model;
                 ExpressionNode fromLo = null;
                 while (curr != null && fromLo == null) {
-                    fromLo = curr.getSampleByFromLo();
+                    fromLo = curr.getSampleByTo();
                     curr = curr.getNestedModel();
                 }
 

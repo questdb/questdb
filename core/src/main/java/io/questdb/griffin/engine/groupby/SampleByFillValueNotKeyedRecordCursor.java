@@ -50,10 +50,10 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
             int timezoneNameFuncPos,
             Function offsetFunc,
             int offsetFuncPos,
-            Function fromLoFunc,
-            int fromLoFuncPos,
-            Function fromHiFunc,
-            int fromHiFuncPos
+            Function sampleFromFunc,
+            int sampleFromFuncPos,
+            Function sampleToFunc,
+            int sampleToFuncPos
     ) {
         super(
                 configuration,
@@ -67,10 +67,10 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
                 timezoneNameFuncPos,
                 offsetFunc,
                 offsetFuncPos,
-                fromLoFunc,
-                fromLoFuncPos,
-                fromHiFunc,
-                fromHiFuncPos
+                sampleFromFunc,
+                sampleFromFuncPos,
+                sampleToFunc,
+                sampleToFuncPos
         );
         this.simpleMapValue = simpleMapValue;
         record.of(simpleMapValue);
@@ -116,9 +116,9 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
 
         final boolean hasNext = notKeyedLoop(simpleMapValue);
 
-        if (baseRecord == null && fromHiFunc != TimestampConstant.NULL && !endFill) {
+        if (baseRecord == null && sampleToFunc != TimestampConstant.NULL && !endFill) {
             endFill = true;
-            final long upperBound = fromHiFunc.getTimestamp(null);
+            final long upperBound = sampleToFunc.getTimestamp(null);
             baseRecord = baseCursor.getRecord();
             nextSamplePeriod(upperBound);
         }

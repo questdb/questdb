@@ -2772,10 +2772,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final ExpressionNode offset = model.getSampleByOffset();
         final Function offsetFunc;
         final int offsetFuncPos;
-        Function fromLoFunc = null;
-        final int fromLoFuncPos;
-        Function fromHiFunc = null;
-        final int fromHiFuncPos;
+        Function sampleFromFunc = null;
+        final int sampleFromFuncPos;
+        Function sampleToFunc = null;
+        final int sampleToFuncPos;
 
         if (timezoneName != null) {
             timezoneNameFunc = functionParser.parseFunction(
@@ -2803,22 +2803,22 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             offsetFuncPos = 0;
         }
 
-        if (model.getSampleByFromLo() != null) {
-            fromLoFunc = functionParser.parseFunction(model.getSampleByFromLo(), EmptyRecordMetadata.INSTANCE, executionContext);
-            fromLoFuncPos = model.getSampleByFromLo().position;
-            coerceRuntimeConstantType(fromLoFunc, ColumnType.TIMESTAMP, executionContext, "from lower bound must be a constant expression convertible to a TIMESTAMP", fromLoFuncPos);
+        if (model.getSampleByTo() != null) {
+            sampleFromFunc = functionParser.parseFunction(model.getSampleByTo(), EmptyRecordMetadata.INSTANCE, executionContext);
+            sampleFromFuncPos = model.getSampleByTo().position;
+            coerceRuntimeConstantType(sampleFromFunc, ColumnType.TIMESTAMP, executionContext, "from lower bound must be a constant expression convertible to a TIMESTAMP", sampleFromFuncPos);
         } else {
-            fromLoFunc = TimestampConstant.NULL;
-            fromLoFuncPos = 0;
+            sampleFromFunc = TimestampConstant.NULL;
+            sampleFromFuncPos = 0;
         }
 
-        if (model.getSampleByFromHi() != null) {
-            fromHiFunc = functionParser.parseFunction(model.getSampleByFromHi(), EmptyRecordMetadata.INSTANCE, executionContext);
-            fromHiFuncPos = model.getSampleByFromHi().position;
-            coerceRuntimeConstantType(fromHiFunc, ColumnType.TIMESTAMP, executionContext, "from upper bound must be a constant expression convertible to a TIMESTAMP", fromHiFuncPos);
+        if (model.getSampleByFrom() != null) {
+            sampleToFunc = functionParser.parseFunction(model.getSampleByFrom(), EmptyRecordMetadata.INSTANCE, executionContext);
+            sampleToFuncPos = model.getSampleByFrom().position;
+            coerceRuntimeConstantType(sampleToFunc, ColumnType.TIMESTAMP, executionContext, "from upper bound must be a constant expression convertible to a TIMESTAMP", sampleToFuncPos);
         } else {
-            fromHiFunc = TimestampConstant.NULL;
-            fromHiFuncPos = 0;
+            sampleToFunc = TimestampConstant.NULL;
+            sampleToFuncPos = 0;
         }
 
         RecordCursorFactory factory = null;
@@ -2998,10 +2998,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 timestampIndex,
                                 symbolFilter,
                                 configuration.getSampleByIndexSearchPageSize(),
-                                fromLoFunc,
-                                fromLoFuncPos,
-                                fromHiFunc,
-                                fromHiFuncPos
+                                sampleFromFunc,
+                                sampleFromFuncPos,
+                                sampleToFunc,
+                                sampleToFuncPos
                         );
                     }
                     factory.revertFromSampleByIndexDataFrameCursorFactory();
@@ -3024,10 +3024,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             timezoneNameFuncPos,
                             offsetFunc,
                             offsetFuncPos,
-                            fromLoFunc,
-                            fromLoFuncPos,
-                            fromHiFunc,
-                            fromHiFuncPos
+                            sampleFromFunc,
+                            sampleFromFuncPos,
+                            sampleToFunc,
+                            sampleToFuncPos
                     );
                 }
 
@@ -3047,10 +3047,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         timezoneNameFuncPos,
                         offsetFunc,
                         offsetFuncPos,
-                        fromLoFunc,
-                        fromLoFuncPos,
-                        fromHiFunc,
-                        fromHiFuncPos
+                        sampleFromFunc,
+                        sampleFromFuncPos,
+                        sampleToFunc,
+                        sampleToFuncPos
                 );
             }
 
@@ -3071,10 +3071,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             timezoneNameFuncPos,
                             offsetFunc,
                             offsetFuncPos,
-                            fromLoFunc,
-                            fromLoFuncPos,
-                            fromHiFunc,
-                            fromHiFuncPos
+                            sampleFromFunc,
+                            sampleFromFuncPos,
+                            sampleToFunc,
+                            sampleToFuncPos
                     );
                 }
 
@@ -3094,10 +3094,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         timezoneNameFuncPos,
                         offsetFunc,
                         offsetFuncPos,
-                        fromLoFunc,
-                        fromLoFuncPos,
-                        fromHiFunc,
-                        fromHiFuncPos
+                        sampleFromFunc,
+                        sampleFromFuncPos,
+                        sampleToFunc,
+                        sampleToFuncPos
                 );
             }
 
@@ -3118,10 +3118,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             timezoneNameFuncPos,
                             offsetFunc,
                             offsetFuncPos,
-                            fromLoFunc,
-                            fromLoFuncPos,
-                            fromHiFunc,
-                            fromHiFuncPos
+                            sampleFromFunc,
+                            sampleFromFuncPos,
+                            sampleToFunc,
+                            sampleToFuncPos
                     );
                 }
 
@@ -3142,10 +3142,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         timezoneNameFuncPos,
                         offsetFunc,
                         offsetFuncPos,
-                        fromLoFunc,
-                        fromLoFuncPos,
-                        fromHiFunc,
-                        fromHiFuncPos
+                        sampleFromFunc,
+                        sampleFromFuncPos,
+                        sampleToFunc,
+                        sampleToFuncPos
                 );
             }
 
@@ -3168,10 +3168,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         timezoneNameFuncPos,
                         offsetFunc,
                         offsetFuncPos,
-                        fromLoFunc,
-                        fromLoFuncPos,
-                        fromHiFunc,
-                        fromHiFuncPos
+                        sampleFromFunc,
+                        sampleFromFuncPos,
+                        sampleToFunc,
+                        sampleToFuncPos
                 );
             }
 
@@ -3193,10 +3193,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     timezoneNameFuncPos,
                     offsetFunc,
                     offsetFuncPos,
-                    fromLoFunc,
-                    fromLoFuncPos,
-                    fromHiFunc,
-                    fromHiFuncPos
+                    sampleFromFunc,
+                    sampleFromFuncPos,
+                    sampleToFunc,
+                    sampleToFuncPos
             );
         } catch (Throwable e) {
             Misc.free(factory);
