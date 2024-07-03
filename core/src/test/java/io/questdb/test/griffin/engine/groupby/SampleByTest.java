@@ -3836,6 +3836,9 @@ public class SampleByTest extends AbstractCairoTest {
                             "where s != '5'\n" +
                             "sample by 5d from '2017-12-20' to '2018-01-31' fill(42)",
                     0, "supported");
+            assertException("select ts, avg(x), first(x), last(x), x from fromto\n" +
+                    "where s != '5'\n" +
+                    "sample by 5d from '2017-12-20' to '2018-01-31' fill(42)", 0, "supported");
         });
     }
 
