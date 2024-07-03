@@ -106,6 +106,7 @@ public class SqlOptimiser implements Mutable {
     private final ObjList<IntHashSet> postFilterTableRefs = new ObjList<>();
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
+    private final RewriteSampleByFromToVisitor rewriteSampleByFromToVisitor = new RewriteSampleByFromToVisitor();
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final ObjList<RecordCursorFactory> tableFactoriesInFlight = new ObjList<>();
     private final FlyweightCharSequence tableLookupSequence = new FlyweightCharSequence();
@@ -191,6 +192,7 @@ public class SqlOptimiser implements Mutable {
         groupByUsed.clear();
         tempColumnAlias = null;
         tempQueryModel = null;
+        rewriteSampleByFromToVisitor.clear();
     }
 
     public void clearForUnionModelInJoin() {
@@ -4667,6 +4669,73 @@ public class SqlOptimiser implements Mutable {
         return model;
     }
 
+
+    private QueryModel rewriteSampleByFromTo(QueryModel model) throws SqlException {
+        QueryModel curr = model;
+        QueryModel fromToModel = null;
+        QueryModel whereModel = null;
+        ExpressionNode sampleFrom = null;
+        ExpressionNode sampleTo = null;
+
+        // extract sample from-to expressions
+        while (curr != null && (sampleFrom == null && sampleTo == null)) {
+            sampleFrom = curr.getSampleByFrom();
+            sampleTo = curr.getSampleByTo();
+
+            if (sampleFrom != null || sampleTo != null) {
+                fromToModel = curr;
+            }
+
+            curr = curr.getNestedModel();
+        }
+
+        // if no from-to
+        if (sampleFrom == null && sampleTo == null) {
+            return model;
+        }
+
+        curr = model;
+
+        ExpressionNode whereClause = null;
+
+        while (curr != null && whereClause == null) {
+            whereClause = curr.getWhereClause();
+            if (whereClause != null) {
+                whereModel = curr;
+            }
+            curr = curr.getNestedModel();
+        }
+
+        if (whereModel != null) {
+            // check if designated timestamp appears
+            traversalAlgo.traverse(whereClause, rewriteSampleByFromToVisitor.of(whereModel.getTimestamp()));
+            // if it already considers the timestamp, then we do nothing
+            if (rewriteSampleByFromToVisitor.timestampAppears) {
+                return model;
+            }
+            // else we need to add in the interval
+        }
+
+
+        if (sampleFrom != null && sampleTo != null) {
+            // between
+            ExpressionNode between = expressionNodePool.next().of(32, "between", 11, 0);
+            between.args.add(sampleFrom);
+            between.args.add(sampleTo);
+            between.args.add(fromToModel.getTimestamp());
+            between.paramCount = 3;
+            fromToModel.setWhereClause(between);
+        } else if (sampleFrom != null) {
+
+        } else if (sampleTo != null) {
+
+        } else {
+            assert false;
+        }
+
+        return model;
+    }
+
     // flatParent = true means that parent model does not have selected columns
     private QueryModel rewriteSelectClause(
             QueryModel model,
@@ -5805,6 +5874,7 @@ public class SqlOptimiser implements Mutable {
             optimiseExpressionModels(rewrittenModel, sqlExecutionContext, sqlParserCallback);
             enumerateTableColumns(rewrittenModel, sqlExecutionContext, sqlParserCallback);
             rewriteTopLevelLiteralsToFunctions(rewrittenModel);
+            rewrittenModel = rewriteSampleByFromTo(rewrittenModel);
             //rewrittenModel = rewriteSampleBy(rewrittenModel);
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
             resolveJoinColumns(rewrittenModel);
@@ -5964,6 +6034,29 @@ public class SqlOptimiser implements Mutable {
 
     private static class NonLiteralException extends RuntimeException {
         private static final NonLiteralException INSTANCE = new NonLiteralException();
+    }
+
+    private static class RewriteSampleByFromToVisitor implements PostOrderTreeTraversalAlgo.Visitor {
+        public boolean timestampAppears;
+        private ExpressionNode timestamp;
+
+        public void clear() {
+            timestampAppears = false;
+            timestamp = null;
+        }
+
+        @Override
+        public void visit(ExpressionNode node) {
+            if (node.type == LITERAL && Chars.equalsIgnoreCase(node.token, timestamp.token)) {
+                timestampAppears = true;
+            }
+        }
+
+        PostOrderTreeTraversalAlgo.Visitor of(ExpressionNode timestamp) {
+            this.timestamp = timestamp;
+            this.timestampAppears = false;
+            return this;
+        }
     }
 
     private class ColumnPrefixEraser implements PostOrderTreeTraversalAlgo.Visitor {

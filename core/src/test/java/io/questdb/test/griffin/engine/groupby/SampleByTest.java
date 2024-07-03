@@ -61,7 +61,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class SampleByTest extends AbstractCairoTest {
-    private static final String DDL_FROMTO = "create table fromto as (\n" +
+    public static final String DDL_FROMTO = "create table fromto as (\n" +
             "  SELECT timestamp_sequence(\n" +
             "            to_timestamp('2018-01-01T00:00:00', 'yyyy-MM-ddTHH:mm:ss'),\n" +
             "            1800000000L) as ts, x, x::varchar as s\n" +
