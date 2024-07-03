@@ -4713,32 +4713,48 @@ public class SqlOptimiser implements Mutable {
             if (rewriteSampleByFromToVisitor.timestampAppears) {
                 return model;
             }
-            // else we need to add in the interval
+
+            // else we need to add compose the existing clause with AND
         }
 
+        ExpressionNode intervalClause = null;
+
+        // construct an appropriate where clause
         if (sampleFrom != null && sampleTo != null) {
-            // between
-            ExpressionNode between = expressionNodePool.next().of(SET_OPERATION, "between", 11, 0);
-            between.args.add(sampleFrom);
-            between.args.add(sampleTo);
-            between.args.add(fromToModel.getTimestamp());
-            between.paramCount = 3;
-            fromToModel.setWhereClause(between);
+            ExpressionNode betweenNode = expressionNodePool.next().of(SET_OPERATION, "between", 11, 0);
+            betweenNode.args.add(sampleFrom);
+            betweenNode.args.add(sampleTo);
+            betweenNode.args.add(fromToModel.getTimestamp());
+            betweenNode.paramCount = 3;
+            intervalClause = betweenNode;
+            fromToModel.setWhereClause(betweenNode);
         } else if (sampleFrom != null) {
-            ExpressionNode greaterThanOrEqualTo = expressionNodePool.next().of(OPERATION, ">=", 12, 0);
-            greaterThanOrEqualTo.lhs = fromToModel.getTimestamp();
-            greaterThanOrEqualTo.rhs = sampleFrom;
-            greaterThanOrEqualTo.paramCount = 2;
-            fromToModel.setWhereClause(greaterThanOrEqualTo);
+            ExpressionNode greaterThanOrEqualToNode = expressionNodePool.next().of(OPERATION, ">=", 12, 0);
+            greaterThanOrEqualToNode.lhs = fromToModel.getTimestamp();
+            greaterThanOrEqualToNode.rhs = sampleFrom;
+            greaterThanOrEqualToNode.paramCount = 2;
+            intervalClause = greaterThanOrEqualToNode;
+            fromToModel.setWhereClause(greaterThanOrEqualToNode);
         } else if (sampleTo != null) {
-            ExpressionNode lesserThan = expressionNodePool.next().of(OPERATION, "<", 12, 0);
-            lesserThan.lhs = fromToModel.getTimestamp();
-            lesserThan.rhs = sampleTo;
-            lesserThan.paramCount = 2;
-            fromToModel.setWhereClause(lesserThan);
+            ExpressionNode lesserThanNode = expressionNodePool.next().of(OPERATION, "<", 12, 0);
+            lesserThanNode.lhs = fromToModel.getTimestamp();
+            lesserThanNode.rhs = sampleTo;
+            lesserThanNode.paramCount = 2;
+            intervalClause = lesserThanNode;
+            fromToModel.setWhereClause(lesserThanNode);
         } else {
             // unreachable
             assert false;
+        }
+
+        if (whereClause != null) {
+            ExpressionNode andNode = expressionNodePool.next().of(OPERATION, "and", 15, 0);
+            andNode.lhs = intervalClause;
+            andNode.rhs = whereClause;
+            andNode.paramCount = 2;
+            fromToModel.setWhereClause(andNode);
+        } else {
+            fromToModel.setWhereClause(intervalClause);
         }
 
         return model;

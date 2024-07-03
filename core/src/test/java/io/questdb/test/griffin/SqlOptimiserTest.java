@@ -2153,6 +2153,49 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         });
     }
 
+    @Test
+    public void testSampleByFromToBasicWhereOptimisationWithExistingWhereBetween() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(SampleByTest.DDL_FROMTO);
+            final String query = "select ts, avg(x) from fromto\n" +
+                    "where s != '5'\n" +
+                    "sample by 5d from '2017-12-20' to '2018-01-31'\n";
+
+            final String model = "select-group-by ts, avg(x) avg from (select [ts, x, s] from fromto timestamp (ts) where ts between ('2018-01-31','2017-12-20') and s != '5') sample by 5d from '2017-12-20' to '2018-01-31' align to calendar with offset '00:00'";
+
+            assertModel(model, query, ExecutionModel.QUERY);
+        });
+    }
+
+    @Test
+    public void testSampleByFromToBasicWhereOptimisationWithExistingWhereGreaterThanOrEqualTo() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(SampleByTest.DDL_FROMTO);
+            final String query = "select ts, avg(x) from fromto\n" +
+                    "where s != '5'\n" +
+                    "sample by 5d from '2017-12-20'\n";
+
+            final String model = "select-group-by ts, avg(x) avg from (select [ts, x, s] from fromto timestamp (ts) where ts >= '2017-12-20' and s != '5') sample by 5d from '2017-12-20' align to calendar with offset '00:00'";
+
+            assertModel(model, query, ExecutionModel.QUERY);
+        });
+    }
+
+
+    @Test
+    public void testSampleByFromToBasicWhereOptimisationWithExistingWhereLesserThan() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(SampleByTest.DDL_FROMTO);
+            final String query = "select ts, avg(x) from fromto\n" +
+                    "where s != '5'\n" +
+                    "sample by 5d to '2018-01-31'\n";
+
+            final String model = "select-group-by ts, avg(x) avg from (select [ts, x, s] from fromto timestamp (ts) where ts < '2018-01-31' and s != '5') sample by 5d to '2018-01-31' align to calendar with offset '00:00'";
+
+            assertModel(model, query, ExecutionModel.QUERY);
+        });
+    }
+
     protected QueryModel compileModel(String query) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             ExecutionModel model = compiler.testCompileModel(query, sqlExecutionContext);
