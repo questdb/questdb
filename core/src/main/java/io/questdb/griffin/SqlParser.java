@@ -2673,7 +2673,7 @@ public class SqlParser {
 
     private void rewriteJsonExtractCast0(ExpressionNode node) {
         if (node.type == ExpressionNode.FUNCTION && SqlKeywords.isCastKeyword(node.token)) {
-            if (node.lhs != null && Chars.equalsIgnoreCase(node.lhs.token, "json_extract") && node.lhs.paramCount == 2) {
+            if (node.lhs != null && SqlKeywords.isJsonExtract(node.lhs.token) && node.lhs.paramCount == 2) {
                 // rewrite cast such as
                 // json_extract(json,path)::type -> json_extract(json,path,type)
                 // the ::type is already rewritten as
@@ -2685,7 +2685,7 @@ public class SqlParser {
                 // check if the type is a valid symbol
                 ExpressionNode typeNode = node.rhs;
                 if (typeNode != null) {
-                    if (Chars.equalsIgnoreCase(typeNode.token, "varchar")) {
+                    if (SqlKeywords.isVarchar(typeNode.token)) {
                         // redundant cast to varchar, just remove it
                         node.token = jsonExtractNode.token;
                         node.paramCount = jsonExtractNode.paramCount;

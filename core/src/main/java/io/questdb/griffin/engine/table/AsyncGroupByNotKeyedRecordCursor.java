@@ -151,7 +151,8 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
                             .$(", cursor=").$(cursor)
                             .I$();
                     if (task.hasError()) {
-                        throw CairoException.nonCritical().position(task.getErrorMessagePosition())
+                        throw CairoException.nonCritical()
+                                .position(task.getErrorMessagePosition())
                                 .put(task.getErrorMsg());
                     }
 

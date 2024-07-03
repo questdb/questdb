@@ -24,9 +24,11 @@
 
 package io.questdb.griffin.engine.functions.json;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.json.SimdJsonError;
 import io.questdb.std.json.SimdJsonParser;
 import io.questdb.std.json.SimdJsonResult;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -75,5 +77,17 @@ class JsonExtractSupportingState implements QuietCloseable {
             jsonSeq = jsonSink;
         }
         return jsonSeq;
+    }
+
+    void throwIfInError(int position) {
+        switch (simdJsonResult.getError()) {
+            case SimdJsonError.SUCCESS:
+            case SimdJsonError.INDEX_OUT_OF_BOUNDS:
+            case SimdJsonError.NO_SUCH_FIELD:
+                return;
+            default:
+                throw CairoException.nonCritical().position(position).put(SimdJsonError.getMessage(simdJsonResult.getError()));
+        }
+
     }
 }

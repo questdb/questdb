@@ -811,6 +811,22 @@ public class SqlKeywords {
                 && (tok.charAt(8) | 32) == 'n';
     }
 
+    public static boolean isJsonExtract(CharSequence tok) {
+        return tok.length() == 12
+                && (tok.charAt(0) | 32) == 'j'
+                && (tok.charAt(1) | 32) == 's'
+                && (tok.charAt(2) | 32) == 'o'
+                && (tok.charAt(3) | 32) == 'n'
+                && tok.charAt(4) == '_'
+                && (tok.charAt(5) | 32) == 'e'
+                && (tok.charAt(6) | 32) == 'x'
+                && (tok.charAt(7) | 32) == 't'
+                && (tok.charAt(8) | 32) == 'r'
+                && (tok.charAt(9) | 32) == 'a'
+                && (tok.charAt(10) | 32) == 'c'
+                && (tok.charAt(11) | 32) == 't';
+    }
+
     public static boolean isJsonKeyword(CharSequence tok) {
         return tok.length() == 4
                 && (tok.charAt(0) | 32) == 'j'
@@ -1756,6 +1772,17 @@ public class SqlKeywords {
                 && (tok.charAt(3) | 32) == 'u'
                 && (tok.charAt(4) | 32) == 'e'
                 && (tok.charAt(5) | 32) == 's';
+    }
+
+    public static boolean isVarchar(CharSequence tok) {
+        return tok.length() == 7
+                && (tok.charAt(0) | 32) == 'v'
+                && (tok.charAt(1) | 32) == 'a'
+                && (tok.charAt(2) | 32) == 'r'
+                && (tok.charAt(3) | 32) == 'c'
+                && (tok.charAt(4) | 32) == 'h'
+                && (tok.charAt(5) | 32) == 'a'
+                && (tok.charAt(6) | 32) == 'r';
     }
 
     public static boolean isVolumeKeyword(CharSequence tok) {

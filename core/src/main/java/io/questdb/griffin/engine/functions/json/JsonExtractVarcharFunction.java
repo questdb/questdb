@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.functions.json;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -32,7 +31,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.std.Misc;
-import io.questdb.std.json.SimdJsonError;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
@@ -111,15 +109,7 @@ class JsonExtractVarcharFunction extends VarcharFunction {
             if (state.simdJsonResult.hasValue()) {
                 return state.destSink;
             }
-
-            switch (state.simdJsonResult.getError()) {
-                case SimdJsonError.SUCCESS:
-                case SimdJsonError.INDEX_OUT_OF_BOUNDS:
-                case SimdJsonError.NO_SUCH_FIELD:
-                    return null;
-                default:
-                    throw CairoException.nonCritical().position(position).put(SimdJsonError.getMessage(state.simdJsonResult.getError()));
-            }
+            state.throwIfInError(position);
         }
         return null;
     }

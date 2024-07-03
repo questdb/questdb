@@ -58,7 +58,7 @@ public class JsonExtractTypedFunctionFactory implements FunctionFactory {
         }
 
         return new JsonExtractTypedFunction(
-                position,
+                argPositions.getQuick(0),
                 parseTargetType(position, args.getQuiet(2)),
                 json,
                 path

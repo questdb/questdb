@@ -43,10 +43,6 @@ public class JsonExtractTypedFunction implements ScalarFunction {
     private final int columnType;
     private final Function json;
     private final Function path;
-    // todo: test error scenarios, for example:
-    //     - unclosed JSON string
-    //     - bad type situation (whatever is appropriate)
-    //     validate that error position is accurate with regards to SQL text
     private final int position;
     private final JsonExtractSupportingState state;
     private DirectUtf8Sink pointer;
@@ -112,7 +108,9 @@ public class JsonExtractTypedFunction implements ScalarFunction {
         if (jsonSeq == null) {
             return Double.NaN;
         }
-        return state.parser.queryPointerDouble(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult);
+        final double d = state.parser.queryPointerDouble(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult);
+        state.throwIfInError(position);
+        return d;
     }
 
     @Override

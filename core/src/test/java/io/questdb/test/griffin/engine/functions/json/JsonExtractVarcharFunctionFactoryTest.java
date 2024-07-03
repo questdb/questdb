@@ -115,9 +115,9 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
                             " ]}'";
                     ddl("create table json_test as (select " + json + "::varchar text)");
                     assertSql(
-                            "cast\n" +
+                            "k\n" +
                                     "3\n",
-                            "select json_extract(text, '.path2[2]')::int from json_test"
+                            "select json_extract(text, '.path2[2]')::int k from json_test"
                     );
                 }
         );
@@ -244,6 +244,12 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
                     "null\n" +
                     ")::varchar text from long_sequence(10000)\n" +
                     ")");
+
+            assertException(
+                    "select count_distinct(json_extract(text, '.list[2]')) from json_test",
+                    35,
+                    "UNCLOSED_STRING: A string is opened, but never closed"
+            );
 
             assertException(
                     "select sum(json_extract(text, '.list[2]')::double) from json_test",

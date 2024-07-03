@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 
