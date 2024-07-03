@@ -5,11 +5,11 @@ import io.questdb.std.Chars;
 import io.questdb.std.Os;
 
 public enum WalErrorTag {
+    NONE(""),
     DISK_FULL("DISK FULL"),
     TOO_MANY_OPEN_FILES("TOO MANY OPEN FILES"),
-    OUT_OF_MEMORY("OUT OF MEMORY"),
-    FAILED_MEMORY_ALLOCATION("FAILED MEMORY ALLOCATION"),
-    OTHER("");
+    OUT_OF_MMAP_AREAS("OUT OF MMAP AREAS"),
+    OUT_OF_MEMORY("OUT OF MEMORY");
 
     private final String text;
 
@@ -24,12 +24,12 @@ public enum WalErrorTag {
             return DISK_FULL;
         } else if (Chars.equals(text, TOO_MANY_OPEN_FILES.text)) {
             return TOO_MANY_OPEN_FILES;
+        } else if (Chars.equals(text, OUT_OF_MMAP_AREAS.text)) {
+            return OUT_OF_MMAP_AREAS;
         } else if (Chars.equals(text, OUT_OF_MEMORY.text)) {
             return OUT_OF_MEMORY;
-        } else if (Chars.equals(text, FAILED_MEMORY_ALLOCATION.text)) {
-            return FAILED_MEMORY_ALLOCATION;
-        } else if (Chars.equals(text, OTHER.text)) {
-            return OTHER;
+        } else if (Chars.equals(text, NONE.text)) {
+            return NONE;
         } else {
             throw CairoException.nonCritical().put("Invalid WAL error tag [").put(text).put("]");
         }
@@ -50,9 +50,9 @@ public enum WalErrorTag {
             case 24:
                 return TOO_MANY_OPEN_FILES;
             case 12:
-                return OUT_OF_MEMORY;
+                return OUT_OF_MMAP_AREAS;
             default:
-                return OTHER;
+                return NONE;
         }
     }
 
@@ -64,9 +64,9 @@ public enum WalErrorTag {
             case 4:
                 return TOO_MANY_OPEN_FILES;
             case 8:
-                return OUT_OF_MEMORY;
+                return OUT_OF_MMAP_AREAS;
             default:
-                return OTHER;
+                return NONE;
         }
     }
 }

@@ -1300,7 +1300,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wal from txn -10", "invalid value [value=-]");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " resume wal from txn 10AA", "invalid value [value=10AA]");
 
-            engine.getTableSequencerAPI().suspendTable(tableToken, OTHER, "wal apply error");
+            engine.getTableSequencerAPI().suspendTable(tableToken, NONE, "wal apply error");
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
             assertAlterTableTypeFail(
                     "alter table " + tableToken.getTableName() + "ererer resume wal from txn 2",
@@ -1311,17 +1311,17 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
     @Test
     public void testWalTableSuspendResumeStatusTable() throws Exception {
-        testWalTableSuspendResumeStatusTable("1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", "table1", 999, OTHER.text());
-        testWalTableSuspendResumeStatusTable("1\tBC\t2022-02-24T00:00:00.000000Z\tFG\n", "table2", -1, FAILED_MEMORY_ALLOCATION.text());
+        testWalTableSuspendResumeStatusTable("1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", "table1", 999, NONE.text());
+        testWalTableSuspendResumeStatusTable("1\tBC\t2022-02-24T00:00:00.000000Z\tFG\n", "table2", -1, OUT_OF_MEMORY.text());
         if (Os.isWindows()) {
             testWalTableSuspendResumeStatusTable("1\tCD\t2022-02-24T00:00:00.000000Z\tFG\n", "table3", 39, DISK_FULL.text());
             testWalTableSuspendResumeStatusTable("1\tCD\t2022-02-24T00:00:00.000000Z\tFG\n", "table4", 112, DISK_FULL.text());
             testWalTableSuspendResumeStatusTable("1\tAB\t2022-02-24T00:00:00.000000Z\tDE\n", "table5", 4, TOO_MANY_OPEN_FILES.text());
-            testWalTableSuspendResumeStatusTable("1\tBC\t2022-02-24T00:00:00.000000Z\tDE\n", "table6", 8, OUT_OF_MEMORY.text());
+            testWalTableSuspendResumeStatusTable("1\tBC\t2022-02-24T00:00:00.000000Z\tDE\n", "table6", 8, OUT_OF_MMAP_AREAS.text());
         } else {
             testWalTableSuspendResumeStatusTable("1\tCD\t2022-02-24T00:00:00.000000Z\tFG\n", "table3", 28, DISK_FULL.text());
             testWalTableSuspendResumeStatusTable("1\tCD\t2022-02-24T00:00:00.000000Z\tFG\n", "table4", 24, TOO_MANY_OPEN_FILES.text());
-            testWalTableSuspendResumeStatusTable("1\tAB\t2022-02-24T00:00:00.000000Z\tDE\n", "table5", 12, OUT_OF_MEMORY.text());
+            testWalTableSuspendResumeStatusTable("1\tAB\t2022-02-24T00:00:00.000000Z\tDE\n", "table5", 12, OUT_OF_MMAP_AREAS.text());
         }
     }
 
@@ -1584,7 +1584,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
     }
 
     private void testWalTableSuspendResumeStatusTable(String startState, String tableName, int errorCode, String expectedTag) throws Exception {
-        final String OOM_message = "Test internal OOM";
+        final String OOM_message = "Test OOM";
         final FilesFacade filesFacade = new TestFilesFacadeImpl() {
             private int attempt = 0;
 

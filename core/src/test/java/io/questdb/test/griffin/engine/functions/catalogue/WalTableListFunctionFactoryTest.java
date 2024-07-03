@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.wal.WalErrorTag;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -38,6 +39,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.cairo.wal.WalErrorTag.*;
 import static io.questdb.std.Files.SEPARATOR;
 
 public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
@@ -119,12 +121,19 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testWalTablesSuspendedWithErrorCode() throws Exception {
-        testWalTablesSuspendedWithError("alter table B suspend wal with " + (Os.isWindows() ? 8 : 12) + ", 'test error message'");
+        testWalTablesSuspendedWithError("alter table B suspend wal with " + (Os.isWindows() ? 112 : 28) + ", 'Out of disk space'", DISK_FULL, "Out of disk space");
+        testWalTablesSuspendedWithError("alter table B suspend wal with " + (Os.isWindows() ? 8 : 12) + ", 'Out of memory'", OUT_OF_MMAP_AREAS, "Out of memory");
+        testWalTablesSuspendedWithError("alter table B suspend wal with " + (Os.isWindows() ? 4 : 24) + ", 'Too many open file handlers'", TOO_MANY_OPEN_FILES, "Too many open file handlers");
     }
 
     @Test
     public void testWalTablesSuspendedWithErrorTag() throws Exception {
-        testWalTablesSuspendedWithError("alter table B suspend wal with 'OUT OF MEMORY', 'test error message'");
+        testWalTablesSuspendedWithError("alter table B suspend wal with 'DISK FULL', 'test error message 1'", DISK_FULL, "test error message 1");
+        testWalTablesSuspendedWithError("alter table B suspend wal with 'OUT OF MMAP AREAS', 'test error message 2'", OUT_OF_MMAP_AREAS, "test error message 2");
+        testWalTablesSuspendedWithError("alter table B suspend wal with 'OUT OF MEMORY', 'test error message 3'", OUT_OF_MEMORY, "test error message 3");
+        testWalTablesSuspendedWithError("alter table B suspend wal with 'TOO MANY OPEN FILES', 'test error message 4'", TOO_MANY_OPEN_FILES, "test error message 4");
+        testWalTablesSuspendedWithError("alter table B suspend wal with '', 'test error message 5'", NONE, "test error message 5");
+        testWalTablesSuspendedWithError("alter table B suspend wal", NONE, "");
     }
 
     private void createTable(final String tableName, boolean isWal) throws SqlException {
@@ -136,7 +145,11 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
                 ") timestamp(ts) partition by DAY" + (isWal ? " WAL" : ""));
     }
 
-    private void testWalTablesSuspendedWithError(String suspendSql) throws Exception {
+    private void dropTable(final String tableName) throws SqlException {
+        compile("drop table " + tableName);
+    }
+
+    private void testWalTablesSuspendedWithError(String suspendSql, WalErrorTag expectedErrorTag, String expectedErrorMessage) throws Exception {
         assertMemoryLeak(() -> {
             createTable("A", false);
             createTable("B", true);
@@ -151,7 +164,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("B")));
 
             assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\n" +
-                    "B\ttrue\t2\t0\t2\tOUT OF MEMORY\ttest error message\n", "wal_tables()");
+                    "B\ttrue\t2\t0\t2\t" + expectedErrorTag.text() + "\t" + expectedErrorMessage + "\n", "wal_tables()");
 
             compile("alter table B resume wal");
 
@@ -162,6 +175,8 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
             assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\n" +
                     "B\tfalse\t2\t0\t2\t\t\n", "wal_tables()");
 
+            dropTable("A");
+            dropTable("B");
         });
     }
 }

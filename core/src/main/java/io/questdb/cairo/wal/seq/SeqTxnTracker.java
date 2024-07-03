@@ -33,7 +33,7 @@ public class SeqTxnTracker {
     private static final long SUSPENDED_STATE_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "suspendedState");
     private static final long WRITER_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "writerTxn");
     private volatile String errorMessage = "";
-    private volatile WalErrorTag errorTag = WalErrorTag.OTHER;
+    private volatile WalErrorTag errorTag = WalErrorTag.NONE;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile long seqTxn = -1;
     // -1 suspended
@@ -133,7 +133,7 @@ public class SeqTxnTracker {
         // no error details should be read when table is not suspended
         this.suspendedState = 1;
 
-        this.errorTag = WalErrorTag.OTHER;
+        this.errorTag = WalErrorTag.NONE;
         this.errorMessage = "";
     }
 }

@@ -749,7 +749,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
 
                 tok = SqlUtil.fetchNext(lexer); // optional WITH part
-                WalErrorTag errorTag = WalErrorTag.OTHER;
+                WalErrorTag errorTag = WalErrorTag.NONE;
                 String errorMessage = "";
                 if (tok != null && !Chars.equals(tok, ';')) {
                     if (SqlKeywords.isWithKeyword(tok)) {
