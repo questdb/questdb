@@ -38,11 +38,11 @@ public class JsonExtractTypedFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return JsonExtractFunction.DEFAULT_FUNCTION_NAME + "(ØØi)";
+        return JsonExtractSupportingState.EXTRACT_FUNCTION_NAME + "(ØØi)";
     }
 
     @Override
-    public JsonExtractFunction newInstance(
+    public Function newInstance(
             int position,
             ObjList<Function> args,
             IntList argPositions,
@@ -57,7 +57,7 @@ public class JsonExtractTypedFunctionFactory implements FunctionFactory {
             throw SqlException.$(argPositions.getQuick(1), "constant or bind variable expected");
         }
 
-        return new JsonExtractPrimitiveFunction(
+        return new JsonExtractTypedFunction(
                 position,
                 parseTargetType(position, args.getQuiet(2)),
                 json,

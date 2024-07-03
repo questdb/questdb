@@ -228,18 +228,6 @@ public final class ColumnType {
         return columnType == NULL;
     }
 
-    /** The type can represent a NULL value */
-    public static boolean isNullable(int columnType) {
-        switch (columnType) {
-            case BOOLEAN:
-            case BYTE:
-            case SHORT:
-                return false;
-            default:
-                return true;
-        }
-    }
-
     public static boolean isString(int columnType) {
         return columnType == STRING;
     }

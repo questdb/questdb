@@ -38,7 +38,7 @@ import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-class JsonExtractVarcharFunction extends VarcharFunction implements JsonExtractFunction {
+class JsonExtractVarcharFunction extends VarcharFunction {
     private final VarcharJsonExtractSupportingState a;
     private final VarcharJsonExtractSupportingState b;
     private final VarcharJsonExtractSupportingState copied;
@@ -72,6 +72,11 @@ class JsonExtractVarcharFunction extends VarcharFunction implements JsonExtractF
     }
 
     @Override
+    public String getName() {
+        return JsonExtractSupportingState.EXTRACT_FUNCTION_NAME;
+    }
+
+    @Override
     public @Nullable DirectUtf8Sink getVarcharA(Record rec) {
         return jsonPointer(json.getVarcharA(rec), a);
     }
@@ -86,7 +91,7 @@ class JsonExtractVarcharFunction extends VarcharFunction implements JsonExtractF
         json.init(symbolTableSource, executionContext);
         path.init(symbolTableSource, executionContext);
         pointer = Misc.free(pointer);
-        pointer = JsonExtractFunction.varcharConstantToJsonPointer(path);
+        pointer = JsonExtractSupportingState.varcharConstantToJsonPointer(path);
     }
 
     private @Nullable DirectUtf8Sink jsonPointer(Utf8Sequence json, VarcharJsonExtractSupportingState state) {
