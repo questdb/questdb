@@ -24,10 +24,6 @@
 
 #include <jni.h>
 
-#if defined(SIMDJSON_THREADS_ENABLED)
-#error "SIMDJSON_THREADS_ENABLED must not be defined"
-#endif
-
 #include <simdjson.h>
 #include <limits>
 #include <cmath>
@@ -313,20 +309,15 @@ Java_io_questdb_std_json_SimdJsonParser_queryPointerVarchar(
         size_t pointer_len,
         json_result *result,
         questdb_byte_sink_t *dest_sink,
-        int32_t max_size,
-        const char *default_chars,
-        size_t default_len
+        int32_t max_size
 ) {
     value_at_pointer(
             parser, json_chars, json_len, tail_padding, pointer_chars, pointer_len, result,
-            [result, dest_sink, max_size, default_chars, default_len](json_value res) -> token_void {
+            [result, dest_sink, max_size](json_value res) -> token_void {
                 if (res.error() != simdjson::error_code::SUCCESS) {
-                    if (default_chars != nullptr) {
-                        const auto max_size_st = static_cast<size_t>(max_size);
-                        truncated_utf8_copy(*dest_sink, {default_chars, default_len}, max_size_st);
-                    }
                     return default_value<token_void>::value();
                 }
+
                 switch (result->type) {
                     case simdjson::ondemand::json_type::string: {
                         auto str_res = res.get_string();
@@ -528,4 +519,6 @@ Java_io_questdb_std_json_SimdJsonParser_queryPointerFloat(
             });
 }
 
-} // extern "C"
+}
+
+// extern "C"
