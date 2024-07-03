@@ -1437,26 +1437,25 @@ public class SqlParser {
             expectSample(lexer, model, sqlParserCallback);
             tok = optTok(lexer);
 
-
-            ExpressionNode loNode = null, hiNode = null;
+            ExpressionNode fromNode = null, toNode = null;
             // support `SAMPLE BY 5m FROM foo TO bah`
             if (tok != null && isFromKeyword(tok)) {
-                loNode = expr(lexer, model, sqlParserCallback);
-                if (loNode == null) {
+                fromNode = expr(lexer, model, sqlParserCallback);
+                if (fromNode == null) {
                     throw SqlException.$(lexer.lastTokenPosition(), "'timestamp' expression expected");
                 }
                 tok = optTok(lexer);
             }
 
             if (tok != null && isToKeyword(tok)) {
-                hiNode = expr(lexer, model, sqlParserCallback);
-                if (hiNode == null) {
+                toNode = expr(lexer, model, sqlParserCallback);
+                if (toNode == null) {
                     throw SqlException.$(lexer.lastTokenPosition(), "'timestamp' expression expected");
                 }
                 tok = optTok(lexer);
             }
 
-            model.setSampleByFrom(loNode, hiNode);
+            model.setSampleByFrom(fromNode, toNode);
 
             if (tok != null && isFillKeyword(tok)) {
                 expectTok(lexer, '(');
