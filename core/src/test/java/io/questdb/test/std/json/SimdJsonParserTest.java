@@ -275,9 +275,7 @@ public class SimdJsonParserTest {
 
     @Test
     public void testQueryPointerLong() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            Assert.assertEquals(30, parser.queryPointerLong(json, new GcUtf8String("/age"), result, Long.MIN_VALUE));
-        });
+        TestUtils.assertMemoryLeak(() -> Assert.assertEquals(30, parser.queryPointerLong(json, new GcUtf8String("/age"), result, Long.MIN_VALUE)));
     }
 
     @Test

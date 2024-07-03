@@ -3834,7 +3834,7 @@ public class SqlOptimiser implements Mutable {
                 && parent.getGroupBy().size() == 0
         ) {
             ObjList<QueryColumn> queryColumns = parent.getBottomUpColumns();
-            CharSequence designatedTimestampColumn = null;
+            CharSequence designatedTimestampColumn;
 
             /**if FIRST/LAST/min/max(column) does not contain designated-timestamp column
              * OR
