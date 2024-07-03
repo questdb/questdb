@@ -1455,7 +1455,7 @@ public class SqlParser {
                 }
                 tok = optTok(lexer);
             }
-            
+
             model.setSampleByFrom(loNode, hiNode);
 
             if (tok != null && isFillKeyword(tok)) {
@@ -1503,6 +1503,11 @@ public class SqlParser {
                     }
                 } else if (isFirstKeyword(tok)) {
                     expectObservation(lexer);
+
+                    if (model.getSampleByFromLo() != null || model.getSampleByFromHi() != null) {
+                        throw SqlException.$(lexer.getPosition(), "ALIGN TO FIRST OBSERVATION is incompatible with FROM-TO");
+                    }
+
                     model.setSampleByTimezoneName(null);
                     model.setSampleByOffset(null);
                     tok = optTok(lexer);

@@ -7910,7 +7910,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testSampleByFromBasicSyntax() throws SqlException {
+    public void testSampleByFromToBasicSyntax() throws SqlException {
         assertQuery(
                 "select-group-by ts, avg(price) avg from (select [ts, price] from tbl timestamp (ts)) sample by 5m from '2018' to '2019'",
                 "select ts, avg(price) from tbl sample by 5m from '2018' to '2019' align to first observation",
@@ -7921,7 +7921,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testSampleByFromOnItsOwn() throws SqlException {
+    public void testSampleByFromToJustFromOnItsOwn() throws SqlException {
         assertQuery(
                 "select-group-by ts, avg(price) avg from (select [ts, price] from tbl timestamp (ts)) sample by 5m from '2018'",
                 "select ts, avg(price) from tbl sample by 5m from '2018' align to first observation",
@@ -7929,6 +7929,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         .timestamp("ts")
                         .col("price", ColumnType.DOUBLE)
         );
+    }
+
+    @Test
+    public void testSampleByFromToWithAlignToFirstObservation() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE tbl (ts TIMESTAMP, price DOUBLE)");
+            assertException("select ts, avg(price) from tbl sample by 5m from '2018' align to first observation", 82, "incompatible");
+        });
     }
 
     @Test
