@@ -31,6 +31,18 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
+/**
+ * Tests extracting JSON values as various SQL types.
+ * <p>
+ * The first column in the `scenarios` table represents the input JSON token.
+ * The remaining columns represent the expected output when casting the JSON token to the corresponding SQL type.
+ * <p>
+ * The mechanics of the test are:
+ * * setUp() creates a table with the document containing a JSON array of the first column of the `scenarios` table.
+ * * Each test loops through each scenario and tests the extraction of the JSON token as a SQL type.
+ * * It asserts by performing a SQL query.
+ * * tearDown() drops the table.
+ */
 public class JsonExtractCastScenariosTest extends AbstractCairoTest {
     private static final String castsDoc;
     private static final String[][] scenarios = new String[][]{
@@ -61,6 +73,7 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
             {"\"  abc\"", "false", "0", "null", "null", "null", "  abc"},
             {"\"abc  \"", "false", "0", "null", "null", "null", "abc  "},
             {"\"  abc  \"", "false", "0", "null", "null", "null", "  abc  "},
+            {"\"esc\\\"aping\"", "false", "0", "null", "null", "null", "esc\"aping"},
             {"0.0", "false", "0", "0", "0", "0.0", "0.0"},
             {"1.0", "false", "1", "1", "1", "1.0", "1.0"},
             {"1e1", "false", "10", "10", "10", "10.0", "1e1"},
@@ -158,58 +171,65 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
 
     @Test
     public void testBoolean() throws Exception {
-        assertMemoryLeak(() -> {
-            for (int i = 0; i < scenarios.length; i++) {
-                testScenario(ColumnType.BOOLEAN, i);
-            }
-        });
+        testScenarios(ColumnType.BOOLEAN);
     }
 
     @Test
     public void testDouble() throws Exception {
-        assertMemoryLeak(() -> {
-            for (int i = 0; i < scenarios.length; i++) {
-                testScenario(ColumnType.DOUBLE, i);
-            }
-        });
+        testScenarios(ColumnType.DOUBLE);
     }
 
     @Test
     public void testInt() throws Exception {
-        assertMemoryLeak(() -> {
-            for (int i = 0; i < scenarios.length; i++) {
-                testScenario(ColumnType.INT, i);
-            }
-        });
+        testScenarios(ColumnType.INT);
     }
 
     @Test
     public void testLong() throws Exception {
-        assertMemoryLeak(() -> {
-            for (int i = 0; i < scenarios.length; i++) {
-                testScenario(ColumnType.LONG, i);
-            }
-        });
+        testScenarios(ColumnType.LONG);
     }
 
     public void testScenario(int type, int index) throws Exception {
+        final int varcharColumn = selectScenarioColumn(ColumnType.VARCHAR);
         final int scenarioColumn = selectScenarioColumn(type);
         final String expectedValue = scenarios[index][scenarioColumn];
         final String expected = "x\n" + expectedValue + ":" + ColumnType.nameOf(type) + "\n";
 
+        if (scenarioColumn < varcharColumn) {
+            try {
+                final String sql = "select json_extract(text, '[" + index + "]', " + type + ") as x from json_test";
+                assertSqlWithTypes(sql, expected);
+            } catch (AssertionError e) {
+                throw new AssertionError(
+                        "Failed JSON 3rd type arg call. Scenario: " + index +
+                                ", Cast Type: " + ColumnType.nameOf(type) +
+                                ", JSON: " + scenarios[index][0] +
+                                ", Expected Value: " + expectedValue +
+                                ", Error: " + e.getMessage(), e);
+            } catch (CairoException e) {
+                throw new RuntimeException(
+                        "Failed JSON 3rd type arg call. Scenario: " + index +
+                                ", Cast Type: " + ColumnType.nameOf(type) +
+                                ", JSON: " + scenarios[index][0] +
+                                ", Expected Value: " + expectedValue +
+                                ", Error: " + e.getMessage(), e);
+            }
+        }
+
         try {
-            final String sql = "select json_extract(text, '[" + index + "]', " + type + ") as x from json_test";
+            final String sql = "select json_extract(text, '[" + index + "]')::" + ColumnType.nameOf(type) +
+                    " as x from json_test";
             assertSqlWithTypes(sql, expected);
         } catch (AssertionError e) {
             throw new AssertionError(
-                    "Failed JSON cast. Scenario: " + index +
+                    "Failed intrusive cast call. Scenario: " + index +
                             ", Cast Type: " + ColumnType.nameOf(type) +
                             ", JSON: " + scenarios[index][0] +
                             ", Expected Value: " + expectedValue +
                             ", Error: " + e.getMessage(), e);
         } catch (CairoException e) {
             throw new RuntimeException(
-                    "Failed JSON cast. Scenario: " + index +
+                    "Failed intrusive cast call. Scenario: " + index +
                             ", Cast Type: " + ColumnType.nameOf(type) +
                             ", JSON: " + scenarios[index][0] +
                             ", Expected Value: " + expectedValue +
@@ -219,20 +239,12 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
 
     @Test
     public void testShort() throws Exception {
-        assertMemoryLeak(() -> {
-            for (int i = 0; i < scenarios.length; i++) {
-                testScenario(ColumnType.SHORT, i);
-            }
-        });
+        testScenarios(ColumnType.SHORT);
     }
 
     @Test
     public void testVarchar() throws Exception {
-        assertMemoryLeak(() -> {
-            for (int i = 0; i < scenarios.length; i++) {
-                testScenario(ColumnType.VARCHAR, i);
-            }
-        });
+        testScenarios(ColumnType.VARCHAR);
     }
 
     private static int selectScenarioColumn(int type) {
@@ -252,6 +264,14 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
             default:
                 throw new RuntimeException("No scenario tests for type " + ColumnType.nameOf(type));
         }
+    }
+
+    private void testScenarios(int type) throws Exception {
+        assertMemoryLeak(() -> {
+            for (int index = 0; index < scenarios.length; index++) {
+                testScenario(type, index);
+            }
+        });
     }
 
     static {
