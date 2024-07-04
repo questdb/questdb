@@ -198,7 +198,7 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
         if (scenarioColumn < varcharColumn) {
             try {
                 final String sql = "select json_extract(text, '[" + index + "]', " + type + ") as x from json_test";
-                assertSqlWithTypes(sql, expected);
+                assertSqlWithTypes(expected, sql);
             } catch (AssertionError e) {
                 throw new AssertionError(
                         "Failed JSON 3rd type arg call. Scenario: " + index +
@@ -219,7 +219,7 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
         try {
             final String sql = "select json_extract(text, '[" + index + "]')::" + ColumnType.nameOf(type) +
                     " as x from json_test";
-            assertSqlWithTypes(sql, expected);
+            assertSqlWithTypes(expected, sql);
         } catch (AssertionError e) {
             throw new AssertionError(
                     "Failed intrusive cast call. Scenario: " + index +

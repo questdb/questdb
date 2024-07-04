@@ -2671,6 +2671,19 @@ public class SqlParser {
         return parent;
     }
 
+    /*
+       Rewrites the following:
+
+       select json_extract(json,path)::varchar -> select json_extract(json,path)
+       select json_extract(json,path)::double -> select json_extract(json,path,double)
+       select json_extract(json,path)::uuid -> select json_extract(json,path)::uuid
+
+       Notes:
+        - varchar cast it rewritten in a special way, e.g. removed
+        - subset of types is handled more efficiently in the 3-arg function
+        - the remaining type casts are not rewritten, e.g. left as is
+     */
+
     private void rewriteJsonExtractCast0(ExpressionNode node) {
         if (node.type == ExpressionNode.FUNCTION && SqlKeywords.isCastKeyword(node.token)) {
             if (node.lhs != null && SqlKeywords.isJsonExtract(node.lhs.token) && node.lhs.paramCount == 2) {
@@ -2685,39 +2698,52 @@ public class SqlParser {
                 // check if the type is a valid symbol
                 ExpressionNode typeNode = node.rhs;
                 if (typeNode != null) {
-                    if (SqlKeywords.isVarchar(typeNode.token)) {
-                        // redundant cast to varchar, just remove it
-                        node.token = jsonExtractNode.token;
-                        node.paramCount = jsonExtractNode.paramCount;
-                        node.type = jsonExtractNode.type;
-                        node.position = jsonExtractNode.position;
-                        node.lhs = jsonExtractNode.lhs;
-                        node.rhs = jsonExtractNode.rhs;
-                        node.args.clear();
-                    } else {
-                        int type = ColumnType.typeOf(typeNode.token);
-                        node.token = jsonExtractNode.token;
-                        node.paramCount = 3;
-                        node.type = jsonExtractNode.type;
-                        node.position = jsonExtractNode.position;
-                        node.lhs = null;
-                        node.rhs = null;
-                        node.args.clear();
+                    int castType = ColumnType.typeOf(typeNode.token);
+                    switch (castType) {
+                        case ColumnType.VARCHAR:
+                            // redundant cast to varchar, just remove it
+                            node.token = jsonExtractNode.token;
+                            node.paramCount = jsonExtractNode.paramCount;
+                            node.type = jsonExtractNode.type;
+                            node.position = jsonExtractNode.position;
+                            node.lhs = jsonExtractNode.lhs;
+                            node.rhs = jsonExtractNode.rhs;
+                            node.args.clear();
+                            break;
+                        case ColumnType.BOOLEAN:
+                        case ColumnType.SHORT:
+                        case ColumnType.INT:
+                        case ColumnType.LONG:
+                        case ColumnType.DOUBLE:
+                        case ColumnType.TIMESTAMP:
+                        case ColumnType.DATE:
+                            int type = ColumnType.typeOf(typeNode.token);
+                            node.token = jsonExtractNode.token;
+                            node.paramCount = 3;
+                            node.type = jsonExtractNode.type;
+                            node.position = jsonExtractNode.position;
+                            node.lhs = null;
+                            node.rhs = null;
+                            node.args.clear();
 
-                        // args are added in reverse order
+                            // args are added in reverse order
 
-                        // type integer
-                        CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
-                        characterStoreEntry.put(type);
-                        node.args.add(expressionNodePool.next().of(
-                                        ExpressionNode.CONSTANT,
-                                        characterStoreEntry.toImmutable(),
-                                        typeNode.precedence,
-                                        typeNode.position
-                                )
-                        );
-                        node.args.add(jsonExtractNode.rhs);
-                        node.args.add(jsonExtractNode.lhs);
+                            // type integer
+                            CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
+                            characterStoreEntry.put(type);
+                            node.args.add(expressionNodePool.next().of(
+                                            ExpressionNode.CONSTANT,
+                                            characterStoreEntry.toImmutable(),
+                                            typeNode.precedence,
+                                            typeNode.position
+                                    )
+                            );
+                            node.args.add(jsonExtractNode.rhs);
+                            node.args.add(jsonExtractNode.lhs);
+                            break;
+                        default:
+                            // do not rewrite
+                            break;
                     }
                 }
             }

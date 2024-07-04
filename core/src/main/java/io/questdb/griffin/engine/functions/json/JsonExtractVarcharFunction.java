@@ -41,18 +41,18 @@ class JsonExtractVarcharFunction extends VarcharFunction {
     private final VarcharJsonExtractSupportingState b;
     private final VarcharJsonExtractSupportingState copied;
     private final Function json;
+    private final int jsonPosition;
     private final int maxSize;
     private final Function path;
-    private final int position;
     private DirectUtf8Sink pointer;
 
     public JsonExtractVarcharFunction(
-            int position,
+            int jsonPosition,
             Function json,
             Function path,
             int maxSize
     ) {
-        this.position = position;
+        this.jsonPosition = jsonPosition;
         this.a = new VarcharJsonExtractSupportingState(new DirectUtf8Sink(maxSize));
         this.b = new VarcharJsonExtractSupportingState(new DirectUtf8Sink(maxSize));
         this.copied = new VarcharJsonExtractSupportingState();
@@ -107,7 +107,7 @@ class JsonExtractVarcharFunction extends VarcharFunction {
             if (state.simdJsonResult.hasValue()) {
                 return state.destSink;
             }
-            state.throwIfInError(position);
+            state.throwIfInError(jsonPosition);
         }
         return null;
     }

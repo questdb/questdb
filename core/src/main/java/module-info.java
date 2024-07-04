@@ -23,7 +23,7 @@
  ******************************************************************************/
 
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
+import io.questdb.griffin.engine.functions.json.JsonExtractPrimitiveFunctionFactory;
 import io.questdb.griffin.engine.functions.json.JsonExtractVarcharFunctionFactory;
 
 open module io.questdb {
@@ -857,7 +857,7 @@ open module io.questdb {
 
             // json_path() & json_path_s()
             JsonExtractVarcharFunctionFactory,
-            JsonExtractTypedFunctionFactory,
+            JsonExtractPrimitiveFunctionFactory,
 
             // regexp_replace()
             io.questdb.griffin.engine.functions.regex.RegexpReplaceStrFunctionFactory,

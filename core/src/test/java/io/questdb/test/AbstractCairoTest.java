@@ -46,7 +46,6 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.json.SimdJsonParser;
 import io.questdb.std.str.*;
 import io.questdb.test.cairo.CairoTestConfiguration;
 import io.questdb.test.cairo.Overrides;
@@ -451,23 +450,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     public static Utf8String utf8(CharSequence value) {
         return value != null ? new Utf8String(value) : null;
-    }
-
-    public static DirectUtf8Sequence dirUtf8(CharSequence value, int padding) {
-        if (value == null) {
-            return null;
-        }
-        final DirectUtf8Sink utf8Sink = new DirectUtf8Sink(value.length() + padding);
-        utf8Sink.put(value);
-        return utf8Sink;
-    }
-
-    public static DirectUtf8Sequence dirUtf8(CharSequence value) {
-        return dirUtf8(value, SimdJsonParser.SIMDJSON_PADDING);
-    }
-
-    public static DirectUtf8Sequence dirUtf80(CharSequence value) {
-        return dirUtf8(value, 0);
     }
 
     @Before
@@ -1336,25 +1318,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
-    protected static void getFirstRowFirstColumn(
-            CharSequence sql,
-            MutableUtf16Sink sink
-    ) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    RecordMetadata metadata = factory.getMetadata();
-                    sink.clear();
-
-                    final Record record = cursor.getRecord();
-                    if (cursor.hasNext()) {
-                        CursorPrinter.printColumn(record, metadata, 0, sink, false);
-                    }
-                }
-            }
-        }
-    }
-
     protected static TableReader getReader(CharSequence tableName) {
         return engine.getReader(tableName);
     }
@@ -1866,7 +1829,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
-    protected void assertSqlWithTypes(CharSequence sql, CharSequence expected) throws SqlException {
+    protected void assertSqlWithTypes(CharSequence expected, CharSequence sql) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             TestUtils.assertSqlWithTypes(compiler, sqlExecutionContext, sql, sink, expected);
         }

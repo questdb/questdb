@@ -136,6 +136,107 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExtractChar() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table json_test (text varchar)");
+            insert("insert into json_test values ('{\"path\": \"c\"}')");
+            insert("insert into json_test values ('{\"path\": \"2klll\"}')");
+            insert("insert into json_test values ('{\"path\": \"a\"}')");
+            insert("insert into json_test values ('{\"path2\": \"4\"}')");
+            insert("insert into json_test values ('{\"path\": \"1\"}')");
+            assertSql(
+                    "x\n" +
+                            "c\n" +
+                            "a\n" +
+                            "2\n" +
+                            "1\n" +
+                            "\n",
+                    "select json_extract(text, '.path')::char x from json_test order by 1 desc"
+            );
+        });
+    }
+
+    @Test
+    public void testExtractSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table json_test (text varchar)");
+            insert("insert into json_test values ('{\"path\": \"blue\"}')");
+            insert("insert into json_test values ('{\"path\": \"klll\"}')");
+            insert("insert into json_test values ('{\"path\": \"appl\"}')");
+            insert("insert into json_test values ('{\"path2\": \"4\"}')");
+            insert("insert into json_test values ('{\"path\": \"1on1\"}')");
+            assertSqlWithTypes(
+                    "x\n" +
+                            "klll:SYMBOL\n" +
+                            "blue:SYMBOL\n" +
+                            "appl:SYMBOL\n" +
+                            "1on1:SYMBOL\n" +
+                            ":SYMBOL\n",
+                    "select json_extract(text, '.path')::symbol x from json_test order by 1 desc"
+            );
+        });
+    }
+
+    @Test
+    public void testExtractString() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table json_test (text varchar)");
+            insert("insert into json_test values ('{\"path\": \"blue\"}')");
+            insert("insert into json_test values ('{\"path\": \"klll\"}')");
+            insert("insert into json_test values ('{\"path\": \"appl\"}')");
+            insert("insert into json_test values ('{\"path2\": \"4\"}')");
+            insert("insert into json_test values ('{\"path\": \"1on1\"}')");
+            assertSqlWithTypes(
+                    "x\n" +
+                            "klll:STRING\n" +
+                            "blue:STRING\n" +
+                            "appl:STRING\n" +
+                            "1on1:STRING\n" +
+                            ":STRING\n",
+                    "select json_extract(text, '.path')::string x from json_test order by 1 desc"
+            );
+        });
+    }
+
+    @Test
+    public void testGeoHash() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table json_test (text varchar)");
+            insert("insert into json_test values ('{\"path\": \"sp052w9\"}')");
+            insert("insert into json_test values ('{\"path\": \"gbsuv7z\"}')");
+            insert("insert into json_test values ('{\"path\": null}')");
+            insert("insert into json_test values ('{\"path2\": \"4\"}')");
+            insert("insert into json_test values ('{\"path\": \"1on1\"}')");
+            assertSqlWithTypes(
+                    "x\n" +
+                            "sp052w9:GEOHASH(7c)\n" +
+                            "gbsuv7z:GEOHASH(7c)\n" +
+                            ":GEOHASH(7c)\n" +
+                            ":GEOHASH(7c)\n" +
+                            ":GEOHASH(7c)\n",
+                    "select cast(json_extract(text, '.path') as geohash(7c)) x from json_test order by 1 desc"
+            );
+        });
+    }
+
+    @Test
+    public void testExtractUUID() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table json_test (text varchar)");
+            insert("insert into json_test values ('{\"path\": \"6e18f80d-8b8f-4561-a9c8-703b73d5560d\"}')");
+            insert("insert into json_test values ('{\"path\": \"7d4bb839-98e4-4c31-9a5a-2dc39834a2a2\"}')");
+            insert("insert into json_test values ('{\"path\": \"58e9a7c6-6112-4c48-8723-8765c706773a\"}')");
+            assertSql(
+                    "x\n" +
+                            "7d4bb839-98e4-4c31-9a5a-2dc39834a2a2\n" +
+                            "6e18f80d-8b8f-4561-a9c8-703b73d5560d\n" +
+                            "58e9a7c6-6112-4c48-8723-8765c706773a\n",
+                    "select json_extract(text, '.path')::uuid x from json_test order by 1 desc"
+            );
+        });
+    }
+
+    @Test
     public void testHttpAccess() throws Exception {
         final String json = "'{\"path\": 0.0000000000000000000000000001}'";
 

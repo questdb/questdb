@@ -34,7 +34,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
-public class JsonExtractTypedFunctionFactory implements FunctionFactory {
+public class JsonExtractPrimitiveFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
@@ -57,37 +57,33 @@ public class JsonExtractTypedFunctionFactory implements FunctionFactory {
             throw SqlException.$(argPositions.getQuick(1), "constant or bind variable expected");
         }
 
-        final int fnPosition = argPositions.getQuick(0);
         final int targetType = parseTargetType(position, args.getQuick(2));
-        return (targetType == ColumnType.VARCHAR)
-            ? new JsonExtractVarcharFunction(fnPosition, json, path, configuration.getStrFunctionMaxBufferLength())
-            : new JsonExtractPrimitiveFunction(fnPosition, targetType, json, path);
+        return new JsonExtractPrimitiveFunction(
+                argPositions.getQuick(0),
+                targetType,
+                json,
+                path
+        );
     }
 
     private static int parseTargetType(int position, Function targetTypeFn) throws SqlException {
-        if (targetTypeFn == null) {
-            return ColumnType.VARCHAR;
+        // this is internal undocumented function, which is triggered via SQL rewrite.
+        // The invocation is triggered by calling `json_extract(json,path)::type`.
+        // Therefore, we have to validate type input to provide user with actionable error message.
+        if (targetTypeFn != null && targetTypeFn.isConstant()) {
+            final int targetType = targetTypeFn.getInt(null);
+            switch (targetType) {
+                case ColumnType.BOOLEAN:
+                case ColumnType.SHORT:
+                case ColumnType.INT:
+                case ColumnType.LONG:
+                case ColumnType.FLOAT:
+                case ColumnType.DOUBLE:
+                case ColumnType.TIMESTAMP:
+                case ColumnType.DATE:
+                    return targetType;
+            }
         }
-        if (!targetTypeFn.isConstant()) {
-            throw SqlException.position(position).put("target type must be constant");
-        }
-        // TODO: This isn't _really_ a int, it's supposed to be a type constant.
-        //       Make it so in the parser.
-        if (targetTypeFn.getType() != ColumnType.INT) {
-            throw SqlException.position(position).put("target type must be INT");
-        }
-        final int targetType = targetTypeFn.getInt(null);
-        switch (targetType) {
-            case ColumnType.BOOLEAN:
-            case ColumnType.SHORT:
-            case ColumnType.INT:
-            case ColumnType.LONG:
-            case ColumnType.FLOAT:
-            case ColumnType.DOUBLE:
-            case ColumnType.VARCHAR:
-                return targetType;
-            default:
-                throw SqlException.position(position).put("unsupported target type: ").put(targetType);
-        }
+        throw SqlException.position(position).put("please use json_extract(json,path)::type semantic");
     }
 }

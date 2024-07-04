@@ -43,17 +43,17 @@ public class JsonExtractPrimitiveFunction implements ScalarFunction {
     private final int columnType;
     private final Function json;
     private final Function path;
-    private final int position;
+    private final int jsonPosition;
     private final JsonExtractSupportingState state;
     private DirectUtf8Sink pointer;
 
     public JsonExtractPrimitiveFunction(
-            int position,
+            int jsonPposition,
             int columnType,
             Function json,
             Function path
     ) {
-        this.position = position;
+        this.jsonPosition = jsonPposition;
         this.columnType = columnType;
         this.json = json;
         this.path = path;
@@ -109,7 +109,7 @@ public class JsonExtractPrimitiveFunction implements ScalarFunction {
             return Double.NaN;
         }
         final double d = state.parser.queryPointerDouble(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult);
-        state.throwIfInError(position);
+        state.throwIfInError(jsonPosition);
         return d;
     }
 
