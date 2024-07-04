@@ -58,6 +58,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 PropertyKey.PG_SELECT_CACHE_ENABLED + "=true",
                 PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD + "=1",
                 PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD + "=100",
+                PropertyKey.QUERY_TIMEOUT_SEC + "=120",
                 // JIT doesn't support ARM, and we want exec plans to be the same.
                 PropertyKey.CAIRO_SQL_JIT_MODE + "=off",
                 PropertyKey.DEBUG_ENABLE_TEST_FACTORIES + "=true"
