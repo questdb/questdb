@@ -96,7 +96,7 @@ class JsonExtractVarcharFunction extends VarcharFunction {
         if (json != null && pointer != null) {
             assert state.destSink != null;
             state.destSink.clear();
-            state.parser.queryPointerVarchar(
+            state.parser.queryPointerUtf8(
                     state.initPaddedJson(json),
                     pointer,
                     state.simdJsonResult,

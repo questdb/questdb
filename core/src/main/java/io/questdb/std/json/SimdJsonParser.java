@@ -145,7 +145,7 @@ public class SimdJsonParser implements QuietCloseable {
         );
     }
 
-    public void queryPointerVarchar(
+    public void queryPointerUtf8(
             DirectUtf8Sequence json,
             DirectUtf8Sequence pointer,
             SimdJsonResult result,
@@ -158,7 +158,47 @@ public class SimdJsonParser implements QuietCloseable {
             throw new IllegalArgumentException("Destination buffer is too small");
         }
         assert dest.capacity() - dest.size() >= maxSize;  // Without this guarantee we'd need to close `NativeByteSink.close`.
-        queryPointerVarchar(
+        queryPointerUtf8(
+                impl,
+                json.ptr(),
+                json.size(),
+                json.tailPadding(),
+                pointer.ptr(),
+                pointer.size(),
+                result.ptr(),
+                nativeByteSinkPtr,
+                maxSize
+        );
+    }
+
+    /**
+     * Generic call that can access any JSON value.
+     * Consult the `result`'s `getError()`, `getType()` and `getNumberType()` for processing the data.
+     * <p>
+     * For example, if the path points to a JSON number extracted as a double:
+     * * `result.getError()` will be `SimdJsonError.SUCCESS`
+     * * `result.getType()` will be `SimdJsonType.NUMBER`
+     * * `result.getNumberType()` will be `SimdJsonNumberType.FLOATING_POINT_NUMBER`
+     * * `queryPointerValue`'s returned long needs to be converted to a double by calling `Double.longBitsToDouble`.
+     * <p>
+     * On a `null`, the `result.getType()` will be `SimdJsonType.NULL` and returned value 0.
+     * <p>
+     * On a boolean, the `result.getType()` will be `SimdJsonType.BOOLEAN` and returned value reliably 0 or 1.
+     */
+    public long queryPointerValue(
+            DirectUtf8Sequence json,
+            DirectUtf8Sequence pointer,
+            SimdJsonResult result,
+            DirectUtf8Sink dest,
+            int maxSize
+    ) {
+        assert json.tailPadding() >= SIMDJSON_PADDING;
+        final long nativeByteSinkPtr = dest.borrowDirectByteSink().ptr();
+        if (!(dest.capacity() - dest.size() >= maxSize)) {
+            throw new IllegalArgumentException("Destination buffer is too small");
+        }
+        assert dest.capacity() - dest.size() >= maxSize;  // Without this guarantee we'd need to close `NativeByteSink.close`.
+        return queryPointerValue(
                 impl,
                 json.ptr(),
                 json.size(),
@@ -233,7 +273,19 @@ public class SimdJsonParser implements QuietCloseable {
             long resultPtr
     );
 
-    private static native void queryPointerVarchar(
+    private static native void queryPointerUtf8(
+            long impl,
+            long jsonPtr,
+            long jsonLen,
+            long jsonTailPadding,
+            long pointerPtr,
+            long pointerLen,
+            long resultPtr,
+            long destPtr,
+            int maxSize
+    );
+
+    private static native long queryPointerValue(
             long impl,
             long jsonPtr,
             long jsonLen,

@@ -32,8 +32,9 @@ import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
 public class SimdJsonResult implements QuietCloseable {
-    private static final int JSON_RESULT_STRUCT_SIZE = 8;
+    private static final int JSON_RESULT_STRUCT_SIZE = 12;
     private static final int JSON_RESULT_STRUCT_TYPE_OFFSET = 4;
+    private static final int JSON_RESULT_STRUCT_NUMBER_TYPE_OFFSET = JSON_RESULT_STRUCT_TYPE_OFFSET + 4;
     private long impl;
 
     public SimdJsonResult() {
@@ -53,6 +54,7 @@ public class SimdJsonResult implements QuietCloseable {
     public void clear() {
         Unsafe.getUnsafe().putInt(impl, 0);
         Unsafe.getUnsafe().putInt(impl + JSON_RESULT_STRUCT_TYPE_OFFSET, 0);
+        Unsafe.getUnsafe().putInt(impl + JSON_RESULT_STRUCT_NUMBER_TYPE_OFFSET, 0);
     }
 
     @Override
@@ -71,6 +73,11 @@ public class SimdJsonResult implements QuietCloseable {
     // See constants in `SimdJsonType` for possible values.
     public int getType() {
         return Unsafe.getUnsafe().getInt(impl + JSON_RESULT_STRUCT_TYPE_OFFSET);
+    }
+
+    // See constants in `SimdJsonNumberType` for possible values.
+    public int getNumberType() {
+        return Unsafe.getUnsafe().getInt(impl + JSON_RESULT_STRUCT_NUMBER_TYPE_OFFSET);
     }
 
     /**
