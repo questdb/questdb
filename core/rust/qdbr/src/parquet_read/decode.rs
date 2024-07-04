@@ -1,4 +1,7 @@
-use crate::parquet_read::column_sink::{BinaryColumnSink, FixedColumnSink, PhysicalIntegerColumnSink, Pushable, ReverseFixedColumnSink, StringColumnSink, VarcharColumnSink};
+use crate::parquet_read::column_sink::{
+    BinaryColumnSink, FixedColumnSink, PhysicalIntegerColumnSink, Pushable, ReverseFixedColumnSink,
+    StringColumnSink, VarcharColumnSink,
+};
 use crate::parquet_read::slicer::{
     decode_rle, DataPageFixedSlicer, DeltaLengthArraySlicer, DictionarySlicer,
 };
@@ -197,7 +200,8 @@ pub fn decoder_page(
                     )?;
                     Ok(row_count)
                 }
-                (None, ColumnType::Int) | (Some(PrimitiveLogicalType::Integer(IntegerType::Int32)), ColumnType::Int) => {
+                (None, ColumnType::Int)
+                | (Some(PrimitiveLogicalType::Integer(IntegerType::Int32)), ColumnType::Int) => {
                     decode_page(
                         version,
                         page,
@@ -216,7 +220,8 @@ pub fn decoder_page(
         },
         (PhysicalType::Int64, logical_type) => match page.encoding() {
             Encoding::Plain => match (logical_type, column_type) {
-                (None, ColumnType::Long) | (Some(PrimitiveLogicalType::Integer(IntegerType::Int64)), ColumnType::Long) => {
+                (None, ColumnType::Long)
+                | (Some(PrimitiveLogicalType::Integer(IntegerType::Int64)), ColumnType::Long) => {
                     decode_page(
                         version,
                         page,
@@ -229,14 +234,20 @@ pub fn decoder_page(
                     )?;
                     Ok(row_count)
                 }
-                (Some(PrimitiveLogicalType::Timestamp {
-                          unit: _unit,
-                          is_adjusted_to_utc: _is_adjusted_to_utc,
-                      }), ColumnType::Timestamp) |
-                (Some(PrimitiveLogicalType::Timestamp {
-                          unit: _unit,
-                          is_adjusted_to_utc: _is_adjusted_to_utc,
-                      }), ColumnType::Date) => {
+                (
+                    Some(PrimitiveLogicalType::Timestamp {
+                        unit: _unit,
+                        is_adjusted_to_utc: _is_adjusted_to_utc,
+                    }),
+                    ColumnType::Timestamp,
+                )
+                | (
+                    Some(PrimitiveLogicalType::Timestamp {
+                        unit: _unit,
+                        is_adjusted_to_utc: _is_adjusted_to_utc,
+                    }),
+                    ColumnType::Date,
+                ) => {
                     decode_page(
                         version,
                         page,
@@ -271,22 +282,24 @@ pub fn decoder_page(
                 _ => Err(encoding_error),
             }
         }
-        (PhysicalType::FixedLenByteArray(32), _logical_type) => match (page.encoding(), column_type) {
-            (Encoding::Plain, ColumnType::Long256) => {
-                decode_page(
-                    version,
-                    page,
-                    row_count,
-                    &mut FixedColumnSink::new(
-                        &mut DataPageFixedSlicer::<32>::new(values_buffer, row_count),
-                        buffers,
-                        LONG256_NULL,
-                    ),
-                )?;
-                Ok(row_count)
+        (PhysicalType::FixedLenByteArray(32), _logical_type) => {
+            match (page.encoding(), column_type) {
+                (Encoding::Plain, ColumnType::Long256) => {
+                    decode_page(
+                        version,
+                        page,
+                        row_count,
+                        &mut FixedColumnSink::new(
+                            &mut DataPageFixedSlicer::<32>::new(values_buffer, row_count),
+                            buffers,
+                            LONG256_NULL,
+                        ),
+                    )?;
+                    Ok(row_count)
+                }
+                _ => Err(encoding_error),
             }
-            _ => Err(encoding_error),
-        },
+        }
         (PhysicalType::ByteArray, Some(PrimitiveLogicalType::String)) => {
             let encoding = page.encoding();
 
@@ -907,9 +920,9 @@ mod tests {
         null_value: [u8; N],
         to_le_bytes: F,
     ) -> ColumnBuffers
-        where
-            T: From<i16> + Copy,
-            F: Fn(T) -> [u8; N],
+    where
+        T: From<i16> + Copy,
+        F: Fn(T) -> [u8; N],
     {
         let value_size = N;
         let mut buff = vec![0u8; row_count * value_size];
@@ -1108,7 +1121,7 @@ mod tests {
             null(),
             0,
         )
-            .unwrap()
+        .unwrap()
     }
 
     fn create_var_column(
@@ -1132,7 +1145,7 @@ mod tests {
             null(),
             0,
         )
-            .unwrap()
+        .unwrap()
     }
 
     fn create_symbol_column(
@@ -1157,6 +1170,6 @@ mod tests {
             offsets.as_ptr(),
             offsets.len(),
         )
-            .unwrap()
+        .unwrap()
     }
 }

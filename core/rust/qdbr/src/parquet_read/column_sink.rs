@@ -368,7 +368,9 @@ impl<T: DataPageSlicer> Pushable for BinaryColumnSink<'_, T> {
     #[inline]
     fn push(&mut self) {
         let slice = self.slicer.next();
-        self.buffers.data_vec.extend_from_slice(slice.len().to_le_bytes().as_ref());
+        self.buffers
+            .data_vec
+            .extend_from_slice(slice.len().to_le_bytes().as_ref());
         self.buffers.data_vec.extend_from_slice(slice);
 
         // set aux pointer
