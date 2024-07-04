@@ -205,7 +205,7 @@ public class NetTest {
             int clientFd = Net.socketTcp(true);
             long sockAddr = Net.sockaddr("127.0.0.1", port);
             TestUtils.assertConnect(clientFd, sockAddr);
-            Assert.assertEquals(msgLen, Net.send(clientFd, msgSink.ptr(), msgLen));
+            Assert.assertEquals(msgLen, Net.send(clientFd, msgSink.$().ptr(), msgLen));
             Net.close(clientFd);
             Net.freeSockAddr(sockAddr);
 

@@ -274,7 +274,6 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
 
     @Override
     public long ptr() {
-        $();
         return headPtr;
     }
 

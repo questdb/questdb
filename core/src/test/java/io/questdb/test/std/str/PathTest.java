@@ -127,7 +127,7 @@ public class PathTest {
                 Path p0 = new Path().put("sumerians");
                 Path p1 = new Path(1)
         ) {
-            p1.concat(p0.ptr());
+            p1.concat(p0.$().ptr());
             Assert.assertTrue(p0.isAscii());
             Assert.assertFalse(p1.isAscii());
             Assert.assertEquals(p0.toString(), p1.toString());
@@ -140,7 +140,7 @@ public class PathTest {
                 Path p0 = new Path().put("тест");
                 Path p1 = new Path(1)
         ) {
-            p1.concat(p0.ptr());
+            p1.concat(p0.$().ptr());
             Assert.assertFalse(p0.isAscii());
             Assert.assertFalse(p1.isAscii());
             Assert.assertEquals(p0.toString(), p1.toString());
