@@ -2803,19 +2803,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             offsetFuncPos = 0;
         }
 
-        if (model.getSampleByTo() != null) {
-            sampleFromFunc = functionParser.parseFunction(model.getSampleByTo(), EmptyRecordMetadata.INSTANCE, executionContext);
-            sampleFromFuncPos = model.getSampleByTo().position;
+        if (model.getSampleByFrom() != null) {
+            sampleFromFunc = functionParser.parseFunction(model.getSampleByFrom(), EmptyRecordMetadata.INSTANCE, executionContext);
+            sampleFromFuncPos = model.getSampleByFrom().position;
             coerceRuntimeConstantType(sampleFromFunc, ColumnType.TIMESTAMP, executionContext, "from lower bound must be a constant expression convertible to a TIMESTAMP", sampleFromFuncPos);
         } else {
             sampleFromFunc = TimestampConstant.NULL;
             sampleFromFuncPos = 0;
         }
 
-        if (model.getSampleByFrom() != null) {
-            sampleToFunc = functionParser.parseFunction(model.getSampleByFrom(), EmptyRecordMetadata.INSTANCE, executionContext);
-            sampleToFuncPos = model.getSampleByFrom().position;
-            coerceRuntimeConstantType(sampleToFunc, ColumnType.TIMESTAMP, executionContext, "from upper bound must be a constant expression convertible to a TIMESTAMP", sampleToFuncPos);
+        if (model.getSampleByTo() != null) {
+            sampleToFunc = functionParser.parseFunction(model.getSampleByTo(), EmptyRecordMetadata.INSTANCE, executionContext);
+            sampleToFuncPos = model.getSampleByTo().position;
+            coerceRuntimeConstantType(sampleToFunc, ColumnType.TIMESTAMP, executionContext, "to upper bound must be a constant expression convertible to a TIMESTAMP", sampleToFuncPos);
         } else {
             sampleToFunc = TimestampConstant.NULL;
             sampleToFuncPos = 0;
