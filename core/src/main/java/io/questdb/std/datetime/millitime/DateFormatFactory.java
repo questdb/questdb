@@ -32,6 +32,7 @@ import java.util.function.Function;
 
 
 public class DateFormatFactory {
+    public static final DateFormatFactory INSTANCE = new DateFormatFactory();
     private final static ThreadLocal<DateFormatCompiler> tlCompiler = ThreadLocal.withInitial(DateFormatCompiler::new);
     private static final Function<CharSequence, DateFormat> mapper = DateFormatFactory::map;
     private final ConcurrentHashMap<DateFormat> cache = new ConcurrentHashMap<>();
