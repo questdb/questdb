@@ -184,6 +184,8 @@ public class SimdJsonParser implements QuietCloseable {
      * On a `null`, the `result.getType()` will be `SimdJsonType.NULL` and returned value 0.
      * <p>
      * On a boolean, the `result.getType()` will be `SimdJsonType.BOOLEAN` and returned value reliably 0 or 1.
+     * <p>
+     * Arrays and objects are returned as raw JSON strings.
      */
     public long queryPointerValue(
             DirectUtf8Sequence json,
