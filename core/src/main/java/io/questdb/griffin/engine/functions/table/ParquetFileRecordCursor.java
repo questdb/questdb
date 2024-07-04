@@ -79,7 +79,7 @@ public class ParquetFileRecordCursor implements NoRandomAccessRecordCursor {
     public void of(SqlExecutionContext executionContext) {
         try {
             // Reopen the file, it could have changed
-            decoder.of(path);
+            decoder.of(path.$());
             // TODO: compare metadata hasn't changed.
             toTop();
         } catch (DataUnavailableException e) {

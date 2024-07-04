@@ -81,7 +81,7 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                 PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
                 PartitionEncoder.encode(partitionDescriptor, path);
 
-                partitionDecoder.of(path);
+                partitionDecoder.of(path.$());
                 Assert.assertEquals(24, partitionDecoder.getMetadata().columnCount());
                 Assert.assertEquals(rows, partitionDecoder.getMetadata().rowCount());
                 Assert.assertEquals(1, partitionDecoder.getMetadata().rowGroupCount());

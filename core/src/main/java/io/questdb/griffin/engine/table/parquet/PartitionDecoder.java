@@ -32,6 +32,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectString;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 public class PartitionDecoder implements QuietCloseable {
@@ -112,7 +113,7 @@ public class PartitionDecoder implements QuietCloseable {
         return metadata;
     }
 
-    public void of(@Transient Path srcPath) {
+    public void of(@Transient LPSZ srcPath) {
         destroy();
         this.fd = TableUtils.openRO(ff, srcPath, LOG);
         try {
