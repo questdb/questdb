@@ -35,7 +35,7 @@ public class DateLocaleFactory {
 
     public static final DateLocaleFactory INSTANCE = new DateLocaleFactory(TimeZoneRuleFactory.INSTANCE);
     private final ConcurrentHashMap<DateLocale> dateLocales = new ConcurrentHashMap<>();
-    private final DateLocale dummyLocale = new DateLocale(new DateFormatSymbols(), TimeZoneRuleFactory.INSTANCE);
+    private final DateLocale dummyLocale = new DateLocale("en-quest", new DateFormatSymbols(), TimeZoneRuleFactory.INSTANCE);
     private final TimeZoneRuleFactory timeZoneRuleFactory;
     private final BiFunction<CharSequence, DateLocale, DateLocale> computeDateLocaleBiFunc = this::computeDateLocale;
 
@@ -71,6 +71,6 @@ public class DateLocaleFactory {
             return val;
         }
         Locale locale = Locale.forLanguageTag(key.toString());
-        return new DateLocale(new DateFormatSymbols(locale), timeZoneRuleFactory);
+        return new DateLocale(key.toString(), new DateFormatSymbols(locale), timeZoneRuleFactory);
     }
 }
