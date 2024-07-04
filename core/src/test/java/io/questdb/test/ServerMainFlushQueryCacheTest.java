@@ -49,7 +49,7 @@ public class ServerMainFlushQueryCacheTest extends AbstractBootstrapTest {
         TestUtils.unchecked(() -> createDummyConfiguration(
                 PropertyKey.METRICS_ENABLED + "=true",
                 PropertyKey.PG_SELECT_CACHE_ENABLED + "=true",
-                PropertyKey.HTTP_QUERY_CACHE_ENABLED + "=true"
+                PropertyKey.PG_WORKER_COUNT + "=4"
         ));
         dbPath.parent().$();
     }
@@ -81,7 +81,8 @@ public class ServerMainFlushQueryCacheTest extends AbstractBootstrapTest {
                     statement.execute("select flush_query_cache();");
                 }
 
-                TestUtils.assertEventually(() -> Assert.assertEquals(0, metrics.pgWire().cachedSelectsGauge().getValue()));
+                // Only the select flush_query_cache(); query may remain in the cache.
+                TestUtils.assertEventually(() -> Assert.assertTrue(metrics.pgWire().cachedSelectsGauge().getValue() <= 1));
             }
         }
     }
