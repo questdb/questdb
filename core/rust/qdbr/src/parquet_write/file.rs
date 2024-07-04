@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::io::Write;
 
 use parquet2::compression::CompressionOptions;
@@ -6,9 +7,10 @@ use parquet2::metadata::{SchemaDescriptor, SortingColumn};
 use parquet2::page::{CompressedPage, Page};
 use parquet2::schema::types::{ParquetType, PhysicalType, PrimitiveType};
 use parquet2::write::{
-    Compressor, DynIter, DynStreamingIterator, FileWriter, RowGroupIter, Version,
+    compress, Compressor, DynIter, DynStreamingIterator, FileWriter, RowGroupIter, Version,
     WriteOptions as FileWriteOptions,
 };
+use parquet2::FallibleStreamingIterator;
 
 use crate::parquet_write::schema::{
     to_encodings, to_parquet_schema, Column, ColumnType, Partition,
@@ -71,7 +73,7 @@ impl<W: Write> ParquetWriter<W> {
             data_page_size: None,
             sorting_columns: None,
             version: Version::V1,
-            parallel: true,
+            parallel: false,
         }
     }
 
@@ -218,6 +220,31 @@ impl<W: Write> ChunkedWriter<W> {
     }
 }
 
+struct CompressedPages {
+    pages: VecDeque<ParquetResult<CompressedPage>>,
+    current: Option<CompressedPage>,
+}
+
+impl CompressedPages {
+    fn new(pages: VecDeque<ParquetResult<CompressedPage>>) -> Self {
+        Self { pages, current: None }
+    }
+}
+
+impl FallibleStreamingIterator for CompressedPages {
+    type Item = CompressedPage;
+    type Error = ParquetError;
+
+    fn advance(&mut self) -> Result<(), Self::Error> {
+        self.current = self.pages.pop_front().transpose()?;
+        Ok(())
+    }
+
+    fn get(&self) -> Option<&Self::Item> {
+        self.current.as_ref()
+    }
+}
+
 fn create_row_group(
     partition: &Partition,
     offset: usize,
@@ -227,30 +254,37 @@ fn create_row_group(
     options: WriteOptions,
     parallel: bool,
 ) -> ParquetResult<RowGroupIter<'static, ParquetError>> {
-    let col_to_iter = move |((column, column_type), encoding): (
-        (&Column, &ParquetType),
-        &Encoding,
-    )|
-          -> ParquetResult<
-        DynStreamingIterator<CompressedPage, ParquetError>,
-    > {
-        let encoded_column = column_chunk_to_pages(
-            *column,
-            column_type.clone(),
-            offset,
-            length,
-            options,
-            *encoding,
-        )
-        .expect("encoded_column");
-
-        Ok(DynStreamingIterator::new(Compressor::new(
-            encoded_column,
-            options.compression,
-            vec![],
-        )))
-    };
     let columns = if parallel {
+        let col_to_iter = move |((column, column_type), encoding): (
+            (&Column, &ParquetType),
+            &Encoding,
+        )|
+              -> ParquetResult<
+            DynStreamingIterator<CompressedPage, ParquetError>,
+        > {
+            let encoded_column = column_chunk_to_pages(
+                *column,
+                column_type.clone(),
+                offset,
+                length,
+                options,
+                *encoding,
+            )
+            .expect("encoded_column");
+            let compressed_pages = encoded_column
+                .into_iter()
+                .map(|page| {
+                    let page = page?;
+                    let page = compress(page, vec![], options.compression)?;
+                    Ok(Ok(page))
+                })
+                .collect::<ParquetResult<VecDeque<_>>>()?;
+
+            Ok(DynStreamingIterator::new(CompressedPages::new(
+                compressed_pages,
+            )))
+        };
+
         POOL.install(|| {
             partition
                 .columns
@@ -261,6 +295,29 @@ fn create_row_group(
                 .collect::<Vec<_>>()
         })
     } else {
+        let col_to_iter = move |((column, column_type), encoding): (
+            (&Column, &ParquetType),
+            &Encoding,
+        )|
+              -> ParquetResult<
+            DynStreamingIterator<CompressedPage, ParquetError>,
+        > {
+            let encoded_column = column_chunk_to_pages(
+                *column,
+                column_type.clone(),
+                offset,
+                length,
+                options,
+                *encoding,
+            )
+            .expect("encoded_column");
+            Ok(DynStreamingIterator::new(Compressor::new(
+                encoded_column,
+                options.compression,
+                vec![],
+            )))
+        };
+
         partition
             .columns
             .iter()

@@ -41,7 +41,6 @@ pub static POOL: Lazy<ThreadPool> = Lazy::new(|| {
                 .unwrap_or(std::num::NonZeroUsize::new(1).unwrap())
                 .get()
         });
-    eprintln!("Using {} threads", num_threads);
     ThreadPoolBuilder::new()
         .num_threads(num_threads)
         .thread_name(move |i| format!("questdb-parquet-{}", i))
