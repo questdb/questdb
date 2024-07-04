@@ -343,3 +343,77 @@ impl<'a, const N: usize, T: DataPageSlicer> ReverseFixedColumnSink<'a, N, T> {
         Self { slicer, buffers, null_value }
     }
 }
+
+pub struct BinaryColumnSink<'a, T: DataPageSlicer> {
+    slicer: &'a mut T,
+    buffers: &'a mut ColumnChunkBuffers,
+}
+
+impl<T: DataPageSlicer> Pushable for BinaryColumnSink<'_, T> {
+    fn reserve(&mut self) {
+        let count = self.slicer.count();
+        if count > 0 {
+            self.buffers.aux_vec.reserve((count + 1) * STRING_AUX_SIZE);
+            if self.buffers.aux_vec.is_empty() {
+                self.buffers
+                    .aux_vec
+                    .extend_from_slice(0u64.to_le_bytes().as_ref());
+            }
+        }
+        self.buffers
+            .data_vec
+            .reserve(self.slicer.data_size() + size_of::<u64>() * count);
+    }
+
+    #[inline]
+    fn push(&mut self) {
+        let slice = self.slicer.next();
+        self.buffers.data_vec.extend_from_slice(slice.len().to_le_bytes().as_ref());
+        self.buffers.data_vec.extend_from_slice(slice);
+
+        // set aux pointer
+        self.buffers
+            .aux_vec
+            .extend_from_slice(self.buffers.data_vec.len().to_le_bytes().as_ref());
+    }
+
+    #[inline]
+    fn push_slice(&mut self, count: usize) {
+        for _ in 0..count {
+            self.push();
+        }
+    }
+
+    #[inline]
+    fn push_null(&mut self) {
+        self.buffers
+            .data_vec
+            .extend_from_slice((-1i64).to_le_bytes().as_ref());
+        // set aux pointer
+        self.buffers
+            .aux_vec
+            .extend_from_slice(self.buffers.data_vec.len().to_le_bytes().as_ref());
+    }
+
+    #[inline]
+    fn push_nulls(&mut self, count: usize) {
+        // TODO: optimise
+        for _ in 0..count {
+            self.push_null();
+        }
+    }
+
+    fn skip(&mut self, count: usize) {
+        self.slicer.skip(count);
+    }
+
+    fn result(&self) -> ParquetResult<()> {
+        Ok(())
+    }
+}
+
+impl<'a, T: DataPageSlicer> BinaryColumnSink<'a, T> {
+    pub fn new(slicer: &'a mut T, buffers: &'a mut ColumnChunkBuffers) -> Self {
+        Self { slicer, buffers }
+    }
+}

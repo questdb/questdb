@@ -43,23 +43,19 @@ public class ParquetFileRecordCursor implements NoRandomAccessRecordCursor {
     private final LongList dataPtrs = new LongList();
     private final PartitionDecoder decoder;
     private final RecordMetadata metadata;
-    private final Path path;
     private final ParquetRecord record;
     private int currentRowInRowGroup;
     private int rowGroup;
     private long rowGroupRowCount;
 
-    public ParquetFileRecordCursor(FilesFacade ff, @Transient CharSequence path, RecordMetadata metadata) {
-        this.path = new Path().of(path);
+    public ParquetFileRecordCursor(FilesFacade ff, RecordMetadata metadata) {
         this.metadata = metadata;
         this.decoder = new PartitionDecoder(ff);
         this.record = new ParquetRecord();
     }
 
-    @Override
     public void close() {
         Misc.free(decoder);
-        Misc.free(path);
     }
 
     @Override
@@ -76,10 +72,10 @@ public class ParquetFileRecordCursor implements NoRandomAccessRecordCursor {
         return switchToNextRowGroup();
     }
 
-    public void of(SqlExecutionContext executionContext) {
+    public void of(SqlExecutionContext executionContext, LPSZ path) {
         try {
             // Reopen the file, it could have changed
-            decoder.of(path.$());
+            decoder.of(path);
             // TODO: compare metadata hasn't changed.
             toTop();
         } catch (DataUnavailableException e) {
@@ -131,6 +127,7 @@ public class ParquetFileRecordCursor implements NoRandomAccessRecordCursor {
         private final Long256Impl long256B = new Long256Impl();
         private final Utf8SplitString utf8SplitViewA = new Utf8SplitString(false);
         private final Utf8SplitString utf8SplitViewB = new Utf8SplitString(false);
+        private final DirectBinarySequence binarySequence = new DirectBinarySequence();
 
         @Override
         public boolean getBool(int col) {
@@ -240,6 +237,27 @@ public class ParquetFileRecordCursor implements NoRandomAccessRecordCursor {
             long dataPtr = dataPtrs.get(col);
             long data_offset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
             return getStr(dataPtr + data_offset, directCharSequenceB);
+        }
+
+        @Override
+        public BinarySequence getBin(int col) {
+            long auxPtr = auxPtrs.get(col);
+            long dataPtr = dataPtrs.get(col);
+            long data_offset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
+            long len = Unsafe.getUnsafe().getLong(dataPtr + data_offset);
+            if (len != TableUtils.NULL_LEN) {
+                binarySequence.of(dataPtr + data_offset + 8L, len);
+                return binarySequence;
+            }
+            return null;
+        }
+
+        @Override
+        public long getBinLen(int col) {
+            long auxPtr = auxPtrs.get(col);
+            long dataPtr = dataPtrs.get(col);
+            long data_offset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
+            return Unsafe.getUnsafe().getLong(dataPtr + data_offset);
         }
 
         @Override

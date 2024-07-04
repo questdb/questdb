@@ -24,7 +24,10 @@
 
 package io.questdb.test.griffin.engine.table.parquet;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
@@ -62,6 +65,7 @@ public class ParquetFileReaderFunctionTest extends AbstractCairoTest {
                     " rnd_geohash(8) a_geo_short," +
                     " rnd_geohash(16) a_geo_int," +
                     " rnd_geohash(32) a_geo_long," +
+                    " rnd_bin(10, 20, 2) a_bin," +
                     " rnd_timestamp('2015','2016',2) as a_ts," +
                     " from long_sequence(" + rows + "))");
 
@@ -96,9 +100,45 @@ public class ParquetFileReaderFunctionTest extends AbstractCairoTest {
                         "cast(a_geo_short as geohash(8b)) as a_geo_short," +
                         "cast(a_geo_int as geohash(16b)) as a_geo_int," +
                         "cast(a_geo_long as geohash(32b)) as a_geo_long," +
+                        "a_bin," +
                         "a_ts," +
                         " from read_parquet('").put(path).put("')");
                 assertSqlCursors("x", sink);
+            }
+        });
+    }
+
+    @Test
+    public void testFileDeleted() throws Exception {
+        assertMemoryLeak(() -> {
+            final long rows = 10;
+            ddl("create table x as (select" +
+                    " case when x % 2 = 0 then cast(x as int) end id," +
+                    " rnd_timestamp('2015','2016',2) as a_ts," +
+                    " from long_sequence(" + rows + "))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("x.parquet").$();
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+
+                sink.clear();
+                sink.put("select * from read_parquet('").put(path).put("')");
+
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    try (RecordCursorFactory factory2 = compiler.compile(sink, sqlExecutionContext).getRecordCursorFactory()) {
+                        engine.getConfiguration().getFilesFacade().remove(path.$());
+                        try (RecordCursor cursor2 = factory2.getCursor(sqlExecutionContext)) {
+                            Assert.fail();
+                        } catch (CairoException e) {
+                            TestUtils.assertContains(e.getMessage(), "could not open read-only");
+                        }
+                    }
+                }
             }
         });
     }

@@ -1,7 +1,4 @@
-use crate::parquet_read::column_sink::{
-    FixedColumnSink, PhysicalIntegerColumnSink, Pushable, ReverseFixedColumnSink, StringColumnSink,
-    VarcharColumnSink,
-};
+use crate::parquet_read::column_sink::{BinaryColumnSink, FixedColumnSink, PhysicalIntegerColumnSink, Pushable, ReverseFixedColumnSink, StringColumnSink, VarcharColumnSink};
 use crate::parquet_read::slicer::{
     decode_rle, DataPageFixedSlicer, DeltaLengthArraySlicer, DictionarySlicer,
 };
@@ -165,14 +162,15 @@ pub fn decoder_page(
     let (_rep_levels, _, values_buffer) = split_buffer(page)?;
     let row_count = page.header().num_values();
 
-    match (
+    let encoding_error = anyhow!("encoding not supported");
+    let decoding_result = match (
         page.descriptor.primitive_type.physical_type,
         page.descriptor.primitive_type.logical_type,
     ) {
         (PhysicalType::Int32, logical_type) => match page.encoding() {
-            Encoding::Plain => match logical_type {
-                Some(PrimitiveLogicalType::Integer(IntegerType::Int16))
-                | Some(PrimitiveLogicalType::Integer(IntegerType::UInt16)) => {
+            Encoding::Plain => match (logical_type, column_type) {
+                (Some(PrimitiveLogicalType::Integer(IntegerType::Int16)), ColumnType::Short)
+                | (Some(PrimitiveLogicalType::Integer(IntegerType::UInt16)), ColumnType::Char) => {
                     decode_page(
                         version,
                         page,
@@ -185,8 +183,8 @@ pub fn decoder_page(
                     )?;
                     Ok(row_count)
                 }
-                Some(PrimitiveLogicalType::Integer(IntegerType::Int8))
-                | Some(PrimitiveLogicalType::Integer(IntegerType::UInt8)) => {
+                (Some(PrimitiveLogicalType::Integer(IntegerType::Int8)), ColumnType::Byte)
+                | (Some(PrimitiveLogicalType::Integer(IntegerType::UInt8)), ColumnType::Byte) => {
                     decode_page(
                         version,
                         page,
@@ -199,7 +197,7 @@ pub fn decoder_page(
                     )?;
                     Ok(row_count)
                 }
-                None | Some(PrimitiveLogicalType::Integer(IntegerType::Int32)) => {
+                (None, ColumnType::Int) | (Some(PrimitiveLogicalType::Integer(IntegerType::Int32)), ColumnType::Int) => {
                     decode_page(
                         version,
                         page,
@@ -212,21 +210,13 @@ pub fn decoder_page(
                     )?;
                     Ok(row_count)
                 }
-                _ => Err(anyhow!(format!(
-                    "encoding not supported for type {:?}, {:?}",
-                    page.encoding(),
-                    logical_type
-                ))),
+                _ => Err(encoding_error),
             },
-            _ => Err(anyhow!(format!(
-                "encoding {:?} not supported for type {:?}",
-                page.encoding(),
-                logical_type
-            ))),
+            _ => Err(encoding_error),
         },
         (PhysicalType::Int64, logical_type) => match page.encoding() {
-            Encoding::Plain => match logical_type {
-                None | Some(PrimitiveLogicalType::Integer(IntegerType::Int64)) => {
+            Encoding::Plain => match (logical_type, column_type) {
+                (None, ColumnType::Long) | (Some(PrimitiveLogicalType::Integer(IntegerType::Int64)), ColumnType::Long) => {
                     decode_page(
                         version,
                         page,
@@ -239,10 +229,14 @@ pub fn decoder_page(
                     )?;
                     Ok(row_count)
                 }
-                Some(PrimitiveLogicalType::Timestamp {
-                    unit: _unit,
-                    is_adjusted_to_utc: _is_adjusted_to_utc,
-                }) => {
+                (Some(PrimitiveLogicalType::Timestamp {
+                          unit: _unit,
+                          is_adjusted_to_utc: _is_adjusted_to_utc,
+                      }), ColumnType::Timestamp) |
+                (Some(PrimitiveLogicalType::Timestamp {
+                          unit: _unit,
+                          is_adjusted_to_utc: _is_adjusted_to_utc,
+                      }), ColumnType::Date) => {
                     decode_page(
                         version,
                         page,
@@ -255,21 +249,13 @@ pub fn decoder_page(
                     )?;
                     Ok(row_count)
                 }
-                _ => Err(anyhow!(format!(
-                    "encoding not supported for type {:?}, {:?}",
-                    page.encoding(),
-                    logical_type
-                ))),
+                _ => Err(encoding_error),
             },
-            _ => Err(anyhow!(format!(
-                "encoding {:?} not supported for type {:?}",
-                page.encoding(),
-                logical_type
-            ))),
+            _ => Err(encoding_error),
         },
         (PhysicalType::FixedLenByteArray(16), Some(PrimitiveLogicalType::Uuid)) => {
-            match page.encoding() {
-                Encoding::Plain => {
+            match (page.encoding(), column_type) {
+                (Encoding::Plain, ColumnType::Uuid) => {
                     decode_page(
                         version,
                         page,
@@ -282,14 +268,11 @@ pub fn decoder_page(
                     )?;
                     Ok(row_count)
                 }
-                _ => Err(anyhow!(format!(
-                    "encoding {:?} not supported for type Uuid",
-                    page.encoding()
-                ))),
+                _ => Err(encoding_error),
             }
         }
-        (PhysicalType::FixedLenByteArray(32), _logical_type) => match page.encoding() {
-            Encoding::Plain => {
+        (PhysicalType::FixedLenByteArray(32), _logical_type) => match (page.encoding(), column_type) {
+            (Encoding::Plain, ColumnType::Long256) => {
                 decode_page(
                     version,
                     page,
@@ -302,10 +285,7 @@ pub fn decoder_page(
                 )?;
                 Ok(row_count)
             }
-            _ => Err(anyhow!(format!(
-                "encoding {:?} not supported for type Uuid",
-                page.encoding()
-            ))),
+            _ => Err(encoding_error),
         },
         (PhysicalType::ByteArray, Some(PrimitiveLogicalType::String)) => {
             let encoding = page.encoding();
@@ -355,7 +335,23 @@ pub fn decoder_page(
                     }
                     Ok(row_count)
                 }
-                _ => Err(anyhow!("encoding not supported")),
+                _ => Err(encoding_error),
+            }
+        }
+        (PhysicalType::ByteArray, None) => {
+            let encoding = page.encoding();
+            match (encoding, dict, column_type) {
+                (Encoding::DeltaLengthByteArray, None, ColumnType::Binary) => {
+                    let mut slicer = DeltaLengthArraySlicer::try_new(values_buffer, row_count)?;
+                    decode_page(
+                        version,
+                        page,
+                        row_count,
+                        &mut BinaryColumnSink::new(&mut slicer, buffers),
+                    )?;
+                    Ok(row_count)
+                }
+                _ => Err(encoding_error),
             }
         }
         (typ, None) => match page.encoding() {
@@ -363,8 +359,8 @@ pub fn decoder_page(
                 buffers.aux_vec.clear();
                 buffers.aux_ptr = ptr::null_mut();
 
-                match typ {
-                    PhysicalType::Double => {
+                match (typ, column_type) {
+                    (PhysicalType::Double, ColumnType::Double) => {
                         decode_page(
                             version,
                             page,
@@ -378,7 +374,7 @@ pub fn decoder_page(
 
                         Ok(row_count)
                     }
-                    PhysicalType::Float => {
+                    (PhysicalType::Float, ColumnType::Float) => {
                         decode_page(
                             version,
                             page,
@@ -392,30 +388,35 @@ pub fn decoder_page(
 
                         Ok(row_count)
                     }
-                    PhysicalType::Boolean => {
+                    (PhysicalType::Boolean, ColumnType::Boolean) => {
                         decode_page_bool(version, page, values_buffer, row_count, buffers)?;
 
                         Ok(row_count)
                     }
-
-                    _ => Err(anyhow!(format!(
-                        "encoding {:?} not supported for type {:?}",
-                        page.encoding(),
-                        typ
-                    ))),
+                    _ => Err(encoding_error),
                 }
             }
-            _ => Err(anyhow!(format!(
-                "encoding {:?} not supported for type {:?}",
-                page.encoding(),
-                typ
-            ))),
+            _ => Err(encoding_error),
         },
-        _ => Err(anyhow!(format!(
-            "deserialization not supported; physical_type: {:?}, logical_type: {:?}",
-            page.descriptor.primitive_type.physical_type,
-            page.descriptor.primitive_type.logical_type
-        ))),
+        _ => Err(encoding_error),
+    };
+
+    match decoding_result {
+        Ok(row_count) => Ok(row_count),
+        Err(err) => {
+            // TODO: use error type
+            if err.to_string() == "encoding not supported" {
+                Err(anyhow!(
+                        "encoding not supported, physical type: {:?}, encoding {:?}, logical type {:?}, column type {:?}",
+                        page.descriptor.primitive_type.physical_type,
+                        page.descriptor.primitive_type.logical_type,
+                        page.encoding(),
+                        column_type
+                    ))
+            } else {
+                Err(err)
+            }
+        }
     }
 }
 
@@ -906,9 +907,9 @@ mod tests {
         null_value: [u8; N],
         to_le_bytes: F,
     ) -> ColumnBuffers
-    where
-        T: From<i16> + Copy,
-        F: Fn(T) -> [u8; N],
+        where
+            T: From<i16> + Copy,
+            F: Fn(T) -> [u8; N],
     {
         let value_size = N;
         let mut buff = vec![0u8; row_count * value_size];
@@ -1107,7 +1108,7 @@ mod tests {
             null(),
             0,
         )
-        .unwrap()
+            .unwrap()
     }
 
     fn create_var_column(
@@ -1131,7 +1132,7 @@ mod tests {
             null(),
             0,
         )
-        .unwrap()
+            .unwrap()
     }
 
     fn create_symbol_column(
@@ -1156,6 +1157,6 @@ mod tests {
             offsets.as_ptr(),
             offsets.len(),
         )
-        .unwrap()
+            .unwrap()
     }
 }
