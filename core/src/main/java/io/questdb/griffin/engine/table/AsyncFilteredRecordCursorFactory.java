@@ -155,6 +155,11 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
+    public TableToken getTableToken() {
+        return base.getTableToken();
+    }
+
+    @Override
     public void halfClose() {
         Misc.free(frameSequence);
         cursor.freeRecords();

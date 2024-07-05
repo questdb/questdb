@@ -112,8 +112,8 @@ public class TxnScoreboard implements Closeable, Mutable {
     public TxnScoreboard ofRO(@Transient Path root) {
         clear();
         int rootLen = root.size();
-        root.concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$();
-        this.fd = openCleanRW(ff, root, this.size);
+        root.concat(TableUtils.TXN_SCOREBOARD_FILE_NAME);
+        this.fd = openCleanRW(ff, root.$(), this.size);
         try {
             this.mem = TableUtils.mapRO(ff, fd, this.size, MemoryTag.MMAP_DEFAULT);
         } catch (Throwable e) {
@@ -127,8 +127,8 @@ public class TxnScoreboard implements Closeable, Mutable {
 
     public TxnScoreboard ofRW(@Transient Path root) {
         clear();
-        root.concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$();
-        this.fd = openCleanRW(ff, root, this.size);
+        root.concat(TableUtils.TXN_SCOREBOARD_FILE_NAME);
+        this.fd = openCleanRW(ff, root.$(), this.size);
 
         // truncate is required to give file a size
         // allocate above does not seem to update file system's size entry

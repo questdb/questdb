@@ -165,6 +165,8 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
 
     /**
      * If factory operates on table directly returns table's token, null otherwise.
+     * When this method returns a table token, it also means that the factory doesn't
+     * remap column names via aliases.
      *
      * @return table token of table used by this factory
      */

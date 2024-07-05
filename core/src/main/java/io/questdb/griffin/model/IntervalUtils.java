@@ -904,16 +904,16 @@ public final class IntervalUtils {
         int writePoint = k / 2;
         int n = count - 1;
         if (period < 0) {
-            lo = Timestamps.addYear(lo, period * n);
-            hi = Timestamps.addYear(hi, period * n);
+            lo = Timestamps.addYears(lo, period * n);
+            hi = Timestamps.addYears(hi, period * n);
             out.setQuick(k - 2, lo);
             out.setQuick(k - 1, hi);
             period = -period;
         }
 
         for (int i = 0; i < n; i++) {
-            lo = Timestamps.addYear(lo, period);
-            hi = Timestamps.addYear(hi, period);
+            lo = Timestamps.addYears(lo, period);
+            hi = Timestamps.addYears(hi, period);
             writePoint = append(out, writePoint, lo, hi);
         }
     }

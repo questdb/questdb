@@ -55,9 +55,9 @@ public class FilesFacadeImpl implements FilesFacade {
             return false;
         }
         try (Path path = new Path()) {
-            path.of(root).$();
+            path.of(root);
             // path will contain file system name
-            long fsStatus = Files.getFileSystemStatus(path);
+            long fsStatus = Files.getFileSystemStatus(path.$());
             path.seekZ(); // useful for debugging
             // allow mixed I/O for all supported FSes except ZFS
             return fsStatus < 0 && Math.abs(fsStatus) != ZFS_MAGIC_NUMBER;
@@ -302,7 +302,7 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public int mkdir(Path path, int mode) {
+    public int mkdir(LPSZ path, int mode) {
         return Files.mkdir(path, mode);
     }
 
@@ -458,7 +458,7 @@ public class FilesFacadeImpl implements FilesFacade {
 
     @Override
     public boolean unlinkOrRemove(Path path, Log LOG) {
-        int checkedType = isSoftLink(path) ? Files.DT_LNK : Files.DT_UNKNOWN;
+        int checkedType = isSoftLink(path.$()) ? Files.DT_LNK : Files.DT_UNKNOWN;
         return unlinkOrRemove(path, checkedType, LOG);
     }
 
@@ -469,7 +469,7 @@ public class FilesFacadeImpl implements FilesFacade {
             // is to delete the link, not the contents of the target. in *nix
             // systems we can simply unlink, which deletes the link and leaves
             // the contents of the target intact
-            if (unlink(path) == 0) {
+            if (unlink(path.$()) == 0) {
                 LOG.debug().$("removed by unlink [path=").$(path).I$();
                 return true;
             } else {
@@ -513,7 +513,8 @@ public class FilesFacadeImpl implements FilesFacade {
         int len = src.size();
         long p = findFirst(src.$());
 
-        if (!exists(dst.$()) && -1 == mkdir(dst, dirMode)) {
+        LPSZ lpsz = dst.$();
+        if (!exists(lpsz) && -1 == mkdir(lpsz, dirMode)) {
             return -1;
         }
 

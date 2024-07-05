@@ -33,6 +33,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.*;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
@@ -142,10 +143,10 @@ public class UnorderedVarcharMapBenchmark {
         try (MemoryMA auxAppendMem = Vm.getMAInstance(CommitMode.NOSYNC);
              MemoryMA dataAppendMem = Vm.getMAInstance(CommitMode.NOSYNC)) {
             try (Path path = new Path()) {
-                path.of(AUX_MEM_FILENAME).$();
-                auxAppendMem.of(ff, path, ff.getMapPageSize(), MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
-                path.of(DATA_MEM_FILENAME).$();
-                dataAppendMem.of(ff, path, ff.getMapPageSize(), MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
+                path.of(AUX_MEM_FILENAME);
+                auxAppendMem.of(ff, path.$(), ff.getMapPageSize(), MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
+                path.of(DATA_MEM_FILENAME);
+                dataAppendMem.of(ff, path.$(), ff.getMapPageSize(), MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
             }
             Utf8StringSink sink = new Utf8StringSink();
             long[] seeds0 = new long[WORD_COUNT];
@@ -173,19 +174,19 @@ public class UnorderedVarcharMapBenchmark {
         }
 
         try (Path path = new Path()) {
-            path.of(AUX_MEM_FILENAME).$();
-            auxReadMemUnstable = Vm.getMRInstance(ff, path, -1, MemoryTag.NATIVE_DEFAULT, false);
-            auxReadMemStable = Vm.getMRInstance(ff, path, -1, MemoryTag.NATIVE_DEFAULT, true);
+            LPSZ lpsz = path.of(AUX_MEM_FILENAME).$();
+            auxReadMemUnstable = Vm.getMRInstance(ff, lpsz, -1, MemoryTag.NATIVE_DEFAULT, false);
+            auxReadMemStable = Vm.getMRInstance(ff, lpsz, -1, MemoryTag.NATIVE_DEFAULT, true);
             path.of(DATA_MEM_FILENAME).$();
-            dataReadMemUnstable = Vm.getMRInstance(ff, path, -1, MemoryTag.NATIVE_DEFAULT, false);
-            dataReadMemStable = Vm.getMRInstance(ff, path, -1, MemoryTag.NATIVE_DEFAULT, true);
+            dataReadMemUnstable = Vm.getMRInstance(ff, lpsz, -1, MemoryTag.NATIVE_DEFAULT, false);
+            dataReadMemStable = Vm.getMRInstance(ff, lpsz, -1, MemoryTag.NATIVE_DEFAULT, true);
         }
     }
 
     private static void ensureFileDoesNotExist(String file) throws RunnerException {
         try (Path path = new Path()) {
-            path.of(file).$();
-            if (Files.exists(path)) {
+            path.of(file);
+            if (Files.exists(path.$())) {
                 throw new RunnerException("File " + file + " already exists. Delete it before running the benchmark.");
             }
         }

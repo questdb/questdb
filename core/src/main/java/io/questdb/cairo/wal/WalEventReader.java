@@ -64,10 +64,10 @@ public class WalEventReader implements Closeable {
         try {
             final int pathLen = path.size();
 
-            path.concat(EVENT_FILE_NAME).$();
+            path.concat(EVENT_FILE_NAME);
             eventMem.of(
                     ff,
-                    path,
+                    path.$(),
                     ff.getPageSize(),
                     WALE_HEADER_SIZE + Integer.BYTES,
                     MemoryTag.MMAP_TABLE_WAL_READER,
