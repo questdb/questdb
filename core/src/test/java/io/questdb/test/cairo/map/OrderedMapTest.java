@@ -900,8 +900,13 @@ public class OrderedMapTest extends AbstractCairoTest {
                                 1
                         )
                 ) {
-
-                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, true);
+                    BitSet writeSymbolAsString = new BitSet();
+                    for (int i = 0, n = reader.getMetadata().getColumnCount(); i < n; i++) {
+                        if (reader.getMetadata().getColumnType(i) == ColumnType.SYMBOL) {
+                            writeSymbolAsString.set(i);
+                        }
+                    }
+                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, writeSymbolAsString);
                     // this random will be populating values
                     Rnd rnd2 = new Rnd();
 
@@ -1581,7 +1586,13 @@ public class OrderedMapTest extends AbstractCairoTest {
                                 1
                         )
                 ) {
-                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, true);
+                    BitSet writeSymbolAsString = new BitSet();
+                    for (int i = 0, n = reader.getMetadata().getColumnCount(); i < n; i++) {
+                        if (reader.getMetadata().getColumnType(i) == ColumnType.SYMBOL) {
+                            writeSymbolAsString.set(i);
+                        }
+                    }
+                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, writeSymbolAsString);
 
                     final int keyColumnOffset = map.getValueColumnCount();
 
@@ -1679,7 +1690,13 @@ public class OrderedMapTest extends AbstractCairoTest {
                                 1
                         )
                 ) {
-                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, true);
+                    BitSet writeSymbolAsString = new BitSet();
+                    for (int i = 0, n = reader.getMetadata().getColumnCount(); i < n; i++) {
+                        if (reader.getMetadata().getColumnType(i) == ColumnType.SYMBOL) {
+                            writeSymbolAsString.set(i);
+                        }
+                    }
+                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, writeSymbolAsString);
 
                     // this random will be populating values
                     Rnd rnd2 = new Rnd();
@@ -1749,7 +1766,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                                 N, 0.9f, 1
                         )
                 ) {
-                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), listColumnFilter, false);
+                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), listColumnFilter);
 
                     // this random will be populating values
                     Rnd rnd2 = new Rnd();

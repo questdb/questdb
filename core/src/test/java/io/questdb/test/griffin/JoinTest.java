@@ -3957,6 +3957,132 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSelfJoinOnSymbolKey1() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE trades (pair SYMBOL, ts TIMESTAMP, price INT) TIMESTAMP(ts) PARTITION BY DAY");
+
+            insert(
+                    "INSERT INTO trades VALUES " +
+                            "('BTC-USD', '2000-01-01T00:00:00.000000Z', 1)," +
+                            "('BTC-USD', '2001-01-01T00:00:01.000000Z', 2)," +
+                            "('ETH-USD', '2001-01-01T00:00:00.000000Z', 3)," +
+                            "('ETH-USD', '2001-01-01T00:00:01.000000Z', 4)"
+            );
+
+            String query = "SELECT * FROM trades t1 JOIN trades t2 ON (pair)";
+            String expected = "pair\tts\tprice\tpair1\tts1\tprice1\n" +
+                    "BTC-USD\t2000-01-01T00:00:00.000000Z\t1\tBTC-USD\t2000-01-01T00:00:00.000000Z\t1\n" +
+                    "BTC-USD\t2000-01-01T00:00:00.000000Z\t1\tBTC-USD\t2001-01-01T00:00:01.000000Z\t2\n" +
+                    "ETH-USD\t2001-01-01T00:00:00.000000Z\t3\tETH-USD\t2001-01-01T00:00:00.000000Z\t3\n" +
+                    "ETH-USD\t2001-01-01T00:00:00.000000Z\t3\tETH-USD\t2001-01-01T00:00:01.000000Z\t4\n" +
+                    "ETH-USD\t2001-01-01T00:00:01.000000Z\t4\tETH-USD\t2001-01-01T00:00:00.000000Z\t3\n" +
+                    "ETH-USD\t2001-01-01T00:00:01.000000Z\t4\tETH-USD\t2001-01-01T00:00:01.000000Z\t4\n" +
+                    "BTC-USD\t2001-01-01T00:00:01.000000Z\t2\tBTC-USD\t2000-01-01T00:00:00.000000Z\t1\n" +
+                    "BTC-USD\t2001-01-01T00:00:01.000000Z\t2\tBTC-USD\t2001-01-01T00:00:01.000000Z\t2\n";
+            assertQueryAndCache(expected, query, "ts", true);
+        });
+    }
+
+    @Test
+    public void testSelfJoinOnSymbolKey2() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE trades (pair SYMBOL, ts TIMESTAMP, price INT) TIMESTAMP(ts) PARTITION BY DAY");
+
+            insert(
+                    "INSERT INTO trades VALUES " +
+                            "('BTC-USD', '2000-01-01T00:00:00.000000Z', 1)," +
+                            "('BTC-USD', '2001-01-01T00:00:01.000000Z', 2)," +
+                            "('ETH-USD', '2001-01-01T00:00:00.000000Z', 3)," +
+                            "('ETH-USD', '2001-01-01T00:00:01.000000Z', 4)"
+            );
+
+            String query = "SELECT * FROM (select pair p1, ts, price from trades) t1 " +
+                    "JOIN (select ts, price, pair p2 from trades) t2 ON t1.p1 = t2.p2";
+            String expected = "p1\tts\tprice\tts1\tprice1\tp2\n" +
+                    "BTC-USD\t2000-01-01T00:00:00.000000Z\t1\t2000-01-01T00:00:00.000000Z\t1\tBTC-USD\n" +
+                    "BTC-USD\t2000-01-01T00:00:00.000000Z\t1\t2001-01-01T00:00:01.000000Z\t2\tBTC-USD\n" +
+                    "ETH-USD\t2001-01-01T00:00:00.000000Z\t3\t2001-01-01T00:00:00.000000Z\t3\tETH-USD\n" +
+                    "ETH-USD\t2001-01-01T00:00:00.000000Z\t3\t2001-01-01T00:00:01.000000Z\t4\tETH-USD\n" +
+                    "ETH-USD\t2001-01-01T00:00:01.000000Z\t4\t2001-01-01T00:00:00.000000Z\t3\tETH-USD\n" +
+                    "ETH-USD\t2001-01-01T00:00:01.000000Z\t4\t2001-01-01T00:00:01.000000Z\t4\tETH-USD\n" +
+                    "BTC-USD\t2001-01-01T00:00:01.000000Z\t2\t2000-01-01T00:00:00.000000Z\t1\tBTC-USD\n" +
+                    "BTC-USD\t2001-01-01T00:00:01.000000Z\t2\t2001-01-01T00:00:01.000000Z\t2\tBTC-USD\n";
+            assertQueryAndCache(expected, query, "ts", true);
+        });
+    }
+
+    @Test
+    public void testSelfJoinOnSymbolKey3() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE trades (pair SYMBOL, side SYMBOL, ts TIMESTAMP, price INT) TIMESTAMP(ts) PARTITION BY DAY");
+
+            insert(
+                    "INSERT INTO trades VALUES " +
+                            "('BTC-USD', 'sell', '2000-01-01T00:00:00.000000Z', 1)," +
+                            "('BTC-USD', 'buy', '2001-01-01T00:00:01.000000Z', 2)," +
+                            "('ETH-USD', 'sell', '2001-01-01T00:00:00.000000Z', 4)," +
+                            "('ETH-USD', 'buy', '2001-01-01T00:00:01.000000Z', 5)"
+            );
+
+            String query = "SELECT * FROM trades t1 JOIN trades t2 ON(pair, side)";
+            String expected = "pair\tside\tts\tprice\tpair1\tside1\tts1\tprice1\n" +
+                    "BTC-USD\tsell\t2000-01-01T00:00:00.000000Z\t1\tBTC-USD\tsell\t2000-01-01T00:00:00.000000Z\t1\n" +
+                    "ETH-USD\tsell\t2001-01-01T00:00:00.000000Z\t4\tETH-USD\tsell\t2001-01-01T00:00:00.000000Z\t4\n" +
+                    "ETH-USD\tbuy\t2001-01-01T00:00:01.000000Z\t5\tETH-USD\tbuy\t2001-01-01T00:00:01.000000Z\t5\n" +
+                    "BTC-USD\tbuy\t2001-01-01T00:00:01.000000Z\t2\tBTC-USD\tbuy\t2001-01-01T00:00:01.000000Z\t2\n";
+            assertQueryAndCache(expected, query, "ts", true);
+        });
+    }
+
+    @Test
+    public void testSelfJoinOnSymbolKey4() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE x (sym1 SYMBOL, sym2 SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            insert(
+                    "INSERT INTO x VALUES " +
+                            "('1', '2', '2000-01-01T00:00:00.000000Z')," +
+                            "('3', '4', '2000-01-01T00:00:00.000000Z')," +
+                            "('1', '1', '2000-01-01T00:00:00.000000Z')," +
+                            "('2', '2', '2000-01-01T00:00:00.000000Z')," +
+                            "('4', '3', '2000-01-01T00:00:00.000000Z')"
+            );
+
+            String query = "SELECT * FROM (select sym1 s, ts from x) x1 " +
+                    "INNER JOIN (select sym2 s, ts from x) x2 ON(s)";
+            String expected = "s\tts\ts1\tts1\n" +
+                    "1\t2000-01-01T00:00:00.000000Z\t1\t2000-01-01T00:00:00.000000Z\n" +
+                    "3\t2000-01-01T00:00:00.000000Z\t3\t2000-01-01T00:00:00.000000Z\n" +
+                    "1\t2000-01-01T00:00:00.000000Z\t1\t2000-01-01T00:00:00.000000Z\n" +
+                    "2\t2000-01-01T00:00:00.000000Z\t2\t2000-01-01T00:00:00.000000Z\n" +
+                    "2\t2000-01-01T00:00:00.000000Z\t2\t2000-01-01T00:00:00.000000Z\n" +
+                    "4\t2000-01-01T00:00:00.000000Z\t4\t2000-01-01T00:00:00.000000Z\n";
+            assertQueryAndCache(expected, query, "ts", true);
+        });
+    }
+
+    @Test
+    public void testSelfJoinOnSymbolKey5() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE trades (pair SYMBOL, ts TIMESTAMP, price INT) TIMESTAMP(ts) PARTITION BY DAY");
+
+            insert(
+                    "INSERT INTO trades VALUES " +
+                            "('BTC-USD', '2000-01-01T00:00:00.000000Z', 1)," +
+                            "('BTC-USD', '2001-01-01T00:00:01.000000Z', 2)," +
+                            "('ETH-USD', '2001-01-01T00:00:02.000000Z', 3)"
+            );
+
+            String query = "SELECT * FROM (select * from trades where pair = 'BTC-USD') t1 " +
+                    "LEFT JOIN (select * from trades where pair = 'BTC-USD' and price > 1) t2 ON(pair)";
+            String expected = "pair\tts\tprice\tpair1\tts1\tprice1\n" +
+                    "BTC-USD\t2000-01-01T00:00:00.000000Z\t1\tBTC-USD\t2001-01-01T00:00:01.000000Z\t2\n" +
+                    "BTC-USD\t2001-01-01T00:00:01.000000Z\t2\tBTC-USD\t2001-01-01T00:00:01.000000Z\t2\n";
+            assertQueryAndCache(expected, query, "ts", false);
+        });
+    }
+
+    @Test
     public void testSpliceCorrectness() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table orders (sym SYMBOL, amount DOUBLE, side BYTE, timestamp TIMESTAMP) timestamp(timestamp)");
@@ -4685,6 +4811,32 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolStringJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table xy2 as (select rnd_str(1,3,1) a from long_sequence(10000))");
+            compile("create table xy3 as (select a::symbol a, rnd_int() b from xy2);");
+            assertSql(
+                    "a\tb\ta1\n" +
+                            "J\t1373755567\tJ\n" +
+                            "J\t1373755567\tJ\n" +
+                            "J\t1373755567\tJ\n" +
+                            "J\t1373755567\tJ\n" +
+                            "J\t1373755567\tJ\n",
+                    "xy3 join xy2 on (a) limit 5"
+            );
+            assertSql(
+                    "a\ta1\tb\n" +
+                            "J\tJ\t1373755567\n" +
+                            "J\tJ\t1039504745\n" +
+                            "J\tJ\t1567010865\n" +
+                            "J\tJ\t2034043022\n" +
+                            "J\tJ\t340641498\n",
+                    "xy2 join xy3 on (a) limit 5"
+            );
+        });
+    }
+
+    @Test
     public void testSymbolVarcharJoin() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table xy2 as (select rnd_varchar(1,3,1) a from long_sequence(10000))");
@@ -4697,6 +4849,15 @@ public class JoinTest extends AbstractCairoTest {
                             "&\t2061726721\t&\n" +
                             "&\t2061726721\t&\n",
                     "xy3 join xy2 on (a) limit 5"
+            );
+            assertSql(
+                    "a\ta1\tb\n" +
+                            "&\t&\t2061726721\n" +
+                            "&\t&\t398292760\n" +
+                            "&\t&\t-233040518\n" +
+                            "&\t&\t-49123156\n" +
+                            "&\t&\t-1216872153\n",
+                    "xy2 join xy3 on (a) limit 5"
             );
         });
     }

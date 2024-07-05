@@ -398,7 +398,7 @@ public class CopyTask {
             long ptr;
             long hi;
 
-            int fd = TableUtils.openRO(ff, path, LOG);
+            int fd = TableUtils.openRO(ff, path.$(), LOG);
             ff.fadvise(fd, chunkStart, chunkEnd - chunkStart, Files.POSIX_FADV_SEQUENTIAL);
             try {
                 do {
@@ -1053,9 +1053,9 @@ public class CopyTask {
 
             int fd = -1;
             try {
-                tmpPath.of(configuration.getSqlCopyInputRoot()).concat(inputFileName).$();
+                tmpPath.of(configuration.getSqlCopyInputRoot()).concat(inputFileName);
                 utf8Sink.clear();
-                fd = TableUtils.openRO(ff, tmpPath, LOG);
+                fd = TableUtils.openRO(ff, tmpPath.$(), LOG);
 
                 final long len = ff.length(fd);
                 if (len == -1) {
@@ -1166,9 +1166,9 @@ public class CopyTask {
 
             int fd = -1;
             try {
-                tmpPath.of(configuration.getSqlCopyInputRoot()).concat(inputFileName).$();
+                tmpPath.of(configuration.getSqlCopyInputRoot()).concat(inputFileName);
                 utf8Sink.clear();
-                fd = TableUtils.openRO(ff, tmpPath, LOG);
+                fd = TableUtils.openRO(ff, tmpPath.$(), LOG);
 
                 final long len = ff.length(fd);
                 if (len == -1) {
@@ -1269,9 +1269,9 @@ public class CopyTask {
 
                 if (unmergedIndexes.size() > 2) { // there's more than 1 chunk so we've to merge
                     partitionPath.trimTo(partitionLen);
-                    partitionPath.concat(CsvFileIndexer.INDEX_FILE_NAME).$();
+                    partitionPath.concat(CsvFileIndexer.INDEX_FILE_NAME);
 
-                    fd = TableUtils.openFileRWOrFail(ff, partitionPath, CairoConfiguration.O_NONE);
+                    fd = TableUtils.openFileRWOrFail(ff, partitionPath.$(), CairoConfiguration.O_NONE);
                     mergeIndexAddr = TableUtils.mapRW(ff, fd, mergedIndexSize, MemoryTag.MMAP_IMPORT);
 
                     Vect.mergeLongIndexesAsc(unmergedIndexes.getAddress(), (int) unmergedIndexes.size() / 2, mergeIndexAddr);
@@ -1356,7 +1356,7 @@ public class CopyTask {
 
         private long openIndexChunks(FilesFacade ff, Path partitionPath, DirectLongList mergeIndexes, int partitionLen) {
             long mergedIndexSize = 0;
-            long chunk = ff.findFirst(partitionPath);
+            long chunk = ff.findFirst(partitionPath.$());
             if (chunk > 0) {
                 try {
                     do {
@@ -1365,9 +1365,9 @@ public class CopyTask {
                         long chunkType = ff.findType(chunk);
                         if (chunkType == Files.DT_FILE) {
                             partitionPath.trimTo(partitionLen);
-                            partitionPath.concat(chunkName).$();
+                            partitionPath.concat(chunkName);
 
-                            int fd = TableUtils.openRO(ff, partitionPath, LOG);
+                            int fd = TableUtils.openRO(ff, partitionPath.$(), LOG);
                             long size = 0;
                             long address = -1;
 

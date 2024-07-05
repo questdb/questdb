@@ -71,10 +71,10 @@ public class AbstractTest {
 
     public static void createTestPath() {
         final Path path = Path.getThreadLocal(root);
-        if (Files.exists(path)) {
+        if (Files.exists(path.$())) {
             return;
         }
-        Files.mkdirs(path.of(root).slash$(), 509);
+        Files.mkdirs(path.of(root).slash(), 509);
     }
 
     public static Rnd generateRandom() {
@@ -93,7 +93,7 @@ public class AbstractTest {
         final Path path = Path.getThreadLocal(root);
         FilesFacade ff = FilesFacadeImpl.INSTANCE;
         path.slash$();
-        Assert.assertTrue("Test dir cleanup error", !ff.exists(path) || ff.rmdir(path.slash$()));
+        Assert.assertTrue("Test dir cleanup error", !ff.exists(path.$()) || ff.rmdir(path.slash()));
     }
 
     @BeforeClass

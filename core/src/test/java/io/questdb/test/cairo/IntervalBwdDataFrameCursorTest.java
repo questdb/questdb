@@ -397,7 +397,7 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
                     Assert.assertTrue(cursor.reload());
                     assertEquals(expected1, record, cursor);
 
-                    timestamp = Timestamps.addYear(timestamp, 3);
+                    timestamp = Timestamps.addYears(timestamp, 3);
 
                     for (int i = 0; i < rowCount; i++) {
                         TableWriter.Row row = writer.newRow(timestamp);
@@ -595,7 +595,7 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
                 }
                 writer.commit();
 
-                timestamp = Timestamps.addYear(timestamp, 3);
+                timestamp = Timestamps.addYears(timestamp, 3);
 
                 for (int i = 0; i < rowCount; i++) {
                     TableWriter.Row row = writer.newRow(timestamp);

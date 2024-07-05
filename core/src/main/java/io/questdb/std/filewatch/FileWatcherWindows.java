@@ -48,9 +48,9 @@ public class FileWatcherWindows extends FileWatcher {
     ) {
         super(callback);
         this.accessor = accessor;
-        this.dirPath.of(filePath).parent().$();
+        this.dirPath.of(filePath).parent();
         this.fileName.put(Paths.get(filePath.toString()).getFileName().toString());
-        this.pWatch = accessor.openDirectory(dirPath);
+        this.pWatch = accessor.openDirectory(dirPath.$());
         if (pWatch == -1) {
             Misc.free(dirPath);
             Misc.free(fileName);

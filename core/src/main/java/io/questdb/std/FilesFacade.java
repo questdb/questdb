@@ -116,7 +116,7 @@ public interface FilesFacade {
 
     void madvise(long address, long len, int advise);
 
-    int mkdir(Path path, int mode);
+    int mkdir(LPSZ path, int mode);
 
     int mkdirs(Path path, int mode);
 

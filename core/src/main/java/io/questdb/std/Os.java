@@ -101,7 +101,7 @@ public final class Os {
 
     public static byte[] generateKerberosToken(CharSequence spn) throws KerberosException {
         // We use Path as a LPSZ sink here.
-        try (Path sink = new Path().of(spn).$()) {
+        try (Path sink = new Path().of(spn)) {
             final long struct = generateKrbToken(sink.ptr());
             int status = Unsafe.getUnsafe().getInt(struct);
             int bufLen = Unsafe.getUnsafe().getInt(struct + 4);

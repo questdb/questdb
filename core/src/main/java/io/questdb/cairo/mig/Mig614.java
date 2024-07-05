@@ -41,7 +41,7 @@ final class Mig614 {
     private static final long TX_OFFSET_STRUCT_VERSION = 40;
 
     private static void openFileSafe(MemoryMARW metaMem, FilesFacade ff, Path path, long readOffset) {
-        long fileLen = ff.length(path);
+        long fileLen = ff.length(path.$());
 
         if (fileLen < 0) {
             throw CairoException.critical(ff.errno()).put("cannot read file length: ").put(path);
@@ -53,7 +53,7 @@ final class Mig614 {
 
         metaMem.of(
                 ff,
-                path,
+                path.$(),
                 ff.getPageSize(),
                 fileLen,
                 MemoryTag.NATIVE_MIG_MMAP
