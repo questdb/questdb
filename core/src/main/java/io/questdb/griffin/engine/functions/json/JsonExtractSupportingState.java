@@ -33,15 +33,43 @@ import io.questdb.std.json.SimdJsonParser;
 import io.questdb.std.json.SimdJsonResult;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
-class JsonExtractSupportingState implements QuietCloseable {
+/**
+ * Buffer state for JSON extraction functions.
+ * This is used by the `JsonExtractFunction` to:
+ * * Create a UTF-8 input buffer with sufficient padding where needed.
+ * * Cache a UTF-8 result - sometimes as intermediate for TIMESTAMP, DATE or IPV4 parsing.
+ * * Cache a UTF-16 result.
+ */
+public class JsonExtractSupportingState implements QuietCloseable {
     public static final String EXTRACT_FUNCTION_NAME = "json_extract";
     public DirectUtf8Sequence jsonSeq = null;
     public SimdJsonParser parser = new SimdJsonParser();
     public SimdJsonResult simdJsonResult = new SimdJsonResult();
     private DirectUtf8Sink jsonSink = null;
+
+    // Only set for types that require UTF-8 storage: VARCHAR, TIMESTAMP, DATE or IPV4 parsing.
+    public @Nullable DirectUtf8Sink destUtf8Sink;
+
+    // Only set for VARCHAR extraction to provide string backwards compatibility.
+    public @Nullable StringSink destUtf16Sink;
+
+    private JsonExtractSupportingState(@Nullable DirectUtf8Sink destUtf8Sink, @Nullable StringSink destUtf16Sink) {
+        this.destUtf8Sink = destUtf8Sink;
+        this.destUtf16Sink = destUtf16Sink;
+    }
+
+    public static JsonExtractSupportingState newBuffered(int maxSize, boolean withUtf16Sink) {
+        return new JsonExtractSupportingState(new DirectUtf8Sink(maxSize), withUtf16Sink ? new StringSink() : null);
+    }
+
+    public static JsonExtractSupportingState newUnbuffered() {
+        return new JsonExtractSupportingState(null, null);
+    }
 
     public static DirectUtf8Sink varcharConstantToJsonPointer(Function fn) {
         final Utf8Sequence seq = fn.getVarcharA(null);
@@ -61,6 +89,7 @@ class JsonExtractSupportingState implements QuietCloseable {
         parser = Misc.free(parser);
         jsonSink = Misc.free(jsonSink);
         simdJsonResult = Misc.free(simdJsonResult);
+        destUtf8Sink = Misc.free(destUtf8Sink);
     }
 
     public DirectUtf8Sequence initPaddedJson(@NotNull Utf8Sequence json) {
@@ -79,6 +108,13 @@ class JsonExtractSupportingState implements QuietCloseable {
         return jsonSeq;
     }
 
+    CairoException asCairoException(int position) {
+        return CairoException
+                .nonCritical()
+                .position(position)
+                .put(SimdJsonError.getMessage(simdJsonResult.getError()));
+    }
+
     void throwIfInError(int position) {
         switch (simdJsonResult.getError()) {
             case SimdJsonError.SUCCESS:
@@ -87,10 +123,7 @@ class JsonExtractSupportingState implements QuietCloseable {
             case SimdJsonError.INCORRECT_TYPE:
                 return;
             default:
-                throw CairoException
-                        .nonCritical()
-                        .position(position)
-                        .put(SimdJsonError.getMessage(simdJsonResult.getError()));
+                throw asCairoException(position);
         }
     }
 }

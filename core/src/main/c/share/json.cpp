@@ -175,12 +175,6 @@ struct default_value<jlong> {
 };
 
 template<>
-struct default_value<jfloat> {
-    // TODO: Is the C++ bit representation for quiet NaN the same as the Java one?
-    static jfloat value() { return std::numeric_limits<float>::quiet_NaN(); }
-};
-
-template<>
 struct default_value<jdouble> {
     // TODO: Is the C++ bit representation for quiet NaN the same as the Java one?
     static jdouble value() { return std::numeric_limits<double>::quiet_NaN(); }

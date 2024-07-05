@@ -798,9 +798,9 @@ io.questdb.griffin.engine.functions.str.ConcatFunctionFactory
 io.questdb.griffin.engine.functions.str.ReplaceStrFunctionFactory
 io.questdb.griffin.engine.functions.str.ReplaceVarcharFunctionFactory
 
-# json_path() & json_path_s
+# json_extract()
 io.questdb.griffin.engine.functions.json.JsonExtractVarcharFunctionFactory
-io.questdb.griffin.engine.functions.json.JsonExtractPrimitiveFunctionFactory
+io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory
 
 # regexp_replace()
 io.questdb.griffin.engine.functions.regex.RegexpReplaceStrFunctionFactory

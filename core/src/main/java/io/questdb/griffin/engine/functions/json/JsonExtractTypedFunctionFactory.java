@@ -34,11 +34,18 @@ import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
-public class JsonExtractPrimitiveFunctionFactory implements FunctionFactory {
+/**
+ * Hidden function that intrusively handles typed (i.e. non-VARCHAR) JSON extraction.
+ * This is exclusively to be called via a SQL rewrite of from the form `json_extract(json, path)::type`,
+ * as performed by the SqlParser.
+ */
+public class JsonExtractTypedFunctionFactory implements FunctionFactory {
+
+    private static final String SIGNATURE = JsonExtractSupportingState.EXTRACT_FUNCTION_NAME + "(ØØi)";
 
     @Override
     public String getSignature() {
-        return JsonExtractSupportingState.EXTRACT_FUNCTION_NAME + "(ØØi)";
+        return SIGNATURE;
     }
 
     @Override
@@ -58,11 +65,26 @@ public class JsonExtractPrimitiveFunctionFactory implements FunctionFactory {
         }
 
         final int targetType = parseTargetType(position, args.getQuick(2));
-        return new JsonExtractPrimitiveFunction(
+        final int maxSize = configuration.getStrFunctionMaxBufferLength();
+        JsonExtractSupportingState stateA;
+        switch (targetType) {
+            case ColumnType.IPv4:
+            case ColumnType.DATE:
+            case ColumnType.TIMESTAMP:
+                stateA = JsonExtractSupportingState.newBuffered(maxSize, false);
+                break;
+            default:
+                stateA = JsonExtractSupportingState.newUnbuffered();
+                break;
+        }
+        return new JsonExtractFunction(
                 argPositions.getQuick(0),
                 targetType,
                 json,
-                path
+                path,
+                maxSize,
+                stateA,
+                null
         );
     }
 

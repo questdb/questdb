@@ -35,9 +35,11 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class JsonExtractVarcharFunctionFactory implements FunctionFactory {
+    private static final String SIGNATURE = JsonExtractSupportingState.EXTRACT_FUNCTION_NAME + "(ØØ)";
+
     @Override
     public String getSignature() {
-        return JsonExtractSupportingState.EXTRACT_FUNCTION_NAME + "(ØØ)";
+        return SIGNATURE;
     }
 
     @Override
@@ -56,11 +58,17 @@ public class JsonExtractVarcharFunctionFactory implements FunctionFactory {
             throw SqlException.$(argPositions.getQuick(1), "constant or bind variable expected");
         }
 
-        return new JsonExtractVarcharFunction(
+        final int maxSize = configuration.getStrFunctionMaxBufferLength();
+        final JsonExtractSupportingState stateA = JsonExtractSupportingState.newBuffered(maxSize, true);
+        final JsonExtractSupportingState stateB = JsonExtractSupportingState.newBuffered(maxSize, true);
+        return new JsonExtractFunction(
                 argPositions.getQuick(0), // position of the json
+                ColumnType.VARCHAR,
                 json,
                 path,
-                configuration.getStrFunctionMaxBufferLength()
+                maxSize,
+                stateA,
+                stateB
         );
     }
 }

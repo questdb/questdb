@@ -24,45 +24,57 @@
 
 package io.questdb.griffin.engine.functions.json;
 
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.DirectUtf8Sink;
-import io.questdb.std.str.Utf16Sink;
-import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.json.SimdJsonNumberType;
+import io.questdb.std.json.SimdJsonType;
+import io.questdb.std.str.*;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class JsonExtractPrimitiveFunction implements ScalarFunction {
+public class JsonExtractFunction implements ScalarFunction {
     private static final boolean defaultBool = false;
     private final int columnType;
     private final Function json;
+    private final int maxSize;
     private final Function path;
     private final int jsonPosition;
-    private final JsonExtractSupportingState state;
+    private final @NotNull JsonExtractSupportingState stateA;
+
+    // Only set for VARCHAR
+    private final @Nullable JsonExtractSupportingState stateB;
     private DirectUtf8Sink pointer;
 
-    public JsonExtractPrimitiveFunction(
-            int jsonPposition,
+    public JsonExtractFunction(
+            int jsonPosition,
             int columnType,
             Function json,
-            Function path
+            Function path,
+            int maxSize,
+            @NotNull JsonExtractSupportingState stateA,
+            @Nullable JsonExtractSupportingState stateB
     ) {
-        this.jsonPosition = jsonPposition;
+        this.jsonPosition = jsonPosition;
         this.columnType = columnType;
         this.json = json;
         this.path = path;
-        this.state = new JsonExtractSupportingState();
+        this.maxSize = maxSize;
+        this.stateA = stateA;
+        this.stateB = stateB;
     }
 
     @Override
     public void close() {
-        state.close();
+        Misc.free(stateA);
+        Misc.free(stateB);
         pointer = Misc.free(pointer);
         json.close();
         path.close();
@@ -84,21 +96,22 @@ public class JsonExtractPrimitiveFunction implements ScalarFunction {
         if (jsonSeq == null) {
             return defaultBool;
         }
-        return state.parser.queryPointerBoolean(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult);
+        return stateA.parser.queryPointerBoolean(stateA.initPaddedJson(jsonSeq), pointer, stateA.simdJsonResult);
     }
 
     @Override
-    public byte getByte(Record rec) {
-        throw new UnsupportedOperationException();
+    public final byte getByte(Record rec) {
+        return SqlUtil.implicitCastVarcharAsByte(getVarcharA(rec));
     }
 
     @Override
     public char getChar(Record rec) {
-        throw new UnsupportedOperationException();
+        return SqlUtil.implicitCastVarcharAsChar(getVarcharA(rec));
     }
 
     @Override
     public long getDate(Record rec) {
+        // TODO: implement this
         throw new UnsupportedOperationException();
     }
 
@@ -108,8 +121,12 @@ public class JsonExtractPrimitiveFunction implements ScalarFunction {
         if (jsonSeq == null) {
             return Double.NaN;
         }
-        final double d = state.parser.queryPointerDouble(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult);
-        state.throwIfInError(jsonPosition);
+        final double d = stateA.parser.queryPointerDouble(
+            stateA.initPaddedJson(jsonSeq),
+            pointer,
+            stateA.simdJsonResult
+        );
+        stateA.throwIfInError(jsonPosition);
         return d;
     }
 
@@ -140,7 +157,39 @@ public class JsonExtractPrimitiveFunction implements ScalarFunction {
 
     @Override
     public int getIPv4(Record rec) {
-        throw new UnsupportedOperationException();
+        final Utf8Sequence json = getVarcharA(rec);
+        if ((json == null) || (pointer == null)) {
+            return Numbers.IPv4_NULL;
+        }
+        assert stateA.destUtf8Sink != null;
+        stateA.destUtf8Sink.clear();
+        final long res = stateA.parser.queryPointerValue(
+                stateA.initPaddedJson(json),
+                pointer,
+                stateA.simdJsonResult,
+                stateA.destUtf8Sink,
+                maxSize
+        );
+
+        if (!stateA.simdJsonResult.hasValue()) {
+            throw stateA.asCairoException(jsonPosition);
+        }
+
+        switch (stateA.simdJsonResult.getType()) {
+            case SimdJsonType.STRING:
+                return SqlUtil.implicitCastStrAsIPv4(stateA.destUtf8Sink);
+            case SimdJsonType.NUMBER: {
+                if (stateA.simdJsonResult.getNumberType() == SimdJsonNumberType.SIGNED_INTEGER) {
+                    final int asInt = (int) res;
+                    if (asInt == res) {  // precision is intact
+                        return asInt;
+                    }
+                }
+                return Numbers.IPv4_NULL;
+            }
+            default:
+                return Numbers.IPv4_NULL;
+        }
     }
 
     @Override
@@ -149,7 +198,11 @@ public class JsonExtractPrimitiveFunction implements ScalarFunction {
         if (jsonSeq == null) {
             return Numbers.INT_NULL;
         }
-        return state.parser.queryPointerInt(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult);
+        return stateA.parser.queryPointerInt(
+                stateA.initPaddedJson(jsonSeq),
+                pointer,
+                stateA.simdJsonResult
+        );
     }
 
     @Override
@@ -158,7 +211,7 @@ public class JsonExtractPrimitiveFunction implements ScalarFunction {
         if (jsonSeq == null) {
             return Numbers.LONG_NULL;
         }
-        return state.parser.queryPointerLong(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult);
+        return stateA.parser.queryPointerLong(stateA.initPaddedJson(jsonSeq), pointer, stateA.simdJsonResult);
     }
 
     @Override
@@ -187,6 +240,11 @@ public class JsonExtractPrimitiveFunction implements ScalarFunction {
     }
 
     @Override
+    public String getName() {
+        return JsonExtractSupportingState.EXTRACT_FUNCTION_NAME;
+    }
+
+    @Override
     public RecordCursorFactory getRecordCursorFactory() {
         throw new UnsupportedOperationException();
     }
@@ -197,41 +255,69 @@ public class JsonExtractPrimitiveFunction implements ScalarFunction {
         if (jsonSeq == null) {
             return 0;
         }
-        return state.parser.queryPointerShort(state.initPaddedJson(jsonSeq), pointer, state.simdJsonResult);
+        return stateA.parser.queryPointerShort(
+                stateA.initPaddedJson(jsonSeq),
+                pointer,
+                stateA.simdJsonResult
+        );
     }
 
     @Override
     public void getStr(Record rec, Utf16Sink utf16Sink) {
-        throw new UnsupportedOperationException();
+        final Utf8Sequence utf8seq = getVarcharA(rec);
+        if (utf8seq != null) {
+            Utf8s.utf8ToUtf16(utf8seq, utf16Sink);
+        }
     }
 
     @Override
     public CharSequence getStrA(Record rec) {
-        throw new UnsupportedOperationException();
+        Utf8Sequence utf8seq = getVarcharA(rec);
+        if (utf8seq == null) {
+            return null;
+        }
+        if (utf8seq.isAscii()) {
+            return utf8seq.asAsciiCharSequence();
+        }
+        assert stateA.destUtf16Sink != null;
+        stateA.destUtf16Sink.clear();
+        Utf8s.utf8ToUtf16(utf8seq, stateA.destUtf16Sink);
+        return stateA.destUtf16Sink;
     }
 
     @Override
     public CharSequence getStrB(Record rec) {
-        throw new UnsupportedOperationException();
+        Utf8Sequence utf8seq = getVarcharB(rec);
+        if (utf8seq == null) {
+            return null;
+        }
+        if (utf8seq.isAscii()) {
+            return utf8seq.asAsciiCharSequence();
+        }
+        assert stateB != null;
+        assert stateB.destUtf16Sink != null;
+        stateB.destUtf16Sink.clear();
+        Utf8s.utf8ToUtf16(utf8seq, stateB.destUtf16Sink);
+        return stateB.destUtf16Sink;
     }
 
     @Override
     public int getStrLen(Record rec) {
-        throw new UnsupportedOperationException();
+        return TableUtils.lengthOf(getStrA(rec));
     }
 
     @Override
-    public CharSequence getSymbol(Record rec) {
-        throw new UnsupportedOperationException();
+    public final CharSequence getSymbol(Record rec) {
+        return getStrA(rec);
     }
 
-    @Override
-    public CharSequence getSymbolB(Record rec) {
-        throw new UnsupportedOperationException();
+    public final CharSequence getSymbolB(Record rec) {
+        return getStrB(rec);
     }
 
     @Override
     public long getTimestamp(Record rec) {
+        // TODO: implement this
         throw new UnsupportedOperationException();
     }
 
@@ -241,23 +327,23 @@ public class JsonExtractPrimitiveFunction implements ScalarFunction {
     }
 
     @Override
-    public @Nullable Utf8Sequence getVarcharA(Record rec) {
-        throw new UnsupportedOperationException();
+    public @Nullable DirectUtf8Sink getVarcharA(Record rec) {
+        return extractVarchar(json.getVarcharA(rec), stateA);
     }
 
     @Override
-    public @Nullable Utf8Sequence getVarcharB(Record rec) {
-        throw new UnsupportedOperationException();
+    public @Nullable DirectUtf8Sink getVarcharB(Record rec) {
+        assert stateB != null;
+        return extractVarchar(json.getVarcharB(rec), stateB);
     }
 
     @Override
     public int getVarcharSize(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public String getName() {
-        return JsonExtractSupportingState.EXTRACT_FUNCTION_NAME;
+        final Utf8Sequence utf8seq = getVarcharA(rec);
+        if (utf8seq == null) {
+            return TableUtils.NULL_LEN;
+        }
+        return utf8seq.size();
     }
 
     @Override
@@ -266,5 +352,25 @@ public class JsonExtractPrimitiveFunction implements ScalarFunction {
         path.init(symbolTableSource, executionContext);
         pointer = Misc.free(pointer);
         pointer = JsonExtractSupportingState.varcharConstantToJsonPointer(path);
+    }
+
+    private @Nullable DirectUtf8Sink extractVarchar(Utf8Sequence json, JsonExtractSupportingState state) {
+        if (json != null && pointer != null) {
+            assert state.destUtf8Sink != null;
+            state.destUtf8Sink.clear();
+            state.parser.queryPointerUtf8(
+                    state.initPaddedJson(json),
+                    pointer,
+                    state.simdJsonResult,
+                    state.destUtf8Sink,
+                    maxSize
+            );
+
+            if (state.simdJsonResult.hasValue()) {
+                return state.destUtf8Sink;
+            }
+            state.throwIfInError(jsonPosition);
+        }
+        return null;
     }
 }
