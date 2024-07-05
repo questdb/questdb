@@ -2620,7 +2620,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
     @Test
     public void testRemoveActivePartitionByYear() throws Exception {
-        testRemoveActivePartition(PartitionBy.YEAR, current -> Timestamps.addYear(Timestamps.floorYYYY(current), 1), "2021");
+        testRemoveActivePartition(PartitionBy.YEAR, current -> Timestamps.addYears(Timestamps.floorYYYY(current), 1), "2021");
     }
 
     @Test
@@ -2737,22 +2737,22 @@ public class TableReaderTest extends AbstractCairoTest {
 
     @Test
     public void testRemoveFirstPartitionByYear() throws Exception {
-        testRemovePartition(PartitionBy.YEAR, "2017", 0, current -> Timestamps.addYear(Timestamps.floorYYYY(current), 1));
+        testRemovePartition(PartitionBy.YEAR, "2017", 0, current -> Timestamps.addYears(Timestamps.floorYYYY(current), 1));
     }
 
     @Test
     public void testRemoveFirstPartitionByYearReload() throws Exception {
-        testRemovePartitionReload(PartitionBy.YEAR, "2017", 0, current -> Timestamps.addYear(Timestamps.floorYYYY(current), 1));
+        testRemovePartitionReload(PartitionBy.YEAR, "2017", 0, current -> Timestamps.addYears(Timestamps.floorYYYY(current), 1));
     }
 
     @Test
     public void testRemoveFirstPartitionByYearReloadTwo() throws Exception {
-        testRemovePartitionReload(PartitionBy.YEAR, "2017", 0, current -> Timestamps.addYear(Timestamps.floorYYYY(current), 2));
+        testRemovePartitionReload(PartitionBy.YEAR, "2017", 0, current -> Timestamps.addYears(Timestamps.floorYYYY(current), 2));
     }
 
     @Test
     public void testRemoveFirstPartitionByYearTwo() throws Exception {
-        testRemovePartition(PartitionBy.YEAR, "2017", 0, current -> Timestamps.addYear(Timestamps.floorYYYY(current), 2));
+        testRemovePartition(PartitionBy.YEAR, "2017", 0, current -> Timestamps.addYears(Timestamps.floorYYYY(current), 2));
     }
 
     @Test
@@ -2875,12 +2875,12 @@ public class TableReaderTest extends AbstractCairoTest {
 
     @Test
     public void testRemovePartitionByYear() throws Exception {
-        testRemovePartition(PartitionBy.YEAR, "2020", 3000, current -> Timestamps.addYear(Timestamps.floorYYYY(current), 1));
+        testRemovePartition(PartitionBy.YEAR, "2020", 3000, current -> Timestamps.addYears(Timestamps.floorYYYY(current), 1));
     }
 
     @Test
     public void testRemovePartitionByYearReload() throws Exception {
-        testRemovePartitionReload(PartitionBy.YEAR, "2020", 3000, current -> Timestamps.addYear(Timestamps.floorYYYY(current), 1));
+        testRemovePartitionReload(PartitionBy.YEAR, "2020", 3000, current -> Timestamps.addYears(Timestamps.floorYYYY(current), 1));
     }
 
     @Test
