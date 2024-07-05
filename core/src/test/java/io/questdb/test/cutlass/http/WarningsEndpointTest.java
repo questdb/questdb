@@ -33,7 +33,7 @@ import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.client.Response;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.str.Path;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
@@ -170,7 +170,7 @@ public class WarningsEndpointTest extends AbstractBootstrapTest {
                                             }
 
                                             @Override
-                                            public int getFileSystemStatus(Path lpszName) {
+                                            public int getFileSystemStatus(LPSZ lpszName) {
                                                 return fsMagic;
                                             }
 
