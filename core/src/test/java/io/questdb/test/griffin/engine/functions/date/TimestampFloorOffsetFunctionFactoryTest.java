@@ -70,20 +70,6 @@ public class TimestampFloorOffsetFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLowerBound() throws Exception {
-        assertMemoryLeak(() -> {
-            final char[] types = {'M', 'y', 'w', 'd', 'h', 'm', 's', 'T', 'U'};
-            for (int i = 0; i < types.length; i++) {
-
-                LOG.infoW().$(types[i]).I$();
-                assertSql("timestamp_floor\n" +
-                                "2016-02-10T16:00:00.000000Z\n",
-                        "select timestamp_floor('" + types[i] + "', 0, '2016-02-10T16:00:00Z')");
-            }
-        });
-    }
-
-    @Test
     public void testMicrosecondsFloorWithStride() throws Exception {
         assertMemoryLeak(() -> {
                     assertSql("timestamp_floor\n" +

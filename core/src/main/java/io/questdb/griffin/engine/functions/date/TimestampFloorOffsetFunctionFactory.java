@@ -54,23 +54,23 @@ public class TimestampFloorOffsetFunctionFactory implements FunctionFactory {
 
         switch (unit) {
             case 'M':
-                return new TimestampFloorFunctions.TimestampFloorMMFunction(timestamp, stride, offset);
+                return new TimestampFloorOffsetFunctions.TimestampFloorOffsetMMFunction(timestamp, stride, offset);
             case 'y':
-                return new TimestampFloorFunctions.TimestampFloorYYYYFunction(timestamp, stride, offset);
+                return new TimestampFloorOffsetFunctions.TimestampFloorOffsetYYYYFunction(timestamp, stride, offset);
             case 'w':
-                return new TimestampFloorFunctions.TimestampFloorWWFunction(timestamp, stride, offset);
+                return new TimestampFloorOffsetFunctions.TimestampFloorOffsetWWFunction(timestamp, stride, offset);
             case 'd':
-                return new TimestampFloorFunctions.TimestampFloorDDFunction(timestamp, stride, offset);
+                return new TimestampFloorOffsetFunctions.TimestampFloorOffsetDDFunction(timestamp, stride, offset);
             case 'h':
-                return new TimestampFloorFunctions.TimestampFloorHHFunction(timestamp, stride, offset);
+                return new TimestampFloorOffsetFunctions.TimestampFloorOffsetHHFunction(timestamp, stride, offset);
             case 'm':
-                return new TimestampFloorFunctions.TimestampFloorMIFunction(timestamp, stride, offset);
+                return new TimestampFloorOffsetFunctions.TimestampFloorOffsetMIFunction(timestamp, stride, offset);
             case 's':
-                return new TimestampFloorFunctions.TimestampFloorSSFunction(timestamp, stride, offset);
+                return new TimestampFloorOffsetFunctions.TimestampFloorOffsetSSFunction(timestamp, stride, offset);
             case 'T':
-                return new TimestampFloorFunctions.TimestampFloorMSFunction(timestamp, stride, offset);
+                return new TimestampFloorOffsetFunctions.TimestampFloorOffsetMSFunction(timestamp, stride, offset);
             case 'U':
-                return new TimestampFloorFunctions.TimestampFloorMCFunction(timestamp, stride, offset);
+                return new TimestampFloorOffsetFunctions.TimestampFloorOffsetMCFunction(timestamp, stride, offset);
             case 0:
                 throw SqlException.position(argPositions.getQuick(0)).put("invalid unit 'null'");
             default:

@@ -247,7 +247,8 @@ public final class Timestamps {
     }
 
     public static long floorDD(long micros, int stride) {
-        return floorDD(micros, stride, 0);
+        long result = micros - getTimeMicros(micros, stride);
+        return Math.min(result, micros);
     }
 
     public static long floorDD(long micros, int stride, long offset) {
@@ -315,9 +316,6 @@ public final class Timestamps {
     }
 
     public static long floorMC(long micros, int stride, long offset) {
-        if (micros < offset) {
-            return offset;
-        }
         return micros - ((micros - offset) % stride);
     }
 
@@ -330,9 +328,6 @@ public final class Timestamps {
     }
 
     public static long floorMI(long micros, int stride, long offset) {
-        if (micros < offset) {
-            return offset;
-        }
         return micros - ((micros - offset) % (stride * MINUTE_MICROS));
     }
 
@@ -347,9 +342,6 @@ public final class Timestamps {
     }
 
     public static long floorMM(long micros, int stride, long offset) {
-        if (micros < offset) {
-            return offset;
-        }
         final long monthsDiff = getMonthsBetween(micros, offset);
         final long monthsToAdd = monthsDiff - (monthsDiff % stride);
         return addMonths(offset, (int) monthsToAdd);
@@ -365,9 +357,6 @@ public final class Timestamps {
     }
 
     public static long floorMS(long micros, int stride, long offset) {
-        if (micros < offset) {
-            return offset;
-        }
         long result = micros - ((micros - offset) % (stride * MILLI_MICROS));
         return Math.min(result, micros);
     }
@@ -423,9 +412,6 @@ public final class Timestamps {
     }
 
     public static long floorSS(long micros, int stride, long offset) {
-        if (micros < offset) {
-            return offset;
-        }
         return micros - ((micros - offset) % (stride * SECOND_MICROS));
     }
 
@@ -1216,7 +1202,8 @@ public final class Timestamps {
     }
 
     private static long getTimeMicros(long micros, int stride) {
-        return getTimeMicros(micros, 1, 0);
+        final long us = stride * DAY_MICROS;
+        return micros < 0 ? us - 1 + (micros % us) : micros % us;
     }
 
     private static long getTimeMicros(long micros, int stride, long offset) {
