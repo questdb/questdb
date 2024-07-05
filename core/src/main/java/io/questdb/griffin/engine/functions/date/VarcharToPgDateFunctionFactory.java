@@ -28,8 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DateFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
@@ -37,37 +35,27 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.DateLocale;
-import io.questdb.std.datetime.millitime.DateFormatFactory;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.str.Utf8Sequence;
 
-public class ToDateFunctionFactory implements FunctionFactory {
+public class VarcharToPgDateFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "to_date(Ss)";
+        return "to_pg_date(Ø)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final Function arg = args.getQuick(0);
-        final CharSequence pattern = args.getQuick(1).getStrA(null);
-        if (pattern == null) {
-            throw SqlException.$(argPositions.getQuick(1), "pattern is required");
-        }
-        return new ToDateFunction(arg, DateFormatFactory.INSTANCE.get(pattern), configuration.getDefaultDateLocale(), pattern);
+        return new ToPgDateFunction(arg);
     }
 
-    private static final class ToDateFunction extends DateFunction implements UnaryFunction {
-        private final Function arg;
-        private final DateFormat dateFormat;
-        private final DateLocale locale;
-        private final CharSequence pattern;
+    public static final class ToPgDateFunction extends DateFunction implements UnaryFunction {
 
-        public ToDateFunction(Function arg, DateFormat dateFormat, DateLocale locale, CharSequence pattern) {
+        private final Function arg;
+
+        public ToPgDateFunction(Function arg) {
             this.arg = arg;
-            this.dateFormat = dateFormat;
-            this.locale = locale;
-            this.pattern = pattern;
         }
 
         @Override
@@ -77,10 +65,10 @@ public class ToDateFunctionFactory implements FunctionFactory {
 
         @Override
         public long getDate(Record rec) {
-            CharSequence value = arg.getStrA(rec);
+            Utf8Sequence value = arg.getVarcharA(rec);
             try {
-                if (value != null) {
-                    return dateFormat.parse(value, locale);
+                if (value != null && value.isAscii()) {
+                    return DateFormatUtils.PG_DATE_FORMAT.parse(value.asAsciiCharSequence(), DateFormatUtils.EN_LOCALE);
                 }
             } catch (NumericException ignore) {
             }
@@ -88,8 +76,8 @@ public class ToDateFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toPlan(PlanSink sink) {
-            sink.val("to_date(").val(arg).val(',').val(pattern).val(')');
+        public String getName() {
+            return "to_pg_date";
         }
     }
 }
