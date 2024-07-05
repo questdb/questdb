@@ -30,10 +30,8 @@ import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
-import io.questdb.std.BinarySequence;
-import io.questdb.std.Long256;
-import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
+import io.questdb.std.*;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.json.SimdJsonNumberType;
 import io.questdb.std.json.SimdJsonType;
 import io.questdb.std.str.*;
@@ -44,9 +42,9 @@ public class JsonExtractFunction implements ScalarFunction {
     private static final boolean defaultBool = false;
     private final int columnType;
     private final Function json;
+    private final int jsonPosition;
     private final int maxSize;
     private final Function path;
-    private final int jsonPosition;
     private final @NotNull JsonExtractSupportingState stateA;
 
     // Only set for VARCHAR
@@ -111,8 +109,28 @@ public class JsonExtractFunction implements ScalarFunction {
 
     @Override
     public long getDate(Record rec) {
-        // TODO: implement this
-        throw new UnsupportedOperationException();
+        final Utf8Sequence jsonInput = json.getVarcharA(rec);
+        if ((jsonInput == null) || (pointer == null)) {
+            return Numbers.LONG_NULL;
+        }
+        final long res = queryPointerValue(jsonInput);
+        switch (stateA.simdJsonResult.getType()) {
+            case SimdJsonType.STRING:
+                assert stateA.destUtf8Sink != null;
+                try {
+                    return DateFormatUtils.parseDate(stateA.destUtf8Sink.asAsciiCharSequence());
+                } catch (NumericException e) {
+                    return Numbers.LONG_NULL;
+                }
+            case SimdJsonType.NUMBER: {
+                if (stateA.simdJsonResult.getNumberType() == SimdJsonNumberType.SIGNED_INTEGER) {
+                    return res;
+                }
+                return Numbers.LONG_NULL;
+            }
+            default:
+                return Numbers.LONG_NULL;
+        }
     }
 
     @Override
@@ -122,9 +140,9 @@ public class JsonExtractFunction implements ScalarFunction {
             return Double.NaN;
         }
         final double d = stateA.parser.queryPointerDouble(
-            stateA.initPaddedJson(jsonSeq),
-            pointer,
-            stateA.simdJsonResult
+                stateA.initPaddedJson(jsonSeq),
+                pointer,
+                stateA.simdJsonResult
         );
         stateA.throwIfInError(jsonPosition);
         return d;
@@ -161,22 +179,10 @@ public class JsonExtractFunction implements ScalarFunction {
         if ((jsonInput == null) || (pointer == null)) {
             return Numbers.IPv4_NULL;
         }
-        assert stateA.destUtf8Sink != null;
-        stateA.destUtf8Sink.clear();
-        final long res = stateA.parser.queryPointerValue(
-                stateA.initPaddedJson(jsonInput),
-                pointer,
-                stateA.simdJsonResult,
-                stateA.destUtf8Sink,
-                maxSize
-        );
-
-        if (!stateA.simdJsonResult.hasValue()) {
-            throw stateA.asCairoException(jsonPosition);
-        }
-
+        final long res = queryPointerValue(jsonInput);
         switch (stateA.simdJsonResult.getType()) {
             case SimdJsonType.STRING:
+                assert stateA.destUtf8Sink != null;
                 return Numbers.parseIPv4Quiet(stateA.destUtf8Sink.asAsciiCharSequence());
             case SimdJsonType.NUMBER: {
                 if (stateA.simdJsonResult.getNumberType() == SimdJsonNumberType.SIGNED_INTEGER) {
@@ -372,5 +378,22 @@ public class JsonExtractFunction implements ScalarFunction {
             state.throwIfInError(jsonPosition);
         }
         return null;
+    }
+
+    private long queryPointerValue(Utf8Sequence jsonInput) {
+        assert stateA.destUtf8Sink != null;
+        stateA.destUtf8Sink.clear();
+        final long res = stateA.parser.queryPointerValue(
+                stateA.initPaddedJson(jsonInput),
+                pointer,
+                stateA.simdJsonResult,
+                stateA.destUtf8Sink,
+                maxSize
+        );
+
+        if (!stateA.simdJsonResult.hasValue()) {
+            throw stateA.asCairoException(jsonPosition);
+        }
+        return res;
     }
 }

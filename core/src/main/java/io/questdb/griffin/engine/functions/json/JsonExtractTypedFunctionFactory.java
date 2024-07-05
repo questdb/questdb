@@ -51,9 +51,9 @@ public class JsonExtractTypedFunctionFactory implements FunctionFactory {
             case ColumnType.LONG:
             case ColumnType.FLOAT:
             case ColumnType.DOUBLE:
-            case ColumnType.IPv4:
-            case ColumnType.TIMESTAMP:
             case ColumnType.DATE:
+            case ColumnType.TIMESTAMP:
+            case ColumnType.IPv4:
                 return true;
             default:
                 return false;

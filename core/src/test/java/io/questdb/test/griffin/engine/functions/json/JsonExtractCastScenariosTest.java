@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.functions.json;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.After;
 import org.junit.Before;
@@ -46,109 +47,113 @@ import org.junit.Test;
 public class JsonExtractCastScenariosTest extends AbstractCairoTest {
     private static final String castsDoc;
     private static final String[][] scenarios = new String[][]{
-            // json token, ::boolean, ::short, ::int, ::long, ::double, ::varchar, ::ipv4
-            {"null", "false", "0", "null", "null", "null", "", ""},
-            {"true", "true", "1", "1", "1", "1.0", "true", ""},
-            {"false", "false", "0", "0", "0", "0.0", "false", ""},
-            {"1", "false", "1", "1", "1", "1.0", "1", "0.0.0.1"},
-            {"0", "false", "0", "0", "0", "0.0", "0", ""},
-            {"-1", "false", "-1", "-1", "-1", "-1.0", "-1", "255.255.255.255"},
-            {"\"true\"", "false", "0", "null", "null", "null", "true", ""},
-            {"\"false\"", "false", "0", "null", "null", "null", "false", ""},
-            {"\"null\"", "false", "0", "null", "null", "null", "null", ""},
-            {"\"1\"", "false", "0", "null", "null", "null", "1", ""},
-            {"\"0\"", "false", "0", "null", "null", "null", "0", ""},
-            {"\"\"", "false", "0", "null", "null", "null", "", ""},
-            {"\" \"", "false", "0", "null", "null", "null", " ", ""},
-            {"\"  \"", "false", "0", "null", "null", "null", "  ", ""},
-            {"\"  true\"", "false", "0", "null", "null", "null", "  true", ""},
-            {"\"true  \"", "false", "0", "null", "null", "null", "true  ", ""},
-            {"\"  true  \"", "false", "0", "null", "null", "null", "  true  ", ""},
-            {"\"  false\"", "false", "0", "null", "null", "null", "  false", ""},
-            {"\"false  \"", "false", "0", "null", "null", "null", "false  ", ""},
-            {"\"  false  \"", "false", "0", "null", "null", "null", "  false  ", ""},
-            {"\"  null\"", "false", "0", "null", "null", "null", "  null", ""},
-            {"\"null  \"", "false", "0", "null", "null", "null", "null  ", ""},
-            {"\"  null  \"", "false", "0", "null", "null", "null", "  null  ", ""},
-            {"\"  abc\"", "false", "0", "null", "null", "null", "  abc", ""},
-            {"\"abc  \"", "false", "0", "null", "null", "null", "abc  ", ""},
-            {"\"  abc  \"", "false", "0", "null", "null", "null", "  abc  ", ""},
-            {"\"esc\\\"aping\"", "false", "0", "null", "null", "null", "esc\"aping", ""},
-            {"0.0", "false", "0", "0", "0", "0.0", "0.0", ""},
-            {"1.0", "false", "1", "1", "1", "1.0", "1.0", ""},
-            {"1e1", "false", "10", "10", "10", "10.0", "1e1", ""},
-            {"1e+1", "false", "10", "10", "10", "10.0", "1e+1", ""},
-            {"1e-1", "false", "0", "0", "0", "0.1", "1e-1", ""},
-            {"1e01", "false", "10", "10", "10", "10.0", "1e01", ""},
-            {"1E1", "false", "10", "10", "10", "10.0", "1E1", ""},
-            {"1E+1", "false", "10", "10", "10", "10.0", "1E+1", ""},
-            {"1E-1", "false", "0", "0", "0", "0.1", "1E-1", ""},
-            {"1E01", "false", "10", "10", "10", "10.0", "1E01", ""},
-            {"1E+01", "false", "10", "10", "10", "10.0", "1E+01", ""},
-            {"0.25", "false", "0", "0", "0", "0.25", "0.25", ""},
-            {"1.25", "false", "1", "1", "1", "1.25", "1.25", ""},
-            {"1.25e2", "false", "125", "125", "125", "125.0", "1.25e2", ""},
-            {"1.25e+2", "false", "125", "125", "125", "125.0", "1.25e+2", ""},
-            {"1.25e-2", "false", "0", "0", "0", "0.0125", "1.25e-2", ""},
-            {"1.25e02", "false", "125", "125", "125", "125.0", "1.25e02", ""},
-            {"1.25e+02", "false", "125", "125", "125", "125.0", "1.25e+02", ""},
-            {"1.25e-02", "false", "0", "0", "0", "0.0125", "1.25e-02", ""},
-            {"1.25e+02", "false", "125", "125", "125", "125.0", "1.25e+02", ""},
-            {"2.0", "false", "2", "2", "2", "2.0", "2.0", ""},
-            {"2.5", "false", "2", "2", "2", "2.5", "2.5", ""},
-            {"2.75", "false", "2", "2", "2", "2.75", "2.75", ""},
-            {"-2.0", "false", "-2", "-2", "-2", "-2.0", "-2.0", ""},
-            {"-2.5", "false", "-2", "-2", "-2", "-2.5", "-2.5", ""},
-            {"-2.75", "false", "-2", "-2", "-2", "-2.75", "-2.75", ""},
-            {"-1.0", "false", "-1", "-1", "-1", "-1.0", "-1.0", ""},
-            {"-0.25", "false", "0", "0", "0", "-0.25", "-0.25", ""},
-            {"-1.25", "false", "-1", "-1", "-1", "-1.25", "-1.25", ""},
-            {"-1.25e2", "false", "-125", "-125", "-125", "-125.0", "-1.25e2", ""},
-            {"-1.25e+2", "false", "-125", "-125", "-125", "-125.0", "-1.25e+2", ""},
-            {"-1.25e-2", "false", "0", "0", "0", "-0.0125", "-1.25e-2", ""},
-            {"-1.25e02", "false", "-125", "-125", "-125", "-125.0", "-1.25e02", ""},
-            {"-1.25e+02", "false", "-125", "-125", "-125", "-125.0", "-1.25e+02", ""},
-            {"-1.25e-02", "false", "0", "0", "0", "-0.0125", "-1.25e-02", ""},
-            {"-1.25e+02", "false", "-125", "-125", "-125", "-125.0", "-1.25e+02", ""},
-            {"1e308", "false", "0", "null", "null", "1.0E308", "1e308", ""},
-            {"1E308", "false", "0", "null", "null", "1.0E308", "1E308", ""},
-            {"127", "false", "127", "127", "127", "127.0", "127", "0.0.0.127"},
-            {"128", "false", "128", "128", "128", "128.0", "128", "0.0.0.128"},
-            {"-128", "false", "-128", "-128", "-128", "-128.0", "-128", "255.255.255.128"},
-            {"-129", "false", "-129", "-129", "-129", "-129.0", "-129", "255.255.255.127"},
-            {"255", "false", "255", "255", "255", "255.0", "255", "0.0.0.255"},
-            {"256", "false", "256", "256", "256", "256.0", "256", "0.0.1.0"},
-            {"-256", "false", "-256", "-256", "-256", "-256.0", "-256", "255.255.255.0"},
-            {"-257", "false", "-257", "-257", "-257", "-257.0", "-257", "255.255.254.255"},
-            {"32767", "false", "32767", "32767", "32767", "32767.0", "32767", "0.0.127.255"},
-            {"32768", "false", "0", "32768", "32768", "32768.0", "32768", "0.0.128.0"},
-            {"-32768", "false", "-32768", "-32768", "-32768", "-32768.0", "-32768", "255.255.128.0"},
-            {"-32769", "false", "0", "-32769", "-32769", "-32769.0", "-32769", "255.255.127.255"},
-            {"65535", "false", "0", "65535", "65535", "65535.0", "65535", "0.0.255.255"},
-            {"65536", "false", "0", "65536", "65536", "65536.0", "65536", "0.1.0.0"},
-            {"-65536", "false", "0", "-65536", "-65536", "-65536.0", "-65536", "255.255.0.0"},
-            {"-65537", "false", "0", "-65537", "-65537", "-65537.0", "-65537", "255.254.255.255"},
-            {"2147483647", "false", "0", "2147483647", "2147483647", "2.147483647E9", "2147483647", "127.255.255.255"},
-            {"2147483648", "false", "0", "null", "2147483648", "2.147483648E9", "2147483648", ""},
-            {"-2147483648", "false", "0", "null", "-2147483648", "-2.147483648E9", "-2147483648", "128.0.0.0"},
-            {"-2147483649", "false", "0", "null", "-2147483649", "-2.147483649E9", "-2147483649", ""},
-            {"4294967295", "false", "0", "null", "4294967295", "4.294967295E9", "4294967295", ""},
-            {"4294967296", "false", "0", "null", "4294967296", "4.294967296E9", "4294967296", ""},
-            {"-4294967296", "false", "0", "null", "-4294967296", "-4.294967296E9", "-4294967296", ""},
-            {"-4294967297", "false", "0", "null", "-4294967297", "-4.294967297E9", "-4294967297", ""},
-            {"9223372036854775807", "false", "0", "null", "9223372036854775807", "9.223372036854776E18", "9223372036854775807", ""},
-            {"9223372036854775808", "false", "0", "null", "null", "9.223372036854776E18", "9223372036854775808", ""},
-            {"-9223372036854775808", "false", "0", "null", "null", "-9.223372036854776E18", "-9223372036854775808", ""},
-            {"-9223372036854775809", "false", "0", "null", "null", "-9.223372036854776E18", "-9223372036854775809", ""},
-            {"[]", "false", "0", "null", "null", "null", "[]", ""},
-            {"[true]", "false", "0", "null", "null", "null", "[true]", ""},
-            {"[false]", "false", "0", "null", "null", "null", "[false]", ""},
-            {"[null]", "false", "0", "null", "null", "null", "[null]", ""},
-            {"[1]", "false", "0", "null", "null", "null", "[1]", ""},
-            {"[0]", "false", "0", "null", "null", "null", "[0]", ""},
-            {"[\"true\"]", "false", "0", "null", "null", "null", "[\"true\"]", ""},
-            {"[\"false\"]", "false", "0", "null", "null", "null", "[\"false\"]", ""},
-            {"[1, 2]", "false", "0", "null", "null", "null", "[1, 2]", ""}
+            // json token, ::boolean, ::short, ::int, ::long, ::double, ::varchar, ::ipv4, ::date
+            {"null", "false", "0", "null", "null", "null", "", "", ""},
+            {"true", "true", "1", "1", "1", "1.0", "true", "", ""},
+            {"false", "false", "0", "0", "0", "0.0", "false", "", ""},
+            {"1", "false", "1", "1", "1", "1.0", "1", "0.0.0.1", "1970-01-01T00:00:00.001Z"},
+            {"0", "false", "0", "0", "0", "0.0", "0", "", "1970-01-01T00:00:00.000Z"},
+            {"-1", "false", "-1", "-1", "-1", "-1.0", "-1", "255.255.255.255", "1969-12-31T23:59:59.999Z"},
+            {"\"true\"", "false", "0", "null", "null", "null", "true", "", ""},
+            {"\"false\"", "false", "0", "null", "null", "null", "false", "", ""},
+            {"\"null\"", "false", "0", "null", "null", "null", "null", "", ""},
+            {"\"1\"", "false", "0", "null", "null", "null", "1", "", "1970-01-01T00:00:00.001Z"},
+            {"\"0\"", "false", "0", "null", "null", "null", "0", "", "1970-01-01T00:00:00.000Z"},
+            {"\"\"", "false", "0", "null", "null", "null", "", "", ""},
+            {"\" \"", "false", "0", "null", "null", "null", " ", "", ""},
+            {"\"  \"", "false", "0", "null", "null", "null", "  ", "", ""},
+            {"\"  true\"", "false", "0", "null", "null", "null", "  true", "", ""},
+            {"\"true  \"", "false", "0", "null", "null", "null", "true  ", "", ""},
+            {"\"  true  \"", "false", "0", "null", "null", "null", "  true  ", "", ""},
+            {"\"  false\"", "false", "0", "null", "null", "null", "  false", "", ""},
+            {"\"false  \"", "false", "0", "null", "null", "null", "false  ", "", ""},
+            {"\"  false  \"", "false", "0", "null", "null", "null", "  false  ", "", ""},
+            {"\"  null\"", "false", "0", "null", "null", "null", "  null", "", ""},
+            {"\"null  \"", "false", "0", "null", "null", "null", "null  ", "", ""},
+            {"\"  null  \"", "false", "0", "null", "null", "null", "  null  ", "", ""},
+            {"\"  abc\"", "false", "0", "null", "null", "null", "  abc", "", ""},
+            {"\"abc  \"", "false", "0", "null", "null", "null", "abc  ", "", ""},
+            {"\"  abc  \"", "false", "0", "null", "null", "null", "  abc  ", "", ""},
+            {"\"esc\\\"aping\"", "false", "0", "null", "null", "null", "esc\"aping", "", ""},
+            {"\"1969-12-31T23:58:54.463Z\"", "false", "0", "null", "null", "null", "1969-12-31T23:58:54.463Z", "", "1969-12-31T23:58:54.463Z"},
+            {"\"1970-01-01T00:00:00.000Z\"", "false", "0", "null", "null", "null", "1970-01-01T00:00:00.000Z", "", "1970-01-01T00:00:00.000Z"},
+            {"0.0", "false", "0", "0", "0", "0.0", "0.0", "", ""},
+            {"1.0", "false", "1", "1", "1", "1.0", "1.0", "", ""},
+            {"1e1", "false", "10", "10", "10", "10.0", "1e1", "", ""},
+            {"1e+1", "false", "10", "10", "10", "10.0", "1e+1", "", ""},
+            {"1e-1", "false", "0", "0", "0", "0.1", "1e-1", "", ""},
+            {"1e01", "false", "10", "10", "10", "10.0", "1e01", "", ""},
+            {"1E1", "false", "10", "10", "10", "10.0", "1E1", "", ""},
+            {"1E+1", "false", "10", "10", "10", "10.0", "1E+1", "", ""},
+            {"1E-1", "false", "0", "0", "0", "0.1", "1E-1", "", ""},
+            {"1E01", "false", "10", "10", "10", "10.0", "1E01", "", ""},
+            {"1E+01", "false", "10", "10", "10", "10.0", "1E+01", "", ""},
+            {"0.25", "false", "0", "0", "0", "0.25", "0.25", "", ""},
+            {"1.25", "false", "1", "1", "1", "1.25", "1.25", "", ""},
+            {"1.25e2", "false", "125", "125", "125", "125.0", "1.25e2", "", ""},
+            {"1.25e+2", "false", "125", "125", "125", "125.0", "1.25e+2", "", ""},
+            {"1.25e-2", "false", "0", "0", "0", "0.0125", "1.25e-2", "", ""},
+            {"1.25e02", "false", "125", "125", "125", "125.0", "1.25e02", "", ""},
+            {"1.25e+02", "false", "125", "125", "125", "125.0", "1.25e+02", "", ""},
+            {"1.25e-02", "false", "0", "0", "0", "0.0125", "1.25e-02", "", ""},
+            {"1.25e+02", "false", "125", "125", "125", "125.0", "1.25e+02", "", ""},
+            {"2.0", "false", "2", "2", "2", "2.0", "2.0", "", ""},
+            {"2.5", "false", "2", "2", "2", "2.5", "2.5", "", ""},
+            {"2.75", "false", "2", "2", "2", "2.75", "2.75", "", ""},
+            {"-2.0", "false", "-2", "-2", "-2", "-2.0", "-2.0", "", ""},
+            {"-2.5", "false", "-2", "-2", "-2", "-2.5", "-2.5", "", ""},
+            {"-2.75", "false", "-2", "-2", "-2", "-2.75", "-2.75", "", ""},
+            {"-1.0", "false", "-1", "-1", "-1", "-1.0", "-1.0", "", ""},
+            {"-0.25", "false", "0", "0", "0", "-0.25", "-0.25", "", ""},
+            {"-1.25", "false", "-1", "-1", "-1", "-1.25", "-1.25", "", ""},
+            {"-1.25e2", "false", "-125", "-125", "-125", "-125.0", "-1.25e2", "", ""},
+            {"-1.25e+2", "false", "-125", "-125", "-125", "-125.0", "-1.25e+2", "", ""},
+            {"-1.25e-2", "false", "0", "0", "0", "-0.0125", "-1.25e-2", "", ""},
+            {"-1.25e02", "false", "-125", "-125", "-125", "-125.0", "-1.25e02", "", ""},
+            {"-1.25e+02", "false", "-125", "-125", "-125", "-125.0", "-1.25e+02", "", ""},
+            {"-1.25e-02", "false", "0", "0", "0", "-0.0125", "-1.25e-02", "", ""},
+            {"-1.25e+02", "false", "-125", "-125", "-125", "-125.0", "-1.25e+02", "", ""},
+            {"1e308", "false", "0", "null", "null", "1.0E308", "1e308", "", ""},
+            {"1E308", "false", "0", "null", "null", "1.0E308", "1E308", "", ""},
+            {"127", "false", "127", "127", "127", "127.0", "127", "0.0.0.127", "1970-01-01T00:00:00.127Z"},
+            {"128", "false", "128", "128", "128", "128.0", "128", "0.0.0.128", "1970-01-01T00:00:00.128Z"},
+            {"-128", "false", "-128", "-128", "-128", "-128.0", "-128", "255.255.255.128", "1969-12-31T23:59:59.872Z"},
+            {"-129", "false", "-129", "-129", "-129", "-129.0", "-129", "255.255.255.127", "1969-12-31T23:59:59.871Z"},
+            {"255", "false", "255", "255", "255", "255.0", "255", "0.0.0.255", "1970-01-01T00:00:00.255Z"},
+            {"256", "false", "256", "256", "256", "256.0", "256", "0.0.1.0", "1970-01-01T00:00:00.256Z"},
+            {"-256", "false", "-256", "-256", "-256", "-256.0", "-256", "255.255.255.0", "1969-12-31T23:59:59.744Z"},
+            {"-257", "false", "-257", "-257", "-257", "-257.0", "-257", "255.255.254.255", "1969-12-31T23:59:59.743Z"},
+            {"32767", "false", "32767", "32767", "32767", "32767.0", "32767", "0.0.127.255", "1970-01-01T00:00:32.767Z"},
+            {"32768", "false", "0", "32768", "32768", "32768.0", "32768", "0.0.128.0", "1970-01-01T00:00:32.768Z"},
+            {"-32768", "false", "-32768", "-32768", "-32768", "-32768.0", "-32768", "255.255.128.0", "1969-12-31T23:59:27.232Z"},
+            {"-32769", "false", "0", "-32769", "-32769", "-32769.0", "-32769", "255.255.127.255", "1969-12-31T23:59:27.231Z"},
+            {"65535", "false", "0", "65535", "65535", "65535.0", "65535", "0.0.255.255", "1970-01-01T00:01:05.535Z"},
+            {"65536", "false", "0", "65536", "65536", "65536.0", "65536", "0.1.0.0", "1970-01-01T00:01:05.536Z"},
+            {"-65536", "false", "0", "-65536", "-65536", "-65536.0", "-65536", "255.255.0.0", "1969-12-31T23:58:54.464Z"},
+            {"-65537", "false", "0", "-65537", "-65537", "-65537.0", "-65537", "255.254.255.255", "1969-12-31T23:58:54.463Z"},
+            {"2147483647", "false", "0", "2147483647", "2147483647", "2.147483647E9", "2147483647", "127.255.255.255", "1970-01-25T20:31:23.647Z"},
+            {"2147483648", "false", "0", "null", "2147483648", "2.147483648E9", "2147483648", "", "1970-01-25T20:31:23.648Z"},
+            {"-2147483648", "false", "0", "null", "-2147483648", "-2.147483648E9", "-2147483648", "128.0.0.0", "1969-12-07T03:28:36.352Z"},
+            {"-2147483649", "false", "0", "null", "-2147483649", "-2.147483649E9", "-2147483649", "", "1969-12-07T03:28:36.351Z"},
+            {"4294967295", "false", "0", "null", "4294967295", "4.294967295E9", "4294967295", "", "1970-02-19T17:02:47.295Z"},
+            {"4294967296", "false", "0", "null", "4294967296", "4.294967296E9", "4294967296", "", "1970-02-19T17:02:47.296Z"},
+            {"-4294967296", "false", "0", "null", "-4294967296", "-4.294967296E9", "-4294967296", "", "1969-11-12T06:57:12.704Z"},
+            {"-4294967297", "false", "0", "null", "-4294967297", "-4.294967297E9", "-4294967297", "", "1969-11-12T06:57:12.703Z"},
+            {"1000000000000", "false", "0", "null", "1000000000000", "1.0E12", "1000000000000", "", "2001-09-09T01:46:40.000Z"},
+            {"9223372036854775807", "false", "0", "null", "9223372036854775807", "9.223372036854776E18", "9223372036854775807", "", "292278994-08-17T07:12:55.807Z"},
+            {"9223372036854775808", "false", "0", "null", "null", "9.223372036854776E18", "9223372036854775808", "", ""},
+            {"-9223372036854775808", "false", "0", "null", "null", "-9.223372036854776E18", "-9223372036854775808", "", ""},
+            {"-9223372036854775809", "false", "0", "null", "null", "-9.223372036854776E18", "-9223372036854775809", "", ""},
+            {"10000000000000000000000000000000000000000", "false", "0", "null", "null", "1.0E40", "10000000000000000000000000000000000000000", "", ""},
+            {"[]", "false", "0", "null", "null", "null", "[]", "", ""},
+            {"[true]", "false", "0", "null", "null", "null", "[true]", "", ""},
+            {"[false]", "false", "0", "null", "null", "null", "[false]", "", ""},
+            {"[null]", "false", "0", "null", "null", "null", "[null]", "", ""},
+            {"[1]", "false", "0", "null", "null", "null", "[1]", "", ""},
+            {"[0]", "false", "0", "null", "null", "null", "[0]", "", ""},
+            {"[\"true\"]", "false", "0", "null", "null", "null", "[\"true\"]", "", ""},
+            {"[\"false\"]", "false", "0", "null", "null", "null", "[\"false\"]", "", ""},
+            {"[1, 2]", "false", "0", "null", "null", "null", "[1, 2]", "", ""}
     };
 
     @Before
@@ -175,8 +180,18 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDate() throws Exception {
+        testScenarios(ColumnType.DATE);
+    }
+
+    @Test
     public void testDouble() throws Exception {
         testScenarios(ColumnType.DOUBLE);
+    }
+
+    @Test
+    public void testIPv4() throws Exception {
+        testScenarios(ColumnType.IPv4);
     }
 
     @Test
@@ -190,56 +205,21 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
     }
 
     public void testScenario(int type, int index) throws Exception {
-        final int varcharColumn = selectScenarioColumn(ColumnType.VARCHAR);
         final int scenarioColumn = selectScenarioColumn(type);
         final String expectedValue = scenarios[index][scenarioColumn];
         final String expected = "x\n" + expectedValue + ":" + ColumnType.nameOf(type) + "\n";
 
-        if (scenarioColumn != varcharColumn) {
-            try {
-                final String sql = "select json_extract(text, '[" + index + "]', " + type + ") as x from json_test";
-                assertSqlWithTypes(expected, sql);
-            } catch (AssertionError e) {
-                throw new AssertionError(
-                        "Failed JSON 3rd type arg call. Scenario: " + index +
-                                ", Cast Type: " + ColumnType.nameOf(type) +
-                                ", JSON: " + scenarios[index][0] +
-                                ", Expected Value: " + expectedValue +
-                                ", Error: " + e.getMessage(), e);
-            } catch (CairoException e) {
-                throw new RuntimeException(
-                        "Failed JSON 3rd type arg call. Scenario: " + index +
-                                ", Cast Type: " + ColumnType.nameOf(type) +
-                                ", JSON: " + scenarios[index][0] +
-                                ", Expected Value: " + expectedValue +
-                                ", Error: " + e.getMessage(), e);
-            }
+        if (type != ColumnType.VARCHAR) {
+            testScenarioVia3rdArgCall(type, index, expected, expectedValue);
         }
 
-        try {
-            final String sql = "select json_extract(text, '[" + index + "]')::" + ColumnType.nameOf(type) +
-                    " as x from json_test";
-            assertSqlWithTypes(expected, sql);
-        } catch (AssertionError e) {
-            throw new AssertionError(
-                    "Failed intrusive cast call. Scenario: " + index +
-                            ", Cast Type: " + ColumnType.nameOf(type) +
-                            ", JSON: " + scenarios[index][0] +
-                            ", Expected Value: " + expectedValue +
-                            ", Error: " + e.getMessage(), e);
-        } catch (CairoException e) {
-            throw new RuntimeException(
-                    "Failed intrusive cast call. Scenario: " + index +
-                            ", Cast Type: " + ColumnType.nameOf(type) +
-                            ", JSON: " + scenarios[index][0] +
-                            ", Expected Value: " + expectedValue +
-                            ", Error: " + e.getMessage(), e);
-        }
-    }
+        testScenarioViaLonghandCast(type, index, expected, expectedValue);
 
-    @Test
-    public void testIPv4() throws Exception {
-        testScenarios(ColumnType.IPv4);
+        if (type != ColumnType.DATE) {
+            // TODO: Fix `::date` casting. Something's off.
+            //       This is not specific to JSON, possibly a SqlParser issue.
+            testScenarioViaSuffixCast(type, index, expected, expectedValue);
+        }
     }
 
     @Test
@@ -268,8 +248,78 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
                 return 6;
             case ColumnType.IPv4:
                 return 7;
+            case ColumnType.DATE:
+                return 8;
             default:
                 throw new RuntimeException("No scenario tests for type " + ColumnType.nameOf(type));
+        }
+    }
+
+    private void testScenarioVia3rdArgCall(int type, int index, String expected, String expectedValue) throws SqlException {
+        // json_extract(doc, path, type)
+        try {
+            final String sql = "select json_extract(text, '[" + index + "]', " + type + ") as x from json_test";
+            assertSqlWithTypes(expected, sql);
+        } catch (AssertionError e) {
+            throw new AssertionError(
+                    "Failed JSON 3rd type arg call. Scenario: " + index +
+                            ", Cast Type: " + ColumnType.nameOf(type) +
+                            ", JSON: " + scenarios[index][0] +
+                            ", Expected Value: " + expectedValue +
+                            ", Error: " + e.getMessage(), e);
+        } catch (CairoException e) {
+            throw new RuntimeException(
+                    "Failed JSON 3rd type arg call. Scenario: " + index +
+                            ", Cast Type: " + ColumnType.nameOf(type) +
+                            ", JSON: " + scenarios[index][0] +
+                            ", Expected Value: " + expectedValue +
+                            ", Error: " + e.getMessage(), e);
+        }
+    }
+
+    private void testScenarioViaLonghandCast(int type, int index, String expected, String expectedValue) throws SqlException {
+        // cast(json_extract(doc, path) as type)
+        try {
+            final String sql = "select cast(json_extract(text, '[" + index + "]') as " + ColumnType.nameOf(type) +
+                    ") as x from json_test";
+            assertSqlWithTypes(expected, sql);
+        } catch (AssertionError e) {
+            throw new AssertionError(
+                    "Failed cast(.. as ..) call. Scenario: " + index +
+                            ", Cast Type: " + ColumnType.nameOf(type) +
+                            ", JSON: " + scenarios[index][0] +
+                            ", Expected Value: " + expectedValue +
+                            ", Error: " + e.getMessage(), e);
+        } catch (CairoException e) {
+            throw new RuntimeException(
+                    "Failed cast(.. as ..) call. Scenario: " + index +
+                            ", Cast Type: " + ColumnType.nameOf(type) +
+                            ", JSON: " + scenarios[index][0] +
+                            ", Expected Value: " + expectedValue +
+                            ", Error: " + e.getMessage(), e);
+        }
+    }
+
+    private void testScenarioViaSuffixCast(int type, int index, String expected, String expectedValue) throws SqlException {
+        // json_extract(doc, path)::type
+        try {
+            final String sql = "select json_extract(text, '[" + index + "]')::" + ColumnType.nameOf(type) +
+                    " as x from json_test";
+            assertSqlWithTypes(expected, sql);
+        } catch (AssertionError e) {
+            throw new AssertionError(
+                    "Failed suffix ::cast call. Scenario: " + index +
+                            ", Cast Type: " + ColumnType.nameOf(type) +
+                            ", JSON: " + scenarios[index][0] +
+                            ", Expected Value: " + expectedValue +
+                            ", Error: " + e.getMessage(), e);
+        } catch (CairoException e) {
+            throw new RuntimeException(
+                    "Failed suffix ::cast call. Scenario: " + index +
+                            ", Cast Type: " + ColumnType.nameOf(type) +
+                            ", JSON: " + scenarios[index][0] +
+                            ", Expected Value: " + expectedValue +
+                            ", Error: " + e.getMessage(), e);
         }
     }
 
