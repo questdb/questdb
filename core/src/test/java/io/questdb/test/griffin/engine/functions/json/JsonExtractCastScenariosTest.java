@@ -265,8 +265,8 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
 
     private void testScenarioVia3rdArgCall(int type, int index, String expected, String expectedValue) throws SqlException {
         // json_extract(doc, path, type)
+        final String sql = "select json_extract(text, '[" + index + "]', " + type + ") as x from json_test";
         try {
-            final String sql = "select json_extract(text, '[" + index + "]', " + type + ") as x from json_test";
             assertSqlWithTypes(expected, sql);
         } catch (AssertionError e) {
             throw new AssertionError(
@@ -278,6 +278,7 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
         } catch (CairoException e) {
             throw new RuntimeException(
                     "Failed JSON 3rd type arg call. Scenario: " + index +
+                            ", SQL: `" + sql + "`" +
                             ", Cast Type: " + ColumnType.nameOf(type) +
                             ", JSON: " + scenarios[index][0] +
                             ", Expected Value: " + expectedValue +
@@ -287,9 +288,9 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
 
     private void testScenarioViaLonghandCast(int type, int index, String expected, String expectedValue) throws SqlException {
         // cast(json_extract(doc, path) as type)
+        final String sql = "select cast(json_extract(text, '[" + index + "]') as " + ColumnType.nameOf(type) +
+                ") as x from json_test";
         try {
-            final String sql = "select cast(json_extract(text, '[" + index + "]') as " + ColumnType.nameOf(type) +
-                    ") as x from json_test";
             assertSqlWithTypes(expected, sql);
         } catch (AssertionError e) {
             throw new AssertionError(
@@ -301,6 +302,7 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
         } catch (CairoException e) {
             throw new RuntimeException(
                     "Failed cast(.. as ..) call. Scenario: " + index +
+                            ", SQL: `" + sql + "`" +
                             ", Cast Type: " + ColumnType.nameOf(type) +
                             ", JSON: " + scenarios[index][0] +
                             ", Expected Value: " + expectedValue +
@@ -310,9 +312,9 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
 
     private void testScenarioViaSuffixCast(int type, int index, String expected, String expectedValue) throws SqlException {
         // json_extract(doc, path)::type
+        final String sql = "select json_extract(text, '[" + index + "]')::" + ColumnType.nameOf(type) +
+                " as x from json_test";
         try {
-            final String sql = "select json_extract(text, '[" + index + "]')::" + ColumnType.nameOf(type) +
-                    " as x from json_test";
             assertSqlWithTypes(expected, sql);
         } catch (AssertionError e) {
             throw new AssertionError(
@@ -324,6 +326,7 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
         } catch (CairoException e) {
             throw new RuntimeException(
                     "Failed suffix ::cast call. Scenario: " + index +
+                            ", SQL: `" + sql + "`" +
                             ", Cast Type: " + ColumnType.nameOf(type) +
                             ", JSON: " + scenarios[index][0] +
                             ", Expected Value: " + expectedValue +
