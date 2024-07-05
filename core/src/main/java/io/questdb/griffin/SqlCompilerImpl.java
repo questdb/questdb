@@ -33,7 +33,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cairo.wal.WalErrorTag;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriterMetadata;
 import io.questdb.griffin.engine.QueryProgress;
@@ -749,7 +748,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
 
                 tok = SqlUtil.fetchNext(lexer); // optional WITH part
-                WalErrorTag errorTag = WalErrorTag.NONE;
+                ErrorTag errorTag = ErrorTag.NONE;
                 String errorMessage = "";
                 if (tok != null && !Chars.equals(tok, ';')) {
                     if (SqlKeywords.isWithKeyword(tok)) {
@@ -757,10 +756,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         final CharSequence errorCodeOrTagValue = GenericLexer.unquote(tok).toString();
                         try {
                             final int errorCode = Numbers.parseInt(errorCodeOrTagValue);
-                            errorTag = WalErrorTag.resolveTag(errorCode);
+                            errorTag = ErrorTag.resolveTag(errorCode);
                         } catch (NumericException e) {
                             try {
-                                errorTag = WalErrorTag.resolveTag(errorCodeOrTagValue);
+                                errorTag = ErrorTag.resolveTag(errorCodeOrTagValue);
                             } catch (CairoException cairoException) {
                                 throw SqlException.$(lexer.lastTokenPosition(), "invalid value [value=").put(errorCodeOrTagValue).put(']');
                             }
@@ -1396,7 +1395,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private void alterTableSuspend(int tableNamePosition, TableToken tableToken, WalErrorTag errorTag, String errorMessage, SqlExecutionContext executionContext) {
+    private void alterTableSuspend(int tableNamePosition, TableToken tableToken, ErrorTag errorTag, String errorMessage, SqlExecutionContext executionContext) {
         try {
             engine.getTableSequencerAPI().suspendTable(tableToken, errorTag, errorMessage);
             executionContext.storeTelemetry(TelemetrySystemEvent.WAL_APPLY_SUSPEND, TelemetryOrigin.WAL_APPLY);

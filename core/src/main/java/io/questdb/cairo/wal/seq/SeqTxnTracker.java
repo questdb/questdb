@@ -24,7 +24,7 @@
 
 package io.questdb.cairo.wal.seq;
 
-import io.questdb.cairo.wal.WalErrorTag;
+import io.questdb.cairo.ErrorTag;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.TestOnly;
 
@@ -33,7 +33,7 @@ public class SeqTxnTracker {
     private static final long SUSPENDED_STATE_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "suspendedState");
     private static final long WRITER_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "writerTxn");
     private volatile String errorMessage = "";
-    private volatile WalErrorTag errorTag = WalErrorTag.NONE;
+    private volatile ErrorTag errorTag = ErrorTag.NONE;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile long seqTxn = -1;
     // -1 suspended
@@ -46,7 +46,7 @@ public class SeqTxnTracker {
         return errorMessage;
     }
 
-    public WalErrorTag getErrorTag() {
+    public ErrorTag getErrorTag() {
         return errorTag;
     }
 
@@ -119,7 +119,7 @@ public class SeqTxnTracker {
         return (stxn < 1 || writerTxn == (newSeqTxn - 1)) && suspendedState >= 0;
     }
 
-    public void setSuspended(WalErrorTag errorTag, String errorMessage) {
+    public void setSuspended(ErrorTag errorTag, String errorMessage) {
         this.errorTag = errorTag;
         this.errorMessage = errorMessage;
 
@@ -133,7 +133,7 @@ public class SeqTxnTracker {
         // no error details should be read when table is not suspended
         this.suspendedState = 1;
 
-        this.errorTag = WalErrorTag.NONE;
+        this.errorTag = ErrorTag.NONE;
         this.errorMessage = "";
     }
 }

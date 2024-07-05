@@ -51,10 +51,10 @@ import org.jetbrains.annotations.NotNull;
 import java.io.Closeable;
 
 import static io.questdb.TelemetrySystemEvent.*;
+import static io.questdb.cairo.ErrorTag.OUT_OF_MEMORY;
+import static io.questdb.cairo.ErrorTag.resolveTag;
 import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
 import static io.questdb.cairo.pool.AbstractMultiTenantPool.NO_LOCK_REASON;
-import static io.questdb.cairo.wal.WalErrorTag.OUT_OF_MEMORY;
-import static io.questdb.cairo.wal.WalErrorTag.resolveTag;
 import static io.questdb.cairo.wal.WalTxnType.*;
 import static io.questdb.cairo.wal.WalUtils.*;
 import static io.questdb.tasks.TableWriterTask.CMD_ALTER_TABLE;
@@ -379,7 +379,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         TelemetryWalTask.store(walTelemetry, event, tableToken.getTableId(), walId, seqTxn, rowCount, physicalRowCount, latencyUs);
     }
 
-    private void handleWalApplyFailure(TableToken tableToken, WalErrorTag errorTag, String errorMessage) {
+    private void handleWalApplyFailure(TableToken tableToken, ErrorTag errorTag, String errorMessage) {
         try {
             engine.getTableSequencerAPI().suspendTable(tableToken, errorTag, errorMessage);
         } catch (CairoException e) {
@@ -554,7 +554,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             LOG.critical().$("job failed, table suspended [table=").utf8(tableToken.getDirName())
                     .$(", error=").$(ex)
                     .I$();
-            handleWalApplyFailure(tableToken, WalErrorTag.NONE, ex.getMessage());
+            handleWalApplyFailure(tableToken, ErrorTag.NONE, ex.getMessage());
         }
     }
 

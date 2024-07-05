@@ -1,11 +1,12 @@
-package io.questdb.cairo.wal;
+package io.questdb.cairo;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.std.Chars;
 import io.questdb.std.Os;
+import org.jetbrains.annotations.NotNull;
 
-public enum WalErrorTag {
+public enum ErrorTag {
     NONE(""),
+    UNSUPPORTED_FILE_SYSTEM("UNSUPPORTED FILE SYSTEM"),
     DISK_FULL("DISK FULL"),
     TOO_MANY_OPEN_FILES("TOO MANY OPEN FILES"),
     OUT_OF_MMAP_AREAS("OUT OF MMAP AREAS"),
@@ -13,14 +14,12 @@ public enum WalErrorTag {
 
     private final String text;
 
-    WalErrorTag(String text) {
+    ErrorTag(String text) {
         this.text = text;
     }
 
-    public static WalErrorTag resolveTag(CharSequence text) {
-        if (text == null) {
-            throw CairoException.nonCritical().put("Invalid WAL error tag [null]");
-        } else if (Chars.equals(text, DISK_FULL.text)) {
+    public static ErrorTag resolveTag(@NotNull CharSequence text) {
+        if (Chars.equals(text, DISK_FULL.text)) {
             return DISK_FULL;
         } else if (Chars.equals(text, TOO_MANY_OPEN_FILES.text)) {
             return TOO_MANY_OPEN_FILES;
@@ -35,7 +34,7 @@ public enum WalErrorTag {
         }
     }
 
-    public static WalErrorTag resolveTag(int code) {
+    public static ErrorTag resolveTag(int code) {
         return Os.isWindows() ? windows(code) : linux(code);
     }
 
@@ -43,7 +42,7 @@ public enum WalErrorTag {
         return text;
     }
 
-    static WalErrorTag linux(int code) {
+    static ErrorTag linux(int code) {
         switch (code) {
             case 28:
                 return DISK_FULL;
@@ -56,7 +55,7 @@ public enum WalErrorTag {
         }
     }
 
-    static WalErrorTag windows(int code) {
+    static ErrorTag windows(int code) {
         switch (code) {
             case 39:
             case 112:
