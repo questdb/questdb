@@ -82,6 +82,19 @@ constexpr std::byte BYTE_0xE0 = std::byte(0xE0); // 11100000
 constexpr std::byte BYTE_0xF0 = std::byte(0xF0); // 11110000
 constexpr std::byte BYTE_0xF8 = std::byte(0xF8); // 11111000
 
+// https://stackoverflow.com/questions/67521312/safe-equivalent-of-stdbit-cast-in-c11
+// Replace this with `std::bit_cast` if/when we upgrade our C++ standard to C++20.
+template<class T2, class T1>
+T2 compat_bit_cast(T1 t1) {
+    static_assert(sizeof(T1) == sizeof(T2), "Types must match sizes");
+    static_assert(std::is_pod<T1>::value, "Requires POD input");
+    static_assert(std::is_pod<T2>::value, "Requires POD output");
+
+    T2 t2;
+    std::memcpy(std::addressof(t2), std::addressof(t1), sizeof(T1));
+    return t2;
+}
+
 std::string_view trim(std::string_view str) {
     const char *first = str.begin();
     const char *const end = str.end();
@@ -176,8 +189,12 @@ struct default_value<jlong> {
 
 template<>
 struct default_value<jdouble> {
-    // TODO: Is the C++ bit representation for quiet NaN the same as the Java one?
-    static jdouble value() { return std::numeric_limits<double>::quiet_NaN(); }
+    static jdouble value() {
+        // This should have the bit representation of 0x7ff8000000000000L which
+        // Java uses at the sole representation of NaN.
+        // See runtime check in `Java_io_questdb_std_json_SimdJsonParser_getSimdJsonPadding`.
+        return std::numeric_limits<double>::quiet_NaN();
+    }
 };
 
 using simdjson_value = simdjson::simdjson_result<simdjson::ondemand::value>;
@@ -232,19 +249,6 @@ auto value_at_pointer(
     return std::forward<F>(extractor)(res);
 }
 
-// https://stackoverflow.com/questions/67521312/safe-equivalent-of-stdbit-cast-in-c11
-// Replace this with `std::bit_cast` if/when we upgrade our C++ standard to C++20.
-template<class T2, class T1>
-T2 compat_bit_cast(T1 t1) {
-    static_assert(sizeof(T1) == sizeof(T2), "Types must match sizes");
-    static_assert(std::is_pod<T1>::value, "Requires POD input");
-    static_assert(std::is_pod<T2>::value, "Requires POD output");
-
-    T2 t2;
-    std::memcpy(std::addressof(t2), std::addressof(t1), sizeof(T1));
-    return t2;
-}
-
 static void extract_raw_json(
         simdjson_value &res,
         questdb_byte_sink_t *dest_sink,
@@ -266,6 +270,15 @@ Java_io_questdb_std_json_SimdJsonParser_getSimdJsonPadding(
         JNIEnv */*env*/,
         jclass /*cl*/
 ) {
+    // work-around since we're compiling without constexpr std::bit_cast
+    // so instead of a `static_assert` we need to do a runtime check
+    {
+        auto nan_bits = compat_bit_cast<jlong>(std::numeric_limits<double>::quiet_NaN());
+        if (nan_bits != 0x7ff8000000000000L) {
+            fprintf(stderr, "Unexpected bit representation for NaN: %lx\n", nan_bits);
+            abort();
+        }
+    }
     return simdjson::SIMDJSON_PADDING;
 }
 
