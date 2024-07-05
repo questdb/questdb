@@ -523,13 +523,13 @@ public class Bootstrap {
             log.advisoryW().$(" - THIS IS READ ONLY INSTANCE").$();
         }
         try (Path path = new Path()) {
-            verifyFileSystem(path, cairoConfig.getRoot(), "db");
-            verifyFileSystem(path, cairoConfig.getBackupRoot(), "backup");
-            verifyFileSystem(path, cairoConfig.getSnapshotRoot(), "snapshot");
-            verifyFileSystem(path, cairoConfig.getSqlCopyInputRoot(), "sql copy input");
-            verifyFileSystem(path, cairoConfig.getSqlCopyInputWorkRoot(), "sql copy input worker");
+            verifyFileSystem(path, cairoConfig.getRoot(), "db", true);
+            verifyFileSystem(path, cairoConfig.getBackupRoot(), "backup", true);
+            verifyFileSystem(path, cairoConfig.getSnapshotRoot(), "snapshot", true);
+            verifyFileSystem(path, cairoConfig.getSqlCopyInputRoot(), "sql copy input", false);
+            verifyFileSystem(path, cairoConfig.getSqlCopyInputWorkRoot(), "sql copy input worker", true);
             verifyFileOpts(path, cairoConfig);
-            cairoConfig.getVolumeDefinitions().forEach((alias, volumePath) -> verifyFileSystem(path, volumePath, "create table allowed volume [" + alias + ']'));
+            cairoConfig.getVolumeDefinitions().forEach((alias, volumePath) -> verifyFileSystem(path, volumePath, "create table allowed volume [" + alias + ']', true));
         }
         if (JitUtil.isJitSupported()) {
             final int jitMode = cairoConfig.getSqlJitMode();
@@ -596,7 +596,7 @@ public class Bootstrap {
         }
     }
 
-    private void verifyFileSystem(Path path, CharSequence rootDir, String kind) {
+    private void verifyFileSystem(Path path, CharSequence rootDir, String kind, boolean failOnNfs) {
         if (rootDir == null) {
             log.advisoryW().$(" - ").$(kind).$(" root: NOT SET").$();
             return;
@@ -610,6 +610,13 @@ public class Bootstrap {
             rec.$hex(-fsStatus).$("] -> SUPPORTED").$();
         } else {
             rec.$hex(fsStatus).$("] -> UNSUPPORTED (SYSTEM COULD BE UNSTABLE)").$();
+        }
+        if (failOnNfs && fsStatus == Files.NFS_MAGIC) {
+            throw new BootstrapException("Error: Unsupported Filesystem Detected. " + Misc.EOL
+                    + "QuestDB cannot start because the '" + rootDirectory + "' is located on an NFS filesystem, "
+                    + "which is not supported. Please relocate your '" + kind + " root' to a supported filesystem to continue. " + Misc.EOL
+                    + "For a list of supported filesystems and further guidance, please visit: https://questdb.io/docs/deployment/capacity-planning/#supported-filesystems "
+                    + "[path=" + rootDir + ", kind=" + kind + ", fs=NFS]", true);
         }
     }
 

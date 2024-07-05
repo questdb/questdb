@@ -48,7 +48,7 @@ public class RecordChainTest extends AbstractCairoTest {
             CreateTableTestUtils.createTestTable(10000, new Rnd(), new TestRecord.ArrayBinarySequence());
             try (TableReader reader = newOffPoolReader(configuration, "x")) {
                 entityColumnFilter.of(reader.getColumnCount());
-                RecordSink recordSink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, false);
+                RecordSink recordSink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter);
                 try (RecordChain chain = new RecordChain(reader.getMetadata(), recordSink, SIZE_4M, Integer.MAX_VALUE)) {
                     Assert.assertFalse(chain.hasNext());
                     populateChain(chain, reader);
@@ -69,7 +69,7 @@ public class RecordChainTest extends AbstractCairoTest {
             CreateTableTestUtils.createTestTable(N, new Rnd(), new TestRecord.ArrayBinarySequence());
             try (TableReader reader = newOffPoolReader(configuration, "x")) {
                 entityColumnFilter.of(reader.getMetadata().getColumnCount());
-                RecordSink recordSink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, false);
+                RecordSink recordSink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter);
                 try (RecordChain chain = new RecordChain(reader.getMetadata(), recordSink, SIZE_4M, Integer.MAX_VALUE)) {
                     LongList rows = new LongList();
                     RecordCursor cursor = reader.getCursor();
@@ -129,12 +129,7 @@ public class RecordChainTest extends AbstractCairoTest {
             filter.add(-2);
             filter.add(3);
 
-            RecordSink sink = RecordSinkFactory.getInstance(
-                    asm,
-                    metadata,
-                    filter,
-                    false
-            );
+            RecordSink sink = RecordSinkFactory.getInstance(asm, metadata, filter);
 
             long[] cols = new long[metadata.getColumnCount()];
 
@@ -202,7 +197,7 @@ public class RecordChainTest extends AbstractCairoTest {
                     CreateTableTestUtils.createTestTable(N, new Rnd(), new TestRecord.ArrayBinarySequence());
                     try (TableReader reader = newOffPoolReader(configuration, "x")) {
                         entityColumnFilter.of(reader.getMetadata().getColumnCount());
-                        RecordSink recordSink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, false);
+                        RecordSink recordSink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter);
 
                         try (RecordChain chain = new RecordChain(reader.getMetadata(), recordSink, 4 * 1024 * 1024L, Integer.MAX_VALUE)) {
                             populateChain(chain, reader);
@@ -331,7 +326,7 @@ public class RecordChainTest extends AbstractCairoTest {
             try (TableReader reader = newOffPoolReader(configuration, "x")) {
 
                 entityColumnFilter.of(reader.getMetadata().getColumnCount());
-                RecordSink recordSink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, false);
+                RecordSink recordSink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter);
                 try (RecordChain chain = new RecordChain(reader.getMetadata(), recordSink, 4 * 1024 * 1024L, Integer.MAX_VALUE)) {
                     populateChain(chain, reader);
                     assertChain(chain, N, reader);
