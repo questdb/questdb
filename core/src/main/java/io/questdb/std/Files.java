@@ -48,6 +48,7 @@ public final class Files {
     public static final int FILES_RENAME_OK = 0;
     public static final int MAP_RO = 1;
     public static final int MAP_RW = 2;
+    public static final int NFS_MAGIC = 0x6969;
     public static final long PAGE_SIZE;
     public static final int POSIX_FADV_RANDOM;
     public static final int POSIX_FADV_SEQUENTIAL;
