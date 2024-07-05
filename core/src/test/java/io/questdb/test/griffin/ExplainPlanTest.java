@@ -2389,6 +2389,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     if (p == 0) {
                                         args.add(new VarcharConstant("{\"a\": 1}"));
                                         args.add(new VarcharConstant(".a"));
+                                        args.add(new IntConstant(ColumnType.INT));
                                     }
                                 } else if (Chars.equals(key, "approx_count_distinct") && sigArgCount == 2 && p == 1 && sigArgType == ColumnType.INT) {
                                     args.add(new IntConstant(4)); // precision has to be in the range of 4 to 18
