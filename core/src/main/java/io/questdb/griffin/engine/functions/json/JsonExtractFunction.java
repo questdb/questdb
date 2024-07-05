@@ -114,7 +114,10 @@ public class JsonExtractFunction implements ScalarFunction {
         if ((jsonInput == null) || (pointer == null)) {
             return Numbers.LONG_NULL;
         }
+
         final long res = queryPointerValue(jsonInput);
+        stateA.throwIfInError(jsonPosition);
+
         switch (stateA.simdJsonResult.getType()) {
             case SimdJsonType.STRING:
                 assert stateA.destUtf8Sink != null;
@@ -178,6 +181,8 @@ public class JsonExtractFunction implements ScalarFunction {
             return Numbers.IPv4_NULL;
         }
         final long res = queryPointerValue(jsonInput);
+
+        stateA.throwIfInError(jsonPosition);
         switch (stateA.simdJsonResult.getType()) {
             case SimdJsonType.STRING:
                 assert stateA.destUtf8Sink != null;
@@ -202,11 +207,13 @@ public class JsonExtractFunction implements ScalarFunction {
         if (jsonSeq == null) {
             return Numbers.INT_NULL;
         }
-        return stateA.parser.queryPointerInt(
+        final int result = stateA.parser.queryPointerInt(
                 stateA.initPaddedJson(jsonSeq),
                 pointer,
                 stateA.simdJsonResult
         );
+        stateA.throwIfInError(jsonPosition);
+        return result;
     }
 
     @Override
@@ -215,7 +222,9 @@ public class JsonExtractFunction implements ScalarFunction {
         if (jsonSeq == null) {
             return Numbers.LONG_NULL;
         }
-        return stateA.parser.queryPointerLong(stateA.initPaddedJson(jsonSeq), pointer, stateA.simdJsonResult);
+        final long result = stateA.parser.queryPointerLong(stateA.initPaddedJson(jsonSeq), pointer, stateA.simdJsonResult);
+        stateA.throwIfInError(jsonPosition);
+        return result;
     }
 
     @Override
@@ -259,11 +268,13 @@ public class JsonExtractFunction implements ScalarFunction {
         if (jsonSeq == null) {
             return 0;
         }
-        return stateA.parser.queryPointerShort(
+        final short result = stateA.parser.queryPointerShort(
                 stateA.initPaddedJson(jsonSeq),
                 pointer,
                 stateA.simdJsonResult
         );
+        stateA.throwIfInError(jsonPosition);
+        return result;
     }
 
     @Override
@@ -326,6 +337,7 @@ public class JsonExtractFunction implements ScalarFunction {
             return Numbers.LONG_NULL;
         }
         final long res = queryPointerValue(jsonInput);
+        stateA.throwIfInError(jsonPosition);
         switch (stateA.simdJsonResult.getType()) {
             case SimdJsonType.STRING:
                 assert stateA.destUtf8Sink != null;

@@ -2709,8 +2709,7 @@ public class SqlParser {
                         node.lhs = jsonExtractNode.lhs;
                         node.rhs = jsonExtractNode.rhs;
                         node.args.clear();
-                    }
-                    else if (JsonExtractTypedFunctionFactory.isIntrusivelyOptimized(castType)) {
+                    } else if (JsonExtractTypedFunctionFactory.isIntrusivelyOptimized(castType)) {
                         int type = ColumnType.typeOf(typeNode.token);
                         node.token = jsonExtractNode.token;
                         node.paramCount = 3;
@@ -2725,7 +2724,8 @@ public class SqlParser {
                         // type integer
                         CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
                         characterStoreEntry.put(type);
-                        node.args.add(expressionNodePool.next().of(
+                        node.args.add(
+                                expressionNodePool.next().of(
                                         ExpressionNode.CONSTANT,
                                         characterStoreEntry.toImmutable(),
                                         typeNode.precedence,

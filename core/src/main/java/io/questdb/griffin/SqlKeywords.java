@@ -1774,17 +1774,6 @@ public class SqlKeywords {
                 && (tok.charAt(5) | 32) == 's';
     }
 
-    public static boolean isVarchar(CharSequence tok) {
-        return tok.length() == 7
-                && (tok.charAt(0) | 32) == 'v'
-                && (tok.charAt(1) | 32) == 'a'
-                && (tok.charAt(2) | 32) == 'r'
-                && (tok.charAt(3) | 32) == 'c'
-                && (tok.charAt(4) | 32) == 'h'
-                && (tok.charAt(5) | 32) == 'a'
-                && (tok.charAt(6) | 32) == 'r';
-    }
-
     public static boolean isVolumeKeyword(CharSequence tok) {
         return tok.length() == 6
                 && (tok.charAt(0) | 32) == 'v'
