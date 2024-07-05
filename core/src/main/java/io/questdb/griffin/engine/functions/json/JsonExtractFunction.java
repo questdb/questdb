@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.json.SimdJsonNumberType;
@@ -123,10 +124,7 @@ public class JsonExtractFunction implements ScalarFunction {
                     return Numbers.LONG_NULL;
                 }
             case SimdJsonType.NUMBER: {
-                if (stateA.simdJsonResult.getNumberType() == SimdJsonNumberType.SIGNED_INTEGER) {
-                    return res;
-                }
-                return Numbers.LONG_NULL;
+                return extractLongFromJsonNumber(res);
             }
             default:
                 return Numbers.LONG_NULL;
@@ -323,8 +321,25 @@ public class JsonExtractFunction implements ScalarFunction {
 
     @Override
     public long getTimestamp(Record rec) {
-        // TODO: implement this
-        throw new UnsupportedOperationException();
+        final Utf8Sequence jsonInput = json.getVarcharA(rec);
+        if ((jsonInput == null) || (pointer == null)) {
+            return Numbers.LONG_NULL;
+        }
+        final long res = queryPointerValue(jsonInput);
+        switch (stateA.simdJsonResult.getType()) {
+            case SimdJsonType.STRING:
+                assert stateA.destUtf8Sink != null;
+                try {
+                    return IntervalUtils.parseFloorPartialTimestamp(stateA.destUtf8Sink.asAsciiCharSequence());
+                } catch (NumericException e) {
+                    return Numbers.LONG_NULL;
+                }
+            case SimdJsonType.NUMBER: {
+                return extractLongFromJsonNumber(res);
+            }
+            default:
+                return Numbers.LONG_NULL;
+        }
     }
 
     @Override
@@ -358,6 +373,21 @@ public class JsonExtractFunction implements ScalarFunction {
         path.init(symbolTableSource, executionContext);
         pointer = Misc.free(pointer);
         pointer = JsonExtractSupportingState.varcharConstantToJsonPointer(path);
+    }
+
+    private long extractLongFromJsonNumber(long res) {
+        switch (stateA.simdJsonResult.getNumberType()) {
+            case SimdJsonNumberType.SIGNED_INTEGER:
+                return res;
+            case SimdJsonNumberType.FLOATING_POINT_NUMBER: {
+                final double d = Double.longBitsToDouble(res);
+                if (d >= Long.MIN_VALUE && d <= Long.MAX_VALUE) {
+                    return (long) d;
+                }
+                break;
+            }
+        }
+        return Numbers.LONG_NULL;
     }
 
     private @Nullable DirectUtf8Sink extractVarchar(Utf8Sequence json, JsonExtractSupportingState state) {
