@@ -43,6 +43,23 @@ public class JsonExtractTypedFunctionFactory implements FunctionFactory {
 
     private static final String SIGNATURE = JsonExtractSupportingState.EXTRACT_FUNCTION_NAME + "(ØØi)";
 
+    public static boolean isIntrusivelyOptimized(int columnType) {
+        switch (columnType) {
+            case ColumnType.BOOLEAN:
+            case ColumnType.SHORT:
+            case ColumnType.INT:
+            case ColumnType.LONG:
+            case ColumnType.FLOAT:
+            case ColumnType.DOUBLE:
+            case ColumnType.IPv4:
+            case ColumnType.TIMESTAMP:
+            case ColumnType.DATE:
+                return true;
+            default:
+                return false;
+        }
+    }
+
     @Override
     public String getSignature() {
         return SIGNATURE;
@@ -101,6 +118,7 @@ public class JsonExtractTypedFunctionFactory implements FunctionFactory {
                 case ColumnType.LONG:
                 case ColumnType.FLOAT:
                 case ColumnType.DOUBLE:
+                case ColumnType.IPv4:
                 case ColumnType.TIMESTAMP:
                 case ColumnType.DATE:
                     return targetType;

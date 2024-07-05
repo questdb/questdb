@@ -157,14 +157,14 @@ public class JsonExtractFunction implements ScalarFunction {
 
     @Override
     public int getIPv4(Record rec) {
-        final Utf8Sequence json = getVarcharA(rec);
-        if ((json == null) || (pointer == null)) {
+        final Utf8Sequence jsonInput = json.getVarcharA(rec);
+        if ((jsonInput == null) || (pointer == null)) {
             return Numbers.IPv4_NULL;
         }
         assert stateA.destUtf8Sink != null;
         stateA.destUtf8Sink.clear();
         final long res = stateA.parser.queryPointerValue(
-                stateA.initPaddedJson(json),
+                stateA.initPaddedJson(jsonInput),
                 pointer,
                 stateA.simdJsonResult,
                 stateA.destUtf8Sink,
@@ -177,7 +177,7 @@ public class JsonExtractFunction implements ScalarFunction {
 
         switch (stateA.simdJsonResult.getType()) {
             case SimdJsonType.STRING:
-                return SqlUtil.implicitCastStrAsIPv4(stateA.destUtf8Sink);
+                return Numbers.parseIPv4Quiet(stateA.destUtf8Sink.asAsciiCharSequence());
             case SimdJsonType.NUMBER: {
                 if (stateA.simdJsonResult.getNumberType() == SimdJsonNumberType.SIGNED_INTEGER) {
                     final int asInt = (int) res;

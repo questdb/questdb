@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.text.Atomicity;
+import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
@@ -2699,51 +2700,40 @@ public class SqlParser {
                 ExpressionNode typeNode = node.rhs;
                 if (typeNode != null) {
                     int castType = ColumnType.typeOf(typeNode.token);
-                    switch (castType) {
-                        case ColumnType.VARCHAR:
-                            // redundant cast to varchar, just remove it
-                            node.token = jsonExtractNode.token;
-                            node.paramCount = jsonExtractNode.paramCount;
-                            node.type = jsonExtractNode.type;
-                            node.position = jsonExtractNode.position;
-                            node.lhs = jsonExtractNode.lhs;
-                            node.rhs = jsonExtractNode.rhs;
-                            node.args.clear();
-                            break;
-                        case ColumnType.BOOLEAN:
-                        case ColumnType.SHORT:
-                        case ColumnType.INT:
-                        case ColumnType.LONG:
-                        case ColumnType.DOUBLE:
-                        case ColumnType.TIMESTAMP:
-                        case ColumnType.DATE:
-                            int type = ColumnType.typeOf(typeNode.token);
-                            node.token = jsonExtractNode.token;
-                            node.paramCount = 3;
-                            node.type = jsonExtractNode.type;
-                            node.position = jsonExtractNode.position;
-                            node.lhs = null;
-                            node.rhs = null;
-                            node.args.clear();
+                    if (castType == ColumnType.VARCHAR) {
+                        // redundant cast to varchar, just remove it
+                        node.token = jsonExtractNode.token;
+                        node.paramCount = jsonExtractNode.paramCount;
+                        node.type = jsonExtractNode.type;
+                        node.position = jsonExtractNode.position;
+                        node.lhs = jsonExtractNode.lhs;
+                        node.rhs = jsonExtractNode.rhs;
+                        node.args.clear();
+                    }
+                    else if (JsonExtractTypedFunctionFactory.isIntrusivelyOptimized(castType)) {
+                        int type = ColumnType.typeOf(typeNode.token);
+                        node.token = jsonExtractNode.token;
+                        node.paramCount = 3;
+                        node.type = jsonExtractNode.type;
+                        node.position = jsonExtractNode.position;
+                        node.lhs = null;
+                        node.rhs = null;
+                        node.args.clear();
 
-                            // args are added in reverse order
+                        // args are added in reverse order
 
-                            // type integer
-                            CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
-                            characterStoreEntry.put(type);
-                            node.args.add(expressionNodePool.next().of(
-                                            ExpressionNode.CONSTANT,
-                                            characterStoreEntry.toImmutable(),
-                                            typeNode.precedence,
-                                            typeNode.position
-                                    )
-                            );
-                            node.args.add(jsonExtractNode.rhs);
-                            node.args.add(jsonExtractNode.lhs);
-                            break;
-                        default:
-                            // do not rewrite
-                            break;
+                        // type integer
+                        CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
+                        characterStoreEntry.put(type);
+                        node.args.add(expressionNodePool.next().of(
+                                        ExpressionNode.CONSTANT,
+                                        characterStoreEntry.toImmutable(),
+                                        typeNode.precedence,
+                                        typeNode.position
+                                )
+                        );
+                        node.args.add(jsonExtractNode.rhs);
+                        node.args.add(jsonExtractNode.lhs);
                     }
                 }
             }
