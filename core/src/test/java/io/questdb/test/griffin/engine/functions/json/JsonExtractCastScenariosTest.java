@@ -48,7 +48,7 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
     private static final String castsDoc;
     private static final String[][] scenarios = new String[][]{
             // json token, ::boolean, ::short, ::int, ::long, ::double, ::varchar, ::ipv4, ::date, ::varchar
-            {"null", "false", "0", "null", "null", "null", "", "", "", "x"},
+            {"null", "false", "0", "null", "null", "null", "", "", "", ""},
             {"true", "true", "1", "1", "1", "1.0", "true", "", "", ""},
             {"false", "false", "0", "0", "0", "0.0", "false", "", "", ""},
             {"1", "false", "1", "1", "1", "1.0", "1", "0.0.0.1", "1970-01-01T00:00:00.001Z", "1970-01-01T00:00:00.000001Z"},
