@@ -85,7 +85,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
 
     @AfterClass
     public static void tearDownStatic() {
-        Assert.assertTrue(Files.rmdir(auxPath.of(otherVolume).$(), true));
+        Assert.assertTrue(Files.rmdir(auxPath.of(otherVolume), true));
         AbstractBootstrapTest.tearDownStatic();
     }
 
@@ -199,28 +199,28 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
 
             // copy the table to a foreign location, remove it, then symlink it
             try (
-                    Path filePath = new Path().of(root).concat(PropServerConfiguration.DB_DIRECTORY).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
-                    Path fakeTablePath = new Path().of(root).concat(PropServerConfiguration.DB_DIRECTORY).concat("coconut").$();
-                    Path foreignPath = new Path().of(root).concat("banana").concat(tableName).slash$()
+                    Path filePath = new Path().of(root).concat(PropServerConfiguration.DB_DIRECTORY).concat(TableUtils.TAB_INDEX_FILE_NAME);
+                    Path fakeTablePath = new Path().of(root).concat(PropServerConfiguration.DB_DIRECTORY).concat("coconut");
+                    Path foreignPath = new Path().of(root).concat("banana").concat(tableName).slash()
             ) {
-                if (!Files.exists(foreignPath)) {
+                if (!Files.exists(foreignPath.$())) {
                     Assert.assertEquals(0, Files.mkdirs(foreignPath, 509));
                 }
-                Assert.assertTrue(Files.exists(foreignPath));
+                Assert.assertTrue(Files.exists(foreignPath.$()));
                 dbPath.trimTo(dbPathLen).concat(tableName).$();
                 TestUtils.copyDirectory(dbPath, foreignPath, 509);
 
                 String tablePathStr = dbPath.toString();
                 String foreignPathStr = foreignPath.toString();
-                Assert.assertTrue(Files.rmdir(auxPath.of(tablePathStr).$(), true));
-                Assert.assertFalse(Files.exists(dbPath));
+                Assert.assertTrue(Files.rmdir(auxPath.of(tablePathStr), true));
+                Assert.assertFalse(Files.exists(dbPath.$()));
                 createSoftLink(foreignPathStr, tablePathStr);
-                Assert.assertTrue(Files.exists(dbPath));
+                Assert.assertTrue(Files.exists(dbPath.$()));
 
-                if (!Files.exists(fakeTablePath)) {
+                if (!Files.exists(fakeTablePath.$())) {
                     createSoftLink(filePath.toString(), fakeTablePath.toString());
                 }
-                Assert.assertTrue(Files.exists(fakeTablePath));
+                Assert.assertTrue(Files.exists(fakeTablePath.$()));
             }
 
             // check content of table after sym-linking it

@@ -119,7 +119,7 @@ public class BootstrapTest extends AbstractBootstrapTest {
             int plen = auxPath.size();
             Files.touch(auxPath.concat(configuration.getOGCrashFilePrefix()).put(1).put(".log").$());
             Files.touch(auxPath.trimTo(plen).concat(configuration.getOGCrashFilePrefix()).put(2).put(".log").$());
-            Files.mkdirs(auxPath.trimTo(plen).concat(configuration.getOGCrashFilePrefix()).put(3).slash$(), configuration.getMkDirMode());
+            Files.mkdirs(auxPath.trimTo(plen).concat(configuration.getOGCrashFilePrefix()).put(3).slash(), configuration.getMkDirMode());
 
             Bootstrap.reportCrashFiles(configuration, logger);
 
@@ -130,11 +130,11 @@ public class BootstrapTest extends AbstractBootstrapTest {
         }
 
         // make sure we check disk contents after factory is closed
-        try (Path path = new Path().of(logFileName).$()) {
+        try (Path path = new Path().of(logFileName)) {
             int bufSize = 4096;
             long buf = Unsafe.calloc(bufSize, MemoryTag.NATIVE_DEFAULT);
             // we should read sub-4k bytes from the file
-            int fd = TestFilesFacadeImpl.INSTANCE.openRO(path);
+            int fd = TestFilesFacadeImpl.INSTANCE.openRO(path.$());
             Assert.assertTrue(fd > -1);
             try {
                 while (true) {

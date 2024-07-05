@@ -79,7 +79,7 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
     public static void setUpStatic() throws Exception {
         AbstractTest.setUpStatic();
         TestUtils.unchecked(() -> {
-            dbPath = new Path().of(root).concat(PropServerConfiguration.DB_DIRECTORY).$();
+            dbPath = new Path().of(root).concat(PropServerConfiguration.DB_DIRECTORY);
             dbPathLen = dbPath.size();
             auxPath = new Path();
             dbPath.trimTo(dbPathLen).$();
@@ -241,8 +241,8 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             writer.print("<html><body><p>Dummy Web Console</p></body></html>");
         }
 
-        try (Path indexPath = new Path().of(indexFile).$()) {
-            return Files.getLastModified(indexPath);
+        try (Path indexPath = new Path().of(indexFile)) {
+            return Files.getLastModified(indexPath.$());
         }
     }
 

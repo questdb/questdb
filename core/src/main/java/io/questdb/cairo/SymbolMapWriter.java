@@ -31,6 +31,7 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.SingleCharCharSequence;
 import org.jetbrains.annotations.NotNull;
@@ -72,14 +73,14 @@ public class SymbolMapWriter implements Closeable, MapWriter {
 
             // this constructor does not create index. Index must exist,
             // and we use "offset" file to store "header"
-            offsetFileName(path.trimTo(plen), name, columnNameTxn);
-            if (!ff.exists(path)) {
+            if (!ff.exists(offsetFileName(path.trimTo(plen), name, columnNameTxn))) {
                 LOG.error().$(path).$(" is not found").$();
                 throw CairoException.critical(0).put("SymbolMap does not exist: ").put(path);
             }
 
             // is there enough length in "offset" file for "header"?
-            long len = ff.length(path);
+            LPSZ lpsz = path.$();
+            long len = ff.length(lpsz);
             if (len < HEADER_SIZE) {
                 LOG.error().$(path).$(" is too short [len=").$(len).$(']').$();
                 throw CairoException.critical(0).put("SymbolMap is too short: ").put(path);
@@ -89,7 +90,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             // we left off. Where we left off is stored externally to symbol map
             this.offsetMem = Vm.getWholeMARWInstance(
                     ff,
-                    path,
+                    lpsz,
                     mapPageSize,
                     MemoryTag.MMAP_INDEX_WRITER,
                     configuration.getWriterFileOpenOpts()

@@ -705,10 +705,10 @@ public class WalWriter implements TableWriterAPI {
         final int segmentPathLen = path.size();
         try {
             lockName(path);
-            final int segmentLockFd = TableUtils.lock(ff, path);
+            final int segmentLockFd = TableUtils.lock(ff, path.$());
             if (segmentLockFd == -1) {
                 path.trimTo(segmentPathLen);
-                throw CairoException.critical(ff.errno()).put("Cannot lock wal segment: ").put(path.$());
+                throw CairoException.critical(ff.errno()).put("Cannot lock wal segment: ").put(path);
             }
             return segmentLockFd;
         } finally {
@@ -1037,13 +1037,13 @@ public class WalWriter implements TableWriterAPI {
 
                         // todo: use own path
                         Path path = Path.PATH2.get();
-                        path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+                        path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME);
 
                         // Does not matter which PartitionBy, as long as it is partitioned
                         // WAL tables must be partitioned
-                        txReader.ofRO(path, PartitionBy.DAY);
-                        path.of(configuration.getRoot()).concat(tableToken).concat(COLUMN_VERSION_FILE_NAME).$();
-                        columnVersionReader.ofRO(ff, path);
+                        txReader.ofRO(path.$(), PartitionBy.DAY);
+                        path.of(configuration.getRoot()).concat(tableToken).concat(COLUMN_VERSION_FILE_NAME);
+                        columnVersionReader.ofRO(ff, path.$());
 
                         initialized = true;
                         long structureVersion = getMetadataVersion();
@@ -1100,7 +1100,7 @@ public class WalWriter implements TableWriterAPI {
         path.slash().put(segmentId);
         final int segmentPathLen = path.size();
         segmentLockFd = acquireSegmentLock();
-        if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
+        if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
             throw CairoException.critical(ff.errno()).put("Cannot create WAL segment directory: ").put(path);
         }
         walDirectoryPolicy.initDirectory(path);
@@ -1196,7 +1196,7 @@ public class WalWriter implements TableWriterAPI {
     private void lockWal() {
         try {
             lockName(path);
-            walLockFd = TableUtils.lock(ff, path);
+            walLockFd = TableUtils.lock(ff, path.$());
         } finally {
             path.trimTo(rootLen);
         }
@@ -1228,7 +1228,7 @@ public class WalWriter implements TableWriterAPI {
 
     private void mkWalDir() {
         final int walDirLength = path.size();
-        if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
+        if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
             throw CairoException.critical(ff.errno()).put("Cannot create WAL directory: ").put(path);
         }
         path.trimTo(walDirLength);
@@ -1283,7 +1283,7 @@ public class WalWriter implements TableWriterAPI {
             if (Os.isWindows() || commitMode == CommitMode.NOSYNC) {
                 dirFd = -1;
             } else {
-                dirFd = TableUtils.openRO(ff, path, LOG);
+                dirFd = TableUtils.openRO(ff, path.$(), LOG);
             }
 
             for (int i = 0; i < columnCount; i++) {
@@ -1958,9 +1958,9 @@ public class WalWriter implements TableWriterAPI {
                                 // remove .i files when converting var type to fixed
                                 if (ColumnType.isVarSize(existingColumnType) && !ColumnType.isVarSize(newType)) {
                                     path.trimTo(rootLen).slash().put(segmentId);
-                                    iFile(path, columnName);
-                                    if (ff.exists(path)) {
-                                        ff.remove(path);
+                                    LPSZ lpsz = iFile(path, columnName);
+                                    if (ff.exists(lpsz)) {
+                                        ff.remove(lpsz);
                                     }
                                 }
                             }

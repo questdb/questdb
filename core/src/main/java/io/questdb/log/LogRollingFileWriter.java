@@ -330,7 +330,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
     }
 
     private long getNextYearDeadline() {
-        return Timestamps.addYear(Timestamps.floorYYYY(clock.getTicks()), 1);
+        return Timestamps.addYears(Timestamps.floorYYYY(clock.getTicks()), 1);
     }
 
     private void openFile() {
@@ -399,9 +399,9 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
             final int startOffset = Numbers.decodeLowInt(packedOffsets);
             final int endOffset = Numbers.decodeHighInt(packedOffsets);
             CharSequence fileName = logFileNameSink.subSequence(startOffset, endOffset);
-            path.trimTo(logDir.length()).concat(fileName).$();
-            if ((totalSize += Files.length(path)) > nSizeLimit) {
-                if (!ff.removeQuiet(path)) {
+            path.trimTo(logDir.length()).concat(fileName);
+            if ((totalSize += Files.length(path.$())) > nSizeLimit) {
+                if (!ff.removeQuiet(path.$())) {
                     throw new LogError("cannot remove: " + path);
                 }
             }
@@ -412,11 +412,11 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
         if (type == Files.DT_FILE && Files.notDots(filePointer)) {
             logFileName.of(filePointer);
             if (Utf8s.containsAscii(logFileName, logFileTemplate)) {
-                path.trimTo(logDir.length()).concat(filePointer).$();
+                path.trimTo(logDir.length()).concat(filePointer);
                 int startOffset = logFileNameSink.length();
                 logFileNameSink.put(logFileName);
                 int endOffset = logFileNameSink.length();
-                logFileList.add(ff.getLastModified(path));
+                logFileList.add(ff.getLastModified(path.$()));
                 logFileList.add(Numbers.encodeLowHighInts(startOffset, endOffset));
             }
         }
@@ -424,11 +424,11 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
 
     private void removeExpiredLogs(long filePointer, int type) {
         if (type == Files.DT_FILE && Files.notDots(filePointer)) {
-            path.trimTo(logDir.length()).concat(filePointer).$();
+            path.trimTo(logDir.length()).concat(filePointer);
             logFileName.of(filePointer);
             if (Utf8s.containsAscii(logFileName, logFileTemplate)
                     && clock.getTicks() - ff.getLastModified(path.$()) * Timestamps.MILLI_MICROS > nLifeDuration) {
-                if (!ff.removeQuiet(path)) {
+                if (!ff.removeQuiet(path.$())) {
                     throw new LogError("cannot remove: " + path);
                 }
             }

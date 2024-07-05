@@ -121,7 +121,7 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
         int len = src.size();
         long p = ff.findFirst(src.$());
 
-        if (!ff.exists(dst.$()) && -1 == ff.mkdir(dst, dirMode)) {
+        if (!ff.exists(dst.$()) && -1 == ff.mkdir(dst.$(), dirMode)) {
             LOG.info().$("failed to copy, cannot create dst dir ").$(src).$(" to ").$(dst)
                     .$(", errno: ").$(ff.errno()).$();
         }
@@ -166,8 +166,8 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
         CairoConfiguration conf = engine.getConfiguration();
 
         FilesFacade ff = conf.getFilesFacade();
-        Path snapshotPath = Path.getThreadLocal(conf.getRoot()).put("_snapshot").$();
-        Path rootPath = Path.getThreadLocal2(conf.getRoot()).$();
+        Path snapshotPath = Path.getThreadLocal(conf.getRoot()).put("_snapshot");
+        Path rootPath = Path.getThreadLocal2(conf.getRoot());
 
         ff.mkdirs(snapshotPath, conf.getMkDirMode());
 
@@ -211,11 +211,11 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
 
         CairoConfiguration conf = engine.getConfiguration();
         FilesFacade ff = conf.getFilesFacade();
-        Path snapshotPath = Path.getThreadLocal(conf.getRoot()).put("_snapshot").slash$();
-        Path rootPath = Path.getThreadLocal2(conf.getRoot()).slash$();
+        Path snapshotPath = Path.getThreadLocal(conf.getRoot()).put("_snapshot").slash();
+        Path rootPath = Path.getThreadLocal2(conf.getRoot()).slash();
 
         ff.rmdir(rootPath);
-        ff.rename(snapshotPath, rootPath);
+        ff.rename(snapshotPath.$(), rootPath.$());
 
         setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, "id_2");
 

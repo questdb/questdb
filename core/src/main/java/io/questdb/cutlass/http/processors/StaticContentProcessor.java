@@ -94,10 +94,10 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
                 path.concat(url);
             }
 
-            path.$();
+            LPSZ lpsz = path.$();
 
-            if (ff.exists(path)) {
-                send(context, path, headers.getUrlParam(URL_PARAM_ATTACHMENT) != null);
+            if (ff.exists(lpsz)) {
+                send(context, lpsz, headers.getUrlParam(URL_PARAM_ATTACHMENT) != null);
             } else {
                 logInfoWithFd(context).$("not found [path=").$(path).$(']').$();
                 sendStatusTextContent(context, 404);

@@ -58,7 +58,7 @@ public class WalAlterTableSqlTest extends AbstractCairoTest {
                 TableToken tableToken = engine.verifyTableName(tableName);
                 path.of(configuration.getRoot()).concat(tableToken).concat(partition).put(DETACHED_DIR_MARKER).$();
                 other.of(configuration.getRoot()).concat(tableToken).concat(partition).put(configuration.getAttachPartitionSuffix()).$();
-                Assert.assertTrue(Files.rename(path, other) > -1);
+                Assert.assertTrue(Files.rename(path.$(), other.$()) > -1);
             }
 
             ddl("alter table " + tableName + " attach partition list '" + partition + "'");

@@ -85,9 +85,9 @@ public class WalUtils {
                 mem.jumpTo(TableTransactionLogFile.HEADER_SIZE);
                 mem.close(false);
 
-                txnSeqDirPath.trimTo(rootLen).concat(WalUtils.TXNLOG_PARTS_DIR).$();
-                if (!ff.exists(txnSeqDirPath)) {
-                    ff.mkdir(txnSeqDirPath, mkDirMode);
+                txnSeqDirPath.trimTo(rootLen).concat(WalUtils.TXNLOG_PARTS_DIR);
+                if (!ff.exists(txnSeqDirPath.$())) {
+                    ff.mkdir(txnSeqDirPath.$(), mkDirMode);
                 }
             }
         } finally {

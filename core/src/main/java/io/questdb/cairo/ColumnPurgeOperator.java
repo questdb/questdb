@@ -29,6 +29,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.ColumnPurgeTask;
 
@@ -138,7 +139,7 @@ public class ColumnPurgeOperator implements Closeable {
         }
     }
 
-    private static boolean couldNotRemove(FilesFacade ff, Path path) {
+    private static boolean couldNotRemove(FilesFacade ff, LPSZ path) {
         if (ff.removeQuiet(path)) {
             return false;
         }
@@ -234,21 +235,17 @@ public class ColumnPurgeOperator implements Closeable {
                 }
 
                 // perform existence check ahead of trying to remove files
-                if (!ff.exists(path)) {
+                if (!ff.exists(path.$())) {
                     if (ColumnType.isVarSize(columnType)) {
                         path.trimTo(pathTrimToPartition);
-                        TableUtils.iFile(path, columnName, columnVersion);
-                        if (!ff.exists(path)) {
+                        if (!ff.exists(TableUtils.iFile(path, columnName, columnVersion))) {
                             completedRowIds.add(updateRowId);
                             continue;
                         }
                     } else if (isSymbolRootFiles) {
-                        TableUtils.offsetFileName(path.trimTo(pathTrimToPartition), columnName, columnVersion);
-                        if (!ff.exists(path)) {
-                            BitmapIndexUtils.keyFileName(path.trimTo(pathTrimToPartition), columnName, columnVersion);
-                            if (!ff.exists(path)) {
-                                BitmapIndexUtils.valueFileName(path.trimTo(pathTrimToPartition), columnName, columnVersion);
-                                if (!ff.exists(path)) {
+                        if (!ff.exists(TableUtils.offsetFileName(path.trimTo(pathTrimToPartition), columnName, columnVersion))) {
+                            if (!ff.exists(BitmapIndexUtils.keyFileName(path.trimTo(pathTrimToPartition), columnName, columnVersion))) {
+                                if (!ff.exists(BitmapIndexUtils.valueFileName(path.trimTo(pathTrimToPartition), columnName, columnVersion))) {
                                     completedRowIds.add(updateRowId);
                                     continue;
                                 }
@@ -309,7 +306,7 @@ public class ColumnPurgeOperator implements Closeable {
                 LOG.info().$("purging [path=").$(path).I$();
 
                 // No readers looking at the column version, files can be deleted
-                if (couldNotRemove(ff, path)) {
+                if (couldNotRemove(ff, path.$())) {
                     allDone = false;
                     continue;
                 }
@@ -318,7 +315,7 @@ public class ColumnPurgeOperator implements Closeable {
                     path.trimTo(pathTrimToPartition);
                     TableUtils.iFile(path, columnName, columnVersion);
 
-                    if (couldNotRemove(ff, path)) {
+                    if (couldNotRemove(ff, path.$())) {
                         allDone = false;
                         continue;
                     }
@@ -328,30 +325,26 @@ public class ColumnPurgeOperator implements Closeable {
                 if (ColumnType.isSymbol(columnType)) {
                     if (isSymbolRootFiles) {
                         path.trimTo(pathTrimToPartition);
-                        TableUtils.charFileName(path, columnName, columnVersion);
-                        if (couldNotRemove(ff, path)) {
+                        if (couldNotRemove(ff, TableUtils.charFileName(path, columnName, columnVersion))) {
                             allDone = false;
                             continue;
                         }
 
                         path.trimTo(pathTrimToPartition);
-                        TableUtils.offsetFileName(path, columnName, columnVersion);
-                        if (couldNotRemove(ff, path)) {
+                        if (couldNotRemove(ff, TableUtils.offsetFileName(path, columnName, columnVersion))) {
                             allDone = false;
                             continue;
                         }
                     }
 
                     path.trimTo(pathTrimToPartition);
-                    BitmapIndexUtils.keyFileName(path, columnName, columnVersion);
-                    if (couldNotRemove(ff, path)) {
+                    if (couldNotRemove(ff, BitmapIndexUtils.keyFileName(path, columnName, columnVersion))) {
                         allDone = false;
                         continue;
                     }
 
                     path.trimTo(pathTrimToPartition);
-                    BitmapIndexUtils.valueFileName(path, columnName, columnVersion);
-                    if (couldNotRemove(ff, path)) {
+                    if (couldNotRemove(ff, BitmapIndexUtils.valueFileName(path, columnName, columnVersion))) {
                         allDone = false;
                         continue;
                     }
