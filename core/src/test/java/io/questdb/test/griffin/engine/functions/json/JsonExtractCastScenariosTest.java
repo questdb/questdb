@@ -157,24 +157,6 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
             {"[1, 2]", "false", "0", "null", "null", "null", "[1, 2]", "", "", ""}
     };
 
-    @Before
-    public void setUp() {
-        try {
-            assertMemoryLeak(() -> ddl("create table json_test as (select '" + castsDoc + "'::varchar text)"));
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
-    }
-
-    @After
-    public void tearDown() {
-        try {
-            assertMemoryLeak(() -> drop("drop table json_test"));
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
-    }
-
     @Test
     public void testBoolean() throws Exception {
         testScenarios(ColumnType.BOOLEAN);
@@ -207,19 +189,20 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
 
     public void testScenario(int type, int index) throws Exception {
         final int scenarioColumn = selectScenarioColumn(type);
+        final String json = scenarios[index][0];
         final String expectedValue = scenarios[index][scenarioColumn];
         final String expected = "x\n" + expectedValue + ":" + ColumnType.nameOf(type) + "\n";
 
         if (type != ColumnType.VARCHAR) {
-            testScenarioVia3rdArgCall(type, index, expected, expectedValue);
+            testScenarioVia3rdArgCall(json, type, index, expected, expectedValue);
         }
 
-        testScenarioViaLonghandCast(type, index, expected, expectedValue);
+        testScenarioViaLonghandCast(json, type, index, expected, expectedValue);
 
         if (type != ColumnType.DATE) {
             // TODO: Fix `::date` casting. Something's off.
             //       This is not specific to JSON, possibly a SqlParser issue.
-            testScenarioViaSuffixCast(type, index, expected, expectedValue);
+            testScenarioViaSuffixCast(json, type, index, expected, expectedValue);
         }
     }
 
@@ -263,9 +246,14 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
         }
     }
 
-    private void testScenarioVia3rdArgCall(int type, int index, String expected, String expectedValue) throws SqlException {
-        // json_extract(doc, path, type)
-        final String sql = "select json_extract(text, '[" + index + "]', " + type + ") as x from json_test";
+    private void testScenarioVia3rdArgCall(
+            String json,
+            int type,
+            int index,
+            String expected,
+            String expectedValue
+    ) throws SqlException {
+        final String sql = "select json_extract('{\"x\":" + json + "}', '.x', " + type + ") as x from long_sequence(1)";
         try {
             assertSqlWithTypes(expected, sql);
         } catch (AssertionError e) {
@@ -286,10 +274,15 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
         }
     }
 
-    private void testScenarioViaLonghandCast(int type, int index, String expected, String expectedValue) throws SqlException {
-        // cast(json_extract(doc, path) as type)
-        final String sql = "select cast(json_extract(text, '[" + index + "]') as " + ColumnType.nameOf(type) +
-                ") as x from json_test";
+    private void testScenarioViaLonghandCast(
+            String json,
+            int type,
+            int index,
+            String expected,
+            String expectedValue
+) throws SqlException {
+        final String sql = "select cast(json_extract('{\"x\":" + json + "}', '.x') as " + ColumnType.nameOf(type) +
+                ") as x from long_sequence(1)";
         try {
             assertSqlWithTypes(expected, sql);
         } catch (AssertionError e) {
@@ -310,10 +303,15 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
         }
     }
 
-    private void testScenarioViaSuffixCast(int type, int index, String expected, String expectedValue) throws SqlException {
-        // json_extract(doc, path)::type
-        final String sql = "select json_extract(text, '[" + index + "]')::" + ColumnType.nameOf(type) +
-                " as x from json_test";
+    private void testScenarioViaSuffixCast(
+            String json,
+            int type,
+            int index,
+            String expected,
+            String expectedValue
+    ) throws SqlException {
+        final String sql = "select json_extract('{\"x\":" + json + "}', '.x')::" + ColumnType.nameOf(type) +
+                " as x from long_sequence(1)";
         try {
             assertSqlWithTypes(expected, sql);
         } catch (AssertionError e) {
