@@ -48,7 +48,7 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
     private static final String castsDoc;
     private static final String[][] scenarios = new String[][]{
             // json token, ::boolean, ::short, ::int, ::long, ::double, ::varchar, ::ipv4, ::date, ::varchar
-            {"null", "false", "0", "null", "null", "null", "", "", "", ""},
+            {"null", "false", "0", "null", "null", "null", "", "", "", "x"},
             {"true", "true", "1", "1", "1", "1.0", "true", "", "", ""},
             {"false", "false", "0", "0", "0", "0.0", "false", "", "", ""},
             {"1", "false", "1", "1", "1", "1.0", "1", "0.0.0.1", "1970-01-01T00:00:00.001Z", "1970-01-01T00:00:00.000001Z"},
@@ -259,6 +259,7 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
         } catch (AssertionError e) {
             throw new AssertionError(
                     "Failed JSON 3rd type arg call. Scenario: " + index +
+                            ", SQL: `" + sql + "`" +
                             ", Cast Type: " + ColumnType.nameOf(type) +
                             ", JSON: " + scenarios[index][0] +
                             ", Expected Value: " + expectedValue +
@@ -288,6 +289,7 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
         } catch (AssertionError e) {
             throw new AssertionError(
                     "Failed cast(.. as ..) call. Scenario: " + index +
+                            ", SQL: `" + sql + "`" +
                             ", Cast Type: " + ColumnType.nameOf(type) +
                             ", JSON: " + scenarios[index][0] +
                             ", Expected Value: " + expectedValue +
@@ -317,6 +319,7 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
         } catch (AssertionError e) {
             throw new AssertionError(
                     "Failed suffix ::cast call. Scenario: " + index +
+                            ", SQL: `" + sql + "`" +
                             ", Cast Type: " + ColumnType.nameOf(type) +
                             ", JSON: " + scenarios[index][0] +
                             ", Expected Value: " + expectedValue +
