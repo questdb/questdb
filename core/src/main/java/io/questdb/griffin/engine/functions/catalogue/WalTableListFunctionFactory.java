@@ -238,10 +238,10 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                         }
 
                         rootPath.concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
-                        if (!ff.exists(rootPath)) {
+                        if (!ff.exists(rootPath.$())) {
                             return false;
                         }
-                        txReader.ofRO(rootPath, PartitionBy.NONE);
+                        txReader.ofRO(rootPath.$(), PartitionBy.NONE);
                         rootPath.trimTo(rootLen);
 
                         final CairoEngine engine = sqlExecutionContext.getCairoEngine();

@@ -407,7 +407,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         engine.clear();
                         TableToken tableToken = engine.verifyTableName(s.getName());
                         path.of(configuration.getRoot()).concat(tableToken).concat("2022-08-01").concat("sh.i").$();
-                        int fd = TestFilesFacadeImpl.INSTANCE.openRW(path, CairoConfiguration.O_NONE);
+                        int fd = TestFilesFacadeImpl.INSTANCE.openRW(path.$(), CairoConfiguration.O_NONE);
                         Files.truncate(fd, Files.length(fd) / 4);
                         TestFilesFacadeImpl.INSTANCE.close(fd);
                     },
@@ -473,7 +473,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         engine.clear();
                         TableToken tableToken = engine.verifyTableName(s.getName());
                         path.of(configuration.getRoot()).concat(tableToken).concat("2022-08-01").concat("sh.v").$();
-                        int fd = TestFilesFacadeImpl.INSTANCE.openRW(path, CairoConfiguration.O_NONE);
+                        int fd = TestFilesFacadeImpl.INSTANCE.openRW(path.$(), CairoConfiguration.O_NONE);
                         Files.truncate(fd, Files.length(fd) / 2);
                         TestFilesFacadeImpl.INSTANCE.close(fd);
                     },
@@ -913,7 +913,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     engine.clear();
                     TableToken tableToken = engine.verifyTableName(src.getName());
                     path.of(configuration.getRoot()).concat(tableToken).concat("2022-08-09").concat("s.k").$();
-                    Assert.assertTrue(Files.remove(path));
+            Assert.assertTrue(Files.remove(path.$()));
                     try {
                         attachFromSrcIntoDst(src, dst, "2022-08-09");
                         Assert.fail();
@@ -1213,7 +1213,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
             TestUtils.assertContains(e.getFlyweightMessage(), errorMessage);
         }
         TableToken tableToken = engine.verifyTableName(dstTableName);
-        Files.rmdir(path.of(root).concat(tableToken).concat("2022-08-01").put(configuration.getAttachPartitionSuffix()).$(), true);
+        Files.rmdir(path.of(root).concat(tableToken).concat("2022-08-01").put(configuration.getAttachPartitionSuffix()), true);
     }
 
     private void attachFromSrcIntoDst(TableModel src, TableModel dst, String... partitionList) throws SqlException, NumericException {
@@ -1348,7 +1348,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         engine.clear();
                         TableToken tableToken = engine.verifyTableName(s.getName());
                         path.of(configuration.getRoot()).concat(tableToken).concat("2022-08-01").concat("t.d").$();
-                        int fd = TestFilesFacadeImpl.INSTANCE.openRW(path, CairoConfiguration.O_NONE);
+                        int fd = TestFilesFacadeImpl.INSTANCE.openRW(path.$(), CairoConfiguration.O_NONE);
                         Files.truncate(fd, Files.length(fd) / 10);
                         TestFilesFacadeImpl.INSTANCE.close(fd);
                     },
@@ -1413,7 +1413,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
             engine.clear();
             TableToken tableToken = engine.verifyTableName(src.getName());
             path.of(configuration.getRoot()).concat(tableToken).concat(partition).concat(columnFileName).$();
-            fd = ff.openRW(path, CairoConfiguration.O_NONE);
+            fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
             Unsafe.getUnsafe().putLong(writeBuff, value);
             ff.write(fd, writeBuff, Long.BYTES, offset);
         } finally {

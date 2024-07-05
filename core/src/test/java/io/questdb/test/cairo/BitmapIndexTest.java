@@ -214,8 +214,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
                 try (MemoryMARW mem = Vm.getMARWInstance()) {
                     try (Path path = new Path()) {
-                        path.of(configuration.getRoot()).concat("x").put(".k").$();
-                        mem.wholeFile(configuration.getFilesFacade(), path, MemoryTag.MMAP_DEFAULT);
+                        path.of(configuration.getRoot()).concat("x").put(".k");
+                        mem.wholeFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
                     }
                     mem.putLong(BitmapIndexUtils.getKeyEntryOffset(0) + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT, 10);
 
@@ -855,8 +855,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
                 try (MemoryMARW mem = Vm.getMARWInstance()) {
                     try (Path path = new Path()) {
-                        path.of(configuration.getRoot()).concat("x").put(".k").$();
-                        mem.smallFile(configuration.getFilesFacade(), path, MemoryTag.MMAP_DEFAULT);
+                        path.of(configuration.getRoot()).concat("x").put(".k");
+                        mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
                     }
 
                     long offset = BitmapIndexUtils.getKeyEntryOffset(0);
@@ -1456,8 +1456,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             try (Path path = new Path()) {
-                path.of(configuration.getRoot()).concat("x").put(".k").$();
-                int fd = TableUtils.openFileRWOrFail(ff, path, configuration.getWriterFileOpenOpts());
+                path.of(configuration.getRoot()).concat("x").put(".k");
+                int fd = TableUtils.openFileRWOrFail(ff, path.$(), configuration.getWriterFileOpenOpts());
                 try {
                     ff.truncate(fd, 64);
                 } finally {

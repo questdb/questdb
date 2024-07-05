@@ -101,7 +101,7 @@ public class SnapshotTest extends AbstractCairoTest {
     public void tearDown() throws Exception {
         super.tearDown();
         path.trimTo(rootLen);
-        configuration.getFilesFacade().rmdir(path.slash$());
+        configuration.getFilesFacade().rmdir(path.slash());
         // reset inProgress for all tests
         ddl("snapshot complete");
     }
@@ -249,7 +249,7 @@ public class SnapshotTest extends AbstractCairoTest {
             } finally {
                 ff.close(fd);
             }
-            Assert.assertEquals(ff.length(path), restartedId.length());
+            Assert.assertEquals(ff.length(path.$()), restartedId.length());
 
             setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
             engine.recoverSnapshot();
@@ -311,7 +311,7 @@ public class SnapshotTest extends AbstractCairoTest {
             ddl("snapshot complete");
 
             path.trimTo(rootLen).slash$();
-            Assert.assertFalse(configuration.getFilesFacade().exists(path));
+            Assert.assertFalse(configuration.getFilesFacade().exists(path.$()));
         });
     }
 
@@ -459,18 +459,18 @@ public class SnapshotTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             path.trimTo(rootLen);
             FilesFacade ff = configuration.getFilesFacade();
-            int rc = ff.mkdirs(path.slash$(), configuration.getMkDirMode());
+            int rc = ff.mkdirs(path.slash(), configuration.getMkDirMode());
             Assert.assertEquals(0, rc);
 
             // Create a test file.
             path.trimTo(rootLen).concat("test.txt").$();
-            Assert.assertTrue(Files.touch(path));
+            Assert.assertTrue(Files.touch(path.$()));
 
             ddl("create table test (ts timestamp, name symbol, val int)");
             ddl("snapshot prepare", sqlExecutionContext);
 
             // The test file should be deleted by SNAPSHOT PREPARE.
-            Assert.assertFalse(ff.exists(path));
+            Assert.assertFalse(ff.exists(path.$()));
 
             ddl("snapshot complete");
         });
@@ -1051,7 +1051,7 @@ public class SnapshotTest extends AbstractCairoTest {
             ddl("snapshot prepare");
 
             path.trimTo(rootLen).slash$();
-            Assert.assertTrue(Utf8s.toString(path), configuration.getFilesFacade().exists(path));
+            Assert.assertTrue(Utf8s.toString(path), configuration.getFilesFacade().exists(path.$()));
 
             insert(
                     "insert into " + nonPartitionedTable +
@@ -1085,7 +1085,7 @@ public class SnapshotTest extends AbstractCairoTest {
 
             // Recovery should delete the snapshot dir. Otherwise, the dir should be kept as is.
             path.trimTo(rootLen).slash$();
-            if (expectRecovery == configuration.getFilesFacade().exists(path)) {
+            if (expectRecovery == configuration.getFilesFacade().exists(path.$())) {
                 if (expectRecovery) {
                     Assert.fail("Recovery should happen but the snapshot path still exists:" + Utf8s.toString(path));
                 } else {
@@ -1151,7 +1151,7 @@ public class SnapshotTest extends AbstractCairoTest {
                     try (TableReaderMetadata metadata0 = tableReader.getMetadata()) {
                         path.concat(TableUtils.META_FILE_NAME).$();
                         try (TableReaderMetadata metadata = new TableReaderMetadata(configuration)) {
-                            metadata.load(path);
+                            metadata.load(path.$());
                             // Assert _meta contents.
 
                             Assert.assertEquals(metadata0.getColumnCount(), metadata.getColumnCount());
@@ -1175,7 +1175,7 @@ public class SnapshotTest extends AbstractCairoTest {
                             // Assert _txn contents.
                             path.trimTo(tableNameLen).concat(TableUtils.TXN_FILE_NAME).$();
                             try (TxReader txReader0 = tableReader.getTxFile()) {
-                                try (TxReader txReader1 = new TxReader(ff).ofRO(path, metadata.getPartitionBy())) {
+                                try (TxReader txReader1 = new TxReader(ff).ofRO(path.$(), metadata.getPartitionBy())) {
                                     TableUtils.safeReadTxn(txReader1, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
 
                                     Assert.assertEquals(txReader0.getTxn(), txReader1.getTxn());
@@ -1202,7 +1202,7 @@ public class SnapshotTest extends AbstractCairoTest {
                             // Assert _cv contents.
                             path.trimTo(tableNameLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
                             try (ColumnVersionReader cvReader0 = tableReader.getColumnVersionReader()) {
-                                try (ColumnVersionReader cvReader1 = new ColumnVersionReader().ofRO(ff, path)) {
+                                try (ColumnVersionReader cvReader1 = new ColumnVersionReader().ofRO(ff, path.$())) {
                                     cvReader1.readSafe(configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
 
                                     Assert.assertEquals(cvReader0.getVersion(), cvReader1.getVersion());

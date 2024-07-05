@@ -6005,7 +6005,7 @@ public class IODispatcherTest extends AbstractTest {
                 workerPool.start(LOG);
 
                 // create 20Mb file in /tmp directory
-                try (Path path = new Path().of(baseDir).concat("questdb-temp.txt").$()) {
+                try (Path path = new Path().of(baseDir).concat("questdb-temp.txt")) {
                     try {
                         Rnd rnd = new Rnd();
                         writeRandomFile(path, rnd, 122222212222L);
@@ -6102,7 +6102,7 @@ public class IODispatcherTest extends AbstractTest {
                         }
                     } finally {
                         workerPool.halt();
-                        Files.remove(path);
+                        Files.remove(path.$());
                     }
                 }
             }
@@ -6133,7 +6133,7 @@ public class IODispatcherTest extends AbstractTest {
                 workerPool.start(LOG);
 
                 // create 20Mb file in /tmp directory
-                try (Path path = new Path().of(baseDir).concat("questdb-temp.txt").$()) {
+                try (Path path = new Path().of(baseDir).concat("questdb-temp.txt")) {
                     try {
                         Rnd rnd = new Rnd();
                         final int diskBufferLen = 1024 * 1024;
@@ -6243,7 +6243,7 @@ public class IODispatcherTest extends AbstractTest {
                         }
                     } finally {
                         workerPool.halt();
-                        Files.remove(path);
+                        Files.remove(path.$());
                     }
                 }
             }
@@ -6283,7 +6283,7 @@ public class IODispatcherTest extends AbstractTest {
                 workerPool.start(LOG);
 
                 // create 20Mb file in /tmp directory
-                try (Path path = new Path().of(baseDir).concat("questdb-temp.txt").$()) {
+                try (Path path = new Path().of(baseDir).concat("questdb-temp.txt")) {
                     try {
                         Rnd rnd = new Rnd();
 
@@ -6386,7 +6386,7 @@ public class IODispatcherTest extends AbstractTest {
                             workerPool.halt();
                         }
                     } finally {
-                        Files.remove(path);
+                        Files.remove(path.$());
                     }
                 }
             }
@@ -9394,10 +9394,10 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     private void writeRandomFile(Path path, Rnd rnd, long lastModified) {
-        if (Files.exists(path)) {
-            assertTrue(Files.remove(path));
+        if (Files.exists(path.$())) {
+            assertTrue(Files.remove(path.$()));
         }
-        int fd = Files.openAppend(path);
+        int fd = Files.openAppend(path.$());
 
         long buf = Unsafe.malloc(1048576, MemoryTag.NATIVE_DEFAULT); // 1Mb buffer
         for (int i = 0; i < 1048576; i++) {
@@ -9409,7 +9409,7 @@ public class IODispatcherTest extends AbstractTest {
         }
 
         TestFilesFacadeImpl.INSTANCE.close(fd);
-        Files.setLastModified(path, lastModified);
+        Files.setLastModified(path.$(), lastModified);
         Unsafe.free(buf, 1048576, MemoryTag.NATIVE_DEFAULT);
     }
 

@@ -479,8 +479,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         sink.clear();
         memoryUsage = -1;
         if (inputWorkRoot != null) {
-            try (Path path = new Path().of(inputWorkRoot).$()) {
-                if (Files.exists(path)) {
+            try (Path path = new Path().of(inputWorkRoot)) {
+                if (Files.exists(path.$())) {
                     Files.rmdir(path, true);
                 }
             }
@@ -1225,7 +1225,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static boolean couldObtainLock(Path path) {
-        final int lockFd = TableUtils.lock(TestFilesFacadeImpl.INSTANCE, path, false);
+        final int lockFd = TableUtils.lock(TestFilesFacadeImpl.INSTANCE, path.$(), false);
         if (lockFd != -1L) {
             TestFilesFacadeImpl.INSTANCE.close(lockFd);
             return true;  // Could lock/unlock.
@@ -1478,16 +1478,16 @@ public abstract class AbstractCairoTest extends AbstractTest {
         final FilesFacade ff = configuration.getFilesFacade();
         final int mkdirMode = configuration.getMkDirMode();
 
-        final Path srcWal = Path.PATH.get().of(srcNode.getRoot()).concat(srcTableToken).concat(wal).$();
-        final Path dstWal = Path.PATH2.get().of(dstNode.getRoot()).concat(dstTableToken).concat(wal).$();
-        if (ff.exists(dstWal)) {
+        final Path srcWal = Path.PATH.get().of(srcNode.getRoot()).concat(srcTableToken).concat(wal);
+        final Path dstWal = Path.PATH2.get().of(dstNode.getRoot()).concat(dstTableToken).concat(wal);
+        if (ff.exists(dstWal.$())) {
             Assert.assertTrue(ff.rmdir(dstWal));
         }
-        Assert.assertEquals(0, ff.mkdir(dstWal, mkdirMode));
+        Assert.assertEquals(0, ff.mkdir(dstWal.$(), mkdirMode));
         Assert.assertEquals(0, ff.copyRecursive(srcWal, dstWal, mkdirMode));
 
-        final Path srcTxnLog = Path.PATH.get().of(srcNode.getRoot()).concat(srcTableToken).concat(WalUtils.SEQ_DIR).$();
-        final Path dstTxnLog = Path.PATH2.get().of(dstNode.getRoot()).concat(dstTableToken).concat(WalUtils.SEQ_DIR).$();
+        final Path srcTxnLog = Path.PATH.get().of(srcNode.getRoot()).concat(srcTableToken).concat(WalUtils.SEQ_DIR);
+        final Path dstTxnLog = Path.PATH2.get().of(dstNode.getRoot()).concat(dstTableToken).concat(WalUtils.SEQ_DIR);
         Assert.assertTrue(ff.rmdir(dstTxnLog));
         Assert.assertEquals(0, ff.copyRecursive(srcTxnLog, dstTxnLog, mkdirMode));
 
@@ -1739,8 +1739,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected File assertSegmentExistence(boolean expectExists, @NotNull TableToken tableToken, int walId, int segmentId) {
         final CharSequence root = engine.getConfiguration().getRoot();
         try (Path path = new Path()) {
-            path.of(root).concat(tableToken).concat("wal").put(walId).slash().put(segmentId).$();
-            Assert.assertEquals(Utf8s.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path));
+            path.of(root).concat(tableToken).concat("wal").put(walId).slash().put(segmentId);
+            Assert.assertEquals(Utf8s.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path.$()));
             return new File(Utf8s.toString(path));
         }
     }
@@ -1762,8 +1762,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected void assertSegmentLockExistence(boolean expectExists, String tableName, @SuppressWarnings("SameParameterValue") int walId, int segmentId) {
         final CharSequence root = engine.getConfiguration().getRoot();
         try (Path path = new Path()) {
-            path.of(root).concat(engine.verifyTableName(tableName)).concat("wal").put(walId).slash().put(segmentId).put(".lock").$();
-            Assert.assertEquals(Utf8s.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path));
+            path.of(root).concat(engine.verifyTableName(tableName)).concat("wal").put(walId).slash().put(segmentId).put(".lock");
+            Assert.assertEquals(Utf8s.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path.$()));
         }
     }
 
@@ -1838,8 +1838,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected void assertTableExistence(boolean expectExists, @NotNull TableToken tableToken) {
         final CharSequence root = engine.getConfiguration().getRoot();
         try (Path path = new Path()) {
-            path.of(root).concat(tableToken).$();
-            Assert.assertEquals(Utf8s.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path));
+            path.of(root).concat(tableToken);
+            Assert.assertEquals(Utf8s.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path.$()));
         }
     }
 
@@ -1851,8 +1851,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected void assertWalExistence(boolean expectExists, @NotNull TableToken tableToken, int walId) {
         final CharSequence root = engine.getConfiguration().getRoot();
         try (Path path = new Path()) {
-            path.of(root).concat(tableToken).concat("wal").put(walId).$();
-            Assert.assertEquals(Utf8s.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path));
+            path.of(root).concat(tableToken).concat("wal").put(walId);
+            Assert.assertEquals(Utf8s.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path.$()));
         }
     }
 
@@ -1874,8 +1874,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         final CharSequence root = engine.getConfiguration().getRoot();
         try (Path path = new Path()) {
             TableToken tableToken = engine.verifyTableName(tableName);
-            path.of(root).concat(tableToken).concat("wal").put(walId).put(".lock").$();
-            Assert.assertEquals(Utf8s.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path));
+            path.of(root).concat(tableToken).concat("wal").put(walId).put(".lock");
+            Assert.assertEquals(Utf8s.toString(path), expectExists, TestFilesFacadeImpl.INSTANCE.exists(path.$()));
         }
     }
 

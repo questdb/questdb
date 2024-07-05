@@ -25,10 +25,7 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.std.*;
-import io.questdb.std.str.DirectUtf8String;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.Utf8String;
-import io.questdb.std.str.Utf8s;
+import io.questdb.std.str.*;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.BufferedReader;
@@ -66,7 +63,7 @@ public final class MimeTypesCache extends Utf8SequenceObjHashMap<CharSequence> {
         }
     }
 
-    public MimeTypesCache(@Transient FilesFacade ff, @Transient Path path) {
+    public MimeTypesCache(@Transient FilesFacade ff, @Transient LPSZ path) {
         final int fd = ff.openRO(path);
         if (fd < 0) {
             throw HttpException.instance("could not open [file=").put(path).put(", errno=").put(ff.errno()).put(']');

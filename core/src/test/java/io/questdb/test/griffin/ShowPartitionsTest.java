@@ -146,9 +146,9 @@ public class ShowPartitionsTest extends AbstractCairoTest {
                     drainWalQueue();
                 }
                 engine.releaseAllWriters();
-                srcPath.of(configuration.getRoot()).concat(engine.verifyTableName(tab2Name)).concat("2023-03").put(DETACHED_DIR_MARKER).$();
-                dstPath.of(configuration.getRoot()).concat(engine.verifyTableName(tabName)).concat("2023-03").put(ATTACHABLE_DIR_MARKER).$();
-                Assert.assertEquals(0, Files.softLink(srcPath, dstPath));
+                srcPath.of(configuration.getRoot()).concat(engine.verifyTableName(tab2Name)).concat("2023-03").put(DETACHED_DIR_MARKER);
+                dstPath.of(configuration.getRoot()).concat(engine.verifyTableName(tabName)).concat("2023-03").put(ATTACHABLE_DIR_MARKER);
+                Assert.assertEquals(0, Files.softLink(srcPath.$(), dstPath.$()));
                 assertShowPartitions(
                         "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\n" +
                                 "0\tDAY\t2023-03-13\t2023-03-13T04:47:59.900000Z\t2023-03-13T23:59:59.500000Z\t5\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\n" +
@@ -202,9 +202,9 @@ public class ShowPartitionsTest extends AbstractCairoTest {
                     drainWalQueue();
                 }
                 engine.releaseAllWriters();
-                srcPath.of(configuration.getRoot()).concat(engine.verifyTableName(tab2Name)).concat("2023-03-15").put(DETACHED_DIR_MARKER).$();
-                dstPath.of(configuration.getRoot()).concat(engine.verifyTableName(tabName)).concat("2023-03-15").put(ATTACHABLE_DIR_MARKER).$();
-                Assert.assertEquals(0, Files.softLink(srcPath, dstPath));
+                srcPath.of(configuration.getRoot()).concat(engine.verifyTableName(tab2Name)).concat("2023-03-15").put(DETACHED_DIR_MARKER);
+                dstPath.of(configuration.getRoot()).concat(engine.verifyTableName(tabName)).concat("2023-03-15").put(ATTACHABLE_DIR_MARKER);
+                Assert.assertEquals(0, Files.softLink(srcPath.$(), dstPath.$()));
                 assertShowPartitions(
                         "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\n" +
                                 "0\tDAY\t2023-03-13\t2023-03-13T04:47:59.900000Z\t2023-03-13T23:59:59.500000Z\t5\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\n" +
@@ -247,9 +247,9 @@ public class ShowPartitionsTest extends AbstractCairoTest {
             ) {
                 int len = path.size();
                 for (int i = 2; i < 5; i++) {
-                    path.trimTo(len).put(i).put(TableUtils.DETACHED_DIR_MARKER).$();
-                    link.trimTo(len).put(i).put(TableUtils.ATTACHABLE_DIR_MARKER).$();
-                    Assert.assertEquals(0, Files.softLink(path, link));
+                    path.trimTo(len).put(i).put(TableUtils.DETACHED_DIR_MARKER);
+                    link.trimTo(len).put(i).put(TableUtils.ATTACHABLE_DIR_MARKER);
+                    Assert.assertEquals(0, Files.softLink(path.$(), link.$()));
                 }
             }
             assertShowPartitions(
@@ -499,9 +499,9 @@ public class ShowPartitionsTest extends AbstractCairoTest {
                 path.concat(part);
             }
             path.$();
-            Assert.assertTrue(Files.exists(path));
-            Assert.assertTrue(Files.remove(path));
-            Assert.assertFalse(Files.exists(path));
+            Assert.assertTrue(Files.exists(path.$()));
+            Assert.assertTrue(Files.remove(path.$()));
+            Assert.assertFalse(Files.exists(path.$()));
         }
     }
 
@@ -512,9 +512,9 @@ public class ShowPartitionsTest extends AbstractCairoTest {
     ) {
         ObjObjHashMap<String, Long> sizes = new ObjObjHashMap<>();
         TableToken tableToken = engine.verifyTableName(tableName);
-        try (Path path = new Path().of(root).concat(tableToken).$()) {
+        try (Path path = new Path().of(root).concat(tableToken)) {
             int len = path.size();
-            long pFind = Files.findFirst(path);
+            long pFind = Files.findFirst(path.$());
             try {
                 do {
                     long namePtr = Files.findName(pFind);

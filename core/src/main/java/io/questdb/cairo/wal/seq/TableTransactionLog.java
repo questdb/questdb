@@ -89,9 +89,9 @@ public class TableTransactionLog implements Closeable {
 
     private static int openFileRO(final FilesFacade ff, final Path path, final String fileName) {
         final int rootLen = path.size();
-        path.concat(fileName).$();
+        path.concat(fileName);
         try {
-            return TableUtils.openRO(ff, path, LOG);
+            return TableUtils.openRO(ff, path.$(), LOG);
         } finally {
             path.trimTo(rootLen);
         }
