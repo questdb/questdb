@@ -177,7 +177,7 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
                         if (ff.isDirOrSoftLinkDirNoDots(path, plimit, pUtf8NameZ, ff.findType(findFileStruct))) {
                             if (ff.exists(path.concat(TableUtils.META_FILE_NAME).$())) {
                                 foundMetadataFile = true;
-                                metaMem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+                                metaMem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
                                 columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
                                 tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
                             }

@@ -1827,9 +1827,9 @@ public class TableWriterTest extends AbstractCairoTest {
             TableToken tableToken = engine.verifyTableName(all);
             try (
                     MemoryCMARW mem = Vm.getCMARWInstance();
-                    Path path = new Path().of(root).concat(tableToken).concat(TableUtils.TODO_FILE_NAME).$()
+                    Path path = new Path().of(root).concat(tableToken).concat(TableUtils.TODO_FILE_NAME)
             ) {
-                mem.smallFile(TestFilesFacadeImpl.INSTANCE, path, MemoryTag.MMAP_DEFAULT);
+                mem.smallFile(TestFilesFacadeImpl.INSTANCE, path.$(), MemoryTag.MMAP_DEFAULT);
                 mem.putLong(32, 1);
                 mem.putLong(40, 9990001L);
                 mem.jumpTo(48);
@@ -2856,19 +2856,19 @@ public class TableWriterTest extends AbstractCairoTest {
                 newOffPoolWriter(configuration, PRODUCT, metrics).close();
 
                 path.of(configuration.getRoot()).concat(PRODUCT_FS).concat("default").slash$();
-                Assert.assertTrue(ff.exists(path));
+                Assert.assertTrue(ff.exists(path.$()));
 
                 path.of(configuration.getRoot()).concat(PRODUCT_FS).concat("somethingortheother").slash$();
-                Assert.assertTrue(ff.exists(path));
+                Assert.assertTrue(ff.exists(path.$()));
 
                 path.of(configuration.getRoot()).concat(PRODUCT_FS).concat("0001-01-01.123").slash$();
-                Assert.assertFalse(ff.exists(path));
+                Assert.assertFalse(ff.exists(path.$()));
 
                 path.of(configuration.getRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR).slash$();
-                Assert.assertTrue(ff.exists(path));
+                Assert.assertTrue(ff.exists(path.$()));
 
                 path.of(configuration.getRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR_DEPRECATED).slash$();
-                Assert.assertTrue(ff.exists(path));
+                Assert.assertTrue(ff.exists(path.$()));
             }
         });
     }
@@ -2900,19 +2900,19 @@ public class TableWriterTest extends AbstractCairoTest {
                 newOffPoolWriter(configuration, PRODUCT, metrics).close();
 
                 path.of(configuration.getRoot()).concat(PRODUCT).concat("default").slash$();
-                Assert.assertTrue(ff.exists(path));
+                Assert.assertTrue(ff.exists(path.$()));
 
                 path.of(configuration.getRoot()).concat(PRODUCT).concat("somethingortheother").slash$();
-                Assert.assertTrue(ff.exists(path));
+                Assert.assertTrue(ff.exists(path.$()));
 
                 path.of(configuration.getRoot()).concat(PRODUCT).concat("0001-01-01.123").slash$();
-                Assert.assertTrue(ff.exists(path));
+                Assert.assertTrue(ff.exists(path.$()));
 
                 path.of(configuration.getRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR).slash$();
-                Assert.assertTrue(ff.exists(path));
+                Assert.assertTrue(ff.exists(path.$()));
 
                 path.of(configuration.getRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR_DEPRECATED).slash$();
-                Assert.assertTrue(ff.exists(path));
+                Assert.assertTrue(ff.exists(path.$()));
             }
         });
     }

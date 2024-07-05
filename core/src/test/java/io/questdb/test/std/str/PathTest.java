@@ -124,10 +124,10 @@ public class PathTest {
     @Test
     public void testConcatWithExtend() {
         try (
-                Path p0 = new Path().put("sumerians").$();
+                Path p0 = new Path().put("sumerians");
                 Path p1 = new Path(1)
         ) {
-            p1.concat(p0.ptr());
+            p1.concat(p0.$().ptr());
             Assert.assertTrue(p0.isAscii());
             Assert.assertFalse(p1.isAscii());
             Assert.assertEquals(p0.toString(), p1.toString());
@@ -137,10 +137,10 @@ public class PathTest {
     @Test
     public void testConcatWithExtendNonAscii() {
         try (
-                Path p0 = new Path().put("тест").$();
+                Path p0 = new Path().put("тест");
                 Path p1 = new Path(1)
         ) {
-            p1.concat(p0.ptr());
+            p1.concat(p0.$().ptr());
             Assert.assertFalse(p0.isAscii());
             Assert.assertFalse(p1.isAscii());
             Assert.assertEquals(p0.toString(), p1.toString());
@@ -215,7 +215,7 @@ public class PathTest {
 
     @Test
     public void testOfAnotherPath() {
-        try (Path p0 = new Path().of("root").$()) {
+        try (Path p0 = new Path().of("root")) {
             path.of(p0).$();
             Assert.assertTrue(p0.isAscii());
             Assert.assertTrue(path.isAscii());
@@ -225,7 +225,7 @@ public class PathTest {
 
     @Test
     public void testOfAnotherPathAsUtf8Sequence() {
-        try (Path p0 = new Path().put("root").$()) {
+        try (Path p0 = new Path().put("root")) {
             path.of((Utf8Sequence) p0);
             Assert.assertTrue(p0.isAscii());
             Assert.assertTrue(path.isAscii());
@@ -235,7 +235,7 @@ public class PathTest {
 
     @Test
     public void testOfAnotherPathNonAscii() {
-        try (Path p0 = new Path().of("грут").$()) {
+        try (Path p0 = new Path().of("грут")) {
             path.of(p0).$();
             Assert.assertFalse(p0.isAscii());
             Assert.assertFalse(path.isAscii());
@@ -245,7 +245,7 @@ public class PathTest {
 
     @Test
     public void testOfCharSequence() {
-        try (Path p0 = new Path().of("sumerians", 2, 7).$()) {
+        try (Path p0 = new Path().of("sumerians", 2, 7)) {
             Assert.assertEquals("meria", p0.toString());
             Assert.assertTrue(p0.isAscii());
         }
@@ -253,7 +253,7 @@ public class PathTest {
 
     @Test
     public void testOfCharSequenceNonAscii() {
-        try (Path p0 = new Path().of("грут", 1, 4).$()) {
+        try (Path p0 = new Path().of("грут", 1, 4)) {
             Assert.assertEquals("рут", p0.toString());
             Assert.assertFalse(p0.isAscii());
         }
@@ -357,7 +357,7 @@ public class PathTest {
 
     @Test
     public void testPrefix() {
-        try (Path p0 = new Path(4).putAscii("foobar").$()) {
+        try (Path p0 = new Path(4).putAscii("foobar")) {
             path.of("baz").prefix(p0, p0.size()).$();
             Assert.assertTrue(p0.isAscii());
             Assert.assertTrue(path.isAscii());
@@ -367,7 +367,7 @@ public class PathTest {
 
     @Test
     public void testPrefixNonAscii() {
-        try (Path p0 = new Path(4).put("раздва").$()) {
+        try (Path p0 = new Path(4).put("раздва")) {
             path.of("три").prefix(p0, p0.size()).$();
             Assert.assertFalse(p0.isAscii());
             Assert.assertFalse(path.isAscii());
@@ -505,7 +505,7 @@ public class PathTest {
                         path.concat("table").slash$();
                         Assert.assertEquals(expected1, path.toString());
                         Assert.assertEquals(22, path.size());
-                        Assert.assertFalse(Files.exists(path));
+                        Assert.assertFalse(Files.exists(path.$()));
                         path.concat("partition").slash$();
                         Assert.assertEquals(expected2, path.toString());
                         Assert.assertEquals(32, path.size());
@@ -534,7 +534,7 @@ public class PathTest {
                 path.concat("banana").slash$();
                 Assert.assertEquals(expected1, path.toString());
                 Assert.assertEquals(8, path.size());
-                Assert.assertFalse(Files.exists(path));
+                Assert.assertFalse(Files.exists(path.$()));
                 path.concat("party").slash$();
                 Assert.assertEquals(expected2, path.toString());
                 Assert.assertEquals(14, path.size());
@@ -584,7 +584,7 @@ public class PathTest {
 
     @Test
     public void testZeroPad() {
-        try (Path p0 = new Path(1).of("a").$()) {
+        try (Path p0 = new Path(1).of("a")) {
             final int len = 16;
             p0.zeroPad(len);
             Assert.assertEquals(17, p0.capacity());

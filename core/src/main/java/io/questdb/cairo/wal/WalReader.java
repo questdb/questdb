@@ -214,9 +214,9 @@ public class WalReader implements Closeable {
             long columnSize
     ) {
         if (mem != null && mem != NullMemoryMR.INSTANCE) {
-            mem.of(ff, path, columnSize, columnSize, MemoryTag.MMAP_TABLE_WAL_READER);
+            mem.of(ff, path.$(), columnSize, columnSize, MemoryTag.MMAP_TABLE_WAL_READER);
         } else {
-            mem = Vm.getMRInstance(ff, path, columnSize, MemoryTag.MMAP_TABLE_WAL_READER);
+            mem = Vm.getMRInstance(ff, path.$(), columnSize, MemoryTag.MMAP_TABLE_WAL_READER);
             columns.setQuick(primaryIndex, mem);
         }
         return mem;

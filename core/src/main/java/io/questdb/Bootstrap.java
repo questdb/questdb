@@ -241,12 +241,12 @@ public class Bootstrap {
         final int maxFiles = cairoConfiguration.getMaxCrashFiles();
         DirectUtf8StringZ name = new DirectUtf8StringZ();
         try (
-                Path path = new Path().of(dbRoot).slash$();
-                Path other = new Path().of(dbRoot).slash$()
+                Path path = new Path().of(dbRoot).slash();
+                Path other = new Path().of(dbRoot).slash()
         ) {
             int plen = path.size();
             AtomicInteger counter = new AtomicInteger(0);
-            FilesFacadeImpl.INSTANCE.iterateDir(path, (pUtf8NameZ, type) -> {
+            FilesFacadeImpl.INSTANCE.iterateDir(path.$(), (pUtf8NameZ, type) -> {
                 if (Files.notDots(pUtf8NameZ)) {
                     name.of(pUtf8NameZ);
                     if (Utf8s.startsWithAscii(name, cairoConfiguration.getOGCrashFilePrefix()) && type == Files.DT_FILE) {
@@ -254,12 +254,12 @@ public class Bootstrap {
                         boolean shouldRename = false;
                         do {
                             other.trimTo(plen).concat(cairoConfiguration.getArchivedCrashFilePrefix()).put(counter.getAndIncrement()).put(".log").$();
-                            if (!ff.exists(other)) {
+                            if (!ff.exists(other.$())) {
                                 shouldRename = counter.get() <= maxFiles;
                                 break;
                             }
                         } while (counter.get() < maxFiles);
-                        if (shouldRename && ff.rename(path, other) == 0) {
+                        if (shouldRename && ff.rename(path.$(), other.$()) == 0) {
                             log.critical().$("found crash file [path=").$(other).I$();
                         } else {
                             log.critical().$("could not rename crash file [path=").$(path).$(", errno=").$(ff.errno()).$(", index=").$(counter.get()).$(", max=").$(maxFiles).I$();
@@ -439,7 +439,7 @@ public class Bootstrap {
     private static void verifyFileOpts(Path path, CairoConfiguration cairoConfiguration) {
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
         path.of(cairoConfiguration.getRoot()).concat("_verify_").put(cairoConfiguration.getRandom().nextPositiveInt()).put(".d").$();
-        int fd = ff.openRW(path, cairoConfiguration.getWriterFileOpenOpts());
+        int fd = ff.openRW(path.$(), cairoConfiguration.getWriterFileOpenOpts());
         try {
             if (fd > -1) {
                 long mem = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -452,7 +452,7 @@ public class Bootstrap {
         } finally {
             ff.close(fd);
         }
-        ff.remove(path);
+        ff.remove(path.$());
     }
 
     private void createHelloFile(String helloMsg) {
@@ -601,9 +601,9 @@ public class Bootstrap {
             log.advisoryW().$(" - ").$(kind).$(" root: NOT SET").$();
             return;
         }
-        path.of(rootDir).$();
+        path.of(rootDir);
         // path will contain file system name
-        long fsStatus = Files.getFileSystemStatus(path);
+        long fsStatus = Files.getFileSystemStatus(path.$());
         path.seekZ();
         LogRecord rec = log.advisoryW().$(" - ").$(kind).$(" root: [path=").$(rootDir).$(", magic=0x");
         if (fsStatus < 0 || (fsStatus == 0 && Os.type == Os.DARWIN && Os.arch == Os.ARCH_AARCH64)) {

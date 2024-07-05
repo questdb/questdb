@@ -64,12 +64,12 @@ public final class LinuxFileWatcher extends FileWatcher {
             }
             Files.bumpFileCount(this.inotifyFd);
 
-            this.dirPath.of(filePath).parent().$();
+            this.dirPath.of(filePath).parent();
             this.fileName.put(Paths.get(filePath.toString()).getFileName().toString());
 
             this.wd = accessorFacade.inotifyAddWatch(
                     this.inotifyFd,
-                    this.dirPath.ptr(),
+                    this.dirPath.$().ptr(),
                     LinuxAccessor.IN_CREATE | LinuxAccessor.IN_MODIFY |
                             LinuxAccessor.IN_MOVED_TO | LinuxAccessor.IN_CLOSE_WRITE
             );

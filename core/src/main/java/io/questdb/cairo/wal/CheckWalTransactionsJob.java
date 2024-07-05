@@ -31,6 +31,7 @@ import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
@@ -83,9 +84,9 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
                     engine.notifyWalTxnCommitted(tableToken);
                 }
             } else {
-                threadLocalPath.trimTo(dbRoot.length()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
-                if (ff.exists(threadLocalPath)) {
-                    try (TxReader txReader = this.txReader.ofRO(threadLocalPath, PartitionBy.NONE)) {
+                LPSZ txnPath = threadLocalPath.trimTo(dbRoot.length()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
+                if (ff.exists(txnPath)) {
+                    try (TxReader txReader = this.txReader.ofRO(txnPath, PartitionBy.NONE)) {
                         TableUtils.safeReadTxn(this.txReader, millisecondClock, spinLockTimeout);
                         if (engine.getTableSequencerAPI().initTxnTracker(tableToken, txReader.getSeqTxn(), seqTxn)) {
                             engine.notifyWalTxnCommitted(tableToken);

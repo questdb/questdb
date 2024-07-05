@@ -173,8 +173,8 @@ public final class Net {
     }
 
     public static long getAddrInfo(CharSequence host, int port) {
-        try (Path p = new Path().of(host).$()) {
-            return getAddrInfo(p, port);
+        try (Path p = new Path().of(host)) {
+            return getAddrInfo(p.$(), port);
         }
     }
 

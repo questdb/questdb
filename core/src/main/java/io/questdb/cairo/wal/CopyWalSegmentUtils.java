@@ -60,14 +60,12 @@ public class CopyWalSegmentUtils {
     ) {
         Path newSegPath = Path.PATH.get().of(walPath).slash().put(newSegment);
         int setPathRoot = newSegPath.size();
-        dFile(newSegPath, columnName, COLUMN_NAME_TXN_NONE);
-        int primaryFd = openRW(ff, newSegPath, LOG, options);
+        int primaryFd = openRW(ff, dFile(newSegPath, columnName, COLUMN_NAME_TXN_NONE), LOG, options);
         newColumnFiles.setDestPrimaryFd(primaryFd);
 
         int secondaryFd;
         if (ColumnType.isVarSize(newColumnType)) {
-            iFile(newSegPath.trimTo(setPathRoot), columnName, COLUMN_NAME_TXN_NONE);
-            secondaryFd = openRW(ff, newSegPath, LOG, options);
+            secondaryFd = openRW(ff, iFile(newSegPath.trimTo(setPathRoot), columnName, COLUMN_NAME_TXN_NONE), LOG, options);
         } else {
             secondaryFd = -1;
         }

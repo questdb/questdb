@@ -51,9 +51,9 @@ public class VarcharTypeDriverTest extends AbstractTest {
         final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
         final VarcharTypeDriver driver = new VarcharTypeDriver();
         TestUtils.assertMemoryLeak(() -> {
-            try (Path path = new Path().of(temp.newFile().getAbsolutePath()).$()) {
+            try (Path path = new Path().of(temp.newFile().getAbsolutePath())) {
                 try (
-                        MemoryCMARW auxMem = Vm.getSmallCMARWInstance(ff, path, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
+                        MemoryCMARW auxMem = Vm.getSmallCMARWInstance(ff, path.$(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
                         MemoryCARW dataMem = Vm.getCARWInstance(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
                 ) {
                     VarcharTypeDriver.appendValue(auxMem, dataMem, null);
@@ -321,10 +321,10 @@ public class VarcharTypeDriverTest extends AbstractTest {
         long pageSize = Files.PAGE_SIZE;
         final Rnd rnd = TestUtils.generateRandom(null);
 
-        try (Path auxPath = new Path().of(temp.newFile().getAbsolutePath()).$();
-             Path dataPath = new Path().of(temp.newFile().getAbsolutePath()).$();
-             MemoryCMARW auxMem = new MemoryCMARWImpl(ff, auxPath, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
-             MemoryCMARW dataMem = new MemoryCMARWImpl(ff, dataPath, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE)) {
+        try (Path auxPath = new Path().of(temp.newFile().getAbsolutePath());
+             Path dataPath = new Path().of(temp.newFile().getAbsolutePath());
+             MemoryCMARW auxMem = new MemoryCMARWImpl(ff, auxPath.$(), pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
+             MemoryCMARW dataMem = new MemoryCMARWImpl(ff, dataPath.$(), pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE)) {
 
             Utf8StringSink utf8Sink = new Utf8StringSink();
             int n = 10000;
