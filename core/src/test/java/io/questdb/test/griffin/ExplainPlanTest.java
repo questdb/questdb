@@ -8301,7 +8301,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where ts in '2020-03-01' or ts in '2020-03-10'",
-                "Async Filter workers: 1\n" +
+                "Async JIT Filter workers: 1\n" +
                         "  filter: (ts in [1583020800000000,1583107199999999] or ts in [1583798400000000,1583884799999999])\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +

@@ -36,6 +36,7 @@ import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
 
@@ -871,8 +872,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private void serializeOperator(int position, final CharSequence token, int argCount, int type) throws SqlException {
-        if (SqlKeywords.isInKeyword(token) && type == ExpressionNode.FUNCTION) {
-            serializeIn();
+        if (SqlKeywords.isInKeyword(token)) {
+            if (type == ExpressionNode.FUNCTION) {
+                serializeIn();
+            } else if (type == ExpressionNode.SET_OPERATION) {
+                serializeInTimestampRange(position);
+            }
             return;
         }
         if (SqlKeywords.isNotKeyword(token)) {
@@ -1021,6 +1026,38 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             traverseAlgo.traverse(args.get(i), this);
             traverseAlgo.traverse(args.getLast(), this);
             putOperator(EQ);
+            orCount++;
+        }
+
+        for (int i = 0; i < orCount; ++i) {
+            putOperator(OR);
+        }
+    }
+
+    private void serializeInTimestampRange(int position) throws SqlException {
+        predicateContext.currentInSerialization = true;
+
+        final CharSequence intervalEx = predicateContext.inOperationNode.rhs.token;
+
+        if (intervalEx == null) return;
+
+        final LongList intervals = new LongList();
+        IntervalUtils.parseIntervalEx(intervalEx, 1, intervalEx.length() - 1, position, intervals, IntervalOperation.INTERSECT);
+
+        final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
+        final ExpressionNode lhs = predicateContext.inOperationNode.lhs;
+
+        int orCount = -1;
+        for (int i = 0; i < intervals.size() / 2 - 1; i++) {
+            long lo = intervals.getQuick(i * 2 + IntervalUtils.LO_INDEX);
+            long hi = intervals.getQuick(i * 2 + IntervalUtils.HI_INDEX);
+            putOperand(IMM, I8_TYPE, lo);
+            traverseAlgo.traverse(lhs, this);
+            putOperator(GE);
+            putOperand(IMM, I8_TYPE, hi);
+            traverseAlgo.traverse(lhs, this);
+            putOperator(LE);
+            putOperator(AND);
             orCount++;
         }
 

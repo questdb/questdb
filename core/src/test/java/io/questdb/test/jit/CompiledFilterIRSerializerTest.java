@@ -847,9 +847,10 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         serialize("asymbol in (select asymbol from tab limit 1)");
     }
 
-    @Test(expected = SqlException.class)
+    @Test
     public void testTimestampInLiteral() throws Exception {
         serialize("atimestamp in '2020-01-01'");
+        assertIR("(i64 1577836800000000L)(i64 atimestamp)(>=)(i64 1577923199999999L)(i64 atimestamp)(<=)(&&)(ret)");
     }
 
     private void assertIR(String message, String expectedIR) {
