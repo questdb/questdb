@@ -203,7 +203,7 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
         addFunctions.extendAndSet('d', Timestamps::addDays);
         addFunctions.extendAndSet('w', Timestamps::addWeeks);
         addFunctions.extendAndSet('M', Timestamps::addMonths);
-        addFunctions.extendAndSet('y', Timestamps::addYear);
+        addFunctions.extendAndSet('y', Timestamps::addYears);
         addFunctionsMax = addFunctions.size();
     }
 }

@@ -3201,8 +3201,8 @@ public class WalWriterTest extends AbstractCairoTest {
 
     private static Path constructPath(Path path, TableToken tableName, CharSequence walName, long segment, CharSequence fileName) {
         return segment < 0
-                ? path.concat(tableName).slash().concat(walName).slash().concat(fileName).$()
-                : path.concat(tableName).slash().concat(walName).slash().put(segment).slash().concat(fileName).$();
+                ? path.concat(tableName).slash().concat(walName).slash().concat(fileName)
+                : path.concat(tableName).slash().concat(walName).slash().put(segment).slash().concat(fileName);
     }
 
     private static TableModel defaultModel(String tableName) {
@@ -3245,7 +3245,7 @@ public class WalWriterTest extends AbstractCairoTest {
         final int pathLen = path.size();
         try {
             path = constructPath(path, tableName, walName, segment, fileName);
-            if (!Files.exists(path)) {
+            if (!Files.exists(path.$())) {
                 throw new AssertionError("Path " + path + " does not exists!");
             }
         } finally {

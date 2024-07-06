@@ -94,7 +94,7 @@ public class ShowTablesFunctionFactoryTest extends AbstractCairoTest {
             try (Path path = new Path()) {
                 TableToken tableToken = engine.verifyTableName("table1");
                 path.concat(configuration.getRoot()).concat(tableToken).concat(META_FILE_NAME).$();
-                filesFacade.remove(path);
+                filesFacade.remove(path.$());
             }
 
             refreshTablesInBaseEngine();

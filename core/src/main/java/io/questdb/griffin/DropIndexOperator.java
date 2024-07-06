@@ -84,7 +84,7 @@ public class DropIndexOperator {
                     partitionDFile(path, rootLen, partitionBy, pTimestamp, pVersion, columnName, columnVersion);
                     // hard link
                     partitionDFile(other, rootLen, partitionBy, pTimestamp, pVersion, columnName, columnDropIndexVersion);
-                    if (-1 == ff.hardLink(path, other)) {
+                    if (-1 == ff.hardLink(path.$(), other.$())) {
                         throw CairoException.critical(ff.errno())
                                 .put("cannot hardLink [src=").put(path)
                                 .put(", hardLink=").put(other)
@@ -108,7 +108,7 @@ public class DropIndexOperator {
                     final long pTimestamp = rollbackColumnVersions.getQuick(i + 2);
                     final long partitionNameTxn = rollbackColumnVersions.getQuick(i + 3);
                     partitionDFile(other, rootLen, partitionBy, pTimestamp, partitionNameTxn, columnName, columnDropIndexVersion);
-                    if (!ff.removeQuiet(other)) {
+                    if (!ff.removeQuiet(other.$())) {
                         LOG.info().$("Please remove this file \"").$(other).$('"').I$();
                     }
                 }

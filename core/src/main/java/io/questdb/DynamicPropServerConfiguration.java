@@ -119,8 +119,8 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
             // we assume the config file does exist, otherwise we should not
             // get to this code. This constructor is passed properties object,
             // loaded from the same file. We are not expecting races here either.
-            p.of(confPath.toString()).$();
-            lastModified = Files.getLastModified(p);
+            p.of(confPath.toString());
+            lastModified = Files.getLastModified(p.$());
         }
     }
 
@@ -319,10 +319,10 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
     @Override
     public void onFileEvent() {
         try (Path p = new Path()) {
-            p.of(confPath.toString()).$();
+            p.of(confPath.toString());
 
             // Check that the file has been modified since the last trigger
-            long newLastModified = Files.getLastModified(p);
+            long newLastModified = Files.getLastModified(p.$());
             if (newLastModified > lastModified) {
                 // If it has, update the cached value
                 lastModified = newLastModified;
