@@ -24,7 +24,7 @@
 
 package io.questdb.metrics;
 
-import io.questdb.std.str.BorrowableUtf8Sink;
+import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.NotNull;
 
 public class NullCounter implements Counter, CounterWithOneLabel, CounterWithTwoLabels {
@@ -55,6 +55,6 @@ public class NullCounter implements Counter, CounterWithOneLabel, CounterWithTwo
     }
 
     @Override
-    public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
+    public void scrapeIntoPrometheus(@NotNull Utf8Sink sink) {
     }
 }

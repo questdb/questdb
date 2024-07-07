@@ -26,6 +26,7 @@ package io.questdb.std.str;
 
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
+import io.questdb.std.bytes.BorrowableAsNativeByteSink;
 import io.questdb.std.bytes.DirectByteSink;
 import io.questdb.std.bytes.NativeByteSink;
 import org.jetbrains.annotations.NotNull;
@@ -37,7 +38,7 @@ import java.io.Closeable;
 /**
  * UTF-8 sink backed by native memory.
  */
-public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, DirectUtf8Sequence, Closeable {
+public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableAsNativeByteSink, DirectUtf8Sequence, Closeable {
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
     private final DirectByteSink sink;
     private boolean ascii;

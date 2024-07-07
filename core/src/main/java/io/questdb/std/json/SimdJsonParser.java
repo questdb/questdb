@@ -195,10 +195,6 @@ public class SimdJsonParser implements QuietCloseable {
             int maxSize
     ) {
         assert json.tailPadding() >= SIMDJSON_PADDING;
-        final long nativeByteSinkPtr = dest.borrowDirectByteSink().ptr();
-        if (!(dest.capacity() - dest.size() >= maxSize)) {
-            throw new IllegalArgumentException("Destination buffer is too small");
-        }
         assert dest.capacity() - dest.size() >= maxSize;  // Without this guarantee we'd need to close `NativeByteSink.close`.
         return queryPointerValue(
                 impl,
@@ -208,7 +204,7 @@ public class SimdJsonParser implements QuietCloseable {
                 pointer.ptr(),
                 pointer.size(),
                 result.ptr(),
-                nativeByteSinkPtr,
+                dest.borrowDirectByteSink().ptr(),
                 maxSize
         );
     }

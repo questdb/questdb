@@ -62,7 +62,6 @@ public class JsonExtractVarcharFunctionFactory implements FunctionFactory {
         final JsonExtractSupportingState stateA = JsonExtractSupportingState.newBuffered(maxSize, true);
         final JsonExtractSupportingState stateB = JsonExtractSupportingState.newBuffered(maxSize, true);
         return new JsonExtractFunction(
-                argPositions.getQuick(0), // position of the json
                 ColumnType.VARCHAR,
                 json,
                 path,

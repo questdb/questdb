@@ -28,8 +28,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
-import org.junit.After;
-import org.junit.Before;
 import org.junit.Test;
 
 /**
@@ -45,7 +43,6 @@ import org.junit.Test;
  * * tearDown() drops the table.
  */
 public class JsonExtractCastScenariosTest extends AbstractCairoTest {
-    private static final String castsDoc;
     private static final String[][] scenarios = new String[][]{
             // json token, ::boolean, ::short, ::int, ::long, ::double, ::varchar, ::ipv4, ::date, ::varchar
             {"null", "false", "0", "null", "null", "null", "", "", "", ""},
@@ -281,7 +278,7 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
             int index,
             String expected,
             String expectedValue
-) throws SqlException {
+    ) throws SqlException {
         final String sql = "select cast(json_extract('{\"x\":" + json + "}', '.x') as " + ColumnType.nameOf(type) +
                 ") as x from long_sequence(1)";
         try {
@@ -341,19 +338,5 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
                 testScenario(type, index);
             }
         });
-    }
-
-    static {
-        // Writes out all the scenarios (column 0) into a single JSON array `castsDoc`.
-        StringBuilder sb = new StringBuilder();
-        sb.append("[\n");
-        for (int i = 0; i < scenarios.length; i++) {
-            if (i > 0) {
-                sb.append(",\n");
-            }
-            sb.append(scenarios[i][0]);
-        }
-        sb.append("\n]");
-        castsDoc = sb.toString();
     }
 }

@@ -24,5 +24,50 @@
 
 package io.questdb.test.griffin.engine.functions.json;
 
-public class JsonExtractTypedFunctionFactoryTest {
+import io.questdb.test.AbstractCairoTest;
+import org.junit.Test;
+
+public class JsonExtractTypedFunctionFactoryTest extends AbstractCairoTest {
+    @Test
+    public void testExtractTimestampNonExistingPlaces() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table json_test (text varchar)");
+            insert("insert into json_test values ('{\"path\": [1,2,3]}')");
+            insert("insert into json_test values ('{\"path\": [1,2]}')");
+            insert("insert into json_test values ('{\"path\": []]}')");
+            insert("insert into json_test values ('{\"path2\": \"4\"}')");
+            insert("insert into json_test values ('{\"path\": \"1on1\"}')");
+            assertSqlWithTypes(
+                    "x\n" +
+                            "1970-01-01T00:00:00.000003Z:TIMESTAMP\n" +
+                            ":TIMESTAMP\n" +
+                            ":TIMESTAMP\n" +
+                            ":TIMESTAMP\n" +
+                            ":TIMESTAMP\n",
+                    "select json_extract(text, '.path[2]')::timestamp x from json_test order by 1 desc"
+            );
+        });
+    }
+
+    @Test
+    public void testExtractTimestampBadJson() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table json_test (text varchar)");
+            insert("insert into json_test values ('{\"path\": [1,2,3]}')");
+            insert("insert into json_test values ('{\"\"path\": [1,2]}')");
+            insert("insert into json_test values ('{\"path\": []]}')");
+            insert("insert into json_test values ('{\"path2\": \"4\"}')");
+            insert("insert into json_test values ('{\"path\": \"1on1\"}')");
+            assertSqlWithTypes(
+                    "x\n" +
+                            "1970-01-01T00:00:00.000003Z:TIMESTAMP\n" +
+                            ":TIMESTAMP\n" +
+                            ":TIMESTAMP\n" +
+                            ":TIMESTAMP\n" +
+                            ":TIMESTAMP\n",
+                    "select json_extract(text, '.path[2]')::timestamp x from json_test order by 1 desc"
+            );
+        });
+    }
+
 }

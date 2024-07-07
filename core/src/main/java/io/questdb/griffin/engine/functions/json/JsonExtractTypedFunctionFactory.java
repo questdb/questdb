@@ -95,7 +95,6 @@ public class JsonExtractTypedFunctionFactory implements FunctionFactory {
                 break;
         }
         return new JsonExtractFunction(
-                argPositions.getQuick(0),
                 targetType,
                 json,
                 path,

@@ -207,11 +207,8 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
      * After this call, `capacity() &gt;= minCapacity` is guaranteed.
      */
     public void reserve(long minCapacity) {
-        final long cap = capacity();
-        if (minCapacity > cap) {
-            final long spare = cap - size();
-            final long additionalRequired = minCapacity - spare;
-            checkCapacity(additionalRequired);
+        if (minCapacity > capacity()) {
+            checkCapacity(minCapacity);
         }
     }
 
