@@ -110,17 +110,8 @@ public class JsonExtractTypedFunctionFactory implements FunctionFactory {
         // Therefore, we have to validate type input to provide user with actionable error message.
         if (targetTypeFn != null && targetTypeFn.isConstant()) {
             final int targetType = targetTypeFn.getInt(null);
-            switch (targetType) {
-                case ColumnType.BOOLEAN:
-                case ColumnType.SHORT:
-                case ColumnType.INT:
-                case ColumnType.LONG:
-                case ColumnType.FLOAT:
-                case ColumnType.DOUBLE:
-                case ColumnType.IPv4:
-                case ColumnType.TIMESTAMP:
-                case ColumnType.DATE:
-                    return targetType;
+            if (isIntrusivelyOptimized(targetType)) {
+                return targetType;
             }
         }
         throw SqlException.position(position).put("please use json_extract(json,path)::type semantic");
