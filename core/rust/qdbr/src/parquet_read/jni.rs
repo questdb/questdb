@@ -78,6 +78,19 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     assert!(!decoder.is_null(), "decoder pointer is null");
     let decoder = unsafe { &mut *decoder };
 
+    if column >= decoder.columns.len() {
+        throw_state_msg(
+            &mut env,
+            "decodeColumnChunk",
+            &format!(
+                "column index {} out of range [0,{})",
+                column,
+                decoder.columns.len()
+            ),
+            (),
+        );
+    }
+
     let column_type = decoder.columns[column].typ;
     if Ok(column_type) != ColumnType::try_from(to_column_type) {
         throw_state_msg(

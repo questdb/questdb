@@ -15,7 +15,7 @@ use crate::parquet_read::slicer::{
 use crate::parquet_read::{ColumnChunkBuffers, ParquetDecoder};
 use crate::parquet_write::schema::ColumnType;
 use crate::parquet_write::ParquetResult;
-use anyhow::anyhow;
+use anyhow::{anyhow, Context};
 use parquet2::deserialize::{
     FilteredHybridEncoded, FilteredHybridRleDecoderIter, HybridDecoderBitmapIter,
 };
@@ -24,7 +24,9 @@ use parquet2::encoding::{bitpacked, hybrid_rle, Encoding};
 use parquet2::indexes::Interval;
 use parquet2::page::{split_buffer, DataPage, DictPage, Page};
 use parquet2::read::{decompress, get_page_iterator};
-use parquet2::schema::types::{IntegerType, PhysicalType, PrimitiveLogicalType};
+use parquet2::schema::types::{
+    IntegerType, PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType,
+};
 use parquet2::write::Version;
 use std::collections::VecDeque;
 use std::ptr;
@@ -149,7 +151,18 @@ impl ParquetDecoder {
                     dict = Some(page);
                 }
                 Page::Data(page) => {
-                    row_count += decoder_page(version, &page, dict.as_ref(), buffers, column_type)?;
+                    row_count += decoder_page(version, &page, dict.as_ref(), buffers, column_type)
+                        .with_context(|| {
+                        format!(
+                            "failed to decode row group [ column={}, group={}]",
+                            row_group,
+                            self.metadata.schema_descr.columns()[column]
+                                .descriptor
+                                .primitive_type
+                                .field_info
+                                .name
+                        )
+                    })?
                 }
             };
         }
@@ -179,21 +192,12 @@ pub fn decoder_page(
     let decoding_result = match (
         page.descriptor.primitive_type.physical_type,
         page.descriptor.primitive_type.logical_type,
+        page.descriptor.primitive_type.converted_type,
     ) {
-        (PhysicalType::Int32, logical_type) => {
+        (PhysicalType::Int32, logical_type, _) => {
             match (page.encoding(), dict, logical_type, column_type) {
-                (
-                    Encoding::Plain,
-                    _,
-                    Some(PrimitiveLogicalType::Integer(IntegerType::Int16)),
-                    ColumnType::Short,
-                )
-                | (
-                    Encoding::Plain,
-                    _,
-                    Some(PrimitiveLogicalType::Integer(IntegerType::UInt16)),
-                    ColumnType::Char,
-                ) => {
+                (Encoding::Plain, _, _, ColumnType::Short)
+                | (Encoding::Plain, _, _, ColumnType::Char) => {
                     decode_page(
                         version,
                         page,
@@ -206,18 +210,7 @@ pub fn decoder_page(
                     )?;
                     Ok(row_count)
                 }
-                (
-                    Encoding::Plain,
-                    _,
-                    Some(PrimitiveLogicalType::Integer(IntegerType::Int8)),
-                    ColumnType::Byte,
-                )
-                | (
-                    Encoding::Plain,
-                    _,
-                    Some(PrimitiveLogicalType::Integer(IntegerType::UInt8)),
-                    ColumnType::Byte,
-                ) => {
+                (Encoding::Plain, _, _, ColumnType::Byte) => {
                     decode_page(
                         version,
                         page,
@@ -230,13 +223,7 @@ pub fn decoder_page(
                     )?;
                     Ok(row_count)
                 }
-                (Encoding::Plain, _, None, ColumnType::Int)
-                | (
-                    Encoding::Plain,
-                    _,
-                    Some(PrimitiveLogicalType::Integer(IntegerType::Int32)),
-                    ColumnType::Int,
-                ) => {
+                (Encoding::Plain, _, _, ColumnType::Int) => {
                     decode_page(
                         version,
                         page,
@@ -250,12 +237,7 @@ pub fn decoder_page(
                     Ok(row_count)
                 }
                 (Encoding::RleDictionary, Some(dict_page), None, ColumnType::Int)
-                | (
-                    Encoding::RleDictionary,
-                    Some(dict_page),
-                    Some(PrimitiveLogicalType::Integer(IntegerType::Int32)),
-                    ColumnType::Int,
-                ) => {
+                | (Encoding::RleDictionary, Some(dict_page), _, ColumnType::Int) => {
                     let dict_decoder = FixedDictDecoder::<4>::try_new(dict_page)?;
                     let mut slicer = RleDictionarySlicer::try_new(
                         values_buffer,
@@ -272,12 +254,7 @@ pub fn decoder_page(
 
                     Ok(row_count)
                 }
-                (
-                    Encoding::RleDictionary,
-                    Some(dict_page),
-                    Some(PrimitiveLogicalType::Integer(IntegerType::Int16)),
-                    ColumnType::Short,
-                ) => {
+                (Encoding::RleDictionary, Some(dict_page), _, ColumnType::Short) => {
                     let dict_decoder = FixedDictDecoder::<4>::try_new(dict_page)?;
                     let mut slicer = RleDictionarySlicer::try_new(
                         values_buffer,
@@ -297,7 +274,7 @@ pub fn decoder_page(
                 _ => Err(encoding_error),
             }
         }
-        (PhysicalType::Int64, logical_type) => {
+        (PhysicalType::Int64, logical_type, _) => {
             match (page.encoding(), dict, logical_type, column_type) {
                 (Encoding::Plain, _, None, ColumnType::Long)
                 | (
@@ -348,13 +325,8 @@ pub fn decoder_page(
                     )?;
                     Ok(row_count)
                 }
-                (Encoding::RleDictionary, Some(dict_page), None, ColumnType::Long)
-                | (
-                    Encoding::RleDictionary,
-                    Some(dict_page),
-                    Some(PrimitiveLogicalType::Integer(IntegerType::Int64)),
-                    ColumnType::Long,
-                ) => {
+                (Encoding::RleDictionary, Some(dict_page), _, ColumnType::Long)
+                | (Encoding::RleDictionary, Some(dict_page), _, ColumnType::Timestamp) => {
                     let dict_decoder = FixedDictDecoder::<8>::try_new(dict_page)?;
                     let mut slicer = RleDictionarySlicer::try_new(
                         values_buffer,
@@ -374,7 +346,7 @@ pub fn decoder_page(
                 _ => Err(encoding_error),
             }
         }
-        (PhysicalType::FixedLenByteArray(16), Some(PrimitiveLogicalType::Uuid)) => {
+        (PhysicalType::FixedLenByteArray(16), Some(PrimitiveLogicalType::Uuid), _) => {
             match (page.encoding(), column_type) {
                 (Encoding::Plain, ColumnType::Uuid) => {
                     decode_page(
@@ -392,7 +364,7 @@ pub fn decoder_page(
                 _ => Err(encoding_error),
             }
         }
-        (PhysicalType::FixedLenByteArray(32), _logical_type) => {
+        (PhysicalType::FixedLenByteArray(32), _logical_type, _) => {
             match (page.encoding(), column_type) {
                 (Encoding::Plain, ColumnType::Long256) => {
                     decode_page(
@@ -410,7 +382,8 @@ pub fn decoder_page(
                 _ => Err(encoding_error),
             }
         }
-        (PhysicalType::ByteArray, Some(PrimitiveLogicalType::String)) => {
+        (PhysicalType::ByteArray, Some(PrimitiveLogicalType::String), _)
+        | (PhysicalType::ByteArray, _, Some(PrimitiveConvertedType::Utf8)) => {
             let encoding = page.encoding();
 
             match (encoding, dict, column_type) {
@@ -478,7 +451,7 @@ pub fn decoder_page(
                 _ => Err(encoding_error),
             }
         }
-        (PhysicalType::ByteArray, None) => {
+        (PhysicalType::ByteArray, None, _) => {
             let encoding = page.encoding();
             match (encoding, dict, column_type) {
                 (Encoding::DeltaLengthByteArray, None, ColumnType::Binary) => {
@@ -494,7 +467,7 @@ pub fn decoder_page(
                 _ => Err(encoding_error),
             }
         }
-        (typ, None) => {
+        (typ, None, _) => {
             buffers.aux_vec.clear();
             buffers.aux_ptr = ptr::null_mut();
 

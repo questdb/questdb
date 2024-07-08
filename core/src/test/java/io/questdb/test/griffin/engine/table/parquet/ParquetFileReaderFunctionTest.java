@@ -25,6 +25,8 @@
 package io.questdb.test.griffin.engine.table.parquet;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.LogRecordSinkAdapter;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -32,11 +34,14 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
+import io.questdb.log.Log;
+import io.questdb.log.LogRecord;
 import io.questdb.std.Files;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class ParquetFileReaderFunctionTest extends AbstractCairoTest {
@@ -142,6 +147,39 @@ public class ParquetFileReaderFunctionTest extends AbstractCairoTest {
             }
         });
     }
+
+    @Ignore
+    @Test
+    public void testReadExternalFile() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor()
+            ) {
+                path.of("/Users/alpel/temp/db/request_logs.parquet").$();
+
+                sink.clear();
+                sink.put("select * from read_parquet('").put(path).put("')");
+
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    try (RecordCursorFactory factory1 = compiler.compile(sink, sqlExecutionContext).getRecordCursorFactory()) {
+                        Log log = LOG;
+                        try (RecordCursor cursor1 = factory1.getCursor(sqlExecutionContext)) {
+                            log.xDebugW().$();
+
+                            LogRecordSinkAdapter recordSinkAdapter = new LogRecordSinkAdapter();
+                            LogRecord record = log.xDebugW().$("java.lang.AssertionError: expected:<");
+                            CursorPrinter.printHeader(factory1.getMetadata(), recordSinkAdapter.of(record));
+
+                            CursorPrinter.println(cursor1, factory1.getMetadata(), false, log);
+                            log.xDebugW().$(">").$();
+                        }
+                    }
+                }
+            }
+        });
+    }
+
 
     @Test
     public void testFileDoesNotExist() throws Exception {

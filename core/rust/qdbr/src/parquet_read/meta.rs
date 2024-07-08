@@ -4,7 +4,9 @@ use crate::parquet_read::{ColumnChunkBuffers, ColumnMeta, ParquetDecoder};
 use parquet2::metadata::Descriptor;
 use parquet2::read::read_metadata;
 use parquet2::schema::types::PrimitiveLogicalType::{Timestamp, Uuid};
-use parquet2::schema::types::{IntegerType, PhysicalType, PrimitiveLogicalType, TimeUnit};
+use parquet2::schema::types::{
+    IntegerType, PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType, TimeUnit,
+};
 
 use crate::parquet_read::jni::{
     BOOLEAN, BYTE_ARRAY, DOUBLE, FIXED_LEN_BYTE_ARRAY, FLOAT, INT32, INT64, INT96,
@@ -15,13 +17,12 @@ impl ParquetDecoder {
     pub fn read(mut reader: File) -> anyhow::Result<Self> {
         let metadata = read_metadata(&mut reader)?;
 
-        let col_count = metadata.schema().fields().len() as i32;
         let mut columns = vec![];
         let mut column_buffers = vec![];
 
         for f in metadata.schema_descr.columns().iter() {
             // Some types are not supported, this will skip them.
-            if let Some(typ) = Self::to_column_type(&f.descriptor) {
+            if let Some(typ) = Self::descriptor_to_column_type(&f.descriptor) {
                 let physical_type = match f.descriptor.primitive_type.physical_type {
                     PhysicalType::Boolean => BOOLEAN as i64,
                     PhysicalType::Int32 => INT32 as i64,
@@ -36,12 +37,12 @@ impl ParquetDecoder {
                     }
                 };
 
-                let info = &f.descriptor.primitive_type.field_info;
-                let name: Vec<u16> = info.name.encode_utf16().collect();
+                let name_str = &f.descriptor.primitive_type.field_info.name;
+                let name: Vec<u16> = name_str.encode_utf16().collect();
 
                 columns.push(ColumnMeta {
                     typ,
-                    id: info.id.unwrap_or(-1),
+                    id: columns.len() as i32,
                     physical_type,
                     name_size: name.len() as u32,
                     name_ptr: name.as_ptr(),
@@ -54,7 +55,7 @@ impl ParquetDecoder {
 
         // TODO: add some validation
         let decoder = ParquetDecoder {
-            col_count,
+            col_count: columns.len() as i32,
             row_count: metadata.num_rows,
             row_group_count: metadata.row_groups.len() as i32,
             file: reader,
@@ -68,54 +69,65 @@ impl ParquetDecoder {
         Ok(decoder)
     }
 
-    fn to_column_type(des: &Descriptor) -> Option<ColumnType> {
+    fn descriptor_to_column_type(des: &Descriptor) -> Option<ColumnType> {
         match (
             des.primitive_type.physical_type,
             des.primitive_type.logical_type,
+            des.primitive_type.converted_type,
         ) {
             (
                 PhysicalType::Int64,
                 Some(Timestamp {
                     unit: TimeUnit::Microseconds,
-                    is_adjusted_to_utc: true,
+                    is_adjusted_to_utc: _,
                 }),
+                _,
             ) => Some(ColumnType::Timestamp),
             (
                 PhysicalType::Int64,
                 Some(Timestamp {
                     unit: TimeUnit::Milliseconds,
-                    is_adjusted_to_utc: true,
+                    is_adjusted_to_utc: _,
                 }),
+                _,
             ) => Some(ColumnType::Date),
-            (PhysicalType::Int64, None) => Some(ColumnType::Long),
-            (PhysicalType::Int64, Some(PrimitiveLogicalType::Integer(IntegerType::Int64))) => {
+            (PhysicalType::Int64, None, _) => Some(ColumnType::Long),
+            (PhysicalType::Int64, Some(PrimitiveLogicalType::Integer(IntegerType::Int64)), _) => {
                 Some(ColumnType::Long)
             }
-            (PhysicalType::Int32, None) => Some(ColumnType::Int),
-            (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int32))) => {
+            (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int32)), _) => {
                 Some(ColumnType::Int)
             }
-            (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int16))) => {
+            (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int16)), _)
+            | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Int16)) => {
                 Some(ColumnType::Short)
             }
 
-            (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::UInt16))) => {
+            (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::UInt16)), _) => {
                 Some(ColumnType::Char)
             }
-            (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int8))) => {
+            (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int8)), _)
+            | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Int8)) => {
                 Some(ColumnType::Byte)
             }
-            (PhysicalType::Boolean, None) => Some(ColumnType::Boolean),
-            (PhysicalType::Double, None) => Some(ColumnType::Double),
-            (PhysicalType::Float, None) => Some(ColumnType::Float),
-            (PhysicalType::FixedLenByteArray(16), Some(Uuid)) => Some(ColumnType::Uuid),
-            (PhysicalType::ByteArray, Some(PrimitiveLogicalType::String)) => {
+            (PhysicalType::Int32, None, _)
+            | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Int32)) => {
+                Some(ColumnType::Int)
+            }
+            (PhysicalType::Boolean, None, _) => Some(ColumnType::Boolean),
+            (PhysicalType::Double, None, _) => Some(ColumnType::Double),
+            (PhysicalType::Float, None, _) => Some(ColumnType::Float),
+            (PhysicalType::FixedLenByteArray(16), Some(Uuid), _) => Some(ColumnType::Uuid),
+            (PhysicalType::ByteArray, Some(PrimitiveLogicalType::String), _) => {
                 Some(ColumnType::Varchar)
             }
-            (PhysicalType::FixedLenByteArray(32), None) => Some(ColumnType::Long256),
-            (PhysicalType::ByteArray, None) => Some(ColumnType::Binary),
-            (PhysicalType::FixedLenByteArray(16), None) => Some(ColumnType::Long128),
-            (_, _) => None,
+            (PhysicalType::FixedLenByteArray(32), None, _) => Some(ColumnType::Long256),
+            (PhysicalType::ByteArray, None, Some(PrimitiveConvertedType::Utf8)) => {
+                Some(ColumnType::Varchar)
+            }
+            (PhysicalType::ByteArray, None, _) => Some(ColumnType::Binary),
+            (PhysicalType::FixedLenByteArray(16), None, _) => Some(ColumnType::Long128),
+            (_, _, _) => None,
         }
     }
 }
