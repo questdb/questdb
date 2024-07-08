@@ -2181,7 +2181,6 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         });
     }
 
-
     @Test
     public void testSampleByFromToBasicWhereOptimisationWithExistingWhereLesserThan() throws Exception {
         assertMemoryLeak(() -> {
@@ -2193,6 +2192,40 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String model = "select-group-by ts, avg(x) avg from (select [ts, x, s] from fromto timestamp (ts) where ts < '2018-01-31' and s != '5') sample by 5d to '2018-01-31' align to calendar with offset '00:00'";
 
             assertModel(model, query, ExecutionModel.QUERY);
+        });
+    }
+
+    @Test
+    public void testSampleByFromToParallelSampleByRewrite() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(SampleByTest.DDL_FROMTO);
+            final String query = "select ts, avg(x) from fromto\n" +
+                    "sample by 5d from '2017-12-20' to '2018-01-31' fill(null)\n";
+
+            assertPlanNoLeakCheck(query, "Sort\n" +
+                    "  keys: [ts]\n" +
+                    "    Fill Range\n" +
+                    "      from: '2017-12-20'\n" +
+                    "      to: '2018-01-31'\n" +
+                    "      stride: 5d\n" +
+                    "        Async Group By workers: 1\n" +
+                    "          keys: [ts]\n" +
+                    "          values: [avg(x)]\n" +
+                    "          filter: null\n" +
+                    "            DataFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Interval forward scan on: fromto\n" +
+                    "                  intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
+            assertSql("ts\tavg\n" +
+                    "2017-12-20T00:00:00.000000Z\tnull\n" +
+                    "2017-12-25T00:00:00.000000Z\tnull\n" +
+                    "2017-12-30T00:00:00.000000Z\t72.5\n" +
+                    "2018-01-04T00:00:00.000000Z\t264.5\n" +
+                    "2018-01-09T00:00:00.000000Z\t432.5\n" +
+                    "2018-01-14T00:00:00.000000Z\tnull\n" +
+                    "2018-01-19T00:00:00.000000Z\tnull\n" +
+                    "2018-01-24T00:00:00.000000Z\tnull\n" +
+                    "2018-01-29T00:00:00.000000Z\tnull\n", query);
         });
     }
 

@@ -36,6 +36,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.functions.date.TimestampFloorOffsetFunctionFactory;
+import io.questdb.std.BitSet;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.Timestamps;
 
@@ -123,12 +124,15 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         private Record baseRecord;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private ConstantFunction fillFunction;
+        private int fillOffset;
         private FillRangeRecord fillingRecord = new FillRangeRecord();
         private TimestampFloorOffsetFunctionFactory flooringFactory = new TimestampFloorOffsetFunctionFactory();
         private long fromTimestamp;
         private boolean gapFilling;
         private boolean hasNext = true;
         private long nextBucket;
+        private BitSet presentRecords;
+        private int size = -1;
         private int strideMultiple;
         private char strideUnit;
         private int timestampIndex;
@@ -145,43 +149,103 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             return fillingRecord;
         }
 
+//        @Override
+//        public boolean hasNext() {
+//
+//            // if we no longer need to fill, return to the real record
+//            if (gapFilling) {
+//                nextBucket = timestampSampler.nextTimestamp(nextBucket);
+//                if (nextBucket >= baseRecord.getTimestamp(timestampIndex)) {
+//                    gapFilling = false;
+//                }
+//                return true;
+//            }
+//
+//            if (baseRecord == null) {
+//                baseRecord = baseCursor.getRecord();
+//            }
+//
+//            // if we have no further records of either kind
+//            if (!baseCursor.hasNext() && !gapFilling && nextBucket >= toTimestamp) {
+//                return false;
+//            }
+//
+//
+//            final long timestamp = baseRecord.getTimestamp(timestampIndex);
+//
+//            if (timestamp <= nextBucket) {
+//                nextBucket = timestampSampler.nextTimestamp(nextBucket);
+//            } else {
+//                // fill
+//                gapFilling = true;
+//            }
+//
+//            return true;
+//        }
+
+//        @Override
+//        public boolean hasNext() {
+//            if (baseRecord == null) {
+//                baseRecord = baseCursor.getRecord();
+//            }
+//
+//            if (baseCursor.hasNext()) {
+//                presentRecords.set(timestampSampler.bucketIndex(baseRecord.getTimestamp(timestampIndex)));
+//                return true;
+//            }
+//
+//            // otherwise, we need to use bitset to fill
+//            if (!gapFilling) {
+//                gapFilling = true;
+//                return true;
+//            }
+//            while (fillOffset < size && presentRecords.get(fillOffset)) {
+//                fillOffset++;
+//                nextBucket = timestampSampler.nextTimestamp(nextBucket);
+//            }
+//
+//            if (fillOffset < size) {
+//                fillOffset++;
+//                return true;
+//            }
+//
+//            return false;
+//        }
+
         @Override
         public boolean hasNext() {
-
-            // if we no longer need to fill, return to the real record
-            if (gapFilling) {
-                nextBucket = timestampSampler.nextTimestamp(nextBucket);
-                if (nextBucket >= baseRecord.getTimestamp(timestampIndex)) {
-                    gapFilling = false;
-                }
-                return true;
-            }
-
             if (baseRecord == null) {
                 baseRecord = baseCursor.getRecord();
             }
 
-            // if we have no further records of either kind
-            if (!baseCursor.hasNext() && !gapFilling && nextBucket >= toTimestamp) {
+            if (baseCursor.hasNext()) {
+                presentRecords.set(timestampSampler.bucketIndex(baseRecord.getTimestamp(timestampIndex)));
+                return true;
+            } else {
+                // otherwise, we need to use bitset to fill
+                if (!gapFilling) {
+                    gapFilling = true;
+                    return true;
+                }
+
+                do {
+                    fillOffset++;
+                    nextBucket = timestampSampler.nextTimestamp(nextBucket);
+                }
+                while (presentRecords.get(fillOffset));
+
+                if (fillOffset <= size) {
+                    return true;
+                }
+
                 return false;
             }
-
-
-            final long timestamp = baseRecord.getTimestamp(timestampIndex);
-
-            if (timestamp <= nextBucket) {
-                nextBucket = timestampSampler.nextTimestamp(nextBucket);
-            } else {
-                // fill
-                gapFilling = true;
-            }
-
-            return true;
         }
+
 
         @Override
         public long size() {
-            return -1;
+            return size;
         }
 
         @Override
@@ -191,6 +255,24 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             timestampSampler.setStart(fromTimestamp);
             gapFilling = false;
             baseRecord = null;
+            nextBucket = fromTimestamp;
+            fillOffset = 0;
+        }
+
+        // make this O(1) calc, timestamp sampler can own the diff calculation
+        // this is critical as we set each bit by its index, so we need to do this calculation fast
+        private void initBitset() {
+            size = timestampSampler.bucketIndex(toTimestamp);
+            presentRecords = new BitSet(size); // what if we have no to...
+
+            // use default and then overflow
+
+//            size = 0;
+//            for (nextBucket = toTimestamp; nextBucket <= toTimestamp; nextBucket = timestampSampler.nextTimestamp(nextBucket)) {
+//                size++;
+//            }
+//            presentRecords = new BitSet(size);
+            fillOffset = 0;
         }
 
         private void initTimestamps(Function from, Function to, CharSequence stride) throws SqlException {
@@ -216,6 +298,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             this.circuitBreaker = circuitBreaker;
             this.timestampIndex = timestampIndex;
             initTimestamps(from, to, stride);
+            initBitset();
             toTop();
         }
 
