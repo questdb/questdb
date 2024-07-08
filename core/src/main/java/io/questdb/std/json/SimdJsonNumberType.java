@@ -35,7 +35,7 @@ public class SimdJsonNumberType {
     /** a signed integer that fits in a 64-bit word using two's complement */
     public static final int SIGNED_INTEGER = FLOATING_POINT_NUMBER + 1;  // 2
 
-    /** a positive integer larger or equal to 1<<63 */
+    /** a positive integer larger or equal to 2^63 */
     public static final int UNSIGNED_INTEGER = SIGNED_INTEGER + 1;  // 3
 
     /** a big integer that does not fit in a 64-bit word */
