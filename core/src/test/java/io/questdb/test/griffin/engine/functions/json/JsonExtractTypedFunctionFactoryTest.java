@@ -25,7 +25,10 @@
 package io.questdb.test.griffin.engine.functions.json;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class JsonExtractTypedFunctionFactoryTest extends AbstractCairoTest {
@@ -73,6 +76,14 @@ public class JsonExtractTypedFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInvalid3rdArgCall() throws Exception {
+        test3rdArgCallInvalid(ColumnType.UUID);
+        test3rdArgCallInvalid(ColumnType.VARCHAR);
+        test3rdArgCallInvalid(ColumnType.SYMBOL);
+        test3rdArgCallInvalid(ColumnType.GEOHASH);
+    }
+
+    @Test
     public void testNullTyped() throws Exception {
         testNullJson3rdArgCall(ColumnType.BOOLEAN, "false");
         testNullJsonFunctionCast(ColumnType.BOOLEAN, "false");
@@ -99,8 +110,16 @@ public class JsonExtractTypedFunctionFactoryTest extends AbstractCairoTest {
         testNullJsonSuffixCast(ColumnType.DOUBLE, "null");
     }
 
-    private void testNullJson3rdArgCall(int columnType, String expected) throws Exception {
-        testNullJson3rdArgCall(columnType, expected, columnType);
+    private void test3rdArgCallInvalid(int columnType) throws Exception {
+        assertMemoryLeak(() -> {
+            final String sql = "select json_extract(NULL, '.x', " + columnType + ") as x from long_sequence(1)";
+            final SqlException exc = Assert.assertThrows(
+                    SqlException.class,
+                    () -> compile(sql)
+            );
+            Assert.assertEquals(7, exc.getPosition());
+            TestUtils.assertContains(exc.getMessage(), "please use json_extract(json,path)::type semantic");
+        });
     }
 
     private void testNullJson3rdArgCall(int columnType, String expected, int expectedType) throws Exception {
@@ -116,8 +135,8 @@ public class JsonExtractTypedFunctionFactoryTest extends AbstractCairoTest {
         });
     }
 
-    private void testNullJsonFunctionCast(int columnType, String expected) throws Exception {
-        testNullJsonFunctionCast(columnType, expected, columnType);
+    private void testNullJson3rdArgCall(int columnType, String expected) throws Exception {
+        testNullJson3rdArgCall(columnType, expected, columnType);
     }
 
     private void testNullJsonFunctionCast(int columnType, String expected, int expectedType) throws Exception {
@@ -133,8 +152,8 @@ public class JsonExtractTypedFunctionFactoryTest extends AbstractCairoTest {
         });
     }
 
-    private void testNullJsonSuffixCast(int columnType, String expected) throws Exception {
-        testNullJsonSuffixCast(columnType, expected, columnType);
+    private void testNullJsonFunctionCast(int columnType, String expected) throws Exception {
+        testNullJsonFunctionCast(columnType, expected, columnType);
     }
 
     private void testNullJsonSuffixCast(int columnType, String expected, int expectedType) throws Exception {
@@ -148,6 +167,10 @@ public class JsonExtractTypedFunctionFactoryTest extends AbstractCairoTest {
                     sql
             );
         });
+    }
+
+    private void testNullJsonSuffixCast(int columnType, String expected) throws Exception {
+        testNullJsonSuffixCast(columnType, expected, columnType);
     }
 
 //    public static class BrokenJsonScenario {

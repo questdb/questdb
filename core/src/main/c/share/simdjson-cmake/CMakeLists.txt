@@ -1,5 +1,5 @@
 set(SIMDJSON_INCLUDE_DIR "src/main/c/share/simdjson/include")
-set(SIMDJSON_SRC_DIR "src/main/c/share/simdjson//src")
+set(SIMDJSON_SRC_DIR "src/main/c/share/simdjson/src")
 set(SIMDJSON_SRC "${SIMDJSON_SRC_DIR}/simdjson.cpp")
 
 add_library(_simdjson ${SIMDJSON_SRC})
