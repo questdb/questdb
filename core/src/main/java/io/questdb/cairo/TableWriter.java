@@ -701,9 +701,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // final name of partition folder after attach
         setPathForPartition(path.trimTo(rootLen), partitionBy, timestamp, getTxn());
-        path.$();
-
-        if (ff.exists(path)) {
+        if (ff.exists(path.$())) {
             // Very unlikely since txn is part of the folder name
             return AttachDetachStatus.ATTACH_ERR_DIR_EXISTS;
         }
@@ -717,9 +715,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         boolean checkPassed = false;
         boolean isSoftLink;
         try {
-            if (ff.exists(detachedPath)) {
+            if (ff.exists(detachedPath.$())) {
 
-                isSoftLink = ff.isSoftLink(detachedPath); // returns false regardless in Windows
+                isSoftLink = ff.isSoftLink(detachedPath.$()); // returns false regardless in Windows
 
                 // detached metadata files validation
                 CharSequence timestampColName = metadata.getColumnMetadata(metadata.getTimestampIndex()).getName();
@@ -751,7 +749,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         return AttachDetachStatus.ATTACH_ERR_COPY;
                     }
                 } else {
-                    if (ff.rename(detachedPath.trimTo(detachedRootLen).$(), path) == FILES_RENAME_OK) {
+                    if (ff.rename(detachedPath.trimTo(detachedRootLen).$(), path.$()) == FILES_RENAME_OK) {
                         LOG.info().$("renamed partition dir [from=").$(detachedPath).$(", to=").$(path).I$();
                     } else {
                         LOG.error().$("could not rename [errno=").$(ff.errno()).$(", from=").$(detachedPath).$(", to=").$(path).I$();
@@ -1139,7 +1137,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             final int detachedPathLen;
             AttachDetachStatus attachDetachStatus;
-            if (ff.isSoftLink(path)) {
+            if (ff.isSoftLink(path.$())) {
                 detachedPathLen = 0;
                 attachDetachStatus = AttachDetachStatus.OK;
                 LOG.info().$("detaching partition via unlink [path=").$(path).I$();
@@ -1158,9 +1156,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
                 setPathForPartition(detachedPath.trimTo(detachedRootLen), partitionBy, timestamp, -1L);
-                detachedPath.put(DETACHED_DIR_MARKER).$();
+                detachedPath.put(DETACHED_DIR_MARKER);
                 detachedPathLen = detachedPath.size();
-                if (ff.exists(detachedPath)) {
+                if (ff.exists(detachedPath.$())) {
                     LOG.error().$("detached partition folder already exist [path=").$(detachedPath).I$();
                     return AttachDetachStatus.DETACH_ERR_ALREADY_DETACHED;
                 }
@@ -2656,18 +2654,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int rootLen,
             boolean partitioned
     ) {
-        path.concat(COLUMN_VERSION_FILE_NAME).$();
+        path.concat(COLUMN_VERSION_FILE_NAME);
         try {
-            return new ColumnVersionWriter(configuration, path, partitioned);
+            return new ColumnVersionWriter(configuration, path.$(), partitioned);
         } finally {
             path.trimTo(rootLen);
         }
     }
 
     private static void openMetaFile(FilesFacade ff, Path path, int rootLen, MemoryMR metaMem) {
-        path.concat(META_FILE_NAME).$();
+        path.concat(META_FILE_NAME);
         try {
-            metaMem.smallFile(ff, path, MemoryTag.MMAP_TABLE_WRITER);
+            metaMem.smallFile(ff, path.$(), MemoryTag.MMAP_TABLE_WRITER);
         } finally {
             path.trimTo(rootLen);
         }
@@ -2924,7 +2922,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             LOG.info().$("attaching partition with missing column [path=").$(partitionPath).I$();
             columnVersionWriter.upsertColumnTop(partitionTimestamp, columnIndex, partitionSize);
         } else {
-            long fileSize = ff.length(partitionPath);
+            long fileSize = ff.length(partitionPath.$());
             if (fileSize < (columnSize << ColumnType.pow2SizeOf(columnType))) {
                 throw CairoException.critical(0)
                         .put("Column file is too small. ")
@@ -2958,7 +2956,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         TableUtils.iFile(partitionPath, columnName, columnNameTxn);
         long indexLength = ff.length(partitionPath.$());
         if (indexLength > 0) {
-            int indexFd = openRO(ff, partitionPath, LOG);
+            int indexFd = openRO(ff, partitionPath.$(), LOG);
             try {
                 long fileSize = ff.length(indexFd);
                 ColumnTypeDriver driver = ColumnType.getDriver(columnType);
@@ -3104,10 +3102,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             if (attachMetadata == null) {
                 attachMetaMem = Vm.getCMRInstance();
-                attachMetaMem.smallFile(ff, detachedPath, MemoryTag.MMAP_TABLE_WRITER);
+                attachMetaMem.smallFile(ff, detachedPath.$(), MemoryTag.MMAP_TABLE_WRITER);
                 attachMetadata = new TableWriterMetadata(tableToken, attachMetaMem);
             } else {
-                attachMetaMem.smallFile(ff, detachedPath, MemoryTag.MMAP_TABLE_WRITER);
+                attachMetaMem.smallFile(ff, detachedPath.$(), MemoryTag.MMAP_TABLE_WRITER);
                 attachMetadata.reload(attachMetaMem);
             }
 
@@ -3123,7 +3121,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // load/check _dcv, updating local column tops
             // set current _dcv to where the partition was
             detachedPath.trimTo(detachedPartitionRoot).concat(COLUMN_VERSION_FILE_NAME).$();
-            if (!ff.exists(detachedPath)) {
+            if (!ff.exists(detachedPath.$())) {
                 // Backups and older versions of detached partitions will not have _cv
                 LOG.error().$("detached _dcv file not found, skipping check [path=").$(detachedPath).I$();
                 return false;
@@ -3132,7 +3130,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     attachColumnVersionReader = new ColumnVersionReader();
                 }
                 // attach partition is only possible on partitioned table
-                attachColumnVersionReader.ofRO(ff, detachedPath);
+                attachColumnVersionReader.ofRO(ff, detachedPath.$());
                 attachColumnVersionReader.readUnsafe();
             }
 
@@ -3180,9 +3178,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (!isIndexedNow && wasIndexedAtDetached) {
                         long columnNameTxn = attachColumnVersionReader.getColumnNameTxn(partitionTimestamp, colIdx);
                         keyFileName(detachedPath.trimTo(detachedPartitionRoot), columnName, columnNameTxn);
-                        removeFileOrLog(ff, detachedPath);
+                        removeFileOrLog(ff, detachedPath.$());
                         valueFileName(detachedPath.trimTo(detachedPartitionRoot), columnName, columnNameTxn);
-                        removeFileOrLog(ff, detachedPath);
+                        removeFileOrLog(ff, detachedPath.$());
                     } else if (isIndexedNow
                             && (!wasIndexedAtDetached || indexValueBlockCapacityNow != indexValueBlockCapacityDetached)) {
                         // Was not indexed before or value block capacity has changed
@@ -3681,14 +3679,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private int copyOverwrite(Path to) {
-        int res = ff.copy(other, to);
+        int res = ff.copy(other.$(), to.$());
         if (Os.isWindows() && res == -1 && ff.errno() == Files.WINDOWS_ERROR_FILE_EXISTS) {
             // Windows throws an error the destination file already exists, other platforms do not
-            if (!ff.removeQuiet(to)) {
+            if (!ff.removeQuiet(to.$())) {
                 // If file is open, return here so that errno is 5 in the error message
                 return -1;
             }
-            return ff.copy(other, to);
+            return ff.copy(other.$(), to.$());
         }
         return res;
     }
@@ -3715,13 +3713,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             keyFileName(path.trimTo(plen), columnName, columnNameTxn);
 
-            if (!force && ff.exists(path)) {
+            if (!force && ff.exists(path.$())) {
                 return;
             }
 
             // reuse memory column object to create index and close it at the end
             try {
-                ddlMem.smallFile(ff, path, MemoryTag.MMAP_TABLE_WRITER);
+                ddlMem.smallFile(ff, path.$(), MemoryTag.MMAP_TABLE_WRITER);
                 ddlMem.truncate();
                 BitmapIndexWriter.initKeyMemory(ddlMem, indexValueBlockCapacity);
             } catch (CairoException e) {
@@ -3731,7 +3729,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         .$("could not create index [name=").$(path)
                         .$(", errno=").$(e.getErrno())
                         .I$();
-                if (!ff.removeQuiet(path)) {
+                if (!ff.removeQuiet(path.$())) {
                     LOG.critical()
                             .$("could not remove '").$(path).$("'. Please remove MANUALLY.")
                             .$("[errno=").$(ff.errno())
@@ -5013,9 +5011,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         final int plen = path.size();
 
                         long columnNameTxn = columnVersionWriter.getColumnNameTxn(timestamp, columnIndex);
-                        TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn);
 
-                        if (ff.exists(path)) {
+                        if (ff.exists(TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn))) {
                             path.trimTo(plen);
                             LOG.info().$("indexing [path=").$(path).I$();
 
@@ -5024,8 +5021,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             final long columnTop = columnVersionWriter.getColumnTop(timestamp, columnIndex);
 
                             if (columnTop > -1L && partitionSize > columnTop) {
-                                TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn);
-                                int columnDataFd = TableUtils.openRO(ff, path, LOG);
+                                int columnDataFd = TableUtils.openRO(ff, TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn), LOG);
                                 try {
                                     indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop);
                                     indexer.index(ff, columnDataFd, columnTop, partitionSize);
@@ -5082,9 +5078,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void lock() {
         try {
             path.trimTo(rootLen);
-            lockName(path);
-            performRecovery = ff.exists(path);
-            this.lockFd = TableUtils.lock(ff, path);
+            performRecovery = ff.exists(lockName(path));
+            this.lockFd = TableUtils.lock(ff, path.$());
         } finally {
             path.trimTo(rootLen);
         }
@@ -5147,13 +5142,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                         final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
 
-                        iFile(walPath, metadata.getColumnName(columnIndex), -1L);
+                        LPSZ ifile = iFile(walPath, metadata.getColumnName(columnIndex), -1L);
                         LOG.debug().$("reusing file descriptor for WAL files [fd=").$(auxFd).$(", path=").$(walPath).$(", walSegment=").$(walSegmentId).I$();
                         columnTypeDriver.configureAuxMemOM(
                                 configuration.getFilesFacade(),
                                 auxMem,
                                 auxFd,
-                                walPath,
+                                ifile,
                                 rowLo,
                                 rowHi,
                                 MemoryTag.MMAP_TABLE_WRITER,
@@ -5161,14 +5156,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         );
                         walPath.trimTo(walPathLen);
 
-                        dFile(walPath, metadata.getColumnName(columnIndex), -1L);
+                        LPSZ dfile = dFile(walPath, metadata.getColumnName(columnIndex), -1L);
                         LOG.debug().$("reusing file descriptor for WAL files [fd=").$(dataFd).$(", path=").$(walPath).$(", walSegment=").$(walSegmentId).I$();
                         columnTypeDriver.configureDataMemOM(
                                 configuration.getFilesFacade(),
                                 auxMem,
                                 dataMem,
                                 dataFd,
-                                walPath,
+                                dfile,
                                 rowLo,
                                 rowHi,
                                 MemoryTag.MMAP_TABLE_WRITER,
@@ -5179,13 +5174,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         walMappedColumns.add(primary);
                         walMappedColumns.add(null);
 
-                        dFile(walPath, metadata.getColumnName(columnIndex), -1L);
+                        LPSZ dfile = dFile(walPath, metadata.getColumnName(columnIndex), -1L);
                         int fd = fds != null ? fds.get(file++) : -1;
                         LOG.debug().$("reusing file descriptor for WAL files [fd=").$(fd).$(", path=").$(walPath).$(", walSegment=").$(walSegmentId).I$();
                         primary.ofOffset(
                                 configuration.getFilesFacade(),
                                 fd,
-                                walPath,
+                                dfile,
                                 rowLo << sizeBitsPow2,
                                 rowHi << sizeBitsPow2,
                                 MemoryTag.MMAP_TABLE_WRITER,
@@ -5877,7 +5872,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             setStateForTimestamp(path, timestamp);
             partitionTimestampHi = txWriter.getNextPartitionTimestamp(timestamp) - 1;
             int plen = path.size();
-            if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
+            if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
                 throw CairoException.critical(ff.errno()).put("Cannot create directory: ").put(path);
             }
 
@@ -5918,15 +5913,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private long openTodoMem() {
-        path.concat(TODO_FILE_NAME).$();
+        path.concat(TODO_FILE_NAME);
         try {
-            if (ff.exists(path)) {
-                long fileLen = ff.length(path);
+            if (ff.exists(path.$())) {
+                long fileLen = ff.length(path.$());
                 if (fileLen < 32) {
                     throw CairoException.critical(0).put("corrupt ").put(path);
                 }
 
-                todoMem.smallFile(ff, path, MemoryTag.MMAP_TABLE_WRITER);
+                todoMem.smallFile(ff, path.$(), MemoryTag.MMAP_TABLE_WRITER);
                 this.todoTxn = todoMem.getLong(0);
                 // check if _todo_ file is consistent, if not, we just ignore its contents and reset hash
                 if (todoMem.getLong(24) != todoTxn) {
@@ -6454,12 +6449,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long readMinTimestamp(long partitionTimestamp) {
         setStateForTimestamp(other, partitionTimestamp);
         try {
-            dFile(other, metadata.getColumnName(metadata.getTimestampIndex()), COLUMN_NAME_TXN_NONE);
-            if (ff.exists(other)) {
+            if (ff.exists(dFile(other, metadata.getColumnName(metadata.getTimestampIndex()), COLUMN_NAME_TXN_NONE))) {
                 // read min timestamp value
-                final int fd = TableUtils.openRO(ff, other, LOG);
+                final int fd = TableUtils.openRO(ff, other.$(), LOG);
                 try {
-                    return TableUtils.readLongOrFail(ff, fd, 0, tempMem16b, other);
+                    return TableUtils.readLongOrFail(ff, fd, 0, tempMem16b, other.$());
                 } finally {
                     ff.close(fd);
                 }
@@ -6472,8 +6466,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void readPartitionMinMax(FilesFacade ff, long partitionTimestamp, Path path, CharSequence columnName, long partitionSize) {
-        dFile(path, columnName, COLUMN_NAME_TXN_NONE);
-        final int fd = TableUtils.openRO(ff, path, LOG);
+        final int fd = TableUtils.openRO(ff, dFile(path, columnName, COLUMN_NAME_TXN_NONE), LOG);
         try {
             attachMinTimestamp = ff.readNonNegativeLong(fd, 0);
             attachMaxTimestamp = ff.readNonNegativeLong(fd, (partitionSize - 1) * ColumnType.sizeOf(ColumnType.TIMESTAMP));
@@ -6502,12 +6495,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long readPartitionSizeMinMax(FilesFacade ff, long partitionTimestamp, Path path, CharSequence columnName) {
         int pathLen = path.size();
         try {
-            path.concat(TXN_FILE_NAME).$();
-            if (ff.exists(path)) {
+            path.concat(TXN_FILE_NAME);
+            if (ff.exists(path.$())) {
                 if (attachTxReader == null) {
                     attachTxReader = new TxReader(ff);
                 }
-                attachTxReader.ofRO(path, partitionBy);
+                attachTxReader.ofRO(path.$(), partitionBy);
                 attachTxReader.unsafeLoadAll();
 
                 try {
@@ -6529,9 +6522,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // No txn file found, scan the file to get min, max timestamp
             // Scan forward while value increases
-
-            dFile(path.trimTo(pathLen), columnName, COLUMN_NAME_TXN_NONE);
-            final int fd = TableUtils.openRO(ff, path, LOG);
+            final int fd = TableUtils.openRO(ff, dFile(path.trimTo(pathLen), columnName, COLUMN_NAME_TXN_NONE), LOG);
             try {
                 long fileSize = ff.length(fd);
                 if (fileSize <= 0) {
@@ -6688,8 +6679,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             try {
-                lockName(path);
-                removeOrException(ff, lockFd, path);
+                removeOrException(ff, lockFd, lockName(path));
             } finally {
                 path.trimTo(rootLen);
             }
@@ -6870,12 +6860,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void removeMetaFile() {
         try {
-            path.concat(META_FILE_NAME).$();
-            if (!ff.removeQuiet(path)) {
+            path.concat(META_FILE_NAME);
+            if (!ff.removeQuiet(path.$())) {
                 // On Windows opened file cannot be removed
                 // but can be renamed
-                other.concat(META_FILE_NAME).put('.').put(configuration.getMicrosecondClock().getTicks()).$();
-                if (ff.rename(path, other) != FILES_RENAME_OK) {
+                other.concat(META_FILE_NAME).put('.').put(configuration.getMicrosecondClock().getTicks());
+                if (ff.rename(path.$(), other.$()) != FILES_RENAME_OK) {
                     LOG.error()
                             .$("could not rename [from=").$(path)
                             .$(", to=").$(other)
@@ -6969,16 +6959,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (index > 0) {
                     other.trimTo(l);
                     other.put('.').put(index);
-                    other.$();
                 }
 
-                if (!ff.removeQuiet(other)) {
+                if (!ff.removeQuiet(other.$())) {
                     LOG.info().$("could not remove target of rename '").$(path).$("' to '").$(other).$(" [errno=").$(ff.errno()).I$();
                     index++;
                     continue;
                 }
 
-                if (ff.rename(path, other) != FILES_RENAME_OK) {
+                if (ff.rename(path.$(), other.$()) != FILES_RENAME_OK) {
                     LOG.info().$("could not rename '").$(path).$("' to '").$(other).$(" [errno=").$(ff.errno()).I$();
                     index++;
                     continue;
@@ -7064,10 +7053,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         fixedRowCount += partitionSize;
                         lastTimestamp = ts;
                     } else {
-                        Path other = Path.getThreadLocal2(path.trimTo(p).$());
+                        Path other = Path.getThreadLocal2(path.trimTo(p));
                         TableUtils.oldPartitionName(other, getTxn());
                         if (ff.exists(other.$())) {
-                            if (ff.rename(other, path) != FILES_RENAME_OK) {
+                            if (ff.rename(other.$(), path.$()) != FILES_RENAME_OK) {
                                 LOG.error().$("could not rename [from=").$(other).$(", to=").$(path).I$();
                                 throw new CairoError("could not restore directory, see log for details");
                             } else {
@@ -7086,7 +7075,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         Path other = Path.getThreadLocal2(path);
                         TableUtils.oldPartitionName(other, getTxn());
                         if (ff.exists(other.$())) {
-                            if (ff.rename(other, path) != FILES_RENAME_OK) {
+                            if (ff.rename(other.$(), path.$()) != FILES_RENAME_OK) {
                                 LOG.error().$("could not rename [from=").$(other).$(", to=").$(path).I$();
                                 throw new CairoError("could not restore directory, see log for details");
                             } else {
@@ -7103,7 +7092,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                             // 2. read max timestamp
                             TableUtils.dFile(path.trimTo(p), metadata.getColumnName(metadata.getTimestampIndex()), COLUMN_NAME_TXN_NONE);
-                            maxTimestamp = TableUtils.readLongAtOffset(ff, path, tempMem16b, (transientRowCount - 1) * Long.BYTES);
+                            maxTimestamp = TableUtils.readLongAtOffset(ff, path.$(), tempMem16b, (transientRowCount - 1) * Long.BYTES);
                             fixedRowCount -= transientRowCount;
                             txWriter.removeAttachedPartitions(txWriter.getMaxTimestamp());
                             LOG.info()
@@ -7146,13 +7135,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (index > 0) {
                 path.put('.').put(index);
             }
-            path.$();
 
-            if (ff.exists(path)) {
+            if (ff.exists(path.$())) {
                 LOG.info().$("Repairing metadata from: ").$(path).$();
                 ff.remove(other.concat(META_FILE_NAME).$());
 
-                if (ff.rename(path, other) != FILES_RENAME_OK) {
+                if (ff.rename(path.$(), other.$()) != FILES_RENAME_OK) {
                     throw CairoException.critical(ff.errno()).put("Repair failed. Cannot rename ").put(path).put(" -> ").put(other);
                 }
             }
@@ -7188,7 +7176,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             path.$();
 
-            TableUtils.renameOrFail(ff, path, other.concat(META_FILE_NAME).$());
+            TableUtils.renameOrFail(ff, path.$(), other.concat(META_FILE_NAME).$());
         } finally {
             path.trimTo(rootLen);
             other.trimTo(rootLen);
@@ -7470,7 +7458,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (copyTargetFrame) {
                         try {
                             TableUtils.setPathForPartition(other, partitionBy, targetPartition, txWriter.txn);
-                            TableUtils.createDirsOrFail(ff, other.slash$(), configuration.getMkDirMode());
+                            TableUtils.createDirsOrFail(ff, other.slash(), configuration.getMkDirMode());
                             LOG.info().$("copying partition to force squash [from=").$(path).$(", to=").$(other).I$();
 
                             targetFrame = partitionFrameFactory.openRW(other, targetPartition, metadata, columnVersionWriter, 0);
@@ -8131,7 +8119,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (removeDirOnCancelRow) {
                     try {
                         setStateForTimestamp(path, txWriter.getPartitionTimestampByTimestamp(dirtyMaxTimestamp));
-                        if (!ff.rmdir(path.$())) {
+                        if (!ff.rmdir(path)) {
                             throw CairoException.critical(ff.errno()).put("could not remove directory: ").put(path);
                         }
                         removeDirOnCancelRow = false;

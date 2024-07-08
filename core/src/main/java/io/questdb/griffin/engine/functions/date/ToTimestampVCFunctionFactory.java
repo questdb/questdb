@@ -40,10 +40,9 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
-import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
+import io.questdb.std.datetime.microtime.TimestampFormatFactory;
 
 public class ToTimestampVCFunctionFactory implements FunctionFactory {
-    private static final ThreadLocal<TimestampFormatCompiler> tlCompiler = ThreadLocal.withInitial(TimestampFormatCompiler::new);
 
     @Override
     public String getSignature() {
@@ -64,13 +63,13 @@ public class ToTimestampVCFunctionFactory implements FunctionFactory {
             throw SqlException.$(argPositions.getQuick(1), "pattern is required");
         }
         if (arg.isConstant()) {
-            return evaluateConstant(arg, tlCompiler.get().compile(pattern), configuration.getDefaultDateLocale());
+            return evaluateConstant(arg, TimestampFormatFactory.INSTANCE.get(pattern), configuration.getDefaultDateLocale());
         } else {
-            return new Func(arg, tlCompiler.get().compile(pattern), configuration.getDefaultDateLocale());
+            return new Func(arg, TimestampFormatFactory.INSTANCE.get(pattern), configuration.getDefaultDateLocale());
         }
     }
 
-    private TimestampConstant evaluateConstant(Function arg, DateFormat timestampFormat, DateLocale locale) {
+    protected TimestampConstant evaluateConstant(Function arg, DateFormat timestampFormat, DateLocale locale) {
         CharSequence value = arg.getStrA(null);
         try {
             if (value != null) {
@@ -82,7 +81,7 @@ public class ToTimestampVCFunctionFactory implements FunctionFactory {
         return TimestampConstant.NULL;
     }
 
-    private static final class Func extends TimestampFunction implements UnaryFunction {
+    protected static final class Func extends TimestampFunction implements UnaryFunction {
 
         private final Function arg;
         private final DateLocale locale;

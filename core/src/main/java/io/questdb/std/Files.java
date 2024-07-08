@@ -48,6 +48,7 @@ public final class Files {
     public static final int FILES_RENAME_OK = 0;
     public static final int MAP_RO = 1;
     public static final int MAP_RW = 2;
+    public static final int NFS_MAGIC = 0x6969;
     public static final long PAGE_SIZE;
     public static final int POSIX_FADV_RANDOM;
     public static final int POSIX_FADV_SEQUENTIAL;
@@ -186,7 +187,7 @@ public final class Files {
     public static native int fsync(int fd);
 
     public static long getDirSize(Path path) {
-        long pFind = findFirst(path.ptr());
+        long pFind = findFirst(path.$().ptr());
         if (pFind > 0L) {
             int len = path.size();
             try {
@@ -195,7 +196,7 @@ public final class Files {
                     long nameUtf8Ptr = findName(pFind);
                     path.trimTo(len).concat(nameUtf8Ptr).$();
                     if (findType(pFind) == Files.DT_FILE) {
-                        totalSize += length(path);
+                        totalSize += length(path.$());
                     } else if (notDots(nameUtf8Ptr)) {
                         totalSize += getDirSize(path);
                     }
@@ -232,8 +233,7 @@ public final class Files {
      * @return 0 when OS call failed, errno should be checked. Negative number is file system magic that is supported
      * positive number is magic that is not supported.
      */
-    public static int getFileSystemStatus(Path lpszName) {
-        assert lpszName.capacity() > 127;
+    public static int getFileSystemStatus(LPSZ lpszName) {
         int status = getFileSystemStatus(lpszName.ptr());
         if (status == VIRTIO_FS_MAGIC) {
             VIRTIO_FS_DETECTED = true;
@@ -325,7 +325,7 @@ public final class Files {
 
     public static native void madvise0(long address, long len, int advise);
 
-    public static int mkdir(Path path, int mode) {
+    public static int mkdir(LPSZ path, int mode) {
         return mkdir(path.ptr(), mode);
     }
 
@@ -341,8 +341,9 @@ public final class Files {
                 // replace separator we just found with \0
                 // temporarily truncate path to the directory we need to create
                 path.$at(i);
-                if (path.size() > 0 && !Files.exists(path)) {
-                    int r = Files.mkdir(path, mode);
+                LPSZ lpsz = path.$();
+                if (path.size() > 0 && !Files.exists(lpsz)) {
+                    int r = Files.mkdir(lpsz, mode);
                     if (r != 0) {
                         path.put(i, (byte) Files.SEPARATOR);
                         return r;
@@ -446,9 +447,9 @@ public final class Files {
         // value. If the value is the same as the buffer size we make an assumption that
         // the link target is perhaps longer than the buffer.
 
-        int res = readLink0(softLink.ptr(), readTo.ptr() + len, bufSize);
+        int res = readLink0(softLink.$().ptr(), readTo.$().ptr() + len, bufSize);
         if (res > 0 && res < bufSize) {
-            readTo.trimTo(len + res).$();
+            readTo.trimTo(len + res);
             // check if symlink is absolute or relative
             if (readTo.byteAt(0) != '/') {
                 int prefixLen = Utf8s.lastIndexOfAscii(softLink, '/');
@@ -492,6 +493,7 @@ public final class Files {
      * @return true on success
      */
     public static boolean rmdir(Path path, boolean haltOnFail) {
+        path.$();
         long pFind = findFirst(path.ptr());
         if (pFind > 0L) {
             int len = path.size();
@@ -587,7 +589,7 @@ public final class Files {
 
     public static void walk(Path path, FindVisitor func) {
         int len = path.size();
-        long p = findFirst(path);
+        long p = findFirst(path.$());
         if (p > 0) {
             try {
                 do {
@@ -598,7 +600,7 @@ public final class Files {
                         if (type == Files.DT_FILE) {
                             func.onFind(name, type);
                         } else {
-                            walk(path.concat(name).$(), func);
+                            walk(path.concat(name), func);
                         }
                     }
                 } while (findNext(p) > 0);

@@ -855,8 +855,8 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     public void testImportFileFailsWhenTargetTableDirectoryIsMangled() throws Exception {
         String tabex3 = "tabex3";
         CharSequence dirName = tabex3 + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
-        try (Path p = Path.getThreadLocal(root).concat(dirName).slash$()) {
-            TestFilesFacadeImpl.INSTANCE.mkdir(p, configuration.getMkDirMode());
+        try (Path p = Path.getThreadLocal(root).concat(dirName).slash()) {
+            TestFilesFacadeImpl.INSTANCE.mkdir(p.$(), configuration.getMkDirMode());
         }
 
         refreshTablesInBaseEngine();
@@ -887,7 +887,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     public void testImportFileFailsWhenWorkDirCantBeCreated() throws Exception {
         FilesFacadeImpl ff = new TestFilesFacadeImpl() {
             @Override
-            public int mkdir(Path path, int mode) {
+            public int mkdir(LPSZ path, int mode) {
                 if (Utf8s.containsAscii(path, "tab39")) {
                     return -1;
                 }
@@ -2522,12 +2522,12 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
     private void assertChunkBoundariesFor(String fileName, LongList expectedBoundaries, SqlExecutionContext sqlExecutionContext) throws TextImportException {
         FilesFacade ff = engine.getConfiguration().getFilesFacade();
-        try (Path path = new Path().of(inputRoot).slash().concat(fileName).$();
+        try (Path path = new Path().of(inputRoot).slash().concat(fileName);
              ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
             importer.setMinChunkSize(1);
             importer.of("table", fileName, 1, PartitionBy.DAY, (byte) ',', "unknown", null, false);
 
-            int fd = ff.openRO(path);
+            int fd = ff.openRO(path.$());
             long length = ff.length(fd);
             Assert.assertTrue(fd > -1);
 
@@ -2605,13 +2605,13 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         inputRoot = TestUtils.getCsvRoot();
 
         try (
-                Path path = new Path().of(inputRoot).concat(fileName).$();
+                Path path = new Path().of(inputRoot).concat(fileName);
                 ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())
         ) {
             importer.setMinChunkSize(1);
             importer.of("tableName", fileName, 1, partitionBy, (byte) ',', "ts", format, false);
 
-            int fd = TableUtils.openRO(ff, path, LOG);
+            int fd = TableUtils.openRO(ff, path.$(), LOG);
             try {
                 importer.parseStructure(fd, sqlExecutionContext.getSecurityContext());
                 long length = ff.length(fd);
@@ -2940,7 +2940,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
             for (File chunk : indexChunks) {
                 p.of(chunk.getAbsolutePath()).$();
-                memory.smallFile(engine.getConfiguration().getFilesFacade(), p, MemoryTag.NATIVE_DEFAULT);
+                memory.smallFile(engine.getConfiguration().getFilesFacade(), p.$(), MemoryTag.NATIVE_DEFAULT);
                 long[] data = new long[(int) chunk.length() / Long.BYTES];
 
                 for (int i = 0; i < data.length; i++) {

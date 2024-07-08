@@ -130,7 +130,7 @@ public class TableUtilsTest extends AbstractTest {
             Assert.fail();
         } catch (CairoException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "could not create soft link [src=" + path.toString() + ", tableDir=" + tableName + ']');
-            Assert.assertFalse(Files.exists(path));
+            Assert.assertFalse(Files.exists(path.$()));
         } finally {
             dbRoot.delete();
             volumeRoot.delete();

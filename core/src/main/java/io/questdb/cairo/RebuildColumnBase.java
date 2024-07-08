@@ -91,8 +91,8 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
     ) {
         try {
             lock(ff);
-            path.concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
-            try (ColumnVersionReader columnVersionReader = new ColumnVersionReader().ofRO(ff, path)) {
+            path.concat(TableUtils.COLUMN_VERSION_FILE_NAME);
+            try (ColumnVersionReader columnVersionReader = new ColumnVersionReader().ofRO(ff, path.$())) {
                 final long deadline = clock.getTicks() + configuration.getSpinLockTimeout();
                 columnVersionReader.readSafe(clock, deadline);
                 path.trimTo(rootLen);
@@ -173,8 +173,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
     private void lock(FilesFacade ff) {
         try {
             path.trimTo(rootLen);
-            lockName(path);
-            this.lockFd = TableUtils.lock(ff, path);
+            this.lockFd = TableUtils.lock(ff, lockName(path));
         } finally {
             path.trimTo(rootLen);
         }
@@ -340,8 +339,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
             lockFd = -1;
             try {
                 path.trimTo(rootLen);
-                lockName(path);
-                ff.remove(path);
+                ff.remove(lockName(path));
             } finally {
                 path.trimTo(rootLen);
             }

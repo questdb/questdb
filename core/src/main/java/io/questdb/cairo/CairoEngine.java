@@ -1384,7 +1384,7 @@ public class CairoEngine implements Closeable, WriterSource {
         }
 
         try {
-            if (ff.rename(fromPath, toPath) != Files.FILES_RENAME_OK) {
+            if (ff.rename(fromPath.$(), toPath.$()) != Files.FILES_RENAME_OK) {
                 final int error = ff.errno();
                 LOG.error()
                         .$("could not rename [from='").$(fromPath)

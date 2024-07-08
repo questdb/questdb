@@ -193,7 +193,7 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
                 }
                 Assert.assertTrue(totalRows > (expectedTotalRows.get() * 0.5));
             } finally {
-                Assert.assertTrue(Files.rmdir(dbPath.of(newRoot).$(), true));
+                Assert.assertTrue(Files.rmdir(dbPath.of(newRoot), true));
             }
         });
     }
@@ -242,7 +242,7 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
                 if (!f.getName().equals("tmp")) {
                     roots.add(f);
                 } else {
-                    Assert.assertTrue(Files.rmdir(auxPath.of(f.getAbsolutePath()).$(), true));
+                    Assert.assertTrue(Files.rmdir(auxPath.of(f.getAbsolutePath()), true));
                 }
             }
         }
@@ -251,7 +251,7 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
         roots.sort(Comparator.comparing(File::lastModified));
         String newRoot = roots.get(len - 1).getAbsolutePath();
         for (int i = 0; i < len - 1; i++) {
-            Assert.assertTrue(Files.rmdir(auxPath.of(roots.get(i).getAbsolutePath()).$(), true));
+            Assert.assertTrue(Files.rmdir(auxPath.of(roots.get(i).getAbsolutePath()), true));
         }
         return newRoot;
     }
