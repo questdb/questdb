@@ -660,7 +660,8 @@ public class WriterPoolTest extends AbstractCairoTest {
                     configuration.getRoot(),
                     engine.getDdlListener(tableToken),
                     () -> false,
-                    metrics
+                    metrics,
+                    EmptyO3MemoryPressureRegulator.INSTANCE
             );
             for (int i = 0; i < 100; i++) {
                 TableWriter.Row row = writer.newRow();

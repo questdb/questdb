@@ -31,6 +31,7 @@ public class SeqTxnTracker {
     private static final long SEQ_TXN_OFFSET;
     private static final long SUSPENDED_STATE_OFFSET;
     private static final long WRITER_TXN_OFFSET;
+    private volatile int memoryPressureLevel;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile long seqTxn = -1;
     // -1 suspended
@@ -38,6 +39,10 @@ public class SeqTxnTracker {
     // 1 not suspended
     private volatile int suspendedState = 0;
     private volatile long writerTxn = -1;
+
+    public int getMemoryPressureLevel() {
+        return memoryPressureLevel;
+    }
 
     @TestOnly
     public long getSeqTxn() {
@@ -106,6 +111,10 @@ public class SeqTxnTracker {
         // Notify on transactions that are first move seqTxn from -1 or 0
         // or when writerTxn is behind seqTxn by 1 and not suspended
         return (stxn < 1 || writerTxn == (newSeqTxn - 1)) && suspendedState >= 0;
+    }
+
+    public void setMemoryPressureLevel(int memoryPressureLevel) {
+        this.memoryPressureLevel = memoryPressureLevel;
     }
 
     public void setSuspended() {

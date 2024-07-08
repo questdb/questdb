@@ -253,11 +253,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             CharSequence root,
             DdlListener ddlListener,
             DatabaseSnapshotAgent snapshotAgent,
-            Metrics metrics
+            Metrics metrics,
+            O3MemoryPressureRegulator memoryPressureRegulator
     ) {
         LOG.info().$("open '").utf8(tableToken.getTableName()).$('\'').$();
         this.configuration = configuration;
-        this.memoryPressureRegulator = new O3MemoryPressureRegulator(configuration.getRandom(), configuration.getMicrosecondClock());
+        this.memoryPressureRegulator = memoryPressureRegulator;
         this.ddlListener = ddlListener;
         this.snapshotAgent = snapshotAgent;
         this.partitionFrameFactory = new PartitionFrameFactory(configuration);

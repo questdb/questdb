@@ -96,7 +96,8 @@ public class TableReaderReloadBenchmark {
                 configuration.getRoot(),
                 DefaultDdlListener.INSTANCE,
                 () -> false,
-                Metrics.disabled()
+                Metrics.disabled(),
+                EmptyO3MemoryPressureRegulator.INSTANCE
         );
         writer.truncate();
         // create 10 partitions

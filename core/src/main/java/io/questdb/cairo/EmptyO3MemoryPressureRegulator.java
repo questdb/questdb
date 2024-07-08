@@ -24,12 +24,26 @@
 
 package io.questdb.cairo;
 
-public interface O3MemoryPressureRegulator {
-    int getMaxO3MergeParallelism();
+public final class EmptyO3MemoryPressureRegulator implements O3MemoryPressureRegulator {
+    public static final EmptyO3MemoryPressureRegulator INSTANCE = new EmptyO3MemoryPressureRegulator();
 
-    void onPressureDecreased();
+    @Override
+    public int getMaxO3MergeParallelism() {
+        return Integer.MAX_VALUE;
+    }
 
-    void onPressureIncreased();
+    @Override
+    public void onPressureDecreased() {
+        // intentionally empty
+    }
 
-    boolean shouldBackoff();
+    @Override
+    public void onPressureIncreased() {
+        // intentionally empty
+    }
+
+    @Override
+    public boolean shouldBackoff() {
+        return false;
+    }
 }

@@ -1281,7 +1281,8 @@ public final class TestUtils {
                 configuration.getRoot(),
                 DefaultDdlListener.INSTANCE,
                 () -> false,
-                metrics
+                metrics,
+                EmptyO3MemoryPressureRegulator.INSTANCE
         );
     }
 

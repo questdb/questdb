@@ -505,7 +505,8 @@ public class CopyTask {
                             root,
                             cairoEngine.getDdlListener(tableToken),
                             cairoEngine.getSnapshotAgent(),
-                            cairoEngine.getMetrics()
+                            cairoEngine.getMetrics(),
+                            EmptyO3MemoryPressureRegulator.INSTANCE
                     )
             ) {
                 for (int i = 0; i < columnCount; i++) {
@@ -890,7 +891,8 @@ public class CopyTask {
                             importRoot,
                             engine.getDdlListener(tableToken),
                             engine.getSnapshotAgent(),
-                            engine.getMetrics()
+                            engine.getMetrics(),
+                            EmptyO3MemoryPressureRegulator.INSTANCE
                     )
             ) {
                 tableWriterRef = writer;

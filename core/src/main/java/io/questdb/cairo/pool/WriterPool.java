@@ -28,6 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.cairo.sql.AsyncWriterCommand;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -278,7 +279,8 @@ public class WriterPool extends AbstractPool {
                         root,
                         engine.getDdlListener(tableToken),
                         engine.getSnapshotAgent(),
-                        engine.getMetrics()
+                        engine.getMetrics(),
+                        newRegulator(tableToken)
                 );
             }
 
@@ -388,6 +390,8 @@ public class WriterPool extends AbstractPool {
         try {
             checkClosed();
             LOG.info().$("open [table=`").utf8(tableToken.getDirName()).$("`, thread=").$(thread).$(']').$();
+
+            O3MemoryPressureRegulator regulator = newRegulator(tableToken);
             e.writer = new TableWriter(
                     configuration,
                     tableToken,
@@ -398,7 +402,8 @@ public class WriterPool extends AbstractPool {
                     root,
                     engine.getDdlListener(tableToken),
                     engine.getSnapshotAgent(),
-                    engine.getMetrics()
+                    engine.getMetrics(),
+                    regulator
             );
             e.ownershipReason = lockReason;
             return logAndReturn(e, PoolListener.EV_CREATE);
@@ -521,6 +526,17 @@ public class WriterPool extends AbstractPool {
         LOG.info().$(">> [table=`").utf8(e.writer.getTableToken().getDirName()).$("`, thread=").$(e.owner).$(']').$();
         notifyListener(e.owner, e.writer.getTableToken(), event);
         return e.writer;
+    }
+
+    private @NotNull O3MemoryPressureRegulator newRegulator(TableToken tableToken) {
+        O3MemoryPressureRegulator regulator;
+        if (engine.isWalTable(tableToken)) {
+            SeqTxnTracker txnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+            regulator = new O3MemoryPressureRegulatorImpl(configuration.getRandom(), configuration.getMicrosecondClock(), txnTracker);
+        } else {
+            regulator = EmptyO3MemoryPressureRegulator.INSTANCE;
+        }
+        return regulator;
     }
 
     private String reinterpretOwnershipReason(String providedReason) {
