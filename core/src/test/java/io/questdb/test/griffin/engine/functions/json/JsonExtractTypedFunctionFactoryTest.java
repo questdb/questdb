@@ -102,7 +102,9 @@ public class JsonExtractTypedFunctionFactoryTest extends AbstractCairoTest {
         testNullJsonSuffixCast(ColumnType.LONG, "null");
 
         testNullJson3rdArgCall(ColumnType.FLOAT, "null", ColumnType.FLOAT);
-        // testNullJsonFunctionCast(ColumnType.FLOAT, "null", ColumnType.DOUBLE);  // TODO: re-enable me and fix me.
+        testNullJsonFunctionCast(ColumnType.FLOAT, "null", ColumnType.FLOAT);
+
+        // Casting to `float` actually casts to double. This is done for compatibility with PG.
         testNullJsonSuffixCast(ColumnType.FLOAT, "null", ColumnType.DOUBLE);
 
         testNullJson3rdArgCall(ColumnType.DOUBLE, "null");
@@ -123,7 +125,6 @@ public class JsonExtractTypedFunctionFactoryTest extends AbstractCairoTest {
     }
 
     private void testNullJson3rdArgCall(int columnType, String expected, int expectedType) throws Exception {
-        final String typeName = ColumnType.nameOf(columnType);
         final String expectedTypeName = ColumnType.nameOf(expectedType);
         assertMemoryLeak(() -> {
             final String sql = "select json_extract(NULL, '.x', " + columnType + ") as x from long_sequence(1)";
