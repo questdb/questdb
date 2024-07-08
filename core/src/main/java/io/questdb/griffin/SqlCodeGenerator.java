@@ -3835,7 +3835,29 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         );
                     }
 
-                    return new AsyncGroupByRecordCursorFactory(
+                    RecordCursorFactory retval;
+                    // [NW] Here for group by
+
+                    Function fillFromFunc = TimestampConstant.NULL;
+                    Function fillToFunc = TimestampConstant.NULL;
+                    final ExpressionNode fillFrom = nested.getFillFrom();
+                    final ExpressionNode fillTo = nested.getFillTo();
+                    final ExpressionNode fillStride = nested.getFillStride();
+
+                    if (fillFrom != null) {
+                        fillFromFunc = functionParser.parseFunction(fillFrom, EmptyRecordMetadata.INSTANCE, executionContext);
+                        coerceRuntimeConstantType(fillFromFunc, ColumnType.TIMESTAMP, executionContext, "from lower bound must be a constant expression convertible to a TIMESTAMP", -1);
+                    }
+
+                    if (fillTo != null) {
+                        fillToFunc = functionParser.parseFunction(fillTo, EmptyRecordMetadata.INSTANCE, executionContext);
+                        coerceRuntimeConstantType(fillToFunc, ColumnType.TIMESTAMP, executionContext, "to upper bound must be a constant expression convertible to a TIMESTAMP", -1);
+                    }
+
+                    fillFromFunc.init(null, executionContext);
+                    fillToFunc.init(null, executionContext);
+
+                    retval = new AsyncGroupByRecordCursorFactory(
                             asm,
                             configuration,
                             executionContext.getMessageBus(),
@@ -3875,6 +3897,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             ),
                             executionContext.getSharedWorkerCount()
                     );
+
+                    if (nested.getFillStride() != null) {
+                        return new FillRangeRecordCursorFactory(groupByMetadata, retval, fillFromFunc, fillToFunc, fillStride.token, timestampIndex);
+                    }
                 }
             }
 

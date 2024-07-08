@@ -4442,7 +4442,12 @@ public class SqlOptimiser implements Mutable {
                     sampleBy != null
                             && timestamp != null
                             && (sampleByOffset != null && SqlKeywords.isZeroOffset(sampleByOffset.token) && (sampleByTimezoneName == null || SqlKeywords.isUTC(sampleByTimezoneName.token)))
-                            && (sampleByFill.size() == 0 || (sampleByFill.size() == 1 && SqlKeywords.isNoneKeyword(sampleByFill.getQuick(0).token)))
+                            && (sampleByFill.size() == 0
+                            || (sampleByFill.size() == 1 &&
+                            (
+                                    !SqlKeywords.isPrevKeyword(sampleByFill.getQuick(0).token))
+                            && !SqlKeywords.isLinearKeyword(sampleByFill.getQuick(0).token))
+                    )
                             && sampleByUnit == null
             ) {
                 // Validate that the model does not have wildcard column names.
@@ -4578,17 +4583,13 @@ public class SqlOptimiser implements Mutable {
                 int timestampPos = model.getColumnAliasIndex(timestampAlias);
 
                 // look for FROM clause
-                QueryModel curr = model;
-                ExpressionNode fromLo = null;
-                while (curr != null && fromLo == null) {
-                    fromLo = curr.getSampleByTo();
-                    curr = curr.getNestedModel();
-                }
+                ExpressionNode sampleByFrom = nested.getSampleByFrom();
+                ExpressionNode sampleByTo = nested.getSampleByTo();
 
                 ExpressionNode timestampFunc = expressionNodePool.next();
                 timestampFunc.token = "timestamp_floor";
                 timestampFunc.type = FUNCTION;
-                timestampFunc.paramCount = fromLo != null ? 3 : 2;
+                timestampFunc.paramCount = sampleByFrom != null ? 3 : 2;
 
                 CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
                 characterStoreEntry.put('\'').put(sampleBy.token).put('\'');
@@ -4604,10 +4605,10 @@ public class SqlOptimiser implements Mutable {
                 param2.paramCount = 0;
                 param2.type = LITERAL;
 
-                if (fromLo != null) {
-                    timestampFunc.args.add(param1);
+                if (sampleByFrom != null) {
+                    timestampFunc.args.add(sampleByFrom);
                     timestampFunc.args.add(param2);
-                    timestampFunc.args.add(fromLo);
+                    timestampFunc.args.add(param1);
                 } else {
                     timestampFunc.lhs = param1;
                     timestampFunc.rhs = param2;
@@ -4634,9 +4635,15 @@ public class SqlOptimiser implements Mutable {
                     nested.setTimestamp(nextLiteral(timestamp.token));
                 }
 
-                // clear sample by
+                nested.setFillFrom(sampleByFrom);
+                nested.setFillTo(sampleByTo);
+                nested.setFillStride(sampleBy);
+                nested.setFillValue(sampleByFill);
+
+                // clear sample by (but keep FILL and FROM-TO)
                 nested.setSampleBy(null);
                 nested.setSampleByOffset(null);
+                nested.setSampleByFromTo(null, null);
 
                 if ((wrapAction & SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES) != 0) {
                     model = wrapWithSelectModel(model, tempList, insetColumnAliases, timestampAlias);
@@ -5912,7 +5919,7 @@ public class SqlOptimiser implements Mutable {
             enumerateTableColumns(rewrittenModel, sqlExecutionContext, sqlParserCallback);
             rewriteTopLevelLiteralsToFunctions(rewrittenModel);
             rewrittenModel = rewriteSampleByFromTo(rewrittenModel);
-            //rewrittenModel = rewriteSampleBy(rewrittenModel);
+            rewrittenModel = rewriteSampleBy(rewrittenModel);
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
             resolveJoinColumns(rewrittenModel);
             optimiseBooleanNot(rewrittenModel);

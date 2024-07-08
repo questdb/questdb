@@ -139,6 +139,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private JoinContext context;
     private boolean distinct = false;
     private boolean explicitTimestamp;
+    private ExpressionNode fillFrom;
+    private ExpressionNode fillStride;
+    private ExpressionNode fillTo;
+    private ObjList<ExpressionNode> fillValue;
+
     //simple flag to mark when limit x,y in current model (part of query) is already taken care of by existing factories e.g. LimitedSizeSortedLightRecordCursorFactory
     //and doesn't need to be enforced by LimitRecordCursor. We need it to detect whether current factory implements limit from this or inner query .
     private boolean isLimitImplemented;
@@ -437,6 +442,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         sampleByOffset = ZERO_OFFSET;
         sampleByTo = null;
         sampleByFrom = null;
+        fillFrom = null;
+        fillTo = null;
+        fillStride = null;
+        fillValue = null;
     }
 
     public void clearColumnMapStructs() {
@@ -619,6 +628,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && Objects.equals(sampleByUnit, that.sampleByUnit)
                 && Objects.equals(sampleByTo, that.sampleByTo)
                 && Objects.equals(sampleByFrom, that.sampleByFrom)
+                && Objects.equals(fillFrom, that.fillFrom)
+                && Objects.equals(fillTo, that.fillTo)
+                && Objects.equals(fillStride, that.fillStride)
                 && Objects.equals(context, that.context)
                 && Objects.equals(joinCriteria, that.joinCriteria)
                 && Objects.equals(orderedJoinModels, that.orderedJoinModels)
@@ -687,6 +699,22 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public ObjList<ExpressionNode> getExpressionModels() {
         return expressionModels;
+    }
+
+    public ExpressionNode getFillFrom() {
+        return fillFrom;
+    }
+
+    public ExpressionNode getFillStride() {
+        return fillStride;
+    }
+
+    public ExpressionNode getFillTo() {
+        return fillTo;
+    }
+
+    public ObjList<ExpressionNode> getFillValue() {
+        return fillValue;
     }
 
     public ObjList<ExpressionNode> getGroupBy() {
@@ -963,7 +991,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 distinct, unionModel, setOperationType,
                 modelPosition, orderByAdviceMnemonic, tableId,
                 isUpdateModel, modelType, updateTableModel,
-                updateTableToken, artificialStar
+                updateTableToken, artificialStar, fillFrom, fillStride, fillTo, fillValue
         );
     }
 
@@ -1170,6 +1198,36 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         joinModels.setQuick(pos, model);
     }
 
+    public ExpressionNode searchForSampleByFrom() {
+        if (sampleByFrom != null) {
+            return sampleByFrom;
+        } else if (nestedModel != null) {
+            return nestedModel.searchForSampleByFrom();
+        } else {
+            return null;
+        }
+    }
+
+    public ExpressionNode searchForSampleByTo() {
+        if (sampleByTo != null) {
+            return sampleByTo;
+        } else if (nestedModel != null) {
+            return nestedModel.searchForSampleByTo();
+        } else {
+            return null;
+        }
+    }
+
+    public ExpressionNode searchForSampleByUnit() {
+        if (sampleByUnit != null) {
+            return sampleByUnit;
+        } else if (nestedModel != null) {
+            return nestedModel.searchForSampleByUnit();
+        } else {
+            return null;
+        }
+    }
+
     public void setAlias(ExpressionNode alias) {
         this.alias = alias;
     }
@@ -1196,6 +1254,22 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setExplicitTimestamp(boolean explicitTimestamp) {
         this.explicitTimestamp = explicitTimestamp;
+    }
+
+    public void setFillFrom(ExpressionNode fillFrom) {
+        this.fillFrom = fillFrom;
+    }
+
+    public void setFillStride(ExpressionNode fillStride) {
+        this.fillStride = fillStride;
+    }
+
+    public void setFillTo(ExpressionNode fillTo) {
+        this.fillTo = fillTo;
+    }
+
+    public void setFillValue(ObjList<ExpressionNode> fillValue) {
+        this.fillValue = fillValue;
     }
 
     public void setIsUpdate(boolean isUpdate) {
