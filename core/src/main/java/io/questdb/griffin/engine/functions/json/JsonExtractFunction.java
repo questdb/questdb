@@ -202,15 +202,11 @@ public class JsonExtractFunction implements ScalarFunction {
         if (jsonSeq == null) {
             return Numbers.INT_NULL;
         }
-        final int result = stateA.parser.queryPointerInt(
+        return stateA.parser.queryPointerInt(
                 stateA.initPaddedJson(jsonSeq),
                 pointer,
                 stateA.simdJsonResult
         );
-        if (stateA.simdJsonResult.getError() == 0) {
-            return result;
-        }
-        return Numbers.INT_NULL;
     }
 
     @Override
@@ -219,11 +215,7 @@ public class JsonExtractFunction implements ScalarFunction {
         if (jsonSeq == null) {
             return Numbers.LONG_NULL;
         }
-        final long result = stateA.parser.queryPointerLong(stateA.initPaddedJson(jsonSeq), pointer, stateA.simdJsonResult);
-        if (stateA.simdJsonResult.getError() == 0) {
-            return result;
-        }
-        return Numbers.LONG_NULL;
+        return stateA.parser.queryPointerLong(stateA.initPaddedJson(jsonSeq), pointer, stateA.simdJsonResult);
     }
 
     @Override
@@ -267,15 +259,11 @@ public class JsonExtractFunction implements ScalarFunction {
         if (jsonSeq == null) {
             return 0;
         }
-        final short result = stateA.parser.queryPointerShort(
+        return stateA.parser.queryPointerShort(
                 stateA.initPaddedJson(jsonSeq),
                 pointer,
                 stateA.simdJsonResult
         );
-        if (stateA.simdJsonResult.getError() == 0) {
-            return result;
-        }
-        return 0;
     }
 
     @Override

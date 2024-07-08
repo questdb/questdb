@@ -73,11 +73,6 @@ public class SimdJsonParserTest {
         parser.close();
     }
 
-    @Before
-    public void before() {
-        result.clear();
-    }
-
     @Test
     public void testBooleanAbsent() throws Exception {
         TestUtils.assertMemoryLeak(() -> {

@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.*;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -82,6 +83,32 @@ public class JsonExtractTypedFunctionFactory implements FunctionFactory {
         }
 
         final int targetType = parseTargetType(position, args.getQuick(2));
+
+        if (path.getVarcharA(null) == null) {
+            switch (targetType) {
+                case ColumnType.BOOLEAN:
+                    return BooleanConstant.FALSE;
+                case ColumnType.SHORT:
+                    return ShortConstant.ZERO;
+                case ColumnType.INT:
+                    return IntConstant.NULL;
+                case ColumnType.LONG:
+                    return LongConstant.NULL;
+                case ColumnType.FLOAT:
+                    return FloatConstant.NULL;
+                case ColumnType.DOUBLE:
+                    return DoubleConstant.NULL;
+                case ColumnType.DATE:
+                    return DateConstant.NULL;
+                case ColumnType.TIMESTAMP:
+                    return TimestampConstant.NULL;
+                case ColumnType.IPv4:
+                    return IPv4Constant.NULL;
+                default:
+                    assert false;
+            }
+        }
+
         final int maxSize = configuration.getStrFunctionMaxBufferLength();
         JsonExtractSupportingState stateA;
         switch (targetType) {

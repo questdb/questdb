@@ -24,12 +24,9 @@
 
 package io.questdb.std.json;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.Utf8Sequence;
-import org.jetbrains.annotations.NotNull;
 
 public class SimdJsonResult implements QuietCloseable {
     private static final int JSON_RESULT_STRUCT_SIZE = 12;
@@ -39,22 +36,6 @@ public class SimdJsonResult implements QuietCloseable {
 
     public SimdJsonResult() {
         this.impl = Unsafe.calloc(JSON_RESULT_STRUCT_SIZE, MemoryTag.NATIVE_DEFAULT);
-    }
-
-    public static CairoException formatError(int position, @NotNull String functionName, Utf8Sequence path, int error) {
-        return CairoException.nonCritical()
-                .position(position)
-                .put(functionName)
-                .put("(.., '")
-                .put(path)
-                .put("'): ")
-                .put(SimdJsonError.getMessage(error));
-    }
-
-    public void clear() {
-        Unsafe.getUnsafe().putInt(impl, 0);
-        Unsafe.getUnsafe().putInt(impl + JSON_RESULT_STRUCT_TYPE_OFFSET, 0);
-        Unsafe.getUnsafe().putInt(impl + JSON_RESULT_STRUCT_NUMBER_TYPE_OFFSET, 0);
     }
 
     @Override

@@ -84,6 +84,19 @@ public class JsonExtractTypedFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullPath() throws Exception {
+        testNullJson2ndArgCall(ColumnType.BOOLEAN, "false");
+        testNullJson2ndArgCall(ColumnType.SHORT, "0");
+        testNullJson2ndArgCall(ColumnType.INT, "null");
+        testNullJson2ndArgCall(ColumnType.LONG, "null");
+        testNullJson2ndArgCall(ColumnType.FLOAT, "null");
+        testNullJson2ndArgCall(ColumnType.DOUBLE, "null");
+        testNullJson2ndArgCall(ColumnType.DATE, "");
+        testNullJson2ndArgCall(ColumnType.TIMESTAMP, "");
+        testNullJson2ndArgCall(ColumnType.IPv4, "");
+    }
+
+    @Test
     public void testNullTyped() throws Exception {
         testNullJson3rdArgCall(ColumnType.BOOLEAN, "false");
         testNullJsonFunctionCast(ColumnType.BOOLEAN, "false");
@@ -110,6 +123,18 @@ public class JsonExtractTypedFunctionFactoryTest extends AbstractCairoTest {
         testNullJson3rdArgCall(ColumnType.DOUBLE, "null");
         testNullJsonFunctionCast(ColumnType.DOUBLE, "null");
         testNullJsonSuffixCast(ColumnType.DOUBLE, "null");
+
+        testNullJson3rdArgCall(ColumnType.DATE, "");
+        testNullJsonFunctionCast(ColumnType.DATE, "");
+        testNullJsonSuffixCast(ColumnType.DATE, "");
+
+        testNullJson3rdArgCall(ColumnType.TIMESTAMP, "");
+        testNullJsonFunctionCast(ColumnType.TIMESTAMP, "");
+        testNullJsonSuffixCast(ColumnType.TIMESTAMP, "");
+
+        testNullJson3rdArgCall(ColumnType.IPv4, "");
+        testNullJsonFunctionCast(ColumnType.IPv4, "");
+        testNullJsonSuffixCast(ColumnType.IPv4, "");
     }
 
     private void test3rdArgCallInvalid(int columnType) throws Exception {
@@ -121,6 +146,23 @@ public class JsonExtractTypedFunctionFactoryTest extends AbstractCairoTest {
             );
             Assert.assertEquals(7, exc.getPosition());
             TestUtils.assertContains(exc.getMessage(), "please use json_extract(json,path)::type semantic");
+        });
+    }
+
+    private void testNullJson2ndArgCall(int columnType, String expected) throws Exception {
+        final String expectedTypeName = ColumnType.nameOf(columnType);
+        assertMemoryLeak(() -> {
+            assertSqlWithTypes(
+                    "x\n" +
+                            expected + ":" + expectedTypeName + "\n",
+                    "select json_extract('{}', null, " + columnType + ") as x"
+            );
+
+            assertSqlWithTypes(
+                    "x\n" +
+                            expected + ":" + expectedTypeName + "\n",
+                    "select json_extract('{}', '', " + columnType + ") as x"
+            );
         });
     }
 
