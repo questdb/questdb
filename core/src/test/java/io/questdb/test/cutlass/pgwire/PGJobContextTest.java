@@ -4927,6 +4927,19 @@ nodejs code:
             }
 
             sink.clear();
+            try (PreparedStatement ps = connection.prepareStatement("select sum(json_extract(text, '.list[1]')::int) from json_example;")) {
+                try (ResultSet rs = ps.executeQuery()) {
+                    // all rows, null = null is always true
+                    assertResultSet(
+                            "sum[BIGINT]\n" +
+                                    "20\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            sink.clear();
             try (PreparedStatement ps = connection.prepareStatement("select sum(json_extract(text, ?, 5)) from json_example;")) {
                 ps.setString(1, ".list[1]");
                 try (ResultSet rs = ps.executeQuery()) {
@@ -4950,6 +4963,29 @@ nodejs code:
 
             sink.clear();
             try (PreparedStatement ps = connection.prepareStatement("select sum(json_extract(text, ?)::varchar::int) from json_example;")) {
+                ps.setString(1, ".list[1]");
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "sum[BIGINT]\n" +
+                                    "20\n",
+                            sink,
+                            rs
+                    );
+                }
+
+                ps.setString(1, ".list[2]");
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "sum[BIGINT]\n" +
+                                    "30\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            sink.clear();
+            try (PreparedStatement ps = connection.prepareStatement("select sum(json_extract(text, ?)::int) from json_example;")) {
                 ps.setString(1, ".list[1]");
                 try (ResultSet rs = ps.executeQuery()) {
                     assertResultSet(
