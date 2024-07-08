@@ -198,7 +198,8 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
 
         // TODO: we should get the format from table reader
         // FIXME: current logic is for testing purposes only
-        formats.extendAndSet(reenterPartitionIndex, reenterPartitionIndex % 2 == 0 ? PageFrame.NATIVE_FORMAT : PageFrame.PARQUET_FORMAT);
+        //formats.extendAndSet(reenterPartitionIndex, reenterPartitionIndex % 2 == 0 ? PageFrame.NATIVE_FORMAT : PageFrame.PARQUET_FORMAT);
+        formats.extendAndSet(reenterPartitionIndex, PageFrame.NATIVE_FORMAT);
 
         // it is possible that all columns in data frame are empty, but it doesn't mean
         // the data frame size is 0; sometimes we may want to imply nulls
