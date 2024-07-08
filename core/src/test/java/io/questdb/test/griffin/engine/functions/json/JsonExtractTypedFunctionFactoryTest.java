@@ -24,14 +24,53 @@
 
 package io.questdb.test.griffin.engine.functions.json;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.json.SimdJsonError;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class JsonExtractTypedFunctionFactoryTest extends AbstractCairoTest {
+
+    private final String[] brokenJsonScenarios = new String[]{
+            "{",
+            "[",
+            "{]",
+            "\"",
+            "[1, \"]",
+            "[1, 2]"  // valid, but path `[3]` does not exist
+    };
+
+    public void testBadJsonExtract(int columnType, String expected) throws Exception {
+        final String typeName = ColumnType.nameOf(columnType);
+        assertMemoryLeak(() -> {
+            for (String json : brokenJsonScenarios) {
+                final String sql = "select cast(json_extract('" + json + "', '[3]') as " + typeName + ")" +
+                        " as x from long_sequence(1)";
+                final String expectedTyped = "x\n" + expected + ":" + typeName + "\n";
+                assertSqlWithTypes(expectedTyped, sql);
+            }
+        });
+    }
+
+    @Test
+    public void testBadJsonExtract() throws Exception {
+        testBadJsonExtract(ColumnType.BOOLEAN, "false");
+        testBadJsonExtract(ColumnType.SHORT, "0");
+        testBadJsonExtract(ColumnType.INT, "null");
+        testBadJsonExtract(ColumnType.LONG, "null");
+        testBadJsonExtract(ColumnType.FLOAT, "null");
+        testBadJsonExtract(ColumnType.DOUBLE, "null");
+        testBadJsonExtract(ColumnType.VARCHAR, "");
+        testBadJsonExtract(ColumnType.SYMBOL, "");
+        testBadJsonExtract(ColumnType.DATE, "");
+        testBadJsonExtract(ColumnType.TIMESTAMP, "");
+        testBadJsonExtract(ColumnType.IPv4, "");
+    }
 
     @Test
     public void testExtractTimestampBadJson() throws Exception {
@@ -173,35 +212,4 @@ public class JsonExtractTypedFunctionFactoryTest extends AbstractCairoTest {
     private void testNullJsonSuffixCast(int columnType, String expected) throws Exception {
         testNullJsonSuffixCast(columnType, expected, columnType);
     }
-
-//    public static class BrokenJsonScenario {
-//        public BrokenJsonScenario(String brokenJson, int expectedError) {
-//            this.brokenJson = brokenJson;
-//            this.expectedError = expectedError;
-//        }
-//
-//        public final String brokenJson;
-//        public final int expectedError;
-//    }
-//
-//    public static BrokenJsonScenario bjs(String brokenJson, int expectedError) {
-//        return new BrokenJsonScenario(brokenJson, expectedError);
-//    }
-//
-//    public final BrokenJsonScenario brokenJsons[] = new BrokenJsonScenario[] {
-//        bjs("{", SimdJsonError.INCOMPLETE_ARRAY_OR_OBJECT),  // incomplete object
-//        bjs("[", SimdJsonError.INCOMPLETE_ARRAY_OR_OBJECT),  // incomplete array
-//        bjs("{]", SimdJsonError.),  // invalid object
-//        bjs("\"", ),  // unterminated string
-//        bjs("[1, \"]", ),  // unterminated string2
-//    };
-//
-//    @Test
-//    public void testBadJsonExtractVarchar() throws Exception {
-//        assertMemoryLeak(() -> {
-//            for (String json : brokenJsons) {
-//                assertSql("baobab", "select json_extract('" + json + "', '$') as x from long_sequence(1)");
-//            }
-//        });
-//    }
 }
