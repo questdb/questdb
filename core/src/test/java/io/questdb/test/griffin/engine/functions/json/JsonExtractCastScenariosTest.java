@@ -44,7 +44,8 @@ import org.junit.Test;
  * * tearDown() drops the table.
  */
 public class JsonExtractCastScenariosTest extends AbstractCairoTest {
-    private static final String[][] scenarios = new String[][]{
+    // N.B.: Compare these scenarios with those from `JsonParserTest`.
+    private static final String[][] SCENARIOS = new String[][]{
             // json token, ::boolean, ::short, ::int, ::long, ::double, ::varchar, ::ipv4, ::date, ::timestamp, ::string
             {"null", "false", "0", "null", "null", "null", "", "", "", "", ""},
             {"true", "true", "1", "1", "1", "1.0", "true", "", "", "", "true"},
@@ -187,8 +188,8 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
 
     public void testScenario(int type, int index) throws Exception {
         final int scenarioColumn = selectScenarioColumn(type);
-        final String json = scenarios[index][0];
-        final String expectedValue = scenarios[index][scenarioColumn];
+        final String json = SCENARIOS[index][0];
+        final String expectedValue = SCENARIOS[index][scenarioColumn];
         final String expected = "x\n" + expectedValue + ":" + ColumnType.nameOf(type) + "\n";
 
         if (JsonExtractTypedFunctionFactory.isIntrusivelyOptimized(type)) {
@@ -262,7 +263,7 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
                     "Failed JSON 3rd type arg call. Scenario: " + index +
                             ", SQL: `" + sql + "`" +
                             ", Cast Type: " + ColumnType.nameOf(type) +
-                            ", JSON: " + scenarios[index][0] +
+                            ", JSON: " + SCENARIOS[index][0] +
                             ", Expected Value: " + expectedValue +
                             ", Error: " + e.getMessage(), e);
         } catch (CairoException e) {
@@ -270,7 +271,7 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
                     "Failed JSON 3rd type arg call. Scenario: " + index +
                             ", SQL: `" + sql + "`" +
                             ", Cast Type: " + ColumnType.nameOf(type) +
-                            ", JSON: " + scenarios[index][0] +
+                            ", JSON: " + SCENARIOS[index][0] +
                             ", Expected Value: " + expectedValue +
                             ", Error: " + e.getMessage(), e);
         }
@@ -292,7 +293,7 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
                     "Failed cast(.. as ..) call. Scenario: " + index +
                             ", SQL: `" + sql + "`" +
                             ", Cast Type: " + ColumnType.nameOf(type) +
-                            ", JSON: " + scenarios[index][0] +
+                            ", JSON: " + SCENARIOS[index][0] +
                             ", Expected Value: " + expectedValue +
                             ", Error: " + e.getMessage(), e);
         } catch (CairoException e) {
@@ -300,7 +301,7 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
                     "Failed cast(.. as ..) call. Scenario: " + index +
                             ", SQL: `" + sql + "`" +
                             ", Cast Type: " + ColumnType.nameOf(type) +
-                            ", JSON: " + scenarios[index][0] +
+                            ", JSON: " + SCENARIOS[index][0] +
                             ", Expected Value: " + expectedValue +
                             ", Error: " + e.getMessage(), e);
         }
@@ -322,7 +323,7 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
                     "Failed suffix ::cast call. Scenario: " + index +
                             ", SQL: `" + sql + "`" +
                             ", Cast Type: " + ColumnType.nameOf(type) +
-                            ", JSON: " + scenarios[index][0] +
+                            ", JSON: " + SCENARIOS[index][0] +
                             ", Expected Value: " + expectedValue +
                             ", Error: " + e.getMessage(), e);
         } catch (CairoException e) {
@@ -330,7 +331,7 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
                     "Failed suffix ::cast call. Scenario: " + index +
                             ", SQL: `" + sql + "`" +
                             ", Cast Type: " + ColumnType.nameOf(type) +
-                            ", JSON: " + scenarios[index][0] +
+                            ", JSON: " + SCENARIOS[index][0] +
                             ", Expected Value: " + expectedValue +
                             ", Error: " + e.getMessage(), e);
         }
@@ -338,7 +339,7 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
 
     private void testScenarios(int type) throws Exception {
         assertMemoryLeak(() -> {
-            for (int index = 0; index < scenarios.length; index++) {
+            for (int index = 0; index < SCENARIOS.length; index++) {
                 testScenario(type, index);
             }
         });

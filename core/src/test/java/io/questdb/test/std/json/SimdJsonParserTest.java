@@ -26,14 +26,81 @@ package io.questdb.test.std.json;
 
 import io.questdb.log.LogFactory;
 import io.questdb.std.json.*;
+import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.GcUtf8String;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Objects;
 
 public class SimdJsonParserTest {
+    private static final GcUtf8String ROOT_PATH = new GcUtf8String("");
+
+    // N.B.: Compare these scenarios with those from `JsonExtractCastScenariosTest`.
+    private static final ScalarTestScenario[] SCALAR_SCENARIOS = new ScalarTestScenario[]{
+            new ScalarTestScenario(
+                    "null",
+                    new ScalarTestScenario.Value<Boolean>(
+                            SimdJsonError.SUCCESS,
+                            SimdJsonType.NULL,
+                            SimdJsonNumberType.UNSET,
+                            false),
+                    new ScalarTestScenario.Value<Short>(
+                            SimdJsonError.SUCCESS,
+                            SimdJsonType.NULL,
+                            SimdJsonNumberType.UNSET,
+                            (short) 0),
+                    new ScalarTestScenario.Value<Integer>(
+                            SimdJsonError.SUCCESS,
+                            SimdJsonType.NULL,
+                            SimdJsonNumberType.UNSET,
+                            Integer.MIN_VALUE),
+                    new ScalarTestScenario.Value<Long>(
+                            SimdJsonError.SUCCESS,
+                            SimdJsonType.NULL,
+                            SimdJsonNumberType.UNSET,
+                            Long.MIN_VALUE),
+                    new ScalarTestScenario.Value<Double>(
+                            SimdJsonError.SUCCESS,
+                            SimdJsonType.NULL,
+                            SimdJsonNumberType.UNSET,
+                            Double.NaN),
+                    new ScalarTestScenario.Value<String>(
+                            SimdJsonError.SUCCESS,
+                            SimdJsonType.NULL,
+                            SimdJsonNumberType.UNSET,
+                            ""),
+                    new ScalarTestScenario.Value<Long>(
+                            SimdJsonError.SUCCESS,
+                            SimdJsonType.NULL,
+                            SimdJsonNumberType.UNSET,
+                            0L,
+                            "")
+            ),
+//            new ScalarTestScenario(
+//                    "true",
+//            ),
+//            new ScalarTestScenario(
+//                    "false",
+//            ),
+//            new ScalarTestScenario(
+//                    "1",
+//            ),
+//            new ScalarTestScenario(
+//                    "0",
+//            ),
+//            new ScalarTestScenario(
+//                    "-1",
+//            ),
+//            new ScalarTestScenario(
+//                    "  abc  ",
+//            ),
+    };
     private static final SimdJsonResult result = new SimdJsonResult();
     private static final String testUnicodeChars = "ðãµ¶Āڜ💩🦞";
     private static final String description = (
@@ -328,6 +395,105 @@ public class SimdJsonParserTest {
     }
 
     @Test
+    public void testScalarScenariosBoolean() throws Exception {
+        testScenarios("queryPointerBoolean", (json, dest, scenario) -> {
+            final boolean res = parser.queryPointerBoolean(json, ROOT_PATH, result);
+            ScalarTestScenario.Value<Boolean> actual = new ScalarTestScenario.Value<>(
+                    result.getError(),
+                    result.getType(),
+                    result.getNumberType(),
+                    res
+            );
+            Assert.assertEquals(scenario.expectedBoolean, actual);
+        });
+    }
+
+    @Test
+    public void testScalarScenariosDouble() throws Exception {
+        testScenarios("queryPointerDouble", (json, dest, scenario) -> {
+            final double res = parser.queryPointerDouble(json, ROOT_PATH, result);
+            ScalarTestScenario.Value<Double> actual = new ScalarTestScenario.Value<>(
+                    result.getError(),
+                    result.getType(),
+                    result.getNumberType(),
+                    res
+            );
+            Assert.assertEquals(scenario.expectedDouble, actual);
+        });
+    }
+
+    @Test
+    public void testScalarScenariosInt() throws Exception {
+        testScenarios("queryPointerInt", (json, dest, scenario) -> {
+            final int res = parser.queryPointerInt(json, ROOT_PATH, result);
+            ScalarTestScenario.Value<Integer> actual = new ScalarTestScenario.Value<>(
+                    result.getError(),
+                    result.getType(),
+                    result.getNumberType(),
+                    res
+            );
+            Assert.assertEquals(scenario.expectedInt, actual);
+        });
+    }
+
+    @Test
+    public void testScalarScenariosLong() throws Exception {
+        testScenarios("queryPointerLong", (json, dest, scenario) -> {
+            final long res = parser.queryPointerLong(json, ROOT_PATH, result);
+            ScalarTestScenario.Value<Long> actual = new ScalarTestScenario.Value<>(
+                    result.getError(),
+                    result.getType(),
+                    result.getNumberType(),
+                    res
+            );
+            Assert.assertEquals(scenario.expectedLong, actual);
+        });
+    }
+
+    @Test
+    public void testScalarScenariosShort() throws Exception {
+        testScenarios("queryPointerShort", (json, dest, scenario) -> {
+            final short res = parser.queryPointerShort(json, ROOT_PATH, result);
+            ScalarTestScenario.Value<Short> actual = new ScalarTestScenario.Value<>(
+                    result.getError(),
+                    result.getType(),
+                    result.getNumberType(),
+                    res
+            );
+            Assert.assertEquals(scenario.expectedShort, actual);
+        });
+    }
+
+    @Test
+    public void testScalarScenariosUtf8() throws Exception {
+        testScenarios("queryPointerUtf8", (json, dest, scenario) -> {
+            parser.queryPointerUtf8(json, ROOT_PATH, result, dest, 1000);
+            ScalarTestScenario.Value<String> actual = new ScalarTestScenario.Value<>(
+                    result.getError(),
+                    result.getType(),
+                    result.getNumberType(),
+                    dest.toString()
+            );
+            Assert.assertEquals(scenario.expectedString, actual);
+        });
+    }
+
+    @Test
+    public void testScalarScenariosValue() throws Exception {
+        testScenarios("queryPointerValue", (json, dest, scenario) -> {
+            final long res = parser.queryPointerValue(json, ROOT_PATH, result, dest, 1000);
+            ScalarTestScenario.Value<Long> actual = new ScalarTestScenario.Value<>(
+                    result.getError(),
+                    result.getType(),
+                    result.getNumberType(),
+                    res,
+                    dest.toString()
+            );
+            Assert.assertEquals(scenario.expectedValue, actual);
+        });
+    }
+
+    @Test
     public void testStringAbsent() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (DirectUtf8Sink dest = new DirectUtf8Sink(100)) {
@@ -353,6 +519,116 @@ public class SimdJsonParserTest {
         try (DirectUtf8Sink dest = new DirectUtf8Sink(100)) {
             SimdJsonParser.convertJsonPathToPointer(new GcUtf8String(path), dest);
             return new GcUtf8String(dest.toString());
+        }
+    }
+
+    private void testScenarios(String method, ScenarioTestCode testCode) throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    DirectUtf8Sink json = new DirectUtf8Sink(1000);
+                    DirectUtf8Sink dest = new DirectUtf8Sink(1000)
+            ) {
+                for (ScalarTestScenario scenario : SCALAR_SCENARIOS) {
+                    json.clear();
+                    json.put(scenario.json);
+                    dest.clear();
+
+                    try {
+                        testCode.run(json, dest, scenario);
+                    } catch (AssertionError e) {
+                        final String message = "Scalar scenario failed for call `parser." + method +
+                                "(\"" + scenario.json + "\", \"" + ROOT_PATH + "\", ..)`. Error: " + e.getMessage();
+                        throw new AssertionError(message, e);
+                    }
+                }
+            }
+        });
+    }
+
+    private interface ScenarioTestCode {
+        void run(DirectUtf8Sequence json, DirectUtf8Sink dest, ScalarTestScenario scenario) throws Exception;
+    }
+
+    private static class ScalarTestScenario {
+        public final Value<Boolean> expectedBoolean;
+        public final Value<Double> expectedDouble;
+        public final Value<Integer> expectedInt;
+        public final Value<Long> expectedLong;
+        public final Value<Short> expectedShort;
+        public final Value<String> expectedString;
+        public final Value<Long> expectedValue;
+        public final String json;
+
+        public ScalarTestScenario(
+                String json,
+                Value<Boolean> expectedBoolean,
+                Value<Short> expectedShort,
+                Value<Integer> expectedInt,
+                Value<Long> expectedLong,
+                Value<Double> expectedDouble,
+                Value<String> expectedString,
+                Value<Long> expectedValue
+        ) {
+            this.json = json;
+            this.expectedBoolean = expectedBoolean;
+            this.expectedShort = expectedShort;
+            this.expectedInt = expectedInt;
+            this.expectedLong = expectedLong;
+            this.expectedDouble = expectedDouble;
+            this.expectedString = expectedString;
+            this.expectedValue = expectedValue;
+        }
+
+        public static class Value<T> {
+            String buffer = null;
+            int error;
+            int numberType;
+            int type;
+            T value;
+
+            public Value(int error, int type, int numberType, T value) {
+                this.error = error;
+                this.type = type;
+                this.value = value;
+            }
+
+            public Value(int error, int type, int numberType, T value, String buffer) {
+                this.error = error;
+                this.type = type;
+                this.numberType = numberType;
+                this.value = value;
+                this.buffer = buffer;
+            }
+
+            @Override
+            public boolean equals(Object obj) {
+                if (obj instanceof Value) {
+                    Value<?> other = (Value<?>) obj;
+                    return error == other.error &&
+                            type == other.type &&
+                            numberType == other.numberType &&
+                            Objects.equals(value, other.value) &&
+                            Objects.equals(buffer, other.buffer);
+                }
+                return false;
+            }
+
+            @Override
+            public String toString() {
+                final String errorStr = SimdJsonError.getMessage(error).split(":")[0];
+                if (buffer != null) {
+                    return "error=" + errorStr +
+                            ", type=" + SimdJsonType.nameOf(type) +
+                            ", numberType=" + SimdJsonNumberType.nameOf(numberType) +
+                            ", value=" + value +
+                            ", buffer=" + buffer;
+                } else {
+                    return "error=" + errorStr +
+                            ", type=" + SimdJsonType.nameOf(type) +
+                            ", numberType=" + SimdJsonNumberType.nameOf(numberType) +
+                            ", value=" + value;
+                }
+            }
         }
     }
 
