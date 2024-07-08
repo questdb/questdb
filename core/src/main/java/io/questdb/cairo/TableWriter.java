@@ -1059,6 +1059,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (e.isOutOfMemory()) {
                 onIncreasedMemoryPressure();
             }
+            distressed = true;
             throw e;
         }
 
