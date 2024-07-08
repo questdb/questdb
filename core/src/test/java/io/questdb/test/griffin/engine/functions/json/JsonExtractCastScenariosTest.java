@@ -197,11 +197,7 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
 
         testScenarioViaLonghandCast(json, type, index, expected, expectedValue);
 
-        if (type != ColumnType.DATE) {
-            // TODO: Fix `::date` casting. Something's off.
-            //       This is not specific to JSON, possibly a SqlParser issue.
-            testScenarioViaSuffixCast(json, type, index, expected, expectedValue);
-        }
+        testScenarioViaSuffixCast(json, type, index, expected, expectedValue);
     }
 
     @Test
