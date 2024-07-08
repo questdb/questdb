@@ -24,8 +24,8 @@
 
 package io.questdb.metrics;
 
+import io.questdb.std.str.BorrowableUtf8Sink;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -62,7 +62,7 @@ public class VirtualLongGauge implements LongGauge {
     }
 
     @Override
-    public void scrapeIntoPrometheus(@NotNull Utf8Sink sink) {
+    public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
         appendType(sink);
         appendMetricName(sink);
         PrometheusFormatUtils.appendSampleLineSuffix(sink, getValue());

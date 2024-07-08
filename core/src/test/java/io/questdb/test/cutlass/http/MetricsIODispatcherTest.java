@@ -33,8 +33,8 @@ import io.questdb.metrics.*;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.BorrowableUtf8Sink;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -332,7 +332,7 @@ public class MetricsIODispatcherTest {
         }
 
         @Override
-        public void scrapeIntoPrometheus(@NotNull Utf8Sink sink) {
+        public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
             metricsRegistry.scrapeIntoPrometheus(sink);
         }
 

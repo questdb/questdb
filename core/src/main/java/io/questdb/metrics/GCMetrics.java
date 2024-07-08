@@ -25,8 +25,8 @@
 package io.questdb.metrics;
 
 import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.str.BorrowableUtf8Sink;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.NotNull;
 
 import java.lang.management.GarbageCollectorMXBean;
@@ -42,7 +42,7 @@ public class GCMetrics implements Scrapable {
     private static final CharSequenceHashSet minorGCNames = new CharSequenceHashSet();
 
     @Override
-    public void scrapeIntoPrometheus(@NotNull Utf8Sink sink) {
+    public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
         long majorCount = 0;
         long majorTime = 0;
         long minorCount = 0;

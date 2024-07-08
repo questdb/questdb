@@ -27,8 +27,8 @@ package io.questdb.test;
 import io.questdb.Metrics;
 import io.questdb.metrics.*;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.str.BorrowableUtf8Sink;
 import io.questdb.std.str.DirectUtf8Sink;
-import io.questdb.std.str.Utf8Sink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -196,7 +196,7 @@ public class MetricsTest {
         }
 
         @Override
-        public void scrapeIntoPrometheus(@NotNull Utf8Sink sink) {
+        public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
             delegate.scrapeIntoPrometheus(sink);
         }
 

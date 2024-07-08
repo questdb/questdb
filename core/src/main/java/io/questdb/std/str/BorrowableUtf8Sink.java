@@ -22,39 +22,15 @@
  *
  ******************************************************************************/
 
-package io.questdb.metrics;
+package io.questdb.std.str;
 
-import io.questdb.std.str.BorrowableUtf8Sink;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.std.bytes.BorrowableAsNativeByteSink;
 
-public class NullCounter implements Counter, CounterWithOneLabel, CounterWithTwoLabels {
-    public static final NullCounter INSTANCE = new NullCounter();
-
-    private NullCounter() {
-    }
-
-    @Override
-    public void add(long value) {
-    }
-
-    @Override
-    public long getValue() {
-        return 0;
-    }
-
-    @Override
-    public void inc() {
-    }
-
-    @Override
-    public void inc(short label0) {
-    }
-
-    @Override
-    public void inc(short label0, short label1) {
-    }
-
-    @Override
-    public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
-    }
+/**
+ * A growable Utf8 buffer that can be written as a utf-8 sink and borrowed for writing in native code.
+ *
+ * This is an interface abstraction of the sink, used by Promethius scraping job. The "borrowable" part
+ * is used in Ent by rust code.
+ */
+public interface BorrowableUtf8Sink extends Utf8Sink, BorrowableAsNativeByteSink {
 }

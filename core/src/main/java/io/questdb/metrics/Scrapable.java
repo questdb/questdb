@@ -24,10 +24,11 @@
 
 package io.questdb.metrics;
 
-import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.BorrowableUtf8Sink;
 
 /** Anything that can be scraped for Prometheus metrics. */
 public interface Scrapable {
+
     // We need a sink that we can borrow from and append to in native code.
-    void scrapeIntoPrometheus(Utf8Sink sink);
+    void scrapeIntoPrometheus(BorrowableUtf8Sink sink);
 }
