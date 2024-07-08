@@ -61,25 +61,18 @@ public class CastVarcharToStrFunctionFactory implements FunctionFactory {
     }
 
     public static class Func extends AbstractCastToStrFunction {
-        private final StringSink sinkA = new StringSink();
-        private final StringSink sinkB = new StringSink();
-
         public Func(Function arg) {
             super(arg);
         }
 
         @Override
         public CharSequence getStrA(Record rec) {
-            sinkA.clear();
-            arg.getStr(rec, sinkA);
-            return sinkA;
+            return arg.getStrA(rec);
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
-            sinkB.clear();
-            arg.getStr(rec, sinkB);
-            return sinkB;
+            return arg.getStrB(rec);
         }
 
         @Override

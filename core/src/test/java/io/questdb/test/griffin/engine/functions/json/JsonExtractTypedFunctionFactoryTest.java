@@ -24,11 +24,8 @@
 
 package io.questdb.test.griffin.engine.functions.json;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.json.SimdJsonError;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -70,6 +67,15 @@ public class JsonExtractTypedFunctionFactoryTest extends AbstractCairoTest {
         testBadJsonExtract(ColumnType.DATE, "");
         testBadJsonExtract(ColumnType.TIMESTAMP, "");
         testBadJsonExtract(ColumnType.IPv4, "");
+    }
+
+    @Test
+    public void testColumnAsJsonPath() throws Exception {
+        assertMemoryLeak(() -> {
+            final String json = "'{\"path\": 0.0000000000000000000000000001}'";
+            ddl("create table json_test as (select " + json + "::varchar text, '.path' path)");
+            assertException("select json_extract(text, path, 6) from json_test", 26, "constant or bind variable expected");
+        });
     }
 
     @Test

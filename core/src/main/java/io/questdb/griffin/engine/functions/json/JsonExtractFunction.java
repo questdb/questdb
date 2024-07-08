@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
@@ -89,7 +88,7 @@ public class JsonExtractFunction implements ScalarFunction {
     @Override
     public boolean getBool(Record rec) {
         final Utf8Sequence jsonSeq = json.getVarcharA(rec);
-        if (jsonSeq == null) {
+        if (jsonSeq == null || pointer == null) {
             return defaultBool;
         }
         return stateA.parser.queryPointerBoolean(stateA.initPaddedJson(jsonSeq), pointer, stateA.simdJsonResult);
@@ -97,12 +96,12 @@ public class JsonExtractFunction implements ScalarFunction {
 
     @Override
     public final byte getByte(Record rec) {
-        return SqlUtil.implicitCastVarcharAsByte(getVarcharA(rec));
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public char getChar(Record rec) {
-        return SqlUtil.implicitCastVarcharAsChar(getVarcharA(rec));
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -132,7 +131,7 @@ public class JsonExtractFunction implements ScalarFunction {
     @Override
     public double getDouble(Record rec) {
         final Utf8Sequence jsonSeq = json.getVarcharA(rec);
-        if (jsonSeq == null) {
+        if (jsonSeq == null || pointer == null) {
             return Double.NaN;
         }
         final double d = stateA.parser.queryPointerDouble(
@@ -199,7 +198,7 @@ public class JsonExtractFunction implements ScalarFunction {
     @Override
     public int getInt(Record rec) {
         final Utf8Sequence jsonSeq = json.getVarcharA(rec);
-        if (jsonSeq == null) {
+        if (jsonSeq == null || pointer == null) {
             return Numbers.INT_NULL;
         }
         return stateA.parser.queryPointerInt(
@@ -212,7 +211,7 @@ public class JsonExtractFunction implements ScalarFunction {
     @Override
     public long getLong(Record rec) {
         final Utf8Sequence jsonSeq = json.getVarcharA(rec);
-        if (jsonSeq == null) {
+        if (jsonSeq == null || pointer == null) {
             return Numbers.LONG_NULL;
         }
         return stateA.parser.queryPointerLong(stateA.initPaddedJson(jsonSeq), pointer, stateA.simdJsonResult);
@@ -256,7 +255,7 @@ public class JsonExtractFunction implements ScalarFunction {
     @Override
     public short getShort(Record rec) {
         final Utf8Sequence jsonSeq = json.getVarcharA(rec);
-        if (jsonSeq == null) {
+        if (jsonSeq == null || pointer == null) {
             return 0;
         }
         return stateA.parser.queryPointerShort(
@@ -373,6 +372,11 @@ public class JsonExtractFunction implements ScalarFunction {
         path.init(symbolTableSource, executionContext);
         pointer = Misc.free(pointer);
         pointer = JsonExtractSupportingState.varcharConstantToJsonPointer(path);
+    }
+
+    @Override
+    public boolean isRuntimeConstant() {
+        return pointer == null;
     }
 
     private long extractLongFromJsonNumber(long res) {

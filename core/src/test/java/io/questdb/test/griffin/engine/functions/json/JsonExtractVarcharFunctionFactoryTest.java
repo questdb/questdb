@@ -124,6 +124,72 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testString() throws Exception {
+        assertMemoryLeak(
+                () -> {
+                    ddl("create table json_test as (" +
+                            "select rnd_str('{\n" +
+                            "    \"hello\": \"world\",\n" +
+                            "    \"list\": [\n" +
+                            "        1,\n" +
+                            "        2,\n" +
+                            "        3\n" +
+                            "     ],\n" +
+                            "     \"dicts\": [\n" +
+                            "         {\"hello\": \"world\"},\n" +
+                            "         {\"hello\": \"bob\"}\n" +
+                            "     ]\n" +
+                            "}', \n" +
+                            "'{\n" +
+                            "    \"hello\": \"world\",\n" +
+                            "    \"list\": [\n" +
+                            "        1,\n" +
+                            "        2,\n" +
+                            "        3\n" +
+                            "     ],\n" +
+                            "     \"dicts\": [\n" +
+                            "         {\"hello\": \"world\"},\n" +
+                            "         {\"hello\": \"bob\"},\n" +
+                            "         {\"hello\": \"alice\"}\n" +
+                            "     ]\n" +
+                            "}',\n" +
+                            "'{\n" +
+                            "    \"hello\": \"world\",\n" +
+                            "    \"list\": [\n" +
+                            "        1,\n" +
+                            "        2,\n" +
+                            "        3\n" +
+                            "     ],\n" +
+                            "     \"dicts\": [\n" +
+                            "         {\"hello\": \"world\"},\n" +
+                            "         {\"hello\": \"bob\"},\n" +
+                            "         {\"hello\": \"запросила\"}\n" +
+                            "     ]\n" +
+                            "}',\n" +
+                            "null\n" +
+                            ")::varchar text from long_sequence(10)\n" +
+                            ")");
+
+                    assertQuery(
+                            "k\n" +
+                                    "\n" +
+                                    "{\"hello\": \"запросила\"}\n" +
+                                    "{\"hello\": \"alice\"}\n" +
+                                    "\n" +
+                                    "{\"hello\": \"alice\"}\n" +
+                                    "\n" +
+                                    "{\"hello\": \"запросила\"}\n" +
+                                    "\n" +
+                                    "{\"hello\": \"запросила\"}\n" +
+                                    "\n",
+                            "select json_extract(text, '.dicts[2]')::string k from json_test",
+                            true
+                    );
+                }
+        );
+    }
+
+    @Test
     public void testEmptyJson() throws Exception {
         assertMemoryLeak(() -> {
             final String json = "'{}'";
@@ -482,7 +548,7 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testString() throws Exception {
+    public void testVarcharVanilla() throws Exception {
         assertMemoryLeak(() -> {
             final String json = "'{\"path\": \"abc\"}'";
             final String expected = "json_extract\n" +
