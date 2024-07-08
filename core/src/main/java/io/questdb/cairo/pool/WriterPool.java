@@ -36,6 +36,7 @@ import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -532,7 +533,7 @@ public class WriterPool extends AbstractPool {
         O3MemoryPressureRegulator regulator;
         if (engine.isWalTable(tableToken)) {
             SeqTxnTracker txnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
-            regulator = new O3MemoryPressureRegulatorImpl(configuration.getRandom(), configuration.getMicrosecondClock(), txnTracker);
+            regulator = new O3MemoryPressureRegulatorImpl(configuration.getRandom(), MicrosecondClockImpl.INSTANCE, txnTracker);
         } else {
             regulator = EmptyO3MemoryPressureRegulator.INSTANCE;
         }
