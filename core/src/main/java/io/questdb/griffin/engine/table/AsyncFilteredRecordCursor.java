@@ -376,9 +376,9 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         ogRowsRemaining = rowsRemaining;
         this.rowsRemaining = rowsRemaining;
         allFramesActive = true;
-        record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
+        record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageFrameMemoryCache());
         if (recordB != null) {
-            recordB.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
+            recordB.of(frameSequence.getSymbolTableSource(), frameSequence.getPageFrameMemoryCache());
         }
     }
 }

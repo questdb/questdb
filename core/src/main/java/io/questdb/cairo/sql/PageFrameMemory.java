@@ -22,20 +22,31 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql.async;
+package io.questdb.cairo.sql;
 
-import io.questdb.cairo.sql.PageFrameMemoryRecord;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
+import io.questdb.std.LongList;
+import io.questdb.std.QuietCloseable;
 
-@FunctionalInterface
-public interface PageFrameReducer {
-    void reduce(
-            int workerId,
-            @NotNull PageFrameMemoryRecord record,
-            @NotNull PageFrameReduceTask task,
-            @NotNull SqlExecutionCircuitBreaker circuitBreaker,
-            @Nullable PageFrameSequence<?> stealingFrameSequence
-    );
+/**
+ * Represents page frame as a set of per column contiguous memory.
+ * For native partitions, it's simply a slice of mmapped memory.
+ * For Parquet partitions, it's a deserialized in-memory native format.
+ */
+public interface PageFrameMemory extends QuietCloseable {
+
+    long getAuxPageAddress(int columnIndex);
+
+    LongList getAuxPageAddresses();
+
+    int getColumnCount();
+
+    int getFrameIndex();
+
+    long getPageAddress(int columnIndex);
+
+    LongList getPageAddresses();
+
+    LongList getPageSizes();
+
+    long getRowIdOffset();
 }

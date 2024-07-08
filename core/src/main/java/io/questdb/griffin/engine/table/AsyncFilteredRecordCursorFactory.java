@@ -213,7 +213,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
 
     private static void filter(
             int workerId,
-            @NotNull PageAddressCacheRecord record,
+            @NotNull PageFrameMemoryRecord record,
             @NotNull PageFrameReduceTask task,
             @NotNull SqlExecutionCircuitBreaker circuitBreaker,
             @Nullable PageFrameSequence<?> stealingFrameSequence

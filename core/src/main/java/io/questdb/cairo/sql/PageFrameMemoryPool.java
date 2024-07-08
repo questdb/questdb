@@ -38,15 +38,15 @@ import org.jetbrains.annotations.Nullable;
 /**
  * Provides addresses for page frames in both native and Parquet formats.
  * Memory in native page frames is mmapped, so no additional actions are
- * necessary. Parquet frames need to be explicitly deserialized into
+ * necessary. Parquet frames must be explicitly deserialized into
  * the in-memory native format before being accessed directly or via a Record.
  * Thus, a {@link #navigateTo(int)} call is required before accessing memory
  * that belongs to a page frame.
  * <p>
- * This cache is thread-unsafe when it comes to Parquet partitions, so it
- * shouldn't be shared between multiple threads.
+ * This pool is thread-unsafe as it may hold navigated Parquet partition data,
+ * so it shouldn't be shared between multiple threads.
  */
-public class PageFrameMemoryCache implements Mutable, QuietCloseable {
+public class PageFrameMemoryPool implements QuietCloseable {
 
     // Used for deserialized Parquet frame.
     // TODO: add LRU cache for multiple frames
@@ -56,122 +56,19 @@ public class PageFrameMemoryCache implements Mutable, QuietCloseable {
             () -> (MemoryCARWImpl) Vm.getCARWInstance(128 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_OFFLOAD),
             128
     );
-    private final IntList columnTypes = new IntList();
-    private final LongList frameAuxPageAddresses = new LongList(); // Holds addresses for non-native frames.
-    private final ByteList frameFormats = new ByteList();
-    private final LongList framePageAddresses = new LongList(); // Holds addresses for non-native frames.
-    private final LongList framePageSizes = new LongList(); // Holds sizes for non-native frames.
-    private final LongList frameSizes = new LongList();
-    private final long nativeCacheSizeThreshold;
+    private final PageFrameMemoryImpl frameMemory = new PageFrameMemoryImpl();
     private final NativeFrameRecord nativeFrameRecord;
-    private ObjList<LongList> auxPageAddresses = new ObjList<>();
-    private int columnCount;
-    private byte frameFormat;
+    private final LongList tmpAuxPageAddresses = new LongList(); // Holds addresses for non-native frames.
+    private final LongList tmpPageAddresses = new LongList(); // Holds addresses for non-native frames.
+    private final LongList tmpPageSizes = new LongList(); // Holds sizes for non-native frames.
+    private PageFrameAddressCache addressCache;
+    private LongList auxPageAddresses;
     private int frameIndex;
-    private ObjList<LongList> pageAddresses = new ObjList<>();
-    private ObjList<LongList> pageSizes = new ObjList<>();
-    // Makes it possible to determine real row id, not the one relative to the page.
-    private LongList rowIdOffsets = new LongList();
+    private LongList pageAddresses;
+    private LongList pageSizes;
 
-    public PageFrameMemoryCache(CairoConfiguration configuration) {
-        this.nativeCacheSizeThreshold = configuration.getSqlJitPageAddressCacheThreshold() / Long.BYTES;
+    public PageFrameMemoryPool() {
         this.nativeFrameRecord = new NativeFrameRecord(this);
-    }
-
-    public PageFrameMemoryCache(PageFrameMemoryCache other) {
-        this.nativeCacheSizeThreshold = other.nativeCacheSizeThreshold;
-        this.frameSizes.add(other.frameSizes);
-        this.frameFormats.addAll(other.frameFormats);
-        this.columnTypes.addAll(other.columnTypes);
-        this.columnCount = other.columnCount;
-        // deep auxPageAddresses copy
-        for (int i = 0, n = other.auxPageAddresses.size(); i < n; i++) {
-            final LongList otherAuxPageAddresses = other.auxPageAddresses.getQuick(i);
-            if (otherAuxPageAddresses != null) {
-                final LongList thisAuxPageAddresses = new LongList(otherAuxPageAddresses.size());
-                thisAuxPageAddresses.add(otherAuxPageAddresses);
-                this.auxPageAddresses.add(thisAuxPageAddresses);
-            } else {
-                this.auxPageAddresses.add(null);
-            }
-        }
-        // deep pageAddresses copy
-        for (int i = 0, n = other.pageAddresses.size(); i < n; i++) {
-            final LongList otherPageAddresses = other.pageAddresses.getQuick(i);
-            if (otherPageAddresses != null) {
-                final LongList thisPageAddresses = new LongList(otherPageAddresses.size());
-                thisPageAddresses.add(otherPageAddresses);
-                this.pageAddresses.add(thisPageAddresses);
-            } else {
-                this.pageAddresses.add(null);
-            }
-        }
-        // deep pageSizes copy
-        for (int i = 0, n = other.pageSizes.size(); i < n; i++) {
-            final LongList otherPageSizes = other.pageSizes.getQuick(i);
-            if (otherPageSizes != null) {
-                final LongList thisPageSizes = new LongList(otherPageSizes.size());
-                thisPageSizes.add(otherPageSizes);
-                this.pageSizes.add(thisPageSizes);
-            } else {
-                this.pageSizes.add(null);
-            }
-        }
-        this.rowIdOffsets.add(other.rowIdOffsets);
-        this.nativeFrameRecord = new NativeFrameRecord(this);
-    }
-
-    public void add(int frameIndex, @Transient PageFrame frame) {
-        if (pageAddresses.size() >= columnCount * (frameIndex + 1)) {
-            return; // The page frame is already cached
-        }
-
-        if (frame.getFormat() == PageFrame.NATIVE_FORMAT) {
-            final LongList framePageAddresses = new LongList(columnCount);
-            final LongList frameAuxPageAddresses = new LongList(columnCount);
-            final LongList framePageSizes = new LongList(columnCount);
-            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                framePageAddresses.add(frame.getPageAddress(columnIndex));
-                final boolean isVarSize = ColumnType.isVarSize(columnTypes.getQuick(columnIndex));
-                frameAuxPageAddresses.add(isVarSize ? frame.getIndexPageAddress(columnIndex) : 0);
-                framePageSizes.add(isVarSize ? frame.getPageSize(columnIndex) : 0);
-            }
-            pageAddresses.add(framePageAddresses);
-            auxPageAddresses.add(frameAuxPageAddresses);
-            pageSizes.add(framePageSizes);
-        } else {
-            pageAddresses.add(null);
-            auxPageAddresses.add(null);
-            pageSizes.add(null);
-        }
-
-        frameSizes.add(frame.getPartitionHi() - frame.getPartitionLo());
-        frameFormats.add(frame.getFormat());
-        rowIdOffsets.add(Rows.toRowID(frame.getPartitionIndex(), frame.getPartitionLo()));
-    }
-
-    @Override
-    public void clear() {
-        frameIndex = -1;
-        frameFormat = -1;
-        frameSizes.clear();
-        frameFormats.clear();
-        columnTypes.clear();
-        framePageAddresses.clear();
-        frameAuxPageAddresses.clear();
-        framePageSizes.clear();
-        // TODO: threshold logic no longer makes sense
-        if (pageAddresses.size() < nativeCacheSizeThreshold) {
-            pageAddresses.clear();
-            auxPageAddresses.clear();
-            pageSizes.clear();
-            rowIdOffsets.clear();
-        } else {
-            pageAddresses = new ObjList<>();
-            auxPageAddresses = new ObjList<>();
-            pageSizes = new ObjList<>();
-            rowIdOffsets = new LongList();
-        }
     }
 
     @Override
@@ -180,91 +77,36 @@ public class PageFrameMemoryCache implements Mutable, QuietCloseable {
         columnChunksPool.closeAndClear();
     }
 
-    public LongList getAuxPageAddresses() {
-        if (frameFormat == PageFrame.NATIVE_FORMAT) {
-            return auxPageAddresses.getQuick(frameIndex);
-        }
-        return frameAuxPageAddresses;
-    }
-
-    public int getColumnCount() {
-        return columnCount;
-    }
-
-    public int getFrameIndex() {
-        return frameIndex;
-    }
-
-    public LongList getPageAddresses() {
-        if (frameFormat == PageFrame.NATIVE_FORMAT) {
-            return pageAddresses.getQuick(frameIndex);
-        }
-        return framePageAddresses;
-    }
-
-    public LongList getPageSizes() {
-        if (frameFormat == PageFrame.NATIVE_FORMAT) {
-            return pageSizes.getQuick(frameIndex);
-        }
-        return framePageSizes;
-    }
-
-    public long getRowIdOffset() {
-        return rowIdOffsets.getQuick(frameIndex);
-    }
-
-    public boolean hasColumnTops() {
-        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            if (pageAddresses.getQuick(frameIndex).getQuick(columnIndex) == 0
-                    // VARCHAR column that contains short strings will have zero data vector,
-                    // so for such columns we also need to check that the aux (index) vector is zero.
-                    && auxPageAddresses.getQuick(frameIndex).getQuick(columnIndex) == 0) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    public boolean isVarSizeColumn(int columnIndex) {
-        return ColumnType.isVarSize(columnTypes.getQuick(columnIndex));
-    }
-
-    public void navigateTo(int frameIndex) {
-        assert pageAddresses.size() >= columnCount * (frameIndex + 1);
-        assert pageSizes.size() >= columnCount * (frameIndex + 1);
-        assert auxPageAddresses.size() >= columnCount * (frameIndex + 1);
-
+    public PageFrameMemory navigateTo(int frameIndex) {
         this.frameIndex = frameIndex;
-        this.frameFormat = frameFormats.getQuick(frameIndex);
+        final byte frameFormat = addressCache.getFrameFormat(frameIndex);
         if (frameFormat == PageFrame.PARQUET_FORMAT) {
-            columnChunks.clear();
-            columnChunksPool.clear();
             // TODO: handle missing columns/column tops/etc.
-            copyToColumnChunks(0, frameSizes.getQuick(frameIndex));
+            copyToColumnChunks(0, addressCache.getFrameSize(frameIndex));
 
             // Copy the addresses to frame-local lists.
-            framePageAddresses.clear();
-            frameAuxPageAddresses.clear();
-            framePageSizes.clear();
+            tmpPageAddresses.clear();
+            tmpAuxPageAddresses.clear();
+            tmpPageSizes.clear();
+            final int columnCount = addressCache.getColumnCount();
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                framePageAddresses.add(columnChunks.getQuick(2 * columnIndex).addressOf(0));
-                frameAuxPageAddresses.add(columnChunks.getQuick(2 * columnIndex + 1).addressOf(0));
-                framePageSizes.add(columnChunks.getQuick(2 * columnIndex).size());
+                tmpPageAddresses.add(columnChunks.getQuick(2 * columnIndex).addressOf(0));
+                tmpAuxPageAddresses.add(columnChunks.getQuick(2 * columnIndex + 1).addressOf(0));
+                tmpPageSizes.add(columnChunks.getQuick(2 * columnIndex).size());
             }
+            pageAddresses = tmpPageAddresses;
+            auxPageAddresses = tmpAuxPageAddresses;
+            pageSizes = tmpPageSizes;
+        } else {
+            pageAddresses = addressCache.getPageAddresses(frameIndex);
+            auxPageAddresses = addressCache.getAuxPageAddresses(frameIndex);
+            pageSizes = addressCache.getPageSizes(frameIndex);
         }
+        return frameMemory;
     }
 
-    public MemoryCARW nextColumnChunk() {
-        return columnChunksPool.next();
-    }
-
-    public void of(@Transient RecordMetadata metadata) {
-        this.frameIndex = -1;
-        this.frameFormat = -1;
-        this.columnCount = metadata.getColumnCount();
-        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            columnTypes.add(metadata.getColumnType(columnIndex));
-        }
+    public void of(PageFrameAddressCache addressCache) {
+        this.addressCache = addressCache;
     }
 
     /**
@@ -272,7 +114,8 @@ public class PageFrameMemoryCache implements Mutable, QuietCloseable {
      * Copies column values for filtered rows into column memory chunks.
      */
     private void copyToColumnChunks(long rowIdLo, long rowIdHi) {
-        for (int i = 0; i < columnTypes.size(); i++) {
+        final IntList columnTypes = addressCache.getColumnTypes();
+        for (int i = 0, n = columnTypes.size(); i < n; i++) {
             final int columnType = columnTypes.getQuick(i);
 
             final MemoryCARW dataMem = nextColumnChunk();
@@ -379,24 +222,19 @@ public class PageFrameMemoryCache implements Mutable, QuietCloseable {
     }
 
     private long getAuxPageAddress(int columnIndex) {
-        if (frameFormat == PageFrame.NATIVE_FORMAT) {
-            return auxPageAddresses.getQuick(frameIndex).getQuick(columnIndex);
-        }
-        return frameAuxPageAddresses.getQuick(columnIndex);
+        return auxPageAddresses.getQuick(columnIndex);
     }
 
     private long getPageAddress(int columnIndex) {
-        if (frameFormat == PageFrame.NATIVE_FORMAT) {
-            return pageAddresses.getQuick(frameIndex).getQuick(columnIndex);
-        }
-        return framePageAddresses.getQuick(columnIndex);
+        return pageAddresses.getQuick(columnIndex);
     }
 
     private long getPageSize(int columnIndex) {
-        if (frameFormat == PageFrame.NATIVE_FORMAT) {
-            return pageSizes.getQuick(frameIndex).getQuick(columnIndex);
-        }
-        return framePageSizes.getQuick(columnIndex);
+        return pageSizes.getQuick(columnIndex);
+    }
+
+    private MemoryCARW nextColumnChunk() {
+        return columnChunksPool.next();
     }
 
     // TODO: delete once we don't need to copy native frames
@@ -407,12 +245,12 @@ public class PageFrameMemoryCache implements Mutable, QuietCloseable {
         private final StableDirectString csviewB = new StableDirectString();
         private final Long256Impl long256A = new Long256Impl();
         private final Long256Impl long256B = new Long256Impl();
-        private final PageFrameMemoryCache memoryCache;
+        private final PageFrameMemoryPool memoryCache;
         private final Utf8SplitString utf8ViewA = new Utf8SplitString(true);
         private final Utf8SplitString utf8ViewB = new Utf8SplitString(true);
         private long rowIndex;
 
-        public NativeFrameRecord(PageFrameMemoryCache memoryCache) {
+        public NativeFrameRecord(PageFrameMemoryPool memoryCache) {
             this.memoryCache = memoryCache;
         }
 
@@ -720,6 +558,55 @@ public class PageFrameMemoryCache implements Mutable, QuietCloseable {
             }
             final long dataPageAddress = memoryCache.getPageAddress(columnIndex);
             return VarcharTypeDriver.getSplitValue(auxPageAddress, dataPageAddress, rowIndex, utf8View);
+        }
+    }
+
+    private class PageFrameMemoryImpl implements PageFrameMemory {
+
+        @Override
+        public void close() {
+            columnChunks.clear();
+            columnChunksPool.clear();
+        }
+
+        @Override
+        public long getAuxPageAddress(int columnIndex) {
+            return auxPageAddresses.getQuick(columnIndex);
+        }
+
+        @Override
+        public LongList getAuxPageAddresses() {
+            return auxPageAddresses;
+        }
+
+        @Override
+        public int getColumnCount() {
+            return addressCache.getColumnCount();
+        }
+
+        @Override
+        public int getFrameIndex() {
+            return frameIndex;
+        }
+
+        @Override
+        public long getPageAddress(int columnIndex) {
+            return pageAddresses.getQuick(columnIndex);
+        }
+
+        @Override
+        public LongList getPageAddresses() {
+            return pageAddresses;
+        }
+
+        @Override
+        public LongList getPageSizes() {
+            return pageSizes;
+        }
+
+        @Override
+        public long getRowIdOffset() {
+            return addressCache.getRowIdOffset(frameIndex);
         }
     }
 }

@@ -26,7 +26,9 @@ package io.questdb.cairo.sql.async;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.sql.PageAddressCache;
+import io.questdb.cairo.sql.PageFrameAddressCache;
+import io.questdb.cairo.sql.PageFrameMemory;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.FlyweightMessageContainer;
@@ -45,9 +47,11 @@ public class PageFrameReduceTask implements Closeable {
     private final DirectLongList columns;
     private final StringSink errorMsg = new StringSink();
     private final DirectLongList filteredRows; // Used for TYPE_FILTER.
-    private final long pageFrameQueueCapacity;
+    private final PageFrameMemoryPool frameMemoryPool;
+    private final long frameQueueCapacity;
     private final DirectLongList varSizeAux;
     private int frameIndex = Integer.MAX_VALUE;
+    private PageFrameMemory frameMemory;
     private PageFrameSequence<?> frameSequence;
     private long frameSequenceId;
     private boolean isCancelled;
@@ -58,7 +62,8 @@ public class PageFrameReduceTask implements Closeable {
             this.filteredRows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), memoryTag);
             this.columns = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
             this.varSizeAux = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
-            this.pageFrameQueueCapacity = configuration.getPageFrameReduceQueueCapacity();
+            this.frameQueueCapacity = configuration.getPageFrameReduceQueueCapacity();
+            this.frameMemoryPool = new PageFrameMemoryPool();
         } catch (Throwable th) {
             close();
             throw th;
@@ -67,6 +72,7 @@ public class PageFrameReduceTask implements Closeable {
 
     @Override
     public void close() {
+        Misc.free(frameMemoryPool);
         Misc.free(filteredRows);
         Misc.free(columns);
         Misc.free(varSizeAux);
@@ -91,6 +97,10 @@ public class PageFrameReduceTask implements Closeable {
         return frameIndex;
     }
 
+    public PageFrameMemory getFrameMemory() {
+        return frameMemory;
+    }
+
     public long getFrameRowCount() {
         return frameSequence.getFrameRowCount(frameIndex);
     }
@@ -106,10 +116,6 @@ public class PageFrameReduceTask implements Closeable {
 
     public long getFrameSequenceId() {
         return frameSequenceId;
-    }
-
-    public PageAddressCache getPageAddressCache() {
-        return frameSequence.getPageAddressCache();
     }
 
     public byte getType() {
@@ -133,25 +139,35 @@ public class PageFrameReduceTask implements Closeable {
 
     public void of(PageFrameSequence<?> frameSequence, int frameIndex) {
         this.frameSequence = frameSequence;
+        this.frameMemoryPool.of(frameSequence.getAddressCache());
         this.frameSequenceId = frameSequence.getId();
         this.type = frameSequence.getTaskType();
         this.frameIndex = frameIndex;
         errorMsg.clear();
         isCancelled = false;
+        frameMemory = null;
         if (type == TYPE_FILTER) {
             filteredRows.clear();
         }
     }
 
+    public void populateFrameMemory() {
+        frameMemory = frameMemoryPool.navigateTo(frameIndex);
+    }
+
+    // Must be called after populateFrameMemory.
     public void populateJitData() {
-        PageAddressCache pageAddressCache = getPageAddressCache();
+        assert frameMemory != null;
+        assert frameMemory.getFrameIndex() == frameIndex;
+
+        final PageFrameAddressCache pageAddressCache = frameSequence.getAddressCache();
         final long columnCount = pageAddressCache.getColumnCount();
         if (columns.getCapacity() < columnCount) {
             columns.setCapacity(columnCount);
         }
         columns.clear();
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            columns.add(pageAddressCache.getPageAddress(getFrameIndex(), columnIndex));
+            columns.add(frameMemory.getPageAddress(columnIndex));
         }
 
         if (varSizeAux.getCapacity() < columnCount) {
@@ -161,7 +177,7 @@ public class PageFrameReduceTask implements Closeable {
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             varSizeAux.add(
                     pageAddressCache.isVarSizeColumn(columnIndex)
-                            ? pageAddressCache.getAuxPageAddress(getFrameIndex(), columnIndex)
+                            ? frameMemory.getAuxPageAddress(columnIndex)
                             : 0
             );
         }
@@ -171,10 +187,16 @@ public class PageFrameReduceTask implements Closeable {
         }
     }
 
+    public void releaseFrameMemory() {
+        frameMemory = Misc.free(frameMemory);
+        frameMemoryPool.close();
+    }
+
     public void resetCapacities() {
         filteredRows.resetCapacity();
         columns.resetCapacity();
         varSizeAux.resetCapacity();
+        frameMemoryPool.close();
     }
 
     public void setErrorMsg(Throwable th) {
@@ -208,12 +230,13 @@ public class PageFrameReduceTask implements Closeable {
         }
 
         frameSequence = null;
+        frameMemory = Misc.free(frameMemory);
 
         // We have to reset capacity only on max all queue items
         // What we are avoiding here is resetting capacity on 1000 frames given our queue size
         // is 32 items. If our particular producer resizes queue items to 10x of the initial size
         // we let these sizes stick until produce starts to wind down.
-        if (forceCollect || frameIndex >= frameCount - pageFrameQueueCapacity) {
+        if (forceCollect || frameIndex >= frameCount - frameQueueCapacity) {
             resetCapacities();
         }
     }

@@ -37,7 +37,7 @@ import org.jetbrains.annotations.Nullable;
 import java.io.Closeable;
 
 /**
- * Must be initialized with a {@link #init(PageFrameMemoryCache)} call
+ * Must be initialized with a {@link #init(PageFrameMemory)} call
  * for a given page frame before any use.
  */
 public class PageFrameMemoryRecord implements Record, Closeable {
@@ -50,23 +50,13 @@ public class PageFrameMemoryRecord implements Record, Closeable {
     private final ObjList<SymbolTable> symbolTableCache = new ObjList<>();
     private final Utf8SplitString utf8ViewA = new Utf8SplitString(true);
     private final Utf8SplitString utf8ViewB = new Utf8SplitString(true);
-    private LongList auxPageAddresses; // read from PageFrameMemoryCache
-    private int frameIndex; // read from PageFrameMemoryCache
-    private LongList pageAddresses; // read from PageFrameMemoryCache
-    private LongList pageLimits; // read from PageFrameMemoryCache
-    private long rowIdOffset; // read from PageFrameMemoryCache
+    private LongList auxPageAddresses;
+    private int frameIndex;
+    private LongList pageAddresses;
+    private LongList pageLimits;
+    private long rowIdOffset;
     private long rowIndex;
     private SymbolTableSource symbolTableSource;
-
-    public PageFrameMemoryRecord(PageFrameMemoryRecord other) {
-        this.symbolTableSource = other.symbolTableSource;
-        this.auxPageAddresses.add(other.auxPageAddresses);
-        this.pageAddresses.add(other.pageAddresses);
-        this.pageLimits.add(other.pageLimits);
-        this.rowIdOffset = other.rowIdOffset;
-        this.frameIndex = other.frameIndex;
-        this.rowIndex = other.rowIndex;
-    }
 
     public PageFrameMemoryRecord() {
     }
@@ -337,19 +327,24 @@ public class PageFrameMemoryRecord implements Record, Closeable {
         return TableUtils.NULL_LEN; // Column top.
     }
 
-    public void init(PageFrameMemoryCache memoryCache) {
-        this.frameIndex = memoryCache.getFrameIndex();
-        this.rowIdOffset = memoryCache.getRowIdOffset();
-        this.pageAddresses = memoryCache.getPageAddresses();
-        this.auxPageAddresses = memoryCache.getAuxPageAddresses();
-        this.pageLimits = memoryCache.getPageSizes();
+    public void init(PageFrameMemory frameMemory) {
+        frameIndex = frameMemory.getFrameIndex();
+        rowIdOffset = frameMemory.getRowIdOffset();
+        pageAddresses = frameMemory.getPageAddresses();
+        auxPageAddresses = frameMemory.getAuxPageAddresses();
+        pageLimits = frameMemory.getPageSizes();
     }
 
     public void of(SymbolTableSource symbolTableSource) {
         this.symbolTableSource = symbolTableSource;
-        rowIndex = 0;
         Misc.freeObjListIfCloseable(symbolTableCache);
         symbolTableCache.clear();
+        rowIndex = 0;
+        frameIndex = -1;
+        rowIdOffset = -1;
+        pageAddresses = null;
+        auxPageAddresses = null;
+        pageLimits = null;
     }
 
     public void setRowIndex(long rowIndex) {

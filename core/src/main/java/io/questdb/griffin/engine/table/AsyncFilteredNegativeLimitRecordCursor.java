@@ -238,9 +238,9 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
         rows = negativeLimitRows;
         rowIndex = negativeLimitRows.getCapacity();
         rowCount = 0;
-        record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
+        record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageFrameMemoryCache());
         if (recordB != null) {
-            recordB.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
+            recordB.of(frameSequence.getSymbolTableSource(), frameSequence.getPageFrameMemoryCache());
         }
     }
 }
