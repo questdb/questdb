@@ -5042,6 +5042,42 @@ nodejs code:
                     );
                 }
             }
+
+            sink.clear();
+            try (PreparedStatement ps = connection.prepareStatement("select json_extract(?, ?)::int p")) {
+                ps.setString(1, "{\n" +
+                        "    \"hello\": \"world\",\n" +
+                        "    \"list\": [\n" +
+                        "        1,\n" +
+                        "        2,\n" +
+                        "        3\n" +
+                        "     ],\n" +
+                        "     \"list.of.dicts\": [\n" +
+                        "         {\"hello\": \"world\"},\n" +
+                        "         {\"hello\": \"bob\"}\n" +
+                        "     ]\n" +
+                        "}");
+                ps.setString(2, ".list[1]");
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "p[INTEGER]\n" +
+                                    "2\n",
+                            sink,
+                            rs
+                    );
+                }
+
+                // set json to null
+                ps.setString(1, null);
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "p[INTEGER]\n" +
+                                    "null\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
         });
     }
 
