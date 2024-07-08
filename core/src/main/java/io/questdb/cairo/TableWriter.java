@@ -2135,7 +2135,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         DirectIntList fileDescriptors = new DirectIntList(16, MemoryTag.NATIVE_DEFAULT);
-        long parquetFileLength = -1L;
+        long parquetFileLength;
         try {
             try (PartitionDescriptor partitionDescriptor = new PartitionDescriptor()) {
 
@@ -2161,12 +2161,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             long columnAddr = TableUtils.mapAppendColumnBuffer(ff, columnFd, 0, columnSize, false, memoryTag);
 
                             offsetFileName(path.trimTo(rootLen), columnName, columnNameTxn);
-                            if (!ff.exists(path)) {
+                            if (!ff.exists(path.$())) {
                                 LOG.error().$(path).$(" is not found").$();
                                 throw CairoException.critical(0).put("SymbolMap does not exist: ").put(path);
                             }
 
-                            long fileLength = ff.length(path);
+                            long fileLength = ff.length(path.$());
                             if (fileLength < SymbolMapWriter.HEADER_SIZE) {
                                 LOG.error().$(path).$(" is too short [fileLength=").$(fileLength).$(']').$();
                                 throw CairoException.critical(0).put("SymbolMap is too short: ").put(path);
@@ -2175,7 +2175,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             final int symbolCount = getSymbolMapWriter(columnIndex).getSymbolCount();
                             final long offsetsMemSize = SymbolMapWriter.keyToOffset(symbolCount) + Long.BYTES;
 
-                            final int symbolOffsetsFd = TableUtils.openRO(ff, path, LOG);
+                            final int symbolOffsetsFd = TableUtils.openRO(ff, path.$(), LOG);
                             fileDescriptors.add(symbolOffsetsFd);
 
                             long symbolOffsetsAddr = TableUtils.mapAppendColumnBuffer(ff, symbolOffsetsFd, HEADER_SIZE, offsetsMemSize, false, memoryTag);
@@ -2255,9 +2255,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 path.trimTo(partitionLen);
-                path.put(".parquet").$();
+                path.put(".parquet");
                 PartitionEncoder.encode(partitionDescriptor, path);
-                parquetFileLength = ff.length(path);
+                parquetFileLength = ff.length(path.$());
             }
         } finally {
             path.trimTo(rootLen);

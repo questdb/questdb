@@ -79,10 +79,10 @@ public class ParquetFileReaderFunctionTest extends AbstractCairoTest {
                     PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
                     TableReader reader = engine.getReader("x")
             ) {
-                path.of(root).concat("x.parquet").$();
+                path.of(root).concat("x.parquet");
                 PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
                 PartitionEncoder.encode(partitionDescriptor, path);
-                Assert.assertTrue(Files.exists(path));
+                Assert.assertTrue(Files.exists(path.$()));
 
                 sink.clear();
                 sink.put("select " +
@@ -223,10 +223,10 @@ public class ParquetFileReaderFunctionTest extends AbstractCairoTest {
                     PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
                     TableReader reader = engine.getReader("x")
             ) {
-                path.of(root).concat("x.parquet").$();
+                path.of(root).concat("x.parquet");
                 PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
                 PartitionEncoder.encode(partitionDescriptor, path);
-                Assert.assertTrue(Files.exists(path));
+                Assert.assertTrue(Files.exists(path.$()));
                 // Assert 0 rows, header only
                 sink.clear();
                 sink.put("select * from read_parquet('").put(path).put("')");
