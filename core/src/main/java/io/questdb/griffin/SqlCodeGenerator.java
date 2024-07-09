@@ -3857,14 +3857,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     fillFromFunc.init(null, executionContext);
                     fillToFunc.init(null, executionContext);
 
-                    ObjList<ExpressionNode> fillValuesExprs = nested.getFillValue();
-                    ObjList<Function> fillValues = new ObjList<>(fillValuesExprs.size());
-
-                    for (int i = 0, n = fillValuesExprs.size(); i < n; i++) {
-                        final Function fillValueFunc = functionParser.parseFunction(fillValuesExprs.get(i), EmptyRecordMetadata.INSTANCE, executionContext);
-                        fillValues.add(fillValueFunc);
-                    }
-
 
                     retval = new AsyncGroupByRecordCursorFactory(
                             asm,
@@ -3908,6 +3900,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     );
 
                     if (nested.getFillStride() != null) {
+                        ObjList<ExpressionNode> fillValuesExprs = nested.getFillValue();
+                        ObjList<Function> fillValues = new ObjList<>(fillValuesExprs.size());
+
+                        for (int i = 0, n = fillValuesExprs.size(); i < n; i++) {
+                            final Function fillValueFunc = functionParser.parseFunction(fillValuesExprs.get(i), EmptyRecordMetadata.INSTANCE, executionContext);
+                            fillValues.add(fillValueFunc);
+                        }
+
                         return new FillRangeRecordCursorFactory(groupByMetadata, retval, fillFromFunc, fillToFunc, fillStride.token, fillValues, timestampIndex);
                     }
                 }

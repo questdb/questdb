@@ -45,6 +45,13 @@ public class BitSet implements Mutable {
         return words.length * BITS_PER_WORD;
     }
 
+    public void checkCapacity(int wordsRequired) {
+        if (words.length < wordsRequired) {
+            int newLen = Math.max(2 * words.length, wordsRequired);
+            words = Arrays.copyOf(words, newLen);
+        }
+    }
+
     @Override
     public void clear() {
         Arrays.fill(words, 0);
@@ -77,12 +84,5 @@ public class BitSet implements Mutable {
 
     private static int wordIndex(int bitIndex) {
         return bitIndex >> 6;
-    }
-
-    private void checkCapacity(int wordsRequired) {
-        if (words.length < wordsRequired) {
-            int newLen = Math.max(2 * words.length, wordsRequired);
-            words = Arrays.copyOf(words, newLen);
-        }
     }
 }
