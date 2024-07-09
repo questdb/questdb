@@ -29,7 +29,13 @@ public interface O3MemoryPressureRegulator {
 
     void onPressureDecreased();
 
-    void onPressureIncreased();
+    /**
+     * Returns true if we should retry the previous operation that failed due to memory pressure.
+     * If this method returns false, the OOM is considered unrecoverable.
+     *
+     * @return true if we should retry the previous operation that failed due to memory pressure.
+     */
+    boolean onPressureIncreased();
 
     boolean shouldBackoff();
 }

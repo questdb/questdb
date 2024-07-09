@@ -1057,9 +1057,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             committed = processWalBlock(walPath, metadata.getTimestampIndex(), inOrder, rowLo, rowHi, o3TimestampMin, o3TimestampMax, mapDiffCursor, commitToTimestamp, walSegmentId, isLastSegmentUsage);
         } catch (CairoException e) {
             if (e.isOutOfMemory()) {
-                onIncreasedMemoryPressure();
+                if (!onIncreasedMemoryPressure()) {
+                    LOG.error().$("out of memory, cannot commit WAL [table=").utf8(tableToken.getTableName()).I$();
+                    e.setOutOfMemory(false); // reset flag so it won't be retried
+                }
+                distressed = true;
             }
-            distressed = true;
             throw e;
         }
 
@@ -5643,8 +5646,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         o3CommitBatchTimestampMin = Math.min(o3CommitBatchTimestampMin, timestamp);
     }
 
-    private void onIncreasedMemoryPressure() {
-        memoryPressureRegulator.onPressureIncreased();
+    private boolean onIncreasedMemoryPressure() {
+        return memoryPressureRegulator.onPressureIncreased();
     }
 
     private void openColumnFiles(CharSequence name, long columnNameTxn, int columnIndex, int pathTrimToLen) {

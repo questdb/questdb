@@ -38,8 +38,10 @@ public final class EmptyO3MemoryPressureRegulator implements O3MemoryPressureReg
     }
 
     @Override
-    public void onPressureIncreased() {
-        // intentionally empty
+    public boolean onPressureIncreased() {
+        // empty regulator does not regulate anything, there is no point
+        // in retrying operation that failed due to memory pressure
+        return false;
     }
 
     @Override

@@ -94,13 +94,21 @@ public final class O3MemoryPressureRegulatorImpl implements O3MemoryPressureRegu
     }
 
     @Override
-    public void onPressureIncreased() {
+    public boolean onPressureIncreased() {
         // we might consider more aggressive increase in the future to quickly reduce parallelism
         // when memory pressure is high. For now, we are conservative. It might take multiple cycles
         // to find the right level.
-        level = Math.min(level + 1, MAX_LEVEL);
+
+        if (level == MAX_LEVEL) {
+            // we are already at max level, we can't increase it further
+            // return false to indicate that we can't retry the operation
+            // this will likely suspend the table
+            return false;
+        }
+        level++;
         txnTracker.setMemoryPressureLevel(level);
         adjustWalBackoff();
+        return true;
     }
 
     @Override
