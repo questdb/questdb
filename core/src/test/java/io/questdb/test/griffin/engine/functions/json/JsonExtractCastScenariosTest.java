@@ -196,7 +196,9 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
             testScenarioVia3rdArgCall(json, type, index, expected, expectedValue);
         }
 
-        testScenarioViaLonghandCast(json, type, index, expected, expectedValue);
+        testScenarioViaFunctionCast(json, type, index, expected, expectedValue);
+
+        testScalarScenarioViaFunctionCast(json, type, index, expected, expectedValue);
 
         testScenarioViaSuffixCast(json, type, index, expected, expectedValue);
     }
@@ -277,7 +279,37 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
         }
     }
 
-    private void testScenarioViaLonghandCast(
+    private void testScalarScenarioViaFunctionCast(
+            String json,
+            int type,
+            int index,
+            String expected,
+            String expectedValue
+    ) throws SqlException {
+        final String sql = "select cast(json_extract('" + json + "', '') as " + ColumnType.nameOf(type) +
+                ") as x from long_sequence(1)";
+        try {
+            assertSqlWithTypes(expected, sql);
+        } catch (AssertionError e) {
+            throw new AssertionError(
+                    "Failed cast(.. as ..) call [SCALAR]. Scenario: " + index +
+                            ", SQL: `" + sql + "`" +
+                            ", Cast Type: " + ColumnType.nameOf(type) +
+                            ", JSON: " + SCENARIOS[index][0] +
+                            ", Expected Value: " + expectedValue +
+                            ", Error: " + e.getMessage(), e);
+        } catch (CairoException e) {
+            throw new RuntimeException(
+                    "Failed cast(.. as ..) call. Scenario: " + index +
+                            ", SQL: `" + sql + "`" +
+                            ", Cast Type: " + ColumnType.nameOf(type) +
+                            ", JSON: " + SCENARIOS[index][0] +
+                            ", Expected Value: " + expectedValue +
+                            ", Error: " + e.getMessage(), e);
+        }
+    }
+
+    private void testScenarioViaFunctionCast(
             String json,
             int type,
             int index,
