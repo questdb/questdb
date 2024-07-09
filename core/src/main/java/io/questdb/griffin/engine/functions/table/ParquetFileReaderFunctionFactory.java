@@ -40,7 +40,7 @@ import io.questdb.std.str.Path;
 public class ParquetFileReaderFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "read_parquet(s)";
+        return "parquet_scan(s)";
     }
 
     public boolean isCursor() {

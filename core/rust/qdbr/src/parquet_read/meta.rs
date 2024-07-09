@@ -98,13 +98,14 @@ impl ParquetDecoder {
             (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int32)), _) => {
                 Some(ColumnType::Int)
             }
-            (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int16)), _)
-            | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Int16)) => {
+            (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int16)), _) => {
                 Some(ColumnType::Short)
             }
-
             (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::UInt16)), _) => {
                 Some(ColumnType::Char)
+            }
+            (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Int16)) => {
+                Some(ColumnType::Short)
             }
             (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int8)), _)
             | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Int8)) => {

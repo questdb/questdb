@@ -107,7 +107,7 @@ public class ParquetFileReaderFunctionTest extends AbstractCairoTest {
                         "cast(a_geo_long as geohash(32b)) as a_geo_long," +
                         "a_bin," +
                         "a_ts," +
-                        " from read_parquet('").put(path).put("')");
+                        " from parquet_scan('").put(path).put("')");
                 assertSqlCursors("x", sink);
             }
         });
@@ -132,7 +132,7 @@ public class ParquetFileReaderFunctionTest extends AbstractCairoTest {
                 PartitionEncoder.encode(partitionDescriptor, path);
 
                 sink.clear();
-                sink.put("select * from read_parquet('").put(path).put("')");
+                sink.put("select * from parquet_scan('").put(path).put("')");
 
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     try (RecordCursorFactory factory2 = compiler.compile(sink, sqlExecutionContext).getRecordCursorFactory()) {
@@ -148,39 +148,6 @@ public class ParquetFileReaderFunctionTest extends AbstractCairoTest {
         });
     }
 
-    @Ignore
-    @Test
-    public void testReadExternalFile() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    Path path = new Path();
-                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor()
-            ) {
-                path.of("/Users/alpel/temp/db/request_logs.parquet").$();
-
-                sink.clear();
-                sink.put("select * from read_parquet('").put(path).put("')");
-
-                try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    try (RecordCursorFactory factory1 = compiler.compile(sink, sqlExecutionContext).getRecordCursorFactory()) {
-                        Log log = LOG;
-                        try (RecordCursor cursor1 = factory1.getCursor(sqlExecutionContext)) {
-                            log.xDebugW().$();
-
-                            LogRecordSinkAdapter recordSinkAdapter = new LogRecordSinkAdapter();
-                            LogRecord record = log.xDebugW().$("java.lang.AssertionError: expected:<");
-                            CursorPrinter.printHeader(factory1.getMetadata(), recordSinkAdapter.of(record));
-
-                            CursorPrinter.println(cursor1, factory1.getMetadata(), false, log);
-                            log.xDebugW().$(">").$();
-                        }
-                    }
-                }
-            }
-        });
-    }
-
-
     @Test
     public void testFileDoesNotExist() throws Exception {
         assertMemoryLeak(() -> {
@@ -189,7 +156,7 @@ public class ParquetFileReaderFunctionTest extends AbstractCairoTest {
 
                 // Assert 0 rows, header only
                 try {
-                    select("select * from read_parquet('" + path + "')  where 1 = 2");
+                    select("select * from parquet_scan('" + path + "')  where 1 = 2");
                     Assert.fail();
                 } catch (SqlException e) {
                     TestUtils.assertContains(e.getMessage(), "could not open read-only");
@@ -229,12 +196,44 @@ public class ParquetFileReaderFunctionTest extends AbstractCairoTest {
                 Assert.assertTrue(Files.exists(path.$()));
                 // Assert 0 rows, header only
                 sink.clear();
-                sink.put("select * from read_parquet('").put(path).put("')");
+                sink.put("select * from parquet_scan('").put(path).put("')");
 
                 assertPlanNoLeakCheck(sink, "parquet file sequential scan\n");
 
                 sink.put(" where 1 = 2");
                 assertSqlCursors("x where 1 = 2", sink);
+            }
+        });
+    }
+
+    @Ignore
+    @Test
+    public void testReadExternalFile() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor()
+            ) {
+                path.of("/Users/alpel/temp/db/request_logs.parquet").$();
+
+                sink.clear();
+                sink.put("select * from parquet_scan('").put(path).put("')");
+
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    try (RecordCursorFactory factory1 = compiler.compile(sink, sqlExecutionContext).getRecordCursorFactory()) {
+                        Log log = LOG;
+                        try (RecordCursor cursor1 = factory1.getCursor(sqlExecutionContext)) {
+                            log.xDebugW().$();
+
+                            LogRecordSinkAdapter recordSinkAdapter = new LogRecordSinkAdapter();
+                            LogRecord record = log.xDebugW().$("java.lang.AssertionError: expected:<");
+                            CursorPrinter.printHeader(factory1.getMetadata(), recordSinkAdapter.of(record));
+
+                            CursorPrinter.println(cursor1, factory1.getMetadata(), false, log);
+                            log.xDebugW().$(">").$();
+                        }
+                    }
+                }
             }
         });
     }
