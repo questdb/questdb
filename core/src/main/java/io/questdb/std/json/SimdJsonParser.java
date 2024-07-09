@@ -96,7 +96,7 @@ public class SimdJsonParser implements QuietCloseable {
 
     public int queryPointerInt(
             DirectUtf8Sequence json,
-            DirectUtf8Sink pointer,
+            DirectUtf8Sequence pointer,
             SimdJsonResult result
     ) {
         assert json.tailPadding() >= SIMDJSON_PADDING;

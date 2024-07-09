@@ -24,6 +24,8 @@
 
 package io.questdb.std.json;
 
+import org.jetbrains.annotations.TestOnly;
+
 /** Maps to the constants of the C++ `simdjson::ondemand::number_type` enum. */
 public class SimdJsonNumberType {
     /** An unset `SimdJsonNumberType`. */
@@ -40,4 +42,22 @@ public class SimdJsonNumberType {
 
     /** a big integer that does not fit in a 64-bit word */
     public static final int BIG_INTEGER = UNSIGNED_INTEGER + 1;  // 4
+
+    @TestOnly
+    public static String nameOf(int numberType) {
+        switch (numberType) {
+            case UNSET:
+                return "UNSET";
+            case FLOATING_POINT_NUMBER:
+                return "FLOATING_POINT_NUMBER";
+            case SIGNED_INTEGER:
+                return "SIGNED_INTEGER";
+            case UNSIGNED_INTEGER:
+                return "UNSIGNED_INTEGER";
+            case BIG_INTEGER:
+                return "BIG_INTEGER";
+            default:
+                return "UNKNOWN";
+        }
+    }
 }

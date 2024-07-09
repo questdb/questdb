@@ -25,6 +25,8 @@
 package io.questdb.std.json;
 
 
+import org.jetbrains.annotations.TestOnly;
+
 /** Maps to the constants of the C++ `simdjson::ondemand::json_type` enum. */
 public class SimdJsonType {
     /** An unset `SimdJsonType`. */
@@ -47,4 +49,26 @@ public class SimdJsonType {
 
     /** A JSON null    (null) */
     public static final int NULL = BOOLEAN + 1;  // 6
+
+    @TestOnly
+    public static String nameOf(int type) {
+        switch (type) {
+            case UNSET:
+                return "UNSET";
+            case ARRAY:
+                return "ARRAY";
+            case OBJECT:
+                return "OBJECT";
+            case NUMBER:
+                return "NUMBER";
+            case STRING:
+                return "STRING";
+            case BOOLEAN:
+                return "BOOLEAN";
+            case NULL:
+                return "NULL";
+            default:
+                return "UNKNOWN";
+        }
+    }
 }
