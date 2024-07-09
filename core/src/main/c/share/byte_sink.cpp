@@ -29,6 +29,12 @@
 #include <algorithm>
 
 static_assert(sizeof(size_t) == 8, "size_t must be 64-bits");
+static_assert(sizeof(questdb_byte_sink_t) == 32, "questdb_byte_sink_t must be 26 bytes");
+static_assert(offsetof(questdb_byte_sink_t, ptr) == 0, "ptr must be at offset 0");
+static_assert(offsetof(questdb_byte_sink_t, lo) == 8, "lo must be at offset 8");
+static_assert(offsetof(questdb_byte_sink_t, hi) == 16, "hi must be at offset 16");
+static_assert(offsetof(questdb_byte_sink_t, overflow) == 24, "overflow must be at offset 24");
+static_assert(offsetof(questdb_byte_sink_t, unicode) == 28, "unicode must be at offset 28");
 
 // Due to restrictions in the signature of `ByteSequence`,
 // we need to restrict allocations to 2GiB.
@@ -52,6 +58,7 @@ static questdb_byte_sink_t* create(size_t capacity) {
     }
     sink->hi = sink->lo + capacity;
     sink->overflow = false;
+    sink->unicode = false;
     return sink;
 }
 

@@ -31,6 +31,11 @@ import org.jetbrains.annotations.NotNull;
 import java.nio.BufferOverflowException;
 
 public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByteSink, QuietCloseable, Mutable {
+    private static final int BYTE_SINK_HI_OFFSET = 16;
+    private static final int BYTE_SINK_LO_OFFSET = 8;
+    private static final int BYTE_SINK_OVERFLOW_OFFSET = 24;
+    private static final int BYTE_SINK_PTR_OFFSET = 0;
+    private static final int BYTE_SINK_UNICODE_OFFSET = 28;
     private final long initialCapacity;
     /**
      * Pointer to the C `questdb_byte_sink_t` structure. See `byte_sink.h`.
@@ -136,6 +141,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
     @Override
     public void clear() {
         setImplPtr(getImplLo());
+        setUnicode(false);
     }
 
     @Override
@@ -149,6 +155,13 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
     @Override
     public long hi() {
         return getImplPtr();
+    }
+
+    /**
+     * Returns true when the buffer contains a UTF-8 encoded string containing non-ASCII characters.
+     */
+    public boolean isUnicode() {
+        return Unsafe.getUnsafe().getInt(impl + BYTE_SINK_UNICODE_OFFSET) != 0;
     }
 
     /**
@@ -210,6 +223,10 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         }
     }
 
+    public void setUnicode(boolean unicode) {
+        Unsafe.getUnsafe().putInt(impl + BYTE_SINK_UNICODE_OFFSET, unicode ? 1 : 0);
+    }
+
     /**
      * Number of readable bytes in the sequence.
      */
@@ -243,16 +260,16 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
 
     private long getImplHi() {
         assert impl != 0;
-        return Unsafe.getUnsafe().getLong(impl + 16);
+        return Unsafe.getUnsafe().getLong(impl + BYTE_SINK_HI_OFFSET);
     }
 
     private long getImplLo() {
         assert impl != 0;
-        return Unsafe.getUnsafe().getLong(impl + 8);
+        return Unsafe.getUnsafe().getLong(impl + BYTE_SINK_LO_OFFSET);
     }
 
     private boolean getImplOverflow() {
-        return Unsafe.getUnsafe().getByte(impl + 24) != 0;
+        return Unsafe.getUnsafe().getByte(impl + BYTE_SINK_OVERFLOW_OFFSET) != 0;
     }
 
     private long getImplPtr() {

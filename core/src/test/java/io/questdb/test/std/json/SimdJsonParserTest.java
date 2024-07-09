@@ -869,11 +869,13 @@ public class SimdJsonParserTest {
             try (DirectUtf8Sink dest = new DirectUtf8Sink(1000)) {
                 parser.queryPointerUtf8(json, path2Pointer(".name"), result, dest, 100);
                 Assert.assertEquals("John", dest.toString());
+                Assert.assertTrue(dest.isAscii());
 
                 GcUtf8String descriptionPath = path2Pointer(".description");
                 dest.clear();
                 parser.queryPointerUtf8(json, descriptionPath, result, dest, 100);
                 Assert.assertEquals(description.substring(0, 100), dest.toString());
+                Assert.assertTrue(dest.isAscii());
 
                 // The maxLen == 272 chops one of the unicode characters and unless
                 // the copy is handled with utf-8-aware logic it would produce a string
@@ -882,6 +884,7 @@ public class SimdJsonParserTest {
                 parser.queryPointerUtf8(json, descriptionPath, result, dest, 272);
                 // The string is expected to be truncated at the last valid utf-8 sequence: 270 instead of 272.
                 Assert.assertEquals(dest.size(), 270);
+                Assert.assertFalse(dest.isAscii());
 
                 // This ends up decoding just fine as UTF-8 and is shorter than the maxLen.
                 Assert.assertEquals(description.substring(0, 262), dest.toString());

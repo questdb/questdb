@@ -56,6 +56,14 @@ PACK(struct questdb_byte_sink_t {
 
     // Set to `true` if a `realloc` fails due to exceeding 2GiB.
     bool overflow;  // TODO: Remove once artificial limitation is lifted.
+
+    char _padding1[3];  // pad out boolean so it can be accessed via `Unsafe#getInt`.
+
+    // Set to `true` when the sink contains a UTF-8 buffer that has introduced non-7-bit-ASCII bytes.
+    // This fields remains untouched when processing other types of data.
+    bool unicode;
+
+    char _padding2[3];  // pad out boolean so it can be accessed via `Unsafe#getInt`.
 });
 
 typedef struct questdb_byte_sink_t questdb_byte_sink_t;

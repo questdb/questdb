@@ -145,6 +145,23 @@ std::byte *utf8_find_last_char_start(std::byte *end) {
     return last_utf8_start;
 }
 
+inline bool copy_and_detect_multibyte_codepoint(std::byte* dest, const char* src, size_t len) {
+    bool multibyte = false;
+    std::size_t index = 0;
+    for (; index < len; ++index) {
+        const auto byte = static_cast<std::byte>(src[index]);
+        if (byte >= std::byte{0x80}) {
+            multibyte = true;
+            break;
+        }
+        dest[index] = byte;
+    }
+    if (multibyte) {
+        std::memcpy(dest + index, src + index, len - index);
+    }
+    return multibyte;
+}
+
 // Copy `src` to `dest` up to `max_dest_len` bytes.
 // If `src` is longer than `max_dest_len`, copy up to the last UTF-8 character that fits.
 // This function guarantees that there are no broken UTF-8 characters in the output.
@@ -153,7 +170,13 @@ static void truncated_utf8_copy(questdb_byte_sink_t &dest, std::string_view src,
         return;
     }
     const auto copy_len = std::min(src.length(), max_dest_len);
-    std::memcpy(dest.ptr, src.data(), copy_len);
+    if (dest.unicode) {
+        // Take the fast-path if the string had multibyte characters anyways.
+        std::memcpy(dest.ptr, src.data(), copy_len);
+    }
+    else {
+        dest.unicode = copy_and_detect_multibyte_codepoint(dest.ptr, src.data(), copy_len);
+    }
     std::byte *end_ptr = dest.ptr + copy_len;
     if (max_dest_len < src.length()) {
         std::byte *last_utf8_start = utf8_find_last_char_start(end_ptr);
