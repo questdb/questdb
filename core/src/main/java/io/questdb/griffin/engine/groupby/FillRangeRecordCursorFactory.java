@@ -43,16 +43,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 
-// initialise the class
-// get the next record.
-// compare timestamps
-// if we need to fill, we cache that record and return the
-// the fill record instead
-// etc.
-// fill based on how sample by works
-// then its initialised by looking at from/to within
-// the sample by rewrite
-
 public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
     public static final GenericRecordMetadata DEFAULT_COUNT_METADATA = new GenericRecordMetadata();
     public static final Log LOG = LogFactory.getLog(FillRangeRecordCursorFactory.class);
@@ -200,12 +190,6 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                     return true;
                 }
 
-                // logic
-                // if from and to is set
-                // we just fill and ignore the already filled
-                // if its just prefill, we ignore anything before min
-
-
                 do {
                     fillOffset++;
                     nextBucket = timestampSampler.nextTimestamp(nextBucket);
@@ -216,8 +200,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 if (fillOffset <= size && fillOffset <= timestampSampler.bucketIndex(maxTimestamp)) {
                     return true;
                 }
-
-
+                
                 return false;
             }
         }
@@ -250,11 +233,9 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             if (to != null && to != TimestampConstant.NULL) {
                 size = timestampSampler.bucketIndex(toTimestamp);
             } else {
-                size = 64 * 64; // [NW] revisit to rescale bitset when needed
+                size = 64 * 8; // [NW] revisit to rescale bitset when needed
             }
-
             presentRecords = new BitSet(size);
-            fillOffset = 0;
         }
 
         private void initBounds(Function from, Function to) {
