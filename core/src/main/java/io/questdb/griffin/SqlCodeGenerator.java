@@ -3862,7 +3862,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                     for (int i = 0, n = fillValuesExprs.size(); i < n; i++) {
                         final Function fillValueFunc = functionParser.parseFunction(fillValuesExprs.get(i), EmptyRecordMetadata.INSTANCE, executionContext);
-                        coerceRuntimeConstantType(fillValueFunc, ColumnType.UNDEFINED, executionContext, "", -1);
                         fillValues.add(fillValueFunc);
                     }
 
