@@ -33,7 +33,6 @@ import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.functions.date.TimestampFloorOffsetFunctionFactory;
 import io.questdb.log.Log;
@@ -96,7 +95,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         sink.type("Fill Range");
         sink.attr("range").val('(').val(from).val(',').val(to).val(')');
         sink.attr("stride").val('\'').val(stride).val('\'');
-        sink.attr("values").val(values); // [NW] revisit
+        sink.attr("values").val(values);
         sink.child(base);
     }
 
@@ -124,7 +123,6 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         protected RecordCursor baseCursor;
         protected Record baseRecord;
         protected SqlExecutionCircuitBreaker circuitBreaker;
-        protected ConstantFunction fillFunction;
         protected int fillOffset;
         protected long fromTimestamp;
         protected boolean gapFilling;
@@ -132,7 +130,6 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         protected long minTimestamp;
         protected long nextBucket;
         protected BitSet presentRecords;
-        protected int size = -1;
         protected int timestampIndex;
         protected TimestampSampler timestampSampler;
         protected long toTimestamp;
@@ -197,10 +194,10 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 while (presentRecords.get(fillOffset) &&
                         fillOffset < timestampSampler.bucketIndex(maxTimestamp));
 
-                if (fillOffset <= size && fillOffset <= timestampSampler.bucketIndex(maxTimestamp)) {
+                if (fillOffset <= timestampSampler.bucketIndex(maxTimestamp)) {
                     return true;
                 }
-                
+
                 return false;
             }
         }
@@ -225,17 +222,6 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             }
 
             return values.getQuick(col < timestampIndex ? col : col - 1);
-        }
-
-        // make this O(1) calc, timestamp sampler can own the diff calculation
-        // this is critical as we set each bit by its index, so we need to do this calculation fast
-        private void initBitset(Function from, Function to, CharSequence stride) {
-            if (to != null && to != TimestampConstant.NULL) {
-                size = timestampSampler.bucketIndex(toTimestamp);
-            } else {
-                size = 64 * 8; // [NW] revisit to rescale bitset when needed
-            }
-            presentRecords = new BitSet(size);
         }
 
         private void initBounds(Function from, Function to) {
@@ -283,7 +269,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             this.timestampIndex = timestampIndex;
             this.values = values;
             initTimestamps(from, to, stride);
-            initBitset(from, to, stride);
+            presentRecords = new BitSet(to != TimestampConstant.NULL ? timestampSampler.bucketIndex(toTimestamp) : 64 * 8);
             initBounds(from, to);
             toTop();
         }
