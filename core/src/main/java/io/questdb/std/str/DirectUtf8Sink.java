@@ -30,7 +30,6 @@ import io.questdb.std.bytes.DirectByteSink;
 import io.questdb.std.bytes.NativeByteSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -43,7 +42,11 @@ public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, Dire
     private boolean ascii;
 
     public DirectUtf8Sink(long initialCapacity) {
-        sink = new DirectByteSink(initialCapacity) {
+        this(initialCapacity, true);
+    }
+
+    public DirectUtf8Sink(long initialCapacity, boolean alloc) {
+        sink = new DirectByteSink(initialCapacity, alloc) {
             @Override
             protected int memoryTag() {
                 return MemoryTag.NATIVE_DIRECT_UTF8_SINK;
@@ -67,9 +70,8 @@ public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, Dire
         return sink.byteAt(index);
     }
 
-    @TestOnly
     public long capacity() {
-        return sink.capacity();
+        return sink.allocatedCapacity();
     }
 
     @Override
@@ -140,6 +142,10 @@ public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, Dire
         ascii = false;
         sink.put(lo, hi);
         return this;
+    }
+
+    public void reopen() {
+        sink.reopen();
     }
 
     public void reserve(long minCapacity) {

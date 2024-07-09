@@ -52,14 +52,4 @@ public interface DirectSequence {
      * Number of bytes in the sequence.
      */
     int size();
-
-    /**
-     * Number of bytes contiguously addressable bytes at the end of the sequence.
-     * This is useful if we need to access the data zero-copy via simd instructions.
-     * <p>
-     * The returned value, is the number of addressable bytes past `hi()`.
-     */
-    default long tailPadding() {
-        return 0;
-    }
 }

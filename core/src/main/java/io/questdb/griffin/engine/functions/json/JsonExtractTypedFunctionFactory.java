@@ -81,26 +81,11 @@ public class JsonExtractTypedFunctionFactory implements FunctionFactory {
             throw SqlException.$(argPositions.getQuick(1), "constant or bind variable expected");
         }
 
-        final int targetType = parseTargetType(position, args.getQuick(2));
-        final int maxSize = configuration.getStrFunctionMaxBufferLength();
-        JsonExtractSupportingState stateA;
-        switch (targetType) {
-            case ColumnType.IPv4:
-            case ColumnType.DATE:
-            case ColumnType.TIMESTAMP:
-                stateA = JsonExtractSupportingState.newBuffered(maxSize, false);
-                break;
-            default:
-                stateA = JsonExtractSupportingState.newUnbuffered();
-                break;
-        }
         return new JsonExtractFunction(
-                targetType,
+                parseTargetType(position, args.getQuick(2)),
                 json,
                 path,
-                maxSize,
-                stateA,
-                null
+                configuration.getStrFunctionMaxBufferLength()
         );
     }
 

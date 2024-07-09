@@ -24,13 +24,14 @@
 
 package io.questdb.std.bytes;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.TestOnly;
 
 import java.nio.BufferOverflowException;
 
 public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByteSink, QuietCloseable, Mutable {
+    private final long initialCapacity;
     /**
      * Pointer to the C `questdb_byte_sink_t` structure. See `byte_sink.h`.
      * <p>
@@ -46,12 +47,10 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
      * The {@link #checkCapacity(long)} method updates `impl`'s `lo` and `hi` fields.
      */
     private long impl;
-
     /**
      * Capacity before borrowing out as {@link NativeByteSink}.
      */
-    private long lastCapacity;
-
+    private long lastAllocatedCapacity;
     private final NativeByteSink byteSink = new NativeByteSink() {
         @Override
         public void close() {
@@ -64,19 +63,20 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         }
     };
 
-    public DirectByteSink() {
-        this(32);
+    public DirectByteSink(long initialCapacity) {
+        this(initialCapacity, true);
     }
 
-    public DirectByteSink(long capacity) {
-        assert capacity >= 0;
-        assert capacity <= Integer.MAX_VALUE;
-        impl = implCreate(capacity);
-        if (impl == 0) {
-            throw new OutOfMemoryError("Cannot allocate " + capacity + " bytes");
+    public DirectByteSink(long initialCapacity, boolean alloc) {
+        assert initialCapacity >= 0;
+        assert initialCapacity <= Integer.MAX_VALUE;
+        // this will allocate a minimum of 32 bytes of "allocated capacity"
+        this.initialCapacity = initialCapacity;
+        if (alloc) {
+            inflate();
+        } else {
+            impl = 0;
         }
-        Unsafe.recordMemAlloc(this.capacity(), memoryTag());
-        Unsafe.incrMallocCount();
     }
 
     public static native long implBook(long impl, long len);
@@ -93,16 +93,15 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         setImplPtr(getImplPtr() + written);
     }
 
+    public long allocatedCapacity() {
+        return getImplHi() - getImplLo();
+    }
+
     @Override
     public @NotNull NativeByteSink borrowDirectByteSink() {
         assert impl != 0;
-        lastCapacity = capacity();
+        lastAllocatedCapacity = allocatedCapacity();
         return byteSink;
-    }
-
-    @TestOnly
-    public long capacity() {
-        return getImplHi() - getImplLo();
     }
 
     /**
@@ -117,7 +116,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         if (available >= required) {
             return p;
         }
-        final long initCapacity = capacity();
+        final long initCapacity = allocatedCapacity();
         p = implBook(impl, required);
         if (p == 0) {
             if (getImplOverflow()) {  // TODO: Remove check once api is `long` (rather than `int`) based for size.
@@ -126,7 +125,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
                 throw new OutOfMemoryError("Cannot allocate " + required + " bytes");
             }
         }
-        final long newCapacity = capacity();
+        final long newCapacity = allocatedCapacity();
         if (newCapacity > initCapacity) {
             Unsafe.incrReallocCount();
             Unsafe.recordMemAlloc(newCapacity - initCapacity, memoryTag());
@@ -141,14 +140,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
 
     @Override
     public void close() {
-        if (impl == 0) {
-            return;
-        }
-        final long capAdjustment = -1 * capacity();
-        implDestroy(impl);
-        Unsafe.incrFreeCount();
-        Unsafe.recordMemAlloc(capAdjustment, memoryTag());
-        impl = 0;
+        deflate();
     }
 
     /**
@@ -201,13 +193,19 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         return this;
     }
 
+    public void reopen() {
+        if (impl == 0) {
+            inflate();
+        }
+    }
+
     /**
      * Ensure that the buffer has at least `minCapacity`.
      * <p>
      * After this call, `capacity() &gt;= minCapacity` is guaranteed.
      */
     public void reserve(long minCapacity) {
-        if (minCapacity > capacity()) {
+        if (minCapacity > allocatedCapacity()) {
             checkCapacity(minCapacity);
         }
     }
@@ -220,17 +218,27 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         return (int) (getImplPtr() - getImplLo());
     }
 
-    @Override
     public long tailPadding() {
         return getImplHi() - getImplPtr();
     }
 
     private void closeByteSink() {
-        final long capacityChange = capacity() - lastCapacity;
+        final long capacityChange = allocatedCapacity() - lastAllocatedCapacity;
         if (capacityChange != 0) {
             Unsafe.incrReallocCount();
             Unsafe.recordMemAlloc(capacityChange, memoryTag());
         }
+    }
+
+    private void deflate() {
+        if (impl == 0) {
+            return;
+        }
+        final long capAdjustment = -1 * allocatedCapacity();
+        implDestroy(impl);
+        Unsafe.incrFreeCount();
+        Unsafe.recordMemAlloc(capAdjustment, memoryTag());
+        impl = 0;
     }
 
     private long getImplHi() {
@@ -249,6 +257,15 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
 
     private long getImplPtr() {
         return Unsafe.getUnsafe().getLong(impl);
+    }
+
+    private void inflate() {
+        impl = implCreate(initialCapacity);
+        if (impl == 0) {
+            throw CairoException.nonCritical().setOutOfMemory(true).put("could not allocate direct byte sink [maxCapacity=").put(initialCapacity).put(']');
+        }
+        Unsafe.recordMemAlloc(this.allocatedCapacity(), memoryTag());
+        Unsafe.incrMallocCount();
     }
 
     private void setImplPtr(long ptr) {

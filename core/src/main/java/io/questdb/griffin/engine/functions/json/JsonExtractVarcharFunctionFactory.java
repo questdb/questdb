@@ -58,16 +58,11 @@ public class JsonExtractVarcharFunctionFactory implements FunctionFactory {
             throw SqlException.$(argPositions.getQuick(1), "constant or bind variable expected");
         }
 
-        final int maxSize = configuration.getStrFunctionMaxBufferLength();
-        final JsonExtractSupportingState stateA = JsonExtractSupportingState.newBuffered(maxSize, true);
-        final JsonExtractSupportingState stateB = JsonExtractSupportingState.newBuffered(maxSize, true);
         return new JsonExtractFunction(
                 ColumnType.VARCHAR,
                 json,
                 path,
-                maxSize,
-                stateA,
-                stateB
+                configuration.getStrFunctionMaxBufferLength()
         );
     }
 }

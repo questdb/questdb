@@ -76,6 +76,9 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     default void close() {
     }
 
+    default void cursorClosed() {
+    }
+
     int getArrayLength();
 
     BinarySequence getBin(Record rec);

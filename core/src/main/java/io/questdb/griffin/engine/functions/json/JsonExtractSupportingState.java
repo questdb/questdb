@@ -29,7 +29,10 @@ import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.json.SimdJsonParser;
 import io.questdb.std.json.SimdJsonResult;
-import io.questdb.std.str.*;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -42,28 +45,18 @@ import org.jetbrains.annotations.Nullable;
  */
 public class JsonExtractSupportingState implements QuietCloseable {
     public static final String EXTRACT_FUNCTION_NAME = "json_extract";
+    // Only set for VARCHAR extraction to provide string backwards compatibility.
+    public @Nullable StringSink destUtf16Sink;
+    // Only set for types that require UTF-8 storage: VARCHAR, TIMESTAMP, DATE or IPV4 parsing.
+    public @Nullable DirectUtf8Sink destUtf8Sink;
     public DirectUtf8Sequence jsonSeq = null;
     public SimdJsonParser parser = new SimdJsonParser();
     public SimdJsonResult simdJsonResult = new SimdJsonResult();
     private DirectUtf8Sink jsonSink = null;
 
-    // Only set for types that require UTF-8 storage: VARCHAR, TIMESTAMP, DATE or IPV4 parsing.
-    public @Nullable DirectUtf8Sink destUtf8Sink;
-
-    // Only set for VARCHAR extraction to provide string backwards compatibility.
-    public @Nullable StringSink destUtf16Sink;
-
-    private JsonExtractSupportingState(@Nullable DirectUtf8Sink destUtf8Sink, @Nullable StringSink destUtf16Sink) {
+    JsonExtractSupportingState(@Nullable DirectUtf8Sink destUtf8Sink, boolean useUtf6Sink) {
         this.destUtf8Sink = destUtf8Sink;
-        this.destUtf16Sink = destUtf16Sink;
-    }
-
-    public static JsonExtractSupportingState newBuffered(int maxSize, boolean withUtf16Sink) {
-        return new JsonExtractSupportingState(new DirectUtf8Sink(maxSize), withUtf16Sink ? new StringSink() : null);
-    }
-
-    public static JsonExtractSupportingState newUnbuffered() {
-        return new JsonExtractSupportingState(null, null);
+        this.destUtf16Sink = useUtf6Sink ? new StringSink() : null;
     }
 
     public static DirectUtf8Sink varcharConstantToJsonPointer(Function fn) {
@@ -87,19 +80,33 @@ public class JsonExtractSupportingState implements QuietCloseable {
         destUtf8Sink = Misc.free(destUtf8Sink);
     }
 
+    public void deflate() {
+        Misc.free(destUtf8Sink);
+    }
+
     public DirectUtf8Sequence initPaddedJson(@NotNull Utf8Sequence json) {
-        if ((json instanceof DirectUtf8Sequence) && ((DirectUtf8Sequence) json).tailPadding() >= SimdJsonParser.SIMDJSON_PADDING) {
+        if (json.tailPadding() >= SimdJsonParser.SIMDJSON_PADDING) {
             jsonSeq = (DirectUtf8Sequence) json;
         } else {
-            if (jsonSink == null) {
-                jsonSink = new DirectUtf8Sink(json.size() + SimdJsonParser.SIMDJSON_PADDING);
-            } else {
-                jsonSink.clear();
-                jsonSink.reserve(json.size() + SimdJsonParser.SIMDJSON_PADDING);
-            }
-            jsonSink.put(json);
-            jsonSeq = jsonSink;
+            initPaddedJsonSlow(json);
         }
         return jsonSeq;
+    }
+
+    public void reopen() {
+        if (this.destUtf8Sink != null) {
+            this.destUtf8Sink.reopen();
+        }
+    }
+
+    private void initPaddedJsonSlow(@NotNull Utf8Sequence json) {
+        if (jsonSink == null) {
+            jsonSink = new DirectUtf8Sink(json.size() + SimdJsonParser.SIMDJSON_PADDING);
+        } else {
+            jsonSink.clear();
+            jsonSink.reserve(json.size() + SimdJsonParser.SIMDJSON_PADDING);
+        }
+        jsonSink.put(json);
+        jsonSeq = jsonSink;
     }
 }

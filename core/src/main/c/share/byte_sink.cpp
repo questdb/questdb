@@ -30,15 +30,14 @@
 
 static_assert(sizeof(size_t) == 8, "size_t must be 64-bits");
 
-// TODO: Remove this constraint once `ByteSequence`'s `size` returns `long` instead of `int`.
 // Due to restrictions in the signature of `ByteSequence`,
 // we need to restrict allocations to 2GiB.
 static const size_t max_alloc_size = std::numeric_limits<jint>::max();
 
 static questdb_byte_sink_t* create(size_t capacity) {
-    questdb_byte_sink_t* sink = (questdb_byte_sink_t*) malloc(sizeof(questdb_byte_sink_t));
-    if (sink == NULL) {
-        return NULL;
+    auto* sink = (questdb_byte_sink_t*) malloc(sizeof(questdb_byte_sink_t));
+    if (sink == nullptr) {
+        return nullptr;
     }
 
     // Ensure allocation.
@@ -47,9 +46,9 @@ static questdb_byte_sink_t* create(size_t capacity) {
     capacity = capacity < 32 ? 32 : capacity;
 
     sink->lo = sink->ptr = (std::byte*) malloc(capacity);
-    if (sink->lo == NULL) {
+    if (sink->lo == nullptr) {
         free(sink);
-        return NULL;
+        return nullptr;
     }
     sink->hi = sink->lo + capacity;
     sink->overflow = false;
@@ -108,17 +107,16 @@ std::byte* questdb_byte_sink_book(questdb_byte_sink_t* sink, size_t min_len) {
     const size_t add_req_capacity = min_len - curr_avail;
     const size_t new_capacity = std::min(next_pow2(curr_capacity + add_req_capacity), max_alloc_size);
 
-    // TODO: Remove this check once `ByteSequence`'s `size` returns `long` instead of `int`.
     // Cap allocation to 2GiB.
     if ((new_capacity == max_alloc_size) && (new_capacity < (curr_capacity + add_req_capacity))) {
         sink->overflow = true;
-        return NULL;
+        return nullptr;
     }
 
-    std::byte* const new_lo = (std::byte*) realloc(sink->lo, new_capacity);
-    if (new_lo == NULL) {
+    auto* const new_lo = (std::byte*) realloc(sink->lo, new_capacity);
+    if (new_lo == nullptr) {
         // NB: sink->lo is still valid here and will be freed later by `destroy`.
-        return NULL;
+        return nullptr;
     }
     sink->lo = new_lo;
     sink->hi = new_lo + new_capacity;
