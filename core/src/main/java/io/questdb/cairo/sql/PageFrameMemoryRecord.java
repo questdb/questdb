@@ -61,6 +61,16 @@ public class PageFrameMemoryRecord implements Record, Closeable {
     public PageFrameMemoryRecord() {
     }
 
+    public PageFrameMemoryRecord(PageFrameMemoryRecord other) {
+        this.symbolTableSource = other.symbolTableSource;
+        this.rowIndex = other.rowIndex;
+        this.frameIndex = other.frameIndex;
+        this.rowIdOffset = other.rowIdOffset;
+        this.pageAddresses = other.pageAddresses;
+        this.auxPageAddresses = other.auxPageAddresses;
+        this.pageLimits = other.pageLimits;
+    }
+
     @Override
     public void close() {
         Misc.freeObjListIfCloseable(symbolTableCache);

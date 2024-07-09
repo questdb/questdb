@@ -222,6 +222,9 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         final long frameRowCount = task.getFrameRowCount();
         final AsyncFilterAtom atom = task.getFrameSequence(AsyncFilterAtom.class).getAtom();
 
+        final PageFrameMemory frameMemory = task.populateFrameMemory();
+        record.init(frameMemory);
+
         rows.clear();
 
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
@@ -238,8 +241,10 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             atom.releaseFilter(filterId);
         }
 
-        // Pre-touch fixed-size columns, if asked.
-        atom.preTouchColumns(record, rows);
+        // Pre-touch fixed-size native columns, if asked.
+        if (frameMemory.getFrameFormat() == PageFrame.NATIVE_FORMAT) {
+            atom.preTouchColumns(record, rows);
+        }
     }
 
     @Override

@@ -63,6 +63,7 @@ public class PageFrameMemoryPool implements QuietCloseable {
     private final LongList tmpPageSizes = new LongList(); // Holds sizes for non-native frames.
     private PageFrameAddressCache addressCache;
     private LongList auxPageAddresses;
+    private byte frameFormat;
     private int frameIndex;
     private LongList pageAddresses;
     private LongList pageSizes;
@@ -75,11 +76,16 @@ public class PageFrameMemoryPool implements QuietCloseable {
     public void close() {
         columnChunks.clear();
         columnChunksPool.closeAndClear();
+        frameIndex = -1;
+        frameFormat = -1;
+        pageAddresses = null;
+        auxPageAddresses = null;
+        pageSizes = null;
     }
 
     public PageFrameMemory navigateTo(int frameIndex) {
         this.frameIndex = frameIndex;
-        final byte frameFormat = addressCache.getFrameFormat(frameIndex);
+        this.frameFormat = addressCache.getFrameFormat(frameIndex);
         if (frameFormat == PageFrame.PARQUET_FORMAT) {
             // TODO: handle missing columns/column tops/etc.
             copyToColumnChunks(0, addressCache.getFrameSize(frameIndex));
@@ -582,6 +588,11 @@ public class PageFrameMemoryPool implements QuietCloseable {
         @Override
         public int getColumnCount() {
             return addressCache.getColumnCount();
+        }
+
+        @Override
+        public byte getFrameFormat() {
+            return frameFormat;
         }
 
         @Override

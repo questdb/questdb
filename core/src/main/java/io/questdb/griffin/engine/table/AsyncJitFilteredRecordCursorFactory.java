@@ -284,19 +284,22 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
 
     private static void filter(
             int workerId,
-            @NotNull PageAddressCacheRecord record,
+            @NotNull PageFrameMemoryRecord record,
             @NotNull PageFrameReduceTask task,
             @NotNull SqlExecutionCircuitBreaker circuitBreaker,
             @Nullable PageFrameSequence<?> stealingFrameSequence
     ) {
         final DirectLongList rows = task.getFilteredRows();
         final long frameRowCount = task.getFrameRowCount();
-        final AsyncJitFilterAtom atom = task.getFrameSequence(AsyncJitFilterAtom.class).getAtom();
-        final PageAddressCache pageAddressCache = task.getPageAddressCache();
+        final PageFrameSequence<AsyncJitFilterAtom> frameSequence = task.getFrameSequence(AsyncJitFilterAtom.class);
+        final AsyncJitFilterAtom atom = frameSequence.getAtom();
+
+        final PageFrameMemory frameMemory = task.populateFrameMemory();
+        record.init(frameMemory);
 
         rows.clear();
 
-        if (pageAddressCache.hasColumnTops(task.getFrameIndex())) {
+        if (frameSequence.getAddressCache().hasColumnTops(task.getFrameIndex())) {
             // Use Java-based filter in case of a page frame with column tops.
             final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
             final int filterId = atom.acquireFilter(workerId, owner, circuitBreaker);
@@ -332,8 +335,10 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         );
         rows.setPos(hi);
 
-        // Pre-touch fixed-size columns, if asked.
-        atom.preTouchColumns(record, rows);
+        // Pre-touch fixed-size native columns, if asked.
+        if (frameMemory.getFrameFormat() == PageFrame.NATIVE_FORMAT) {
+            atom.preTouchColumns(record, rows);
+        }
     }
 
     private static void writeBindVarFunction(

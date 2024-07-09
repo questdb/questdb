@@ -40,6 +40,8 @@ public interface PageFrameMemory extends QuietCloseable {
 
     int getColumnCount();
 
+    byte getFrameFormat();
+
     int getFrameIndex();
 
     long getPageAddress(int columnIndex);

@@ -52,6 +52,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
 
     private static final PageFrameReducer AGGREGATE = AsyncGroupByNotKeyedRecordCursorFactory::aggregate;
     private static final PageFrameReducer FILTER_AND_AGGREGATE = AsyncGroupByNotKeyedRecordCursorFactory::filterAndAggregate;
+
     private final RecordCursorFactory base;
     private final SCSequence collectSubSeq = new SCSequence();
     private final AsyncGroupByNotKeyedRecordCursor cursor;
@@ -158,7 +159,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
 
     private static void aggregate(
             int workerId,
-            @NotNull PageAddressCacheRecord record,
+            @NotNull PageFrameMemoryRecord record,
             @NotNull PageFrameReduceTask task,
             @NotNull SqlExecutionCircuitBreaker circuitBreaker,
             @Nullable PageFrameSequence<?> stealingFrameSequence
@@ -166,6 +167,9 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         final long frameRowCount = task.getFrameRowCount();
         assert frameRowCount > 0;
         final AsyncGroupByNotKeyedAtom atom = task.getFrameSequence(AsyncGroupByNotKeyedAtom.class).getAtom();
+
+        final PageFrameMemory frameMemory = task.populateFrameMemory();
+        record.init(frameMemory);
 
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.acquire(workerId, owner, circuitBreaker);
@@ -185,11 +189,12 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             }
         } finally {
             atom.release(slotId);
+            task.releaseFrameMemory();
         }
     }
 
     private static void aggregateFiltered(
-            @NotNull PageAddressCacheRecord record,
+            @NotNull PageFrameMemoryRecord record,
             DirectLongList rows,
             long baseRowId,
             SimpleMapValue value,
@@ -209,28 +214,31 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
 
     private static void filterAndAggregate(
             int workerId,
-            @NotNull PageAddressCacheRecord record,
+            @NotNull PageFrameMemoryRecord record,
             @NotNull PageFrameReduceTask task,
             @NotNull SqlExecutionCircuitBreaker circuitBreaker,
             @Nullable PageFrameSequence<?> stealingFrameSequence
     ) {
         final DirectLongList rows = task.getFilteredRows();
-        final PageAddressCache pageAddressCache = task.getPageAddressCache();
+        final PageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence = task.getFrameSequence(AsyncGroupByNotKeyedAtom.class);
+        final AsyncGroupByNotKeyedAtom atom = frameSequence.getAtom();
+
+        final PageFrameMemory frameMemory = task.populateFrameMemory();
+        record.init(frameMemory);
 
         rows.clear();
 
         final long frameRowCount = task.getFrameRowCount();
         assert frameRowCount > 0;
-        final AsyncGroupByNotKeyedAtom atom = task.getFrameSequence(AsyncGroupByNotKeyedAtom.class).getAtom();
 
-        final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
+        final boolean owner = stealingFrameSequence != null && stealingFrameSequence == frameSequence;
         final int slotId = atom.acquire(workerId, owner, circuitBreaker);
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
         final SimpleMapValue value = atom.getMapValue(slotId);
         final CompiledFilter compiledFilter = atom.getCompiledFilter();
         final Function filter = atom.getFilter(slotId);
         try {
-            if (compiledFilter == null || pageAddressCache.hasColumnTops(task.getFrameIndex())) {
+            if (compiledFilter == null || frameSequence.getAddressCache().hasColumnTops(task.getFrameIndex())) {
                 // Use Java-based filter when there is no compiled filter or in case of a page frame with column tops.
                 applyFilter(filter, rows, record, frameRowCount);
             } else {
@@ -242,6 +250,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             aggregateFiltered(record, rows, baseRowId, value, functionUpdater);
         } finally {
             atom.release(slotId);
+            task.releaseFrameMemory();
         }
     }
 
@@ -268,7 +277,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         rows.setPos(hi);
     }
 
-    static void applyFilter(Function filter, DirectLongList rows, PageAddressCacheRecord record, long frameRowCount) {
+    static void applyFilter(Function filter, DirectLongList rows, PageFrameMemoryRecord record, long frameRowCount) {
         for (long r = 0; r < frameRowCount; r++) {
             record.setRowIndex(r);
             if (filter.getBool(record)) {

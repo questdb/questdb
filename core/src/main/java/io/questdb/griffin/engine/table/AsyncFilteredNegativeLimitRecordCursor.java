@@ -55,12 +55,16 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
 
     private static final Log LOG = LogFactory.getLog(AsyncFilteredNegativeLimitRecordCursor.class);
 
+    // Used for random access: we may have to deserialize Parquet page frame.
+    private final PageFrameMemoryPool frameMemoryPool;
     private final boolean hasDescendingOrder;
-    private final PageAddressCacheRecord record;
+    private final PageFrameMemoryRecord record;
     private int frameIndex;
     private int frameLimit;
+    // Used for random access.
+    private PageFrameMemory frameMemory;
     private PageFrameSequence<?> frameSequence;
-    private PageAddressCacheRecord recordB;
+    private PageFrameMemoryRecord recordB;
     private long rowCount;
     private long rowIndex;
     // Artificial limit on remaining rows to be returned from this cursor.
@@ -70,8 +74,9 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
     private DirectLongList rows;
 
     public AsyncFilteredNegativeLimitRecordCursor(int scanDirection) {
-        this.record = new PageAddressCacheRecord();
+        this.record = new PageFrameMemoryRecord();
         this.hasDescendingOrder = scanDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
+        this.frameMemoryPool = new PageFrameMemoryPool();
     }
 
     @Override
@@ -85,11 +90,14 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
             frameSequence.await();
         }
         frameSequence.clear();
+        frameMemory = Misc.free(frameMemory);
+        Misc.free(frameMemoryPool);
     }
 
     public void freeRecords() {
         Misc.free(record);
         Misc.free(recordB);
+        Misc.free(frameMemoryPool);
     }
 
     @Override
@@ -102,7 +110,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
         if (recordB != null) {
             return recordB;
         }
-        recordB = new PageAddressCacheRecord(record);
+        recordB = new PageFrameMemoryRecord(record);
         return recordB;
     }
 
@@ -119,8 +127,9 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
         }
         if (rowIndex < rows.getCapacity()) {
             long rowId = rows.get(rowIndex);
+            frameMemory = frameMemoryPool.navigateTo(Rows.toPartitionIndex(rowId));
+            record.init(frameMemory);
             record.setRowIndex(Rows.toLocalRowID(rowId));
-            record.setFrameIndex(Rows.toPartitionIndex(rowId));
             rowIndex++;
             return true;
         }
@@ -134,8 +143,9 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
 
     @Override
     public void recordAt(Record record, long atRowId) {
-        ((PageAddressCacheRecord) record).setFrameIndex(Rows.toPartitionIndex(atRowId));
-        ((PageAddressCacheRecord) record).setRowIndex(Rows.toLocalRowID(atRowId));
+        frameMemory = frameMemoryPool.navigateTo(Rows.toPartitionIndex(atRowId));
+        ((PageFrameMemoryRecord) record).init(frameMemory);
+        ((PageFrameMemoryRecord) record).setRowIndex(Rows.toLocalRowID(atRowId));
     }
 
     @Override
@@ -238,9 +248,10 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
         rows = negativeLimitRows;
         rowIndex = negativeLimitRows.getCapacity();
         rowCount = 0;
-        record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageFrameMemoryCache());
+        frameMemoryPool.of(frameSequence.getAddressCache());
+        record.of(frameSequence.getSymbolTableSource());
         if (recordB != null) {
-            recordB.of(frameSequence.getSymbolTableSource(), frameSequence.getPageFrameMemoryCache());
+            recordB.of(frameSequence.getSymbolTableSource());
         }
     }
 }

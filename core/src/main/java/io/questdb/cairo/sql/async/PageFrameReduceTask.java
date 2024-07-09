@@ -151,8 +151,9 @@ public class PageFrameReduceTask implements Closeable {
         }
     }
 
-    public void populateFrameMemory() {
+    public PageFrameMemory populateFrameMemory() {
         frameMemory = frameMemoryPool.navigateTo(frameIndex);
+        return frameMemory;
     }
 
     // Must be called after populateFrameMemory.

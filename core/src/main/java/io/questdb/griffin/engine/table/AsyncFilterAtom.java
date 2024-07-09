@@ -126,7 +126,7 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
      * @param record record to use
      * @param rows   rows to pre-touch
      */
-    public void preTouchColumns(PageAddressCacheRecord record, DirectLongList rows) {
+    public void preTouchColumns(PageFrameMemoryRecord record, DirectLongList rows) {
         if (!preTouchEnabled || forceDisablePreTouch) {
             return;
         }
