@@ -38,6 +38,7 @@ import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.functions.date.TimestampFloorOffsetFunctionFactory;
 import io.questdb.std.BitSet;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.Timestamps;
 
 
@@ -62,15 +63,17 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
     private CharSequence stride;
     private int timestampIndex;
     private Function to;
+    private ObjList<Function> values;
 
 
-    public FillRangeRecordCursorFactory(RecordMetadata metadata, RecordCursorFactory base, Function from, Function to, CharSequence stride, int timestampIndex) {
+    public FillRangeRecordCursorFactory(RecordMetadata metadata, RecordCursorFactory base, Function from, Function to, CharSequence stride, ObjList<Function> fillValues, int timestampIndex) {
         super(metadata);
         this.base = base;
         this.from = from;
         this.to = to;
         this.stride = stride;
         this.timestampIndex = timestampIndex;
+        this.values = fillValues;
     }
 
     @Override
@@ -82,7 +85,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
-            cursor.of(baseCursor, executionContext.getCircuitBreaker(), from, to, stride, timestampIndex);
+            cursor.of(baseCursor, executionContext.getCircuitBreaker(), from, to, stride, values, timestampIndex);
             return cursor;
         } catch (Throwable th) {
             baseCursor.close();
@@ -98,9 +101,9 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Fill Range");
-        sink.optAttr("from", from);
-        sink.optAttr("to", to);
-        sink.optAttr("stride", stride);
+        sink.attr("range").val('(').val(from).val(',').val(to).val(')');
+        sink.attr("stride").val('\'').val(stride).val('\'');
+        sink.attr("value").val("null"); // [NW] revisit
         sink.child(base);
     }
 
@@ -138,6 +141,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         private int timestampIndex;
         private TimestampSampler timestampSampler;
         private long toTimestamp;
+        private ObjList<Function> values;
 
         @Override
         public void close() {
@@ -293,10 +297,11 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             strideUnit = Timestamps.getStrideUnit(stride);
         }
 
-        private void of(RecordCursor baseCursor, SqlExecutionCircuitBreaker circuitBreaker, Function from, Function to, CharSequence stride, int timestampIndex) throws SqlException {
+        private void of(RecordCursor baseCursor, SqlExecutionCircuitBreaker circuitBreaker, Function from, Function to, CharSequence stride, ObjList<Function> values, int timestampIndex) throws SqlException {
             this.baseCursor = baseCursor;
             this.circuitBreaker = circuitBreaker;
             this.timestampIndex = timestampIndex;
+            this.values = values;
             initTimestamps(from, to, stride);
             initBitset();
             toTop();
@@ -308,7 +313,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             @Override
             public double getDouble(int col) {
                 if (gapFilling) {
-                    return Double.NaN;
+                    return values.getQuick(col - 1).getDouble(null);
                 } else {
                     return baseRecord.getDouble(col);
                 }

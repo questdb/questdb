@@ -2205,9 +2205,9 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(query, "Sort\n" +
                     "  keys: [ts]\n" +
                     "    Fill Range\n" +
-                    "      from: '2017-12-20'\n" +
-                    "      to: '2018-01-31'\n" +
-                    "      stride: 5d\n" +
+                    "      range: ('2017-12-20','2018-01-31')\n" +
+                    "      stride: '5d'\n" +
+                    "      value: null\n" +
                     "        Async Group By workers: 1\n" +
                     "          keys: [ts]\n" +
                     "          values: [avg(x)]\n" +
