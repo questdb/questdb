@@ -70,7 +70,7 @@ public class SwarUtilsTest {
         Assert.assertEquals(0x8000808080808080L, SwarUtils.markZeroBytes(1L << 49));
         Assert.assertEquals(0x0080808080808080L, SwarUtils.markZeroBytes(1L << 57));
         Assert.assertEquals(0x0080808080808080L, SwarUtils.markZeroBytes(Long.MIN_VALUE));
-
+        // false positives:
         Assert.assertEquals(0x8080808080808080L, SwarUtils.markZeroBytes(0x0100));
         Assert.assertEquals(0x8080808080808080L, SwarUtils.markZeroBytes(0x0000));
     }
