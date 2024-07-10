@@ -65,7 +65,7 @@ public class WarningsEndpointTest extends AbstractBootstrapTest {
                 "},{" +
                 "\"tag\":\"" + OUT_OF_MMAP_AREAS.text() + "\"," +
                 "\"warning\":\"vm.max_map_count limit is too low [current=1024, recommended=1048576]\"" +
-                "}," +
+                "}" +
                 "]");
     }
 
@@ -75,7 +75,7 @@ public class WarningsEndpointTest extends AbstractBootstrapTest {
                 "{" +
                 "\"tag\":\"" + UNSUPPORTED_FILE_SYSTEM.text() + "\"," +
                 "\"warning\":\"Unsupported file system [dir=" + root + ", magic=0x6400]\"" +
-                "}," +
+                "}" +
                 "]");
     }
 
@@ -85,7 +85,7 @@ public class WarningsEndpointTest extends AbstractBootstrapTest {
                 "{" +
                 "\"tag\":\"" + OUT_OF_MMAP_AREAS.text() + "\"," +
                 "\"warning\":\"vm.max_map_count limit is too low [current=65536, recommended=1048576]\"" +
-                "}," +
+                "}" +
                 "]");
     }
 
@@ -98,7 +98,7 @@ public class WarningsEndpointTest extends AbstractBootstrapTest {
                 "},{" +
                 "\"tag\":\"" + OUT_OF_MMAP_AREAS.text() + "\"," +
                 "\"warning\":\"vm.max_map_count limit is too low [current=4096, recommended=1048576]\"" +
-                "}," +
+                "}" +
                 "]");
     }
 
@@ -113,7 +113,7 @@ public class WarningsEndpointTest extends AbstractBootstrapTest {
                 "{" +
                 "\"tag\":\"" + TOO_MANY_OPEN_FILES.text() + "\"," +
                 "\"warning\":\"fs.file-max limit is too low [current=1024, recommended=1048576]\"" +
-                "}," +
+                "}" +
                 "]");
     }
 

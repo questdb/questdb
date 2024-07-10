@@ -61,7 +61,7 @@ public class WarningsProcessor implements HttpRequestProcessor {
                         .putAscii(',').putQuoted(WARNING).putAscii(":\"")
                         .putAscii("Unsupported file system [dir=").put(rootDir).putAscii(", magic=0x");
                 Numbers.appendHex(sink, fsStatus, false);
-                sink.putAscii("]\"},");
+                sink.putAscii("]\"}");
             }
         }
 
@@ -70,10 +70,13 @@ public class WarningsProcessor implements HttpRequestProcessor {
             throw CairoException.nonCritical().put("Could not read fs.file-max [errno=").put(Os.errno()).put("]");
         }
         if (fileLimit > 0 && fileLimit < RECOMMENDED_FILE_LIMIT) {
+            if (sink.length() > 1) {
+                sink.putAscii(',');
+            }
             sink.putAscii('{').putQuoted(TAG).putAscii(':').putQuoted(TOO_MANY_OPEN_FILES.text())
                     .putAscii(',').putQuoted(WARNING).putAscii(":\"")
                     .putAscii("fs.file-max limit is too low [current=").put(fileLimit)
-                    .putAscii(", recommended=").put(RECOMMENDED_FILE_LIMIT).putAscii("]\"},");
+                    .putAscii(", recommended=").put(RECOMMENDED_FILE_LIMIT).putAscii("]\"}");
         }
 
         final long mapCountLimit = ff.getMapCountLimit();
@@ -81,10 +84,13 @@ public class WarningsProcessor implements HttpRequestProcessor {
             throw CairoException.nonCritical().put("Could not read vm.max_map_count [errno=").put(Os.errno()).put("]");
         }
         if (mapCountLimit > 0 && mapCountLimit < RECOMMENDED_MAP_COUNT_LIMIT) {
+            if (sink.length() > 1) {
+                sink.putAscii(',');
+            }
             sink.putAscii('{').putQuoted(TAG).putAscii(':').putQuoted(OUT_OF_MMAP_AREAS.text())
                     .putAscii(',').putQuoted(WARNING).putAscii(":\"")
                     .putAscii("vm.max_map_count limit is too low [current=").put(mapCountLimit)
-                    .putAscii(", recommended=").put(RECOMMENDED_MAP_COUNT_LIMIT).putAscii("]\"},");
+                    .putAscii(", recommended=").put(RECOMMENDED_MAP_COUNT_LIMIT).putAscii("]\"}");
         }
 
         sink.putAscii(']');
