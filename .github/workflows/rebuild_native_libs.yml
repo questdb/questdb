@@ -48,7 +48,7 @@ jobs:
           submodules: true
       - name: Build in FreeBSD
         # @d44bf830e7d is the same as the tag v1, but it's guaranteed to be immutable.
-        uses: vmactions/freebsd-vm
+        uses: vmactions/freebsd-vm@v1
         with:
           # FreeBSD 13.2
           release: 13.2
