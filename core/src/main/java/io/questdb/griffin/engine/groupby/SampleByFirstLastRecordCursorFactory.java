@@ -112,6 +112,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        // TODO: use PageFrameMemoryPool here
         PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext, ORDER_ASC);
         int groupByIndexKey = symbolFilter.getSymbolFilterKey();
         if (groupByIndexKey == SymbolMapReader.VALUE_NOT_FOUND) {
