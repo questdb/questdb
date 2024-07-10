@@ -31,11 +31,11 @@ import org.jetbrains.annotations.NotNull;
 import java.nio.BufferOverflowException;
 
 public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByteSink, QuietCloseable, Mutable {
-    private static final int BYTE_SINK_HI_OFFSET = 16;
-    private static final int BYTE_SINK_LO_OFFSET = 8;
-    private static final int BYTE_SINK_OVERFLOW_OFFSET = 24;
-    private static final int BYTE_SINK_PTR_OFFSET = 0;
-    private static final int BYTE_SINK_UNICODE_OFFSET = 28;
+    private static final int BYTE_SINK_PTR_OFFSET = 0;  // 0
+    private static final int BYTE_SINK_LO_OFFSET = BYTE_SINK_PTR_OFFSET + 8;  // 8
+    private static final int BYTE_SINK_HI_OFFSET = BYTE_SINK_LO_OFFSET + 8;  // 16
+    private static final int BYTE_SINK_OVERFLOW_OFFSET = BYTE_SINK_HI_OFFSET + 8;  // 24
+    private static final int BYTE_SINK_UNICODE_OFFSET = BYTE_SINK_OVERFLOW_OFFSET + 4;  // 28
     private final long initialCapacity;
     /**
      * Pointer to the C `questdb_byte_sink_t` structure. See `byte_sink.h`.
@@ -161,7 +161,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
      * Returns true when the buffer contains a UTF-8 encoded string containing non-ASCII characters.
      */
     public boolean isUnicode() {
-        return Unsafe.getUnsafe().getInt(impl + BYTE_SINK_UNICODE_OFFSET) != 0;
+        return Unsafe.getUnsafe().getByte(impl + BYTE_SINK_UNICODE_OFFSET) != 0;
     }
 
     /**
@@ -224,7 +224,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
     }
 
     public void setUnicode(boolean unicode) {
-        Unsafe.getUnsafe().putInt(impl + BYTE_SINK_UNICODE_OFFSET, unicode ? 1 : 0);
+        Unsafe.getUnsafe().putByte(impl + BYTE_SINK_UNICODE_OFFSET, (byte) (unicode ? 1 : 0));
     }
 
     /**
@@ -273,7 +273,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
     }
 
     private long getImplPtr() {
-        return Unsafe.getUnsafe().getLong(impl);
+        return Unsafe.getUnsafe().getLong(impl + BYTE_SINK_PTR_OFFSET);
     }
 
     private void inflate() {
@@ -286,7 +286,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
     }
 
     private void setImplPtr(long ptr) {
-        Unsafe.getUnsafe().putLong(impl, ptr);
+        Unsafe.getUnsafe().putLong(impl + BYTE_SINK_PTR_OFFSET, ptr);
     }
 
     protected int memoryTag() {
