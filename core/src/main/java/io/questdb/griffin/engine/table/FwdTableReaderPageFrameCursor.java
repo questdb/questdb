@@ -180,7 +180,7 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
                     long auxOffsetHi = columnTypeDriver.getAuxVectorOffset(partitionHiAdjusted);
 
                     long dataSize = columnTypeDriver.getDataVectorSizeAt(auxAddress, partitionHiAdjusted - 1);
-                    // some varsize columns may not have data memory (fully inlined)
+                    // some var-size columns may not have data memory (fully inlined)
                     long dataAddress = dataSize > 0 ? colMem.getPageAddress(0) : 0;
 
                     columnPageAddress.setQuick(i * 2, dataAddress);

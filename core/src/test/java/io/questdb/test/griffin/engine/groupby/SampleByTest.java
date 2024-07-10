@@ -3649,6 +3649,7 @@ public class SampleByTest extends AbstractCairoTest {
             columns.add(col);
 
             new SampleByFirstLastRecordCursorFactory(
+                    configuration,
                     null,
                     new MicroTimestampSampler(100L),
                     groupByMeta,
@@ -3685,6 +3686,7 @@ public class SampleByTest extends AbstractCairoTest {
             columns.add(col);
 
             new SampleByFirstLastRecordCursorFactory(
+                    configuration,
                     null,
                     new MicroTimestampSampler(100L),
                     groupByMeta,

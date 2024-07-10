@@ -2985,6 +2985,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     int symbolColIndex = getSampleBySymbolKeyIndex(model, metadata);
                     if (symbolColIndex == -1 || symbolFilter.getColumnIndex() == symbolColIndex) {
                         return new SampleByFirstLastRecordCursorFactory(
+                                configuration,
                                 factory,
                                 timestampSampler,
                                 groupByMetadata,

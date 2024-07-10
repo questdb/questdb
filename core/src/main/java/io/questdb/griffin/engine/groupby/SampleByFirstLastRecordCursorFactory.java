@@ -60,6 +60,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
     private DirectLongList samplePeriodAddress;
 
     public SampleByFirstLastRecordCursorFactory(
+            CairoConfiguration configuration,
             RecordCursorFactory base,
             TimestampSampler timestampSampler,
             GenericRecordMetadata groupByMetadata,
@@ -93,6 +94,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             samplePeriodAddress = new DirectLongList(pageSize, MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST);
             this.symbolFilter = symbolFilter;
             sampleByFirstLastRecordCursor = new SampleByFirstLastRecordCursor(
+                    configuration,
                     timestampSampler,
                     timezoneNameFunc,
                     timezoneNameFuncPos,
@@ -112,15 +114,17 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        // TODO: use PageFrameMemoryPool here
-        PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext, ORDER_ASC);
-        int groupByIndexKey = symbolFilter.getSymbolFilterKey();
+        // pageFrameCursor must be acquired before the groupByIndexKey lookup
+        final PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext, ORDER_ASC);
+        final int groupByIndexKey = symbolFilter.getSymbolFilterKey();
         if (groupByIndexKey == SymbolMapReader.VALUE_NOT_FOUND) {
             Misc.free(pageFrameCursor);
             return EmptyTableRecordCursor.INSTANCE;
         }
+
         try {
             sampleByFirstLastRecordCursor.of(
+                    base.getMetadata(),
                     pageFrameCursor,
                     groupByIndexKey,
                     executionContext
@@ -258,19 +262,23 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         private final static int STATE_RETURN_LAST_ROW = 6;
         private final static int STATE_SEARCH = 5;
         private final static int STATE_START = 0;
+        private final PageFrameAddressCache addressCache;
+        private final PageFrameMemoryPool frameMemoryPool;
         private final SampleByFirstLastRecord record = new SampleByFirstLastRecord();
         private int crossRowState;
-        private PageFrame currentFrame;
+        private PageFrameMemory currentFrameMemory;
         private long currentRow;
-        private long dataFrameHi = -1;
-        private long dataFrameLo = -1;
+        private int frameCount = 0;
+        private PageFrameCursor frameCursor;
+        private long frameHi = -1;
+        private long frameLo = -1;
         private long frameNextRowId = -1;
         private int groupBySymbolKey;
         private IndexFrameCursor indexCursor;
         private IndexFrame indexFrame;
         private int indexFramePosition = -1;
         private boolean initialized;
-        private PageFrameCursor pageFrameCursor;
+        private RecordMetadata metadata;
         private long prevSamplePeriodOffset = 0;
         private int rowsFound;
         private long samplePeriodIndexOffset = 0;
@@ -278,6 +286,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         private int state;
 
         public SampleByFirstLastRecordCursor(
+                CairoConfiguration configuration,
                 TimestampSampler timestampSampler,
                 Function timezoneNameFunc,
                 int timezoneNameFuncPos,
@@ -285,11 +294,17 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 int offsetFuncPos
         ) {
             super(timestampSampler, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos);
+            addressCache = new PageFrameAddressCache(configuration);
+            frameMemoryPool = new PageFrameMemoryPool();
+            frameMemoryPool.of(addressCache);
         }
 
         @Override
         public void close() {
-            pageFrameCursor = Misc.free(pageFrameCursor);
+            addressCache.clear();
+            currentFrameMemory = Misc.free(currentFrameMemory);
+            Misc.free(frameMemoryPool);
+            frameCursor = Misc.free(frameCursor);
         }
 
         public long getNextTimestamp() {
@@ -313,7 +328,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
 
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
-            return pageFrameCursor.getSymbolTable(queryToFrameColumnMapping[columnIndex]);
+            return frameCursor.getSymbolTable(queryToFrameColumnMapping[columnIndex]);
         }
 
         @Override
@@ -333,7 +348,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
 
         @Override
         public SymbolTable newSymbolTable(int columnIndex) {
-            return pageFrameCursor.newSymbolTable(queryToFrameColumnMapping[columnIndex]);
+            return frameCursor.newSymbolTable(queryToFrameColumnMapping[columnIndex]);
         }
 
         @Override
@@ -364,11 +379,15 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
 
         @Override
         public void toTop() {
+            frameCount = 0;
             currentRow = rowsFound = 0;
-            frameNextRowId = dataFrameLo = dataFrameHi = -1;
+            frameNextRowId = frameLo = frameHi = -1;
             state = STATE_START;
             crossRowState = NONE;
-            pageFrameCursor.toTop();
+            frameCursor.toTop();
+            addressCache.clear();
+            currentFrameMemory = Misc.free(currentFrameMemory);
+            addressCache.of(metadata);
         }
 
         private void checkCrossRowAfterFoundBufferIterated() {
@@ -436,17 +455,20 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                     // Fall through to STATE_FETCH_NEXT_DATA_FRAME;
 
                 case STATE_FETCH_NEXT_DATA_FRAME:
-                    currentFrame = pageFrameCursor.next();
-                    if (currentFrame != null) {
+                    final PageFrame frame = frameCursor.next();
+                    if (frame != null) {
+                        addressCache.add(frameCount, frame);
+                        Misc.free(currentFrameMemory);
+                        currentFrameMemory = frameMemoryPool.navigateTo(frameCount++);
                         record.switchFrame();
 
                         // Switch to new data frame
-                        frameNextRowId = dataFrameLo = currentFrame.getPartitionLo();
-                        dataFrameHi = dataFrameLo + currentFrame.getPageSize(timestampIndex) / Long.BYTES;
+                        frameNextRowId = frameLo = frame.getPartitionLo();
+                        frameHi = frame.getPartitionHi();
 
                         // Re-fetch index cursor to correctly position it to frameNextRowId
-                        BitmapIndexReader symbolIndexReader = currentFrame.getBitmapIndexReader(groupBySymbolColIndex, BitmapIndexReader.DIR_FORWARD);
-                        indexCursor = symbolIndexReader.getFrameCursor(groupBySymbolKey, dataFrameLo, dataFrameHi);
+                        BitmapIndexReader symbolIndexReader = frame.getBitmapIndexReader(groupBySymbolColIndex, BitmapIndexReader.DIR_FORWARD);
+                        indexCursor = symbolIndexReader.getFrameCursor(groupBySymbolKey, frameLo, frameHi);
 
                         // Fall through to STATE_FETCH_NEXT_INDEX_FRAME;
                     } else {
@@ -461,7 +483,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                     if (indexFrame.getSize() == 0) {
                         if (indexFrameAddress != 0 || groupBySymbolKey != FILTER_KEY_IS_NULL) {
                             // No rows in index for this dataframe left, go to next data frame
-                            frameNextRowId = dataFrameHi;
+                            frameNextRowId = frameHi;
                             // Jump back to fetch next data frame
                             return STATE_FETCH_NEXT_DATA_FRAME;
                         }
@@ -471,8 +493,8 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                     }
 
                     if (samplePeriodStart == Numbers.LONG_NULL) {
-                        long rowId = indexFrameAddress > 0 ? Unsafe.getUnsafe().getLong(indexFrameAddress) : dataFrameLo;
-                        long offsetTimestampColumnAddress = currentFrame.getPageAddress(timestampIndex) - dataFrameLo * Long.BYTES;
+                        long rowId = indexFrameAddress > 0 ? Unsafe.getUnsafe().getLong(indexFrameAddress) : frameLo;
+                        long offsetTimestampColumnAddress = currentFrameMemory.getPageAddress(timestampIndex) - frameLo * Long.BYTES;
                         samplePeriodStart = Unsafe.getUnsafe().getLong(offsetTimestampColumnAddress + rowId * Long.BYTES);
                         startFrom(samplePeriodStart);
                     }
@@ -481,22 +503,22 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 case STATE_OUT_BUFFER_FULL:
                 case STATE_SEARCH:
                     int outPosition = crossRowState == NONE ? 0 : 1;
-                    long offsetTimestampColumnAddress = currentFrame.getPageAddress(timestampIndex) - dataFrameLo * Long.BYTES;
+                    long offsetTimestampColumnAddress = currentFrameMemory.getPageAddress(timestampIndex) - frameLo * Long.BYTES;
                     long iFrameAddress = indexFrame.getAddress();
-                    long iFrameSize = findSafeIndexFrameSize(indexFrame, dataFrameHi);
+                    long iFrameSize = findSafeIndexFrameSize(indexFrame, frameHi);
                     long lastIndexRowId = iFrameAddress > 0
                             ? Unsafe.getUnsafe().getLong(iFrameAddress + (iFrameSize - 1) * Long.BYTES)
                             : Long.MAX_VALUE;
-                    long lastInDataRowId = Math.min(lastIndexRowId, dataFrameHi - 1);
+                    long lastInDataRowId = Math.min(lastIndexRowId, frameHi - 1);
                     long lastInDataTimestamp = Unsafe.getUnsafe().getLong(offsetTimestampColumnAddress + lastInDataRowId * Long.BYTES);
                     int samplePeriodCount = fillSamplePeriodsUntil(lastInDataTimestamp);
 
                     rowsFound = BitmapIndexUtilsNative.findFirstLastInFrame(
                             outPosition,
                             frameNextRowId,
-                            dataFrameHi,
+                            frameHi,
                             offsetTimestampColumnAddress,
-                            dataFrameLo,
+                            frameLo,
                             iFrameAddress,
                             iFrameSize,
                             indexFramePosition,
@@ -523,7 +545,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
 
                     // decide what to do next
                     int newState;
-                    if (frameNextRowId >= dataFrameHi) {
+                    if (frameNextRowId >= frameHi) {
                         // Data frame exhausted. Next time start from fetching new data frame
                         newState = STATE_FETCH_NEXT_DATA_FRAME;
                     } else if (indexFramePosition >= iFrameSize) {
@@ -619,7 +641,6 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 if (firstLastIndexByCol[columnIndex] == LAST_OUT_INDEX) {
                     // last() values only
                     int frameColIndex = queryToFrameColumnMapping[columnIndex];
-                    assert currentFrame.getPageSize(frameColIndex) > rowIdOutAddress.get(LAST_OUT_INDEX);
                     saveRowIdValueToCrossRow(rowIdOutAddress.get(LAST_OUT_INDEX), columnIndex);
                 }
             }
@@ -628,7 +649,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         private void saveRowIdValueToCrossRow(long rowId, int columnIndex) {
             int columnType = getMetadata().getColumnType(columnIndex);
             int frameColIndex = queryToFrameColumnMapping[columnIndex];
-            long pageAddress = currentFrame.getPageAddress(frameColIndex);
+            long pageAddress = currentFrameMemory.getPageAddress(frameColIndex);
             if (pageAddress > 0) {
                 saveFixedColToBufferWithLongAlignment(columnIndex, crossFrameRow, columnType, pageAddress, rowId);
             } else {
@@ -637,11 +658,13 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         }
 
         void of(
+                RecordMetadata metadata,
                 PageFrameCursor pageFrameCursor,
                 int groupBySymbolKey,
                 SqlExecutionContext sqlExecutionContext
         ) throws SqlException {
-            this.pageFrameCursor = pageFrameCursor;
+            this.metadata = metadata;
+            this.frameCursor = pageFrameCursor;
             this.groupBySymbolKey = groupBySymbolKey;
             toTop();
             parseParams(this, sqlExecutionContext);
@@ -790,7 +813,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 @Override
                 public CharSequence getSymA(int col) {
                     int symbolId = (int) crossFrameRow.getQuick(col);
-                    return pageFrameCursor.getSymbolTable(queryToFrameColumnMapping[col]).valueBOf(symbolId);
+                    return frameCursor.getSymbolTable(queryToFrameColumnMapping[col]).valueBOf(symbolId);
                 }
 
                 @Override
@@ -938,7 +961,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                     } else {
                         symbolId = SymbolTable.VALUE_IS_NULL;
                     }
-                    return pageFrameCursor.getSymbolTable(queryToFrameColumnMapping[col]).valueBOf(symbolId);
+                    return frameCursor.getSymbolTable(queryToFrameColumnMapping[col]).valueBOf(symbolId);
                 }
 
                 @Override
@@ -953,7 +976,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
 
                 public void switchFrame() {
                     for (int i = 0, length = pageAddresses.length; i < length; i++) {
-                        pageAddresses[i] = currentFrame.getPageAddress(queryToFrameColumnMapping[i]);
+                        pageAddresses[i] = currentFrameMemory.getPageAddress(queryToFrameColumnMapping[i]);
                     }
                 }
 

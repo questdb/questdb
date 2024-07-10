@@ -87,6 +87,7 @@ public class PageFrameMemoryPool implements QuietCloseable {
         this.frameIndex = frameIndex;
         this.frameFormat = addressCache.getFrameFormat(frameIndex);
         if (frameFormat == PageFrame.PARQUET_FORMAT) {
+            // TODO: we should only deserialize columns that are needed by the query!!!
             // TODO: handle missing columns/column tops/etc.
             copyToColumnChunks(0, addressCache.getFrameSize(frameIndex));
 
@@ -608,6 +609,11 @@ public class PageFrameMemoryPool implements QuietCloseable {
         @Override
         public LongList getPageAddresses() {
             return pageAddresses;
+        }
+
+        @Override
+        public long getPageSize(int columnIndex) {
+            return pageSizes.getQuick(columnIndex);
         }
 
         @Override

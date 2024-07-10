@@ -48,6 +48,8 @@ public interface PageFrameMemory extends QuietCloseable {
 
     LongList getPageAddresses();
 
+    long getPageSize(int columnIndex);
+
     LongList getPageSizes();
 
     long getRowIdOffset();
