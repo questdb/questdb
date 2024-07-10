@@ -213,7 +213,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 Path path = getMetaFilePath(root, tableName);
                 TableReaderMetadata metadata = new TableReaderMetadata(configuration)
         ) {
-            metadata.load(path);
+            metadata.load(path.$());
             for (ObjIntHashMap.Entry<String> e : expected) {
                 Assert.assertEquals(e.value, metadata.getColumnIndexQuiet(e.key));
             }
@@ -450,7 +450,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
 
     private static Path getMetaFilePath(final CharSequence root, final CharSequence tableName) {
         TableToken tableToken = engine.verifyTableName(tableName);
-        return new Path().of(root).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
+        return new Path().of(root).concat(tableToken).concat(TableUtils.META_FILE_NAME);
     }
 
     private void assertThat(String expected, ColumnManipulator... manipulators) throws Exception {

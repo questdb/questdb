@@ -30,6 +30,7 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.SymbolMapWriter.*;
@@ -59,19 +60,18 @@ public class SymbolMapUtil {
 
             // this constructor does not create index. Index must exist,
             // and we use "offset" file to store "header"
-            offsetFileName(path.trimTo(plen), name, columnNameTxn);
-            if (!ff.exists(path)) {
+            if (!ff.exists(offsetFileName(path.trimTo(plen), name, columnNameTxn))) {
                 LOG.error().$(path).$(" is not found").$();
                 throw CairoException.critical(0).put("SymbolMap does not exist: ").put(path);
             }
 
             // is there enough length in "offset" file for "header"?
-            long len = ff.length(path);
+            long len = ff.length(path.$());
             if (len < SymbolMapWriter.HEADER_SIZE) {
                 LOG.error().$(path).$(" is too short [len=").$(len).$(']').$();
                 throw CairoException.critical(0).put("SymbolMap is too short: ").put(path);
             }
-            offsetMem = open(configuration, ff, mapPageSize, len, path, offsetMem);
+            offsetMem = open(configuration, ff, mapPageSize, len, path.$(), offsetMem);
 
             // formula for calculating symbol capacity needs to be in agreement with symbol reader
             if (symbolCapacity < 1) {
@@ -91,8 +91,7 @@ public class SymbolMapUtil {
             truncate(symbolCapacity);
 
             // open .c file
-            charFileName(path.trimTo(plen), name, columnNameTxn);
-            long charFileLen = ff.length(path);
+            long charFileLen = ff.length(charFileName(path.trimTo(plen), name, columnNameTxn));
             if (charFileLen == 0) {
                 // .c file is empty, nothing to do
                 return;
@@ -135,7 +134,7 @@ public class SymbolMapUtil {
         }
     }
 
-    private static MemoryCMOR open(CairoConfiguration configuration, FilesFacade ff, long mapPageSize, long size, Path path, MemoryCMOR mem) {
+    private static MemoryCMOR open(CairoConfiguration configuration, FilesFacade ff, long mapPageSize, long size, LPSZ path, MemoryCMOR mem) {
         if (size == -1) {
             long fileSize = ff.length(path);
             if (fileSize > 0) {
@@ -157,7 +156,7 @@ public class SymbolMapUtil {
         return mem;
     }
 
-    private static MemoryMARW open(CairoConfiguration configuration, FilesFacade ff, long mapPageSize, long size, Path path, MemoryMARW mem) {
+    private static MemoryMARW open(CairoConfiguration configuration, FilesFacade ff, long mapPageSize, long size, LPSZ path, MemoryMARW mem) {
         if (mem == null) {
             mem = Vm.getMARWInstance(
                     ff,

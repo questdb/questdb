@@ -289,8 +289,8 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                             // Remove _txn file first
                             rmPath.trimTo(rootLen).concat(tableName);
                             int len = rmPath.size();
-                            rmPath.concat(TableUtils.TXN_FILE_NAME).$();
-                            ff.remove(rmPath);
+                            rmPath.concat(TableUtils.TXN_FILE_NAME);
+                            ff.remove(rmPath.$());
 
                             // Remove table directory
                             rmPath.trimTo(len).$();
@@ -677,7 +677,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
 
             engine.releaseInactive();
             FilesFacade ff = configuration.getFilesFacade();
-            Assert.assertTrue(ff.rmdir(Path.getThreadLocal2(root).concat(tt1).$()));
+            Assert.assertTrue(ff.rmdir(Path.getThreadLocal2(root).concat(tt1)));
 
             engine.reloadTableNames();
 

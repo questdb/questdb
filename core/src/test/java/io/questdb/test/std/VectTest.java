@@ -818,15 +818,15 @@ public class VectTest {
         int rowCount = 10_000;
         FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
         long pageSize = Files.PAGE_SIZE;
-        try (Path dataPathA = new Path().of(temp.newFile().getAbsolutePath()).$();
-             Path auxPathA = new Path().of(temp.newFile().getAbsolutePath()).$();
-             Path dataPathB = new Path().of(temp.newFile().getAbsolutePath()).$();
-             Path auxPathB = new Path().of(temp.newFile().getAbsolutePath()).$();
+        try (Path dataPathA = new Path().of(temp.newFile().getAbsolutePath());
+             Path auxPathA = new Path().of(temp.newFile().getAbsolutePath());
+             Path dataPathB = new Path().of(temp.newFile().getAbsolutePath());
+             Path auxPathB = new Path().of(temp.newFile().getAbsolutePath());
              DirectLongList index = new DirectLongList(rowCount * 4, MemoryTag.NATIVE_DEFAULT);
-             MemoryCMARW dataMemA = new MemoryCMARWImpl(ff, dataPathA, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
-             MemoryCMARW auxMemA = new MemoryCMARWImpl(ff, auxPathA, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
-             MemoryCMARW dataMemB = new MemoryCMARWImpl(ff, dataPathB, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
-             MemoryCMARW auxMemB = new MemoryCMARWImpl(ff, auxPathB, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE)) {
+             MemoryCMARW dataMemA = new MemoryCMARWImpl(ff, dataPathA.$(), pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
+             MemoryCMARW auxMemA = new MemoryCMARWImpl(ff, auxPathA.$(), pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
+             MemoryCMARW dataMemB = new MemoryCMARWImpl(ff, dataPathB.$(), pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
+             MemoryCMARW auxMemB = new MemoryCMARWImpl(ff, auxPathB.$(), pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE)) {
             auxMemA.putLong(0);
             auxMemB.putLong(0);
 
@@ -881,10 +881,10 @@ public class VectTest {
                 }
             }
 
-            try (Path dataPathDest = new Path().of(temp.newFile().getAbsolutePath()).$();
-                 Path auxPathDest = new Path().of(temp.newFile().getAbsolutePath()).$();
-                 MemoryCMARW dataMemDest = new MemoryCMARWImpl(ff, dataPathDest, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
-                 MemoryCMARW auxMemDest = new MemoryCMARWImpl(ff, auxPathDest, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE)) {
+            try (Path dataPathDest = new Path().of(temp.newFile().getAbsolutePath());
+                 Path auxPathDest = new Path().of(temp.newFile().getAbsolutePath());
+                 MemoryCMARW dataMemDest = new MemoryCMARWImpl(ff, dataPathDest.$(), pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
+                 MemoryCMARW auxMemDest = new MemoryCMARWImpl(ff, auxPathDest.$(), pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE)) {
 
                 auxMemDest.extend(2 * rowCount * 8L + 8L);
                 dataMemDest.extend(dataMemA.getAppendOffset() + dataMemB.getAppendOffset());
@@ -924,15 +924,15 @@ public class VectTest {
         int rowCount = 10_000;
         FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
         long pageSize = Files.PAGE_SIZE;
-        try (Path dataPathA = new Path().of(temp.newFile().getAbsolutePath()).$();
-             Path auxPathA = new Path().of(temp.newFile().getAbsolutePath()).$();
-             Path dataPathB = new Path().of(temp.newFile().getAbsolutePath()).$();
-             Path auxPathB = new Path().of(temp.newFile().getAbsolutePath()).$();
+        try (Path dataPathA = new Path().of(temp.newFile().getAbsolutePath());
+             Path auxPathA = new Path().of(temp.newFile().getAbsolutePath());
+             Path dataPathB = new Path().of(temp.newFile().getAbsolutePath());
+             Path auxPathB = new Path().of(temp.newFile().getAbsolutePath());
              DirectLongList index = new DirectLongList(rowCount * 4, MemoryTag.NATIVE_DEFAULT);
-             MemoryCMARW dataMemA = new MemoryCMARWImpl(ff, dataPathA, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
-             MemoryCMARW auxMemA = new MemoryCMARWImpl(ff, auxPathA, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
-             MemoryCMARW dataMemB = new MemoryCMARWImpl(ff, dataPathB, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
-             MemoryCMARW auxMemB = new MemoryCMARWImpl(ff, auxPathB, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE)) {
+             MemoryCMARW dataMemA = new MemoryCMARWImpl(ff, dataPathA.$(), pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
+             MemoryCMARW auxMemA = new MemoryCMARWImpl(ff, auxPathA.$(), pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
+             MemoryCMARW dataMemB = new MemoryCMARWImpl(ff, dataPathB.$(), pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
+             MemoryCMARW auxMemB = new MemoryCMARWImpl(ff, auxPathB.$(), pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE)) {
 
             StringSink sink = new StringSink();
             Utf8StringSink utf8Sink = new Utf8StringSink();
@@ -986,10 +986,10 @@ public class VectTest {
                 }
             }
 
-            try (Path dataPathDest = new Path().of(temp.newFile().getAbsolutePath()).$();
-                 Path auxPathDest = new Path().of(temp.newFile().getAbsolutePath()).$();
-                 MemoryCMARW dataMemDest = new MemoryCMARWImpl(ff, dataPathDest, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
-                 MemoryCMARW auxMemDest = new MemoryCMARWImpl(ff, auxPathDest, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE)) {
+            try (Path dataPathDest = new Path().of(temp.newFile().getAbsolutePath());
+                 Path auxPathDest = new Path().of(temp.newFile().getAbsolutePath());
+                 MemoryCMARW dataMemDest = new MemoryCMARWImpl(ff, dataPathDest.$(), pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
+                 MemoryCMARW auxMemDest = new MemoryCMARWImpl(ff, auxPathDest.$(), pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE)) {
 
                 auxMemDest.extend(2 * rowCount * 16L);
                 dataMemDest.extend(dataMemA.getAppendOffset() + dataMemB.getAppendOffset());

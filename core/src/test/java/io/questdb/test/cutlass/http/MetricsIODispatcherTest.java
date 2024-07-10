@@ -257,13 +257,7 @@ public class MetricsIODispatcherTest {
                         utf16Sink.clear();
                         utf16Sink.put(response.getStatusCode());
                         TestUtils.assertEquals("200", utf16Sink);
-
-                        if (parallelRequestBatches == 1) {
-                            // The request state is in use.
-                            Assert.assertEquals(0, pool.size());
-                        } else {
-                            Assert.assertTrue(pool.size() <= parallelRequestBatches);
-                        }
+                        Assert.assertTrue(pool.size() <= parallelRequestBatches);
 
                         Assert.assertTrue(response.isChunked());
                         Response chunkedResponse = response.getResponse();

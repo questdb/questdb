@@ -157,8 +157,8 @@ public class EngineMigrationTest extends AbstractCairoTest {
         FilesFacade ff = config.getFilesFacade();
 
         // Make abc _txn too short
-        Path abcTxnPath = Path.getThreadLocal(config.getRoot()).concat(tokenAbc).concat(TableUtils.TXN_FILE_NAME).$();
-        int fd = TableUtils.openRW(ff, abcTxnPath, LOG, config.getWriterFileOpenOpts());
+        Path abcTxnPath = Path.getThreadLocal(config.getRoot()).concat(tokenAbc).concat(TableUtils.TXN_FILE_NAME);
+        int fd = TableUtils.openRW(ff, abcTxnPath.$(), LOG, config.getWriterFileOpenOpts());
         Assert.assertTrue(ff.truncate(fd, 50));
         ff.close(fd);
 
@@ -168,8 +168,8 @@ public class EngineMigrationTest extends AbstractCairoTest {
         checkTxnFile(ff, config, tokenDef, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE);
 
         // Remove _txn file for table abc
-        abcTxnPath = Path.getThreadLocal(config.getRoot()).concat(tokenAbc).concat(TableUtils.TXN_FILE_NAME).$();
-        Assert.assertTrue(ff.removeQuiet(abcTxnPath));
+        abcTxnPath = Path.getThreadLocal(config.getRoot()).concat(tokenAbc).concat(TableUtils.TXN_FILE_NAME);
+        Assert.assertTrue(ff.removeQuiet(abcTxnPath.$()));
 
         // Mess, run migration and check
         TestUtils.messTxnUnallocated(ff, Path.getThreadLocal(config.getRoot()), new Rnd(), tokenDef);
@@ -1582,12 +1582,12 @@ public class EngineMigrationTest extends AbstractCairoTest {
         String copyTableWithMissingPartitions = "t_col_top_день_missing_parts";
         Path to = Path.getThreadLocal2(configuration.getRoot()).concat(copyTableWithMissingPartitions);
 
-        TestUtils.copyDirectory(from.$(), to.$(), configuration.getMkDirMode());
+        TestUtils.copyDirectory(from, to, configuration.getMkDirMode());
         FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
 
         // Remove first partition
         to.of(configuration.getRoot()).concat(copyTableWithMissingPartitions);
-        if (!ff.rmdir(to.concat("1970-01-01").put(Files.SEPARATOR).$())) {
+        if (!ff.rmdir(to.concat("1970-01-01").put(Files.SEPARATOR))) {
             throw CairoException.critical(ff.errno()).put("cannot remove ").put(to);
         }
 

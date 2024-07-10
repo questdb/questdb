@@ -3786,7 +3786,7 @@ public class IODispatcherTest extends AbstractTest {
                         "\\{\"query\":\"select \\* from test_data_unavailable\\(1, 10\\)\",\"error\":\"timeout, query aborted \\[fd=\\d+\\]\",\"position\":0\\}",
                         "select * from test_data_unavailable(1, 10)",
                         null, null, null, null,
-                        "400"
+                        "408" // Request Timeout
                 ));
     }
 
@@ -6003,7 +6003,7 @@ public class IODispatcherTest extends AbstractTest {
                 workerPool.start(LOG);
 
                 // create 20Mb file in /tmp directory
-                try (Path path = new Path().of(baseDir).concat("questdb-temp.txt").$()) {
+                try (Path path = new Path().of(baseDir).concat("questdb-temp.txt")) {
                     try {
                         Rnd rnd = new Rnd();
                         writeRandomFile(path, rnd, 122222212222L);
@@ -6100,7 +6100,7 @@ public class IODispatcherTest extends AbstractTest {
                         }
                     } finally {
                         workerPool.halt();
-                        Files.remove(path);
+                        Files.remove(path.$());
                     }
                 }
             }
@@ -6131,7 +6131,7 @@ public class IODispatcherTest extends AbstractTest {
                 workerPool.start(LOG);
 
                 // create 20Mb file in /tmp directory
-                try (Path path = new Path().of(baseDir).concat("questdb-temp.txt").$()) {
+                try (Path path = new Path().of(baseDir).concat("questdb-temp.txt")) {
                     try {
                         Rnd rnd = new Rnd();
                         final int diskBufferLen = 1024 * 1024;
@@ -6241,7 +6241,7 @@ public class IODispatcherTest extends AbstractTest {
                         }
                     } finally {
                         workerPool.halt();
-                        Files.remove(path);
+                        Files.remove(path.$());
                     }
                 }
             }
@@ -6281,7 +6281,7 @@ public class IODispatcherTest extends AbstractTest {
                 workerPool.start(LOG);
 
                 // create 20Mb file in /tmp directory
-                try (Path path = new Path().of(baseDir).concat("questdb-temp.txt").$()) {
+                try (Path path = new Path().of(baseDir).concat("questdb-temp.txt")) {
                     try {
                         Rnd rnd = new Rnd();
 
@@ -6384,7 +6384,7 @@ public class IODispatcherTest extends AbstractTest {
                             workerPool.halt();
                         }
                     } finally {
-                        Files.remove(path);
+                        Files.remove(path.$());
                     }
                 }
             }
@@ -7564,18 +7564,58 @@ public class IODispatcherTest extends AbstractTest {
                         "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "06b0\r\n" +
+                        "06c1\r\n" +
                         "\"a\",\"b\",\"c\",\"d\",\"e\",\"f\",\"g\",\"h\",\"i\",\"j\",\"k\",\"l\",\"m\",\"n\"\r\n" +
-                        "80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",,,\"EHNRX\",\"ZSX\",false,,c2593f82-b430-328d-84a0-9f29df637e38,}龘и\uDA89\uDFA4~\r\n" +
-                        "53,5639,-1162267908,6993925225312419449,\"195808098-05-09T04:14:54.347Z\",\"171005-04-19T09:31:35.433003Z\",0.24593449,0.29313719347837397,\"BVTMH\",,false,,d364c241-dde2-cf90-a7a8-f4e549997e46,\uE961-\\篸{\r\n" +
+                        "80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",,,\"EHNRX\",\"ZSX\",false,,c2593f82-b430-328d-84a0-9f29df637e38,\"}龘и\uDA89\uDFA4~\"\r\n" +
+                        "53,5639,-1162267908,6993925225312419449,\"195808098-05-09T04:14:54.347Z\",\"171005-04-19T09:31:35.433003Z\",0.24593449,0.29313719347837397,\"BVTMH\",,false,,d364c241-dde2-cf90-a7a8-f4e549997e46,\"\uE961-\\\\篸{\"\r\n" +
                         "40,-8761,,-7995393784734742820,\"275774022-08-09T21:28:04.485Z\",\"-264492-10-11T03:17:51.666853Z\",,0.5065228336156442,\"LNVTI\",,false,,a011214b-ad88-8a69-9502-128cda0887fe,\r\n" +
-                        "-31,4215,1362833895,,\"-49144476-01-15T02:33:12.980Z\",,0.26369333,0.7632615004324503,\"LHMLL\",\"OYP\",false,,b92d0771-d782-63eb-5479-ae0482582ad0,! Yc0\r\n" +
-                        "-80,-23575,,5552835357100545895,\"-229044588-12-31T09:43:18.056Z\",,,,\"GLUOH\",\"ZHZ\",false,,8b1134e2-9413-4389-a2cb-c77b1cdd7786,1\uD97C\uDD2B珣zx\r\n" +
-                        "119,-2044,-2043541236,-4547802916868961458,\"-281648402-09-21T10:33:06.955Z\",\"221810-02-23T20:19:19.020303Z\",0.56910527,,\"WIFFL\",\"BRO\",false,,09359765-2ae7-2c5c-14ef-c23546571bdc,\uDA02\uDE66\uDA29\uDE0E⋜\uD9DC\uDEB3\uD90B\uDDC5\r\n" +
+                        "-31,4215,1362833895,,\"-49144476-01-15T02:33:12.980Z\",,0.26369333,0.7632615004324503,\"LHMLL\",\"OYP\",false,,b92d0771-d782-63eb-5479-ae0482582ad0,\"! Yc0\"\r\n" +
+                        "-80,-23575,,5552835357100545895,\"-229044588-12-31T09:43:18.056Z\",,,,\"GLUOH\",\"ZHZ\",false,,8b1134e2-9413-4389-a2cb-c77b1cdd7786,\"1\uD97C\uDD2B珣zx\"\r\n" +
+                        "119,-2044,-2043541236,-4547802916868961458,\"-281648402-09-21T10:33:06.955Z\",\"221810-02-23T20:19:19.020303Z\",0.56910527,,\"WIFFL\",\"BRO\",false,,09359765-2ae7-2c5c-14ef-c23546571bdc,\"\uDA02\uDE66\uDA29\uDE0E⋜\uD9DC\uDEB3\uD90B\uDDC5\"\r\n" +
                         "16,30964,-1520181263,-7212878484370155026,,\"280770-04-22T16:59:28.938593Z\",0.34608507,0.5780819331422455,\"UQDYO\",,false,,a579cf90-ccdf-133e-86be-020b55a15fd1,\r\n" +
-                        "72,27348,-647653731,8737613628813682249,,,0.0024457574,0.19736767249829557,\"CBDMI\",\"QZV\",true,,,\uDB4F\uDC7Dl⤃堝ᢣ\r\n" +
-                        "36,22350,,,\"77319557-11-14T08:22:42.686Z\",\"104977-04-08T13:34:21.431788Z\",0.112962544,0.9934423708117267,\"FNWGR\",\"DGG\",false,,899850f1-14ad-249d-97af-847507d07b51,d<J1n\r\n" +
-                        "59,-13676,-1529726228,4092568845903588572,,\"31470-11-18T18:43:57.264562Z\",0.3480476,0.48782086416459025,\"KYFLU\",\"ZQS\",true,,c48ad6b8-f696-2219-b27b-0ac7fbdee201,\uD9E2\uDC2C\uD93B\uDD81*\uDBAE\uDF56飃\r\n" +
+                        "72,27348,-647653731,8737613628813682249,,,0.0024457574,0.19736767249829557,\"CBDMI\",\"QZV\",true,,,\"\uDB4F\uDC7Dl⤃堝ᢣ\"\r\n" +
+                        "36,22350,,,\"77319557-11-14T08:22:42.686Z\",\"104977-04-08T13:34:21.431788Z\",0.112962544,0.9934423708117267,\"FNWGR\",\"DGG\",false,,899850f1-14ad-249d-97af-847507d07b51,\"d<J1n\"\r\n" +
+                        "59,-13676,-1529726228,4092568845903588572,,\"31470-11-18T18:43:57.264562Z\",0.3480476,0.48782086416459025,\"KYFLU\",\"ZQS\",true,,c48ad6b8-f696-2219-b27b-0ac7fbdee201,\"\uD9E2\uDC2C\uD93B\uDD81*\uDBAE\uDF56飃\"\r\n" +
+                        "\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+        );
+    }
+
+    @Test
+    public void testTextQueryVarchar() throws Exception {
+        testJsonQuery(
+                10,
+                "GET /exp?query=SELECT+n+as+varchar+FROM+x HTTP/1.1\r\n" +
+                        "Host: localhost:9000\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: */*\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/csv; charset=utf-8\r\n" +
+                        "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "89\r\n" +
+                        "\"varchar\"\r\n" +
+                        "\"}龘и\uDA89\uDFA4~\"\r\n" +
+                        "\"\uE961-\\\\篸{\"\r\n" +
+                        "\r\n" +
+                        "\"! Yc0\"\r\n" +
+                        "\"1\uD97C\uDD2B珣zx\"\r\n" +
+                        "\"\uDA02\uDE66\uDA29\uDE0E⋜\uD9DC\uDEB3\uD90B\uDDC5\"\r\n" +
+                        "\r\n" +
+                        "\"\uDB4F\uDC7Dl⤃堝ᢣ\"\r\n" +
+                        "\"d<J1n\"\r\n" +
+                        "\"\uD9E2\uDC2C\uD93B\uDD81*\uDBAE\uDF56飃\"\r\n" +
                         "\r\n" +
                         "00\r\n" +
                         "\r\n"
@@ -9352,10 +9392,10 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     private void writeRandomFile(Path path, Rnd rnd, long lastModified) {
-        if (Files.exists(path)) {
-            assertTrue(Files.remove(path));
+        if (Files.exists(path.$())) {
+            assertTrue(Files.remove(path.$()));
         }
-        int fd = Files.openAppend(path);
+        int fd = Files.openAppend(path.$());
 
         long buf = Unsafe.malloc(1048576, MemoryTag.NATIVE_DEFAULT); // 1Mb buffer
         for (int i = 0; i < 1048576; i++) {
@@ -9367,7 +9407,7 @@ public class IODispatcherTest extends AbstractTest {
         }
 
         TestFilesFacadeImpl.INSTANCE.close(fd);
-        Files.setLastModified(path, lastModified);
+        Files.setLastModified(path.$(), lastModified);
         Unsafe.free(buf, 1048576, MemoryTag.NATIVE_DEFAULT);
     }
 

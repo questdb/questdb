@@ -34,6 +34,7 @@ public class TimestampFormatFactory {
     private final static ThreadLocal<TimestampFormatCompiler> tlCompiler = ThreadLocal.withInitial(TimestampFormatCompiler::new);
     private static final Function<CharSequence, DateFormat> mapper = TimestampFormatFactory::map;
     private final ConcurrentHashMap<DateFormat> cache = new ConcurrentHashMap<>();
+    public static TimestampFormatFactory INSTANCE = new TimestampFormatFactory();
 
     /**
      * Retrieves cached data format, if already exists of creates and caches new one. Concurrent behaviour is

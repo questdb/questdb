@@ -403,10 +403,10 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
                 TableToken tableToken = engine.verifyTableName(tableName);
                 path.concat(tableToken).concat("abcd").put(Files.SEPARATOR);
                 FilesFacade ff = configuration.getFilesFacade();
-                ff.mkdirs(path.$(), configuration.getMkDirMode());
+                ff.mkdirs(path, configuration.getMkDirMode());
 
                 path.of(configuration.getRoot()).concat(tableToken).concat("2020-01-04.abcd").put(Files.SEPARATOR);
-                ff.mkdirs(path.$(), configuration.getMkDirMode());
+                ff.mkdirs(path, configuration.getMkDirMode());
 
                 String[] files = {"x.d"};
                 assertFilesExist(partitions, tableName, files, ".2", true);
@@ -439,7 +439,7 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
         for (int i = files.length - 1; i > -1; i--) {
             String file = files[i];
             path.of(configuration.getRoot()).concat(tableToken).concat(partition).concat(file).put(colSuffix).$();
-            Assert.assertEquals(Utf8s.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path));
+            Assert.assertEquals(Utf8s.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path.$()));
         }
     }
 
