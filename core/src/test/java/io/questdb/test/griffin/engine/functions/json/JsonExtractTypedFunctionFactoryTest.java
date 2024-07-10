@@ -70,6 +70,15 @@ public class JsonExtractTypedFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExtractTimestampFromDouble() throws SqlException {
+        assertSql(
+                "json_extract\n" +
+                        "1970-01-01T00:00:00.000001Z\n",
+                "select json_extract('{\"x\":1.0}', '.x')::timestamp"
+        );
+    }
+
+    @Test
     public void testColumnAsJsonPath() throws Exception {
         assertMemoryLeak(() -> {
             final String json = "'{\"path\": 0.0000000000000000000000000001}'";

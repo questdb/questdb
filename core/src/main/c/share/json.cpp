@@ -23,7 +23,6 @@
  ******************************************************************************/
 
 #include <jni.h>
-
 #include <simdjson.h>
 #include <limits>
 #include <cmath>
@@ -86,7 +85,7 @@ constexpr std::byte BYTE_0xF8 = std::byte(0xF8); // 11111000
 // https://stackoverflow.com/questions/67521312/safe-equivalent-of-stdbit-cast-in-c11
 // Replace this with `std::bit_cast` if/when we upgrade our C++ standard to C++20.
 template<class T2, class T1>
-T2 compat_bit_cast(T1 t1) {
+inline T2 compat_bit_cast(T1 t1) {
     static_assert(sizeof(T1) == sizeof(T2), "Types must match sizes");
     static_assert(std::is_pod<T1>::value, "Requires POD input");
     static_assert(std::is_pod<T2>::value, "Requires POD output");
@@ -316,7 +315,7 @@ void extract_raw_json(
 }
 
 template<typename V>
-long extract_value(
+jlong extract_value(
         V &res,
         questdb_byte_sink_t *dest_sink,
         int32_t max_size,
@@ -333,7 +332,13 @@ long extract_value(
         case simdjson::ondemand::json_type::number: {
             switch (result.number_type) {
                 case simdjson::ondemand::number_type::floating_point_number:
-                    return compat_bit_cast<jlong>(res.get_double().value_unsafe());
+                    // this is how java converts double to long bits.
+                    union {
+                        jlong l;
+                        double d;
+                    } u;
+                    u.d = (double)res.get_double().value_unsafe();
+                    return u.l;
                 case simdjson::ondemand::number_type::signed_integer:
                     return res.get_int64().value_unsafe();
                 case simdjson::ondemand::number_type::unsigned_integer:

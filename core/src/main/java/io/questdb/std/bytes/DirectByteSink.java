@@ -124,7 +124,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         final long initCapacity = allocatedCapacity();
         p = implBook(impl, required);
         if (p == 0) {
-            if (getImplOverflow()) {  // TODO: Remove check once api is `long` (rather than `int`) based for size.
+            if (getImplOverflow()) {
                 throw new BufferOverflowException();  // More than 2GiB requested.
             } else {
                 throw new OutOfMemoryError("Cannot allocate " + required + " bytes");
@@ -141,7 +141,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
     @Override
     public void clear() {
         setImplPtr(getImplLo());
-        setUnicode(false);
+        setAscii(true);
     }
 
     @Override
@@ -160,8 +160,8 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
     /**
      * Returns true when the buffer contains a UTF-8 encoded string containing non-ASCII characters.
      */
-    public boolean isUnicode() {
-        return Unsafe.getUnsafe().getByte(impl + BYTE_SINK_UNICODE_OFFSET) != 0;
+    public boolean isAscii() {
+        return Unsafe.getUnsafe().getByte(impl + BYTE_SINK_UNICODE_OFFSET) == 0;
     }
 
     /**
@@ -223,8 +223,8 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         }
     }
 
-    public void setUnicode(boolean unicode) {
-        Unsafe.getUnsafe().putByte(impl + BYTE_SINK_UNICODE_OFFSET, (byte) (unicode ? 1 : 0));
+    public void setAscii(boolean ascii) {
+        Unsafe.getUnsafe().putByte(impl + BYTE_SINK_UNICODE_OFFSET, (byte) (ascii ? 0 : 1));
     }
 
     /**

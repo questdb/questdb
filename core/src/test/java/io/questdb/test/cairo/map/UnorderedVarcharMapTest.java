@@ -350,7 +350,7 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
     public void testSmoke() throws Exception {
         assertMemoryLeak(() -> {
             SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
-            UnorderedVarcharMap danglingMap = null;
+            UnorderedVarcharMap danglingMap;
             try (DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024);
                  DirectUtf8Sink sinkB = new DirectUtf8Sink(1024 * 1024);
                  UnorderedVarcharMap map = newDefaultMap(valueType)
@@ -477,7 +477,7 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
         return mapKey;
     }
 
-    private static MapKey putUnstable(String stringKey, int intValue, UnorderedVarcharMap map, boolean isNew) {
+    private static void putUnstable(String stringKey, int intValue, UnorderedVarcharMap map, boolean isNew) {
         MapKey mapKey = map.withKey();
         if (stringKey == null) {
             mapKey.putVarchar((Utf8Sequence) null);
@@ -489,6 +489,5 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
         Assert.assertEquals(isNew, value.isNew());
         value.putInt(0, intValue);
 
-        return mapKey;
     }
 }

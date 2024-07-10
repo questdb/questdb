@@ -85,11 +85,11 @@ public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, Dire
 
     @Override
     public boolean isAscii() {
-        return !sink.isUnicode();
+        return sink.isAscii();
     }
 
     private void setAscii(boolean ascii) {
-        sink.setUnicode(!ascii);
+        sink.setAscii(ascii);
     }
 
     @Override
