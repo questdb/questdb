@@ -2254,7 +2254,7 @@ public class TextLoaderTest extends AbstractCairoTest {
             try (Path path = new Path()) {
                 CharSequence dirName = "test" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
                 path.of(configuration.getRoot()).concat(dirName).$();
-                Files.touch(path);
+                Files.touch(path.$());
             }
 
             configureLoaderDefaults(textLoader, (byte) -1, Atomicity.SKIP_ROW, true);

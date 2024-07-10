@@ -50,8 +50,8 @@ public class KqueueFileWatcher extends FileWatcher {
 
         try (Path p = new Path()) {
 
-            p.of(filePath).$();
-            this.fileFd = Files.openRO(p);
+            p.of(filePath);
+            this.fileFd = Files.openRO(p.$());
             if (this.fileFd < 0) {
                 throw CairoException.critical(Os.errno()).put("could not open file [path=").put(p).put(']');
             }

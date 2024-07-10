@@ -1705,8 +1705,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
                             table + ",location=us-westcost temperature=82 1465839830102500200\n";
             handleIO();
             closeContext();
-            try (Path path = new Path().of(configuration.getRoot()).concat(table).$()) {
-                Assert.assertFalse(configuration.getFilesFacade().exists(path));
+            try (Path path = new Path().of(configuration.getRoot()).concat(table)) {
+                Assert.assertFalse(configuration.getFilesFacade().exists(path.$()));
             }
         });
     }

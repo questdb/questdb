@@ -171,6 +171,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // a bitset of string/symbol columns forced to be serialised as varchar
     private final BitSet writeStringAsVarcharA = new BitSet();
     private final BitSet writeStringAsVarcharB = new BitSet();
+    private final BitSet writeSymbolAsString = new BitSet();
     private boolean enableJitNullChecks = true;
     private boolean fullFatJoins = false;
 
@@ -347,9 +348,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             JoinContext joinContext,
             ColumnFilter masterTableKeyColumns
     ) {
-        return new AsOfJoinRecordCursorFactory(configuration, metadata, masterFactory, slaveFactory, mapKeyTypes,
-                mapValueTypes, slaveColumnTypes, masterKeySink, slaveKeySink, columnSplit, slaveValueSink, columnIndex,
-                joinContext, masterTableKeyColumns
+        return new AsOfJoinRecordCursorFactory(
+                configuration,
+                metadata,
+                masterFactory,
+                slaveFactory,
+                mapKeyTypes,
+                mapValueTypes,
+                slaveColumnTypes,
+                masterKeySink,
+                slaveKeySink,
+                columnSplit,
+                slaveValueSink,
+                columnIndex,
+                joinContext,
+                masterTableKeyColumns
         );
     }
 
@@ -369,9 +382,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             JoinContext joinContext,
             ColumnFilter masterTableKeyColumns
     ) {
-        return new LtJoinRecordCursorFactory(configuration, metadata, masterFactory, slaveFactory, mapKeyTypes,
-                mapValueTypes, slaveColumnTypes, masterKeySink, slaveKeySink, columnSplit, slaveValueSink,
-                columnIndex, joinContext, masterTableKeyColumns
+        return new LtJoinRecordCursorFactory(
+                configuration,
+                metadata,
+                masterFactory,
+                slaveFactory,
+                mapKeyTypes,
+                mapValueTypes,
+                slaveColumnTypes,
+                masterKeySink,
+                slaveKeySink,
+                columnSplit,
+                slaveValueSink,
+                columnIndex,
+                joinContext,
+                masterTableKeyColumns
         );
     }
 
@@ -671,7 +696,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             FullFatJoinGenerator generator,
             JoinContext joinContext
     ) throws SqlException {
-
         // create hash set of key columns to easily find them
         intHashSet.clear();
         for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
@@ -703,7 +727,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 asm,
                 masterMetadata,
                 listColumnFilterB,
-                true,
+                writeSymbolAsString,
                 writeStringAsVarcharB
         );
 
@@ -716,7 +740,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
 
         try {
-
             // metadata will have master record verbatim
             metadata.copyColumnMetadataFrom(masterAlias, masterMetadata);
 
@@ -774,7 +797,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             asm,
                             slaveMetadata,
                             listColumnFilterA,
-                            true,
+                            writeSymbolAsString,
                             writeStringAsVarcharA
                     ),
                     masterMetadata.getColumnCount(),
@@ -815,7 +838,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 asm,
                 masterMetadata,
                 listColumnFilterB,
-                true,
+                writeSymbolAsString,
                 writeStringAsVarcharB
         );
 
@@ -823,7 +846,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 asm,
                 slaveMetadata,
                 listColumnFilterA,
-                true,
+                writeSymbolAsString,
                 writeStringAsVarcharA
         );
 
@@ -879,12 +902,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         entityColumnFilter.of(slaveMetadata.getColumnCount());
-        RecordSink slaveSink = RecordSinkFactory.getInstance(
-                asm,
-                slaveMetadata,
-                entityColumnFilter,
-                false
-        );
+        RecordSink slaveSink = RecordSinkFactory.getInstance(asm, slaveMetadata, entityColumnFilter);
 
         if (joinType == JOIN_INNER) {
             return new HashJoinRecordCursorFactory(
@@ -1817,13 +1835,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordMetadata unionMetadata,
             SetRecordCursorFactoryConstructor constructor
     ) throws SqlException {
-        entityColumnFilter.of(factoryA.getMetadata().getColumnCount());
-        final RecordSink recordSink = RecordSinkFactory.getInstance(
-                asm,
-                unionMetadata,
-                entityColumnFilter,
-                true
-        );
+        writeSymbolAsString.clear();
         valueTypes.clear();
         // Remap symbol columns to string type since that's how recordSink copies them.
         keyTypes.clear();
@@ -1831,10 +1843,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final int columnType = unionMetadata.getColumnType(i);
             if (ColumnType.isSymbol(columnType)) {
                 keyTypes.add(ColumnType.STRING);
+                writeSymbolAsString.set(i);
             } else {
                 keyTypes.add(columnType);
             }
         }
+
+        entityColumnFilter.of(factoryA.getMetadata().getColumnCount());
+        final RecordSink recordSink = RecordSinkFactory.getInstance(
+                asm,
+                unionMetadata,
+                entityColumnFilter,
+                writeSymbolAsString
+        );
+
         RecordCursorFactory unionAllFactory = constructor.create(
                 configuration,
                 unionMetadata,
@@ -1929,7 +1951,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case JOIN_ASOF:
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 validateOuterJoinExpressions(slaveModel, "ASOF");
-                                processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
+                                processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getContext(), masterMetadata, slaveMetadata);
                                 if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
                                         master = createAsOfJoin(
@@ -1939,7 +1961,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         asm,
                                                         masterMetadata,
                                                         listColumnFilterB,
-                                                        true,
+                                                        writeSymbolAsString,
                                                         writeStringAsVarcharB
                                                 ),
                                                 slave,
@@ -1947,7 +1969,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         asm,
                                                         slaveMetadata,
                                                         listColumnFilterA,
-                                                        true,
+                                                        writeSymbolAsString,
                                                         writeStringAsVarcharA
                                                 ),
                                                 masterMetadata.getColumnCount(),
@@ -1992,7 +2014,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case JOIN_LT:
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 validateOuterJoinExpressions(slaveModel, "LT");
-                                processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
+                                processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getContext(), masterMetadata, slaveMetadata);
                                 if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
                                         master = createLtJoin(
@@ -2002,7 +2024,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         asm,
                                                         masterMetadata,
                                                         listColumnFilterB,
-                                                        true,
+                                                        writeSymbolAsString,
                                                         writeStringAsVarcharB
                                                 ),
                                                 slave,
@@ -2010,7 +2032,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         asm,
                                                         slaveMetadata,
                                                         listColumnFilterA,
-                                                        true,
+                                                        writeSymbolAsString,
                                                         writeStringAsVarcharA
                                                 ),
                                                 masterMetadata.getColumnCount(),
@@ -2055,7 +2077,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case JOIN_SPLICE:
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 validateOuterJoinExpressions(slaveModel, "SPLICE");
-                                processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
+                                processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getContext(), masterMetadata, slaveMetadata);
                                 if (slave.recordCursorSupportsRandomAccess() && master.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     master = createSpliceJoin(
                                             // splice join result does not have timestamp
@@ -2065,7 +2087,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                     asm,
                                                     masterMetadata,
                                                     listColumnFilterB,
-                                                    true,
+                                                    writeSymbolAsString,
                                                     writeStringAsVarcharB
                                             ),
                                             slave,
@@ -2073,7 +2095,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                     asm,
                                                     slaveMetadata,
                                                     listColumnFilterA,
-                                                    true,
+                                                    writeSymbolAsString,
                                                     writeStringAsVarcharA
                                             ),
                                             masterMetadata.getColumnCount(),
@@ -2093,7 +2115,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 }
                                 break;
                             default:
-                                processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
+                                processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getContext(), masterMetadata, slaveMetadata);
 
                                 joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata);
                                 if (slaveModel.getOuterJoinExpressionClause() != null) {
@@ -2250,7 +2272,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return new LatestByRecordCursorFactory(
                     configuration,
                     factory,
-                    RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA, false),
+                    RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA),
                     keyTypes,
                     timestampIndex
             );
@@ -2272,7 +2294,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return new LatestByLightRecordCursorFactory(
                 configuration,
                 factory,
-                RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA, false),
+                RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA),
                 keyTypes,
                 timestampIndex,
                 orderedByTimestampAsc
@@ -2343,7 +2365,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         metadata,
                         configuration,
                         dataFrameCursorFactory,
-                        RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA, false),
+                        RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA),
                         keyTypes,
                         partitionByColumnIndexes,
                         partitionBySymbolCounts,
@@ -2355,7 +2377,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     metadata,
                     configuration,
                     dataFrameCursorFactory,
-                    RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA, false),
+                    RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA),
                     keyTypes,
                     filter,
                     columnIndexes
@@ -2704,12 +2726,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         configuration,
                         orderedMetadata,
                         recordCursorFactory,
-                        RecordSinkFactory.getInstance(
-                                asm,
-                                orderedMetadata,
-                                entityColumnFilter,
-                                false
-                        ),
+                        RecordSinkFactory.getInstance(asm, orderedMetadata, entityColumnFilter),
                         recordComparatorCompiler.compile(metadata, listColumnFilterA),
                         listColumnFilterA.copy()
                 );
@@ -4039,12 +4056,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             keyTypes.add(partitionByFunctions.getQuick(j).getType());
                         }
                         entityColumnFilter.of(partitionByCount);
-                        partitionBySink = RecordSinkFactory.getInstance(
-                                asm,
-                                keyTypes,
-                                entityColumnFilter,
-                                false
-                        );
+                        partitionBySink = RecordSinkFactory.getInstance(asm, keyTypes, entityColumnFilter);
                     } else {
                         partitionByRecord = null;
                         partitionBySink = null;
@@ -4271,12 +4283,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                         entityColumnFilter.of(partitionByCount);
                         // create sink
-                        partitionBySink = RecordSinkFactory.getInstance(
-                                asm,
-                                keyTypes,
-                                entityColumnFilter,
-                                false
-                        );
+                        partitionBySink = RecordSinkFactory.getInstance(asm, keyTypes, entityColumnFilter);
                     } else {
                         partitionByRecord = null;
                         partitionBySink = null;
@@ -4398,8 +4405,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     asm,
                     chainTypes,
                     listColumnFilterA,
-                    false,
-                    listColumnFilterB
+                    listColumnFilterB,
+                    null
             );
 
             return new CachedWindowRecordCursorFactory(
@@ -5203,7 +5210,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     myMeta,
                     configuration,
                     new FullBwdDataFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta),
-                    RecordSinkFactory.getInstance(asm, myMeta, listColumnFilterA, false),
+                    RecordSinkFactory.getInstance(asm, myMeta, listColumnFilterA),
                     keyTypes,
                     partitionByColumnIndexes,
                     null,
@@ -5216,7 +5223,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 myMeta,
                 configuration,
                 new FullBwdDataFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta),
-                RecordSinkFactory.getInstance(asm, myMeta, listColumnFilterA, false),
+                RecordSinkFactory.getInstance(asm, myMeta, listColumnFilterA),
                 keyTypes,
                 null,
                 columnIndexes
@@ -5256,13 +5263,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordMetadata unionMetadata,
             SetRecordCursorFactoryConstructor constructor
     ) throws SqlException {
-        entityColumnFilter.of(factoryA.getMetadata().getColumnCount());
-        final RecordSink recordSink = RecordSinkFactory.getInstance(
-                asm,
-                unionMetadata,
-                entityColumnFilter,
-                true
-        );
+        writeSymbolAsString.clear();
         valueTypes.clear();
         // Remap symbol columns to string type since that's how recordSink copies them.
         keyTypes.clear();
@@ -5270,10 +5271,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final int columnType = unionMetadata.getColumnType(i);
             if (ColumnType.isSymbol(columnType)) {
                 keyTypes.add(ColumnType.STRING);
+                writeSymbolAsString.set(i);
             } else {
                 keyTypes.add(columnType);
             }
         }
+
+        entityColumnFilter.of(factoryA.getMetadata().getColumnCount());
+        final RecordSink recordSink = RecordSinkFactory.getInstance(
+                asm,
+                unionMetadata,
+                entityColumnFilter,
+                writeSymbolAsString
+        );
 
         RecordCursorFactory unionFactory = constructor.create(
                 configuration,
@@ -5379,6 +5389,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 getOrderByDirectionOrDefault(model, 0) == ORDER_DIRECTION_DESCENDING;
     }
 
+    private boolean isSameTable(RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory) {
+        return masterFactory.getTableToken() != null && masterFactory.getTableToken().equals(slaveFactory.getTableToken());
+    }
+
     private void lookupColumnIndexes(
             ListColumnFilter filter,
             ObjList<ExpressionNode> columnNames,
@@ -5476,6 +5490,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private void processJoinContext(
             boolean vanillaMaster,
+            boolean selfJoin,
             JoinContext jc,
             RecordMetadata masterMetadata,
             RecordMetadata slaveMetadata
@@ -5489,6 +5504,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         // compare types and populate keyTypes
         keyTypes.clear();
+        writeSymbolAsString.clear();
         writeStringAsVarcharA.clear();
         writeStringAsVarcharB.clear();
         for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
@@ -5496,8 +5512,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // Key types have too much exactly except SYMBOL and STRING special case
             final int columnIndexA = listColumnFilterA.getColumnIndexFactored(k);
             final int columnIndexB = listColumnFilterB.getColumnIndexFactored(k);
-            int columnTypeA = slaveMetadata.getColumnType(columnIndexA);
-            int columnTypeB = masterMetadata.getColumnType(columnIndexB);
+            final int columnTypeA = slaveMetadata.getColumnType(columnIndexA);
+            final String columnNameA = slaveMetadata.getColumnName(columnIndexA);
+            final int columnTypeB = masterMetadata.getColumnType(columnIndexB);
+            final String columnNameB = masterMetadata.getColumnName(columnIndexB);
             if (columnTypeB != columnTypeA && !(ColumnType.isSymbolOrString(columnTypeB) && ColumnType.isSymbolOrString(columnTypeA))) {
                 // index in column filter and join context is the same
                 throw SqlException.$(jc.aNodes.getQuick(k).position, "join column type mismatch");
@@ -5509,8 +5527,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 } else {
                     writeStringAsVarcharA.set(columnIndexA);
                 }
+                writeSymbolAsString.set(columnIndexA);
+                writeSymbolAsString.set(columnIndexB);
             } else if (columnTypeB == ColumnType.SYMBOL) {
-                keyTypes.add(ColumnType.STRING);
+                if (selfJoin && Chars.equalsIgnoreCase(columnNameA, columnNameB)) {
+                    keyTypes.add(ColumnType.SYMBOL);
+                } else {
+                    keyTypes.add(ColumnType.STRING);
+                    writeSymbolAsString.set(columnIndexA);
+                    writeSymbolAsString.set(columnIndexB);
+                }
+            } else if (ColumnType.isString(columnTypeA) || ColumnType.isString(columnTypeB)) {
+                keyTypes.add(columnTypeB);
+                writeSymbolAsString.set(columnIndexA);
+                writeSymbolAsString.set(columnIndexB);
             } else {
                 keyTypes.add(columnTypeB);
             }
@@ -5572,28 +5602,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return func;
     }
 
-    private IntList toOrderIndices(RecordMetadata m, ObjList<ExpressionNode> orderBy, IntList orderByDirection) throws SqlException {
-        final IntList indices = intListPool.next();
-        for (int i = 0, n = orderBy.size(); i < n; i++) {
-            ExpressionNode tok = orderBy.getQuick(i);
-            int index = m.getColumnIndexQuiet(tok.token);
-            if (index == -1) {
-                throw SqlException.invalidColumn(tok.position, tok.token);
-            }
-
-            // shift index by 1 to use sign as sort direction
-            index++;
-
-            // negative column index means descending order of sort
-            if (orderByDirection.getQuick(i) == QueryModel.ORDER_DIRECTION_DESCENDING) {
-                index = -index;
-            }
-
-            indices.add(index);
-        }
-        return indices;
-    }
-
     // UNION_CAST_MATRIX captures all the combinations of "left" and "right" column types
     // in a set operation (UNION etc.), providing the desired output type. Since there are many
     // special cases in the conversion logic, we decided to use a matrix of literals instead.
@@ -5627,11 +5635,32 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 //        return colType >= ColumnType.GEOBYTE && colType <= ColumnType.GEOLONG;
 //    }
 
+    private IntList toOrderIndices(RecordMetadata m, ObjList<ExpressionNode> orderBy, IntList orderByDirection) throws SqlException {
+        final IntList indices = intListPool.next();
+        for (int i = 0, n = orderBy.size(); i < n; i++) {
+            ExpressionNode tok = orderBy.getQuick(i);
+            int index = m.getColumnIndexQuiet(tok.token);
+            if (index == -1) {
+                throw SqlException.invalidColumn(tok.position, tok.token);
+            }
+
+            // shift index by 1 to use sign as sort direction
+            index++;
+
+            // negative column index means descending order of sort
+            if (orderByDirection.getQuick(i) == QueryModel.ORDER_DIRECTION_DESCENDING) {
+                index = -index;
+            }
+
+            indices.add(index);
+        }
+        return indices;
+    }
+
     private void validateBothTimestampOrders(RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory, int position) throws SqlException {
         if (masterFactory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
             throw SqlException.$(position, "left side of time series join doesn't have ASC timestamp order");
         }
-
         if (slaveFactory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
             throw SqlException.$(position, "right side of time series join doesn't have ASC timestamp order");
         }
@@ -5641,7 +5670,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (masterMetadata.getTimestampIndex() == -1) {
             throw SqlException.$(slaveModel.getJoinKeywordPosition(), "left side of time series join has no timestamp");
         }
-
         if (slaveMetadata.getTimestampIndex() == -1) {
             throw SqlException.$(slaveModel.getJoinKeywordPosition(), "right side of time series join has no timestamp");
         }

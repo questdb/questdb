@@ -57,7 +57,7 @@ public class MimeTypesCacheTest extends AbstractTest {
             try (Path path = new Path()) {
                 path.of("/tmp/sdrqwhlkkhlkhasdlkahdoiquweoiuweoiqwe.ok").$();
                 try {
-                    new MimeTypesCache(TestFilesFacadeImpl.INSTANCE, path);
+                    new MimeTypesCache(TestFilesFacadeImpl.INSTANCE, path.$());
                     Assert.fail();
                 } catch (HttpException e) {
                     Assert.assertTrue(Chars.startsWith(e.getMessage(), "could not open"));
@@ -131,7 +131,7 @@ public class MimeTypesCacheTest extends AbstractTest {
             try (Path path = new Path()) {
                 String filePath = TestUtils.getTestResourcePath("/mime.types");
                 path.of(filePath).$();
-                assertMimeTypes(new MimeTypesCache(TestFilesFacadeImpl.INSTANCE, path));
+                assertMimeTypes(new MimeTypesCache(TestFilesFacadeImpl.INSTANCE, path.$()));
             }
         });
     }
@@ -235,7 +235,7 @@ public class MimeTypesCacheTest extends AbstractTest {
         TestUtils.assertMemoryLeak(() -> {
             try (Path path = new Path()) {
                 try {
-                    new MimeTypesCache(ff, path);
+                    new MimeTypesCache(ff, path.$());
                     Assert.fail();
                 } catch (HttpException e) {
                     Assert.assertTrue(Chars.startsWith(e.getMessage(), startsWith));

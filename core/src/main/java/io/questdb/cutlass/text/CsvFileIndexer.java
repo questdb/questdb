@@ -39,10 +39,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
-import io.questdb.std.str.DirectUtf16Sink;
-import io.questdb.std.str.DirectUtf8Sink;
-import io.questdb.std.str.DirectUtf8String;
-import io.questdb.std.str.Path;
+import io.questdb.std.str.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -570,11 +567,11 @@ public class CsvFileIndexer implements Closeable, Mutable {
     @NotNull
     private IndexOutputFile prepareTargetFile(long partitionKey) {
         getPartitionIndexDir(partitionKey);
-        path.slash$();
+        path.slash();
 
-        if (!ff.exists(path)) {
-            int result = ff.mkdir(path, dirMode);
-            if (result != 0 && !ff.exists(path)) {//ignore because other worker might've created it
+        if (!ff.exists(path.$())) {
+            int result = ff.mkdir(path.$(), dirMode);
+            if (result != 0 && !ff.exists(path.$())) {//ignore because other worker might've created it
                 throw TextException.$("Couldn't create partition dir [path='").put(path).put("']");
             }
         }
@@ -665,8 +662,8 @@ public class CsvFileIndexer implements Closeable, Mutable {
             return;
         }
 
-        path.of(inputRoot).slash().concat(inputFileName).$();
-        this.fd = TableUtils.openRO(ff, path, LOG);
+        path.of(inputRoot).slash().concat(inputFileName);
+        this.fd = TableUtils.openRO(ff, path.$(), LOG);
 
         long len = ff.length(fd);
         if (len == -1) {
@@ -708,15 +705,16 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
             chunkNumber++; //start with file name like $workerIndex_$chunkIndex, e.g. 1_1
             indexChunkSize = 0;
-            path.put('_').put(chunkNumber).$();
+            path.put('_').put(chunkNumber);
 
-            if (ff.exists(path)) {
+            LPSZ lpsz = path.$();
+            if (ff.exists(lpsz)) {
                 throw TextException.$("index file already exists [path=").put(path).put(']');
             } else {
                 LOG.debug().$("created import index file [path='").$(path).$("']").$();
             }
 
-            this.memory.of(ff, path, ff.getMapPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
+            this.memory.of(ff, lpsz, ff.getMapPageSize(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
         }
 
         private void sortAndClose() {

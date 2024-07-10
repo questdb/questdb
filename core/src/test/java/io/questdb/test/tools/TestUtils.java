@@ -233,13 +233,13 @@ public final class TestUtils {
 
     public static void assertEquals(File a, File b) {
         try (Path path = new Path()) {
-            path.of(a.getAbsolutePath()).$();
-            int fda = TestFilesFacadeImpl.INSTANCE.openRO(path);
+            path.of(a.getAbsolutePath());
+            int fda = TestFilesFacadeImpl.INSTANCE.openRO(path.$());
             Assert.assertNotEquals(-1, fda);
 
             try {
-                path.of(b.getAbsolutePath()).$();
-                int fdb = TestFilesFacadeImpl.INSTANCE.openRO(path);
+                path.of(b.getAbsolutePath());
+                int fdb = TestFilesFacadeImpl.INSTANCE.openRO(path.$());
                 Assert.assertNotEquals(-1, fdb);
                 try {
 
@@ -281,8 +281,8 @@ public final class TestUtils {
 
     public static void assertEquals(File a, CharSequence actual) {
         try (Path path = new Path()) {
-            path.of(a.getAbsolutePath()).$();
-            int fda = TestFilesFacadeImpl.INSTANCE.openRO(path);
+            path.of(a.getAbsolutePath());
+            int fda = TestFilesFacadeImpl.INSTANCE.openRO(path.$());
             Assert.assertNotEquals(-1, fda);
 
             try {
@@ -943,11 +943,11 @@ public final class TestUtils {
 
     public static void createTestPath(CharSequence root) {
         try (Path path = new Path()) {
-            path.of(root).$();
-            if (Files.exists(path)) {
+            path.of(root);
+            if (Files.exists(path.$())) {
                 return;
             }
-            Files.mkdirs(path.of(root).slash$(), 509);
+            Files.mkdirs(path.of(root).slash(), 509);
         }
     }
 
@@ -1383,8 +1383,8 @@ public final class TestUtils {
         try (Path path = new Path()) {
             path.of(root);
             FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
-            path.slash$();
-            Assert.assertTrue("Test dir cleanup error: " + ff.errno(), !ff.exists(path) || ff.rmdir(path.slash$()));
+            path.slash();
+            Assert.assertTrue("Test dir cleanup error: " + ff.errno(), !ff.exists(path.$()) || ff.rmdir(path.slash()));
         }
     }
 
