@@ -38,7 +38,7 @@ public class ParquetFileRecordCursorFactory extends AbstractRecordCursorFactory 
     private ParquetFileRecordCursor cursor;
     private Path path;
 
-    public ParquetFileRecordCursorFactory(@Transient CharSequence path, RecordMetadata metadata, FilesFacade ff) {
+    public ParquetFileRecordCursorFactory(@Transient Path path, RecordMetadata metadata, FilesFacade ff) {
         super(metadata);
         this.path = new Path().of(path);
         this.cursor = new ParquetFileRecordCursor(ff, metadata);

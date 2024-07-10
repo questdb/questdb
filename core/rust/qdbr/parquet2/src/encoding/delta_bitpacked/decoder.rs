@@ -234,7 +234,7 @@ impl<'a> Iterator for Decoder<'a> {
             Err(e) => return Some(Err(e)),
         };
 
-        self.next_value += delta;
+        self.next_value = self.next_value.wrapping_add(delta);
         result
     }
 

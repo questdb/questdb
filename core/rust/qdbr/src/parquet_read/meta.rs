@@ -127,7 +127,6 @@ impl ParquetDecoder {
                 Some(ColumnType::Varchar)
             }
             (PhysicalType::ByteArray, None, _) => Some(ColumnType::Binary),
-            (PhysicalType::FixedLenByteArray(16), None, _) => Some(ColumnType::Long128),
             (_, _, _) => None,
         }
     }

@@ -24,6 +24,7 @@
 
 mod parquet_read;
 mod parquet_write;
+mod sqllogictest;
 
 extern crate core;
 pub extern crate jni;

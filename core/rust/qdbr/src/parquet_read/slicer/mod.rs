@@ -5,7 +5,6 @@ pub mod rle;
 use crate::parquet_write::{ParquetError, ParquetResult};
 use parquet2::encoding::delta_bitpacked;
 use parquet2::encoding::hybrid_rle::BitmapIter;
-use parquet2::error::Error;
 use std::mem::size_of;
 use std::ptr;
 
@@ -60,11 +59,83 @@ impl<'a, const N: usize> DataPageFixedSlicer<'a, N> {
     }
 }
 
+pub struct DeltaBinaryPackedSlicer<'a, const N: usize> {
+    decoder: delta_bitpacked::Decoder<'a>,
+    row_count: usize,
+    error: Result<(), ParquetError>,
+    error_value: [u8; N],
+    buffer: [u8; N],
+}
+
+impl<const N: usize> DataPageSlicer for DeltaBinaryPackedSlicer<'_, N> {
+    fn next(&mut self) -> &[u8] {
+        let res = self.decoder.next();
+        println!("got {:?}", res);
+        let res = match res {
+            Some(val) => match val {
+                Ok(val) => {
+                    let bytes = val.to_le_bytes();
+                    self.buffer[..N].copy_from_slice(&bytes[..N]);
+                    &self.buffer
+                }
+                Err(_) => {
+                    self.error = Err(ParquetError::OutOfSpec(
+                        "not enough values to iterate".to_string(),
+                    ));
+                    &self.error_value
+                }
+            },
+            None => {
+                self.error = Err(ParquetError::OutOfSpec(
+                    "not enough values to iterate".to_string(),
+                ));
+                &self.error_value
+            }
+        };
+        res
+    }
+
+    fn next_slice(&mut self, _count: usize) -> Option<&[u8]> {
+        None
+    }
+
+    fn skip(&mut self, count: usize) {
+        for _ in 0..count {
+            self.decoder.next();
+        }
+    }
+
+    fn count(&self) -> usize {
+        self.row_count
+    }
+
+    fn data_size(&self) -> usize {
+        self.row_count * N
+    }
+
+    fn result(&self) -> ParquetResult<()> {
+        self.error.clone()
+    }
+}
+
+impl<'a, const N: usize> DeltaBinaryPackedSlicer<'a, N> {
+    pub fn try_new(data: &'a [u8], row_count: usize) -> ParquetResult<Self> {
+        let decoder = delta_bitpacked::Decoder::try_new(data)?;
+        Ok(Self {
+            decoder,
+            row_count,
+            error: Ok(()),
+            error_value: [0; N],
+            buffer: [0; N],
+        })
+    }
+}
+
 pub struct DeltaLengthArraySlicer<'a> {
     data: &'a [u8],
     row_count: usize,
     index: usize,
-    lengths: Vec<i64>,
+    lengths: Vec<i32>,
     pos: usize,
 }
 
@@ -104,8 +175,11 @@ impl DataPageSlicer for DeltaLengthArraySlicer<'_> {
 impl<'a> DeltaLengthArraySlicer<'a> {
     pub fn try_new(data: &'a [u8], row_count: usize) -> ParquetResult<Self> {
         let mut decoder = delta_bitpacked::Decoder::try_new(data)?;
-
-        let lengths: Vec<i64> = decoder.by_ref().collect::<Result<Vec<i64>, Error>>()?;
+        let lengths: Vec<_> = decoder
+            .by_ref()
+            .take(row_count)
+            .map(|r| r.map(|v| v as i32).unwrap())
+            .collect::<Vec<_>>();
 
         let data_offset = decoder.consumed_bytes();
         Ok(Self {
@@ -114,6 +188,107 @@ impl<'a> DeltaLengthArraySlicer<'a> {
             index: 0,
             lengths,
             pos: 0,
+        })
+    }
+}
+
+pub struct DeltaBytesArraySlicer<'a> {
+    prefix: std::vec::IntoIter<i32>,
+    suffix: std::vec::IntoIter<i32>,
+    data: &'a [u8],
+    data_offset: usize,
+    last_value: Vec<u8>,
+    error: Result<(), ParquetError>,
+}
+
+impl<'a> DataPageSlicer for DeltaBytesArraySlicer<'a> {
+    fn next(&mut self) -> &[u8] {
+        let prefix_len = self.prefix.next();
+        match &self.error {
+            Ok(_) => match prefix_len {
+                Some(prefix_len) => {
+                    let prefix_len = prefix_len as usize;
+                    let suffix_len = self.suffix.next();
+                    match suffix_len {
+                        Some(suffix_len) => {
+                            let suffix_len = suffix_len as usize;
+                            self.last_value.truncate(prefix_len);
+
+                            self.last_value.extend_from_slice(
+                                &self.data[self.data_offset..self.data_offset + suffix_len],
+                            );
+                            self.data_offset += suffix_len;
+
+                            let extend_lifetime = unsafe {
+                                std::mem::transmute::<&[u8], &'a [u8]>(self.last_value.as_slice())
+                            };
+                            extend_lifetime
+                        }
+                        None => {
+                            self.error = Err(ParquetError::OutOfSpec(
+                                "not enough suffix values to iterate".to_string(),
+                            ));
+                            &[]
+                        }
+                    }
+                }
+                None => {
+                    self.error = Err(ParquetError::OutOfSpec(
+                        "not enough prefix values to iterate".to_string(),
+                    ));
+                    &[]
+                }
+            },
+            Err(_) => return &[],
+        }
+    }
+
+    fn next_slice(&mut self, _count: usize) -> Option<&[u8]> {
+        None
+    }
+
+    fn skip(&mut self, count: usize) {
+        for _ in 0..count {
+            self.next();
+        }
+    }
+
+    fn count(&self) -> usize {
+        self.prefix.size_hint().0
+    }
+
+    fn data_size(&self) -> usize {
+        self.data.len()
+    }
+
+    fn result(&self) -> ParquetResult<()> {
+        self.error.clone()
+    }
+}
+
+impl<'a> DeltaBytesArraySlicer<'a> {
+    pub fn try_new(data: &'a [u8], row_count: usize) -> ParquetResult<Self> {
+        let values = data;
+        let mut decoder = delta_bitpacked::Decoder::try_new(values)?;
+        let prefix = (&mut decoder)
+            .take(row_count)
+            .map(|r| r.map(|v| v as i32).unwrap())
+            .collect::<Vec<_>>();
+
+        let mut data_offset = decoder.consumed_bytes();
+        let mut decoder = delta_bitpacked::Decoder::try_new(&values[decoder.consumed_bytes()..])?;
+        let suffix = (&mut decoder)
+            .map(|r| r.map(|v| v as i32).unwrap())
+            .collect::<Vec<_>>();
+        data_offset += decoder.consumed_bytes();
+
+        Ok(Self {
+            prefix: prefix.into_iter(),
+            suffix: suffix.into_iter(),
+            data: values,
+            data_offset,
+            last_value: vec![],
+            error: Ok(()),
         })
     }
 }

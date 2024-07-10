@@ -33,11 +33,13 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 
 public class ParquetFileReaderFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "parquet_scan(s)";
@@ -55,25 +57,33 @@ public class ParquetFileReaderFunctionFactory implements FunctionFactory {
         } catch (CairoException e) {
             throw SqlException.$(argPos.getQuick(0), e.getFlyweightMessage());
         }
-        if (checkPathIsSafeToRead(filePath, config)) {
-            Path path = Path.getThreadLocal2(filePath);
+
+        try {
+            Path path = Path.getThreadLocal2("");
+            checkPathIsSafeToRead(path, filePath, argPos.getQuick(0), config);
             try (PartitionDecoder file = new PartitionDecoder(config.getFilesFacade())) {
                 file.of(path.$());
                 GenericRecordMetadata metadata = new GenericRecordMetadata();
                 file.getMetadata().copyTo(metadata);
-                return new CursorFunction(new ParquetFileRecordCursorFactory(filePath, metadata, config.getFilesFacade()));
-            } catch (CairoException e) {
-                throw SqlException.$(argPos.getQuick(0), "error reading parquet file columns ").put('[').put(e.getErrno()).put("]: ").put(e.getFlyweightMessage());
-            } catch (Throwable e) {
-                throw SqlException.$(argPos.getQuick(0), "filed to read parquet file: ").put(filePath).put(": ").put(e.getMessage());
+                return new CursorFunction(new ParquetFileRecordCursorFactory(path, metadata, config.getFilesFacade()));
             }
+        } catch (CairoException e) {
+            throw SqlException.$(argPos.getQuick(0), "error reading parquet file ").put('[').put(e.getErrno()).put("]: ").put(e.getFlyweightMessage());
+        } catch (Throwable e) {
+            throw SqlException.$(argPos.getQuick(0), "filed to read parquet file: ").put(filePath).put(": ").put(e.getMessage());
         }
-        throw SqlException.$(argPos.getQuick(0), "reading from restricted path is not allowed");
     }
 
-    private boolean checkPathIsSafeToRead(CharSequence filePath, CairoConfiguration config) {
-        // TODO: check that it's not pointing to a file inside QuestDb root if ACL is enabled
-        // TODO: check that it's is pointing to pre-defined location if it's a strict mode
-        return true;
+    private void checkPathIsSafeToRead(Path path, CharSequence filePath, int position, CairoConfiguration config) throws SqlException {
+        if (Chars.isBlank(config.getSqlCopyInputRoot())) {
+            throw SqlException.$(position, "parquet files can only be read from sql.copy.input.root, please add sql.copy.input.root=<path> to your configuration");
+        }
+        if (Chars.isBlank(filePath)) {
+            throw SqlException.$(position, "parquet file path pattern is empty");
+        }
+        if (Chars.contains(filePath, "/../") || Chars.contains(filePath, "\\..\\")) {
+            throw SqlException.$(position, "parquet file path pattern is not allowed");
+        }
+        path.of(config.getSqlCopyInputRoot()).concat(filePath);
     }
 }
