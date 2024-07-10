@@ -54,8 +54,11 @@ public final class SwarUtils {
      * <a href="http://graphics.stanford.edu/~seander/bithacks.html##ValueInWord">...</a>
      * (Determine if a word has a byte equal to n).
      * <p>
-     * Caveat:
+     * <strong>Caveat</strong>:
      * there are false positives, but they only occur if there is a real match.
+     * The false positives occur only to the left of the correct match, and only for
+     * a 0x01 byte.
+     * <p>
      * Make sure to handle false positives gracefully by subsequent checks in code.
      */
     public static long markZeroBytes(long w) {
