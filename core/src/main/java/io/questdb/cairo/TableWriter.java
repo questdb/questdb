@@ -5934,6 +5934,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             resizePartitionUpdateSink();
 
             int partitionParallelism = memoryPressureRegulator.getMaxO3MergeParallelism();
+            LOG.debug().$("o3 partition task [parallelism=").$(partitionParallelism).I$();
 
             // One loop iteration per partition.
             for (int partitionCount = 1; srcOoo < srcOooMax; partitionCount++) {
