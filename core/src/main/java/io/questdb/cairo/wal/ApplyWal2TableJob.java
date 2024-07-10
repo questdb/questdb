@@ -521,7 +521,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             try (TableWriter writer = engine.getWriterUnsafe(updatedToken, WAL_2_TABLE_WRITE_REASON)) {
                 assert writer.getMetadata().getTableId() == tableToken.getTableId();
 
-                if (writer.walBackoffRequested()) {
+                if (writer.shouldBackoff()) {
                     engine.notifyWalTxnRepublisher(tableToken);
                     return lastWriterTxn;
                 }

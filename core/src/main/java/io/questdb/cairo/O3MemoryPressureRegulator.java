@@ -27,7 +27,7 @@ package io.questdb.cairo;
 public interface O3MemoryPressureRegulator {
     int getMaxO3MergeParallelism();
 
-    void onPressureDecreased();
+    void onPressureDecreased(long nowMicros);
 
     /**
      * Returns true if we should retry the previous operation that failed due to memory pressure.
@@ -35,7 +35,7 @@ public interface O3MemoryPressureRegulator {
      *
      * @return true if we should retry the previous operation that failed due to memory pressure.
      */
-    boolean onPressureIncreased();
+    boolean onPressureIncreased(long nowMicros);
 
-    boolean shouldBackoff();
+    boolean shouldBackoff(long nowMicros);
 }
