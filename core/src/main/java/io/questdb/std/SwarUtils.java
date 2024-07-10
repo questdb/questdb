@@ -51,7 +51,7 @@ public final class SwarUtils {
      * Returns non-zero result in case if the input contains a zero byte.
      * <p>
      * For the technique, see:
-     * <a href="http://graphics.stanford.edu/~seander/bithacks.html##ValueInWord">...</a>
+     * <a href="http://graphics.stanford.edu/~seander/bithacks.html">Bit Twiddling Hacks</a>
      * (Determine if a word has a byte equal to n).
      * <p>
      * <strong>Caveat</strong>:
