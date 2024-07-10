@@ -457,7 +457,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
 
                     txMem.of(
                             configuration.getFilesFacade(),
-                            path,
+                            path.$(),
                             transientSymCountOffset + Integer.BYTES,
                             transientSymCountOffset + Integer.BYTES,
                             MemoryTag.MMAP_DEFAULT
@@ -615,7 +615,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
 
                     txMem.of(
                             configuration.getFilesFacade(),
-                            path,
+                            path.$(),
                             transientSymCountOffset + Integer.BYTES,
                             transientSymCountOffset + Integer.BYTES,
                             MemoryTag.MMAP_DEFAULT
@@ -698,7 +698,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
 
                     txMem.of(
                             configuration.getFilesFacade(),
-                            path,
+                            path.$(),
                             transientSymCountOffset + Integer.BYTES,
                             transientSymCountOffset + Integer.BYTES,
                             MemoryTag.MMAP_DEFAULT

@@ -76,28 +76,28 @@ public class TimestampsTest {
     @Test
     public void testAddYears() throws Exception {
         long micros = TimestampFormatUtils.parseTimestamp("1988-05-12T23:45:51.045Z");
-        TimestampFormatUtils.appendDateTime(sink, Timestamps.addYear(micros, 10));
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.addYears(micros, 10));
         TestUtils.assertEquals("1998-05-12T23:45:51.045Z", sink);
     }
 
     @Test
     public void testAddYears3() throws Exception {
         long micros = TimestampFormatUtils.parseTimestamp("2014-01-01T00:00:00.000Z");
-        TimestampFormatUtils.appendDateTime(sink, Timestamps.addYear(micros, 1));
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.addYears(micros, 1));
         TestUtils.assertEquals("2015-01-01T00:00:00.000Z", sink);
     }
 
     @Test
     public void testAddYearsNonLeapToLeap() throws Exception {
         long micros = TimestampFormatUtils.parseTimestamp("2015-01-01T00:00:00.000Z");
-        TimestampFormatUtils.appendDateTime(sink, Timestamps.addYear(micros, 1));
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.addYears(micros, 1));
         TestUtils.assertEquals("2016-01-01T00:00:00.000Z", sink);
     }
 
     @Test
     public void testAddYearsPrevEpoch() throws Exception {
         long micros = TimestampFormatUtils.parseTimestamp("1888-05-12T23:45:51.045Z");
-        TimestampFormatUtils.appendDateTime(sink, Timestamps.addYear(micros, 10));
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.addYears(micros, 10));
         TestUtils.assertEquals("1898-05-12T23:45:51.045Z", sink);
     }
 

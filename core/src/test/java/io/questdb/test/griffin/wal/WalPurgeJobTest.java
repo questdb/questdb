@@ -766,22 +766,22 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             CharSequence root = engine.getConfiguration().getRoot();
             try (Path path = new Path()) {
                 final FilesFacade ff = engine.getConfiguration().getFilesFacade();
-                path.of(root).concat(engine.verifyTableName(tableName)).concat("wal1").concat("stuff").$();
-                ff.mkdir(path, configuration.getMkDirMode());
-                Assert.assertTrue(path.toString(), ff.exists(path));
+                path.of(root).concat(engine.verifyTableName(tableName)).concat("wal1").concat("stuff");
+                ff.mkdir(path.$(), configuration.getMkDirMode());
+                Assert.assertTrue(path.toString(), ff.exists(path.$()));
 
                 runWalPurgeJob();
                 assertSegmentLockExistence(false, tableName, 1, 0);
 
                 // "stuff" is untouched.
-                Assert.assertTrue(path.toString(), ff.exists(path));
+                Assert.assertTrue(path.toString(), ff.exists(path.$()));
 
                 // After draining, releasing and purging, it's all deleted.
                 drainWalQueue();
                 engine.releaseInactive();
                 runWalPurgeJob();
 
-                Assert.assertFalse(path.toString(), ff.exists(path));
+                Assert.assertFalse(path.toString(), ff.exists(path.$()));
                 assertWalExistence(false, tableName, 1);
             }
         });
@@ -1039,28 +1039,28 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                 final FilesFacade ff = engine.getConfiguration().getFilesFacade();
                 TableToken tableToken = engine.verifyTableName(tableName);
                 path.of(root).concat(tableToken).$();
-                Assert.assertTrue(path.toString(), ff.exists(path));
-                path.of(root).concat(tableToken).concat("waldo").$();
-                ff.mkdir(path, configuration.getMkDirMode());
-                Assert.assertTrue(path.toString(), ff.exists(path));
+                Assert.assertTrue(path.toString(), ff.exists(path.$()));
+                path.of(root).concat(tableToken).concat("waldo");
+                ff.mkdir(path.$(), configuration.getMkDirMode());
+                Assert.assertTrue(path.toString(), ff.exists(path.$()));
 
                 // Purging will not delete waldo: Wal name not matched.
                 runWalPurgeJob();
-                Assert.assertTrue(path.toString(), ff.exists(path));
+                Assert.assertTrue(path.toString(), ff.exists(path.$()));
 
                 // idempotency check.
                 for (int count = 0; count < 1000; ++count) {
                     runWalPurgeJob();
-                    Assert.assertTrue(path.toString(), ff.exists(path));
+                    Assert.assertTrue(path.toString(), ff.exists(path.$()));
                 }
 
-                path.of(root).concat(tableToken).concat("wal1000").$();
-                ff.mkdir(path, configuration.getMkDirMode());
-                Assert.assertTrue(path.toString(), ff.exists(path));
+                path.of(root).concat(tableToken).concat("wal1000");
+                ff.mkdir(path.$(), configuration.getMkDirMode());
+                Assert.assertTrue(path.toString(), ff.exists(path.$()));
 
                 // Purging will delete wal1000: Wal name matched and the WAL has no lock.
                 runWalPurgeJob();
-                Assert.assertFalse(path.toString(), ff.exists(path));
+                Assert.assertFalse(path.toString(), ff.exists(path.$()));
             }
         });
     }
@@ -1160,7 +1160,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         final CharSequence root = engine.getConfiguration().getRoot();
         try (Path path = new Path()) {
             path.of(root).concat(tableToken).concat(WalUtils.SEQ_DIR).$();
-            Assert.assertEquals(Utf8s.toString(path), exists, TestFilesFacadeImpl.INSTANCE.exists(path));
+            Assert.assertEquals(Utf8s.toString(path), exists, TestFilesFacadeImpl.INSTANCE.exists(path.$()));
         }
     }
 
@@ -1177,7 +1177,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     private void assertSeqPartExistence(boolean exists, TableToken tableToken, int partNo) {
         Path path = Path.getThreadLocal(engine.getConfiguration().getRoot());
         path.of(root).concat(tableToken).concat(SEQ_DIR).concat(WalUtils.TXNLOG_PARTS_DIR).concat(String.valueOf(partNo)).$();
-        Assert.assertEquals(Utf8s.toString(path), exists, TestFilesFacadeImpl.INSTANCE.exists(path));
+        Assert.assertEquals(Utf8s.toString(path), exists, TestFilesFacadeImpl.INSTANCE.exists(path.$()));
     }
 
     private void createPendingFile(TableToken tableToken) {

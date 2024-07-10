@@ -752,7 +752,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
 
         try (Path path = new Path()) {
             CharSequence dirName = "x" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
-            Files.mkdirs(path.of(root).concat(dirName).slash$(), configuration.getMkDirMode());
+            Files.mkdirs(path.of(root).concat(dirName).slash(), configuration.getMkDirMode());
             assertThat(expected, lines, "y", configuration);
             Assert.assertEquals(TableUtils.TABLE_RESERVED, TableUtils.exists(configuration.getFilesFacade(), path, root, dirName));
         }

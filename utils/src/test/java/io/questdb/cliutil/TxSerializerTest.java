@@ -48,17 +48,17 @@ public class TxSerializerTest {
     private static SqlExecutionContextImpl sqlExecutionContext;
 
     public static void createTestPath(CharSequence root) {
-        try (Path path = new Path().of(root).$()) {
-            if (Files.exists(path)) {
+        try (Path path = new Path().of(root)) {
+            if (Files.exists(path.$())) {
                 return;
             }
-            Files.mkdirs(path.of(root).slash$(), 509);
+            Files.mkdirs(path.of(root).slash(), 509);
         }
     }
 
     public static void removeTestPath(CharSequence root) {
         Path path = Path.getThreadLocal(root);
-        Assert.assertTrue(Files.rmdir(path.slash$(), true));
+        Assert.assertTrue(Files.rmdir(path.slash(), true));
     }
 
     public static void setCairoStatic() {

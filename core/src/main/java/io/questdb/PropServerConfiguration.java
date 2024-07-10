@@ -516,7 +516,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long pgWorkerNapThreshold;
     private long pgWorkerSleepThreshold;
     private long pgWorkerYieldThreshold;
-    private int queryCacheEventQueueCapacity;
+    private final int queryCacheEventQueueCapacity;
     private boolean stringToCharCastAllowed;
     private long symbolCacheWaitUsBeforeReload;
 
@@ -678,9 +678,9 @@ public class PropServerConfiguration implements ServerConfiguration {
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
         try (Path path = new Path()) {
             volumeDefinitions.of(getString(properties, env, PropertyKey.CAIRO_VOLUMES, null), path, root);
-            ff.mkdirs(path.of(this.root).slash$(), this.mkdirMode);
-            path.of(this.root).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
-            final int tableIndexFd = TableUtils.openFileRWOrFail(ff, path, CairoConfiguration.O_NONE);
+            ff.mkdirs(path.of(this.root).slash(), this.mkdirMode);
+            path.of(this.root).concat(TableUtils.TAB_INDEX_FILE_NAME);
+            final int tableIndexFd = TableUtils.openFileRWOrFail(ff, path.$(), CairoConfiguration.O_NONE);
             final long fileSize = ff.length(tableIndexFd);
             if (fileSize < Long.BYTES) {
                 if (!ff.allocate(tableIndexFd, Files.PAGE_SIZE)) {
@@ -846,8 +846,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                     httpNetBindPort = p;
                 });
                 // load mime types
-                path.of(new File(new File(root, CONFIG_DIRECTORY), "mime.types").getAbsolutePath()).$();
-                this.mimeTypesCache = new MimeTypesCache(FilesFacadeImpl.INSTANCE, path);
+                path.of(new File(new File(root, CONFIG_DIRECTORY), "mime.types").getAbsolutePath());
+                this.mimeTypesCache = new MimeTypesCache(FilesFacadeImpl.INSTANCE, path.$());
             }
 
             this.maxRerunWaitCapMs = getLong(properties, env, PropertyKey.HTTP_BUSY_RETRY_MAXIMUM_WAIT_BEFORE_RETRY, 1000);

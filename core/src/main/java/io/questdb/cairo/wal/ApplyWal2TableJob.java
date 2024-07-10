@@ -135,7 +135,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     if (!removeOrLog(tempPath.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME), ff)) {
                         return false;
                     }
-                    return ff.removeQuiet(tempPath.trimTo(rootLen).concat(TableUtils.META_FILE_NAME));
+                    return ff.removeQuiet(tempPath.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$());
                 }
             } finally {
                 ff.findClose(p);

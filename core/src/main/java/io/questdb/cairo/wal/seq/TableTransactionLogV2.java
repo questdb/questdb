@@ -100,10 +100,10 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             long prevTxn = lastTxn - 1;
             long part = prevTxn / partTransactionCount;
             int size = path.size();
-            path.concat(TXNLOG_PARTS_DIR).slash().put(part).$();
+            path.concat(TXNLOG_PARTS_DIR).slash().put(part);
             int partFd = -1;
             try {
-                partFd = openRO(ff, path, LOG);
+                partFd = openRO(ff, path.$(), LOG);
                 long fileReadOffset = (prevTxn % partTransactionCount) * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET;
                 return ff.readNonNegativeLong(partFd, fileReadOffset);
             } finally {
@@ -184,7 +184,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     public TransactionLogCursor getCursor(long txnLo, @Transient Path path) {
         TransactionLogCursorImpl cursor = tlTransactionLogCursor.get();
         if (cursor == null) {
-            cursor = new TransactionLogCursorImpl(ff, txnLo, path.$(), partTransactionCount);
+            cursor = new TransactionLogCursorImpl(ff, txnLo, path, partTransactionCount);
             tlTransactionLogCursor.set(cursor);
             return cursor;
         }
@@ -247,9 +247,9 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
 
     private void createPartsDir(int mkDirMode) {
         int rootLen = rootPath.size();
-        rootPath.concat(TXNLOG_PARTS_DIR).$();
+        rootPath.concat(TXNLOG_PARTS_DIR);
         try {
-            if (!ff.exists(rootPath) && ff.mkdir(rootPath, mkDirMode) != 0) {
+            if (!ff.exists(rootPath.$()) && ff.mkdir(rootPath.$(), mkDirMode) != 0) {
                 throw CairoException.critical(ff.errno()).put("could not create directory [path='").put(rootPath).put("']");
             }
         } finally {
@@ -271,9 +271,9 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     private void openTxnMem(Path path) {
         rootPath.of(path);
         int rootLen = rootPath.size();
-        rootPath.concat(TXNLOG_FILE_NAME).$();
+        rootPath.concat(TXNLOG_FILE_NAME);
         try {
-            txnMem.of(ff, rootPath, HEADER_SIZE, HEADER_SIZE, MemoryTag.MMAP_TX_LOG);
+            txnMem.of(ff, rootPath.$(), HEADER_SIZE, HEADER_SIZE, MemoryTag.MMAP_TX_LOG);
         } finally {
             rootPath.trimTo(rootLen);
         }
@@ -284,10 +284,10 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         if (partId != part) {
             int size = rootPath.size();
             try {
-                rootPath.concat(TXNLOG_PARTS_DIR).slash().put(part).$();
+                rootPath.concat(TXNLOG_PARTS_DIR).slash().put(part);
                 long partSize = partTransactionCount * RECORD_SIZE;
                 txnPartMem.close(false);
-                txnPartMem.of(ff, rootPath, partSize, partSize, MemoryTag.MMAP_TX_LOG);
+                txnPartMem.of(ff, rootPath.$(), partSize, partSize, MemoryTag.MMAP_TX_LOG);
                 txnPartMem.jumpTo((txn % partTransactionCount) * RECORD_SIZE);
                 partId = part;
             } finally {
@@ -449,8 +449,8 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             int rootPathLen = rootPath.size();
             try {
                 for (long part = partId - 1; part > -1L; part--) {
-                    rootPath.trimTo(rootPathLen).put(part).$();
-                    if (ff.exists(rootPath)) {
+                    rootPath.trimTo(rootPathLen).put(part);
+                    if (ff.exists(rootPath.$())) {
                         minTxn = part * partTransactionCount;
                     } else {
                         break;
@@ -506,8 +506,8 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
                 closePart();
                 int size = rootPath.size();
                 try {
-                    rootPath.concat(TXNLOG_PARTS_DIR).slash().put(part).$();
-                    partFd = openRO(ff, rootPath, LOG);
+                    rootPath.concat(TXNLOG_PARTS_DIR).slash().put(part);
+                    partFd = openRO(ff, rootPath.$(), LOG);
                     address = ff.mmap(partFd, partMapSize, 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);
                     partId = part;
                 } finally {

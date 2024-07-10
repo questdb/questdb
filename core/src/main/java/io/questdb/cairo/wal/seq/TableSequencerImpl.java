@@ -456,7 +456,7 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     private void createSequencerDir(FilesFacade ff, int mkDirMode) {
-        if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
+        if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
             final CairoException e = CairoException.critical(ff.errno()).put("Cannot create sequencer directory: ").put(path);
             closeLocked();
             throw e;
