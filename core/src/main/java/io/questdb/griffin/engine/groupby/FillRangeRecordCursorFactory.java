@@ -37,9 +37,12 @@ import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.functions.date.TimestampFloorOffsetFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.BitSet;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
+import org.jetbrains.annotations.Nullable;
 
 
 public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -175,33 +178,28 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
 
                     if (rangeBound == RANGE_UPPER_BOUND) {
                         while (nextBucket < minTimestamp) {
-                            fillOffset++;
-                            nextBucket = timestampSampler.nextTimestamp(nextBucket);
+                            moveToNextBucket();
                         }
 
-                        while (presentRecords.get(fillOffset) && fillOffset < timestampSampler.bucketIndex(maxTimestamp)) {
-                            fillOffset++;
-                            nextBucket = timestampSampler.nextTimestamp(nextBucket);
+                        while (recordWasPresent()) {
+                            moveToNextBucket();
                         }
                     }
                     return true;
                 }
 
                 do {
-                    fillOffset++;
-                    nextBucket = timestampSampler.nextTimestamp(nextBucket);
+                    moveToNextBucket();
                 }
-                while (presentRecords.get(fillOffset) &&
-                        fillOffset < timestampSampler.bucketIndex(maxTimestamp));
+                while (recordWasPresent());
 
-                if (fillOffset <= timestampSampler.bucketIndex(maxTimestamp)) {
+                if (notAtEndOfBitset()) {
                     return true;
                 }
 
                 return false;
             }
         }
-
 
         @Override
         public long size() {
@@ -242,6 +240,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             }
         }
 
+
         private void initTimestamps(Function from, Function to, CharSequence stride) throws SqlException {
             if (from != TimestampConstant.NULL) {
                 fromTimestamp = from.getTimestamp(null);
@@ -260,10 +259,18 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             maxTimestamp = to == TimestampConstant.NULL ? Long.MIN_VALUE : toTimestamp;
         }
 
+        private void moveToNextBucket() {
+            fillOffset++;
+            nextBucket = timestampSampler.nextTimestamp(nextBucket);
+        }
+
+        private boolean notAtEndOfBitset() {
+            return fillOffset <= timestampSampler.bucketIndex(maxTimestamp);
+        }
+
         private void of(RecordCursor baseCursor, SqlExecutionCircuitBreaker circuitBreaker, Function from, Function to, CharSequence stride, ObjList<Function> values, int timestampIndex) throws SqlException {
             assert from != null;
             assert to != null;
-
             this.baseCursor = baseCursor;
             this.circuitBreaker = circuitBreaker;
             this.timestampIndex = timestampIndex;
@@ -274,45 +281,306 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             toTop();
         }
 
+        private boolean recordWasPresent() {
+            return presentRecords.get(fillOffset) && fillOffset < timestampSampler.bucketIndex(maxTimestamp);
+        }
+
         private class FillRangeRecord implements Record {
 
             @Override
-            public double getDouble(int col) {
-                if (!gapFilling) {
-                    final double d = baseRecord.getDouble(col);
-                    if (!Double.isNaN(d)) {
-                        return d;
-                    }
+            public BinarySequence getBin(int col) {
+                if (gapFilling) {
+                    return getFillFunction(col).getBin(null);
+                } else {
+                    return baseRecord.getBin(col);
                 }
-                return getFillFunction(col).getDouble(null);
+            }
+
+            @Override
+            public long getBinLen(int col) {
+                if (gapFilling) {
+                    return getFillFunction(col).getBinLen(null);
+                } else {
+                    return baseRecord.getBinLen(col);
+                }
+            }
+
+            @Override
+            public boolean getBool(int col) {
+                if (gapFilling) {
+                    return getFillFunction(col).getBool(null);
+                } else {
+                    return baseRecord.getBool(col);
+                }
+            }
+
+            @Override
+            public byte getByte(int col) {
+                if (gapFilling) {
+                    return getFillFunction(col).getByte(null);
+                } else {
+                    return baseRecord.getByte(col);
+                }
+            }
+
+            @Override
+            public char getChar(int col) {
+                if (gapFilling) {
+                    return getFillFunction(col).getChar(null);
+                } else {
+                    return baseRecord.getChar(col);
+                }
+            }
+
+            @Override
+            public double getDouble(int col) {
+                if (gapFilling) {
+                    return getFillFunction(col).getDouble(null);
+                } else {
+                    return baseRecord.getDouble(col);
+                }
+            }
+
+            public float getFloat(int col) {
+                if (gapFilling) {
+                    return getFillFunction(col).getFloat(null);
+                } else {
+                    return baseRecord.getFloat(col);
+                }
+            }
+
+            public byte getGeoByte(int col) {
+                if (gapFilling) {
+                    return getFillFunction(col).getGeoByte(null);
+                } else {
+                    return baseRecord.getGeoByte(col);
+                }
+            }
+
+            public int getGeoInt(int col) {
+                if (gapFilling) {
+                    return getFillFunction(col).getGeoInt(null);
+                } else {
+                    return baseRecord.getGeoInt(col);
+                }
+            }
+
+            /**
+             * Gets the value of a long GeoHash column by index
+             *
+             * @param col numeric index of the column
+             * @return geohash
+             */
+            public long getGeoLong(int col) {
+                if (gapFilling) {
+                    return getFillFunction(col).getGeoLong(null);
+                } else {
+                    return baseRecord.getGeoLong(col);
+                }
+            }
+
+            public short getGeoShort(int col) {
+                if (gapFilling) {
+                    return getFillFunction(col).getGeoShort(null);
+                } else {
+                    return baseRecord.getGeoShort(col);
+                }
+            }
+
+            public int getIPv4(int col) {
+                if (gapFilling) {
+                    return getFillFunction(col).getIPv4(null);
+                } else {
+                    return baseRecord.getIPv4(col);
+                }
+            }
+
+            @Override
+            public int getInt(int col) {
+                if (gapFilling) {
+                    return getFillFunction(col).getInt(null);
+                } else {
+                    return baseRecord.getInt(col);
+                }
             }
 
             @Override
             public long getLong(int col) {
-                if (!gapFilling) {
-                    final long l = baseRecord.getLong(col);
-                    if (l != Long.MIN_VALUE) {
-                        return l;
-                    }
+                if (gapFilling) {
+                    return getFillFunction(col).getLong(null);
+                } else {
+                    return baseRecord.getLong(col);
                 }
-                return getFillFunction(col).getLong(null);
+            }
+
+            @Override
+            public long getLong128Hi(int col) {
+                if (gapFilling) {
+                    return getFillFunction(col).getLong128Hi(null);
+                } else {
+                    return baseRecord.getLong128Hi(col);
+                }
+            }
+
+            @Override
+            public long getLong128Lo(int col) {
+                if (gapFilling) {
+                    return getFillFunction(col).getLong128Lo(null);
+                } else {
+                    return baseRecord.getLong128Lo(col);
+                }
+            }
+
+            @Override
+            public void getLong256(int col, CharSink<?> sink) {
+                if (gapFilling) {
+                    getFillFunction(col).getLong256(null, sink);
+                } else {
+                    baseRecord.getLong256(col, sink);
+                }
+            }
+
+            public Long256 getLong256A(int col) {
+                if (gapFilling) {
+                    return getFillFunction(col).getLong256A(null);
+                } else {
+                    return baseRecord.getLong256A(col);
+                }
+            }
+
+            public Long256 getLong256B(int col) {
+                if (gapFilling) {
+                    return getFillFunction(col).getLong256B(null);
+                } else {
+                    return baseRecord.getLong256B(col);
+                }
+            }
+
+            /**
+             * Gets the value of an IPv4 column by index as a long (only needed for sorting)
+             * Distinct from getInt(int col) because INT and IPv4 have different null values
+             *
+             * @param col numeric index of the column
+             * @return 64-bit integer
+             */
+            @SuppressWarnings("unused")
+            public long getLongIPv4(int col) {
+                return getLong(col);
+            }
+
+            @Override
+            public short getShort(int col) {
+                if (gapFilling) {
+                    return getFillFunction(col).getShort(null);
+                } else {
+                    return baseRecord.getShort(col);
+                }
+            }
+
+            @Override
+            public void getStr(int col, Utf16Sink utf16Sink) {
+                if (gapFilling) {
+                    getFillFunction(col).getStr(null, utf16Sink);
+                } else {
+                    baseRecord.getStr(col, utf16Sink);
+                }
+            }
+
+            @Override
+            public @Nullable CharSequence getStrA(int col) {
+                if (gapFilling) {
+                    return getFillFunction(col).getStrA(null);
+                } else {
+                    return baseRecord.getStrA(col);
+                }
+            }
+
+            @Override
+            public CharSequence getStrB(int col) {
+                if (gapFilling) {
+                    return getFillFunction(col).getStrB(null);
+                } else {
+                    return baseRecord.getStrB(col);
+                }
+            }
+
+            @Override
+            public int getStrLen(int col) {
+                if (gapFilling) {
+                    return getFillFunction(col).getStrLen(null);
+                } else {
+                    return baseRecord.getStrLen(col);
+                }
+            }
+
+            @Override
+            public CharSequence getSymA(int col) {
+                if (gapFilling) {
+                    return getFillFunction(col).getSymbol(null);
+                } else {
+                    return baseRecord.getSymA(col);
+                }
+            }
+
+            @Override
+            public CharSequence getSymB(int col) {
+                if (gapFilling) {
+                    return getFillFunction(col).getSymbolB(null);
+                } else {
+                    return baseRecord.getSymB(col);
+                }
             }
 
             @Override
             public long getTimestamp(int col) {
-                if (!gapFilling) {
-                    final long l = baseRecord.getLong(col);
-                    if (l != Long.MIN_VALUE) {
-                        return l;
+                if (gapFilling) {
+                    if (col == timestampIndex) {
+                        return nextBucket;
+                    } else {
+                        return getFillFunction(col).getLong(null);
                     }
-                }
-
-                if (col == timestampIndex) {
-                    return nextBucket;
                 } else {
-                    return getFillFunction(col).getLong(null);
+                    return baseRecord.getTimestamp(col);
                 }
             }
+
+            @Override
+            public void getVarchar(int col, Utf8Sink utf8Sink) {
+                if (gapFilling) {
+                    getFillFunction(col).getVarchar(null, utf8Sink);
+                } else {
+                    baseRecord.getVarchar(col, utf8Sink);
+                }
+            }
+
+            @Override
+            public @Nullable Utf8Sequence getVarcharA(int col) {
+                if (gapFilling) {
+                    return getFillFunction(col).getVarcharA(null);
+                } else {
+                    return baseRecord.getVarcharA(col);
+                }
+            }
+
+            @Override
+            public @Nullable Utf8Sequence getVarcharB(int col) {
+                if (gapFilling) {
+                    return getFillFunction(col).getVarcharB(null);
+                } else {
+                    return baseRecord.getVarcharB(col);
+                }
+            }
+
+            @Override
+            public int getVarcharSize(int col) {
+                if (gapFilling) {
+                    return getFillFunction(col).getVarcharSize(null);
+                } else {
+                    return baseRecord.getVarcharSize(col);
+                }
+            }
+
+
         }
     }
 
