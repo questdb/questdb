@@ -341,6 +341,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
             }
 
+            @Override
             public float getFloat(int col) {
                 if (gapFilling) {
                     return getFillFunction(col).getFloat(null);
@@ -349,6 +350,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
             }
 
+            @Override
             public byte getGeoByte(int col) {
                 if (gapFilling) {
                     return getFillFunction(col).getGeoByte(null);
@@ -357,6 +359,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
             }
 
+            @Override
             public int getGeoInt(int col) {
                 if (gapFilling) {
                     return getFillFunction(col).getGeoInt(null);
@@ -365,12 +368,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
             }
 
-            /**
-             * Gets the value of a long GeoHash column by index
-             *
-             * @param col numeric index of the column
-             * @return geohash
-             */
+            @Override
             public long getGeoLong(int col) {
                 if (gapFilling) {
                     return getFillFunction(col).getGeoLong(null);
@@ -379,6 +377,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
             }
 
+            @Override
             public short getGeoShort(int col) {
                 if (gapFilling) {
                     return getFillFunction(col).getGeoShort(null);
@@ -387,6 +386,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
             }
 
+            @Override
             public int getIPv4(int col) {
                 if (gapFilling) {
                     return getFillFunction(col).getIPv4(null);
@@ -440,6 +440,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
             }
 
+            @Override
             public Long256 getLong256A(int col) {
                 if (gapFilling) {
                     return getFillFunction(col).getLong256A(null);
@@ -448,6 +449,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
             }
 
+            @Override
             public Long256 getLong256B(int col) {
                 if (gapFilling) {
                     return getFillFunction(col).getLong256B(null);
@@ -456,13 +458,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
             }
 
-            /**
-             * Gets the value of an IPv4 column by index as a long (only needed for sorting)
-             * Distinct from getInt(int col) because INT and IPv4 have different null values
-             *
-             * @param col numeric index of the column
-             * @return 64-bit integer
-             */
+            @Override
             @SuppressWarnings("unused")
             public long getLongIPv4(int col) {
                 return getLong(col);
@@ -579,8 +575,6 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                     return baseRecord.getVarcharSize(col);
                 }
             }
-
-
         }
     }
 
