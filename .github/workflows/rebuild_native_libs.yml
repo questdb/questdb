@@ -36,7 +36,7 @@ jobs:
       - name: Copy Rust Library to the final directory
         run: |
           cp core/rust/qdbr/target/release/questdbr.dll core/src/main/resources/io/questdb/bin/windows-amd64/
-          cp core/rust/qdbr/target/release/questdbrtest.dll core/src/test/resources/io/questdb/bin/windows-amd64/
+          cp core/rust/qdbr-test/target/release/questdbrtest.dll core/src/test/resources/io/questdb/bin/windows-amd64/
       - name: Save Windows Rust Library to Cache
         uses: actions/cache/save@v3
         with:
@@ -95,14 +95,14 @@ jobs:
           mkdir -p core/src/main/resources/io/questdb/bin/darwin-aarch64/
           cp core/rust/qdbr/target/release/libquestdbr.dylib core/src/main/resources/io/questdb/bin/darwin-aarch64/
           mkdir -p core/src/test/resources/io/questdb/bin/darwin-aarch64/
-          cp core/rust/qdbr/target/release/libquestdbrtest.dylib core/src/test/resources/io/questdb/bin/darwin-aarch64/
+          cp core/rust/qdbr-test/target/release/libquestdbrtest.dylib core/src/test/resources/io/questdb/bin/darwin-aarch64/
       - name: Copy darwin-amd64 Rust Library to the final directory
         if: ${{ matrix.os == 'macos-13' }}
         run: |
           mkdir -p core/src/main/resources/io/questdb/bin/darwin-amd64/
           cp core/rust/qdbr/target/release/libquestdbr.dylib core/src/main/resources/io/questdb/bin/darwin-amd64/
           mkdir -p core/src/test/resources/io/questdb/bin/darwin-amd64/
-          cp core/rust/qdbr/target/release/libquestdbrtest.dylib core/src/test/resources/io/questdb/bin/darwin-amd64/
+          cp core/rust/qdbr-test/target/release/libquestdbrtest.dylib core/src/test/resources/io/questdb/bin/darwin-amd64/
       - name: Save darwin-aarch64 Libraries to Cache
         if: ${{ matrix.os == 'macos-14' }}
         uses: actions/cache/save@v3
