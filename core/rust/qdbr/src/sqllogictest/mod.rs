@@ -8,7 +8,7 @@ use jni::objects::JClass;
 use jni::JNIEnv;
 use log::error;
 use sqllogictest::{Record, Runner};
-use sqllogictest_engines::postgres::{PostgresConfig, PostgresExtended, PostgresSimple};
+use sqllogictest_engines::postgres::{PostgresConfig, PostgresExtended};
 use tokio::runtime::Runtime;
 
 #[no_mangle]
@@ -78,17 +78,12 @@ pub extern "system" fn Java_io_questdb_Sqllogictest_run(
 
                     let res = runner.run(record);
                     if let Err(e) = res {
-                        throw_state_msg(
-                            &mut env,
-                            "run",
-                            &format!("Error running test file '{}': {}", file_path, e),
-                            (),
-                        );
+                        return Err(anyhow::Error::from(e));
                     }
                 }
                 Ok(())
             }
-            Err(e) => Err(e),
+            Err(e) => Err(anyhow::Error::from(e)),
         }
     };
 
@@ -105,7 +100,7 @@ pub extern "system" fn Java_io_questdb_Sqllogictest_run(
     }
 }
 
-fn throw_state_msg<T>(env: &mut JNIEnv, method_name: &str, err: &String, def: T) {
+fn throw_state_msg<T>(env: &mut JNIEnv, method_name: &str, err: &String, _def: T) {
     let msg = format!("error while {}: {}", method_name, err);
     let res = env.throw_new("java/lang/RuntimeException", msg);
     match res {

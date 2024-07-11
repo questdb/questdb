@@ -102,9 +102,8 @@ public class ParquetFileRecordCursor implements NoRandomAccessRecordCursor {
         if (++rowGroup < decoder.getMetadata().rowGroupCount()) {
             rowGroupRowCount = -1;
             for (int columnIndex = 0, n = metadata.getColumnCount(); columnIndex < n; columnIndex++) {
-                int columnId = decoder.getMetadata().columnId(columnIndex);
                 int columnType = metadata.getColumnType(columnIndex);
-                long columnChunkBufferPtr = decoder.decodeColumnChunk(rowGroup, columnId, columnType);
+                long columnChunkBufferPtr = decoder.decodeColumnChunk(rowGroup, columnIndex, columnType);
                 columnChunkBufferPtrs.add(columnChunkBufferPtr);
                 dataPtrs.add(PartitionDecoder.getChunkDataPtr(columnChunkBufferPtr));
                 auxPtrs.add(PartitionDecoder.getChunkAuxPtr(columnChunkBufferPtr));

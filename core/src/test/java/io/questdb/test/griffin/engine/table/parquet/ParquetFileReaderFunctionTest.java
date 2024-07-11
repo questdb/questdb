@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.table.parquet;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.LogRecordSinkAdapter;
@@ -41,10 +42,16 @@ import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
 
 public class ParquetFileReaderFunctionTest extends AbstractCairoTest {
+    @Before
+    public void setUp() {
+        super.setUp();
+        inputRoot = root;
+    }
 
     @Test
     public void testData() throws Exception {
@@ -107,7 +114,7 @@ public class ParquetFileReaderFunctionTest extends AbstractCairoTest {
                         "cast(a_geo_long as geohash(32b)) as a_geo_long," +
                         "a_bin," +
                         "a_ts," +
-                        " from parquet_scan('").put(path).put("')");
+                        " from parquet_scan('x.parquet')");
                 assertSqlCursors("x", sink);
             }
         });
@@ -132,7 +139,7 @@ public class ParquetFileReaderFunctionTest extends AbstractCairoTest {
                 PartitionEncoder.encode(partitionDescriptor, path);
 
                 sink.clear();
-                sink.put("select * from parquet_scan('").put(path).put("')");
+                sink.put("select * from parquet_scan('x.parquet')");
 
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     try (RecordCursorFactory factory2 = compiler.compile(sink, sqlExecutionContext).getRecordCursorFactory()) {
@@ -194,9 +201,11 @@ public class ParquetFileReaderFunctionTest extends AbstractCairoTest {
                 PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
                 PartitionEncoder.encode(partitionDescriptor, path);
                 Assert.assertTrue(Files.exists(path.$()));
+
+
                 // Assert 0 rows, header only
                 sink.clear();
-                sink.put("select * from parquet_scan('").put(path).put("')");
+                sink.put("select * from parquet_scan('x.parquet')");
 
                 assertPlanNoLeakCheck(sink, "parquet file sequential scan\n");
 

@@ -97,13 +97,19 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
             &mut env,
             "decode_column_chunk",
             &format!(
-                "requested column type {} does not match file column type {:?}",
-                to_column_type, column_type
+                "requested column type {} does not match file column type {:?}, column index: {}",
+                to_column_type, column_type, column
             ),
             (),
         );
     } else {
-        match decoder.decode_column_chunk(row_group, column, column_type) {
+        let column_file_index = decoder.columns[column].id;
+        match decoder.decode_column_chunk(
+            row_group,
+            column_file_index as usize,
+            column,
+            column_type,
+        ) {
             Ok(_) => (),
             Err(err) => {
                 throw_state_ex(&mut env, "decode_column_chunk", err, ());

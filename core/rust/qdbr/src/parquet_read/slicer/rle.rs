@@ -101,7 +101,7 @@ impl<'a, 'b, T: DictDecoder> RleDictionarySlicer<'a, 'b, T> {
         } else {
             Ok(Self {
                 decoder: None,
-                data: RleIterator::Rle(std::iter::repeat(0).take(0)),
+                data: RleIterator::Rle(std::iter::repeat(0).take(row_count)),
                 row_count,
                 dict,
                 error: Ok(()),

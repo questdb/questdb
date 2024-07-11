@@ -70,8 +70,7 @@ pub struct DeltaBinaryPackedSlicer<'a, const N: usize> {
 impl<const N: usize> DataPageSlicer for DeltaBinaryPackedSlicer<'_, N> {
     fn next(&mut self) -> &[u8] {
         let res = self.decoder.next();
-        println!("got {:?}", res);
-        let res = match res {
+        match res {
             Some(val) => match val {
                 Ok(val) => {
                     let bytes = val.to_le_bytes();
@@ -91,8 +90,7 @@ impl<const N: usize> DataPageSlicer for DeltaBinaryPackedSlicer<'_, N> {
                 ));
                 &self.error_value
             }
-        };
-        res
+        }
     }
 
     fn next_slice(&mut self, _count: usize) -> Option<&[u8]> {
@@ -239,7 +237,7 @@ impl<'a> DataPageSlicer for DeltaBytesArraySlicer<'a> {
                     &[]
                 }
             },
-            Err(_) => return &[],
+            Err(_) => &[],
         }
     }
 
@@ -444,5 +442,53 @@ impl<'a> BooleanBitmapSlicer<'a> {
     pub fn new(data: &'a [u8], row_count: usize) -> Self {
         let bitmap_iter = BitmapIter::new(data, 0, row_count);
         Self { bitmap_iter, row_count, error: Ok(()) }
+    }
+}
+
+pub struct ValueConvertSlicer<const N: usize, T: DataPageSlicer, F: Fn(&[u8], &mut [u8; N])> {
+    inner_slicer: T,
+    converter: F,
+    error: ParquetResult<()>,
+    buffer: [u8; N],
+}
+
+impl<const N: usize, T: DataPageSlicer, F: Fn(&[u8], &mut [u8; N])> DataPageSlicer
+    for ValueConvertSlicer<N, T, F>
+{
+    fn next(&mut self) -> &[u8] {
+        let slice = self.inner_slicer.next();
+        (self.converter)(slice, &mut self.buffer);
+        &self.buffer
+    }
+
+    fn next_slice(&mut self, _count: usize) -> Option<&[u8]> {
+        None
+    }
+
+    fn skip(&mut self, count: usize) {
+        self.inner_slicer.skip(count);
+    }
+
+    fn count(&self) -> usize {
+        self.inner_slicer.count()
+    }
+
+    fn data_size(&self) -> usize {
+        self.inner_slicer.count() * N
+    }
+
+    fn result(&self) -> ParquetResult<()> {
+        self.error.clone().or(self.inner_slicer.result())
+    }
+}
+
+impl<const N: usize, T: DataPageSlicer, F: Fn(&[u8], &mut [u8; N])> ValueConvertSlicer<N, T, F> {
+    pub fn new(inner_slicer: T, converter: F) -> Self {
+        Self {
+            inner_slicer,
+            converter,
+            error: Ok(()),
+            buffer: [0; N],
+        }
     }
 }

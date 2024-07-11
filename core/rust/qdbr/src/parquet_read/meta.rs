@@ -1,5 +1,3 @@
-use std::fs::File;
-
 use crate::parquet_read::{ColumnChunkBuffers, ColumnMeta, ParquetDecoder};
 use parquet2::metadata::Descriptor;
 use parquet2::read::read_metadata;
@@ -7,6 +5,7 @@ use parquet2::schema::types::PrimitiveLogicalType::{Timestamp, Uuid};
 use parquet2::schema::types::{
     IntegerType, PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType, TimeUnit,
 };
+use std::fs::File;
 
 use crate::parquet_read::jni::{
     BOOLEAN, BYTE_ARRAY, DOUBLE, FIXED_LEN_BYTE_ARRAY, FLOAT, INT32, INT64, INT96,
@@ -20,7 +19,7 @@ impl ParquetDecoder {
         let mut columns = vec![];
         let mut column_buffers = vec![];
 
-        for f in metadata.schema_descr.columns().iter() {
+        for (column_id, f) in metadata.schema_descr.columns().iter().enumerate() {
             // Some types are not supported, this will skip them.
             if let Some(typ) = Self::descriptor_to_column_type(&f.descriptor) {
                 let physical_type = match f.descriptor.primitive_type.physical_type {
@@ -42,7 +41,7 @@ impl ParquetDecoder {
 
                 columns.push(ColumnMeta {
                     typ,
-                    id: columns.len() as i32,
+                    id: column_id as i32,
                     physical_type,
                     name_size: name.len() as u32,
                     name_ptr: name.as_ptr(),
@@ -98,6 +97,10 @@ impl ParquetDecoder {
             (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int32)), _) => {
                 Some(ColumnType::Int)
             }
+            (PhysicalType::Int32, Some(PrimitiveLogicalType::Decimal(_, _)), _)
+            | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Decimal(_, _))) => {
+                Some(ColumnType::Double)
+            }
             (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int16)), _) => {
                 Some(ColumnType::Short)
             }
@@ -111,6 +114,10 @@ impl ParquetDecoder {
             | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Int8)) => {
                 Some(ColumnType::Byte)
             }
+            (PhysicalType::Int32, Some(PrimitiveLogicalType::Date), _)
+            | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Date)) => {
+                Some(ColumnType::Date)
+            }
             (PhysicalType::Int32, None, _)
             | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Int32)) => {
                 Some(ColumnType::Int)
@@ -119,6 +126,7 @@ impl ParquetDecoder {
             (PhysicalType::Double, None, _) => Some(ColumnType::Double),
             (PhysicalType::Float, None, _) => Some(ColumnType::Float),
             (PhysicalType::FixedLenByteArray(16), Some(Uuid), _) => Some(ColumnType::Uuid),
+            (PhysicalType::FixedLenByteArray(16), None, None) => Some(ColumnType::Long128),
             (PhysicalType::ByteArray, Some(PrimitiveLogicalType::String), _) => {
                 Some(ColumnType::Varchar)
             }
@@ -127,7 +135,11 @@ impl ParquetDecoder {
                 Some(ColumnType::Varchar)
             }
             (PhysicalType::ByteArray, None, _) => Some(ColumnType::Binary),
-            (_, _, _) => None,
+            (PhysicalType::Int96, None, None) => Some(ColumnType::Timestamp),
+            (ph, log, conv) => {
+                println!("Unsupported column type: {:?} {:?} {:?}", ph, log, conv);
+                None
+            }
         }
     }
 }

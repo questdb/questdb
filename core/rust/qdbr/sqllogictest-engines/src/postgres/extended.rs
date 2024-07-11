@@ -164,7 +164,17 @@ fn float4_to_str(value: &f32) -> String {
     } else if *value == f32::NEG_INFINITY {
         "-Infinity".to_string()
     } else {
-        format_c_exponent(format!("{:e}", value))
+        let upper_threshold = 1e5; // For large numbers
+        let lower_threshold = 1e-5; // For small numbers
+
+        let value = if value.abs() >= upper_threshold || (value.abs() < lower_threshold && *value != 0f32) {
+            // Use scientific notation
+            format!("{:e}", value)
+        } else {
+            // Use fixed-point notation with 6 decimal places
+            format!("{:.6}", value)
+        };
+        format_c_exponent(value)
     }
 }
 
@@ -189,7 +199,17 @@ fn float8_to_str(value: &f64) -> String {
     } else if *value == f64::NEG_INFINITY {
         "-Infinity".to_string()
     } else {
-        format_c_exponent(format!("{:e}", value))
+        let upper_threshold = 1e5; // For large numbers
+        let lower_threshold = 1e-5; // For small numbers
+
+        let value = if value.abs() >= upper_threshold || (value.abs() < lower_threshold && *value != 0f64) {
+            // Use scientific notation
+            format!("{:e}", value)
+        } else {
+            // Use fixed-point notation with 6 decimal places
+            format!("{:.6}", value)
+        };
+        format_c_exponent(value)
     }
 }
 
@@ -300,6 +320,12 @@ impl sqllogictest::AsyncDB for Postgres<Extended> {
                     Type::TIMESTAMPTZ_ARRAY => {
                         array_process!(self, row, row_vec, idx, DateTime<chrono::Utc>, TIMESTAMPTZ);
                     }
+                    Type::BYTEA => {
+                        single_process!(row, row_vec, idx, &[u8], bytea_to_str);
+                    }
+                    Type::CHAR => {
+                        single_process!(row, row_vec, idx, i8, u16_to_str);
+                    }
                     _ => {
                         todo!("Don't support {} type now.", column.type_().name())
                     }
@@ -334,5 +360,16 @@ impl sqllogictest::AsyncDB for Postgres<Extended> {
 
     async fn run_command(command: Command) -> std::io::Result<std::process::Output> {
         tokio::process::Command::from(command).output().await
+    }
+}
+
+fn u16_to_str(p0: &i8) -> String {
+    p0.to_string()
+}
+
+fn bytea_to_str(bytes: &&[u8]) -> String {
+    match std::str::from_utf8(*bytes) {
+        Ok(utf8_str) => utf8_str.to_string(),
+        Err(_) => bytes.iter().map(|byte| format!("{:02x}", byte)).collect(),
     }
 }

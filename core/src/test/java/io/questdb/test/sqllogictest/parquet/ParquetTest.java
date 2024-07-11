@@ -54,7 +54,7 @@ public class ParquetTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void parquet_10279() throws Exception {
+    public void parquet_10279() {
         short pgPort = 6465;
 
         try (Path path = new Path()) {
