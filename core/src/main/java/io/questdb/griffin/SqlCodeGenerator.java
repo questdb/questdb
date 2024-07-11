@@ -1709,6 +1709,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return groupByFactory;
             }
 
+            if (fillValues.size() == 1 && isNoneKeyword(fillValues.getQuick(0).getName())) {
+                return groupByFactory;
+            }
+
             if (fillFrom != null) {
                 fillFromFunc = functionParser.parseFunction(fillFrom, EmptyRecordMetadata.INSTANCE, executionContext);
                 coerceRuntimeConstantType(fillFromFunc, ColumnType.TIMESTAMP, executionContext, "from lower bound must be a constant expression convertible to a TIMESTAMP", -1);

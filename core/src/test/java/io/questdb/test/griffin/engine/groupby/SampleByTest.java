@@ -125,7 +125,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(2)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                false
+                true
         );
     }
 
@@ -3375,7 +3375,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "select * from (select ts, s, first(v) from tab sample by 30m fill(prev) align to first observation) where s = 'B'",
                     "SelectedRecord\n" +
                             "    Filter filter: s='B'\n" +
-                            "        SampleBy\n" +
+                            "        Sample By\n" +
                             "          fill: prev\n" +
                             "          keys: [s,ts]\n" +
                             "          values: [first(v)]\n" +
@@ -3890,7 +3890,7 @@ public class SampleByTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by day wal;");
             drainWalQueue();
             assertPlanNoLeakCheck(
-                    "select ts, avg(price) from tbl sample by 5m from '2018' to '2019'",
+                    "select ts, avg(price) from tbl sample by 5m from '2018' to '2019' align to calendar with offset '10:00'",
                     "Sample By\n" +
                             "  from: '2018'\n" +
                             "  to: '2019'\n" +
@@ -3900,7 +3900,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "        Frame forward scan on: tbl\n"
             );
             assertPlanNoLeakCheck(
-                    "select ts, avg(price) from tbl sample by 5m from '2018'",
+                    "select ts, avg(price) from tbl sample by 5m from '2018' align to calendar offset with '10:00'",
                     "Sample By\n" +
                             "  from: '2018'\n" +
                             "  values: [avg(price)]\n" +
@@ -3909,7 +3909,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "        Frame forward scan on: tbl\n"
             );
             assertPlanNoLeakCheck(
-                    "select ts, avg(price) from tbl sample by 5m to '2019'",
+                    "select ts, avg(price) from tbl sample by 5m to '2019' align to calendar offset with '10:00'",
                     "Sample By\n" +
                             "  to: '2019'\n" +
                             "  values: [avg(price)]\n" +
@@ -3918,7 +3918,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "        Frame forward scan on: tbl\n"
             );
             assertPlanNoLeakCheck(
-                    "select ts, avg(price) from tbl sample by 5m",
+                    "select ts, avg(price) from tbl sample by 5m align to calendar with offset with '10:00'",
                     "Sample By\n" +
                             "  values: [avg(price)]\n" +
                             "    DataFrame\n" +
@@ -5002,7 +5002,7 @@ public class SampleByTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     query,
-                    "SampleBy\n" +
+                    "Sample By\n" +
                             "  fill: prev\n" +
                             "  keys: [ts,s]\n" +
                             "  values: [first(v)]\n" +
@@ -6799,7 +6799,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "FLOP\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-04T09:00:00.000000Z\n" +
                         "WVDK\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-04T09:00:00.000000Z\n" +
                         "JOXP\t67.29405590773638\t76.0625\t1165635863\t2316\t9\t-4547802916868961458\t1970-01-04T09:00:00.000000Z\n",
-                false
+                true
         );
     }
 
@@ -7240,7 +7240,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "HYRX\tnull\t1970-01-04T09:00:00.000000Z\n" +
                         "UVSD\tnull\t1970-01-04T09:00:00.000000Z\n" +
                         "KGHV\t67.52509547112409\t1970-01-04T09:00:00.000000Z\n",
-                false
+                true
         );
     }
 
@@ -7942,7 +7942,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                false
+                true
         );
     }
 
@@ -8022,7 +8022,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(2200)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                false
+                true
         );
     }
 
@@ -11399,7 +11399,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(10)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                false
+                true
         );
     }
 
@@ -11481,7 +11481,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "66.97969295620055\t1970-01-04T11:30:00.000000Z\n" +
                         "20.56\t1970-01-04T12:00:00.000000Z\n" +
                         "58.93398488053903\t1970-01-04T12:30:00.000000Z\n",
-                "select sum(a), k from x sample by 30m fill(20.56) align to calendar",
+                "select sum(a), k from x sample by 30m fill(20.56)",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -11492,7 +11492,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(40)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                false
+                true
         );
     }
 
@@ -12520,7 +12520,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(2)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                false
+                true
         );
     }
 

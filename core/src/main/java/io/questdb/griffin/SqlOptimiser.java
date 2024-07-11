@@ -4457,10 +4457,14 @@ public class SqlOptimiser implements Mutable {
                 // as group-by keys.
 
                 for (int i = 0, n = model.getColumns().size(); i < n; i++) {
-                    QueryColumn column = model.getColumns().getQuick(i);
-                    if (column.getAst().isWildcard()) {
+                    final QueryColumn column = model.getColumns().getQuick(i);
+                    final ExpressionNode ast = column.getAst();
+                    if (ast.isWildcard()) {
                         throw SqlException.$(column.getAst().position, "wildcard column select is not allowed in sample-by queries");
                     }
+
+//                    // verify that it is non-keyed
+//                    if (ast.type == ExpressionNode.)
                 }
 
                 // When timestamp is not explicitly selected, we will

@@ -79,8 +79,10 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 for (int i = 0; i < diff; i++) {
                     values.add(NullConstant.NULL);
                 }
+            } else {
+                throw SqlException.$(-1, "not enough fill values");
             }
-            throw SqlException.$(-1, "not enough fill values");
+
         }
 
 
@@ -129,9 +131,10 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     private static class FillRangeRecordCursor implements NoRandomAccessRecordCursor {
-        private static final int RANGE_FULLY_BOUND = 0;
-        private static final int RANGE_LOWER_BOUND = 1;
-        private static final int RANGE_UPPER_BOUND = 2;
+        private static final int RANGE_FULLY_BOUND = 1;
+        private static final int RANGE_LOWER_BOUND = 2;
+        private static final int RANGE_UNBOUNDED = 0;
+        private static final int RANGE_UPPER_BOUND = 3;
         protected final FillRangeRecord fillingRecord = new FillRangeRecord();
         protected final TimestampFloorOffsetFunctionFactory flooringFactory = new TimestampFloorOffsetFunctionFactory();
         protected RecordCursor baseCursor;
@@ -161,6 +164,11 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return baseCursor.getSymbolTable(columnIndex);
+        }
+
+        @Override
         public boolean hasNext() {
             if (baseRecord == null) {
                 baseRecord = baseCursor.getRecord();
@@ -187,7 +195,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 if (!gapFilling) {
                     gapFilling = true;
 
-                    if (rangeBound == RANGE_UPPER_BOUND) {
+                    if (rangeBound == RANGE_UPPER_BOUND || rangeBound == RANGE_UNBOUNDED) {
                         while (nextBucket < minTimestamp) {
                             moveToNextBucket();
                         }
@@ -248,6 +256,10 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             if (to != TimestampConstant.NULL) {
                 rangeBound = RANGE_UPPER_BOUND;
                 return;
+            }
+
+            if (from == TimestampConstant.NULL && to == TimestampConstant.NULL) {
+                rangeBound = RANGE_UNBOUNDED;
             }
         }
 
