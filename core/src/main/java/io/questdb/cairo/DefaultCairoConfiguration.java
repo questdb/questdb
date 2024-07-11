@@ -575,6 +575,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean getSimulateWarningsEnabled() {
+        return false;
+    }
+
+    @Override
     public @NotNull CharSequence getSnapshotInstanceId() {
         return "";
     }

@@ -26,6 +26,7 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
@@ -37,8 +38,11 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import java.net.HttpURLConnection;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.ErrorTag.*;
 
@@ -47,53 +51,85 @@ public class WarningsProcessor implements HttpRequestProcessor {
     private static final long RECOMMENDED_MAP_COUNT_LIMIT = 1048576;
     private static final String TAG = "tag";
     private static final String WARNING = "warning";
-    private final StringSink sink = new StringSink();
+    private static final AtomicReference<StringSink> sinkRef = new AtomicReference<>(new StringSink());
 
     public WarningsProcessor(CairoConfiguration configuration) {
-        sink.putAscii('[');
+        synchronized (sinkRef) {
+            final StringSink sink = sinkRef.get();
+            sink.clear();
+            sink.putAscii('[');
 
-        final FilesFacade ff = configuration.getFilesFacade();
-        final String rootDir = configuration.getRoot();
-        try (Path path = new Path()) {
-            final long fsStatus = ff.getFileSystemStatus(path.of(rootDir).$());
-            if (fsStatus >= 0 && !(fsStatus == 0 && Os.type == Os.DARWIN && Os.arch == Os.ARCH_AARCH64)) {
-                sink.putAscii('{').putQuoted(TAG).putAscii(':').putQuoted(UNSUPPORTED_FILE_SYSTEM.text())
+            final FilesFacade ff = configuration.getFilesFacade();
+            final String rootDir = configuration.getRoot();
+            try (Path path = new Path()) {
+                final long fsStatus = ff.getFileSystemStatus(path.of(rootDir).$());
+                if (fsStatus >= 0 && !(fsStatus == 0 && Os.type == Os.DARWIN && Os.arch == Os.ARCH_AARCH64)) {
+                    sink.putAscii('{').putQuoted(TAG).putAscii(':').putQuoted(UNSUPPORTED_FILE_SYSTEM.text())
+                            .putAscii(',').putQuoted(WARNING).putAscii(":\"")
+                            .putAscii("Unsupported file system [dir=").put(rootDir).putAscii(", magic=0x");
+                    Numbers.appendHex(sink, fsStatus, false);
+                    sink.putAscii("]\"}");
+                }
+            }
+
+            final long fileLimit = ff.getFileLimit();
+            if (fileLimit < 0) {
+                throw CairoException.nonCritical().put("Could not read fs.file-max [errno=").put(Os.errno()).put("]");
+            }
+            if (fileLimit > 0 && fileLimit < RECOMMENDED_FILE_LIMIT) {
+                if (sink.length() > 1) {
+                    sink.putAscii(',');
+                }
+                sink.putAscii('{').putQuoted(TAG).putAscii(':').putQuoted(TOO_MANY_OPEN_FILES.text())
                         .putAscii(',').putQuoted(WARNING).putAscii(":\"")
-                        .putAscii("Unsupported file system [dir=").put(rootDir).putAscii(", magic=0x");
-                Numbers.appendHex(sink, fsStatus, false);
-                sink.putAscii("]\"}");
+                        .putAscii("fs.file-max limit is too low [current=").put(fileLimit)
+                        .putAscii(", recommended=").put(RECOMMENDED_FILE_LIMIT).putAscii("]\"}");
             }
-        }
 
-        final long fileLimit = ff.getFileLimit();
-        if (fileLimit < 0) {
-            throw CairoException.nonCritical().put("Could not read fs.file-max [errno=").put(Os.errno()).put("]");
-        }
-        if (fileLimit > 0 && fileLimit < RECOMMENDED_FILE_LIMIT) {
-            if (sink.length() > 1) {
-                sink.putAscii(',');
+            final long mapCountLimit = ff.getMapCountLimit();
+            if (mapCountLimit < 0) {
+                throw CairoException.nonCritical().put("Could not read vm.max_map_count [errno=").put(Os.errno()).put("]");
             }
-            sink.putAscii('{').putQuoted(TAG).putAscii(':').putQuoted(TOO_MANY_OPEN_FILES.text())
-                    .putAscii(',').putQuoted(WARNING).putAscii(":\"")
-                    .putAscii("fs.file-max limit is too low [current=").put(fileLimit)
-                    .putAscii(", recommended=").put(RECOMMENDED_FILE_LIMIT).putAscii("]\"}");
-        }
-
-        final long mapCountLimit = ff.getMapCountLimit();
-        if (mapCountLimit < 0) {
-            throw CairoException.nonCritical().put("Could not read vm.max_map_count [errno=").put(Os.errno()).put("]");
-        }
-        if (mapCountLimit > 0 && mapCountLimit < RECOMMENDED_MAP_COUNT_LIMIT) {
-            if (sink.length() > 1) {
-                sink.putAscii(',');
+            if (mapCountLimit > 0 && mapCountLimit < RECOMMENDED_MAP_COUNT_LIMIT) {
+                if (sink.length() > 1) {
+                    sink.putAscii(',');
+                }
+                sink.putAscii('{').putQuoted(TAG).putAscii(':').putQuoted(OUT_OF_MMAP_AREAS.text())
+                        .putAscii(',').putQuoted(WARNING).putAscii(":\"")
+                        .putAscii("vm.max_map_count limit is too low [current=").put(mapCountLimit)
+                        .putAscii(", recommended=").put(RECOMMENDED_MAP_COUNT_LIMIT).putAscii("]\"}");
             }
-            sink.putAscii('{').putQuoted(TAG).putAscii(':').putQuoted(OUT_OF_MMAP_AREAS.text())
-                    .putAscii(',').putQuoted(WARNING).putAscii(":\"")
-                    .putAscii("vm.max_map_count limit is too low [current=").put(mapCountLimit)
-                    .putAscii(", recommended=").put(RECOMMENDED_MAP_COUNT_LIMIT).putAscii("]\"}");
-        }
 
-        sink.putAscii(']');
+            sink.putAscii(']');
+        }
+    }
+
+    @TestOnly
+    public static void override(@NotNull String tag, @NotNull String warning) {
+        final StringSink current = sinkRef.get();
+        final StringSink sink = new StringSink();
+
+        synchronized (sinkRef) {
+            if (tag.isEmpty()) {
+                sink.putAscii("[]");
+            } else {
+                if (current.length() == 0) {
+                    sink.putAscii('[');
+                } else {
+                    sink.put(current.subSequence(0, current.length() - 1));
+                }
+                if (sink.length() > 1) {
+                    sink.putAscii(',');
+                }
+                sink.putAscii('{')
+                        .putQuoted(TAG).putAscii(':').putQuoted(ErrorTag.resolveTag(tag).text())
+                        .putAscii(',')
+                        .putQuoted(WARNING).putAscii(':').putQuoted(warning)
+                        .putAscii('}')
+                        .putAscii(']');
+            }
+            sinkRef.set(sink);
+        }
     }
 
     @Override
@@ -106,7 +142,7 @@ public class WarningsProcessor implements HttpRequestProcessor {
         final HttpChunkedResponse r = context.getChunkedResponse();
         r.status(HttpURLConnection.HTTP_OK, "application/json");
         r.sendHeader();
-        r.put(sink);
+        r.put(sinkRef.get());
         r.sendChunk(true);
     }
 }

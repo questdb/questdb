@@ -19,7 +19,9 @@ public enum ErrorTag {
     }
 
     public static ErrorTag resolveTag(@NotNull CharSequence text) {
-        if (Chars.equals(text, DISK_FULL.text)) {
+        if (Chars.equals(text, UNSUPPORTED_FILE_SYSTEM.text)) {
+            return UNSUPPORTED_FILE_SYSTEM;
+        } else if (Chars.equals(text, DISK_FULL.text)) {
             return DISK_FULL;
         } else if (Chars.equals(text, TOO_MANY_OPEN_FILES.text)) {
             return TOO_MANY_OPEN_FILES;

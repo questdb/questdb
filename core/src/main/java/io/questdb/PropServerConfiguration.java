@@ -264,6 +264,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long sharedWorkerSleepTimeout;
     private final long sharedWorkerYieldThreshold;
     private final boolean simulateCrashEnabled;
+    private final boolean simulateWarningsEnabled;
     private final String snapshotInstanceId;
     private final boolean snapshotRecoveryEnabled;
     private final String snapshotRoot;
@@ -655,6 +656,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.snapshotInstanceId = getString(properties, env, PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, "");
         this.snapshotRecoveryEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SNAPSHOT_RECOVERY_ENABLED, true);
         this.simulateCrashEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SIMULATE_CRASH_ENABLED, false);
+        this.simulateWarningsEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SIMULATE_WARNINGS_ENABLED, false);
 
         int cpuAvailable = Runtime.getRuntime().availableProcessors();
         int cpuUsed = 0;
@@ -2498,6 +2500,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean getSimulateCrashEnabled() {
             return simulateCrashEnabled;
+        }
+
+        @Override
+        public boolean getSimulateWarningsEnabled() {
+            return simulateWarningsEnabled;
         }
 
         @Override

@@ -142,6 +142,11 @@ public class HttpQueryTestBuilder {
                     }
 
                     @Override
+                    public boolean getSimulateWarningsEnabled() {
+                        return true;
+                    }
+
+                    @Override
                     public CharSequence getSqlCopyInputRoot() {
                         return copyInputRoot != null ? copyInputRoot : super.getSqlCopyInputRoot();
                     }

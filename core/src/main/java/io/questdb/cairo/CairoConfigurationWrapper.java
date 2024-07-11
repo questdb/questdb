@@ -576,6 +576,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean getSimulateWarningsEnabled() {
+        return getDelegate().getSimulateWarningsEnabled();
+    }
+
+    @Override
     public @NotNull CharSequence getSnapshotInstanceId() {
         return getDelegate().getSnapshotInstanceId();
     }

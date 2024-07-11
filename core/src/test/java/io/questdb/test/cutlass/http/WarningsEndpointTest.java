@@ -26,11 +26,19 @@ package io.questdb.test.cutlass.http;
 
 import io.questdb.*;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.client.Response;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
@@ -39,9 +47,13 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.HashMap;
+
+import static io.questdb.PropertyKey.CAIRO_SIMULATE_WARNINGS_ENABLED;
 import static io.questdb.cairo.ErrorTag.*;
 
 public class WarningsEndpointTest extends AbstractBootstrapTest {
@@ -118,8 +130,71 @@ public class WarningsEndpointTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testWarningsWithSimulation() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
+                put(CAIRO_SIMULATE_WARNINGS_ENABLED.getEnvVarName(), "true");
+            }})
+            ) {
+                serverMain.start();
+
+                final CairoEngine engine = serverMain.getEngine();
+
+                // add 1st warning
+                final String tag1 = "UNSUPPORTED FILE SYSTEM";
+                final String warning1 = "Unsupported file system [dir=/questdb/path/dbRoot, magic=0x6400A468]";
+                setWarning(engine, tag1, warning1);
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    assertWarningsRequest(httpClient, "[{\"tag\":\"" + tag1 + "\",\"warning\":\"" + warning1 + "\"}]");
+                }
+
+                // add 2nd warning
+                final String tag2 = "OUT OF MMAP AREAS";
+                final String warning2 = "vm.max_map_count limit is too low [current=4096, recommended=1048576]";
+                setWarning(engine, tag2, warning2);
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    assertWarningsRequest(httpClient, "[{\"tag\":\"" + tag1 + "\",\"warning\":\"" + warning1 + "\"}," +
+                            "{\"tag\":\"" + tag2 + "\",\"warning\":\"" + warning2 + "\"}]");
+                }
+
+                // clear warnings
+                final String tag3 = "";
+                final String warning3 = "";
+                setWarning(engine, tag3, warning3);
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    assertWarningsRequest(httpClient, "[]");
+                }
+
+                // add a new warning
+                final String tag4 = "TOO MANY OPEN FILES";
+                final String warning4 = "fs.file-max limit is too low [current=1024, recommended=1048576]";
+                setWarning(engine, tag4, warning4);
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    assertWarningsRequest(httpClient, "[{\"tag\":\"" + tag4 + "\",\"warning\":\"" + warning4 + "\"}]");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testZeroLimits() throws Exception {
         testWarningsWithProps(-256, 0L, 0L, "[]");
+    }
+
+    private static void setWarning(CairoEngine engine, String tag, String warning) throws SqlException {
+        try (
+                SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE);
+                RecordCursorFactory rcf = engine.select("select simulate_warnings('" + tag + "', '" + warning + "')", context);
+                RecordCursor cursor = rcf.getCursor(context)
+        ) {
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                final boolean result = record.getBool(0);
+                if (!result) {
+                    Assert.fail();
+                }
+            }
+        }
     }
 
     private void assertWarningsRequest(HttpClient httpClient, String expectedHttpResponse) {
