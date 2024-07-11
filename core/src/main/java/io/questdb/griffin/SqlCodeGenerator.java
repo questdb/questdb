@@ -1700,8 +1700,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ObjList<ExpressionNode> fillValuesExprs = nested.getFillValue();
             ObjList<Function> fillValues = new ObjList<>(fillValuesExprs.size());
 
+
+            ExpressionNode expr;
             for (int i = 0, n = fillValuesExprs.size(); i < n; i++) {
-                final Function fillValueFunc = functionParser.parseFunction(fillValuesExprs.get(i), EmptyRecordMetadata.INSTANCE, executionContext);
+                expr = fillValuesExprs.getQuick(0);
+                if (isNoneKeyword(expr.token)) {
+                    return groupByFactory;
+                }
+                final Function fillValueFunc = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, executionContext);
                 fillValues.add(fillValueFunc);
             }
 

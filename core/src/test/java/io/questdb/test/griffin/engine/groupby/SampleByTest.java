@@ -2908,7 +2908,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "select '2022-12-01T00:02:31.000000Z'::timestamp, 's2', 3 from long_sequence(1) " +
                         ") timestamp(ts) partition by DAY",
                 "ts",
-                false
+                true
         );
     }
 
@@ -7832,6 +7832,24 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
                 10,
+                "inconvertible value"
+        );
+    }
+
+    @Test
+    public void testSampleFillNullBadTypeSequential() throws Exception {
+        assertException(
+                "select b, sum_t(b), k from x sample by 3h fill(null)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_str(1,1,2) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                10,
                 "Unsupported type"
         );
     }
@@ -11924,6 +11942,24 @@ public class SampleByTest extends AbstractCairoTest {
     public void testSampleFillValueNotKeyedInvalid() throws Exception {
         assertException(
                 "select sum(a), k from x sample by 30m fill(zz)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(cast('2021-03-28T00:00:00.000000Z' as timestamp), 3400000000) k" +
+                        " from" +
+                        " long_sequence(40)" +
+                        ") timestamp(k) partition by NONE",
+                43,
+                "invalid column: zz"
+        );
+    }
+
+    @Test
+    public void testSampleFillValueNotKeyedInvalidSequential() throws Exception {
+        assertException(
+                "select sum(a), k from x sample by 30m fill(zz) align to calendar with offset '10:00'",
                 "create table x as " +
                         "(" +
                         "select" +
