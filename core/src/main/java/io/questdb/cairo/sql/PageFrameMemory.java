@@ -25,14 +25,13 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.std.LongList;
-import io.questdb.std.QuietCloseable;
 
 /**
  * Represents page frame as a set of per column contiguous memory.
  * For native partitions, it's simply a slice of mmapped memory.
  * For Parquet partitions, it's a deserialized in-memory native format.
  */
-public interface PageFrameMemory extends QuietCloseable {
+public interface PageFrameMemory {
 
     long getAuxPageAddress(int columnIndex);
 

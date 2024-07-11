@@ -266,12 +266,12 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         private final PageFrameMemoryPool frameMemoryPool;
         private final SampleByFirstLastRecord record = new SampleByFirstLastRecord();
         private int crossRowState;
-        private PageFrameMemory currentFrameMemory;
         private long currentRow;
         private int frameCount = 0;
         private PageFrameCursor frameCursor;
         private long frameHi = -1;
         private long frameLo = -1;
+        private PageFrameMemory frameMemory;
         private long frameNextRowId = -1;
         private int groupBySymbolKey;
         private IndexFrameCursor indexCursor;
@@ -301,8 +301,8 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         @Override
         public void close() {
             frameAddressCache.clear();
-            currentFrameMemory = Misc.free(currentFrameMemory);
             Misc.free(frameMemoryPool);
+            frameMemory = null;
             frameCursor = Misc.free(frameCursor);
         }
 
@@ -385,7 +385,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             crossRowState = NONE;
             frameCursor.toTop();
             frameAddressCache.clear();
-            currentFrameMemory = Misc.free(currentFrameMemory);
+            frameMemory = null;
         }
 
         private void checkCrossRowAfterFoundBufferIterated() {
@@ -456,8 +456,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                     final PageFrame frame = frameCursor.next();
                     if (frame != null) {
                         frameAddressCache.add(frameCount, frame);
-                        Misc.free(currentFrameMemory);
-                        currentFrameMemory = frameMemoryPool.navigateTo(frameCount++);
+                        frameMemory = frameMemoryPool.navigateTo(frameCount++);
                         record.switchFrame();
 
                         // Switch to new data frame
@@ -492,7 +491,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
 
                     if (samplePeriodStart == Numbers.LONG_NULL) {
                         long rowId = indexFrameAddress > 0 ? Unsafe.getUnsafe().getLong(indexFrameAddress) : frameLo;
-                        long offsetTimestampColumnAddress = currentFrameMemory.getPageAddress(timestampIndex) - frameLo * Long.BYTES;
+                        long offsetTimestampColumnAddress = frameMemory.getPageAddress(timestampIndex) - frameLo * Long.BYTES;
                         samplePeriodStart = Unsafe.getUnsafe().getLong(offsetTimestampColumnAddress + rowId * Long.BYTES);
                         startFrom(samplePeriodStart);
                     }
@@ -501,7 +500,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 case STATE_OUT_BUFFER_FULL:
                 case STATE_SEARCH:
                     int outPosition = crossRowState == NONE ? 0 : 1;
-                    long offsetTimestampColumnAddress = currentFrameMemory.getPageAddress(timestampIndex) - frameLo * Long.BYTES;
+                    long offsetTimestampColumnAddress = frameMemory.getPageAddress(timestampIndex) - frameLo * Long.BYTES;
                     long iFrameAddress = indexFrame.getAddress();
                     long iFrameSize = findSafeIndexFrameSize(indexFrame, frameHi);
                     long lastIndexRowId = iFrameAddress > 0
@@ -646,7 +645,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         private void saveRowIdValueToCrossRow(long rowId, int columnIndex) {
             int columnType = getMetadata().getColumnType(columnIndex);
             int frameColIndex = queryToFrameColumnMapping[columnIndex];
-            long pageAddress = currentFrameMemory.getPageAddress(frameColIndex);
+            long pageAddress = frameMemory.getPageAddress(frameColIndex);
             if (pageAddress > 0) {
                 saveFixedColToBufferWithLongAlignment(columnIndex, crossFrameRow, columnType, pageAddress, rowId);
             } else {
@@ -973,7 +972,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
 
                 public void switchFrame() {
                     for (int i = 0, length = pageAddresses.length; i < length; i++) {
-                        pageAddresses[i] = currentFrameMemory.getPageAddress(queryToFrameColumnMapping[i]);
+                        pageAddresses[i] = frameMemory.getPageAddress(queryToFrameColumnMapping[i]);
                     }
                 }
 

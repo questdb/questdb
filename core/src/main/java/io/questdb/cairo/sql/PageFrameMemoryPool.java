@@ -63,8 +63,8 @@ public class PageFrameMemoryPool implements QuietCloseable {
     private final LongList tmpPageSizes = new LongList(); // Holds sizes for non-native frames.
     private PageFrameAddressCache addressCache;
     private LongList auxPageAddresses;
-    private byte frameFormat;
-    private int frameIndex;
+    private byte frameFormat = -1;
+    private int frameIndex = -1;
     private LongList pageAddresses;
     private LongList pageSizes;
 
@@ -88,11 +88,18 @@ public class PageFrameMemoryPool implements QuietCloseable {
     }
 
     public PageFrameMemory navigateTo(int frameIndex) {
+        if (this.frameIndex == frameIndex) {
+            return frameMemory;
+        }
+
         this.frameIndex = frameIndex;
         this.frameFormat = addressCache.getFrameFormat(frameIndex);
         if (frameFormat == PageFrame.PARQUET_FORMAT) {
-            // TODO: we should only deserialize columns that are needed by the query!!!
-            // TODO: handle missing columns/column tops/etc.
+            columnChunks.clear();
+            columnChunksPool.clear();
+
+            // TODO(puzpuzpuz): we should only deserialize columns that are needed by the query!!!
+            // TODO(puzpuzpuz): handle missing columns/column tops/etc.
             copyToColumnChunks(0, addressCache.getFrameSize(frameIndex));
 
             // Copy the addresses to frame-local lists.
@@ -248,7 +255,7 @@ public class PageFrameMemoryPool implements QuietCloseable {
         return columnChunksPool.next();
     }
 
-    // TODO: delete once we don't need to copy native frames
+    // TODO(puzpuzpuz): delete once we don't need to copy native frames
     private static class NativeFrameRecord implements Record {
 
         private final MemoryCR.ByteSequenceView bsview = new MemoryCR.ByteSequenceView();
@@ -573,12 +580,6 @@ public class PageFrameMemoryPool implements QuietCloseable {
     }
 
     private class PageFrameMemoryImpl implements PageFrameMemory {
-
-        @Override
-        public void close() {
-            columnChunks.clear();
-            columnChunksPool.clear();
-        }
 
         @Override
         public long getAuxPageAddress(int columnIndex) {

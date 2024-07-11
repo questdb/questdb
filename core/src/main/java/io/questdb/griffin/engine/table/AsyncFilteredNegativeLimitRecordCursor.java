@@ -61,8 +61,6 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
     private final PageFrameMemoryRecord record;
     private int frameIndex;
     private int frameLimit;
-    // Used for random access.
-    private PageFrameMemory frameMemory;
     private PageFrameSequence<?> frameSequence;
     private PageFrameMemoryRecord recordB;
     private long rowCount;
@@ -90,7 +88,6 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
             frameSequence.await();
         }
         frameSequence.clear();
-        frameMemory = Misc.free(frameMemory);
         Misc.free(frameMemoryPool);
     }
 
@@ -127,7 +124,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
         }
         if (rowIndex < rows.getCapacity()) {
             long rowId = rows.get(rowIndex);
-            frameMemory = frameMemoryPool.navigateTo(Rows.toPartitionIndex(rowId));
+            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(Rows.toPartitionIndex(rowId));
             record.init(frameMemory);
             record.setRowIndex(Rows.toLocalRowID(rowId));
             rowIndex++;
@@ -143,7 +140,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
 
     @Override
     public void recordAt(Record record, long atRowId) {
-        frameMemory = frameMemoryPool.navigateTo(Rows.toPartitionIndex(atRowId));
+        final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(Rows.toPartitionIndex(atRowId));
         ((PageFrameMemoryRecord) record).init(frameMemory);
         ((PageFrameMemoryRecord) record).setRowIndex(Rows.toLocalRowID(atRowId));
     }

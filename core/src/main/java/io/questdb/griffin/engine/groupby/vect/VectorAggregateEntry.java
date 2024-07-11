@@ -70,36 +70,35 @@ public class VectorAggregateEntry implements Mutable {
         try {
             slot = perWorkerLocks.acquireSlot(workerId, circuitBreaker);
             final PageFrameMemoryPool frameMemoryPool = frameMemoryPools.getQuick(slot);
-            try (PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex)) {
-                // for functions like `count()`, that do not have arguments we are required to provide
-                // count of rows in table in a form of "pageSize >> shr". Since `vaf` doesn't provide column
-                // this code used column 0. Assumption here that column 0 is fixed size.
-                // This assumption only holds because our aggressive algorithm for "top down columns", e.g.
-                // the algorithm that forces page frame to provide only columns required by the select. At the time
-                // of writing this code there is no way to return variable length column out of non-keyed aggregation
-                // query. This might change if we introduce something like `first(string)`. When this happens we will
-                // need to rethink our way of computing size for the count. This would be either type checking column
-                // 0 and working out size differently or finding any fixed-size column and using that.
-                final long valueAddress = valueColIndex > -1 ? frameMemory.getPageAddress(valueColIndex) : 0;
-                final int effectiveValueColIndex = valueColIndex > -1 ? valueColIndex : 0;
-                final long valuePageSize = frameMemory.getPageSize(effectiveValueColIndex);
-                final int valueColumnSizeShr = frameMemoryPool.getColumnShiftBits(effectiveValueColIndex);
+            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+            // for functions like `count()`, that do not have arguments we are required to provide
+            // count of rows in table in a form of "pageSize >> shr". Since `vaf` doesn't provide column
+            // this code used column 0. Assumption here that column 0 is fixed size.
+            // This assumption only holds because our aggressive algorithm for "top down columns", e.g.
+            // the algorithm that forces page frame to provide only columns required by the select. At the time
+            // of writing this code there is no way to return variable length column out of non-keyed aggregation
+            // query. This might change if we introduce something like `first(string)`. When this happens we will
+            // need to rethink our way of computing size for the count. This would be either type checking column
+            // 0 and working out size differently or finding any fixed-size column and using that.
+            final long valueAddress = valueColIndex > -1 ? frameMemory.getPageAddress(valueColIndex) : 0;
+            final int effectiveValueColIndex = valueColIndex > -1 ? valueColIndex : 0;
+            final long valuePageSize = frameMemory.getPageSize(effectiveValueColIndex);
+            final int valueColumnSizeShr = frameMemoryPool.getColumnShiftBits(effectiveValueColIndex);
 
-                // Zero keyAddress means non-keyed aggregation or column top.
-                final long keyAddress = keyColIndex > -1 ? frameMemory.getPageAddress(keyColIndex) : 0;
-                if (pRosti != null && keyAddress != 0) {
-                    final long oldSize = Rosti.getAllocMemory(pRosti[slot]);
-                    if (!func.aggregate(pRosti[slot], keyAddress, valueAddress, valuePageSize, valueColumnSizeShr, slot)) {
-                        if (oomCounter != null) {
-                            oomCounter.incrementAndGet();
-                        }
+            // Zero keyAddress means non-keyed aggregation or column top.
+            final long keyAddress = keyColIndex > -1 ? frameMemory.getPageAddress(keyColIndex) : 0;
+            if (pRosti != null && keyAddress != 0) {
+                final long oldSize = Rosti.getAllocMemory(pRosti[slot]);
+                if (!func.aggregate(pRosti[slot], keyAddress, valueAddress, valuePageSize, valueColumnSizeShr, slot)) {
+                    if (oomCounter != null) {
+                        oomCounter.incrementAndGet();
                     }
-                    if (raf != null) {
-                        raf.updateMemoryUsage(pRosti[slot], oldSize);
-                    }
-                } else {
-                    func.aggregate(valueAddress, valuePageSize, valueColumnSizeShr, slot);
                 }
+                if (raf != null) {
+                    raf.updateMemoryUsage(pRosti[slot], oldSize);
+                }
+            } else {
+                func.aggregate(valueAddress, valuePageSize, valueColumnSizeShr, slot);
             }
         } finally {
             perWorkerLocks.releaseSlot(slot);

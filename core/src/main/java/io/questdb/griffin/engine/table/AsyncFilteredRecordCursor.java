@@ -50,8 +50,6 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     private long cursor = -1;
     private int frameIndex;
     private int frameLimit;
-    // Used for random access.
-    private PageFrameMemory frameMemory;
     private long frameRowCount;
     private long frameRowIndex;
     private PageFrameSequence<?> frameSequence;
@@ -140,7 +138,6 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                 }
                 frameSequence.clear();
             }
-            frameMemory = Misc.free(frameMemory);
             Misc.free(frameMemoryPool);
             isOpen = false;
         }
@@ -218,7 +215,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
 
     @Override
     public void recordAt(Record record, long atRowId) {
-        frameMemory = frameMemoryPool.navigateTo(Rows.toPartitionIndex(atRowId));
+        final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(Rows.toPartitionIndex(atRowId));
         ((PageFrameMemoryRecord) record).init(frameMemory);
         ((PageFrameMemoryRecord) record).setRowIndex(Rows.toLocalRowID(atRowId));
     }
@@ -283,7 +280,6 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         collectCursor(false);
         filter.toTop();
         frameSequence.toTop();
-        frameMemory = Misc.free(frameMemory);
         rowsRemaining = ogRowsRemaining;
         frameIndex = -1;
         allFramesActive = true;
