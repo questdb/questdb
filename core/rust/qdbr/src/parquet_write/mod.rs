@@ -9,6 +9,7 @@ mod primitive;
 pub mod schema;
 mod string;
 mod symbol;
+mod update;
 mod util;
 pub mod varchar;
 

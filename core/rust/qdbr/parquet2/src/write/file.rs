@@ -17,12 +17,12 @@ use super::{row_group::write_row_group, RowGroupIter, WriteOptions};
 pub use crate::metadata::KeyValue;
 use crate::write::State;
 
-pub(super) fn start_file<W: Write>(writer: &mut W) -> Result<u64> {
+pub fn start_file<W: Write>(writer: &mut W) -> Result<u64> {
     writer.write_all(&PARQUET_MAGIC)?;
     Ok(PARQUET_MAGIC.len() as u64)
 }
 
-pub(super) fn end_file<W: Write>(mut writer: &mut W, metadata: &ThriftFileMetaData) -> Result<u64> {
+pub fn end_file<W: Write>(mut writer: &mut W, metadata: &ThriftFileMetaData) -> Result<u64> {
     // Write metadata
     let mut protocol = TCompactOutputProtocol::new(&mut writer);
     let metadata_len = metadata.write_to_out_protocol(&mut protocol)? as i32;
@@ -263,6 +263,249 @@ impl<W: Write> FileWriter<W> {
     /// This function panics if [`Self::end`] has not yet been called
     pub fn into_inner_and_metadata(self) -> (W, ThriftFileMetaData) {
         (self.writer, self.metadata.expect("File to have ended"))
+    }
+}
+
+// TODO: replace `FileWriter` with `ParquetFile` and deprecate `FileWriter`
+pub struct ParquetFile<W: Write> {
+    writer: W,
+    schema: SchemaDescriptor,
+    options: WriteOptions,
+    created_by: Option<String>,
+    sorting_columns: Option<Vec<SortingColumn>>,
+    offset: u64,
+    row_groups: Vec<RowGroup>,
+    page_specs: Vec<Vec<Vec<PageWriteSpec>>>,
+    state: State,
+    metadata: Option<ThriftFileMetaData>,
+    mode: Mode,
+}
+
+pub enum Mode {
+    Write,
+    Update(ThriftFileMetaData),
+}
+
+impl<W: Write> ParquetFile<W> {
+    pub fn new(
+        writer: W,
+        schema: SchemaDescriptor,
+        options: WriteOptions,
+        created_by: Option<String>,
+    ) -> Self {
+        Self {
+            writer,
+            schema,
+            options,
+            created_by,
+            sorting_columns: None,
+            offset: 0,
+            row_groups: vec![],
+            page_specs: vec![],
+            state: State::Initialised,
+            metadata: None,
+            mode: Mode::Write,
+        }
+    }
+
+    pub fn with_sorting_columns(
+        writer: W,
+        schema: SchemaDescriptor,
+        options: WriteOptions,
+        created_by: Option<String>,
+        sorting_columns: Option<Vec<SortingColumn>>,
+    ) -> Self {
+        Self {
+            writer,
+            schema,
+            options,
+            created_by,
+            sorting_columns,
+            offset: 0,
+            row_groups: vec![],
+            page_specs: vec![],
+            state: State::Initialised,
+            metadata: None,
+            mode: Mode::Write,
+        }
+    }
+
+    pub fn new_updater(
+        writer: W,
+        offset: u64,
+        schema: SchemaDescriptor,
+        options: WriteOptions,
+        created_by: Option<String>,
+        sorting_columns: Option<Vec<SortingColumn>>,
+        metadata: ThriftFileMetaData,
+    ) -> Self {
+        Self {
+            writer,
+            schema,
+            options,
+            created_by,
+            sorting_columns,
+            offset,
+            row_groups: vec![],
+            page_specs: vec![],
+            state: State::Initialised,
+            metadata: Some(metadata.clone()), //TODO: do we need to keep it here?
+            mode: Mode::Update(metadata),
+        }
+    }
+
+    pub fn options(&self) -> &WriteOptions {
+        &self.options
+    }
+
+    pub fn schema(&self) -> &SchemaDescriptor {
+        &self.schema
+    }
+
+    pub fn metadata(&self) -> Option<&ThriftFileMetaData> {
+        self.metadata.as_ref()
+    }
+
+    fn start(&mut self) -> Result<()> {
+        if self.offset == 0 {
+            self.offset = start_file(&mut self.writer)?;
+            self.state = State::Started;
+            Ok(())
+        } else {
+            Err(Error::InvalidParameter("Start cannot be called twice".to_string()))
+        }
+    }
+
+    pub fn write<E>(&mut self, row_group: RowGroupIter<'_, E>) -> Result<()>
+        where
+            Error: From<E>,
+            E: std::error::Error,
+    {
+        if self.offset == 0 {
+            self.start()?;
+        }
+        let ordinal = self.row_groups.len();
+        self.add_row_group(row_group, ordinal)
+    }
+
+    fn add_row_group<E>(&mut self, row_group: RowGroupIter<E>, ordinal: usize) -> Result<()>
+        where
+            Error: From<E>,
+            E: std::error::Error,
+    {
+        let (group, specs, size) = write_row_group(
+            &mut self.writer,
+            self.offset,
+            self.schema.columns(),
+            row_group,
+            &self.sorting_columns,
+            ordinal,
+        )?;
+        self.offset += size;
+        self.row_groups.push(group);
+        self.page_specs.push(specs);
+        Ok(())
+    }
+
+    pub fn replace<E>(&mut self, row_group: RowGroupIter<'_, E>, ordinal: Option<i16>) -> Result<()>
+        where
+            Error: From<E>,
+            E: std::error::Error,
+    {
+        match &self.mode {
+            Mode::Update(metadata) => {
+                let ordinal = if let Some(ordinal) = ordinal {
+                    let num_row_groups = metadata.row_groups.len();
+                    let ordinal = ordinal as usize;
+                    if ordinal >= num_row_groups {
+                        return Err(Error::InvalidParameter(
+                            format!("Row group ordinal must be less then {}, got {}", num_row_groups, ordinal),
+                        ));
+                    }
+                    ordinal
+                } else {
+                    metadata.row_groups.len() + self.row_groups.len()
+                };
+                self.add_row_group(row_group, ordinal)
+            }
+            _ => Err(Error::InvalidParameter("Replace can only be called in update mode".to_string())),
+        }
+    }
+
+    pub fn append<E>(&mut self, row_group: RowGroupIter<'_, E>) -> Result<()>
+        where
+            Error: From<E>,
+            E: std::error::Error,
+    {
+        self.replace(row_group, None)
+    }
+
+    pub fn end(&mut self, key_value_metadata: Option<Vec<KeyValue>>) -> Result<u64> {
+        match &mut self.mode {
+            Mode::Write => {
+                if self.offset == 0 {
+                    self.start()?;
+                }
+
+                if self.state != State::Started {
+                    return Err(Error::InvalidParameter("End cannot be called twice".to_string()));
+                }
+
+                let num_rows = self.row_groups.iter().map(|group| group.num_rows).sum();
+                let metadata = ThriftFileMetaData::new(
+                    self.options.version.into(),
+                    self.schema.clone().into_thrift(),
+                    num_rows,
+                    self.row_groups.clone(),
+                    key_value_metadata,
+                    self.created_by.clone(),
+                    None,
+                    None,
+                    None,
+                );
+
+                let len = end_file(&mut self.writer, &metadata)?;
+                self.state = State::Finished;
+                self.metadata = Some(metadata);
+                Ok(self.offset + len)
+            }
+            Mode::Update(metadata) => {
+                let mut num_rows = metadata.num_rows;
+                for group in &self.row_groups {
+                    let ordinal = group.ordinal.ok_or_else(|| Error::oos("Row group ordinal is missing"))?;
+                    if ordinal < metadata.row_groups.len() as i16 {
+                        num_rows -= metadata.row_groups[ordinal as usize].num_rows;
+                        metadata.row_groups[ordinal as usize] = group.clone();
+                    } else {
+                        metadata.row_groups.push(group.clone());
+                    }
+                    num_rows += group.num_rows;
+                }
+
+                metadata.num_rows = num_rows;
+                metadata.key_value_metadata = metadata.key_value_metadata.take().map_or(key_value_metadata.clone(), |mut kv| {
+                    if let Some(mut new_kv) = key_value_metadata {
+                        kv.append(&mut new_kv);
+                    }
+                    Some(kv)
+                });
+
+                let len = end_file(&mut self.writer, metadata)?;
+                self.state = State::Finished;
+                Ok(self.offset + len)
+            }
+        }
+    }
+
+    pub fn into_inner(self) -> W {
+        self.writer
+    }
+
+    pub fn into_inner_and_metadata(self) -> (W, ThriftFileMetaData) {
+        (
+            self.writer,
+            self.metadata.expect("File to have ended"),
+        )
     }
 }
 

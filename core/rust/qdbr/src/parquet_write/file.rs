@@ -136,9 +136,11 @@ impl<W: Write> ParquetWriter<W> {
         }
     }
 
-    pub fn chunked(self, partition: &Partition) -> ParquetResult<ChunkedWriter<W>> {
-        let parquet_schema = to_parquet_schema(partition)?;
-        let encodings = to_encodings(partition);
+    pub fn chunked(
+        self,
+        parquet_schema: SchemaDescriptor,
+        encodings: Vec<Encoding>,
+    ) -> ParquetResult<ChunkedWriter<W>> {
         let options = self.write_options();
         let parallel = self.parallel;
         let file_write_options = FileWriteOptions {
@@ -165,7 +167,9 @@ impl<W: Write> ParquetWriter<W> {
 
     /// Write the given `Partition` with the writer `W`. Returns the total size of the file.
     pub fn finish(self, partition: Partition) -> ParquetResult<u64> {
-        let mut chunked = self.chunked(&partition)?;
+        let schema = to_parquet_schema(&partition)?;
+        let encodings = to_encodings(&partition);
+        let mut chunked = self.chunked(schema, encodings)?;
         chunked.write_chunk(partition)?;
         chunked.finish()
     }
@@ -245,7 +249,7 @@ impl FallibleStreamingIterator for CompressedPages {
     }
 }
 
-fn create_row_group(
+pub fn create_row_group(
     partition: &Partition,
     offset: usize,
     length: usize,
