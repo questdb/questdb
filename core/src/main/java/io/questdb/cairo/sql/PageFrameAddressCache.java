@@ -37,16 +37,19 @@ import io.questdb.std.*;
  */
 public class PageFrameAddressCache implements Mutable {
 
+    private final ObjList<LongList> auxPageAddresses = new ObjList<>();
     private final IntList columnTypes = new IntList();
     private final ByteList frameFormats = new ByteList();
     private final LongList frameSizes = new LongList();
+    private final ObjectPool<LongList> longListPool = new ObjectPool<>(LongList::new, 16);
     private final long nativeCacheSizeThreshold;
-    private ObjList<LongList> auxPageAddresses = new ObjList<>();
-    private int columnCount;
-    private ObjList<LongList> pageAddresses = new ObjList<>();
-    private ObjList<LongList> pageSizes = new ObjList<>();
+    private final ObjList<LongList> pageAddresses = new ObjList<>();
+    private final ObjList<LongList> pageSizes = new ObjList<>();
     // Makes it possible to determine real row id, not the one relative to the page.
-    private LongList rowIdOffsets = new LongList();
+    private final LongList rowIdOffsets = new LongList();
+    // Sum of all LongList sizes.
+    private long cacheSize;
+    private int columnCount;
 
     public PageFrameAddressCache(CairoConfiguration configuration) {
         this.nativeCacheSizeThreshold = configuration.getSqlJitPageAddressCacheThreshold() / Long.BYTES;
@@ -58,9 +61,9 @@ public class PageFrameAddressCache implements Mutable {
         }
 
         if (frame.getFormat() == PageFrame.NATIVE_FORMAT) {
-            final LongList framePageAddresses = new LongList(columnCount);
-            final LongList frameAuxPageAddresses = new LongList(columnCount);
-            final LongList framePageSizes = new LongList(columnCount);
+            final LongList framePageAddresses = longListPool.next();
+            final LongList frameAuxPageAddresses = longListPool.next();
+            final LongList framePageSizes = longListPool.next();
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 framePageAddresses.add(frame.getPageAddress(columnIndex));
                 final boolean isVarSize = ColumnType.isVarSize(columnTypes.getQuick(columnIndex));
@@ -68,8 +71,11 @@ public class PageFrameAddressCache implements Mutable {
                 framePageSizes.add(isVarSize ? frame.getPageSize(columnIndex) : 0);
             }
             pageAddresses.add(framePageAddresses);
+            cacheSize += framePageAddresses.capacity();
             auxPageAddresses.add(frameAuxPageAddresses);
+            cacheSize += frameAuxPageAddresses.capacity();
             pageSizes.add(framePageSizes);
+            cacheSize += framePageSizes.capacity();
         } else {
             pageAddresses.add(null);
             auxPageAddresses.add(null);
@@ -85,18 +91,16 @@ public class PageFrameAddressCache implements Mutable {
     public void clear() {
         frameSizes.clear();
         frameFormats.clear();
-        // TODO(puzpuzpuz): threshold logic no longer makes sense
-        if (pageAddresses.size() < nativeCacheSizeThreshold) {
-            pageAddresses.clear();
-            auxPageAddresses.clear();
-            pageSizes.clear();
-            rowIdOffsets.clear();
+        pageAddresses.clear();
+        auxPageAddresses.clear();
+        pageSizes.clear();
+        rowIdOffsets.clear();
+        if (cacheSize < nativeCacheSizeThreshold) {
+            longListPool.clear();
         } else {
-            pageAddresses = new ObjList<>();
-            auxPageAddresses = new ObjList<>();
-            pageSizes = new ObjList<>();
-            rowIdOffsets = new LongList();
+            longListPool.resetCapacity();
         }
+        cacheSize = 0;
     }
 
     public LongList getAuxPageAddresses(int frameIndex) {

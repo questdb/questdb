@@ -34,7 +34,8 @@ import org.jetbrains.annotations.NotNull;
 public class ObjectPool<T extends Mutable> implements Mutable {
     private static final Log LOG = LogFactory.getLog(ObjectPool.class);
     private final ObjectFactory<T> factory;
-    private final ObjList<T> list;
+    private final int initialSize;
+    private ObjList<T> list;
     private int pos = 0;
     private int size;
 
@@ -42,6 +43,7 @@ public class ObjectPool<T extends Mutable> implements Mutable {
         this.list = new ObjList<>(size);
         this.factory = factory;
         this.size = size;
+        this.initialSize = size;
         fill();
     }
 
@@ -65,6 +67,13 @@ public class ObjectPool<T extends Mutable> implements Mutable {
         T o = list.getQuick(pos++);
         o.clear();
         return o;
+    }
+
+    public void resetCapacity() {
+        this.list = new ObjList<>(initialSize);
+        this.size = initialSize;
+        fill();
+        pos = 0;
     }
 
     private void expand() {
