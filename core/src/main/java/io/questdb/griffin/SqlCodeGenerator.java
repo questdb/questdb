@@ -1697,6 +1697,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final ExpressionNode fillTo = nested.getFillTo();
             final ExpressionNode fillStride = nested.getFillStride();
 
+            ObjList<ExpressionNode> fillValuesExprs = nested.getFillValue();
+            ObjList<Function> fillValues = new ObjList<>(fillValuesExprs.size());
+
+            for (int i = 0, n = fillValuesExprs.size(); i < n; i++) {
+                final Function fillValueFunc = functionParser.parseFunction(fillValuesExprs.get(i), EmptyRecordMetadata.INSTANCE, executionContext);
+                fillValues.add(fillValueFunc);
+            }
+
+            if (fillValues.size() == 0) {
+                return groupByFactory;
+            }
+
             if (fillFrom != null) {
                 fillFromFunc = functionParser.parseFunction(fillFrom, EmptyRecordMetadata.INSTANCE, executionContext);
                 coerceRuntimeConstantType(fillFromFunc, ColumnType.TIMESTAMP, executionContext, "from lower bound must be a constant expression convertible to a TIMESTAMP", -1);
@@ -1710,13 +1722,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             fillFromFunc.init(null, executionContext);
             fillToFunc.init(null, executionContext);
 
-            ObjList<ExpressionNode> fillValuesExprs = nested.getFillValue();
-            ObjList<Function> fillValues = new ObjList<>(fillValuesExprs.size());
-
-            for (int i = 0, n = fillValuesExprs.size(); i < n; i++) {
-                final Function fillValueFunc = functionParser.parseFunction(fillValuesExprs.get(i), EmptyRecordMetadata.INSTANCE, executionContext);
-                fillValues.add(fillValueFunc);
-            }
 
             return new FillRangeRecordCursorFactory(groupByFactory.getMetadata(), groupByFactory, fillFromFunc, fillToFunc, fillStride.token, fillValues, getTimestampIndex(nested, groupByFactory.getMetadata()));
         }

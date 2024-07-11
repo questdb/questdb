@@ -25,14 +25,12 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.functions.date.TimestampFloorOffsetFunctionFactory;
 import io.questdb.log.Log;
@@ -46,7 +44,6 @@ import org.jetbrains.annotations.Nullable;
 
 
 public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
-    public static final GenericRecordMetadata DEFAULT_COUNT_METADATA = new GenericRecordMetadata();
     public static final Log LOG = LogFactory.getLog(FillRangeRecordCursorFactory.class);
     private final RecordCursorFactory base;
     private final FillRangeRecordCursor cursor = new FillRangeRecordCursor();
@@ -76,8 +73,17 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         if (metadata.getColumnCount() > this.values.size() + 1) {
+
+            if (this.values.size() == 1 && this.values.getQuick(0).isNullConstant()) {
+                final int diff = (metadata.getColumnCount() - 1);
+                for (int i = 0; i < diff; i++) {
+                    values.add(NullConstant.NULL);
+                }
+            }
             throw SqlException.$(-1, "not enough fill values");
         }
+
+
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
             cursor.of(baseCursor, executionContext.getCircuitBreaker(), from, to, stride, values, timestampIndex);
@@ -86,6 +92,11 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             baseCursor.close();
             throw th;
         }
+    }
+
+    @Override
+    public RecordMetadata getMetadata() {
+        return metadata;
     }
 
     @Override
@@ -578,7 +589,4 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         }
     }
 
-    static {
-        DEFAULT_COUNT_METADATA.add(new TableColumnMetadata("fill", ColumnType.DOUBLE));
-    }
 }
