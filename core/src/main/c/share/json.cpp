@@ -240,6 +240,21 @@ auto extract_numeric(
                 case simdjson::ondemand::number_type::big_integer:
                     return double_extractor(res.get_double().value_unsafe());
             }
+        case simdjson::ondemand::json_type::string: {
+            auto maybe_int64 = res.get_int64_in_string();
+            if (maybe_int64.error() == simdjson::error_code::SUCCESS) {
+                return int64_extractor(maybe_int64.value_unsafe());
+            }
+            auto maybe_uint64 = res.get_uint64_in_string();
+            if (maybe_uint64.error() == simdjson::error_code::SUCCESS) {
+                return uint64_extractor(maybe_uint64.value_unsafe());
+            }
+            auto maybe_double = res.get_double_in_string();
+            if (maybe_double.error() == simdjson::error_code::SUCCESS) {
+                return double_extractor(maybe_double.value_unsafe());
+            }
+            return default_value<T>::value;
+        }
         default:
             return default_value<T>::value;
     }
