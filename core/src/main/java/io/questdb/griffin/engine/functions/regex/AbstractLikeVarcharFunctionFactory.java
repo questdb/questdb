@@ -191,29 +191,22 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
             int i = 0;
             for (int n = size - 7 - patternSize + 1; i < n; i += 8) {
                 long zeroBytesWord = SwarUtils.markZeroBytes(us.longAt(i) ^ searchWord);
-                if (zeroBytesWord != 0) {
+                while (zeroBytesWord != 0) {
                     // We've found a match for the first pattern byte,
                     // slow down and check the full pattern.
-                    int firstIndex = SwarUtils.indexOfFirstMarkedByte(zeroBytesWord);
-                    int pos = firstIndex;
-                    while (pos < 8) {
-                        // Check if the pattern matches only for matched first bytes.
-                        if (size - i - pos > 7) {
-                            // It's safe to load full word.
-                            if ((us.longAt(i + pos) & patternMask) == patternWord) {
-                                return true;
-                            }
-                        } else {
-                            // We can't call longAt safely near the sequence end,
-                            // so construct the word from individual bytes.
-                            if ((tailWord(us, i + pos) & patternMask) == patternWord) {
-                                return true;
-                            }
+                    int pos = SwarUtils.indexOfFirstMarkedByte(zeroBytesWord);
+                    // Check if the pattern matches only for matched first bytes.
+                    if (size - i - pos > 7) {
+                        // It's safe to load full word.
+                        if ((us.longAt(i + pos) & patternMask) == patternWord) {
+                            return true;
                         }
-                        zeroBytesWord >>>= ((firstIndex + 1) << 3);
-                        firstIndex = SwarUtils.indexOfFirstMarkedByte(zeroBytesWord);
-                        pos += firstIndex + 1;
+                        // Else, we can't call longAt safely near the sequence end,
+                        // so construct the word from individual bytes.
+                    } else if ((tailWord(us, i + pos) & patternMask) == patternWord) {
+                        return true;
                     }
+                    zeroBytesWord &= zeroBytesWord - 1;
                 }
             }
 
