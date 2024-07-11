@@ -37,6 +37,11 @@ public class NullMemory implements MemoryMAR, MemoryCARW {
     public static final NullMemory INSTANCE = new NullMemory();
 
     @Override
+    public long addressHi() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public long addressOf(long offset) {
         throw new UnsupportedOperationException();
     }

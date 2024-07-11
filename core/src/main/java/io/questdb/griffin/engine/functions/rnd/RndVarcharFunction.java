@@ -50,14 +50,6 @@ class RndVarcharFunction extends VarcharFunction implements Function {
     }
 
     @Override
-    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-        if ((rnd.nextInt() % nullRate) == 1) {
-            return;
-        }
-        sinkRnd(utf8Sink);
-    }
-
-    @Override
     public Utf8Sequence getVarcharA(Record rec) {
         if ((rnd.nextInt() % nullRate) == 1) {
             return null;

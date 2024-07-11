@@ -33,25 +33,33 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 
+import java.util.concurrent.atomic.AtomicLong;
+
 // Contiguous mapped with offset readable memory
-// todo: investigate if we can map file from 0 offset and have the logc in this class done by the OS
+// todo: investigate if we can map file from 0 offset and have the logic in this class done by the OS
 public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
+    private static final AtomicLong ID_GENERATOR = new AtomicLong(0);
     private static final Log LOG = LogFactory.getLog(MemoryCMORImpl.class);
+    private final long id = ID_GENERATOR.incrementAndGet();
     private long mapFileOffset;
     private long offset;
 
     public MemoryCMORImpl() {
     }
 
+    /**
+     * Get the address of a file-based offset. This ignores the `lo` and `hi` range specifies during construction.
+     * The offset is relative to the start of the file, not the virtual area of interest.
+     */
     @Override
-    public long addressOf(long offset) {
-        assert checkOffsetMapped(offset) : "offset=" + offset + ", size=" + size + ", fd=" + fd;
-        return pageAddress + offset - mapFileOffset;
+    public long addressOf(long fileOffset) {
+        assert checkOffsetMapped(fileOffset) : "offset=" + offset + ", size=" + size + ", fd=" + fd;
+        return pageAddress + fileOffset - mapFileOffset;
     }
 
     @Override
-    public boolean checkOffsetMapped(long offset) {
-        return offset - mapFileOffset <= size;
+    public boolean checkOffsetMapped(long fileOffset) {
+        return fileOffset - mapFileOffset <= size;
     }
 
     @Override
@@ -114,6 +122,10 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
         ofOffset(ff, -1, name, lo, hi, memoryTag, opts);
     }
 
+    /**
+     * Size of the "virtual" mapped area, accounting for the offset (hi - lo) during the construction.
+     * Careful not to use this in conjunction with `addressOf` which uses a file-based offset.
+     */
     @Override
     public long size() {
         return size + mapFileOffset - offset;

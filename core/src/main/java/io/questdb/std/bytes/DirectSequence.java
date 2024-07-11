@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.str;
+package io.questdb.std.bytes;
 
 /**
  * A contiguous chunk of native memory.

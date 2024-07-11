@@ -34,7 +34,6 @@ import io.questdb.griffin.engine.functions.*;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 
 import static io.questdb.cairo.ColumnType.*;
 
@@ -865,14 +864,6 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-            Utf8Sequence sequence = getVarcharA(rec);
-            if (sequence != null) {
-                utf8Sink.put(sequence);
-            }
-        }
-
-        @Override
         public Utf8Sequence getVarcharA(Record rec) {
             Utf8Sequence value = args0.getVarcharA(rec);
             if (value != null) {
@@ -950,14 +941,6 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public ObjList<Function> getArgs() {
             return args;
-        }
-
-        @Override
-        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-            Utf8Sequence sequence = getVarcharA(rec);
-            if (sequence != null) {
-                utf8Sink.put(sequence);
-            }
         }
 
         @Override

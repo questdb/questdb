@@ -196,9 +196,14 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
                                 break;
 
                             case ColumnType.VARCHAR:
+                                if (isNull) {
+                                    row.putVarchar(index, null);
+                                    break;
+                                }
                                 utf8StringSink.clear();
-                                rnd.nextUtf8Str(strLen, utf8StringSink);
-                                row.putVarchar(index, isNull ? null : utf8StringSink);
+                                int varcharLen = strLen > 0 ? rnd.nextInt(strLen) : 0;
+                                rnd.nextUtf8Str(varcharLen, utf8StringSink);
+                                row.putVarchar(index, utf8StringSink);
                                 break;
 
                             case ColumnType.STRING:

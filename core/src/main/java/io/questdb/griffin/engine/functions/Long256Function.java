@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 
 public abstract class Long256Function implements ScalarFunction {
     @Override
@@ -167,11 +166,6 @@ public abstract class Long256Function implements ScalarFunction {
     @Override
     public final int getType() {
         return ColumnType.LONG256;
-    }
-
-    @Override
-    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-        throw new UnsupportedOperationException();
     }
 
     @Override

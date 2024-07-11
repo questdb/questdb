@@ -27,6 +27,8 @@ package io.questdb.test.std.str;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryAR;
+import io.questdb.cairo.vm.api.MemoryCA;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.std.*;
 import io.questdb.std.str.*;
 import io.questdb.test.tools.TestUtils;
@@ -354,8 +356,8 @@ public class Utf8sTest {
     @Test
     public void testReadWriteVarchar() {
         try (
-                MemoryAR auxMem = Vm.getARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
-                MemoryAR dataMem = Vm.getARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
+                MemoryCARW auxMem = Vm.getCARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                MemoryCARW dataMem = Vm.getCARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
         ) {
             final Rnd rnd = TestUtils.generateRandom(null);
             final Utf8StringSink utf8Sink = new Utf8StringSink();
@@ -404,8 +406,8 @@ public class Utf8sTest {
     @Test
     public void testReadWriteVarcharOver2GB() {
         try (
-                MemoryAR auxMem = Vm.getARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
-                MemoryAR dataMem = Vm.getARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
+                MemoryCARW auxMem = Vm.getCARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                MemoryCARW dataMem = Vm.getCARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
         ) {
             final Utf8StringSink utf8Sink = new Utf8StringSink();
             int len = 1024;
