@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
@@ -47,6 +48,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
     private static final Log LOG = LogFactory.getLog(WalTableListFunctionFactory.class);
     private static final RecordMetadata METADATA;
     private static final String SIGNATURE = "wal_tables()";
+    private static final int memoryPressureLevelColumn;
     private static final int nameColumn;
     private static final int sequencerTxnColumn;
     private static final int suspendedColumn;
@@ -173,6 +175,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
             }
 
             public class TableListRecord implements Record {
+                private int memoryPressureLevel;
                 private long sequencerTxn;
                 private boolean suspendedFlag;
                 private String tableName;
@@ -185,6 +188,14 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                         return suspendedFlag;
                     }
                     return false;
+                }
+
+                @Override
+                public int getInt(int col) {
+                    if (col == memoryPressureLevelColumn) {
+                        return memoryPressureLevel;
+                    }
+                    return Numbers.INT_NULL;
                 }
 
                 @Override
@@ -250,6 +261,8 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                         TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
                         writerTxn = txReader.getSeqTxn();
                         writerLagTxnCount = txReader.getLagTxnCount();
+                        SeqTxnTracker txnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+                        memoryPressureLevel = txnTracker.getMemoryPressureLevel();
                         return true;
                     } catch (CairoException ex) {
                         if (ex.errnoReadPathDoesNotExist()) {
@@ -274,6 +287,8 @@ public class WalTableListFunctionFactory implements FunctionFactory {
         writerLagTxnCountColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("sequencerTxn", ColumnType.LONG));
         sequencerTxnColumn = metadata.getColumnCount() - 1;
+        metadata.add(new TableColumnMetadata("memoryPressure", ColumnType.INT));
+        memoryPressureLevelColumn = metadata.getColumnCount() - 1;
         METADATA = metadata;
     }
 }
