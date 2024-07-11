@@ -21,13 +21,10 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-use parquet2::read::read_metadata_with_size;
-use std::env;
-use std::fs::File;
-use std::io::Write;
-
 #[cfg(test)]
 mod tests {
+    use std::fs::File;
+    use std::io::Write;
     use bytes::Bytes;
     use num_traits::Float;
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
@@ -38,7 +35,6 @@ mod tests {
     use std::mem::size_of;
     use std::ptr::null;
 
-    use super::*;
 
     use crate::parquet_write::file::{create_row_group, ParquetWriter, WriteOptions};
     use crate::parquet_write::schema::{
