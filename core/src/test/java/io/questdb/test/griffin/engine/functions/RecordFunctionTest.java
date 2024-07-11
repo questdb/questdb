@@ -49,31 +49,6 @@ public class RecordFunctionTest {
     };
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetChar() {
-        function.getChar(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetGeoByte() {
-        function.getGeoByte(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetGeoInt() {
-        function.getGeoInt(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetGeoLong() {
-        function.getGeoLong(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetGeoShort() {
-        function.getGeoShort(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
     public void testGetArrayLength() {
         function.getArrayLength();
     }
@@ -99,6 +74,11 @@ public class RecordFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetChar() {
+        function.getChar(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetDate() {
         function.getDate(null);
     }
@@ -114,6 +94,26 @@ public class RecordFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetGeoByte() {
+        function.getGeoByte(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetGeoInt() {
+        function.getGeoInt(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetGeoLong() {
+        function.getGeoLong(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetGeoShort() {
+        function.getGeoShort(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetIPv4() {
         function.getIPv4(null);
     }
@@ -126,6 +126,31 @@ public class RecordFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetLong() {
         function.getLong(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong128Hi() {
+        function.getLong128Hi(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong128Lo() {
+        function.getLong128Lo(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong256() {
+        function.getLong256(null, null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong256A() {
+        function.getLong256A(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong256B() {
+        function.getLong256B(null);
     }
 
     @Test
@@ -174,41 +199,6 @@ public class RecordFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testTimestamp() {
-        function.getTimestamp(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetLong128Hi() {
-        function.getLong128Hi(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetLong128Lo() {
-        function.getLong128Lo(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetLong256() {
-        function.getLong256(null, null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetLong256A() {
-        function.getLong256A(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetLong256B() {
-        function.getLong256B(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetVarcharUtf8Sink() {
-        function.getVarchar(null, null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
     public void testGetVarcharA() {
         function.getVarcharA(null);
     }
@@ -216,5 +206,10 @@ public class RecordFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetVarcharB() {
         function.getVarcharB(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testTimestamp() {
+        function.getTimestamp(null);
     }
 }

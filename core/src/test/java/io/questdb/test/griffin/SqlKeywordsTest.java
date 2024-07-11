@@ -226,5 +226,6 @@ public class SqlKeywordsTest {
         specialCases.put("isServerVersionKeyword", "server_version");
         specialCases.put("isUTC", "'UTC'");
         specialCases.put("isZeroOffset", "'00:00'");
+        specialCases.put("isJsonExtract", "json_extract");
     }
 }

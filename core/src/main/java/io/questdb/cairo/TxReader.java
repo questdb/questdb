@@ -514,7 +514,7 @@ public class TxReader implements Closeable, Mutable {
     private void openTxnFile(FilesFacade ff, LPSZ path) {
         if (ff.exists(path)) {
             if (roTxMemBase == null) {
-                roTxMemBase = Vm.getMRInstance(ff, path, ff.length(path), MemoryTag.MMAP_DEFAULT);
+                roTxMemBase = Vm.getCMRInstance(ff, path, ff.length(path), MemoryTag.MMAP_DEFAULT);
             } else {
                 roTxMemBase.of(ff, path, ff.getPageSize(), ff.length(path), MemoryTag.MMAP_DEFAULT);
             }

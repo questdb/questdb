@@ -178,11 +178,6 @@ public class Long256FunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetVarcharUtf8Sink() {
-        function.getVarchar(null, null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
     public void testGetVarcharA() {
         function.getVarcharA(null);
     }

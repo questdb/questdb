@@ -26,8 +26,6 @@ package io.questdb.test.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.ShortFunction;
-import io.questdb.std.str.Utf16Sink;
-import io.questdb.std.str.Utf8Sink;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -164,11 +162,6 @@ public class ShortFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetLong256B() {
         function.getLong256B(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetVarcharUtf8Sink() {
-        function.getVarchar(null, null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

@@ -287,7 +287,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 repairMetaRename((int) todoMem.getLong(48));
             }
             this.ddlMem = Vm.getMARInstance(configuration.getCommitMode());
-            this.metaMem = Vm.getMRInstance();
+            this.metaMem = Vm.getCMRInstance();
             openMetaFile(ff, path, rootLen, metaMem);
             this.metadata = new TableWriterMetadata(this.tableToken, metaMem);
             this.partitionBy = metadata.getPartitionBy();

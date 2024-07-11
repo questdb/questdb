@@ -32,9 +32,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8StringSink;
 
 public class CastLong256ToVarcharFunctionFactory implements FunctionFactory {
@@ -61,11 +59,6 @@ public class CastLong256ToVarcharFunctionFactory implements FunctionFactory {
 
         public Func(Function arg) {
             super(arg);
-        }
-
-        @Override
-        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-            arg.getLong256(rec, utf8Sink);
         }
 
         @Override

@@ -36,7 +36,6 @@ import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.StableAwareUtf8StringHolder;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -86,11 +85,6 @@ public class FirstVarcharGroupByFunction extends VarcharFunction implements Grou
     @Override
     public int getValueIndex() {
         return valueIndex;
-    }
-
-    @Override
-    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-        utf8Sink.put(getVarcharA(rec));
     }
 
     @Override

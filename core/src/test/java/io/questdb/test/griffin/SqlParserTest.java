@@ -7230,10 +7230,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testPGCastToDate() throws SqlException {
-        // '2021-01-26'::date
-        assertQuery(
-                "select-virtual to_pg_date('2021-01-26') to_pg_date from (long_sequence(1))",
-                "select '2021-01-26'::date"
+        TestUtils.assertSql(
+                engine,
+                sqlExecutionContext,
+                "select '2021-01-26'::date",
+                sink,
+                "cast\n" +
+                        "2021-01-26T00:00:00.000Z\n"
         );
     }
 

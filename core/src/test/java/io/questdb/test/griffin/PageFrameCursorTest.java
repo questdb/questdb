@@ -206,10 +206,18 @@ public class PageFrameCursorTest extends AbstractCairoTest {
                 PageFrame frame;
                 while ((frame = pageFrameCursor.next()) != null) {
                     final long dataTopAddress = frame.getPageAddress(1);
+                    final long dataTopLim = dataTopAddress + frame.getPageSize(1);
                     final long auxTopAddress = frame.getIndexPageAddress(1);
                     final long count = frame.getPartitionHi() - frame.getPartitionLo();
+                    final long auxTopLim = auxTopAddress + count * VarcharTypeDriver.INSTANCE.getAuxVectorSize(count);
                     for (int row = 0; row < count; row++) {
-                        actualSink.put(VarcharTypeDriver.getSplitValue(auxTopAddress, dataTopAddress, row, utf8SplitView));
+                        actualSink.put(VarcharTypeDriver.getSplitValue(
+                                auxTopAddress,
+                                auxTopLim,
+                                dataTopAddress,
+                                dataTopLim,
+                                row,
+                                utf8SplitView));
                         actualSink.put('\n');
                     }
                 }

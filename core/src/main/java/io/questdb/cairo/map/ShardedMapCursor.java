@@ -32,7 +32,6 @@ import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 
 public class ShardedMapCursor implements MapRecordCursor {
     private final ShardedMapRecord recordA = new ShardedMapRecord(true);
@@ -283,11 +282,6 @@ public class ShardedMapCursor implements MapRecordCursor {
         @Override
         public MapValue getValue() {
             return baseRecord.getValue();
-        }
-
-        @Override
-        public void getVarchar(int col, Utf8Sink utf8Sink) {
-            baseRecord.getVarchar(col, utf8Sink);
         }
 
         @Override
