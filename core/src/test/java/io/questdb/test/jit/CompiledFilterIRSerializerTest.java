@@ -851,6 +851,12 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     public void testTimestampInLiteral() throws Exception {
         serialize("atimestamp in '2020-01-01'");
         assertIR("(i64 1577836800000000L)(i64 atimestamp)(>=)(i64 1577923199999999L)(i64 atimestamp)(<=)(&&)(ret)");
+        serialize("atimestamp in '2020-01-01;15s'");
+        assertIR("(i64 1577836800000000L)(i64 atimestamp)(>=)(i64 1577923214999999L)(i64 atimestamp)(<=)(&&)(ret)");
+        serialize("atimestamp in '2020-01-01T23:59:58;4s;-1d;3'");
+        assertIR("(i64 1577750398000000L)(i64 atimestamp)(>=)(i64 1577750402999999L)(i64 atimestamp)(<=)(&&)" +
+                "(i64 1577750402999999L)(i64 atimestamp)(>=)(i64 1577836798000000L)(i64 atimestamp)(<=)(&&)" +
+                "(i64 1577836798000000L)(i64 atimestamp)(>=)(i64 1577836802999999L)(i64 atimestamp)(<=)(&&)(||)(||)(ret)");
     }
 
     private void assertIR(String message, String expectedIR) {

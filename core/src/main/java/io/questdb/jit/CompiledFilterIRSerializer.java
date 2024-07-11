@@ -1043,14 +1043,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         final LongList intervals = new LongList();
         IntervalUtils.parseIntervalEx(intervalEx, 1, intervalEx.length() - 1, position, intervals, IntervalOperation.INTERSECT);
+        IntervalUtils.applyLastEncodedIntervalEx(intervals);
 
         final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
         final ExpressionNode lhs = predicateContext.inOperationNode.lhs;
 
         int orCount = -1;
-        for (int i = 0; i < intervals.size() / 2 - 1; i++) {
-            long lo = intervals.getQuick(i * 2 + IntervalUtils.LO_INDEX);
-            long hi = intervals.getQuick(i * 2 + IntervalUtils.HI_INDEX);
+        for (int i = 0; i < intervals.size() / 2; i++) {
+            long lo = IntervalUtils.getEncodedPeriodLo(intervals, i);
+            long hi = IntervalUtils.getEncodedPeriodHi(intervals, i);
             putOperand(IMM, I8_TYPE, lo);
             traverseAlgo.traverse(lhs, this);
             putOperator(GE);
