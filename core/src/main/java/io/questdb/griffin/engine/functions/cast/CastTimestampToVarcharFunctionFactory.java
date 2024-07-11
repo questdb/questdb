@@ -34,7 +34,6 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8StringSink;
 
 public class CastTimestampToVarcharFunctionFactory implements FunctionFactory {
@@ -67,15 +66,6 @@ public class CastTimestampToVarcharFunctionFactory implements FunctionFactory {
 
         public Func(Function arg) {
             super(arg);
-        }
-
-        @Override
-        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-            final long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NULL) {
-                return;
-            }
-            TimestampFormatUtils.appendDateTimeUSec(utf8Sink, value);
         }
 
         @Override

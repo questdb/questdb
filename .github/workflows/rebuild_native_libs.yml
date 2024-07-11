@@ -6,7 +6,6 @@ on:
 
 # It builds native libraries for all supported platforms and pushes them to the current branch.
 # It splits the building process into 3 build jobs:
-# 1. build-freebsd - Builds native libraries for x64 FreeBSD
 # 2. build-macos - Builds native libraries for MacOS: both ARM and x64.
 #    It uses native runners for each platform, because cross compilation on MacOS is complicated.
 # 3. build-others - Builds native libraries for x64 Linux, ARM Linux and Windows.
@@ -40,41 +39,6 @@ jobs:
             core/src/main/resources/io/questdb/bin/windows-amd64/questdbr.dll
           key: nativelibs-windows-rust-${{ github.sha }}
           enableCrossOsArchive: true
-  build-all-freebsd:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-      - name: Build in FreeBSD
-        # @d44bf830e7d is the same as the tag v1, but it's guaranteed to be immutable.
-        uses: vmactions/freebsd-vm@d44bf830e7d850111d27aa120d468c905e5980f4
-        with:
-          # FreeBSD 13.2
-          release: 13.2
-          usesh: true
-          prepare: |
-            pkg install -y curl cmake gcc git nasm openjdk17 rust
-          run: |
-            export JAVA_HOME=/usr/local/openjdk17
-            cd core
-            cmake -B build/release -DCMAKE_BUILD_TYPE=Release
-            cmake --build build/release --config Release
-            mkdir -p src/main/resources/io/questdb/bin/freebsd-amd64/
-            cp target/classes/io/questdb/bin-local/libquestdb.so src/main/resources/io/questdb/bin/freebsd-amd64/
-            cd rust/qdbr
-            cargo build --release
-            cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/freebsd-amd64/
-      - name: log git status
-        run: |
-          git status
-      - name: Save FreeBSD Libraries to Cache
-        uses: actions/cache/save@v3
-        with:
-          path: |
-            core/src/main/resources/io/questdb/bin/freebsd-amd64/libquestdb.so
-            core/src/main/resources/io/questdb/bin/freebsd-amd64/libquestdbr.so
-          key: nativelibs-freebsd-${{ github.sha }}
   build-all-macos:
     strategy:
       matrix:
@@ -248,7 +212,7 @@ jobs:
             core/src/main/bin/linux-aarch64/libjemalloc.so
           key: nativelibs-armlinux-${{ github.sha }}
   build-cxx-windows:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -293,7 +257,7 @@ jobs:
             core/src/main/resources/io/questdb/bin/windows-amd64/libquestdb.dll
           key: nativelibs-windows-${{ github.sha }}
   collect-commit-and-push:
-    needs: [ build-all-freebsd, build-all-macos,build-cxx-windows, build-rust-windows, build-all-linux-amd64, build-all-linux-aarch64 ]
+    needs: [ build-all-macos,build-cxx-windows, build-rust-windows, build-all-linux-amd64, build-all-linux-aarch64 ]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -302,13 +266,6 @@ jobs:
           mkdir -p ./core/src/main/resources/io/questdb/bin/
           find ./core/src/main/resources/io/questdb/bin/ -type f -exec ls -l {} \;
           find ./core/src/main/bin/ -type f -exec ls -l {} \;
-      - name: Restore FreeBSD Libraries from Cache
-        uses: actions/cache/restore@v3
-        with:
-          path: |
-            core/src/main/resources/io/questdb/bin/freebsd-amd64/libquestdb.so
-            core/src/main/resources/io/questdb/bin/freebsd-amd64/libquestdbr.so
-          key: nativelibs-freebsd-${{ github.sha }}
       - name: Restore darwin-aarch64 Libraries from Cache
         uses: actions/cache/restore@v3
         with:
@@ -367,8 +324,6 @@ jobs:
           git add core/src/main/resources/io/questdb/bin/darwin-amd64/libquestdb.dylib
           git add core/src/main/resources/io/questdb/bin/darwin-amd64/libquestdbr.dylib
           git add core/src/main/bin/darwin-amd64/libjemalloc.dylib
-          git add core/src/main/resources/io/questdb/bin/freebsd-amd64/libquestdb.so
-          git add core/src/main/resources/io/questdb/bin/freebsd-amd64/libquestdbr.so
           git add core/src/main/resources/io/questdb/bin/linux-amd64/libquestdb.so
           git add core/src/main/resources/io/questdb/bin/linux-amd64/libquestdbr.so
           git add core/src/main/bin/linux-amd64/libjemalloc.so

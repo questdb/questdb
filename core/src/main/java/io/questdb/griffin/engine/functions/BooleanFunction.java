@@ -30,7 +30,10 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
-import io.questdb.std.str.*;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 
 public abstract class BooleanFunction implements ScalarFunction {
     protected static final Utf8String UTF_8_FALSE = new Utf8String("false");
@@ -179,11 +182,6 @@ public abstract class BooleanFunction implements ScalarFunction {
     @Override
     public final int getType() {
         return ColumnType.BOOLEAN;
-    }
-
-    @Override
-    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-        utf8Sink.put(getVarchar0(rec));
     }
 
     @Override
