@@ -282,7 +282,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         private boolean recordWasPresent() {
-            return presentRecords.get(fillOffset) && fillOffset < timestampSampler.bucketIndex(maxTimestamp);
+            return presentRecords.get(fillOffset) && fillOffset <= timestampSampler.bucketIndex(maxTimestamp);
         }
 
         private class FillRangeRecord implements Record {
