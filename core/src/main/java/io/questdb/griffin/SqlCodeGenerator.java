@@ -1686,6 +1686,42 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return castFunctions;
     }
 
+    private RecordCursorFactory generateFill(QueryModel model, RecordCursorFactory groupByFactory, SqlExecutionContext executionContext) throws SqlException {
+        if (!isFillStridePresent(model.getNestedModel())) {
+            return groupByFactory;
+        } else {
+            final QueryModel nested = model.getNestedModel();
+            Function fillFromFunc = TimestampConstant.NULL;
+            Function fillToFunc = TimestampConstant.NULL;
+            final ExpressionNode fillFrom = nested.getFillFrom();
+            final ExpressionNode fillTo = nested.getFillTo();
+            final ExpressionNode fillStride = nested.getFillStride();
+
+            if (fillFrom != null) {
+                fillFromFunc = functionParser.parseFunction(fillFrom, EmptyRecordMetadata.INSTANCE, executionContext);
+                coerceRuntimeConstantType(fillFromFunc, ColumnType.TIMESTAMP, executionContext, "from lower bound must be a constant expression convertible to a TIMESTAMP", -1);
+            }
+
+            if (fillTo != null) {
+                fillToFunc = functionParser.parseFunction(fillTo, EmptyRecordMetadata.INSTANCE, executionContext);
+                coerceRuntimeConstantType(fillToFunc, ColumnType.TIMESTAMP, executionContext, "to upper bound must be a constant expression convertible to a TIMESTAMP", -1);
+            }
+
+            fillFromFunc.init(null, executionContext);
+            fillToFunc.init(null, executionContext);
+
+            ObjList<ExpressionNode> fillValuesExprs = nested.getFillValue();
+            ObjList<Function> fillValues = new ObjList<>(fillValuesExprs.size());
+
+            for (int i = 0, n = fillValuesExprs.size(); i < n; i++) {
+                final Function fillValueFunc = functionParser.parseFunction(fillValuesExprs.get(i), EmptyRecordMetadata.INSTANCE, executionContext);
+                fillValues.add(fillValueFunc);
+            }
+
+            return new FillRangeRecordCursorFactory(groupByFactory.getMetadata(), groupByFactory, fillFromFunc, fillToFunc, fillStride.token, fillValues, getTimestampIndex(nested, groupByFactory.getMetadata()));
+        }
+    }
+
     private RecordCursorFactory generateFilter(RecordCursorFactory factory, QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         return model.getWhereClause() == null ? factory : generateFilter0(factory, model, executionContext);
     }
@@ -3657,13 +3693,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
 
                 if (tempKeyIndexesInBase.size() == 0) {
-                    return new GroupByNotKeyedVectorRecordCursorFactory(
+                    return generateFill(model, new GroupByNotKeyedVectorRecordCursorFactory(
                             configuration,
                             factory,
                             meta,
                             executionContext.getSharedWorkerCount(),
                             tempVaf
-                    );
+                    ), executionContext);
                 }
 
                 if (tempKeyIndexesInBase.size() == 1) {
@@ -3688,17 +3724,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         throw e;
                     }
 
-                    return new GroupByRecordCursorFactory(
-                            configuration,
-                            factory,
-                            meta,
-                            arrayColumnTypes,
-                            executionContext.getSharedWorkerCount(),
-                            tempVaf,
-                            tempKeyIndexesInBase.getQuick(0),
-                            tempKeyIndex.getQuick(0),
-                            tempSymbolSkewIndexes
-                    );
+                    return generateFill(model,
+                            new GroupByRecordCursorFactory(
+                                    configuration,
+                                    factory,
+                                    meta,
+                                    arrayColumnTypes,
+                                    executionContext.getSharedWorkerCount(),
+                                    tempVaf,
+                                    tempKeyIndexesInBase.getQuick(0),
+                                    tempKeyIndex.getQuick(0),
+                                    tempSymbolSkewIndexes
+                            ), executionContext);
                 }
 
                 // Free the vector aggregate functions since we didn't use them.
@@ -3804,61 +3841,40 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (keyTypesCopy.getColumnCount() == 0) {
                         assert keyFunctions.size() == 0;
                         assert recordFunctions.size() == groupByFunctions.size();
-                        return new AsyncGroupByNotKeyedRecordCursorFactory(
-                                asm,
-                                configuration,
-                                executionContext.getMessageBus(),
-                                factory,
-                                groupByMetadata,
-                                groupByFunctions,
-                                compileWorkerGroupByFunctionsConditionally(
-                                        executionContext,
-                                        model,
+
+                        return generateFill(model,
+                                new AsyncGroupByNotKeyedRecordCursorFactory(
+                                        asm,
+                                        configuration,
+                                        executionContext.getMessageBus(),
+                                        factory,
+                                        groupByMetadata,
                                         groupByFunctions,
-                                        executionContext.getSharedWorkerCount(),
-                                        factory.getMetadata()
-                                ),
-                                valueTypesCopy.getColumnCount(),
-                                compiledFilter,
-                                bindVarMemory,
-                                bindVarFunctions,
-                                filter,
-                                reduceTaskFactory,
-                                compileWorkerFilterConditionally(
-                                        executionContext,
+                                        compileWorkerGroupByFunctionsConditionally(
+                                                executionContext,
+                                                model,
+                                                groupByFunctions,
+                                                executionContext.getSharedWorkerCount(),
+                                                factory.getMetadata()
+                                        ),
+                                        valueTypesCopy.getColumnCount(),
+                                        compiledFilter,
+                                        bindVarMemory,
+                                        bindVarFunctions,
                                         filter,
-                                        executionContext.getSharedWorkerCount(),
-                                        nested.getWhereClause(),
-                                        factory.getMetadata()
-                                ),
-                                executionContext.getSharedWorkerCount()
-                        );
+                                        reduceTaskFactory,
+                                        compileWorkerFilterConditionally(
+                                                executionContext,
+                                                filter,
+                                                executionContext.getSharedWorkerCount(),
+                                                nested.getWhereClause(),
+                                                factory.getMetadata()
+                                        ),
+                                        executionContext.getSharedWorkerCount()
+                                ), executionContext);
                     }
 
-                    RecordCursorFactory retval;
-                    // [NW] Here for group by
-
-                    Function fillFromFunc = TimestampConstant.NULL;
-                    Function fillToFunc = TimestampConstant.NULL;
-                    final ExpressionNode fillFrom = nested.getFillFrom();
-                    final ExpressionNode fillTo = nested.getFillTo();
-                    final ExpressionNode fillStride = nested.getFillStride();
-
-                    if (fillFrom != null) {
-                        fillFromFunc = functionParser.parseFunction(fillFrom, EmptyRecordMetadata.INSTANCE, executionContext);
-                        coerceRuntimeConstantType(fillFromFunc, ColumnType.TIMESTAMP, executionContext, "from lower bound must be a constant expression convertible to a TIMESTAMP", -1);
-                    }
-
-                    if (fillTo != null) {
-                        fillToFunc = functionParser.parseFunction(fillTo, EmptyRecordMetadata.INSTANCE, executionContext);
-                        coerceRuntimeConstantType(fillToFunc, ColumnType.TIMESTAMP, executionContext, "to upper bound must be a constant expression convertible to a TIMESTAMP", -1);
-                    }
-
-                    fillFromFunc.init(null, executionContext);
-                    fillToFunc.init(null, executionContext);
-
-
-                    retval = new AsyncGroupByRecordCursorFactory(
+                    return generateFill(model, new AsyncGroupByRecordCursorFactory(
                             asm,
                             configuration,
                             executionContext.getMessageBus(),
@@ -3897,46 +3913,36 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     factory.getMetadata()
                             ),
                             executionContext.getSharedWorkerCount()
-                    );
-
-                    if (nested.getFillStride() != null) {
-                        ObjList<ExpressionNode> fillValuesExprs = nested.getFillValue();
-                        ObjList<Function> fillValues = new ObjList<>(fillValuesExprs.size());
-
-                        for (int i = 0, n = fillValuesExprs.size(); i < n; i++) {
-                            final Function fillValueFunc = functionParser.parseFunction(fillValuesExprs.get(i), EmptyRecordMetadata.INSTANCE, executionContext);
-                            fillValues.add(fillValueFunc);
-                        }
-
-                        return new FillRangeRecordCursorFactory(groupByMetadata, retval, fillFromFunc, fillToFunc, fillStride.token, fillValues, timestampIndex);
-                    }
+                    ), executionContext);
                 }
             }
 
             if (keyTypes.getColumnCount() == 0) {
                 assert recordFunctions.size() == groupByFunctions.size();
-                return new GroupByNotKeyedRecordCursorFactory(
-                        asm,
-                        configuration,
-                        factory,
-                        groupByMetadata,
-                        groupByFunctions,
-                        valueTypes.getColumnCount()
-                );
+                return generateFill(model,
+                        new GroupByNotKeyedRecordCursorFactory(
+                                asm,
+                                configuration,
+                                factory,
+                                groupByMetadata,
+                                groupByFunctions,
+                                valueTypes.getColumnCount()
+                        ), executionContext);
             }
 
-            return new io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory(
-                    asm,
-                    configuration,
-                    factory,
-                    listColumnFilterA,
-                    keyTypes,
-                    valueTypes,
-                    groupByMetadata,
-                    groupByFunctions,
-                    keyFunctions,
-                    recordFunctions
-            );
+            return generateFill(model,
+                    new io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory(
+                            asm,
+                            configuration,
+                            factory,
+                            listColumnFilterA,
+                            keyTypes,
+                            valueTypes,
+                            groupByMetadata,
+                            groupByFunctions,
+                            keyFunctions,
+                            recordFunctions
+                    ), executionContext);
         } catch (Throwable e) {
             Misc.free(factory);
             throw e;
@@ -5463,6 +5469,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (isFromTo) {
             throw SqlException.$(0, "FROM-TO intervals are not supported for keyed sample by queries");
         }
+    }
+
+    private boolean isFillStridePresent(QueryModel model) {
+        return model.getFillStride() != null;
     }
 
     private boolean isKeyedTemporalJoin(RecordMetadata masterMetadata, RecordMetadata slaveMetadata) {
