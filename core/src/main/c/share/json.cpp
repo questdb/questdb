@@ -156,11 +156,12 @@ truncated_utf8_copy(
         return;
     }
     const auto copy_len = std::min(src.length(), max_dest_len);
-    if (src_is_ascii) [[likely]] {
-        // Take the fast-path if the string had multibyte characters anyways.
+    if (src_is_ascii || !dest.ascii) [[likely]] {
+        // Take the fast-path if either the input is guaranteed ascii,
+        // or if the dest is already known to contain multibyte utf-8 characters.
         std::memcpy(dest.ptr, src.data(), copy_len);
     } else {
-        dest.unicode = copy_and_detect_multibyte_codepoint(dest.ptr, src.data(), copy_len);
+        dest.ascii = !copy_and_detect_multibyte_codepoint(dest.ptr, src.data(), copy_len);
     }
     std::byte *end_ptr = dest.ptr + copy_len;
     if (max_dest_len < src.length()) {

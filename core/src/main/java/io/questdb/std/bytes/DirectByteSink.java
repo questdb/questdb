@@ -33,7 +33,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
     private static final int BYTE_SINK_LO_OFFSET = BYTE_SINK_PTR_OFFSET + 8;  // 8
     private static final int BYTE_SINK_HI_OFFSET = BYTE_SINK_LO_OFFSET + 8;  // 16
     private static final int BYTE_SINK_OVERFLOW_OFFSET = BYTE_SINK_HI_OFFSET + 8;  // 24
-    private static final int BYTE_SINK_UNICODE_OFFSET = BYTE_SINK_OVERFLOW_OFFSET + 4;  // 28
+    private static final int BYTE_SINK_ASCII_OFFSET = BYTE_SINK_OVERFLOW_OFFSET + 4;  // 28
     private final long initialCapacity;
     /**
      * Pointer to the C `questdb_byte_sink_t` structure. See `byte_sink.h`.
@@ -43,6 +43,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
      * * `lo` - pointer to the first byte in the buffer, offset: 8
      * * `hi` - pointer to the last byte in the buffer, offset: 16
      * * `overflow` - bool flag set to true if the buffer was asked to resize beyond 2GiB.
+     * * `ascii` - bool flag set to true if the buffer is a UTF-8 buffer and contains non-ASCII characters.
      * <p>
      * These indirect fields are get/set by {@link #getImplPtr()},
      * {@link #setImplPtr(long)}, {@link #getImplLo()}, {@link #getImplHi()}.
@@ -159,7 +160,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
      * Returns true when the buffer contains a UTF-8 encoded string containing non-ASCII characters.
      */
     public boolean isAscii() {
-        return Unsafe.getUnsafe().getByte(impl + BYTE_SINK_UNICODE_OFFSET) == 0;
+        return Unsafe.getUnsafe().getByte(impl + BYTE_SINK_ASCII_OFFSET) != 0;
     }
 
     /**
@@ -222,7 +223,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
     }
 
     public void setAscii(boolean ascii) {
-        Unsafe.getUnsafe().putByte(impl + BYTE_SINK_UNICODE_OFFSET, (byte) (ascii ? 0 : 1));
+        Unsafe.getUnsafe().putByte(impl + BYTE_SINK_ASCII_OFFSET, (byte) (ascii ? 1 : 0));
     }
 
     /**
