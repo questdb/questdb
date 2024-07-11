@@ -24,10 +24,11 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -183,48 +184,6 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testChangeTypePreservesInsertColDefaultOrder() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl(
-                    "create table x as (" +
-                            "select" +
-                            " rnd_str(5,5,2) c," +
-                            " to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 timestamp," +
-                            " from long_sequence(1)" +
-                            ") timestamp (timestamp) PARTITION BY HOUR" + (walEnabled ? "  WAL" : " BYPASS WAL")
-            );
-
-            drainWalQueue();
-            ddl("alter table x alter column c type varchar", sqlExecutionContext);
-            drainWalQueue();
-
-            insert("insert into x values('abc', '2024-06-20T17:18:27.752076Z')", sqlExecutionContext);
-            drainWalQueue();
-
-            assertSql("c\nabc\n", "select c from x limit -1");
-
-            ddl("alter table x alter column c type string", sqlExecutionContext);
-            drainWalQueue();
-            engine.releaseInactive();
-
-            insert("insert into x values('def', '2024-06-20T17:18:27.752076Z')", sqlExecutionContext);
-            drainWalQueue();
-            assertSql("c\ndef\n", "select c from x limit -1");
-
-            ddl("insert into x select * from x");
-            drainWalQueue();
-
-            assertSql("c\ttimestamp\n" +
-                    "TJWCP\t2018-01-01T00:00:07.200000Z\n" +
-                    "TJWCP\t2018-01-01T00:00:07.200000Z\n" +
-                    "abc\t2024-06-20T17:18:27.752076Z\n" +
-                    "abc\t2024-06-20T17:18:27.752076Z\n" +
-                    "def\t2024-06-20T17:18:27.752076Z\n" +
-                    "def\t2024-06-20T17:18:27.752076Z\n", "x order by timestamp, c");
-        });
-    }
-
-    @Test
     public void testChangeMultipleTimesReleaseWriters() throws Exception {
         assertMemoryLeak(() -> {
             createX();
@@ -364,6 +323,48 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testChangeTypePreservesInsertColDefaultOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(
+                    "create table x as (" +
+                            "select" +
+                            " rnd_str(5,5,2) c," +
+                            " to_timestamp('2018-01', 'yyyy-MM') + x * 7200000 timestamp," +
+                            " from long_sequence(1)" +
+                            ") timestamp (timestamp) PARTITION BY HOUR" + (walEnabled ? "  WAL" : " BYPASS WAL")
+            );
+
+            drainWalQueue();
+            ddl("alter table x alter column c type varchar", sqlExecutionContext);
+            drainWalQueue();
+
+            insert("insert into x values('abc', '2024-06-20T17:18:27.752076Z')", sqlExecutionContext);
+            drainWalQueue();
+
+            assertSql("c\nabc\n", "select c from x limit -1");
+
+            ddl("alter table x alter column c type string", sqlExecutionContext);
+            drainWalQueue();
+            engine.releaseInactive();
+
+            insert("insert into x values('def', '2024-06-20T17:18:27.752076Z')", sqlExecutionContext);
+            drainWalQueue();
+            assertSql("c\ndef\n", "select c from x limit -1");
+
+            ddl("insert into x select * from x");
+            drainWalQueue();
+
+            assertSql("c\ttimestamp\n" +
+                    "TJWCP\t2018-01-01T00:00:07.200000Z\n" +
+                    "TJWCP\t2018-01-01T00:00:07.200000Z\n" +
+                    "abc\t2024-06-20T17:18:27.752076Z\n" +
+                    "abc\t2024-06-20T17:18:27.752076Z\n" +
+                    "def\t2024-06-20T17:18:27.752076Z\n" +
+                    "def\t2024-06-20T17:18:27.752076Z\n", "x order by timestamp, c");
+        });
+    }
+
+    @Test
     public void testChangeVarcharStringSymbol() throws Exception {
         assertMemoryLeak(() -> {
             createX();
@@ -468,14 +469,14 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
             ddl("alter table x dedup enable upsert keys(timestamp, d)");
             drainWalQueue();
-            checkDedupSet("x", "d", true);
+            checkDedupSet("d", true);
 
             ddl("alter table x alter column d type float");
             drainWalQueue();
-            checkDedupSet("x", "d", true);
+            checkDedupSet("d", true);
 
             engine.releaseInactive();
-            checkDedupSet("x", "d", true);
+            checkDedupSet("d", true);
 
             insert("insert into x(d, timestamp) values(1.0, '2044-02-24')", sqlExecutionContext);
             insert("insert into x(d, timestamp) values(1.0, '2044-02-25')", sqlExecutionContext);
@@ -604,7 +605,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
             ddl("alter table x dedup enable upsert keys(timestamp, ik)");
             drainWalQueue();
-            checkDedupSet("x", "ik", true);
+            checkDedupSet("ik", true);
 
             try {
                 ddl("alter table x alter column ik type varchar");
@@ -622,10 +623,10 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             ddl("alter table x alter column ik type varchar");
             drainWalQueue();
 
-            checkDedupSet("x", "ik", false);
+            checkDedupSet("ik", false);
 
             engine.releaseInactive();
-            checkDedupSet("x", "ik", false);
+            checkDedupSet("ik", false);
 
             insert("insert into x(ik, d, timestamp) values('abc', 2, '2044-02-24')", sqlExecutionContext);
             insert("insert into x(ik, d, timestamp) values('abc', 3, '2044-02-25')", sqlExecutionContext);
@@ -813,7 +814,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             );
 
             // One each platform the table size can be slightly different, query the size from QuestDB
-            getFirstRowFirstColumn("select sum(diskSize) from table_partitions('x')", sink);
+            getFirstRowFirstColumn();
             long initialSize = Numbers.parseLong(sink);
 
             // 5-15Mb approx
@@ -1062,8 +1063,8 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         Assume.assumeTrue("Test disabled during WAL run.", walEnabled);
     }
 
-    private void checkDedupSet(String tableName, String columnName, boolean value) {
-        try (TableWriter writer = getWriter(tableName)) {
+    private void checkDedupSet(String columnName, boolean value) {
+        try (TableWriter writer = getWriter("x")) {
             int colIndex = writer.getMetadata().getColumnIndex(columnName);
             Assert.assertEquals("dedup key flag mismatch column:" + columnName, value, writer.getMetadata().isDedupKey(colIndex));
         }
@@ -1196,6 +1197,19 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     LOG,
                     true
             );
+        }
+    }
+
+    protected static void getFirstRowFirstColumn() throws SqlException {
+        try (RecordCursorFactory factory = select("select sum(diskSize) from table_partitions('x')")) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                RecordMetadata metadata = factory.getMetadata();
+                sink.clear();
+                final Record record = cursor.getRecord();
+                if (cursor.hasNext()) {
+                    CursorPrinter.printColumn(record, metadata, 0, sink, false);
+                }
+            }
         }
     }
 

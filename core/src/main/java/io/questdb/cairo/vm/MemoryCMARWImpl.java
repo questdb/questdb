@@ -59,6 +59,11 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
+    public long addressHi() {
+        return lim;
+    }
+
+    @Override
     public long appendAddressFor(long bytes) {
         checkAndExtend(appendAddress + bytes);
         final long result = appendAddress;

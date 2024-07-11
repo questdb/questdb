@@ -30,7 +30,6 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
@@ -47,11 +46,6 @@ public class VarcharColumn extends VarcharFunction implements ScalarFunction {
             return COLUMNS.getQuick(columnIndex);
         }
         return new VarcharColumn(columnIndex);
-    }
-
-    @Override
-    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-        rec.getVarchar(columnIndex, utf8Sink);
     }
 
     @Override

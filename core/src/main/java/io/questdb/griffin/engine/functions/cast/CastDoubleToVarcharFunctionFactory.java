@@ -33,7 +33,6 @@ import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8StringSink;
 
 public class CastDoubleToVarcharFunctionFactory implements FunctionFactory {
@@ -68,14 +67,6 @@ public class CastDoubleToVarcharFunctionFactory implements FunctionFactory {
         public Func(Function arg, int scale) {
             super(arg);
             this.scale = scale;
-        }
-
-        @Override
-        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-            final double value = arg.getDouble(rec);
-            if (Numbers.isFinite(value)) {
-                utf8Sink.put(value, scale);
-            }
         }
 
         @Override

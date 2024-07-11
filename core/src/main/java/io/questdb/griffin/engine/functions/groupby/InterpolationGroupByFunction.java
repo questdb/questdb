@@ -36,7 +36,6 @@ import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 
 public class InterpolationGroupByFunction implements GroupByFunction {
     private final GroupByFunction wrappedFunction;
@@ -276,11 +275,6 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     @Override
     public int getValueIndex() {
         return wrappedFunction.getValueIndex();
-    }
-
-    @Override
-    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-        wrappedFunction.getVarchar(rec, utf8Sink);
     }
 
     @Override

@@ -35,7 +35,6 @@ import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
@@ -95,11 +94,6 @@ public class LPadVarcharFunctionFactory implements FunctionFactory {
         @Override
         public Utf8Sequence getVarcharA(final Record rec) {
             return lPad(strFunc.getVarcharA(rec), lenFunc.getInt(rec), sink);
-        }
-
-        @Override
-        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-            utf8Sink.put(lPad(strFunc.getVarcharA(rec), lenFunc.getInt(rec), sink));
         }
 
         @Override
