@@ -152,11 +152,6 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public int getColumnShiftBits(int columnIndex) {
-            return baseFrame.getColumnShiftBits(columnCrossIndex.getQuick(columnIndex));
-        }
-
-        @Override
         public byte getFormat() {
             return baseFrame.getFormat();
         }

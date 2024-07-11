@@ -299,7 +299,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
 
         rows.clear();
 
-        if (frameSequence.getAddressCache().hasColumnTops(task.getFrameIndex())) {
+        if (frameSequence.getPageFrameAddressCache().hasColumnTops(task.getFrameIndex())) {
             // Use Java-based filter in case of a page frame with column tops.
             final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
             final int filterId = atom.acquireFilter(workerId, owner, circuitBreaker);

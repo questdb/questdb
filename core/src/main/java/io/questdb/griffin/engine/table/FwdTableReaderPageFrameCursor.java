@@ -39,7 +39,7 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
     private final IntList columnIndexes;
     private final LongList columnPageAddress = new LongList();
     private final LongList columnPageNextAddress = new LongList();
-    private final IntList columnSizes;
+    private final IntList columnSizeShifts;
     // Holds PageFrame#*_FORMAT per each partition.
     private final ByteList formats = new ByteList();
     private final TableReaderPageFrame frame = new TableReaderPageFrame();
@@ -60,13 +60,13 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
 
     public FwdTableReaderPageFrameCursor(
             IntList columnIndexes,
-            IntList columnSizes,
+            IntList columnSizeShifts,
             int workerCount,
             int pageFrameMinRows,
             int pageFrameMaxRows
     ) {
         this.columnIndexes = columnIndexes;
-        this.columnSizes = columnSizes;
+        this.columnSizeShifts = columnSizeShifts;
         columnCount = columnIndexes.size();
         this.workerCount = workerCount;
         this.pageFrameMinRows = pageFrameMinRows;
@@ -160,7 +160,7 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
             final long top = colMem instanceof NullMemoryMR ? adjustedHi : reader.getColumnTop(base, columnIndex);
             final long partitionLoAdjusted = partitionLo - top;
             final long partitionHiAdjusted = adjustedHi - top;
-            final int sh = columnSizes.getQuick(i);
+            final int sh = columnSizeShifts.getQuick(i);
 
             if (partitionHiAdjusted > 0) {
                 if (sh > -1) {
@@ -191,14 +191,13 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
             } else {
                 columnPageAddress.setQuick(i * 2, 0);
                 columnPageAddress.setQuick(i * 2 + 1, 0);
+                // TODO(puzpuzpuz): hardcoded string/binary min size
                 pageSizes.setQuick(i * 2, (partitionHiAdjusted - partitionLoAdjusted) << (sh > -1 ? sh : 3));
                 pageSizes.setQuick(i * 2 + 1, 0);
             }
         }
 
         // TODO(puzpuzpuz): we should get the format from table reader
-        // FIXME: current logic is for testing purposes only
-        //formats.extendAndSet(reenterPartitionIndex, reenterPartitionIndex % 2 == 0 ? PageFrame.NATIVE_FORMAT : PageFrame.PARQUET_FORMAT);
         formats.extendAndSet(reenterPartitionIndex, PageFrame.NATIVE_FORMAT);
 
         // it is possible that all columns in data frame are empty, but it doesn't mean
@@ -230,11 +229,6 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
         @Override
         public BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {
             return reader.getBitmapIndexReader(partitionIndex, columnIndexes.getQuick(columnIndex), direction);
-        }
-
-        @Override
-        public int getColumnShiftBits(int columnIndex) {
-            return columnSizes.getQuick(columnIndex);
         }
 
         @Override

@@ -44,7 +44,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     protected final int pageFrameMinRows;
     protected final RowCursorFactory rowCursorFactory;
     private final IntList columnIndexes;
-    private final IntList columnSizes;
+    private final IntList columnSizeShifts;
     private final Function filter;
     private final boolean followsOrderByAdvice;
     private final boolean framingSupported;
@@ -63,7 +63,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             @Nullable Function filter,
             boolean framingSupported,
             @NotNull IntList columnIndexes,
-            @NotNull IntList columnSizes,
+            @NotNull IntList columnSizeShifts,
             boolean supportsRandomAccess
     ) {
         super(metadata, dataFrameCursorFactory);
@@ -74,7 +74,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         this.filter = filter;
         this.framingSupported = framingSupported;
         this.columnIndexes = columnIndexes;
-        this.columnSizes = columnSizes;
+        this.columnSizeShifts = columnSizeShifts;
         pageFrameMinRows = configuration.getSqlPageFrameMinRows();
         pageFrameMaxRows = configuration.getSqlPageFrameMaxRows();
         this.supportsRandomAccess = supportsRandomAccess;
@@ -195,7 +195,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         if (bwdPageFrameCursor == null) {
             bwdPageFrameCursor = new BwdTableReaderPageFrameCursor(
                     columnIndexes,
-                    columnSizes,
+                    columnSizeShifts,
                     executionContext.getSharedWorkerCount(),
                     pageFrameMinRows,
                     pageFrameMaxRows
@@ -211,7 +211,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         if (fwdPageFrameCursor == null) {
             fwdPageFrameCursor = new FwdTableReaderPageFrameCursor(
                     columnIndexes,
-                    columnSizes,
+                    columnSizeShifts,
                     executionContext.getSharedWorkerCount(),
                     pageFrameMinRows,
                     pageFrameMaxRows

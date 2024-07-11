@@ -49,10 +49,10 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private static final AtomicLong ID_SEQ = new AtomicLong();
     private static final long LOCAL_TASK_CURSOR = Long.MAX_VALUE;
     private static final Log LOG = LogFactory.getLog(PageFrameSequence.class);
-    private final PageFrameAddressCache addressCache;
     private final T atom;
     private final AtomicInteger cancelReason = new AtomicInteger(SqlExecutionCircuitBreaker.STATE_OK);
     private final MillisecondClock clock;
+    private final PageFrameAddressCache frameAddressCache;
     private final LongList frameRowCounts = new LongList();
     private final PageFrameReduceTaskFactory localTaskFactory;
     private final MessageBus messageBus;
@@ -69,11 +69,11 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private int collectedFrameIndex = -1;
     private int dispatchStartFrameIndex;
     private int frameCount;
+    private PageFrameCursor frameCursor;
     private long id;
     private PageFrameMemoryRecord localRecord;
     // Local reduce task used when there is no slots in the queue to dispatch tasks.
     private PageFrameReduceTask localTask;
-    private PageFrameCursor pageFrameCursor;
     private boolean readyToDispatch;
     private RingQueue<PageFrameReduceTask> reduceQueue;
     private int shard;
@@ -90,7 +90,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             int sharedWorkerCount,
             byte taskType
     ) {
-        this.addressCache = new PageFrameAddressCache(configuration);
+        this.frameAddressCache = new PageFrameAddressCache(configuration);
         this.messageBus = messageBus;
         this.atom = atom;
         this.reducer = reducer;
@@ -169,9 +169,9 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         dispatchStartFrameIndex = 0;
         collectedFrameIndex = -1;
         readyToDispatch = false;
-        addressCache.clear();
+        frameAddressCache.clear();
         atom.clear();
-        pageFrameCursor = Misc.freeIfCloseable(pageFrameCursor);
+        frameCursor = Misc.freeIfCloseable(frameCursor);
         // collect sequence may not be set here when
         // factory is closed without using cursor
         if (collectSubSeq != null) {
@@ -205,10 +205,6 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         collectSubSeq.done(cursor);
     }
 
-    public PageFrameAddressCache getAddressCache() {
-        return addressCache;
-    }
-
     public T getAtom() {
         return atom;
     }
@@ -231,6 +227,10 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
     public long getId() {
         return id;
+    }
+
+    public PageFrameAddressCache getPageFrameAddressCache() {
+        return frameAddressCache;
     }
 
     public AtomicInteger getReduceFinishedCounter() {
@@ -258,7 +258,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     }
 
     public SymbolTableSource getSymbolTableSource() {
-        return pageFrameCursor;
+        return frameCursor;
     }
 
     public PageFrameReduceTask getTask(long cursor) {
@@ -352,10 +352,10 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             // pass one to cache page addresses
             // this has to be separate pass to ensure there no cache reads
             // while cache might be resizing
-            addressCache.of(base.getMetadata());
+            frameAddressCache.of(base.getMetadata());
 
-            assert pageFrameCursor == null;
-            pageFrameCursor = base.getPageFrameCursor(executionContext, order);
+            assert frameCursor == null;
+            frameCursor = base.getPageFrameCursor(executionContext, order);
             this.collectSubSeq = collectSubSeq;
             id = ID_SEQ.incrementAndGet();
             done = false;
@@ -369,9 +369,9 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
             // It is essential to init the atom after we prepared sequence for dispatch.
             // If atom is to fail, we will be releasing whatever we prepared.
-            atom.init(pageFrameCursor, executionContext);
+            atom.init(frameCursor, executionContext);
         } catch (Throwable e) {
-            pageFrameCursor = Misc.freeIfCloseable(pageFrameCursor);
+            frameCursor = Misc.freeIfCloseable(frameCursor);
             throw e;
         }
         return this;
@@ -427,8 +427,8 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
     private void buildAddressCache() {
         PageFrame frame;
-        while ((frame = pageFrameCursor.next()) != null) {
-            addressCache.add(frameCount++, frame);
+        while ((frame = frameCursor.next()) != null) {
+            frameAddressCache.add(frameCount++, frame);
             frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
         }
 

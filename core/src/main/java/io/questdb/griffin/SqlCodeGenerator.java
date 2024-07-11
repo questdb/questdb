@@ -2310,7 +2310,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             @Transient SqlExecutionContext executionContext,
             int timestampIndex,
             @NotNull IntList columnIndexes,
-            @NotNull IntList columnSizes,
+            @NotNull IntList columnSizeShifts,
             @NotNull LongList prefixes
     ) throws SqlException {
         final DataFrameCursorFactory dataFrameCursorFactory;
@@ -2449,7 +2449,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 null,
                                 false,
                                 columnIndexes,
-                                columnSizes,
+                                columnSizeShifts,
                                 true
                         );
                     }
@@ -4631,7 +4631,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final ObjList<QueryColumn> topDownColumns = model.getTopDownColumns();
         final int topDownColumnCount = topDownColumns.size();
         final IntList columnIndexes = new IntList();
-        final IntList columnSizes = new IntList();
+        final IntList columnSizeShifts = new IntList();
 
         // topDownColumnCount can be 0 for 'select count()' queries
 
@@ -4662,7 +4662,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     int typeSize = ColumnType.sizeOf(type);
 
                     columnIndexes.add(columnIndex);
-                    columnSizes.add(Numbers.msb(typeSize));
+                    columnSizeShifts.add(Numbers.msb(typeSize));
 
                     myMeta.add(new TableColumnMetadata(
                             Chars.toString(topDownColumns.getQuick(i).getName()),
@@ -4688,7 +4688,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     myMeta.setTimestampIndex(myMeta.getColumnCount() - 1);
 
                     columnIndexes.add(readerTimestampIndex);
-                    columnSizes.add((Numbers.msb(ColumnType.TIMESTAMP)));
+                    columnSizeShifts.add((Numbers.msb(ColumnType.TIMESTAMP)));
                 }
             } else {
                 framingSupported = false;
@@ -4809,7 +4809,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         executionContext,
                         readerTimestampIndex,
                         columnIndexes,
-                        columnSizes,
+                        columnSizeShifts,
                         prefixes
                 );
             }
@@ -4971,7 +4971,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     dfcFactory,
                                     orderByKeyColumn || orderByTimestamp,
                                     columnIndexes,
-                                    columnSizes,
+                                    columnSizeShifts,
                                     supportsRandomAccess
                             );
                         }
@@ -4984,7 +4984,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 filter,
                                 false,
                                 columnIndexes,
-                                columnSizes,
+                                columnSizeShifts,
                                 supportsRandomAccess
                         );
                     }
@@ -5123,7 +5123,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     null,
                     framingSupported,
                     columnIndexes,
-                    columnSizes,
+                    columnSizeShifts,
                     supportsRandomAccess
             );
         }
@@ -5153,7 +5153,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     null,
                     framingSupported,
                     columnIndexes,
-                    columnSizes,
+                    columnSizeShifts,
                     supportsRandomAccess
             );
         }

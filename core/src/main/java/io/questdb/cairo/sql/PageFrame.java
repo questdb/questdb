@@ -57,14 +57,6 @@ public interface PageFrame {
     BitmapIndexReader getBitmapIndexReader(int columnIndex, int dirForward);
 
     /**
-     * Return the size the column as power 2 of the bytes e.g. long == 3, int == 2 etc.
-     *
-     * @param columnIndex index of column
-     * @return logarithm base 2 of size of column in bytes
-     */
-    int getColumnShiftBits(int columnIndex);
-
-    /**
      * Returns page frame format.
      * <p>
      * Possible values: {@link #NATIVE_FORMAT} and {@link #PARQUET_FORMAT}.

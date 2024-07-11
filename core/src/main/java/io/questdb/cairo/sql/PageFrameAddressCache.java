@@ -66,9 +66,9 @@ public class PageFrameAddressCache implements Mutable {
             final LongList framePageSizes = longListPool.next();
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 framePageAddresses.add(frame.getPageAddress(columnIndex));
+                framePageSizes.add(frame.getPageSize(columnIndex));
                 final boolean isVarSize = ColumnType.isVarSize(columnTypes.getQuick(columnIndex));
                 frameAuxPageAddresses.add(isVarSize ? frame.getAuxPageAddress(columnIndex) : 0);
-                framePageSizes.add(isVarSize ? frame.getPageSize(columnIndex) : 0);
             }
             pageAddresses.add(framePageAddresses);
             cacheSize += framePageAddresses.capacity();
@@ -109,6 +109,11 @@ public class PageFrameAddressCache implements Mutable {
 
     public int getColumnCount() {
         return columnCount;
+    }
+
+    public int getColumnShiftBits(int columnIndex) {
+        final int typeSize = ColumnType.sizeOf(columnTypes.getQuick(columnIndex));
+        return Numbers.msb(typeSize);
     }
 
     public IntList getColumnTypes() {

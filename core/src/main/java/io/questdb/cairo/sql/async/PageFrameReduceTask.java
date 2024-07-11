@@ -139,7 +139,7 @@ public class PageFrameReduceTask implements Closeable {
 
     public void of(PageFrameSequence<?> frameSequence, int frameIndex) {
         this.frameSequence = frameSequence;
-        this.frameMemoryPool.of(frameSequence.getAddressCache());
+        this.frameMemoryPool.of(frameSequence.getPageFrameAddressCache());
         this.frameSequenceId = frameSequence.getId();
         this.type = frameSequence.getTaskType();
         this.frameIndex = frameIndex;
@@ -161,7 +161,7 @@ public class PageFrameReduceTask implements Closeable {
         assert frameMemory != null;
         assert frameMemory.getFrameIndex() == frameIndex;
 
-        final PageFrameAddressCache pageAddressCache = frameSequence.getAddressCache();
+        final PageFrameAddressCache pageAddressCache = frameSequence.getPageFrameAddressCache();
         final long columnCount = pageAddressCache.getColumnCount();
         if (columns.getCapacity() < columnCount) {
             columns.setCapacity(columnCount);

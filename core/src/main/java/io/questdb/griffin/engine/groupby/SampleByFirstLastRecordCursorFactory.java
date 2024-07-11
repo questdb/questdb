@@ -262,7 +262,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         private final static int STATE_RETURN_LAST_ROW = 6;
         private final static int STATE_SEARCH = 5;
         private final static int STATE_START = 0;
-        private final PageFrameAddressCache addressCache;
+        private final PageFrameAddressCache frameAddressCache;
         private final PageFrameMemoryPool frameMemoryPool;
         private final SampleByFirstLastRecord record = new SampleByFirstLastRecord();
         private int crossRowState;
@@ -293,14 +293,14 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 int offsetFuncPos
         ) {
             super(timestampSampler, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos);
-            addressCache = new PageFrameAddressCache(configuration);
+            frameAddressCache = new PageFrameAddressCache(configuration);
             frameMemoryPool = new PageFrameMemoryPool();
-            frameMemoryPool.of(addressCache);
+            frameMemoryPool.of(frameAddressCache);
         }
 
         @Override
         public void close() {
-            addressCache.clear();
+            frameAddressCache.clear();
             currentFrameMemory = Misc.free(currentFrameMemory);
             Misc.free(frameMemoryPool);
             frameCursor = Misc.free(frameCursor);
@@ -384,7 +384,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             state = STATE_START;
             crossRowState = NONE;
             frameCursor.toTop();
-            addressCache.clear();
+            frameAddressCache.clear();
             currentFrameMemory = Misc.free(currentFrameMemory);
         }
 
@@ -455,7 +455,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 case STATE_FETCH_NEXT_DATA_FRAME:
                     final PageFrame frame = frameCursor.next();
                     if (frame != null) {
-                        addressCache.add(frameCount, frame);
+                        frameAddressCache.add(frameCount, frame);
                         Misc.free(currentFrameMemory);
                         currentFrameMemory = frameMemoryPool.navigateTo(frameCount++);
                         record.switchFrame();
@@ -662,7 +662,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         ) throws SqlException {
             this.frameCursor = frameCursor;
             this.groupBySymbolKey = groupBySymbolKey;
-            addressCache.of(metadata);
+            frameAddressCache.of(metadata);
             toTop();
             parseParams(this, sqlExecutionContext);
             initialized = false;
