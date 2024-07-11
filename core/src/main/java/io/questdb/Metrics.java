@@ -34,6 +34,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.BorrowableUtf8Sink;
+import org.jetbrains.annotations.NotNull;
 
 public class Metrics implements Scrapable {
     private final boolean enabled;
@@ -98,7 +99,7 @@ public class Metrics implements Scrapable {
     }
 
     @Override
-    public void scrapeIntoPrometheus(BorrowableUtf8Sink sink) {
+    public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
         metricsRegistry.scrapeIntoPrometheus(sink);
         if (enabled) {
             gcMetrics.scrapeIntoPrometheus(sink);

@@ -33,6 +33,12 @@ import io.questdb.std.str.DirectString;
 
 //contiguous readable 
 public interface MemoryCR extends MemoryC, MemoryR {
+    long addressHi();
+
+    default boolean checkOffsetMapped(long offset) {
+        return offset <= size();
+    }
+
     default BinarySequence getBin(long offset, ByteSequenceView view) {
         final long addr = addressOf(offset);
         final long len = Unsafe.getUnsafe().getLong(addr);
@@ -104,10 +110,6 @@ public interface MemoryCR extends MemoryC, MemoryR {
         return Unsafe.getUnsafe().getShort(addressOf(offset));
     }
 
-    default boolean checkOffsetMapped(long offset) {
-        return offset <= size();
-    }
-
     default DirectString getStr(long offset, DirectString view) {
         long addr = addressOf(offset);
         assert addr > 0;
@@ -144,8 +146,6 @@ public interface MemoryCR extends MemoryC, MemoryR {
     default boolean isFileBased() {
         return false;
     }
-
-    long addressHi();
 
     class ByteSequenceView implements BinarySequence, Mutable {
         private long address;

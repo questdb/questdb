@@ -38,11 +38,11 @@ import java.util.concurrent.atomic.AtomicLong;
 // Contiguous mapped with offset readable memory
 // todo: investigate if we can map file from 0 offset and have the logic in this class done by the OS
 public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
+    private static final AtomicLong ID_GENERATOR = new AtomicLong(0);
     private static final Log LOG = LogFactory.getLog(MemoryCMORImpl.class);
+    private final long id = ID_GENERATOR.incrementAndGet();
     private long mapFileOffset;
     private long offset;
-    private static final AtomicLong ID_GENERATOR = new AtomicLong(0);
-    private final long id = ID_GENERATOR.incrementAndGet();
 
     public MemoryCMORImpl() {
     }
