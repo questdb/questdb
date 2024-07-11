@@ -37,6 +37,7 @@ jobs:
       - name: Copy Rust Library to the final directory
         run: |
           cp core/rust/qdbr/target/release/questdbr.dll core/src/main/resources/io/questdb/bin/windows-amd64/
+          mkdir core/src/test/resources/io/questdb/bin/windows-amd64/
           cp core/rust/qdbr/target/release/questdbrtest.dll core/src/test/resources/io/questdb/bin/windows-amd64/
       - name: Save Windows Rust Library to Cache
         uses: actions/cache/save@v3
@@ -73,6 +74,7 @@ jobs:
             cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/freebsd-amd64/
             cd rust/qdbr-test
             cargo build --release
+            mkdir -p src/test/resources/io/questdb/bin/freebsd-amd64/
             cp target/release/libquestdbrtest.so ../../src/test/resources/io/questdb/bin/freebsd-amd64/
       - name: log git status
         run: |
@@ -134,12 +136,14 @@ jobs:
         run: |
           mkdir -p core/src/main/resources/io/questdb/bin/darwin-aarch64/
           cp core/rust/qdbr/target/release/libquestdbr.dylib core/src/main/resources/io/questdb/bin/darwin-aarch64/
+          mkdir -p core/test/main/resources/io/questdb/bin/darwin-aarch64/
           cp core/rust/qdbr/target/release/libquestdbrtest.dylib core/src/test/resources/io/questdb/bin/darwin-aarch64/
       - name: Copy darwin-amd64 Rust Library to the final directory
         if: ${{ matrix.os == 'macos-13' }}
         run: |
           mkdir -p core/src/main/resources/io/questdb/bin/darwin-amd64/
           cp core/rust/qdbr/target/release/libquestdbr.dylib core/src/main/resources/io/questdb/bin/darwin-amd64/
+          mkdir -p core/src/test/resources/io/questdb/bin/darwin-amd64/
           cp core/rust/qdbr/target/release/libquestdbrtest.dylib core/src/test/resources/io/questdb/bin/darwin-amd64/
       - name: Save darwin-aarch64 Libraries to Cache
         if: ${{ matrix.os == 'macos-14' }}
@@ -335,6 +339,7 @@ jobs:
       - name: Print file sizes before
         run: |
           mkdir -p ./core/src/main/resources/io/questdb/bin/
+          mkdir -p ./core/src/test/resources/io/questdb/bin/
           find ./core/src/main/resources/io/questdb/bin/ -type f -exec ls -l {} \;
           find ./core/src/main/bin/ -type f -exec ls -l {} \;
       - name: Restore FreeBSD Libraries from Cache
