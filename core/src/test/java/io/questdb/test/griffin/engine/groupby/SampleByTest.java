@@ -3405,7 +3405,8 @@ public class SampleByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select * from (select ts, first(v) from tab sample by 30m fill(prev) align to first observation) where ts > '2022-12-01T01:10:00.000000Z'",
                     "Filter filter: 1669857000000000<ts\n" +
-                            "    SampleByFillPrev\n" +
+                            "    Sample By\n" +
+                            "      fill: prev\n" +
                             "      values: [first(v)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
