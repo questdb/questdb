@@ -196,7 +196,7 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
             }
         }
 
-        // TODO: we should get the format from table reader
+        // TODO(puzpuzpuz): we should get the format from table reader
         // FIXME: current logic is for testing purposes only
         //formats.extendAndSet(reenterPartitionIndex, reenterPartitionIndex % 2 == 0 ? PageFrame.NATIVE_FORMAT : PageFrame.PARQUET_FORMAT);
         formats.extendAndSet(reenterPartitionIndex, PageFrame.NATIVE_FORMAT);
@@ -223,6 +223,11 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
         private long partitionLo;
 
         @Override
+        public long getAuxPageAddress(int columnIndex) {
+            return columnPageAddress.getQuick(columnIndex * 2 + 1);
+        }
+
+        @Override
         public BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {
             return reader.getBitmapIndexReader(partitionIndex, columnIndexes.getQuick(columnIndex), direction);
         }
@@ -235,11 +240,6 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
         @Override
         public byte getFormat() {
             return formats.getQuick(partitionIndex);
-        }
-
-        @Override
-        public long getIndexPageAddress(int columnIndex) {
-            return columnPageAddress.getQuick(columnIndex * 2 + 1);
         }
 
         @Override

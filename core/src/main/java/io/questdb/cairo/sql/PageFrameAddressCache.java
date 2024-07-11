@@ -64,7 +64,7 @@ public class PageFrameAddressCache implements Mutable {
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 framePageAddresses.add(frame.getPageAddress(columnIndex));
                 final boolean isVarSize = ColumnType.isVarSize(columnTypes.getQuick(columnIndex));
-                frameAuxPageAddresses.add(isVarSize ? frame.getIndexPageAddress(columnIndex) : 0);
+                frameAuxPageAddresses.add(isVarSize ? frame.getAuxPageAddress(columnIndex) : 0);
                 framePageSizes.add(isVarSize ? frame.getPageSize(columnIndex) : 0);
             }
             pageAddresses.add(framePageAddresses);
@@ -85,8 +85,7 @@ public class PageFrameAddressCache implements Mutable {
     public void clear() {
         frameSizes.clear();
         frameFormats.clear();
-        columnTypes.clear();
-        // TODO: threshold logic no longer makes sense
+        // TODO(puzpuzpuz): threshold logic no longer makes sense
         if (pageAddresses.size() < nativeCacheSizeThreshold) {
             pageAddresses.clear();
             auxPageAddresses.clear();
@@ -152,7 +151,7 @@ public class PageFrameAddressCache implements Mutable {
     }
 
     public void of(@Transient RecordMetadata metadata) {
-        this.columnCount = metadata.getColumnCount();
+        columnCount = metadata.getColumnCount();
         columnTypes.clear();
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             columnTypes.add(metadata.getColumnType(columnIndex));

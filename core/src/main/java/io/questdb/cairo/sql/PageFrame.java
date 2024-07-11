@@ -28,6 +28,11 @@ import io.questdb.cairo.BitmapIndexReader;
 
 /**
  * Represents a contiguous fragment of a table partition.
+ * <p>
+ * When it comes to data access, page frames should not be used directly
+ * as it's only valid for partitions in the native format. Instead,
+ * a combination of {@link PageFrameAddressCache} and {@link PageFrameMemoryPool}
+ * should be used.
  */
 public interface PageFrame {
     /**
@@ -38,6 +43,16 @@ public interface PageFrame {
      * Page frame belonging to a partition in Apache Parquet format.
      */
     byte PARQUET_FORMAT = 1;
+
+    /**
+     * Auxiliary index page for variable-length column types, such as Varchar, String, and Binary.
+     * <p>
+     * Can be called only for frames in native format.
+     *
+     * @param columnIndex index of variable length column
+     * @return contiguous memory address containing offsets for variable value entries
+     */
+    long getAuxPageAddress(int columnIndex);
 
     BitmapIndexReader getBitmapIndexReader(int columnIndex, int dirForward);
 
@@ -55,16 +70,6 @@ public interface PageFrame {
      * Possible values: {@link #NATIVE_FORMAT} and {@link #PARQUET_FORMAT}.
      */
     byte getFormat();
-
-    /**
-     * Index page for variable-length column types, such as Varchar, String, and Binary.
-     * <p>
-     * Can be called only for frames in native format.
-     *
-     * @param columnIndex index of variable length column
-     * @return contiguous memory address containing offsets for variable value entries
-     */
-    long getIndexPageAddress(int columnIndex);
 
     /**
      * Return the address of the start of the page frame or if this page represents
@@ -89,7 +94,7 @@ public interface PageFrame {
     long getPageSize(int columnIndex);
 
     /**
-     * Return hi row index within the frame's partition, exclusive.
+     * Return high row index within the frame's partition, exclusive.
      */
     long getPartitionHi();
 
@@ -99,7 +104,7 @@ public interface PageFrame {
     int getPartitionIndex();
 
     /**
-     * Return lo row index within the frame's partition, inclusive.
+     * Return low row index within the frame's partition, inclusive.
      */
     long getPartitionLo();
 }

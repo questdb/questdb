@@ -278,7 +278,6 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         private IndexFrame indexFrame;
         private int indexFramePosition = -1;
         private boolean initialized;
-        private RecordMetadata metadata;
         private long prevSamplePeriodOffset = 0;
         private int rowsFound;
         private long samplePeriodIndexOffset = 0;
@@ -387,7 +386,6 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             frameCursor.toTop();
             addressCache.clear();
             currentFrameMemory = Misc.free(currentFrameMemory);
-            addressCache.of(metadata);
         }
 
         private void checkCrossRowAfterFoundBufferIterated() {
@@ -640,7 +638,6 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             for (int columnIndex = 0, length = firstLastIndexByCol.length; columnIndex < length; columnIndex++) {
                 if (firstLastIndexByCol[columnIndex] == LAST_OUT_INDEX) {
                     // last() values only
-                    int frameColIndex = queryToFrameColumnMapping[columnIndex];
                     saveRowIdValueToCrossRow(rowIdOutAddress.get(LAST_OUT_INDEX), columnIndex);
                 }
             }
@@ -659,13 +656,13 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
 
         void of(
                 RecordMetadata metadata,
-                PageFrameCursor pageFrameCursor,
+                PageFrameCursor frameCursor,
                 int groupBySymbolKey,
                 SqlExecutionContext sqlExecutionContext
         ) throws SqlException {
-            this.metadata = metadata;
-            this.frameCursor = pageFrameCursor;
+            this.frameCursor = frameCursor;
             this.groupBySymbolKey = groupBySymbolKey;
+            addressCache.of(metadata);
             toTop();
             parseParams(this, sqlExecutionContext);
             initialized = false;

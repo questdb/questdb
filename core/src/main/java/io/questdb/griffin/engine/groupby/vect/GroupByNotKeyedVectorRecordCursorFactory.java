@@ -96,7 +96,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
         for (int i = 0, n = vafList.size(); i < n; i++) {
             vafList.getQuick(i).clear();
         }
-        // TODO: use PageFrameMemoryPool here
+        // TODO(puzpuzpuz): use PageFrameMemoryPool here
         final PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext, ORDER_ASC);
         return cursor.of(pageFrameCursor, executionContext.getMessageBus(), executionContext.getCircuitBreaker());
     }

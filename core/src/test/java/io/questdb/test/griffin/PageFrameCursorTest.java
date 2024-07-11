@@ -83,7 +83,7 @@ public class PageFrameCursorTest extends AbstractCairoTest {
                             while ((frame = pageFrameCursor.next()) != null) {
                                 long size = frame.getPageSize(1);
                                 long topOfVarAddress = frame.getPageAddress(1);
-                                long fixAddress = frame.getIndexPageAddress(1);
+                                long fixAddress = frame.getAuxPageAddress(1);
                                 long count = frame.getPartitionHi() - frame.getPartitionLo();
                                 while (count > 0) {
                                     //validate that index column has correct offsets
@@ -139,7 +139,7 @@ public class PageFrameCursorTest extends AbstractCairoTest {
                             PageFrame frame;
                             while ((frame = pageFrameCursor.next()) != null) {
                                 long varAddress = frame.getPageAddress(1);
-                                long fixAddress = frame.getIndexPageAddress(1);
+                                long fixAddress = frame.getAuxPageAddress(1);
                                 long topOfVarAddress = varAddress;
                                 long count = frame.getPartitionHi() - frame.getPartitionLo();
                                 while (count > 0) {
@@ -206,7 +206,7 @@ public class PageFrameCursorTest extends AbstractCairoTest {
                 PageFrame frame;
                 while ((frame = pageFrameCursor.next()) != null) {
                     final long dataTopAddress = frame.getPageAddress(1);
-                    final long auxTopAddress = frame.getIndexPageAddress(1);
+                    final long auxTopAddress = frame.getAuxPageAddress(1);
                     final long count = frame.getPartitionHi() - frame.getPartitionLo();
                     for (int row = 0; row < count; row++) {
                         actualSink.put(VarcharTypeDriver.getSplitValue(auxTopAddress, dataTopAddress, row, utf8SplitView));

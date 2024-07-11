@@ -273,7 +273,7 @@ public class DataFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                             long intColAddr = frame.getPageAddress(0);
                             long tsColAddr = frame.getPageAddress(1);
                             long longColAddr = frame.getPageAddress(2);
-                            long iStrColAddr = frame.getIndexPageAddress(3);
+                            long iStrColAddr = frame.getAuxPageAddress(3);
                             long dStrColAddr = frame.getPageAddress(3);
 
                             for (long i = len - 1; i > -1; i--) {
@@ -382,7 +382,7 @@ public class DataFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                             long intColAddr = frame.getPageAddress(0);
                             long tsColAddr = frame.getPageAddress(1);
                             long longColAddr = frame.getPageAddress(2);
-                            long iStrColAddr = frame.getIndexPageAddress(3);
+                            long iStrColAddr = frame.getAuxPageAddress(3);
                             long dStrColAddr = frame.getPageAddress(3);
 
                             for (long i = 0; i < len; i++, rowIndex++) {
