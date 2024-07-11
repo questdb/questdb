@@ -132,7 +132,7 @@ public class WarningsEndpointTest extends AbstractBootstrapTest {
     @Test
     public void testWarningsWithSimulation() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
+            try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
                 put(CAIRO_SIMULATE_WARNINGS_ENABLED.getEnvVarName(), "true");
             }})
             ) {
