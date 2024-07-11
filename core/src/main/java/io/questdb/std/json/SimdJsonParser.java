@@ -29,6 +29,7 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.bytes.NativeByteSink;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8Sink;
+import org.jetbrains.annotations.NotNull;
 
 public class SimdJsonParser implements QuietCloseable {
     public static final int SIMDJSON_PADDING;
@@ -42,13 +43,11 @@ public class SimdJsonParser implements QuietCloseable {
      * Convert a JSON path to the SIMDJSON pointer format.
      */
     public static void convertJsonPathToPointer(
-            DirectUtf8Sequence path,
-            DirectUtf8Sink dest
+            @NotNull DirectUtf8Sequence path,
+            @NotNull DirectUtf8Sink dest
     ) {
         try (NativeByteSink destSink = dest.borrowDirectByteSink()) {
-            if (path.size() > 0) {
-                convertJsonPathToPointer(path.ptr(), path.size(), destSink.ptr());
-            }
+            convertJsonPathToPointer(path.ptr(), path.size(), destSink.ptr());
         }
     }
 
@@ -189,7 +188,7 @@ public class SimdJsonParser implements QuietCloseable {
             DirectUtf8Sequence json,
             DirectUtf8Sequence pointer,
             SimdJsonResult result,
-            DirectUtf8Sink dest,
+            DirectUtf8Sink dest, // IMPORTANT: The `ascii` flag is not set on the dest sink. This is beca
             int maxSize
     ) {
         assert json.tailPadding() >= SIMDJSON_PADDING;

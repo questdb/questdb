@@ -399,7 +399,13 @@ Java_io_questdb_std_json_SimdJsonParser_convertJsonPathToPointer(
         size_t json_len,
         questdb_byte_sink_t *dest_sink
 ) {
-    const std::string_view json_path{json_chars, json_len};
+    std::string_view json_path{json_chars, json_len};
+    if (!json_path.empty() && json_path[0] == '$') {
+        json_path.remove_prefix(1);
+    }
+    if (json_path.empty()) {
+        return;
+    }
     const auto json_pointer = simdjson::ondemand::json_path_to_pointer_conversion(json_path);
     auto dest = questdb_byte_sink_book(dest_sink, json_pointer.size());
     std::memcpy(dest, json_pointer.data(), json_pointer.size());
