@@ -24,6 +24,7 @@
 
 package io.questdb.test.std.bytes;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.bytes.ByteSequence;
@@ -32,7 +33,6 @@ import io.questdb.std.bytes.NativeByteSink;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.nio.BufferOverflowException;
 import java.util.function.Supplier;
 
 public class DirectByteSinkTest {
@@ -198,7 +198,7 @@ public class DirectByteSinkTest {
             Assert.assertEquals(Integer.MAX_VALUE, dbs.hi() - dbs.lo());
 
             // The next byte will overflow.
-            Assert.assertThrows(BufferOverflowException.class, () -> dbs.put((byte) '0'));
+            Assert.assertThrows(CairoException.class, () -> dbs.put((byte) '0'));
         }
     }
 }

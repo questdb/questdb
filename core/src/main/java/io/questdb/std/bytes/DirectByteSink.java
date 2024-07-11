@@ -28,8 +28,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
-import java.nio.BufferOverflowException;
-
 public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByteSink, QuietCloseable, Mutable {
     private static final int BYTE_SINK_PTR_OFFSET = 0;  // 0
     private static final int BYTE_SINK_LO_OFFSET = BYTE_SINK_PTR_OFFSET + 8;  // 8
@@ -125,9 +123,9 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         p = implBook(impl, required);
         if (p == 0) {
             if (getImplOverflow()) {
-                throw new BufferOverflowException();  // More than 2GiB requested.
+                throw CairoException.critical(0).put("buffer overflow, buffer capacity is requested to be over 2 GiB");
             } else {
-                throw new OutOfMemoryError("Cannot allocate " + required + " bytes");
+                throw CairoException.nonCritical().setOutOfMemory(true).put("could not allocate DirectByteSink [required=").put(required).put(']');
             }
         }
         final long newCapacity = allocatedCapacity();

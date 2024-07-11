@@ -25,7 +25,6 @@
 #include <jni.h>
 #include <simdjson.h>
 #include <limits>
-#include <cmath>
 #include "byte_sink.h"
 
 static_assert(
@@ -82,19 +81,6 @@ constexpr std::byte BYTE_0xE0 = std::byte(0xE0); // 11100000
 constexpr std::byte BYTE_0xF0 = std::byte(0xF0); // 11110000
 constexpr std::byte BYTE_0xF8 = std::byte(0xF8); // 11111000
 
-// https://stackoverflow.com/questions/67521312/safe-equivalent-of-stdbit-cast-in-c11
-// Replace this with `std::bit_cast` if/when we upgrade our C++ standard to C++20.
-template<class T2, class T1>
-inline T2 compat_bit_cast(T1 t1) {
-    static_assert(sizeof(T1) == sizeof(T2), "Types must match sizes");
-    static_assert(std::is_pod<T1>::value, "Requires POD input");
-    static_assert(std::is_pod<T2>::value, "Requires POD output");
-
-    T2 t2;
-    std::memcpy(std::addressof(t2), std::addressof(t1), sizeof(T1));
-    return t2;
-}
-
 std::string_view trim(std::string_view str) {
     const char *first = str.begin();
     const char *const end = str.end();
@@ -115,11 +101,6 @@ std::string_view trim(std::string_view str) {
 
     auto len = static_cast<size_t>(std::distance(first, last)) + 1;
     return {first, len};
-}
-
-static bool is_root_pointer(const std::string_view pointer) {
-    auto trimmed_pointer = trim(pointer);
-    return trimmed_pointer.empty();
 }
 
 static size_t utf8_char_size(std::byte first_byte) {
@@ -144,7 +125,7 @@ std::byte *utf8_find_last_char_start(std::byte *end) {
     return last_utf8_start;
 }
 
-inline bool copy_and_detect_multibyte_codepoint(std::byte* dest, const char* src, size_t len) {
+inline bool copy_and_detect_multibyte_codepoint(std::byte *dest, const char *src, size_t len) {
     bool multibyte = false;
     std::size_t index = 0;
     for (; index < len; ++index) {
@@ -164,16 +145,21 @@ inline bool copy_and_detect_multibyte_codepoint(std::byte* dest, const char* src
 // Copy `src` to `dest` up to `max_dest_len` bytes.
 // If `src` is longer than `max_dest_len`, copy up to the last UTF-8 character that fits.
 // This function guarantees that there are no broken UTF-8 characters in the output.
-static void truncated_utf8_copy(questdb_byte_sink_t &dest, std::string_view src, size_t max_dest_len) {
-    if (max_dest_len == 0) {
+static void
+truncated_utf8_copy(
+        questdb_byte_sink_t &dest,
+        size_t max_dest_len,
+        std::string_view src,
+        bool src_is_ascii
+) {
+    if (max_dest_len == 0) [[unlikely]] {
         return;
     }
     const auto copy_len = std::min(src.length(), max_dest_len);
-    if (dest.unicode) {
+    if (src_is_ascii) [[likely]] {
         // Take the fast-path if the string had multibyte characters anyways.
         std::memcpy(dest.ptr, src.data(), copy_len);
-    }
-    else {
+    } else {
         dest.unicode = copy_and_detect_multibyte_codepoint(dest.ptr, src.data(), copy_len);
     }
     std::byte *end_ptr = dest.ptr + copy_len;
@@ -302,16 +288,17 @@ inline simdjson::simdjson_result<std::string_view> get_raw_json(
 template<typename V>
 void extract_raw_json(
         V &res,
+        bool json_is_ascii,
         questdb_byte_sink_t *dest_sink,
         int32_t max_size,
         json_result &result) {
     const auto max_size_st = static_cast<size_t>(max_size);
     auto raw_res = get_raw_json(res);
-    if (!result.set_error(raw_res)) {
+    if (!result.set_error(raw_res)) [[unlikely]] {
         return;
     }
     auto raw = trim(raw_res.value_unsafe());
-    truncated_utf8_copy(*dest_sink, raw, max_size_st);
+    truncated_utf8_copy(*dest_sink, max_size_st, raw, json_is_ascii);
 }
 
 template<typename V>
@@ -321,13 +308,15 @@ jlong extract_value(
         int32_t max_size,
         json_result &result
 ) {
-    if (!result.from(res)) {
+    if (!result.from(res)) [[unlikely]]{
         return 0;
     }
+    // we are extracting value for either DATE, TIMESTAMP or IPV4 type
+    // therefore the result is always ASCII
     switch (result.type) {
         case simdjson::ondemand::json_type::array:
         case simdjson::ondemand::json_type::object:
-            extract_raw_json(res, dest_sink, max_size, result);
+            extract_raw_json(res, true, dest_sink, max_size, result);
             return 0;
         case simdjson::ondemand::json_type::number: {
             switch (result.number_type) {
@@ -337,22 +326,24 @@ jlong extract_value(
                         jlong l;
                         double d;
                     } u;
-                    u.d = (double)res.get_double().value_unsafe();
+                    u.d = (double) res.get_double().value_unsafe();
                     return u.l;
                 case simdjson::ondemand::number_type::signed_integer:
                     return res.get_int64().value_unsafe();
                 case simdjson::ondemand::number_type::unsigned_integer:
                     return static_cast<jlong>(res.get_uint64().value_unsafe());
                 case simdjson::ondemand::number_type::big_integer:
-                    extract_raw_json(res, dest_sink, max_size, result);
+                    extract_raw_json(res, true, dest_sink, max_size, result);
                     return 0;
             }
         }
         case simdjson::ondemand::json_type::string:
             truncated_utf8_copy(
                     *dest_sink,
+                    static_cast<size_t>(max_size),
                     res.get_string().value_unsafe(),
-                    static_cast<size_t>(max_size));
+                    true
+            );
             return 0;
         case simdjson::ondemand::json_type::boolean:
             return res.get_bool().value_unsafe() ? 1 : 0;
@@ -371,15 +362,6 @@ Java_io_questdb_std_json_SimdJsonParser_getSimdJsonPadding(
         JNIEnv */*env*/,
         jclass /*cl*/
 ) {
-    // work-around since we're compiling without constexpr std::bit_cast
-    // so instead of a `static_assert` we need to do a runtime check
-    {
-        auto nan_bits = compat_bit_cast<jlong>(std::numeric_limits<double>::quiet_NaN());
-        if (nan_bits != 0x7ff8000000000000L) {
-            fprintf(stderr, "Unexpected bit representation for NaN: %lx\n", nan_bits);
-            abort();
-        }
-    }
     return simdjson::SIMDJSON_PADDING;
 }
 
@@ -433,6 +415,7 @@ Java_io_questdb_std_json_SimdJsonParser_queryPointerUtf8(
         const char *json_chars,
         size_t json_len,
         size_t tail_padding,
+        jboolean json_is_ascii,
         const char *pointer_chars,
         size_t pointer_len,
         json_result *result,
@@ -441,19 +424,21 @@ Java_io_questdb_std_json_SimdJsonParser_queryPointerUtf8(
 ) {
     value_at_pointer(
             parser, json_chars, json_len, tail_padding, pointer_chars, pointer_len, result,
-            [result, dest_sink, max_size](auto res) -> token_void {
+            [result, dest_sink, max_size, json_is_ascii](auto res) -> token_void {
                 switch (result->type) {
                     case simdjson::ondemand::json_type::string:
                         truncated_utf8_copy(
                                 *dest_sink,
+                                static_cast<size_t>(max_size),
                                 res.get_string().value_unsafe(),
-                                static_cast<size_t>(max_size));
+                                json_is_ascii
+                        );
                         return {};
                     case simdjson::ondemand::json_type::array:
                     case simdjson::ondemand::json_type::object:
                     case simdjson::ondemand::json_type::number:
                     case simdjson::ondemand::json_type::boolean:
-                        extract_raw_json(res, dest_sink, max_size, *result);
+                        extract_raw_json(res, json_is_ascii, dest_sink, max_size, *result);
                         return {};
                     case simdjson::ondemand::json_type::null:
                         return default_value<token_void>::value;
@@ -476,6 +461,8 @@ Java_io_questdb_std_json_SimdJsonParser_queryPointerValue(
         questdb_byte_sink_t *dest_sink,
         int32_t max_size
 ) {
+    // this method is used to query utf8 representation of either TIMESTAMP, DATE or IPV4.
+    // all these values are ASCII
     const simdjson::padded_string_view json_buf{json_chars, json_len, json_len + tail_padding};
     const std::string_view pointer{pointer_chars, pointer_len};
     auto doc = parser->iterate(json_buf);
@@ -498,13 +485,12 @@ Java_io_questdb_std_json_SimdJsonParser_queryPointerBoolean(
         size_t pointer_len,
         json_result *result
 ) {
+    // we are extracting boolean value, it is definitely ASCII
     return value_at_pointer(
             parser, json_chars, json_len, tail_padding, pointer_chars, pointer_len, result,
             [result](auto res) -> jboolean {
-                if (result->from(res)) {
-                    if (result->type == simdjson::ondemand::json_type::boolean) {
-                        return res.get_bool().value_unsafe();
-                    }
+                if (result->from(res) && result->type == simdjson::ondemand::json_type::boolean) [[likely]] {
+                    return res.get_bool().value_unsafe();
                 }
                 return false;
             });
@@ -529,7 +515,7 @@ Java_io_questdb_std_json_SimdJsonParser_queryPointerShort(
                         *result, res,
                         [&result](int64_t value) -> jshort {
                             auto short_res = static_cast<jshort>(value);
-                            if (value != short_res) {
+                            if (value != short_res) [[unlikely]] {
                                 result->error = simdjson::error_code::NUMBER_OUT_OF_RANGE;
                                 return default_value<jshort>::value;
                             }
@@ -541,7 +527,7 @@ Java_io_questdb_std_json_SimdJsonParser_queryPointerShort(
                         },
                         [&result](double value) -> jshort {
                             if (value < std::numeric_limits<short>::min() ||
-                                value > std::numeric_limits<short>::max()) {
+                                value > std::numeric_limits<short>::max()) [[unlikely]] {
                                 result->error = simdjson::error_code::NUMBER_OUT_OF_RANGE;
                                 return default_value<jshort>::value;
                             }
@@ -569,7 +555,7 @@ Java_io_questdb_std_json_SimdJsonParser_queryPointerInt(
                         *result, res,
                         [&result](int64_t value) -> jint {
                             auto int_res = static_cast<jint>(value);
-                            if (value != int_res) {
+                            if (value != int_res) [[unlikely]] {
                                 result->error = simdjson::error_code::NUMBER_OUT_OF_RANGE;
                                 return default_value<jint>::value;
                             }
@@ -580,7 +566,8 @@ Java_io_questdb_std_json_SimdJsonParser_queryPointerInt(
                             return default_value<jint>::value;
                         },
                         [&result](double value) -> jint {
-                            if (value < std::numeric_limits<jint>::min() || value > std::numeric_limits<jint>::max()) {
+                            if (value < std::numeric_limits<jint>::min() ||
+                                value > std::numeric_limits<jint>::max()) [[unlikely]] {
                                 result->error = simdjson::error_code::NUMBER_OUT_OF_RANGE;
                                 return default_value<jint>::value;
                             }
@@ -616,7 +603,8 @@ Java_io_questdb_std_json_SimdJsonParser_queryPointerLong(
                         [&result](double value) -> jlong {
                             if (
                                     (value < static_cast<double>(std::numeric_limits<jlong>::min())) ||
-                                    (value > static_cast<double>(std::numeric_limits<jlong>::max()))) {
+                                    (value > static_cast<double>(std::numeric_limits<jlong>::max()))
+                                    ) [[unlikely]] {
                                 result->error = simdjson::error_code::NUMBER_OUT_OF_RANGE;
                                 return default_value<jlong>::value;
                             }
