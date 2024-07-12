@@ -85,22 +85,20 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             ddl("create table y ( x int );");
             final String query = "select concat(lpad(cast(x1 as string), 5)), x1, sum(x1) from (select x x1 from y)";
             final QueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-group-by concat, x1, sum(x1) sum from (select-virtual [concat(lpad(cast(x1,string),5)) concat, x1] concat(lpad(cast(x1,string),5)) concat, x1 from (select-choose [x x1] x x1 from (select [x] from y)))", model.toString0());
-            ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
-            assert aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
-            assert aliasAppearsInFuncArgs(model.getNestedModel(), "x1", sqlNodeStack);
-            assert !aliasAppearsInFuncArgs(model.getNestedModel().getNestedModel(), "x1", sqlNodeStack);
+            TestUtils.assertEquals(
+                    "select-group-by concat(lpad(cast(x1,string),5)) concat, x1, sum(x1) sum from (select-choose [x x1] x x1 from (select [x] from y))",
+                    model.toString0()
+            );
             assertPlanNoLeakCheck(
                     query,
-                    "GroupBy vectorized: false\n" +
+                    "Async Group By workers: 1\n" +
                             "  keys: [concat,x1]\n" +
                             "  values: [sum(x1)]\n" +
-                            "    VirtualRecord\n" +
-                            "      functions: [concat([lpad(x1::string,5)]),x1]\n" +
-                            "        SelectedRecord\n" +
-                            "            DataFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: y\n");
+                            "  filter: null\n" +
+                            "    SelectedRecord\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: y\n");
         });
     }
 
