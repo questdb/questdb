@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -37,8 +38,6 @@ import org.jetbrains.annotations.NotNull;
 
 public class SampleByFillNoneNotKeyedRecordCursorFactory extends AbstractSampleByNotKeyedRecordCursorFactory {
     private final SampleByFillNoneNotKeyedRecordCursor cursor;
-    private final Function sampleFromFunc;
-    private final Function sampleToFunc;
 
     public SampleByFillNoneNotKeyedRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -79,15 +78,14 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory extends AbstractSampleB
                 sampleToFunc,
                 sampleToFuncPos
         );
-        this.sampleFromFunc = sampleFromFunc;
-        this.sampleToFunc = sampleToFunc;
     }
 
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Sample By");
         sink.attr("fill").val("none");
-        sink.attr("range").val('(').val(cursor.sampleFromFunc).val(',').val(cursor.sampleToFunc).val(')');
+        if (cursor.sampleFromFunc != TimestampConstant.NULL && cursor.sampleToFunc != TimestampConstant.NULL)
+            sink.attr("range").val('(').val(cursor.sampleFromFunc).val(',').val(cursor.sampleToFunc).val(')');
         sink.optAttr("values", cursor.groupByFunctions, true);
         sink.child(base);
     }

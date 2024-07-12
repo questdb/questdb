@@ -7915,8 +7915,19 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByFromToBasicSyntax() throws SqlException {
         assertQuery(
-                "select-group-by ts, avg(price) avg from (select [ts, price] from tbl timestamp (ts)) sample by 5m from '2018' to '2019'",
-                "select ts, avg(price) from tbl sample by 5m from '2018' to '2019'",
+                "select-group-by ts, avg(price) avg from (select [ts, price] from tbl timestamp (ts) where ts >= '2018-01-01' and ts < '2019-01-01') sample by 5m from '2018-01-01' to '2019-01-01' align to calendar with offset '10:00'",
+                "select ts, avg(price) from tbl sample by 5m from '2018-01-01' to '2019-01-01' align to calendar with offset '10:00'",
+                modelOf("tbl")
+                        .timestamp("ts")
+                        .col("price", ColumnType.DOUBLE)
+        );
+    }
+
+    @Test
+    public void testSampleByFromToBasicSyntaxWithRewrite() throws SqlException {
+        assertQuery(
+                "select-group-by timestamp_floor('5m',ts,'2018-01-01') ts, avg(price) avg from (select [ts, price] from tbl timestamp (ts) where ts >= '2018-01-01' and ts < '2019-01-01') order by ts",
+                "select ts, avg(price) from tbl sample by 5m from '2018-01-01' to '2019-01-01'",
                 modelOf("tbl")
                         .timestamp("ts")
                         .col("price", ColumnType.DOUBLE)
@@ -7926,7 +7937,18 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByFromToJustFromOnItsOwn() throws SqlException {
         assertQuery(
-                "select-group-by ts, avg(price) avg from (select [ts, price] from tbl timestamp (ts)) sample by 5m from '2018'",
+                "select-group-by ts, avg(price) avg from (select [ts, price] from tbl timestamp (ts) where ts >= '2018-01-01') sample by 5m from '2018-01-01' align to calendar with offset '10:00'",
+                "select ts, avg(price) from tbl sample by 5m from '2018-01-01' align to calendar with offset '10:00'",
+                modelOf("tbl")
+                        .timestamp("ts")
+                        .col("price", ColumnType.DOUBLE)
+        );
+    }
+
+    @Test
+    public void testSampleByFromToJustFromOnItsOwnWithRewrite() throws SqlException {
+        assertQuery(
+                "select-group-by timestamp_floor('5m',ts,'2018') ts, avg(price) avg from (select [ts, price] from tbl timestamp (ts) where ts >= '2018') order by ts",
                 "select ts, avg(price) from tbl sample by 5m from '2018'",
                 modelOf("tbl")
                         .timestamp("ts")
@@ -8260,8 +8282,19 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByToOnItsOwn() throws SqlException {
         assertQuery(
-                "select-group-by ts, avg(price) avg from (select [ts, price] from tbl timestamp (ts)) sample by 5m to '2019'",
-                "select ts, avg(price) from tbl sample by 5m to '2019' align to first observation",
+                "select-group-by ts, avg(price) avg from (select [ts, price] from tbl timestamp (ts) where ts < '2019-01-01') sample by 5m to '2019-01-01' align to calendar with offset '10:00'",
+                "select ts, avg(price) from tbl sample by 5m to '2019-01-01' align to calendar with offset '10:00'",
+                modelOf("tbl")
+                        .timestamp("ts")
+                        .col("price", ColumnType.DOUBLE)
+        );
+    }
+
+    @Test
+    public void testSampleByToOnItsOwnWithRewrite() throws SqlException {
+        assertQuery(
+                "select-group-by timestamp_floor('5m',ts) ts, avg(price) avg from (select [ts, price] from tbl timestamp (ts) where ts < '2019-01-01') order by ts",
+                "select ts, avg(price) from tbl sample by 5m to '2019-01-01'",
                 modelOf("tbl")
                         .timestamp("ts")
                         .col("price", ColumnType.DOUBLE)

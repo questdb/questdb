@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -96,7 +97,8 @@ public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleB
     public void toPlan(PlanSink sink) {
         sink.type("Sample By");
         sink.attr("fill").val("null");
-        sink.attr("range").val('(').val(cursor.sampleFromFunc).val(',').val(cursor.sampleToFunc).val(')');
+        if (cursor.sampleFromFunc != TimestampConstant.NULL && cursor.sampleToFunc != TimestampConstant.NULL)
+            sink.attr("range").val('(').val(cursor.sampleFromFunc).val(',').val(cursor.sampleToFunc).val(')');
         sink.optAttr("values", cursor.groupByFunctions, true);
         sink.child(base);
     }
