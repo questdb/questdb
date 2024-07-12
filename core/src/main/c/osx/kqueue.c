@@ -128,13 +128,15 @@ JNIEXPORT jint JNICALL Java_io_questdb_KqueueAccessor_kevent
         (JNIEnv *e, jclass cl, jint kq, jlong changelist, jint nChanges, jlong eventlist, jint nEvents, jint timeout) {
     int tv_sec = timeout / 1000;
     struct timespec _timeout = {tv_sec, (timeout - tv_sec * 1000) * 1000 * 1000};
-    return (jint) kevent(
+    int res;
+    RESTARTABLE(kevent(
             kq, (const struct kevent *) changelist,
             nChanges,
             (struct kevent *) eventlist,
             nEvents,
             &_timeout
-    );
+    ), res);
+    return res;
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_KqueueAccessor_keventRegister
