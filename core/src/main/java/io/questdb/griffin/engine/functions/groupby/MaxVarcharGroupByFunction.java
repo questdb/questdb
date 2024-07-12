@@ -36,7 +36,6 @@ import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByUtf8Sink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8s;
 
 public final class MaxVarcharGroupByFunction extends VarcharFunction implements GroupByFunction, UnaryFunction {
@@ -96,15 +95,6 @@ public final class MaxVarcharGroupByFunction extends VarcharFunction implements 
     @Override
     public int getValueIndex() {
         return valueIndex;
-    }
-
-    @Override
-    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-        final long ptr = rec.getLong(valueIndex);
-        if (ptr != 0) {
-            sinkA.of(ptr);
-            utf8Sink.put(sinkA);
-        }
     }
 
     @Override

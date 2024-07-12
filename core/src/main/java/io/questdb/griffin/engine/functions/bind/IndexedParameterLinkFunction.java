@@ -37,7 +37,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 
 public class IndexedParameterLinkFunction implements ScalarFunction {
     private final int position;
@@ -209,11 +208,6 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     @Override
     public int getType() {
         return type;
-    }
-
-    @Override
-    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-        getBase().getVarchar(rec, utf8Sink);
     }
 
     @Override

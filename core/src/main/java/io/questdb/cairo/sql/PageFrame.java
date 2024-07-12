@@ -54,6 +54,16 @@ public interface PageFrame {
      */
     long getAuxPageAddress(int columnIndex);
 
+    /**
+     * Return the size of the page frame aux vector in bytes.
+     * <p>
+     * Can be called only for frames in native format.
+     *
+     * @param columnIndex index of column
+     * @return size of column in bytes
+     */
+    long getAuxPageSize(int columnIndex);
+
     BitmapIndexReader getBitmapIndexReader(int columnIndex, int dirForward);
 
     /**
@@ -76,7 +86,7 @@ public interface PageFrame {
     long getPageAddress(int columnIndex);
 
     /**
-     * Return the size of the page frame column in bytes.
+     * Return the size of the page frame data vector in bytes.
      * <p>
      * Can be called only for frames in native format.
      *

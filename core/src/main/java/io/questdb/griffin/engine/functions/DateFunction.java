@@ -35,7 +35,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 
 public abstract class DateFunction implements ScalarFunction {
     @Override
@@ -184,11 +183,6 @@ public abstract class DateFunction implements ScalarFunction {
     @Override
     public final int getType() {
         return ColumnType.DATE;
-    }
-
-    @Override
-    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-        throw new UnsupportedOperationException();
     }
 
     @Override

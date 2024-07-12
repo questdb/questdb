@@ -38,6 +38,7 @@ import io.questdb.std.*;
 public class PageFrameAddressCache implements Mutable {
 
     private final ObjList<LongList> auxPageAddresses = new ObjList<>();
+    private final ObjList<LongList> auxPageSizes = new ObjList<>();
     private final IntList columnTypes = new IntList();
     private final ByteList frameFormats = new ByteList();
     private final LongList frameSizes = new LongList();
@@ -62,24 +63,33 @@ public class PageFrameAddressCache implements Mutable {
 
         if (frame.getFormat() == PageFrame.NATIVE_FORMAT) {
             final LongList framePageAddresses = longListPool.next();
-            final LongList frameAuxPageAddresses = longListPool.next();
             final LongList framePageSizes = longListPool.next();
+            final LongList frameAuxPageAddresses = longListPool.next();
+            final LongList frameAuxPageSizes = longListPool.next();
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 framePageAddresses.add(frame.getPageAddress(columnIndex));
                 framePageSizes.add(frame.getPageSize(columnIndex));
-                final boolean isVarSize = ColumnType.isVarSize(columnTypes.getQuick(columnIndex));
-                frameAuxPageAddresses.add(isVarSize ? frame.getAuxPageAddress(columnIndex) : 0);
+                if (ColumnType.isVarSize(columnTypes.getQuick(columnIndex))) {
+                    frameAuxPageAddresses.add(frame.getAuxPageAddress(columnIndex));
+                    framePageSizes.add(frame.getAuxPageSize(columnIndex));
+                } else {
+                    frameAuxPageAddresses.add(0);
+                    frameAuxPageSizes.add(0);
+                }
             }
             pageAddresses.add(framePageAddresses);
             cacheSize += framePageAddresses.capacity();
-            auxPageAddresses.add(frameAuxPageAddresses);
-            cacheSize += frameAuxPageAddresses.capacity();
             pageSizes.add(framePageSizes);
             cacheSize += framePageSizes.capacity();
+            auxPageAddresses.add(frameAuxPageAddresses);
+            cacheSize += frameAuxPageAddresses.capacity();
+            auxPageSizes.add(frameAuxPageSizes);
+            cacheSize += frameAuxPageSizes.capacity();
         } else {
             pageAddresses.add(null);
-            auxPageAddresses.add(null);
             pageSizes.add(null);
+            auxPageAddresses.add(null);
+            auxPageSizes.add(null);
         }
 
         frameSizes.add(frame.getPartitionHi() - frame.getPartitionLo());
@@ -94,6 +104,7 @@ public class PageFrameAddressCache implements Mutable {
         pageAddresses.clear();
         auxPageAddresses.clear();
         pageSizes.clear();
+        auxPageSizes.clear();
         rowIdOffsets.clear();
         if (cacheSize < nativeCacheSizeThreshold) {
             longListPool.clear();
@@ -105,6 +116,10 @@ public class PageFrameAddressCache implements Mutable {
 
     public LongList getAuxPageAddresses(int frameIndex) {
         return auxPageAddresses.getQuick(frameIndex);
+    }
+
+    public LongList getAuxPageSizes(int frameIndex) {
+        return auxPageSizes.getQuick(frameIndex);
     }
 
     public int getColumnCount() {
@@ -142,6 +157,7 @@ public class PageFrameAddressCache implements Mutable {
 
     public boolean hasColumnTops(int frameIndex) {
         final byte frameFormat = frameFormats.getQuick(frameIndex);
+        // TODO(puzpuzpuz): make sure to test non-native frames
         if (frameFormat == PageFrame.NATIVE_FORMAT) {
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 if (pageAddresses.getQuick(frameIndex).getQuick(columnIndex) == 0

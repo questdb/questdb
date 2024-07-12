@@ -24,39 +24,38 @@
 
 package io.questdb.test.griffin.engine.functions.str;
 
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.functions.str.TrimVarcharFunctionFactory;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class TrimVarcharFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class TrimVarcharFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
-    public void testEmptyOrNullTrimSpace() throws SqlException {
-        call(utf8("")).andAssertUtf8("");
-        call(utf8(" ")).andAssertUtf8("");
-        call(utf8("    ")).andAssertUtf8("");
-        call(utf8(null)).andAssertUtf8(null);
+    public void testEmptyOrNullTrimSpace() throws Exception {
+        assertQuery(
+                "t1\tt2\tt3\tt4\n" +
+                        "\t\t\t\n",
+                "select trim(''::varchar) t1, trim(' '::varchar) t2, trim('       '::varchar) t3, trim(null::varchar) t4",
+                true
+        );
     }
 
     @Test
-    public void testNotTrimSpace() throws SqlException {
-        call(utf8("a b c")).andAssertUtf8("a b c");
-        call(utf8("kkk")).andAssertUtf8("kkk");
-        call(utf8("()  /  {}")).andAssertUtf8("()  /  {}");
+    public void testNotTrimSpace() throws Exception {
+        assertQuery(
+                "t1\tt2\tt3\n" +
+                        "a b c\tkkk\t()  /  {}\n",
+                "select trim('a b c'::varchar) t1, trim('kkk'::varchar) t2, trim('()  /  {}'::varchar) t3",
+                true
+        );
     }
 
     @Test
-    public void testTrimSpace() throws SqlException {
-        call(utf8("    abc     ")).andAssertUtf8("abc");
-        call(utf8("abc     ")).andAssertUtf8("abc");
-        call(utf8("     abc")).andAssertUtf8("abc");
-        call(utf8(" a b c ")).andAssertUtf8("a b c");
-    }
-
-    @Override
-    protected FunctionFactory getFunctionFactory() {
-        return new TrimVarcharFunctionFactory();
+    public void testTrimSpace() throws Exception {
+        assertQuery(
+                "t1\tt2\tt3\tt4\n" +
+                        "abc\tabc\tabc\ta b c\n",
+                "select trim('    abc     '::varchar) t1, trim('abc     '::varchar) t2, trim('     abc'::varchar) t3, trim(' a b c '::varchar) t4",
+                true
+        );
     }
 }

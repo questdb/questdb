@@ -34,7 +34,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8StringSink;
 
 public class VarcharBindVariable extends VarcharFunction implements ScalarFunction, Mutable {
@@ -77,15 +76,6 @@ public class VarcharBindVariable extends VarcharFunction implements ScalarFuncti
             return -1;
         }
         return super.getStrLen(rec);
-    }
-
-    @Override
-    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-        if (isNull) {
-            utf8Sink.put((CharSequence) null);
-        } else {
-            utf8Sink.put(this.utf8Sink);
-        }
     }
 
     @Override

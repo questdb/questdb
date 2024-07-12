@@ -24,6 +24,8 @@
 
 package io.questdb.std.str;
 
+import io.questdb.std.bytes.DirectSequence;
+
 /**
  * A sequence of UTF-16 chars stored in native memory.
  */

@@ -64,7 +64,7 @@ public class QueryProgress extends AbstractRecordCursorFactory {
     public static void logEnd(long sqlId, CharSequence sqlText, SqlExecutionContext executionContext, long beginNanos) {
         LOG.infoW()
                 .$("fin [id=").$(sqlId)
-                .$(", sql=`").$(sqlText).$('`')
+                .$(", sql=`").utf8(sqlText).$('`')
                 .$(", principal=").$(executionContext.getSecurityContext().getPrincipal())
                 .$(", cache=").$(executionContext.isCacheHit())
                 .$(", time=").$(executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos)
@@ -83,7 +83,7 @@ public class QueryProgress extends AbstractRecordCursorFactory {
         LOG.errorW()
                 .$("err")
                 .$(" [id=").$(sqlId)
-                .$(", sql=`").$(sqlText).$('`')
+                .$(", sql=`").utf8(sqlText).$('`')
                 .$(", principal=").$(executionContext.getSecurityContext().getPrincipal())
                 .$(", cache=").$(executionContext.isCacheHit())
                 .$(", time=").$(executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos)
@@ -101,7 +101,7 @@ public class QueryProgress extends AbstractRecordCursorFactory {
         LOG.infoW()
                 .$("exe")
                 .$(" [id=").$(sqlId)
-                .$(", sql=`").$(sqlText).$('`')
+                .$(", sql=`").utf8(sqlText).$('`')
                 .$(", principal=").$(executionContext.getSecurityContext().getPrincipal())
                 .$(", cache=").$(executionContext.isCacheHit())
                 .I$();

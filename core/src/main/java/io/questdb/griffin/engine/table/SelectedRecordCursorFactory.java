@@ -147,6 +147,11 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public long getAuxPageSize(int columnIndex) {
+            return baseFrame.getAuxPageSize(columnCrossIndex.getQuick(columnIndex));
+        }
+
+        @Override
         public BitmapIndexReader getBitmapIndexReader(int columnIndex, int dirForward) {
             return baseFrame.getBitmapIndexReader(columnCrossIndex.getQuick(columnIndex), dirForward);
         }

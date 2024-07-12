@@ -26,7 +26,7 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.vm.MemoryCARWImpl;
-import io.questdb.cairo.vm.NullMemoryMR;
+import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.vm.api.MemoryCR;
@@ -58,11 +58,13 @@ public class PageFrameMemoryPool implements QuietCloseable {
     );
     private final PageFrameMemoryImpl frameMemory = new PageFrameMemoryImpl();
     private final NativeFrameRecord nativeFrameRecord;
-    private final LongList tmpAuxPageAddresses = new LongList(); // Holds addresses for non-native frames.
+    private final LongList tmpAuxPageAddresses = new LongList(); // Holds aux addresses for non-native frames.
+    private final LongList tmpAuxPageSizes = new LongList(); // Holds aux sizes for non-native frames.
     private final LongList tmpPageAddresses = new LongList(); // Holds addresses for non-native frames.
     private final LongList tmpPageSizes = new LongList(); // Holds sizes for non-native frames.
     private PageFrameAddressCache addressCache;
     private LongList auxPageAddresses;
+    private LongList auxPageSizes;
     private byte frameFormat = -1;
     private int frameIndex = -1;
     private LongList pageAddresses;
@@ -81,6 +83,7 @@ public class PageFrameMemoryPool implements QuietCloseable {
         pageAddresses = null;
         auxPageAddresses = null;
         pageSizes = null;
+        auxPageSizes = null;
     }
 
     public int getColumnShiftBits(int columnIndex) {
@@ -106,19 +109,23 @@ public class PageFrameMemoryPool implements QuietCloseable {
             tmpPageAddresses.clear();
             tmpAuxPageAddresses.clear();
             tmpPageSizes.clear();
+            tmpAuxPageSizes.clear();
             final int columnCount = addressCache.getColumnCount();
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 tmpPageAddresses.add(columnChunks.getQuick(2 * columnIndex).addressOf(0));
                 tmpAuxPageAddresses.add(columnChunks.getQuick(2 * columnIndex + 1).addressOf(0));
                 tmpPageSizes.add(columnChunks.getQuick(2 * columnIndex).size());
+                tmpAuxPageSizes.add(columnChunks.getQuick(2 * columnIndex + 1).size());
             }
             pageAddresses = tmpPageAddresses;
             auxPageAddresses = tmpAuxPageAddresses;
             pageSizes = tmpPageSizes;
+            auxPageSizes = tmpAuxPageSizes;
         } else {
             pageAddresses = addressCache.getPageAddresses(frameIndex);
             auxPageAddresses = addressCache.getAuxPageAddresses(frameIndex);
             pageSizes = addressCache.getPageSizes(frameIndex);
+            auxPageSizes = addressCache.getAuxPageSizes(frameIndex);
         }
         return frameMemory;
     }
@@ -243,6 +250,10 @@ public class PageFrameMemoryPool implements QuietCloseable {
         return auxPageAddresses.getQuick(columnIndex);
     }
 
+    private long getAuxPageSize(int columnIndex) {
+        return auxPageSizes.getQuick(columnIndex);
+    }
+
     private long getPageAddress(int columnIndex) {
         return pageAddresses.getQuick(columnIndex);
     }
@@ -276,7 +287,7 @@ public class PageFrameMemoryPool implements QuietCloseable {
         public BinarySequence getBin(int columnIndex) {
             final long dataPageAddress = memoryCache.getPageAddress(columnIndex);
             if (dataPageAddress == 0) {
-                return NullMemoryMR.INSTANCE.getBin(0);
+                return NullMemoryCMR.INSTANCE.getBin(0);
             }
             final long indexPageAddress = memoryCache.getAuxPageAddress(columnIndex);
             final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + (rowIndex << 3));
@@ -288,7 +299,7 @@ public class PageFrameMemoryPool implements QuietCloseable {
         public long getBinLen(int columnIndex) {
             final long dataPageAddress = memoryCache.getPageAddress(columnIndex);
             if (dataPageAddress == 0) {
-                return NullMemoryMR.INSTANCE.getBinLen(0);
+                return NullMemoryCMR.INSTANCE.getBinLen(0);
             }
             final long indexPageAddress = memoryCache.getAuxPageAddress(columnIndex);
             final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + (rowIndex << 3));
@@ -299,7 +310,7 @@ public class PageFrameMemoryPool implements QuietCloseable {
         public boolean getBool(int columnIndex) {
             final long address = memoryCache.getPageAddress(columnIndex);
             if (address == 0) {
-                return NullMemoryMR.INSTANCE.getBool(0);
+                return NullMemoryCMR.INSTANCE.getBool(0);
             }
             return Unsafe.getUnsafe().getByte(address + rowIndex) == 1;
         }
@@ -308,7 +319,7 @@ public class PageFrameMemoryPool implements QuietCloseable {
         public byte getByte(int columnIndex) {
             final long address = memoryCache.getPageAddress(columnIndex);
             if (address == 0) {
-                return NullMemoryMR.INSTANCE.getByte(0);
+                return NullMemoryCMR.INSTANCE.getByte(0);
             }
             return Unsafe.getUnsafe().getByte(address + rowIndex);
         }
@@ -317,7 +328,7 @@ public class PageFrameMemoryPool implements QuietCloseable {
         public char getChar(int columnIndex) {
             final long address = memoryCache.getPageAddress(columnIndex);
             if (address == 0) {
-                return NullMemoryMR.INSTANCE.getChar(0);
+                return NullMemoryCMR.INSTANCE.getChar(0);
             }
             return Unsafe.getUnsafe().getChar(address + (rowIndex << 1));
         }
@@ -326,7 +337,7 @@ public class PageFrameMemoryPool implements QuietCloseable {
         public double getDouble(int columnIndex) {
             final long address = memoryCache.getPageAddress(columnIndex);
             if (address == 0) {
-                return NullMemoryMR.INSTANCE.getDouble(0);
+                return NullMemoryCMR.INSTANCE.getDouble(0);
             }
             return Unsafe.getUnsafe().getDouble(address + (rowIndex << 3));
         }
@@ -335,7 +346,7 @@ public class PageFrameMemoryPool implements QuietCloseable {
         public float getFloat(int columnIndex) {
             final long address = memoryCache.getPageAddress(columnIndex);
             if (address == 0) {
-                return NullMemoryMR.INSTANCE.getFloat(0);
+                return NullMemoryCMR.INSTANCE.getFloat(0);
             }
             return Unsafe.getUnsafe().getFloat(address + (rowIndex << 2));
         }
@@ -344,7 +355,7 @@ public class PageFrameMemoryPool implements QuietCloseable {
         public byte getGeoByte(int columnIndex) {
             final long address = memoryCache.getPageAddress(columnIndex);
             if (address == 0) {
-                return NullMemoryMR.INSTANCE.getByte(0);
+                return NullMemoryCMR.INSTANCE.getByte(0);
             }
             return Unsafe.getUnsafe().getByte(address + rowIndex);
         }
@@ -353,7 +364,7 @@ public class PageFrameMemoryPool implements QuietCloseable {
         public int getGeoInt(int columnIndex) {
             final long address = memoryCache.getPageAddress(columnIndex);
             if (address == 0) {
-                return NullMemoryMR.INSTANCE.getInt(0);
+                return NullMemoryCMR.INSTANCE.getInt(0);
             }
             return Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
         }
@@ -362,7 +373,7 @@ public class PageFrameMemoryPool implements QuietCloseable {
         public long getGeoLong(int columnIndex) {
             final long address = memoryCache.getPageAddress(columnIndex);
             if (address == 0) {
-                return NullMemoryMR.INSTANCE.getLong(0);
+                return NullMemoryCMR.INSTANCE.getLong(0);
             }
             return Unsafe.getUnsafe().getLong(address + (rowIndex << 3));
         }
@@ -371,7 +382,7 @@ public class PageFrameMemoryPool implements QuietCloseable {
         public short getGeoShort(int columnIndex) {
             final long address = memoryCache.getPageAddress(columnIndex);
             if (address == 0) {
-                return NullMemoryMR.INSTANCE.getShort(0);
+                return NullMemoryCMR.INSTANCE.getShort(0);
             }
             return Unsafe.getUnsafe().getShort(address + (rowIndex << 1));
         }
@@ -380,7 +391,7 @@ public class PageFrameMemoryPool implements QuietCloseable {
         public int getIPv4(int columnIndex) {
             final long address = memoryCache.getPageAddress(columnIndex);
             if (address == 0) {
-                return NullMemoryMR.INSTANCE.getIPv4(0);
+                return NullMemoryCMR.INSTANCE.getIPv4(0);
             }
             return Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
         }
@@ -389,7 +400,7 @@ public class PageFrameMemoryPool implements QuietCloseable {
         public int getInt(int columnIndex) {
             final long address = memoryCache.getPageAddress(columnIndex);
             if (address == 0) {
-                return NullMemoryMR.INSTANCE.getInt(0);
+                return NullMemoryCMR.INSTANCE.getInt(0);
             }
             return Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
         }
@@ -398,7 +409,7 @@ public class PageFrameMemoryPool implements QuietCloseable {
         public long getLong(int columnIndex) {
             final long address = memoryCache.getPageAddress(columnIndex);
             if (address == 0) {
-                return NullMemoryMR.INSTANCE.getLong(0);
+                return NullMemoryCMR.INSTANCE.getLong(0);
             }
             return Unsafe.getUnsafe().getLong(address + (rowIndex << 3));
         }
@@ -407,7 +418,7 @@ public class PageFrameMemoryPool implements QuietCloseable {
         public long getLong128Hi(int columnIndex) {
             long address = memoryCache.getPageAddress(columnIndex);
             if (address == 0) {
-                return NullMemoryMR.INSTANCE.getLong128Hi();
+                return NullMemoryCMR.INSTANCE.getLong128Hi();
             }
             return Unsafe.getUnsafe().getLong(address + (rowIndex << 4) + Long.BYTES);
         }
@@ -416,7 +427,7 @@ public class PageFrameMemoryPool implements QuietCloseable {
         public long getLong128Lo(int columnIndex) {
             long address = memoryCache.getPageAddress(columnIndex);
             if (address == 0) {
-                return NullMemoryMR.INSTANCE.getLong128Lo();
+                return NullMemoryCMR.INSTANCE.getLong128Lo();
             }
             return Unsafe.getUnsafe().getLong(address + (rowIndex << 4));
         }
@@ -425,7 +436,7 @@ public class PageFrameMemoryPool implements QuietCloseable {
         public void getLong256(int columnIndex, CharSink<?> sink) {
             final long address = memoryCache.getPageAddress(columnIndex);
             if (address == 0) {
-                NullMemoryMR.INSTANCE.getLong256(0, sink);
+                NullMemoryCMR.INSTANCE.getLong256(0, sink);
                 return;
             }
             getLong256(address + rowIndex * Long256.BYTES, sink);
@@ -447,7 +458,7 @@ public class PageFrameMemoryPool implements QuietCloseable {
         public short getShort(int columnIndex) {
             final long address = memoryCache.getPageAddress(columnIndex);
             if (address == 0) {
-                return NullMemoryMR.INSTANCE.getShort(0);
+                return NullMemoryCMR.INSTANCE.getShort(0);
             }
             return Unsafe.getUnsafe().getShort(address + (rowIndex << 1));
         }
@@ -456,7 +467,7 @@ public class PageFrameMemoryPool implements QuietCloseable {
         public CharSequence getStrA(int columnIndex) {
             final long dataPageAddress = memoryCache.getPageAddress(columnIndex);
             if (dataPageAddress == 0) {
-                return NullMemoryMR.INSTANCE.getStrA(0);
+                return NullMemoryCMR.INSTANCE.getStrA(0);
             }
             final long indexPageAddress = memoryCache.getAuxPageAddress(columnIndex);
             final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + (rowIndex << 3));
@@ -468,7 +479,7 @@ public class PageFrameMemoryPool implements QuietCloseable {
         public CharSequence getStrB(int columnIndex) {
             final long dataPageAddress = memoryCache.getPageAddress(columnIndex);
             if (dataPageAddress == 0) {
-                return NullMemoryMR.INSTANCE.getStrB(0);
+                return NullMemoryCMR.INSTANCE.getStrB(0);
             }
             final long indexPageAddress = memoryCache.getAuxPageAddress(columnIndex);
             final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + (rowIndex << 3));
@@ -480,7 +491,7 @@ public class PageFrameMemoryPool implements QuietCloseable {
         public int getStrLen(int columnIndex) {
             final long dataPageAddress = memoryCache.getPageAddress(columnIndex);
             if (dataPageAddress == 0) {
-                return NullMemoryMR.INSTANCE.getStrLen(0);
+                return NullMemoryCMR.INSTANCE.getStrLen(0);
             }
             final long indexPageAddress = memoryCache.getAuxPageAddress(columnIndex);
             final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + (rowIndex << 3));
@@ -533,7 +544,7 @@ public class PageFrameMemoryPool implements QuietCloseable {
         private void getLong256(int columnIndex, Long256Acceptor sink) {
             final long columnAddress = memoryCache.getPageAddress(columnIndex);
             if (columnAddress == 0) {
-                NullMemoryMR.INSTANCE.getLong256(0, sink);
+                NullMemoryCMR.INSTANCE.getLong256(0, sink);
                 return;
             }
             sink.fromAddress(columnAddress + (rowIndex << 5));
@@ -574,8 +585,17 @@ public class PageFrameMemoryPool implements QuietCloseable {
             if (auxPageAddress == 0) {
                 return null; // Column top.
             }
+            final long auxPageLim = memoryCache.getAuxPageSize(columnIndex);
             final long dataPageAddress = memoryCache.getPageAddress(columnIndex);
-            return VarcharTypeDriver.getSplitValue(auxPageAddress, dataPageAddress, rowIndex, utf8View);
+            final long dataPageLim = memoryCache.getPageSize(columnIndex);
+            return VarcharTypeDriver.getSplitValue(
+                    auxPageAddress,
+                    auxPageLim,
+                    dataPageAddress,
+                    dataPageLim,
+                    rowIndex,
+                    utf8View
+            );
         }
     }
 
@@ -589,6 +609,11 @@ public class PageFrameMemoryPool implements QuietCloseable {
         @Override
         public LongList getAuxPageAddresses() {
             return auxPageAddresses;
+        }
+
+        @Override
+        public LongList getAuxPageSizes() {
+            return auxPageSizes;
         }
 
         @Override

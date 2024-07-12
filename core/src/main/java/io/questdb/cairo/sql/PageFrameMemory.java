@@ -37,6 +37,8 @@ public interface PageFrameMemory {
 
     LongList getAuxPageAddresses();
 
+    LongList getAuxPageSizes();
+
     int getColumnCount();
 
     byte getFrameFormat();

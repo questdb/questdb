@@ -29,8 +29,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.CharFunction;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
-import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -238,22 +236,8 @@ public class CharFunctionTest {
     }
 
     @Test
-    public void testGetVarcharToSink() {
-        Utf8Sink sink = new Utf8StringSink();
-        function.getVarchar(null, sink);
-        TestUtils.assertEquals("4", sink.toString());
-    }
-
-    @Test
     public void testGetZeroVarchar() {
         Assert.assertNull(zeroFunc.getVarcharA(null));
         Assert.assertNull(zeroFunc.getVarcharB(null));
-    }
-
-    @Test
-    public void testGetZeroVarcharToSink() {
-        Utf8Sink sink = new Utf8StringSink();
-        zeroFunc.getVarchar(null, sink);
-        TestUtils.assertEquals("", sink.toString());
     }
 }

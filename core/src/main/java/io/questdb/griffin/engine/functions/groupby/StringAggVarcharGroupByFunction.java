@@ -37,7 +37,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.Nullable;
 
 class StringAggVarcharGroupByFunction extends VarcharFunction implements UnaryFunction, GroupByFunction {
@@ -121,11 +120,6 @@ class StringAggVarcharGroupByFunction extends VarcharFunction implements UnaryFu
     @Override
     public int getValueIndex() {
         return valueIndex;
-    }
-
-    @Override
-    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-        utf8Sink.put(getVarcharA(rec));
     }
 
     @Override

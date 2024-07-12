@@ -27,7 +27,7 @@ package io.questdb.cairo.sql;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
-import io.questdb.cairo.vm.NullMemoryMR;
+import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.*;
@@ -51,6 +51,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
     private final Utf8SplitString utf8ViewA = new Utf8SplitString(true);
     private final Utf8SplitString utf8ViewB = new Utf8SplitString(true);
     private LongList auxPageAddresses;
+    private LongList auxPageLimits;
     private int frameIndex;
     private LongList pageAddresses;
     private LongList pageLimits;
@@ -69,6 +70,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
         this.pageAddresses = other.pageAddresses;
         this.auxPageAddresses = other.auxPageAddresses;
         this.pageLimits = other.pageLimits;
+        this.auxPageLimits = other.auxPageLimits;
     }
 
     @Override
@@ -85,7 +87,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
             final long pageLimit = pageLimits.getQuick(columnIndex);
             return getBin(dataPageAddress, offset, pageLimit, bsview);
         }
-        return NullMemoryMR.INSTANCE.getBin(0);
+        return NullMemoryCMR.INSTANCE.getBin(0);
     }
 
     @Override
@@ -96,7 +98,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
             final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + (rowIndex << 3));
             return Unsafe.getUnsafe().getLong(dataPageAddress + offset);
         }
-        return NullMemoryMR.INSTANCE.getBinLen(0);
+        return NullMemoryCMR.INSTANCE.getBinLen(0);
     }
 
     @Override
@@ -105,7 +107,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
         if (address != 0) {
             return Unsafe.getUnsafe().getByte(address + rowIndex) == 1;
         }
-        return NullMemoryMR.INSTANCE.getBool(0);
+        return NullMemoryCMR.INSTANCE.getBool(0);
     }
 
     @Override
@@ -114,7 +116,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
         if (address != 0) {
             return Unsafe.getUnsafe().getByte(address + rowIndex);
         }
-        return NullMemoryMR.INSTANCE.getByte(0);
+        return NullMemoryCMR.INSTANCE.getByte(0);
     }
 
     @Override
@@ -123,7 +125,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
         if (address != 0) {
             return Unsafe.getUnsafe().getChar(address + (rowIndex << 1));
         }
-        return NullMemoryMR.INSTANCE.getChar(0);
+        return NullMemoryCMR.INSTANCE.getChar(0);
     }
 
     @Override
@@ -132,7 +134,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
         if (address != 0) {
             return Unsafe.getUnsafe().getDouble(address + (rowIndex << 3));
         }
-        return NullMemoryMR.INSTANCE.getDouble(0);
+        return NullMemoryCMR.INSTANCE.getDouble(0);
     }
 
     @Override
@@ -141,7 +143,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
         if (address != 0) {
             return Unsafe.getUnsafe().getFloat(address + (rowIndex << 2));
         }
-        return NullMemoryMR.INSTANCE.getFloat(0);
+        return NullMemoryCMR.INSTANCE.getFloat(0);
     }
 
     @Override
@@ -150,7 +152,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
         if (address != 0) {
             return Unsafe.getUnsafe().getByte(address + rowIndex);
         }
-        return NullMemoryMR.INSTANCE.getByte(0);
+        return NullMemoryCMR.INSTANCE.getByte(0);
     }
 
     @Override
@@ -159,7 +161,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
         if (address != 0) {
             return Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
         }
-        return NullMemoryMR.INSTANCE.getInt(0);
+        return NullMemoryCMR.INSTANCE.getInt(0);
     }
 
     @Override
@@ -168,7 +170,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
         if (address != 0) {
             return Unsafe.getUnsafe().getLong(address + (rowIndex << 3));
         }
-        return NullMemoryMR.INSTANCE.getLong(0);
+        return NullMemoryCMR.INSTANCE.getLong(0);
     }
 
     @Override
@@ -177,7 +179,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
         if (address != 0) {
             return Unsafe.getUnsafe().getShort(address + (rowIndex << 1));
         }
-        return NullMemoryMR.INSTANCE.getShort(0);
+        return NullMemoryCMR.INSTANCE.getShort(0);
     }
 
     @Override
@@ -186,7 +188,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
         if (address != 0) {
             return Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
         }
-        return NullMemoryMR.INSTANCE.getIPv4(0);
+        return NullMemoryCMR.INSTANCE.getIPv4(0);
     }
 
     @Override
@@ -195,7 +197,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
         if (address != 0) {
             return Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
         }
-        return NullMemoryMR.INSTANCE.getInt(0);
+        return NullMemoryCMR.INSTANCE.getInt(0);
     }
 
     @Override
@@ -204,7 +206,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
         if (address != 0) {
             return Unsafe.getUnsafe().getLong(address + (rowIndex << 3));
         }
-        return NullMemoryMR.INSTANCE.getLong(0);
+        return NullMemoryCMR.INSTANCE.getLong(0);
     }
 
     @Override
@@ -213,7 +215,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
         if (address != 0) {
             return Unsafe.getUnsafe().getLong(address + (rowIndex << 4) + Long.BYTES);
         }
-        return NullMemoryMR.INSTANCE.getLong128Hi();
+        return NullMemoryCMR.INSTANCE.getLong128Hi();
     }
 
     @Override
@@ -222,7 +224,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
         if (address != 0) {
             return Unsafe.getUnsafe().getLong(address + (rowIndex << 4));
         }
-        return NullMemoryMR.INSTANCE.getLong128Lo();
+        return NullMemoryCMR.INSTANCE.getLong128Lo();
     }
 
     @Override
@@ -232,7 +234,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
             getLong256(address + rowIndex * Long256.BYTES, sink);
             return;
         }
-        NullMemoryMR.INSTANCE.getLong256(0, sink);
+        NullMemoryCMR.INSTANCE.getLong256(0, sink);
     }
 
     @Override
@@ -258,7 +260,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
         if (address != 0) {
             return Unsafe.getUnsafe().getShort(address + (rowIndex << 1));
         }
-        return NullMemoryMR.INSTANCE.getShort(0);
+        return NullMemoryCMR.INSTANCE.getShort(0);
     }
 
     @Override
@@ -270,7 +272,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
             final long pageLimit = pageLimits.getQuick(columnIndex);
             return getStrA(dataPageAddress, offset, pageLimit, csviewA);
         }
-        return NullMemoryMR.INSTANCE.getStrA(0);
+        return NullMemoryCMR.INSTANCE.getStrA(0);
     }
 
     @Override
@@ -282,7 +284,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
             final long pageLimit = pageLimits.getQuick(columnIndex);
             return getStrA(dataPageAddress, offset, pageLimit, csviewB);
         }
-        return NullMemoryMR.INSTANCE.getStrB(0);
+        return NullMemoryCMR.INSTANCE.getStrB(0);
     }
 
     @Override
@@ -293,13 +295,13 @@ public class PageFrameMemoryRecord implements Record, Closeable {
             final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + (rowIndex << 3));
             return Unsafe.getUnsafe().getInt(dataPageAddress + offset);
         }
-        return NullMemoryMR.INSTANCE.getStrLen(0);
+        return NullMemoryCMR.INSTANCE.getStrLen(0);
     }
 
     @Override
     public CharSequence getSymA(int columnIndex) {
         final long address = pageAddresses.getQuick(columnIndex);
-        int key = NullMemoryMR.INSTANCE.getInt(0);
+        int key = NullMemoryCMR.INSTANCE.getInt(0);
         if (address != 0) {
             key = Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
         }
@@ -343,6 +345,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
         pageAddresses = frameMemory.getPageAddresses();
         auxPageAddresses = frameMemory.getAuxPageAddresses();
         pageLimits = frameMemory.getPageSizes();
+        auxPageLimits = frameMemory.getAuxPageSizes();
     }
 
     public void of(SymbolTableSource symbolTableSource) {
@@ -355,6 +358,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
         pageAddresses = null;
         auxPageAddresses = null;
         pageLimits = null;
+        auxPageLimits = null;
     }
 
     public void setRowIndex(long rowIndex) {
@@ -386,7 +390,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
             sink.fromAddress(columnAddress + (rowIndex << 5));
             return;
         }
-        NullMemoryMR.INSTANCE.getLong256(0, sink);
+        NullMemoryCMR.INSTANCE.getLong256(0, sink);
     }
 
     private void getLong256(long offset, CharSink<?> sink) {
@@ -431,8 +435,17 @@ public class PageFrameMemoryRecord implements Record, Closeable {
     private Utf8Sequence getVarchar(int columnIndex, Utf8SplitString utf8View) {
         final long auxPageAddress = auxPageAddresses.getQuick(columnIndex);
         if (auxPageAddress != 0) {
+            final long varcharAuxPageLim = auxPageLimits.getQuick(columnIndex);
             final long dataPageAddress = pageAddresses.getQuick(columnIndex);
-            return VarcharTypeDriver.getSplitValue(auxPageAddress, dataPageAddress, rowIndex, utf8View);
+            final long dataPageLim = dataPageAddress + pageLimits.getQuick(columnIndex);
+            return VarcharTypeDriver.getSplitValue(
+                    auxPageAddress,
+                    varcharAuxPageLim,
+                    dataPageAddress,
+                    dataPageLim,
+                    rowIndex,
+                    utf8View
+            );
         }
         return null; // Column top.
     }

@@ -25,12 +25,13 @@
 package io.questdb.std.str;
 
 import io.questdb.std.Unsafe;
+import io.questdb.std.bytes.ByteSequence;
 import org.jetbrains.annotations.NotNull;
 
 /**
  * A sequence of UTF-8 bytes.
  */
-public interface Utf8Sequence {
+public interface Utf8Sequence extends ByteSequence {
 
     /**
      * Returns a CharSequence view of the sequence.
@@ -100,6 +101,16 @@ public interface Utf8Sequence {
      * This is named `size` instead of `length` to avoid collision withs the `CharSequence` interface.
      */
     int size();
+
+    /**
+     * Number of bytes contiguously addressable bytes at the end of the sequence.
+     * This is useful if we need to access the data zero-copy via simd instructions.
+     * <p>
+     * The returned value, is the number of addressable bytes past `hi()`.
+     */
+    default long tailPadding() {
+        return 0;
+    }
 
     default void writeTo(long addr, int lo, int hi) {
         int i = lo;
