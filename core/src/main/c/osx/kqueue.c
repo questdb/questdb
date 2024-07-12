@@ -129,7 +129,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_KqueueAccessor_kevent
     long MILLION = 1000 * 1000;
     long BILLION = 1000 * MILLION;
 
-    long remaining_timeout_nsec = (long)timeout_msec * MILLION;
+    long remaining_timeout_nsec = timeout_msec * MILLION;
     int res = -1;
     do {
         int tv_sec = remaining_timeout_nsec / BILLION;
@@ -147,7 +147,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_KqueueAccessor_kevent
             long elapsed_nsec = (end - start) * BILLION / CLOCKS_PER_SEC;
             remaining_timeout_nsec -= elapsed_nsec;
         }
-    } while ( (res == -1) && (errno == EINTR) && remaining_timeout_nsec >= 0 );
+    } while ( res == -1 && errno == EINTR && remaining_timeout_nsec >= 0 );
     return res;
 }
 
