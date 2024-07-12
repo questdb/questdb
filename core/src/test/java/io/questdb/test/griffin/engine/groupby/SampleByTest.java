@@ -3926,7 +3926,6 @@ public class SampleByTest extends AbstractCairoTest {
                     "select ts, avg(price) from tbl sample by 5m align to calendar with offset '10:00'",
                     "Sample By\n" +
                             "  fill: none\n" +
-                            "  range: (null,null)\n" +
                             "  values: [avg(price)]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
