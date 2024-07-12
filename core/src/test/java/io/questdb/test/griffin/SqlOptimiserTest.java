@@ -2239,6 +2239,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertPlanNoLeakCheck(query, "Sample By\n" +
                     "  fill: value\n" +
+                    "  range: ('2017-12-20','2018-01-31')\n" +
                     "  values: [avg(x),sum(x)]\n" +
                     "    DataFrame\n" +
                     "        Row forward scan\n" +

@@ -196,9 +196,9 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                     gapFilling = true;
 
                     if (rangeBound == RANGE_UPPER_BOUND || rangeBound == RANGE_UNBOUNDED) {
-                        while (nextBucket < minTimestamp) {
-                            moveToNextBucket();
-                        }
+                        fillOffset = timestampSampler.bucketIndex(minTimestamp);
+                        nextBucket = minTimestamp;
+
 
                         while (recordWasPresent()) {
                             moveToNextBucket();
