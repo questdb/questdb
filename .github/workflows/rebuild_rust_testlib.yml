@@ -135,7 +135,7 @@ jobs:
             core/src/main/resources/io/questdb/bin/linux-aarch64/libqdbsqllogictest.so
           key: nativelibs-armlinux-${{ github.sha }}
   collect-commit-and-push:
-    needs: [ build-all-macos,build-cxx-windows, build-rust-windows, build-all-linux-amd64, build-all-linux-aarch64 ]
+    needs: [ build-all-macos, build-rust-windows, build-all-linux-amd64, build-all-linux-aarch64 ]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
