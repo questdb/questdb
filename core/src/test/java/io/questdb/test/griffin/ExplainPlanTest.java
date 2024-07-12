@@ -2555,6 +2555,49 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByHourAndFilterIsParallel() throws Exception {
+        assertPlan(
+                "create table a (ts timestamp, d double)",
+                "select hour(ts), min(d) from a where d > 0 group by hour(ts)",
+                "Async JIT Group By workers: 1\n" +
+                        "  keys: [hour]\n" +
+                        "  values: [min(d)]\n" +
+                        "  filter: 0<d\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testGroupByHourNonTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table a (ts timestamp, d double)");
+            assertException(
+                    "select hour(d), min(d) from a",
+                    7,
+                    "unexpected argument for function: hour. expected args: (TIMESTAMP). actual args: (DOUBLE)"
+            );
+        });
+    }
+
+    @Test
+    public void testGroupByHourUnorderedColumns() throws Exception {
+        assertPlan(
+                "create table a (ts timestamp, d double)",
+                "select min(d), hour(ts) from a group by hour(ts)",
+                "VirtualRecord\n" +
+                        "  functions: [min,hour]\n" +
+                        "    GroupBy vectorized: true workers: 1\n" +
+                        "      keys: [ts]\n" +
+                        "      values: [min(d)]\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
     public void testGroupByInt1() throws Exception {
         assertPlan(
                 "create table a (i int, d double)",
@@ -10539,7 +10582,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
         }
     }
 
-    private <T> ObjList<T> list(T... values) {
+    // you cannot win with JDK8, without "SafeVarargs" - a warning we corrupt something
+    // with "SafeVarargs" - JDK8 wants private method to be "final", even more final than private.
+    // this bunch of suppressions is to shut intellij code inspection up
+    @SuppressWarnings("FinalPrivateMethod")
+    @SafeVarargs
+    private final <T> ObjList<T> list(T... values) {
         return new ObjList<>(values);
     }
 
