@@ -1,0 +1,13 @@
+name: Build and Push Rust libraries
+on:
+  workflow_dispatch:
+# This workflow is triggered manually from the Actions tab.
+# It's meant to be run on a PR that changes the Rust Test lib code.
+
+
+jobs:
+  my-job:
+    runs-on: ubuntu-latest
+    steps:
+      - name: my-step
+        run: echo "Hello World!"
