@@ -71,7 +71,7 @@ public class PageFrameAddressCache implements Mutable {
                 framePageSizes.add(frame.getPageSize(columnIndex));
                 if (ColumnType.isVarSize(columnTypes.getQuick(columnIndex))) {
                     frameAuxPageAddresses.add(frame.getAuxPageAddress(columnIndex));
-                    framePageSizes.add(frame.getAuxPageSize(columnIndex));
+                    frameAuxPageSizes.add(frame.getAuxPageSize(columnIndex));
                 } else {
                     frameAuxPageAddresses.add(0);
                     frameAuxPageSizes.add(0);

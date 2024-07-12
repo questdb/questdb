@@ -435,7 +435,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
     private Utf8Sequence getVarchar(int columnIndex, Utf8SplitString utf8View) {
         final long auxPageAddress = auxPageAddresses.getQuick(columnIndex);
         if (auxPageAddress != 0) {
-            final long varcharAuxPageLim = auxPageLimits.getQuick(columnIndex);
+            final long varcharAuxPageLim = auxPageAddress + auxPageLimits.getQuick(columnIndex);
             final long dataPageAddress = pageAddresses.getQuick(columnIndex);
             final long dataPageLim = dataPageAddress + pageLimits.getQuick(columnIndex);
             return VarcharTypeDriver.getSplitValue(
