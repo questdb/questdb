@@ -188,7 +188,7 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
                     pageSizes.setQuick(2 * i, dataSize);
                     pageSizes.setQuick(2 * i + 1, auxOffsetHi - auxOffsetLo);
                 }
-            } else {
+            } else { // column top
                 columnPageAddress.setQuick(2 * i, 0);
                 columnPageAddress.setQuick(2 * i + 1, 0);
                 // data page size is used by VectorAggregateFunction as the size hint
