@@ -181,7 +181,7 @@ public class TestCases {
         // SampleByFillNullNotKeyedRecordCursorFactory
         addTestCase("select sum(i) s, ts from x sample by 30m fill(null) align to calendar with offset '10:00'");
 
-        // SampleBy Group by rewrite
+        // FillRangeRecordCursorFactory
         addTestCase("select sum(i) s, ts from x sample by 30m fill(null)");
 
         // SampleByFirstLastRecordCursorFactory
