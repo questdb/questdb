@@ -229,9 +229,9 @@ jobs:
         run: |
           cd core/rust/qdbr-test
           cargo clean
-          cargo build --release
+          cross build --target aarch64-unknown-linux-gnu --release --target-dir `pwd`/target
           mkdir -p ../../src/test/resources/io/questdb/bin/linux-aarch64/
-          cp target/release/libquestdbrtest.so ../../src/test/resources/io/questdb/bin/linux-aarch64/
+          cp target/aarch64-unknown-linux-gnu/release/libquestdbrtest.so ../../src/test/resources/io/questdb/bin/linux-aarch64/
       - name: Check git status
         run: |
           git status
