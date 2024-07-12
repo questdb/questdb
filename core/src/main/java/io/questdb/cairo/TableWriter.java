@@ -1735,6 +1735,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    // returns true if the tx was committed into the table and can be made visible to readers
+    // returns false if the tx was only copied to LAG and not committed - in this case the tx is not visible to readers
     public boolean processWalBlock(
             @Transient Path walPath,
             int timestampIndex,
@@ -7134,7 +7136,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (doubleAllocate) {
                         dataMem.allocate(dataSizeBytes);
                     }
-                    LOG.infoW().$("setAppendPosition [column=").$(metadata.getColumnName(columnIndex)).$(", size=").$(size).$(", dataSizeBytes=").$(dataSizeBytes).$();
                     dataMem.jumpTo(dataSizeBytes);
 
                 }
