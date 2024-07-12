@@ -69,6 +69,7 @@ public class CairoEngine implements Closeable, WriterSource {
     public static final String REASON_BUSY_TABLE_READER_METADATA_POOL = "busyTableReaderMetaPool";
     public static final String REASON_SNAPSHOT_IN_PROGRESS = "snapshotInProgress";
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
+    private static final int MAX_SLEEP_MILLIS = 250;
     protected final CairoConfiguration configuration;
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
     private final CopyContext copyContext;
@@ -249,7 +250,8 @@ public class CairoEngine implements Closeable, WriterSource {
                 try {
                     tableToken = verifyTableName(tableName);
                 } catch (CairoException ex) {
-                    Os.sleep(sleep *= 2);
+                    Os.sleep(sleep);
+                    sleep = Math.min(MAX_SLEEP_MILLIS, sleep * 2);
                     continue;
                 }
             }
@@ -265,7 +267,8 @@ public class CairoEngine implements Closeable, WriterSource {
                 if (isSuspended) {
                     throw CairoException.nonCritical().put("table is suspended [tableName=").put(tableName).put(']');
                 }
-                Os.sleep(sleep *= 2);
+                Os.sleep(sleep);
+                sleep = Math.min(MAX_SLEEP_MILLIS, sleep * 2);
             }
         }
         throw CairoException.nonCritical().put("txn timed out [table=").put(tableName).put(", expectedTxn=").put(seqTxn).put(", writerTxn=").put(writerTxn);
