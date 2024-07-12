@@ -1,4 +1,4 @@
-name: Build and Push Release CXX/Rust libraries
+name: Build and Push Release CXX libraries
 on:
   workflow_dispatch:
 # This workflow is triggered manually from the Actions tab.
@@ -21,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: true
+          submodules: false
       - name: Build Rust Library
         run: |
           cd core/rust/qdb-sqllogictest
@@ -47,7 +47,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: true
+          submodules: false
       - name: Build Rust Library
         run: |
           cd core/rust/qdb-sqllogictest
@@ -91,7 +91,7 @@ jobs:
           apt install git python3 wget ca-certificates build-essential zstd -y
       - uses: actions/checkout@v4
         with:
-          submodules: true
+          submodules: false
       - name: Install toolchains (Rust)
         run: |
           python3 ./.github/prepare_rust_env.py
@@ -114,7 +114,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: true
+          submodules: false
       - name: Install rs-cross
         run: |
           cargo install cross
