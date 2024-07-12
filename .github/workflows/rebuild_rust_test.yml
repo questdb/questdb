@@ -12,7 +12,7 @@ on:
 #    It uses cross-compilation for ARM Linux and Windows.
 #
 # Each build job saves the resulting binaries to the cache under a unique key
-# When all build jobs are finished, the collect-commit-and-push job restores the binaries from the cache
+# When all build jobs are finished, the collect-commit-and-push j ob restores the binaries from the cache
 # and pushes them to the current branch.
 
 jobs:
@@ -101,8 +101,8 @@ jobs:
           cd core/rust/qdb-sqllogictest
           cargo clean
           cargo build --release
-          mkdir -p ../../src/main/resources/io/questdb/bin/linux-amd64/
-          cp target/release/libqdbsqllogictest.so ../../src/main/resources/io/questdb/bin/linux-amd64/
+          mkdir -p ../../src/test/resources/io/questdb/bin/linux-amd64/
+          cp target/release/libqdbsqllogictest.so ../../src/test/resources/io/questdb/bin/linux-amd64/
       - name: Save linux-amd64 Libraries to Cache
         uses: actions/cache/save@v3
         with:
@@ -123,8 +123,8 @@ jobs:
           cd core/rust/qdb-sqllogictest
           cargo clean
           cross build --target aarch64-unknown-linux-gnu --release --target-dir `pwd`/target
-          mkdir -p ../../src/main/resources/io/questdb/bin/linux-aarch64/
-          cp target/aarch64-unknown-linux-gnu/release/libqdbsqllogictest.so ../../src/main/resources/io/questdb/bin/linux-aarch64/
+          mkdir -p ../../src/test/resources/io/questdb/bin/linux-aarch64/
+          cp target/aarch64-unknown-linux-gnu/release/libqdbsqllogictest.so ../../src/test/resources/io/questdb/bin/linux-aarch64/
       - name: Check git status
         run: |
           git status
