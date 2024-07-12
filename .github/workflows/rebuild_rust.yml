@@ -1,4 +1,4 @@
-name: Build and Push Release CXX/Rust libraries
+name: Build Rust libraries
 on:
   workflow_dispatch:
 # This workflow is triggered manually from the Actions tab.
