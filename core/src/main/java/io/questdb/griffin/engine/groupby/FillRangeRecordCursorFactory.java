@@ -233,6 +233,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             fillOffset = 0;
         }
 
+
         private Function getFillFunction(int col) {
             if (col == timestampIndex) {
                 return TimestampConstant.newInstance(nextBucket);

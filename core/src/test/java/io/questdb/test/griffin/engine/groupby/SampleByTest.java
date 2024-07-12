@@ -125,7 +125,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(2)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                true
+                false
         );
     }
 
@@ -2908,7 +2908,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "select '2022-12-01T00:02:31.000000Z'::timestamp, 's2', 3 from long_sequence(1) " +
                         ") timestamp(ts) partition by DAY",
                 "ts",
-                true
+                false
         );
     }
 
@@ -3300,7 +3300,7 @@ public class SampleByTest extends AbstractCairoTest {
             }
 
             String plan = "Filter filter: (tstmp>=1669852800000000 and sym='B' and 0<length(sym)*tstmp::long)\n" +
-                    "    SampleBy\n" +
+                    "    Sample By\n" +
                     (isNone(fill) ? "" : "      fill: " + fill + "\n") +
                     "      keys: [tstmp,sym]\n" +
                     "      values: [first(val),avg(val),last(val),max(val)]\n" +
@@ -3897,7 +3897,8 @@ public class SampleByTest extends AbstractCairoTest {
                             "  values: [avg(price)]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: tbl\n"
+                            "        Interval forward scan on: tbl\n" +
+                            "          intervals: [(\"2018-01-01T00:00:00.000000Z\",\"2018-12-31T23:59:59.999999Z\")]n"
             );
             assertPlanNoLeakCheck(
                     "select ts, avg(price) from tbl sample by 5m from '2018' align to calendar offset with '10:00'",
@@ -6799,7 +6800,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "FLOP\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-04T09:00:00.000000Z\n" +
                         "WVDK\tnull\tnull\tnull\tnull\tnull\tnull\t1970-01-04T09:00:00.000000Z\n" +
                         "JOXP\t67.29405590773638\t76.0625\t1165635863\t2316\t9\t-4547802916868961458\t1970-01-04T09:00:00.000000Z\n",
-                true
+                false
         );
     }
 
@@ -6945,7 +6946,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "UVSD\t49.42890511958454\t1970-01-04T06:30:00.000000Z\n" +
                         "\t58.912164838797885\t1970-01-04T07:30:00.000000Z\n" +
                         "KGHV\t67.52509547112409\t1970-01-04T08:30:00.000000Z\n",
-                true,
+                false,
                 true,
                 false
         );
@@ -7240,7 +7241,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "HYRX\tnull\t1970-01-04T09:00:00.000000Z\n" +
                         "UVSD\tnull\t1970-01-04T09:00:00.000000Z\n" +
                         "KGHV\t67.52509547112409\t1970-01-04T09:00:00.000000Z\n",
-                true
+                false
         );
     }
 
@@ -7832,7 +7833,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
                 10,
-                "inconvertible value"
+                "Unsupported type"
         );
     }
 
@@ -8040,7 +8041,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(2200)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                true
+                false
         );
     }
 
@@ -11952,7 +11953,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(40)" +
                         ") timestamp(k) partition by NONE",
                 43,
-                "invalid column: zz"
+                "Invalid column: zz"
         );
     }
 
@@ -12556,7 +12557,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(2)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                true
+                false
         );
     }
 

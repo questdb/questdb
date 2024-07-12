@@ -4456,6 +4456,8 @@ public class SqlOptimiser implements Mutable {
                 // will change the outcome of existing queries, if those supported wildcards for
                 // as group-by keys.
 
+                ObjList<ExpressionNode> maybeKeyed = new ObjList<>();
+
                 for (int i = 0, n = model.getColumns().size(); i < n; i++) {
                     final QueryColumn column = model.getColumns().getQuick(i);
                     final ExpressionNode ast = column.getAst();
@@ -4463,8 +4465,10 @@ public class SqlOptimiser implements Mutable {
                         throw SqlException.$(column.getAst().position, "wildcard column select is not allowed in sample-by queries");
                     }
 
-//                    // verify that it is non-keyed
-//                    if (ast.type == ExpressionNode.)
+                    // it might be a keyed expression
+                    if (ast.type == LITERAL) {
+                        maybeKeyed.add(ast);
+                    }
                 }
 
                 // When timestamp is not explicitly selected, we will
@@ -4517,6 +4521,28 @@ public class SqlOptimiser implements Mutable {
                         if (timestampAlias != null) {
                             timestampColumn = tableNamePrefixedTimestampColumn;
 
+                        }
+                    }
+                }
+
+                if (maybeKeyed.size() > 0) {
+                    for (int i = 0, n = maybeKeyed.size(); i < n; i++) {
+                        final ExpressionNode expr = maybeKeyed.getQuick(i);
+                        // drop out early, since we don't handle keyed
+                        if (!Chars.equalsIgnoreCase(expr.token, timestamp.token) && !Chars.equalsIgnoreCaseNc(expr.token, timestampAlias)
+                                && sampleByFill.size() != 0) {
+                            // recurse nested models
+                            nested.setNestedModel(rewriteSampleBy(nested.getNestedModel()));
+
+                            // join models
+                            for (int j = 1, m = nested.getJoinModels().size(); j < m; j++) {
+                                QueryModel joinModel = nested.getJoinModels().getQuick(j);
+                                joinModel.setNestedModel(rewriteSampleBy(joinModel.getNestedModel()));
+                            }
+
+                            // unions
+                            model.setUnionModel(rewriteSampleBy(model.getUnionModel()));
+                            return model;
                         }
                     }
                 }
