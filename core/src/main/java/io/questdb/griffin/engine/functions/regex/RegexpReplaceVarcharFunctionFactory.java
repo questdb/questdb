@@ -47,6 +47,42 @@ import java.util.regex.Matcher;
 public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctionFactory {
     private static final int INITIAL_SINK_CAPACITY = 16;
 
+    /**
+     * Returns true if the input pattern can operate on a UTF-16 view of a UTF-8 string,
+     * i.e. it only cares about ASCII chars.
+     */
+    public static boolean canSkipUtf8Decoding(CharSequence pattern) {
+        for (int i = 0, n = pattern.length(); i < n; i++) {
+            // Check for non-ASCII chars.
+            if (pattern.charAt(i) > 127) {
+                return false;
+            }
+            // Filter out class character closes with all quantifiers, but ']+'.
+            // That's because classes like '[^0-9]' match single non-digit char while
+            // for UTF-16 view each non-ASCII char is interpreted as multiple chars.
+            if (pattern.charAt(i) == ']' && (i == n - 1 || pattern.charAt(i + 1) != '+')) {
+                return false;
+            }
+            // Filter out everything that involves digits/letters/words/etc.
+            if (pattern.charAt(i) == '\\' && i < n - 1) {
+                switch (pattern.charAt(i + 1)) {
+                    case 'x': // a hexadecimal char literal
+                    case 'D': // a non-digit
+                    case 'd': // a digit
+                    case 'B': // a non-word boundary
+                    case 'b': // a word boundary
+                    case 'S': // a non-whitespace character
+                    case 's': // a whitespace character
+                    case 'W': // a non-word character
+                    case 'w': // a word character
+                    case 'p': // \p{Lower} (a lower-case alphabetic char) and such
+                        return false;
+                }
+            }
+        }
+        return true;
+    }
+
     @Override
     public String getSignature() {
         return "regexp_replace(ØSS)";
@@ -97,30 +133,6 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
 
         final int maxLength = configuration.getStrFunctionMaxBufferLength();
         return new Func(value, pattern, patternPos, replacement, replacementPos, maxLength, position);
-    }
-
-    /**
-     * Returns true if the input pattern can operate on a UTF-16 view of a UTF-8 string,
-     * i.e. it only cares about ASCII chars.
-     */
-    private boolean canSkipUtf8Decoding(CharSequence pattern) {
-        if (!Chars.isAscii(pattern)) {
-            return false;
-        }
-        // First, filter out all class character closes with quantifiers, but ']+'.
-        // That's because classes like '[^0-9]' match single non-digit char while
-        // for UTF-16 view each non-ASCII char is interpreted as multiple chars.
-        for (int i = 0, n = pattern.length(); i < n; i++) {
-            if (pattern.charAt(i) == ']' && (i == n - 1 || pattern.charAt(i + 1) != '+')) {
-                return false;
-            }
-        }
-        // Now, filter out everything that involves digits/letters/words/etc.
-        return !Chars.contains(pattern, "\\D") && !Chars.contains(pattern, "\\x")
-                && !Chars.contains(pattern, "\\B") && !Chars.contains(pattern, "\\b")
-                && !Chars.contains(pattern, "\\S") && !Chars.contains(pattern, "\\s")
-                && !Chars.contains(pattern, "\\W") && !Chars.contains(pattern, "\\w")
-                && !Chars.contains(pattern, "\\p{");
     }
 
     private static class DirectAsciiStringView implements CharSequence, DirectUtf8Sequence {
@@ -236,11 +248,6 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
         @Override
         public Function getArg() {
             return value;
-        }
-
-        @Override
-        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-            utf8Sink.put(getVarchar(rec, utf8SinkA, viewA));
         }
 
         @Override
