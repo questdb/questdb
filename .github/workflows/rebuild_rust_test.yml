@@ -28,12 +28,12 @@ jobs:
           cargo build --release
       - name: Copy Rust Library to the final directory
         run: |
-          cp core/rust/qdb-sqllogictest/target/release/qdbsqllogictest.dll core/src/main/resources/io/questdb/bin/windows-amd64/
+          cp core/rust/qdb-sqllogictest/target/release/qdbsqllogictest.dll core/src/test/resources/io/questdb/bin/windows-amd64/
       - name: Save Windows Rust Library to Cache
         uses: actions/cache/save@v3
         with:
           path: |
-            core/src/main/resources/io/questdb/bin/windows-amd64/qdbsqllogictest.dll
+            core/src/test/resources/io/questdb/bin/windows-amd64/qdbsqllogictest.dll
           key: nativelibs-windows-rust-${{ github.sha }}
           enableCrossOsArchive: true
   build-all-macos:
@@ -56,26 +56,26 @@ jobs:
       - name: Copy darwin-aarch64 Rust Library to the final directory
         if: ${{ matrix.os == 'macos-14' }}
         run: |
-          mkdir -p core/src/main/resources/io/questdb/bin/darwin-aarch64/
-          cp core/rust/qdb-sqllogictest/target/release/libqdbsqllogictest.dylib core/src/main/resources/io/questdb/bin/darwin-aarch64/
+          mkdir -p core/src/test/resources/io/questdb/bin/darwin-aarch64/
+          cp core/rust/qdb-sqllogictest/target/release/libqdbsqllogictest.dylib core/src/test/resources/io/questdb/bin/darwin-aarch64/
       - name: Copy darwin-amd64 Rust Library to the final directory
         if: ${{ matrix.os == 'macos-13' }}
         run: |
-          mkdir -p core/src/main/resources/io/questdb/bin/darwin-amd64/
-          cp core/rust/qdb-sqllogictest/target/release/libqdbsqllogictest.dylib core/src/main/resources/io/questdb/bin/darwin-amd64/
+          mkdir -p core/src/test/resources/io/questdb/bin/darwin-amd64/
+          cp core/rust/qdb-sqllogictest/target/release/libqdbsqllogictest.dylib core/src/test/resources/io/questdb/bin/darwin-amd64/
       - name: Save darwin-aarch64 Libraries to Cache
         if: ${{ matrix.os == 'macos-14' }}
         uses: actions/cache/save@v3
         with:
           path: |
-            core/src/main/resources/io/questdb/bin/darwin-aarch64/libqdbsqllogictest.dylib
+            core/src/test/resources/io/questdb/bin/darwin-aarch64/libqdbsqllogictest.dylib
           key: nativelibs-armosx-${{ github.sha }}
       - name: Save darwin-amd64 Libraries to Cache
         if: ${{ matrix.os == 'macos-13' }}
         uses: actions/cache/save@v3
         with:
           path: |
-            core/src/main/resources/io/questdb/bin/darwin-amd64/libqdbsqllogictest.dylib
+            core/src/test/resources/io/questdb/bin/darwin-amd64/libqdbsqllogictest.dylib
           key: nativelibs-osx-${{ github.sha }}
   build-all-linux-amd64:
     runs-on: ubuntu-latest
@@ -107,7 +107,7 @@ jobs:
         uses: actions/cache/save@v3
         with:
           path: |
-            core/src/main/resources/io/questdb/bin/linux-amd64/libqdbsqllogictest.so
+            core/src/test/resources/io/questdb/bin/linux-amd64/libqdbsqllogictest.so
           key: nativelibs-linux-${{ github.sha }}
   build-all-linux-aarch64:
     runs-on: ubuntu-latest
@@ -132,7 +132,7 @@ jobs:
         uses: actions/cache/save@v3
         with:
           path: |
-            core/src/main/resources/io/questdb/bin/linux-aarch64/libqdbsqllogictest.so
+            core/src/test/resources/io/questdb/bin/linux-aarch64/libqdbsqllogictest.so
           key: nativelibs-armlinux-${{ github.sha }}
   collect-commit-and-push:
     needs: [ build-all-macos, build-rust-windows, build-all-linux-amd64, build-all-linux-aarch64 ]
@@ -141,39 +141,39 @@ jobs:
       - uses: actions/checkout@v4
       - name: Print file sizes before
         run: |
-          mkdir -p ./core/src/main/resources/io/questdb/bin/
           mkdir -p ./core/src/test/resources/io/questdb/bin/
-          find ./core/src/main/resources/io/questdb/bin/ -type f -exec ls -l {} \;
+          mkdir -p ./core/src/test/resources/io/questdb/bin/
+          find ./core/src/test/resources/io/questdb/bin/ -type f -exec ls -l {} \;
           find ./core/src/main/bin/ -type f -exec ls -l {} \;
       - name: Restore darwin-aarch64 Libraries from Cache
         uses: actions/cache/restore@v3
         with:
           path: |
-            core/src/main/resources/io/questdb/bin/darwin-aarch64/libqdbsqllogictest.dylib
+            core/src/test/resources/io/questdb/bin/darwin-aarch64/libqdbsqllogictest.dylib
           key: nativelibs-armosx-${{ github.sha }}
       - name: Restore darwin-amd64 Libraries from Cache
         uses: actions/cache/restore@v3
         with:
           path: |
-            core/src/main/resources/io/questdb/bin/darwin-amd64/libqdbsqllogictest.dylib
+            core/src/test/resources/io/questdb/bin/darwin-amd64/libqdbsqllogictest.dylib
           key: nativelibs-osx-${{ github.sha }}
       - name: Restore linux-amd64 Libraries from Cache
         uses: actions/cache/restore@v3
         with:
           path: |
-            core/src/main/resources/io/questdb/bin/linux-amd64/libqdbsqllogictest.so
+            core/src/test/resources/io/questdb/bin/linux-amd64/libqdbsqllogictest.so
           key: nativelibs-linux-${{ github.sha }}
       - name: Restore linux-aarch64 Libraries from Cache
         uses: actions/cache/restore@v3
         with:
           path: |
-            core/src/main/resources/io/questdb/bin/linux-aarch64/libqdbsqllogictest.so
+            core/src/test/resources/io/questdb/bin/linux-aarch64/libqdbsqllogictest.so
           key: nativelibs-armlinux-${{ github.sha }}
       - name: Restore Windows Rust Library from Cache
         uses: actions/cache/restore@v3
         with:
           path: |
-            core/src/main/resources/io/questdb/bin/windows-amd64/qdbsqllogictest.dll
+            core/src/test/resources/io/questdb/bin/windows-amd64/qdbsqllogictest.dll
           key: nativelibs-windows-rust-${{ github.sha }}
           enableCrossOsArchive: true
       - name: Check git status before
@@ -183,11 +183,11 @@ jobs:
         run: |
           git config --global user.name 'GitHub Actions - Rebuild Native Libraries'
           git config --global user.email 'jaromir@questdb.io'
-          git add core/src/main/resources/io/questdb/bin/darwin-aarch64/libqdbsqllogictest.dylib
-          git add core/src/main/resources/io/questdb/bin/darwin-amd64/libqdbsqllogictest.dylib
-          git add core/src/main/resources/io/questdb/bin/linux-amd64/libqdbsqllogictest.so
-          git add core/src/main/resources/io/questdb/bin/linux-aarch64/libqdbsqllogictest.so
-          git add core/src/main/resources/io/questdb/bin/windows-amd64/qdbsqllogictest.dll
+          git add core/src/test/resources/io/questdb/bin/darwin-aarch64/libqdbsqllogictest.dylib
+          git add core/src/test/resources/io/questdb/bin/darwin-amd64/libqdbsqllogictest.dylib
+          git add core/src/test/resources/io/questdb/bin/linux-amd64/libqdbsqllogictest.so
+          git add core/src/test/resources/io/questdb/bin/linux-aarch64/libqdbsqllogictest.so
+          git add core/src/test/resources/io/questdb/bin/windows-amd64/qdbsqllogictest.dll
           
           git commit -m "chore(build): rebuild Rust libraries"
       - name: Check git status after
@@ -195,7 +195,7 @@ jobs:
           git status
       - name: Print file sizes after
         run: |
-          find ./core/src/main/resources/io/questdb/bin/ -type f -exec ls -l {} \;
+          find ./core/src/test/resources/io/questdb/bin/ -type f -exec ls -l {} \;
           find ./core/src/main/bin/ -type f -exec ls -l {} \;
       - name: Push the files to the current branch
         uses: ad-m/github-push-action@d91a481090679876dfc4178fef17f286781251df
