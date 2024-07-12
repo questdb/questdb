@@ -49,7 +49,7 @@ public class WalEventReader implements Closeable {
 
     public WalEventReader(FilesFacade ff) {
         this.ff = ff;
-        eventMem = Vm.getMRInstance();
+        eventMem = Vm.getCMRInstance();
         eventCursor = new WalEventCursor(eventMem);
     }
 

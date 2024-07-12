@@ -139,8 +139,8 @@ public class PGJobContextTest extends BasePGTest {
     private static final Log LOG = LogFactory.getLog(PGJobContextTest.class);
     private static final int count = 200;
     private static final String createDatesTblStmt = "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + ")) timestamp(ts) partition by DAY";
-    private static String stringTypeName;
     private static List<Object[]> datesArr;
+    private static String stringTypeName;
     private final Rnd bufferSizeRnd = TestUtils.generateRandom(LOG);
     private final boolean walEnabled;
 
@@ -2701,20 +2701,6 @@ if __name__ == "__main__":
         });
     }
 
-    @Ignore//create table as select doesn't time out anymore but can be cancelled manually
-    @Test
-    public void testCreateTableAsSelectTimeout() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, TIMEOUT_FAIL_ON_FIRST_CHECK, (connection, binary, mode, port) -> {
-            try (final PreparedStatement statement = connection.prepareStatement(
-                    "create table tab as (select rnd_double() from long_sequence(1000));")) {
-                statement.execute();
-                Assert.fail();
-            } catch (SQLException e) {
-                TestUtils.assertContains(e.getMessage(), "timeout, query aborted");
-            }
-        });
-    }
-
     @Test
     public void testCreateTableDuplicateColumnName() throws Exception {
         skipOnWalRun(); // non-partitioned table
@@ -4888,6 +4874,208 @@ nodejs code:
                     ) {
                         assertResultSet(expected, sink, rs);
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testJsonExtractBindVariable() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            connection.setAutoCommit(false);
+            connection.prepareStatement("create table json_example as  (\n" +
+                    "  select '{\n" +
+                    "    \"hello\": \"world\",\n" +
+                    "    \"list\": [\n" +
+                    "        1,\n" +
+                    "        2,\n" +
+                    "        3\n" +
+                    "     ],\n" +
+                    "     \"list.of.dicts\": [\n" +
+                    "         {\"hello\": \"world\"},\n" +
+                    "         {\"hello\": \"bob\"}\n" +
+                    "     ]\n" +
+                    "}'::varchar text, timestamp_sequence(0, 100000) ts from long_sequence(10)\n" +
+                    ") timestamp(ts) \n" +
+                    "partition by day\n" +
+                    ";\n").execute();
+            mayDrainWalQueue();
+            sink.clear();
+
+            try (PreparedStatement ps = connection.prepareStatement("select sum(json_extract(text, '.list[1]', 5)) from json_example;")) {
+                try (ResultSet rs = ps.executeQuery()) {
+                    // all rows, null = null is always true
+                    assertResultSet(
+                            "sum[BIGINT]\n" +
+                                    "20\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            try (PreparedStatement ps = connection.prepareStatement("select sum(json_extract(text, '.list[1]')::varchar::int) from json_example;")) {
+                try (ResultSet rs = ps.executeQuery()) {
+                    // all rows, null = null is always true
+                    assertResultSet(
+                            "sum[BIGINT]\n" +
+                                    "20\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            sink.clear();
+            try (PreparedStatement ps = connection.prepareStatement("select sum(json_extract(text, '.list[1]')::int) from json_example;")) {
+                try (ResultSet rs = ps.executeQuery()) {
+                    // all rows, null = null is always true
+                    assertResultSet(
+                            "sum[BIGINT]\n" +
+                                    "20\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            sink.clear();
+            try (PreparedStatement ps = connection.prepareStatement("select sum(json_extract(text, ?, 5)) from json_example;")) {
+                ps.setString(1, ".list[1]");
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "sum[BIGINT]\n" +
+                                    "20\n",
+                            sink,
+                            rs
+                    );
+                }
+                ps.setString(1, ".list[2]");
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "sum[BIGINT]\n" +
+                                    "30\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            sink.clear();
+            try (PreparedStatement ps = connection.prepareStatement("select sum(json_extract(text, ?)::varchar::int) from json_example;")) {
+                ps.setString(1, ".list[1]");
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "sum[BIGINT]\n" +
+                                    "20\n",
+                            sink,
+                            rs
+                    );
+                }
+
+                ps.setString(1, ".list[2]");
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "sum[BIGINT]\n" +
+                                    "30\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            sink.clear();
+            try (PreparedStatement ps = connection.prepareStatement("select sum(json_extract(text, ?)::int) from json_example;")) {
+                ps.setString(1, ".list[1]");
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "sum[BIGINT]\n" +
+                                    "20\n",
+                            sink,
+                            rs
+                    );
+                }
+
+                ps.setString(1, ".list[2]");
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "sum[BIGINT]\n" +
+                                    "30\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            sink.clear();
+            try (PreparedStatement ps = connection.prepareStatement("select json_extract(?, ?, 5) p")) {
+                ps.setString(1, "{\n" +
+                        "    \"hello\": \"world\",\n" +
+                        "    \"list\": [\n" +
+                        "        1,\n" +
+                        "        2,\n" +
+                        "        3\n" +
+                        "     ],\n" +
+                        "     \"list.of.dicts\": [\n" +
+                        "         {\"hello\": \"world\"},\n" +
+                        "         {\"hello\": \"bob\"}\n" +
+                        "     ]\n" +
+                        "}");
+                ps.setString(2, ".list[1]");
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "p[INTEGER]\n" +
+                                    "2\n",
+                            sink,
+                            rs
+                    );
+                }
+
+                // set json to null
+                ps.setString(1, null);
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "p[INTEGER]\n" +
+                                    "null\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            sink.clear();
+            try (PreparedStatement ps = connection.prepareStatement("select json_extract(?, ?)::int p")) {
+                ps.setString(1, "{\n" +
+                        "    \"hello\": \"world\",\n" +
+                        "    \"list\": [\n" +
+                        "        1,\n" +
+                        "        2,\n" +
+                        "        3\n" +
+                        "     ],\n" +
+                        "     \"list.of.dicts\": [\n" +
+                        "         {\"hello\": \"world\"},\n" +
+                        "         {\"hello\": \"bob\"}\n" +
+                        "     ]\n" +
+                        "}");
+                ps.setString(2, ".list[1]");
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "p[INTEGER]\n" +
+                                    "2\n",
+                            sink,
+                            rs
+                    );
+                }
+
+                // set json to null
+                ps.setString(1, null);
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "p[INTEGER]\n" +
+                                    "null\n",
+                            sink,
+                            rs
+                    );
                 }
             }
         });
@@ -8014,7 +8202,6 @@ create table tab as (
             connection.prepareStatement("INSERT INTO tab VALUES (null, 4)").execute();
             connection.commit();
             mayDrainWalQueue();
-            final String stringType = ColumnType.nameOf(ColumnType.STRING).toLowerCase();
             String query = "SELECT * FROM tab WHERE to_str(ts,'EE') in (?,'Wednesday',?)";
             try (PreparedStatement stmt = connection.prepareStatement("explain " + query)) {
                 stmt.setString(1, "Tuesday");
@@ -10351,7 +10538,7 @@ create table tab as (
                     engine,
                     workerPool,
                     registry,
-                    createPGSqlExecutionContextFactory(workerCount, workerCount, null, queryScheduledCount, registry)
+                    createPGSqlExecutionContextFactory(workerCount, workerCount, null, queryScheduledCount)
             );
         } catch (Throwable t) {
             Misc.free(registry);
@@ -10364,8 +10551,7 @@ create table tab as (
             int workerCount,
             int sharedWorkerCount,
             SOCountDownLatch queryStartedCount,
-            SOCountDownLatch queryScheduledCount,
-            CircuitBreakerRegistry registry
+            SOCountDownLatch queryScheduledCount
     ) {
         return () -> new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount) {
             @Override
@@ -10530,7 +10716,7 @@ create table tab as (
                             engine,
                             pool,
                             registry,
-                            createPGSqlExecutionContextFactory(workerCount, workerCount, queryStartedCountDownLatch, null, registry)
+                            createPGSqlExecutionContextFactory(workerCount, workerCount, queryStartedCountDownLatch, null)
                     )
             ) {
                 Assert.assertNotNull(server);

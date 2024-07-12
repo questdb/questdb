@@ -205,14 +205,6 @@ public abstract class CharFunction implements ScalarFunction {
     }
 
     @Override
-    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-        final char value = getChar(rec);
-        if (value != 0) {
-            utf8Sink.put(value);
-        }
-    }
-
-    @Override
     public Utf8Sequence getVarcharA(Record rec) {
         final char value = getChar(rec);
         if (value != 0) {

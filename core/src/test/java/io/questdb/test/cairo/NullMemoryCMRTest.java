@@ -25,118 +25,118 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.vm.NullMemoryMR;
+import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class NullMemoryMRTest {
+public class NullMemoryCMRTest {
 
     @Test
     public void close() {
-        NullMemoryMR.INSTANCE.close();
+        NullMemoryCMR.INSTANCE.close();
     }
 
     @Test
     public void getBin() {
-        Assert.assertNull(NullMemoryMR.INSTANCE.getBin(1234));
+        Assert.assertNull(NullMemoryCMR.INSTANCE.getBin(1234));
     }
 
     @Test
     public void getBinLen() {
-        Assert.assertEquals(TableUtils.NULL_LEN, NullMemoryMR.INSTANCE.getBinLen(1234));
+        Assert.assertEquals(TableUtils.NULL_LEN, NullMemoryCMR.INSTANCE.getBinLen(1234));
     }
 
     @Test
     public void getBool() {
-        Assert.assertFalse(NullMemoryMR.INSTANCE.getBool(1234));
+        Assert.assertFalse(NullMemoryCMR.INSTANCE.getBool(1234));
     }
 
     @Test
     public void getByte() {
-        Assert.assertEquals(0, NullMemoryMR.INSTANCE.getByte(1234));
+        Assert.assertEquals(0, NullMemoryCMR.INSTANCE.getByte(1234));
     }
 
     @Test
     public void getChar() {
-        Assert.assertEquals(0, NullMemoryMR.INSTANCE.getChar(1234));
+        Assert.assertEquals(0, NullMemoryCMR.INSTANCE.getChar(1234));
     }
 
     @Test
     public void getDouble() {
-        Assert.assertTrue(Numbers.isNull(NullMemoryMR.INSTANCE.getDouble(1234)));
+        Assert.assertTrue(Numbers.isNull(NullMemoryCMR.INSTANCE.getDouble(1234)));
     }
 
     @Test
     public void getFd() {
-        Assert.assertEquals(-1, NullMemoryMR.INSTANCE.getFd());
+        Assert.assertEquals(-1, NullMemoryCMR.INSTANCE.getFd());
     }
 
     @Test
     public void getFloat() {
-        Assert.assertTrue(Numbers.isNull(NullMemoryMR.INSTANCE.getFloat(123)));
+        Assert.assertTrue(Numbers.isNull(NullMemoryCMR.INSTANCE.getFloat(123)));
     }
 
     @Test
     public void getInt() {
-        Assert.assertEquals(Numbers.INT_NULL, NullMemoryMR.INSTANCE.getInt(1234));
+        Assert.assertEquals(Numbers.INT_NULL, NullMemoryCMR.INSTANCE.getInt(1234));
     }
 
     @Test
     public void getLong() {
-        Assert.assertEquals(Numbers.LONG_NULL, NullMemoryMR.INSTANCE.getLong(1234));
+        Assert.assertEquals(Numbers.LONG_NULL, NullMemoryCMR.INSTANCE.getLong(1234));
     }
 
     @Test
     public void getLong256A() {
-        Assert.assertEquals(Long256Impl.NULL_LONG256, NullMemoryMR.INSTANCE.getLong256A(1234));
+        Assert.assertEquals(Long256Impl.NULL_LONG256, NullMemoryCMR.INSTANCE.getLong256A(1234));
     }
 
     @Test
     public void getLong256B() {
-        Assert.assertEquals(Long256Impl.NULL_LONG256, NullMemoryMR.INSTANCE.getLong256B(1234));
+        Assert.assertEquals(Long256Impl.NULL_LONG256, NullMemoryCMR.INSTANCE.getLong256B(1234));
     }
 
     @Test
     public void getShort() {
-        Assert.assertEquals(0, NullMemoryMR.INSTANCE.getShort(1234));
+        Assert.assertEquals(0, NullMemoryCMR.INSTANCE.getShort(1234));
     }
 
     @Test
     public void getStr() {
-        Assert.assertNull(NullMemoryMR.INSTANCE.getStrA(1234));
+        Assert.assertNull(NullMemoryCMR.INSTANCE.getStrA(1234));
     }
 
     @Test
     public void getStrB() {
-        Assert.assertNull(NullMemoryMR.INSTANCE.getStrB(1234));
+        Assert.assertNull(NullMemoryCMR.INSTANCE.getStrB(1234));
     }
 
     @Test
     public void getStrLen() {
-        Assert.assertEquals(TableUtils.NULL_LEN, NullMemoryMR.INSTANCE.getStrLen(1234));
+        Assert.assertEquals(TableUtils.NULL_LEN, NullMemoryCMR.INSTANCE.getStrLen(1234));
     }
 
     @Test
     public void isDeleted() {
-        Assert.assertTrue(NullMemoryMR.INSTANCE.isDeleted());
+        Assert.assertTrue(NullMemoryCMR.INSTANCE.isDeleted());
     }
 
     @Test
     public void size() {
-        Assert.assertEquals(0, NullMemoryMR.INSTANCE.size());
+        Assert.assertEquals(0, NullMemoryCMR.INSTANCE.size());
     }
 
     @Test
     public void testDeleted() {
-        Assert.assertTrue(NullMemoryMR.INSTANCE.isDeleted());
+        Assert.assertTrue(NullMemoryCMR.INSTANCE.isDeleted());
     }
 
     @Test
     public void testGrow() {
         // this method does nothing. Make sure it doesn't corrupt state of singleton and
         // doesn't throw exception
-        NullMemoryMR.INSTANCE.extend(100000);
+        NullMemoryCMR.INSTANCE.extend(100000);
     }
 }
