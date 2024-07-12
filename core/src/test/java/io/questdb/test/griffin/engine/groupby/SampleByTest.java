@@ -3890,37 +3890,43 @@ public class SampleByTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by day wal;");
             drainWalQueue();
             assertPlanNoLeakCheck(
-                    "select ts, avg(price) from tbl sample by 5m from '2018' to '2019' align to calendar with offset '10:00'",
+                    "select ts, avg(price) from tbl sample by 5m from '2018-01-01' to '2019-01-01' align to calendar with offset '10:00'",
                     "Sample By\n" +
-                            "  from: '2018'\n" +
-                            "  to: '2019'\n" +
+                            "  fill: none\n" +
+                            "  range: ('2018-01-01','2019-01-01')\n" +
                             "  values: [avg(price)]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Interval forward scan on: tbl\n" +
-                            "          intervals: [(\"2018-01-01T00:00:00.000000Z\",\"2018-12-31T23:59:59.999999Z\")]n"
+                            "          intervals: [(\"2018-01-01T00:00:00.000000Z\",\"2018-12-31T23:59:59.999999Z\")]\n"
             );
             assertPlanNoLeakCheck(
-                    "select ts, avg(price) from tbl sample by 5m from '2018' align to calendar offset with '10:00'",
+                    "select ts, avg(price) from tbl sample by 5m from '2018-01-01' align to calendar with offset '10:00'",
                     "Sample By\n" +
-                            "  from: '2018'\n" +
+                            "  fill: none\n" +
+                            "  range: ('2018-01-01',null)\n" +
                             "  values: [avg(price)]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: tbl\n"
+                            "        Interval forward scan on: tbl\n" +
+                            "          intervals: [(\"2018-01-01T00:00:00.000000Z\",\"MAX\")]\n"
             );
             assertPlanNoLeakCheck(
-                    "select ts, avg(price) from tbl sample by 5m to '2019' align to calendar offset with '10:00'",
+                    "select ts, avg(price) from tbl sample by 5m to '2019' align to calendar with offset '10:00'",
                     "Sample By\n" +
-                            "  to: '2019'\n" +
+                            "  fill: none\n" +
+                            "  range: (null,'2019')\n" +
                             "  values: [avg(price)]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: tbl\n"
+                            "        Interval forward scan on: tbl\n" +
+                            "          intervals: [(\"MIN\",\"2018-12-31T23:59:59.999999Z\")]\n"
             );
             assertPlanNoLeakCheck(
-                    "select ts, avg(price) from tbl sample by 5m align to calendar with offset with '10:00'",
+                    "select ts, avg(price) from tbl sample by 5m align to calendar with offset '10:00'",
                     "Sample By\n" +
+                            "  fill: none\n" +
+                            "  range: (null,null)\n" +
                             "  values: [avg(price)]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +

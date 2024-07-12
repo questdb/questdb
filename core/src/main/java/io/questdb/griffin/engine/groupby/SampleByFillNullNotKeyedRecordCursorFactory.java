@@ -40,8 +40,6 @@ import org.jetbrains.annotations.NotNull;
 public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleByNotKeyedRecordCursorFactory {
 
     private final SampleByFillValueNotKeyedRecordCursor cursor;
-    private final Function sampleFromFunc;
-    private final Function sampleToFunc;
 
     public SampleByFillNullNotKeyedRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
@@ -68,8 +66,6 @@ public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleB
             final SimpleMapValue simpleMapValue = new SimpleMapValue(valueCount);
             final SimpleMapValuePeeker peeker = new SimpleMapValuePeeker(simpleMapValue, new SimpleMapValue(valueCount));
             final GroupByFunctionsUpdater groupByFunctionsUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
-            this.sampleFromFunc = sampleFromFunc;
-            this.sampleToFunc = sampleToFunc;
             cursor = new SampleByFillValueNotKeyedRecordCursor(
                     configuration,
                     groupByFunctions,
@@ -100,8 +96,7 @@ public class SampleByFillNullNotKeyedRecordCursorFactory extends AbstractSampleB
     public void toPlan(PlanSink sink) {
         sink.type("Sample By");
         sink.attr("fill").val("null");
-        sink.optAttr("from", sampleFromFunc);
-        sink.optAttr("to", sampleToFunc);
+        sink.attr("range").val('(').val(cursor.sampleFromFunc).val(',').val(cursor.sampleToFunc).val(')');
         sink.optAttr("values", cursor.groupByFunctions, true);
         sink.child(base);
     }
