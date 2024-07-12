@@ -23,18 +23,16 @@
  ******************************************************************************/
 #[cfg(test)]
 mod tests {
-    use std::fs::File;
-    use std::io::Write;
     use bytes::Bytes;
-    use num_traits::Float;
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
     use parquet2::compression::CompressionOptions;
     use parquet2::write::{ParquetFile, Version};
+    use std::env;
     use std::error::Error;
+    use std::fs::File;
     use std::io::Cursor;
-    use std::mem::size_of;
+    use std::io::Write;
     use std::ptr::null;
-
 
     use crate::parquet_write::file::{create_row_group, ParquetWriter, WriteOptions};
     use crate::parquet_write::schema::{
@@ -42,6 +40,8 @@ mod tests {
     };
 
     use arrow::datatypes::ToByteSlice;
+    use num_traits::float::FloatCore;
+    use parquet2::read::read_metadata_with_size;
     use parquet2::write;
 
     fn save_to_file(bytes: &Bytes) {
@@ -60,7 +60,7 @@ mod tests {
             0,
             values.len(),
             values.as_ptr() as *const u8,
-            values.len() * size_of::<T>(),
+            std::mem::size_of_val(values),
             null(),
             0,
             null(),
@@ -91,8 +91,8 @@ mod tests {
 
         let col1_extra = [4, 5, i32::MIN];
         let extra_expected1 = [Some(4i32), Some(5), None];
-        let col2_extra = [f32::nan(), 3.13, 3.14];
-        let extra_expected2 = [None, Some(3.13), Some(3.14)];
+        let col2_extra = [f32::nan(), 3.13, std::f32::consts::PI];
+        let extra_expected2 = [None, Some(3.13), Some(std::f32::consts::PI)];
 
         let col1_extra_w = make_column("col1", ColumnType::Int, &col1_extra);
         let col2_extra_w = make_column("col2", ColumnType::Float, &col2_extra);
