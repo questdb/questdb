@@ -4925,6 +4925,8 @@ public class SampleByTest extends AbstractCairoTest {
     // TODO: fix it, it's a bug
     @Test
     @Ignore
+    // the sample-by to group-by rewrite does not extract aggregate expressions from timestamp
+    // arithmetic
     public void testSampleByWithProjection2() throws Exception {
         assertMemoryLeak(() -> {
             ddl("CREATE TABLE 'trades' (\n" +
@@ -4940,6 +4942,18 @@ public class SampleByTest extends AbstractCairoTest {
                     "rnd_double(),\n" +
                     "timestamp_sequence('2022-02-24', 60* 1000000L)\n" +
                     "from long_sequence(10)\n");
+
+            assertSql(
+                    "",
+                    "select " +
+                            "symbol || 'abcd' as symbol" +
+                            ", sum(amount)" +
+                            ", vwap(price, amount)" +
+                            ", cast(dateadd('h', 2, to_timezone(timestamp,'EST')) as double) as ts" +
+                            ", cast(dateadd('h', 2, to_timezone(timestamp,'EST')) as double) + sum(amount) NYTime\n" +
+                            "from trades\n" +
+                            "sample by 5m"
+            );
 
             assertSampleByFlavours(
                     "symbol\tsum\tvwap\tts\tNYTime\n" +
