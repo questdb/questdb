@@ -203,6 +203,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    public static void coerceRuntimeConstantType(Function func, short type, SqlExecutionContext context, CharSequence message, int pos) throws SqlException {
+        if (ColumnType.isUndefined(func.getType())) {
+            func.assignType(type, context.getBindVariableService());
+        } else if ((!func.isConstant() && !func.isRuntimeConstant()) || !(ColumnType.isAssignableFrom(func.getType(), type))) {
+            throw SqlException.$(pos, message);
+        }
+    }
+
     public static int getUnionCastType(int typeA, int typeB) {
         short tagA = ColumnType.tagOf(typeA);
         short tagB = ColumnType.tagOf(typeB);
@@ -270,11 +278,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return generateQuery(model, executionContext, true);
     }
 
-    public RecordCursorFactory generateExplain(QueryModel model, RecordCursorFactory factory, int format) {
-        RecordCursorFactory recordCursorFactory = new RecordCursorFactoryStub(model, factory);
-        return new ExplainPlanFactory(recordCursorFactory, format);
-    }
-
     public RecordCursorFactory generateExplain(@Transient ExplainModel model, @Transient SqlExecutionContext executionContext) throws SqlException {
         ExecutionModel innerModel = model.getInnerExecutionModel();
         QueryModel queryModel = innerModel.getQueryModel();
@@ -289,6 +292,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         return new ExplainPlanFactory(factory, model.getFormat());
+    }
+
+    public RecordCursorFactory generateExplain(QueryModel model, RecordCursorFactory factory, int format) {
+        RecordCursorFactory recordCursorFactory = new RecordCursorFactoryStub(model, factory);
+        return new ExplainPlanFactory(recordCursorFactory, format);
     }
 
     private static boolean allGroupsFirstLastWithSingleSymbolFilter(QueryModel model, RecordMetadata metadata) {
@@ -554,14 +562,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         return false;
-    }
-
-    private void coerceRuntimeConstantType(Function func, short type, SqlExecutionContext context, CharSequence message, int pos) throws SqlException {
-        if (ColumnType.isUndefined(func.getType())) {
-            func.assignType(type, context.getBindVariableService());
-        } else if ((!func.isConstant() && !func.isRuntimeConstant()) || !(ColumnType.isAssignableFrom(func.getType(), type))) {
-            throw SqlException.$(pos, message);
-        }
     }
 
     @Nullable

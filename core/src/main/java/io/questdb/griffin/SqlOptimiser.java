@@ -4439,6 +4439,9 @@ public class SqlOptimiser implements Mutable {
             final ExpressionNode sampleByUnit = nested.getSampleByUnit();
             final ExpressionNode timestamp = nested.getTimestamp();
             final int sampleByFillSize = sampleByFill.size();
+            ExpressionNode sampleByFrom = nested.getSampleByFrom();
+            ExpressionNode sampleByTo = nested.getSampleByTo();
+
 
             if (
                     sampleBy != null
@@ -4451,6 +4454,7 @@ public class SqlOptimiser implements Mutable {
                             && !SqlKeywords.isLinearKeyword(sampleByFill.getQuick(0).token))
                     )
                             && sampleByUnit == null
+                            && !((sampleByFrom != null && sampleByFrom.token.charAt(0) == '$') || (sampleByTo != null && sampleByTo.token.charAt(0) == '$'))
             ) {
                 // Validate that the model does not have wildcard column names.
                 // Using wildcard in group-by expression makes SQL ambiguous and
@@ -4616,9 +4620,6 @@ public class SqlOptimiser implements Mutable {
 
                 int timestampPos = model.getColumnAliasIndex(timestampAlias);
 
-                // look for FROM clause
-                ExpressionNode sampleByFrom = nested.getSampleByFrom();
-                ExpressionNode sampleByTo = nested.getSampleByTo();
 
                 ExpressionNode timestampFunc = expressionNodePool.next();
                 timestampFunc.token = "timestamp_floor";

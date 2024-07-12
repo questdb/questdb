@@ -6952,8 +6952,8 @@ public class SampleByTest extends AbstractCairoTest {
                         "UVSD\t49.42890511958454\t1970-01-04T06:30:00.000000Z\n" +
                         "\t58.912164838797885\t1970-01-04T07:30:00.000000Z\n" +
                         "KGHV\t67.52509547112409\t1970-01-04T08:30:00.000000Z\n",
-                false,
-                false,
+                true,
+                true,
                 false
         );
     }
@@ -8165,38 +8165,6 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSampleFillNullNotKeyedInvalid() throws Exception {
-        assertException(
-                "select last(z) s from x sample by 30m fill(null)",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_int() a," +
-                        " rnd_boolean() b," +
-                        " rnd_str(1,1,2) c," +
-                        " rnd_double(2) d," +
-                        " rnd_float(2) e," +
-                        " rnd_short(10,1024) f," +
-                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
-                        " rnd_symbol(4,4,4,2) i," +
-                        " rnd_long() j," +
-                        " rnd_byte(2,50) l," +
-                        " rnd_bin(10, 20, 2) m," +
-                        " rnd_str(5,16,2) n," +
-                        " rnd_double(2) o," +
-                        " rnd_char() z," +
-                        " rnd_varchar(5, 16, 2) vch," +
-                        " timestamp_sequence(cast('2020-03-28T03:20:00.000000Z' as timestamp), 3600000000) p," +
-                        " timestamp_sequence(cast('2021-10-31T00:00:00.000000Z' as timestamp), 3400000000) k" +
-                        " from" +
-                        " long_sequence(30)" +
-                        ") timestamp(k) partition by NONE",
-                7,
-                "Unsupported type: CHAR"
-        );
-    }
-
-    @Test
     public void testSampleFillNullNotKeyedInvalidSequential() throws Exception {
         assertException(
                 "select last(z) s from x sample by 30m fill(null) align to calendar with offset '10:00'",
@@ -8226,6 +8194,53 @@ public class SampleByTest extends AbstractCairoTest {
                 7,
                 "Unsupported type: CHAR"
         );
+    }
+
+    @Test
+    public void testSampleFillNullNotKeyedValid() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as " +
+                    "(" +
+                    "select" +
+                    " rnd_int() a," +
+                    " rnd_boolean() b," +
+                    " rnd_str(1,1,2) c," +
+                    " rnd_double(2) d," +
+                    " rnd_float(2) e," +
+                    " rnd_short(10,1024) f," +
+                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                    " rnd_symbol(4,4,4,2) i," +
+                    " rnd_long() j," +
+                    " rnd_byte(2,50) l," +
+                    " rnd_bin(10, 20, 2) m," +
+                    " rnd_str(5,16,2) n," +
+                    " rnd_double(2) o," +
+                    " rnd_char() z," +
+                    " rnd_varchar(5, 16, 2) vch," +
+                    " timestamp_sequence(cast('2020-03-28T03:20:00.000000Z' as timestamp), 3600000000) p," +
+                    " timestamp_sequence(cast('2021-10-31T00:00:00.000000Z' as timestamp), 3400000000) k" +
+                    " from" +
+                    " long_sequence(30)" +
+                    ") timestamp(k) partition by NONE");
+
+            assertPlanNoLeakCheck(
+                    "select last(z) s from x sample by 30m fill(null)",
+                    "SelectedRecord\n" +
+                            "    Sort\n" +
+                            "      keys: [k]\n" +
+                            "        Fill Range\n" +
+                            "          range: (null,null)\n" +
+                            "          stride: '30m'\n" +
+                            "          values: [null]\n" +
+                            "            Async Group By workers: 1\n" +
+                            "              keys: [k]\n" +
+                            "              values: [last(z)]\n" +
+                            "              filter: null\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: x\n"
+            );
+        });
     }
 
     @Test
