@@ -203,7 +203,8 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                             moveToNextBucket();
                         }
                     }
-                    return true;
+
+                    return notAtEndOfBitset();
                 }
 
                 do {
@@ -211,11 +212,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
                 while (recordWasPresent());
 
-                if (notAtEndOfBitset()) {
-                    return true;
-                }
-
-                return false;
+                return notAtEndOfBitset();
             }
         }
 
@@ -288,7 +285,12 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         private boolean notAtEndOfBitset() {
-            return fillOffset <= timestampSampler.bucketIndex(maxTimestamp);
+            if (rangeBound == RANGE_LOWER_BOUND || rangeBound == RANGE_UNBOUNDED) {
+                return fillOffset < timestampSampler.bucketIndex(maxTimestamp);
+            } else {
+                return fillOffset <= timestampSampler.bucketIndex(maxTimestamp);
+            }
+
         }
 
         private void of(RecordCursor baseCursor, SqlExecutionCircuitBreaker circuitBreaker, Function from, Function to, CharSequence stride, ObjList<Function> values, int timestampIndex) throws SqlException {
