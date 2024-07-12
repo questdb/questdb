@@ -122,13 +122,34 @@ public class ParquetFileRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     private class ParquetRecord implements Record {
+        private final DirectBinarySequence binarySequence = new DirectBinarySequence();
         private final DirectString directCharSequenceA = new DirectString();
         private final DirectString directCharSequenceB = new DirectString();
         private final Long256Impl long256A = new Long256Impl();
         private final Long256Impl long256B = new Long256Impl();
         private final Utf8SplitString utf8SplitViewA = new Utf8SplitString(false);
         private final Utf8SplitString utf8SplitViewB = new Utf8SplitString(false);
-        private final DirectBinarySequence binarySequence = new DirectBinarySequence();
+
+        @Override
+        public BinarySequence getBin(int col) {
+            long auxPtr = auxPtrs.get(col);
+            long dataPtr = dataPtrs.get(col);
+            long data_offset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
+            long len = Unsafe.getUnsafe().getLong(dataPtr + data_offset);
+            if (len != TableUtils.NULL_LEN) {
+                binarySequence.of(dataPtr + data_offset + 8L, len);
+                return binarySequence;
+            }
+            return null;
+        }
+
+        @Override
+        public long getBinLen(int col) {
+            long auxPtr = auxPtrs.get(col);
+            long dataPtr = dataPtrs.get(col);
+            long data_offset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
+            return Unsafe.getUnsafe().getLong(dataPtr + data_offset);
+        }
 
         @Override
         public boolean getBool(int col) {
@@ -241,27 +262,6 @@ public class ParquetFileRecordCursor implements NoRandomAccessRecordCursor {
         }
 
         @Override
-        public BinarySequence getBin(int col) {
-            long auxPtr = auxPtrs.get(col);
-            long dataPtr = dataPtrs.get(col);
-            long data_offset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
-            long len = Unsafe.getUnsafe().getLong(dataPtr + data_offset);
-            if (len != TableUtils.NULL_LEN) {
-                binarySequence.of(dataPtr + data_offset + 8L, len);
-                return binarySequence;
-            }
-            return null;
-        }
-
-        @Override
-        public long getBinLen(int col) {
-            long auxPtr = auxPtrs.get(col);
-            long dataPtr = dataPtrs.get(col);
-            long data_offset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
-            return Unsafe.getUnsafe().getLong(dataPtr + data_offset);
-        }
-
-        @Override
         public int getStrLen(int col) {
             long auxPtr = auxPtrs.get(col);
             long dataPtr = dataPtrs.get(col);
@@ -274,7 +274,7 @@ public class ParquetFileRecordCursor implements NoRandomAccessRecordCursor {
         public Utf8Sequence getVarcharA(int col) {
             long auxPtr = auxPtrs.get(col);
             long dataPtr = dataPtrs.get(col);
-            return VarcharTypeDriver.getSplitValue(auxPtr, dataPtr, currentRowInRowGroup, utf8SplitViewA);
+            return VarcharTypeDriver.getSplitValue(auxPtr, Long.MAX_VALUE, dataPtr, Long.MAX_VALUE, currentRowInRowGroup, utf8SplitViewA);
         }
 
         @Nullable
@@ -282,7 +282,7 @@ public class ParquetFileRecordCursor implements NoRandomAccessRecordCursor {
         public Utf8Sequence getVarcharB(int col) {
             long auxPtr = auxPtrs.get(col);
             long dataPtr = dataPtrs.get(col);
-            return VarcharTypeDriver.getSplitValue(auxPtr, dataPtr, currentRowInRowGroup, utf8SplitViewB);
+            return VarcharTypeDriver.getSplitValue(auxPtr, Long.MAX_VALUE, dataPtr, Long.MAX_VALUE, currentRowInRowGroup, utf8SplitViewB);
         }
 
         private DirectString getStr(long addr, DirectString view) {
