@@ -1,4 +1,4 @@
-name: Build and Push Rust libraries
+name: Build and Push Rust Test libraries
 on:
   workflow_dispatch:
 # This workflow is triggered manually from the Actions tab.
