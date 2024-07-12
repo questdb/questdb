@@ -6947,7 +6947,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "\t58.912164838797885\t1970-01-04T07:30:00.000000Z\n" +
                         "KGHV\t67.52509547112409\t1970-01-04T08:30:00.000000Z\n",
                 false,
-                true,
+                false,
                 false
         );
     }
