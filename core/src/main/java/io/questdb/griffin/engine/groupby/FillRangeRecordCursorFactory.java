@@ -39,7 +39,6 @@ import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.Nullable;
 
 
@@ -561,15 +560,6 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                     }
                 } else {
                     return baseRecord.getTimestamp(col);
-                }
-            }
-
-            @Override
-            public void getVarchar(int col, Utf8Sink utf8Sink) {
-                if (gapFilling) {
-                    getFillFunction(col).getVarchar(null, utf8Sink);
-                } else {
-                    baseRecord.getVarchar(col, utf8Sink);
                 }
             }
 

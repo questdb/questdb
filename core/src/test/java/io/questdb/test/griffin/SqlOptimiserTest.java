@@ -2320,6 +2320,69 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         });
     }
 
+    @Test
+    public void testSampleByFromToPlansWithRewrite() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tbl (\n" +
+                    "  ts timestamp,\n" +
+                    "  price double\n" +
+                    ") timestamp(ts) partition by day wal;");
+            drainWalQueue();
+            assertPlanNoLeakCheck(
+                    "select ts, avg(price) from tbl sample by 5m from '2018-01-01' to '2019-01-01'",
+                    "Sort light\n" +
+                            "  keys: [ts]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [ts]\n" +
+                            "      values: [avg(price)]\n" +
+                            "      filter: null\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Interval forward scan on: tbl\n" +
+                            "              intervals: [(\"2018-01-01T00:00:00.000000Z\",\"2018-12-31T23:59:59.999999Z\")]\n"
+            );
+            assertPlanNoLeakCheck(
+                    "select ts, avg(price) from tbl sample by 5m from '2018-01-01'",
+                    "Sort light\n" +
+                            "  keys: [ts]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [ts]\n" +
+                            "      values: [avg(price)]\n" +
+                            "      filter: null\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Interval forward scan on: tbl\n" +
+                            "              intervals: [(\"2018-01-01T00:00:00.000000Z\",\"MAX\")]\n"
+            );
+            assertPlanNoLeakCheck(
+                    "select ts, avg(price) from tbl sample by 5m to '2019-01-01'",
+                    "Sort light\n" +
+                            "  keys: [ts]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [ts]\n" +
+                            "      values: [avg(price)]\n" +
+                            "      filter: null\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Interval forward scan on: tbl\n" +
+                            "              intervals: [(\"MIN\",\"2018-12-31T23:59:59.999999Z\")]\n"
+            );
+            assertPlanNoLeakCheck(
+                    "select ts, avg(price) from tbl sample by 5m",
+                    "Sort light\n" +
+                            "  keys: [ts]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [ts]\n" +
+                            "      values: [avg(price)]\n" +
+                            "      filter: null\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: tbl\n"
+            );
+        });
+
+    }
+
     protected QueryModel compileModel(String query) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             ExecutionModel model = compiler.testCompileModel(query, sqlExecutionContext);

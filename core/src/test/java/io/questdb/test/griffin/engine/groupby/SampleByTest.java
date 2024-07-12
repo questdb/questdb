@@ -3912,10 +3912,10 @@ public class SampleByTest extends AbstractCairoTest {
                             "          intervals: [(\"2018-01-01T00:00:00.000000Z\",\"MAX\")]\n"
             );
             assertPlanNoLeakCheck(
-                    "select ts, avg(price) from tbl sample by 5m to '2019' align to calendar with offset '10:00'",
+                    "select ts, avg(price) from tbl sample by 5m to '2019-01-01' align to calendar with offset '10:00'",
                     "Sample By\n" +
                             "  fill: none\n" +
-                            "  range: (null,'2019')\n" +
+                            "  range: (null,'2019-01-01')\n" +
                             "  values: [avg(price)]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
