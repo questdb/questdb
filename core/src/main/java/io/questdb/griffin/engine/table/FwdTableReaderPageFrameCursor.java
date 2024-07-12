@@ -166,22 +166,22 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
                 if (sh > -1) {
                     // this assumes reader uses single page to map the whole column
                     // non-negative sh means fixed length column
-                    long address = colMem.getPageAddress(0);
-                    long addressSize = partitionHiAdjusted << sh;
-                    long offset = partitionLoAdjusted << sh;
+                    final long address = colMem.getPageAddress(0);
+                    final long addressSize = partitionHiAdjusted << sh;
+                    final long offset = partitionLoAdjusted << sh;
                     columnPageAddress.setQuick(2 * i, address + offset);
                     pageSizes.setQuick(2 * i, addressSize - offset);
                 } else {
                     final int columnType = reader.getMetadata().getColumnType(columnIndex);
                     final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
                     final MemoryR auxCol = reader.getColumn(readerColIndex + 1);
-                    long auxAddress = auxCol.getPageAddress(0);
-                    long auxOffsetLo = columnTypeDriver.getAuxVectorOffset(partitionLoAdjusted);
-                    long auxOffsetHi = columnTypeDriver.getAuxVectorOffset(partitionHiAdjusted);
+                    final long auxAddress = auxCol.getPageAddress(0);
+                    final long auxOffsetLo = columnTypeDriver.getAuxVectorOffset(partitionLoAdjusted);
+                    final long auxOffsetHi = columnTypeDriver.getAuxVectorOffset(partitionHiAdjusted);
 
-                    long dataSize = columnTypeDriver.getDataVectorSizeAt(auxAddress, partitionHiAdjusted - 1);
+                    final long dataSize = columnTypeDriver.getDataVectorSizeAt(auxAddress, partitionHiAdjusted - 1);
                     // some var-size columns may not have data memory (fully inlined)
-                    long dataAddress = dataSize > 0 ? colMem.getPageAddress(0) : 0;
+                    final long dataAddress = dataSize > 0 ? colMem.getPageAddress(0) : 0;
 
                     columnPageAddress.setQuick(2 * i, dataAddress);
                     columnPageAddress.setQuick(2 * i + 1, auxAddress + auxOffsetLo);
@@ -191,8 +191,11 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
             } else {
                 columnPageAddress.setQuick(2 * i, 0);
                 columnPageAddress.setQuick(2 * i + 1, 0);
-                // TODO(puzpuzpuz): hardcoded string/binary min size
-                pageSizes.setQuick(2 * i, (partitionHiAdjusted - partitionLoAdjusted) << (sh > -1 ? sh : 3));
+                // data page size is used by VectorAggregateFunction as the size hint
+                // in the following way:
+                //   size = page_size >>> column_size_hint
+                // (for var-sized types column_size_hint is 0)
+                pageSizes.setQuick(2 * i, (partitionHiAdjusted - partitionLoAdjusted) << (sh > -1 ? sh : 0));
                 pageSizes.setQuick(2 * i + 1, 0);
             }
         }
