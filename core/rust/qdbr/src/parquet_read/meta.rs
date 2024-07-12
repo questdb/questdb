@@ -77,17 +77,21 @@ impl ParquetDecoder {
             (
                 PhysicalType::Int64,
                 Some(Timestamp {
-                    unit: TimeUnit::Microseconds,
-                    is_adjusted_to_utc: _,
-                }),
+                         unit: TimeUnit::Microseconds,
+                         is_adjusted_to_utc: _,
+                     }) |
+                Some(Timestamp {
+                         unit: TimeUnit::Nanoseconds,
+                         is_adjusted_to_utc: _,
+                     }),
                 _,
             ) => Some(ColumnType::Timestamp),
             (
                 PhysicalType::Int64,
                 Some(Timestamp {
-                    unit: TimeUnit::Milliseconds,
-                    is_adjusted_to_utc: _,
-                }),
+                         unit: TimeUnit::Milliseconds,
+                         is_adjusted_to_utc: _,
+                     }),
                 _,
             ) => Some(ColumnType::Date),
             (PhysicalType::Int64, None, _) => Some(ColumnType::Long),
@@ -269,6 +273,6 @@ mod tests {
             null(),
             0,
         )
-        .unwrap()
+            .unwrap()
     }
 }

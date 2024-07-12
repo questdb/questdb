@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.table;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
@@ -69,7 +70,11 @@ public class ParquetFileRecordCursor implements NoRandomAccessRecordCursor {
             return true;
         }
 
-        return switchToNextRowGroup();
+        try {
+            return switchToNextRowGroup();
+        } catch (CairoException ex) {
+            throw CairoException.nonCritical().put("Error reading. Parquet file is likely corrupted");
+        }
     }
 
     public void of(SqlExecutionContext executionContext, LPSZ path) {

@@ -66,8 +66,8 @@ public class TestOs {
             rustLibName = "libqdbsqllogictest" + outputLibExt;
         }
 
-        Path absoluteDevReleasePath = Paths.get("rust/qdbr-test/target/release/" + rustLibName).toAbsolutePath();
-        Path absoluteDevDebugPath = Paths.get("rust/qdbr-test/target/debug/" + rustLibName).toAbsolutePath();
+        Path absoluteDevReleasePath = Paths.get("rust/qdb-sqllogictest/target/release/" + rustLibName).toAbsolutePath();
+        Path absoluteDevDebugPath = Paths.get("rust/qdb-sqllogictest/target/debug/" + rustLibName).toAbsolutePath();
         Path absolutePrdPath = Paths.get("src/test/resources/io/questdb/bin/" + Os.name + '-' + Os.archName + '/' + rustLibName).toAbsolutePath();
 
         FileTime tsDevRel = getLastModifiedTime(absoluteDevReleasePath);

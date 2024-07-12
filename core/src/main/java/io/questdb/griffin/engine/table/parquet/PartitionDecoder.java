@@ -33,7 +33,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectString;
 import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Path;
 
 public class PartitionDecoder implements QuietCloseable {
     public static final int BOOLEAN_PHYSICAL_TYPE = 0;
@@ -101,10 +100,13 @@ public class PartitionDecoder implements QuietCloseable {
                     columnType
             );
         } catch (Throwable th) {
-            throw CairoException.critical(0).put("Could not decode partition: [fd=").put(fd)
-                    .put(", exception=").put(th.getClass().getSimpleName())
-                    .put(", msg=").put(th.getMessage())
-                    .put(']');
+            LOG.error().$("could not decode [fd=").$(fd)
+                    .$(", columnId=").$(columnId)
+                    .$(", rowGroup=").$(rowGroup)
+                    .$(", msg=").$(th.getMessage())
+                    .$(']').$();
+
+            throw CairoException.nonCritical().put(th.getMessage());
         }
     }
 
