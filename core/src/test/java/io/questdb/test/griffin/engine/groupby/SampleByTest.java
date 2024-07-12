@@ -3317,7 +3317,7 @@ public class SampleByTest extends AbstractCairoTest {
         for (String fill : Arrays.asList("", "none", "null", "linear", "prev")) {
 
             String plan = "Filter filter: (tstmp>=1669852800000000 and sym='B' and 0<length(sym)*tstmp::long)\n" +
-                    "    SampleBy\n" +
+                    "    Sample By\n" +
                     (isNone(fill) ? "" : "      fill: " + fill + "\n") +
                     "      keys: [tstmp,sym]\n" +
                     "      values: [first(val),avg(val),last(val),max(val)]\n" +
@@ -3337,7 +3337,7 @@ public class SampleByTest extends AbstractCairoTest {
             }
 
             String plan = "Filter filter: (tstmp>=1669852800000000 and sym='B' and 0<length(sym)*tstmp::long)\n" +
-                    "    SampleBy\n" +
+                    "    Sample By\n" +
                     (isNone(fill) ? "" : "      fill: " + fill + "\n") +
                     "      keys: [tstmp,sym]\n" +
                     "      values: [first(val),avg(val),last(val),max(val)]\n" +
@@ -8168,6 +8168,38 @@ public class SampleByTest extends AbstractCairoTest {
     public void testSampleFillNullNotKeyedInvalid() throws Exception {
         assertException(
                 "select last(z) s from x sample by 30m fill(null)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_int() a," +
+                        " rnd_boolean() b," +
+                        " rnd_str(1,1,2) c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) i," +
+                        " rnd_long() j," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_double(2) o," +
+                        " rnd_char() z," +
+                        " rnd_varchar(5, 16, 2) vch," +
+                        " timestamp_sequence(cast('2020-03-28T03:20:00.000000Z' as timestamp), 3600000000) p," +
+                        " timestamp_sequence(cast('2021-10-31T00:00:00.000000Z' as timestamp), 3400000000) k" +
+                        " from" +
+                        " long_sequence(30)" +
+                        ") timestamp(k) partition by NONE",
+                7,
+                "Unsupported type: CHAR"
+        );
+    }
+
+    @Test
+    public void testSampleFillNullNotKeyedInvalidSequential() throws Exception {
+        assertException(
+                "select last(z) s from x sample by 30m fill(null) align to calendar with offset '10:00'",
                 "create table x as " +
                         "(" +
                         "select" +
