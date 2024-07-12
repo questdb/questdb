@@ -43,6 +43,7 @@ import org.jetbrains.annotations.Nullable;
 import java.util.ArrayDeque;
 
 import static io.questdb.griffin.SqlKeywords.isHourKeyword;
+import static io.questdb.griffin.SqlKeywords.isNoneKeyword;
 import static io.questdb.griffin.model.ExpressionNode.*;
 
 public class SqlOptimiser implements Mutable {
@@ -952,7 +953,7 @@ public class SqlOptimiser implements Mutable {
     private boolean canPushToSampleBy(final QueryModel model, ObjList<CharSequence> expressionColumns) {
         ObjList<ExpressionNode> fill = model.getSampleByFill();
         int fillCount = fill.size();
-        boolean isFillNone = fillCount == 0 || (fillCount == 1 && SqlKeywords.isNoneKeyword(fill.getQuick(0).token));
+        boolean isFillNone = fillCount == 0 || (fillCount == 1 && isNoneKeyword(fill.getQuick(0).token));
 
         if (!isFillNone || model.getSampleByOffset() == null) {
             return false;
@@ -4431,19 +4432,20 @@ public class SqlOptimiser implements Mutable {
         QueryModel nested = model.getNestedModel();
         if (nested != null) {
             // "sample by" details will be on the nested model of the query
-            ExpressionNode sampleBy = nested.getSampleBy();
-            ExpressionNode sampleByOffset = nested.getSampleByOffset();
-            ObjList<ExpressionNode> sampleByFill = nested.getSampleByFill();
-            ExpressionNode sampleByTimezoneName = nested.getSampleByTimezoneName();
-            ExpressionNode sampleByUnit = nested.getSampleByUnit();
-            ExpressionNode timestamp = nested.getTimestamp();
+            final ExpressionNode sampleBy = nested.getSampleBy();
+            final ExpressionNode sampleByOffset = nested.getSampleByOffset();
+            final ObjList<ExpressionNode> sampleByFill = nested.getSampleByFill();
+            final ExpressionNode sampleByTimezoneName = nested.getSampleByTimezoneName();
+            final ExpressionNode sampleByUnit = nested.getSampleByUnit();
+            final ExpressionNode timestamp = nested.getTimestamp();
+            final int sampleByFillSize = sampleByFill.size();
 
             if (
                     sampleBy != null
                             && timestamp != null
                             && (sampleByOffset != null && SqlKeywords.isZeroOffset(sampleByOffset.token) && (sampleByTimezoneName == null || SqlKeywords.isUTC(sampleByTimezoneName.token)))
-                            && (sampleByFill.size() == 0
-                            || (sampleByFill.size() == 1 &&
+                            && (sampleByFillSize == 0
+                            || (sampleByFillSize == 1 &&
                             (
                                     !SqlKeywords.isPrevKeyword(sampleByFill.getQuick(0).token))
                             && !SqlKeywords.isLinearKeyword(sampleByFill.getQuick(0).token))
@@ -4520,29 +4522,30 @@ public class SqlOptimiser implements Mutable {
 
                         if (timestampAlias != null) {
                             timestampColumn = tableNamePrefixedTimestampColumn;
-
                         }
                     }
                 }
 
-                if (maybeKeyed.size() > 0) {
-                    for (int i = 0, n = maybeKeyed.size(); i < n; i++) {
-                        final ExpressionNode expr = maybeKeyed.getQuick(i);
-                        // drop out early, since we don't handle keyed
-                        if (!Chars.equalsIgnoreCase(expr.token, timestamp.token) && !Chars.equalsIgnoreCaseNc(expr.token, timestampAlias)
-                                && sampleByFill.size() != 0) {
-                            // recurse nested models
-                            nested.setNestedModel(rewriteSampleBy(nested.getNestedModel()));
+                if (maybeKeyed.size() > 0 && sampleByFillSize > 0) {
+                    if (!isNoneKeyword(sampleByFill.getQuick(0).token)) {
+                        for (int i = 0, n = maybeKeyed.size(); i < n; i++) {
+                            final ExpressionNode expr = maybeKeyed.getQuick(i);
+                            // drop out early, since we don't handle keyed
+                            if (!Chars.equalsIgnoreCase(expr.token, timestamp.token) && !Chars.equalsIgnoreCaseNc(expr.token, timestampAlias)
+                                    && sampleByFill.size() != 0) {
+                                // recurse nested models
+                                nested.setNestedModel(rewriteSampleBy(nested.getNestedModel()));
 
-                            // join models
-                            for (int j = 1, m = nested.getJoinModels().size(); j < m; j++) {
-                                QueryModel joinModel = nested.getJoinModels().getQuick(j);
-                                joinModel.setNestedModel(rewriteSampleBy(joinModel.getNestedModel()));
+                                // join models
+                                for (int j = 1, m = nested.getJoinModels().size(); j < m; j++) {
+                                    QueryModel joinModel = nested.getJoinModels().getQuick(j);
+                                    joinModel.setNestedModel(rewriteSampleBy(joinModel.getNestedModel()));
+                                }
+
+                                // unions
+                                model.setUnionModel(rewriteSampleBy(model.getUnionModel()));
+                                return model;
                             }
-
-                            // unions
-                            model.setUnionModel(rewriteSampleBy(model.getUnionModel()));
-                            return model;
                         }
                     }
                 }
