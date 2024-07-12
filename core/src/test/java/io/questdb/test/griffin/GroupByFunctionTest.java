@@ -157,7 +157,7 @@ public class GroupByFunctionTest extends AbstractCairoTest {
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
-                        " NaN d" +
+                        " null::double d" +
                         " from" +
                         " long_sequence(200)" +
                         ")",
@@ -254,7 +254,7 @@ public class GroupByFunctionTest extends AbstractCairoTest {
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
-                        " NaN d" +
+                        " null::double d" +
                         " from" +
                         " long_sequence(200)" +
                         ")",
@@ -367,14 +367,14 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testKeyedMaxDoubleAllNaN() throws Exception {
         assertQuery("s\tmax\n" +
-                        "aa\t\n" +
-                        "bb\t\n",
+                        "aa\tnull\n" +
+                        "bb\tnull\n",
                 "select s, max(d) max from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
-                        " NaN d" +
+                        " null::double d" +
                         " from" +
                         " long_sequence(200)" +
                         ")",
@@ -535,14 +535,14 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testKeyedMinDoubleAllNaN() throws Exception {
         assertQuery("s\tmin\n" +
-                        "aa\t\n" +
-                        "bb\t\n",
+                        "aa\tnull\n" +
+                        "bb\tnull\n",
                 "select s, min(d) min from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
-                        " NaN d" +
+                        " null::double d" +
                         " from" +
                         " long_sequence(200)" +
                         ")",
@@ -659,7 +659,7 @@ public class GroupByFunctionTest extends AbstractCairoTest {
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
-                        " NaN d" +
+                        " null::double d" +
                         " from" +
                         " long_sequence(200)" +
                         ")",
@@ -699,7 +699,7 @@ public class GroupByFunctionTest extends AbstractCairoTest {
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
-                        " NaN d" +
+                        " null::double d" +
                         " from" +
                         " long_sequence(200)" +
                         ")"
@@ -879,7 +879,7 @@ public class GroupByFunctionTest extends AbstractCairoTest {
                 "create table x as " +
                         "(" +
                         "select" +
-                        " NaN d" +
+                        " null::double d" +
                         " from" +
                         " long_sequence(200)" +
                         ")",
@@ -2981,7 +2981,7 @@ public class GroupByFunctionTest extends AbstractCairoTest {
                 "create table x as " +
                         "(" +
                         "select" +
-                        " NaN d" +
+                        " null::double d" +
                         " from" +
                         " long_sequence(200)" +
                         ")",
