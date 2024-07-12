@@ -187,9 +187,4 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
     }
-
-    @Override
-    public void toTop() {
-        UnaryFunction.super.toTop();
-    }
 }

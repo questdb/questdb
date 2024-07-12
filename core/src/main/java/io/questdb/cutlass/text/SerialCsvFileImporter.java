@@ -93,7 +93,7 @@ public final class SerialCsvFileImporter implements Closeable {
         this.circuitBreaker = circuitBreaker;
         this.atomicity = atomicity;
         this.importId = importId;
-        inputFilePath.of(inputRoot).concat(inputFileName).$();
+        inputFilePath.of(inputRoot).concat(inputFileName);
     }
 
     public void process(SecurityContext securityContext) throws TextImportException {
@@ -110,7 +110,7 @@ public final class SerialCsvFileImporter implements Closeable {
         final long buf = Unsafe.malloc(sqlCopyBufferSize, MemoryTag.NATIVE_IMPORT);
         int fd = -1;
         try {
-            fd = TableUtils.openRO(ff, inputFilePath, LOG);
+            fd = TableUtils.openRO(ff, inputFilePath.$(), LOG);
             long fileLen = ff.length(fd);
             long n = ff.read(fd, buf, sqlCopyBufferSize, 0);
             if (n > 0) {

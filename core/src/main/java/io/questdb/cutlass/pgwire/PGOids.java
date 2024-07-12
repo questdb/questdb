@@ -45,6 +45,7 @@ public class PGOids {
     public static final int BINARY_TYPE_SYMBOL = (1 << 31) | ColumnType.SYMBOL;
     public static final int BINARY_TYPE_TIMESTAMP = (1 << 31) | ColumnType.TIMESTAMP;
     public static final int BINARY_TYPE_UUID = (1 << 31) | ColumnType.UUID;
+    public static final int BINARY_TYPE_VARCHAR = (1 << 31) | ColumnType.VARCHAR;
     public static final int PG_BOOL = 16;
     public static final int PG_BYTEA = 17;
     public static final int PG_CATALOG_OID = 11;

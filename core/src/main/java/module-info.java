@@ -23,6 +23,8 @@
  ******************************************************************************/
 
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
+import io.questdb.griffin.engine.functions.json.JsonExtractVarcharFunctionFactory;
 
 open module io.questdb {
     requires transitive jdk.unsupported;
@@ -117,11 +119,16 @@ open module io.questdb {
     exports io.questdb.client.impl;
     exports io.questdb.griffin.engine.groupby.hyperloglog;
     exports io.questdb.griffin.engine.functions.finance;
+    exports io.questdb.std.json;
+    exports io.questdb.griffin.engine.functions.json;
+    exports io.questdb.std.filewatch;
 
     provides FunctionFactory with
 
             // finance
             io.questdb.griffin.engine.functions.finance.LevelTwoPriceFunctionFactory,
+            io.questdb.griffin.engine.functions.finance.SpreadFunctionFactory,
+            io.questdb.griffin.engine.functions.finance.MidPriceFunctionFactory,
 
 
             // query activity functions
@@ -313,6 +320,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.uuid.LongsToUuidFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampShuffleFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory,
+            io.questdb.griffin.engine.functions.date.TimestampFloorOffsetFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampCeilFunctionFactory,
             io.questdb.griffin.engine.functions.date.DateTruncFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndByteCCFunctionFactory,
@@ -354,7 +362,9 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.date.TimestampDiffFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampAddFunctionFactory,
             io.questdb.griffin.engine.functions.date.ToDateFunctionFactory,
+            io.questdb.griffin.engine.functions.date.VarcharToDateFunctionFactory,
             io.questdb.griffin.engine.functions.date.ToPgDateFunctionFactory,
+            io.questdb.griffin.engine.functions.date.VarcharToPgDateFunctionFactory,
             io.questdb.griffin.engine.functions.date.PgPostmasterStartTimeFunctionFactory,
 //                  cast functions,
 //                  cast double to ...,
@@ -831,6 +841,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.WalTransactionsFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.DumpMemoryUsageFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.FlushQueryCacheFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedAgeFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PgIsInRecoveryFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgIsInRecoveryFunctionFactory,
@@ -849,6 +860,11 @@ open module io.questdb {
             // replace()
             io.questdb.griffin.engine.functions.str.ReplaceStrFunctionFactory,
             io.questdb.griffin.engine.functions.str.ReplaceVarcharFunctionFactory,
+
+            // json_extract()
+            JsonExtractVarcharFunctionFactory,
+            JsonExtractTypedFunctionFactory,
+
             // regexp_replace()
             io.questdb.griffin.engine.functions.regex.RegexpReplaceStrFunctionFactory,
             io.questdb.griffin.engine.functions.regex.RegexpReplaceVarcharFunctionFactory,

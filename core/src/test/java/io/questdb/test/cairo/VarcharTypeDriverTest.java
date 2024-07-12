@@ -51,9 +51,9 @@ public class VarcharTypeDriverTest extends AbstractTest {
         final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
         final VarcharTypeDriver driver = new VarcharTypeDriver();
         TestUtils.assertMemoryLeak(() -> {
-            try (Path path = new Path().of(temp.newFile().getAbsolutePath()).$()) {
+            try (Path path = new Path().of(temp.newFile().getAbsolutePath())) {
                 try (
-                        MemoryCMARW auxMem = Vm.getSmallCMARWInstance(ff, path, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
+                        MemoryCMARW auxMem = Vm.getSmallCMARWInstance(ff, path.$(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
                         MemoryCARW dataMem = Vm.getCARWInstance(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
                 ) {
                     VarcharTypeDriver.appendValue(auxMem, dataMem, null);
@@ -109,10 +109,10 @@ public class VarcharTypeDriverTest extends AbstractTest {
             final int auxLoBase = 3;
             for (int n = auxLoBase; n < 50; n++) {
                 try (
-                        MemoryARW auxMemA = Vm.getARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
-                        MemoryAR dataMemA = Vm.getARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
-                        MemoryARW auxMemB = Vm.getARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
-                        MemoryAR dataMemB = Vm.getARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
+                        MemoryCARW auxMemA = Vm.getCARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                        MemoryCARW dataMemA = Vm.getCARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                        MemoryCARW auxMemB = Vm.getCARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                        MemoryCARW dataMemB = Vm.getCARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
                 ) {
                     final int len = n % 16;
                     final int auxLo = n % auxLoBase;
@@ -169,10 +169,10 @@ public class VarcharTypeDriverTest extends AbstractTest {
             final int auxLoBase = 3;
             for (int n = auxLoBase; n < 50; n++) {
                 try (
-                        MemoryARW auxMemA = Vm.getARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
-                        MemoryAR dataMemA = Vm.getARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
-                        MemoryARW auxMemB = Vm.getARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
-                        MemoryAR dataMemB = Vm.getARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
+                        MemoryCARW auxMemA = Vm.getCARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                        MemoryCARW dataMemA = Vm.getCARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                        MemoryCARW auxMemB = Vm.getCARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                        MemoryCARW dataMemB = Vm.getCARWInstance(16 * 1024 * 1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
                 ) {
                     final int auxLo = n % auxLoBase;
                     final int shift = -42;
@@ -321,10 +321,10 @@ public class VarcharTypeDriverTest extends AbstractTest {
         long pageSize = Files.PAGE_SIZE;
         final Rnd rnd = TestUtils.generateRandom(null);
 
-        try (Path auxPath = new Path().of(temp.newFile().getAbsolutePath()).$();
-             Path dataPath = new Path().of(temp.newFile().getAbsolutePath()).$();
-             MemoryCMARW auxMem = new MemoryCMARWImpl(ff, auxPath, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
-             MemoryCMARW dataMem = new MemoryCMARWImpl(ff, dataPath, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE)) {
+        try (Path auxPath = new Path().of(temp.newFile().getAbsolutePath());
+             Path dataPath = new Path().of(temp.newFile().getAbsolutePath());
+             MemoryCMARW auxMem = new MemoryCMARWImpl(ff, auxPath.$(), pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
+             MemoryCMARW dataMem = new MemoryCMARWImpl(ff, dataPath.$(), pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE)) {
 
             Utf8StringSink utf8Sink = new Utf8StringSink();
             int n = 10000;

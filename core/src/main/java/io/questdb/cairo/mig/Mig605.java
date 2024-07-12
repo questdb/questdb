@@ -37,16 +37,16 @@ final class Mig605 {
         MigrationActions.LOG.info().$("updating column type IDs [table=").$(migrationContext.getTablePath()).I$();
         final FilesFacade ff = migrationContext.getFf();
         Path path = migrationContext.getTablePath();
-        path.concat(META_FILE_NAME).$();
+        path.concat(META_FILE_NAME);
 
-        if (!ff.exists(path)) {
+        if (!ff.exists(path.$())) {
             MigrationActions.LOG.error().$("meta file does not exist, nothing to migrate [path=").$(path).I$();
             return;
         }
 
         // Metadata file should already be backed up
         try (final MemoryMARW rwMem = migrationContext.getRwMemory()) {
-            rwMem.of(ff, path, ff.getPageSize(), ff.length(path), MemoryTag.NATIVE_MIG_MMAP);
+            rwMem.of(ff, path.$(), ff.getPageSize(), ff.length(path.$()), MemoryTag.NATIVE_MIG_MMAP);
 
             // column count
             final int columnCount = rwMem.getInt(TableUtils.META_OFFSET_COUNT);

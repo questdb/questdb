@@ -242,7 +242,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
      * @param ab      whether to return the A or B flyweight
      * @return a Utf8Sequence representing the value at rowNum, or null if the value is null
      */
-    public static Utf8Sequence getSplitValue(MemoryR auxMem, MemoryR dataMem, long rowNum, int ab) {
+    public static Utf8Sequence getSplitValue(MemoryCR auxMem, MemoryCR dataMem, long rowNum, int ab) {
         final long auxOffset = VARCHAR_AUX_WIDTH_BYTES * rowNum;
         int raw = auxMem.getInt(auxOffset);
         assert raw != 0;
@@ -252,30 +252,34 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         boolean isAscii = hasAsciiFlag(raw);
         if (hasInlinedFlag(raw)) {
             long auxLo = auxMem.addressOf(auxOffset + FULLY_INLINED_STRING_OFFSET);
+            long auxLim = auxMem.addressHi();
             int size = (raw >> HEADER_FLAGS_WIDTH) & INLINED_LENGTH_MASK;
             assert size <= VARCHAR_MAX_BYTES_FULLY_INLINED;
             return ab == 1
-                    ? auxMem.getSplitVarcharA(auxLo, auxLo, size, isAscii)
-                    : auxMem.getSplitVarcharB(auxLo, auxLo, size, isAscii);
+                    ? auxMem.getSplitVarcharA(auxLo, auxLo, auxLim, size, isAscii)
+                    : auxMem.getSplitVarcharB(auxLo, auxLo, auxLim, size, isAscii);
         }
         long auxLo = auxMem.addressOf(auxOffset + INLINED_PREFIX_OFFSET);
         long dataLo = dataMem.addressOf(getDataOffset(auxMem, auxOffset));
+        long dataLim = dataMem.addressHi();
         int size = (raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK;
         return ab == 1
-                ? auxMem.getSplitVarcharA(auxLo, dataLo, size, isAscii)
-                : auxMem.getSplitVarcharB(auxLo, dataLo, size, isAscii);
+                ? auxMem.getSplitVarcharA(auxLo, dataLo, dataLim, size, isAscii)
+                : auxMem.getSplitVarcharB(auxLo, dataLo, dataLim, size, isAscii);
     }
 
     /**
      * Reads a UTF-8 value from a VARCHAR column.
      *
      * @param auxAddr       base pointer of the auxiliary vector
+     * @param auxLim        limit of the addressable memory in the auxiliary vector
      * @param dataAddr      base pointer of the data vector
+     * @param dataLim       limit of the addressable memory in the data vector
      * @param rowNum        the row number to read
      * @param utf8SplitView flyweight for the split string
      * @return utf8SplitView loaded with the read value, or null if the value is null
      */
-    public static Utf8Sequence getSplitValue(long auxAddr, long dataAddr, long rowNum, Utf8SplitString utf8SplitView) {
+    public static Utf8Sequence getSplitValue(long auxAddr, long auxLim, long dataAddr, long dataLim, long rowNum, Utf8SplitString utf8SplitView) {
         long auxEntry = auxAddr + VARCHAR_AUX_WIDTH_BYTES * rowNum;
         int raw = Unsafe.getUnsafe().getInt(auxEntry);
         assert raw != 0;
@@ -287,12 +291,12 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             long auxLo = auxEntry + FULLY_INLINED_STRING_OFFSET;
             int size = (raw >> HEADER_FLAGS_WIDTH) & INLINED_LENGTH_MASK;
             assert size <= VARCHAR_MAX_BYTES_FULLY_INLINED;
-            return utf8SplitView.of(auxLo, auxLo, size, isAscii);
+            return utf8SplitView.of(auxLo, auxLo, auxLim, size, isAscii);
         }
         long auxLo = auxEntry + INLINED_PREFIX_OFFSET;
         long dataLo = dataAddr + getDataOffset(auxEntry);
         int size = (raw >> HEADER_FLAGS_WIDTH) & DATA_LENGTH_MASK;
-        return utf8SplitView.of(auxLo, dataLo, size, isAscii);
+        return utf8SplitView.of(auxLo, dataLo, dataLim, size, isAscii);
     }
 
     /**
@@ -409,6 +413,11 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
                 memoryTag,
                 opts
         );
+    }
+
+    @Override
+    public long dedupMergeVarColumnSize(long mergeIndexAddr, long mergeIndexCount, long srcDataFixAddr, long srcOooFixAddr) {
+        return Vect.dedupMergeVarcharColumnSize(mergeIndexAddr, mergeIndexCount, srcDataFixAddr, srcOooFixAddr);
     }
 
     @Override

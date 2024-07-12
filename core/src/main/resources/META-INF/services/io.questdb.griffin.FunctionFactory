@@ -23,6 +23,8 @@
 ################################################################################
 
 io.questdb.griffin.engine.functions.finance.LevelTwoPriceFunctionFactory
+io.questdb.griffin.engine.functions.finance.SpreadFunctionFactory
+io.questdb.griffin.engine.functions.finance.MidPriceFunctionFactory
 
 io.questdb.griffin.engine.functions.activity.CancelQueryFunctionFactory
 io.questdb.griffin.engine.functions.activity.QueryActivityFunctionFactory
@@ -270,9 +272,12 @@ io.questdb.griffin.engine.functions.date.IsLeapYearFunctionFactory
 io.questdb.griffin.engine.functions.date.TimestampDiffFunctionFactory
 io.questdb.griffin.engine.functions.date.TimestampAddFunctionFactory
 io.questdb.griffin.engine.functions.date.ToDateFunctionFactory
+io.questdb.griffin.engine.functions.date.VarcharToDateFunctionFactory
 io.questdb.griffin.engine.functions.date.ToStrDateFunctionFactory
 io.questdb.griffin.engine.functions.date.ToPgDateFunctionFactory
+io.questdb.griffin.engine.functions.date.VarcharToPgDateFunctionFactory
 io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory
+io.questdb.griffin.engine.functions.date.TimestampFloorOffsetFunctionFactory
 io.questdb.griffin.engine.functions.date.TimestampCeilFunctionFactory
 io.questdb.griffin.engine.functions.date.DateTruncFunctionFactory
 io.questdb.griffin.engine.functions.date.PgPostmasterStartTimeFunctionFactory
@@ -774,6 +779,7 @@ io.questdb.griffin.engine.functions.catalogue.WalTableListFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.WalTransactionsFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.DumpMemoryUsageFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.FlushQueryCacheFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PrefixedAgeFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PgIsInRecoveryFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PrefixedPgIsInRecoveryFunctionFactory
@@ -797,6 +803,10 @@ io.questdb.griffin.engine.functions.str.ConcatFunctionFactory
 # replace()
 io.questdb.griffin.engine.functions.str.ReplaceStrFunctionFactory
 io.questdb.griffin.engine.functions.str.ReplaceVarcharFunctionFactory
+
+# json_extract()
+io.questdb.griffin.engine.functions.json.JsonExtractVarcharFunctionFactory
+io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory
 
 # regexp_replace()
 io.questdb.griffin.engine.functions.regex.RegexpReplaceStrFunctionFactory

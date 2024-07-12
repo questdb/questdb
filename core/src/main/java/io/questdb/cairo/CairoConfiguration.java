@@ -302,6 +302,8 @@ public interface CairoConfiguration {
 
     int getPartitionPurgeListCapacity();
 
+    int getQueryCacheEventQueueCapacity();
+
     int getQueryRegistryPoolSize();
 
     @NotNull

@@ -649,7 +649,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                     "SELECT URLHash, EventDate, COUNT(*) AS PageViews FROM hits WHERE CounterID = 62 AND EventTime >= '2013-07-01T00:00:00Z' AND EventTime <= '2013-07-31T23:59:59Z' AND IsRefresh = 0 AND TraficSourceID IN (-1, 6) AND RefererHash = 3594120000172545465 GROUP BY URLHash, EventDate ORDER BY PageViews DESC LIMIT 100, 110;",
                     "Sort light lo: 100 hi: 110\n" +
                             "  keys: [PageViews desc]\n" +
-                            "    Async Group By workers: 1\n" +
+                            "    Async JIT Group By workers: 1\n" +
                             "      keys: [URLHash,EventDate]\n" +
                             "      values: [count(*)]\n" +
                             "      filter: (CounterID=62 and IsRefresh=0 and TraficSourceID in [-1,6] and RefererHash=3594120000172545465L)\n" +

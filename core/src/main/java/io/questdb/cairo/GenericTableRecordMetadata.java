@@ -26,11 +26,23 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.wal.seq.TableRecordMetadataSink;
+import io.questdb.std.IntList;
+import io.questdb.std.Transient;
+import org.jetbrains.annotations.Nullable;
+
+import java.util.Comparator;
 
 public class GenericTableRecordMetadata extends GenericRecordMetadata implements TableRecordMetadata, TableRecordMetadataSink {
+    private final Comparator<TableColumnMetadata> columnOrderComparator;
     private long metadataVersion;
+    private IntList readColumnOrder;
     private int tableId;
     private TableToken tableToken;
+
+    public GenericTableRecordMetadata() {
+        super();
+        columnOrderComparator = this::compareColumnOrder;
+    }
 
     @Override
     public void addColumn(
@@ -91,17 +103,37 @@ public class GenericTableRecordMetadata extends GenericRecordMetadata implements
             int compressedTimestampIndex,
             boolean suspended,
             long structureVersion,
-            int columnCount
+            int columnCount,
+            @Transient @Nullable IntList readColumnOrder
     ) {
         this.tableToken = tableToken;
         this.tableId = tableId;
         this.timestampIndex = compressedTimestampIndex;
-        // todo: suspended
         this.metadataVersion = structureVersion;
-        // todo: maxUncommittedRows where from ?
+
+        if (readColumnOrder != null) {
+            this.readColumnOrder = readColumnOrder;
+            columnMetadata.sort(columnOrderComparator);
+            this.readColumnOrder = null;
+
+            columnNameIndexMap.clear();
+            for (int i = 0; i < columnCount; i++) {
+                TableColumnMetadata column = columnMetadata.getQuick(i);
+                columnNameIndexMap.put(column.getName(), i);
+                if (column.getWriterIndex() == timestampIndex) {
+                    this.timestampIndex = i;
+                }
+            }
+        }
     }
 
     public void updateTableToken(TableToken tableToken) {
         this.tableToken = tableToken;
+    }
+
+    private int compareColumnOrder(TableColumnMetadata a, TableColumnMetadata b) {
+        int aOrder = readColumnOrder.getQuick(a.getWriterIndex());
+        int bOrder = readColumnOrder.getQuick(b.getWriterIndex());
+        return Integer.compare(aOrder, bOrder);
     }
 }

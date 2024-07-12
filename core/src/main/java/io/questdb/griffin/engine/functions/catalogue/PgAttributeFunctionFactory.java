@@ -79,7 +79,7 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
     private static class AttributeCatalogueCursorFactory extends AbstractRecordCursorFactory {
 
         private final AttributeClassCatalogueCursor cursor;
-        private final MemoryMR metaMem = Vm.getMRInstance();
+        private final MemoryMR metaMem = Vm.getCMRInstance();
         private final Path path = new Path();
 
         public AttributeCatalogueCursorFactory(CairoConfiguration configuration, RecordMetadata metadata) {
@@ -177,7 +177,7 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
                         if (ff.isDirOrSoftLinkDirNoDots(path, plimit, pUtf8NameZ, ff.findType(findFileStruct))) {
                             if (ff.exists(path.concat(TableUtils.META_FILE_NAME).$())) {
                                 foundMetadataFile = true;
-                                metaMem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+                                metaMem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
                                 columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
                                 tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
                             }

@@ -38,6 +38,12 @@ public interface BinaryFunction extends Function {
         getRight().close();
     }
 
+    @Override
+    default void cursorClosed() {
+        getLeft().cursorClosed();
+        getRight().cursorClosed();
+    }
+
     Function getLeft();
 
     Function getRight();

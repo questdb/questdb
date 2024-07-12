@@ -53,6 +53,11 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     }
 
     @Override
+    public long addressHi() {
+        return lim;
+    }
+
+    @Override
     public long appendAddressFor(long bytes) {
         checkAndExtend(appendAddress + bytes);
         long result = appendAddress;

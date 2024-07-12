@@ -27,6 +27,7 @@ package io.questdb;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.FlushQueryCacheJob;
 import io.questdb.cairo.security.ReadOnlySecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -36,10 +37,11 @@ import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.auth.DefaultLineAuthenticatorFactory;
 import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
-import io.questdb.cutlass.http.HttpContextConfiguration;
-import io.questdb.cutlass.http.HttpServer;
+import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.line.tcp.StaticChallengeResponseMatcher;
-import io.questdb.cutlass.pgwire.*;
+import io.questdb.cutlass.pgwire.PGWireConfiguration;
+import io.questdb.cutlass.pgwire.PGWireServer;
+import io.questdb.cutlass.pgwire.ReadOnlyUsersAwareSecurityContextFactory;
 import io.questdb.cutlass.text.CopyJob;
 import io.questdb.cutlass.text.CopyRequestJob;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
@@ -49,7 +51,9 @@ import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
-import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.filewatch.FileWatcher;
+import io.questdb.std.filewatch.FileWatcherFactory;
+import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
@@ -66,6 +70,7 @@ public class ServerMain implements Closeable {
     private final CairoEngine engine;
     private final FreeOnExit freeOnExit = new FreeOnExit();
     private final AtomicBoolean running = new AtomicBoolean();
+    private FileWatcher fileWatcher;
     private HttpServer httpServer;
     private boolean initialized;
     private WorkerPoolManager workerPoolManager;
@@ -123,6 +128,15 @@ public class ServerMain implements Closeable {
         };
     }
 
+    public static HttpAuthenticatorFactory getHttpAuthenticatorFactory(ServerConfiguration configuration) {
+        HttpServerConfiguration httpConfig = configuration.getHttpServerConfiguration();
+        String username = httpConfig.getUsername();
+        if (Chars.empty(username)) {
+            return DefaultHttpAuthenticatorFactory.INSTANCE;
+        }
+        return new StaticHttpAuthenticatorFactory(username, httpConfig.getPassword());
+    }
+
     public static LineAuthenticatorFactory getLineAuthenticatorFactory(ServerConfiguration configuration) {
         LineAuthenticatorFactory authenticatorFactory;
         // create default authenticator for Line TCP protocol
@@ -136,15 +150,6 @@ public class ServerMain implements Closeable {
             authenticatorFactory = DefaultLineAuthenticatorFactory.INSTANCE;
         }
         return authenticatorFactory;
-    }
-
-    public static PgWireAuthenticatorFactory getPgWireAuthenticatorFactory(
-            ServerConfiguration configuration,
-            DirectUtf8Sink defaultUserPasswordSink,
-            DirectUtf8Sink readOnlyUserPasswordSink
-    ) {
-        UsernamePasswordMatcher usernamePasswordMatcher = newPgWireUsernamePasswordMatcher(configuration.getPGWireConfiguration(), defaultUserPasswordSink, readOnlyUserPasswordSink);
-        return new UsernamePasswordPgWireAuthenticatorFactory(usernamePasswordMatcher);
     }
 
     public static SecurityContextFactory getSecurityContextFactory(ServerConfiguration configuration) {
@@ -165,39 +170,18 @@ public class ServerMain implements Closeable {
     public static void main(String[] args) {
         try {
             new ServerMain(args).start(true);
+        } catch (Bootstrap.BootstrapException e) {
+            if (e.isSilentStacktrace()) {
+                System.err.println(e.getMessage());
+            } else {
+                e.printStackTrace();
+            }
+            LogFactory.closeInstance();
+            System.exit(55);
         } catch (Throwable thr) {
             thr.printStackTrace();
             LogFactory.closeInstance();
             System.exit(55);
-        }
-    }
-
-    public static UsernamePasswordMatcher newPgWireUsernamePasswordMatcher(PGWireConfiguration configuration, DirectUtf8Sink defaultUserPasswordSink, DirectUtf8Sink readOnlyUserPasswordSink) {
-        String defaultUsername = configuration.getDefaultUsername();
-        String defaultPassword = configuration.getDefaultPassword();
-        boolean defaultUserEnabled = !Chars.empty(defaultUsername) && !Chars.empty(defaultPassword);
-
-        String readOnlyUsername = configuration.getReadOnlyUsername();
-        String readOnlyPassword = configuration.getReadOnlyPassword();
-        boolean readOnlyUserValid = !Chars.empty(readOnlyUsername) && !Chars.empty(readOnlyPassword);
-        boolean readOnlyUserEnabled = configuration.isReadOnlyUserEnabled() && readOnlyUserValid;
-
-        if (defaultUserEnabled && readOnlyUserEnabled) {
-            defaultUserPasswordSink.put(defaultPassword);
-            readOnlyUserPasswordSink.put(readOnlyPassword);
-
-            return new CombiningUsernamePasswordMatcher(
-                    new StaticUsernamePasswordMatcher(defaultUsername, defaultUserPasswordSink.ptr(), defaultUserPasswordSink.size()),
-                    new StaticUsernamePasswordMatcher(readOnlyUsername, readOnlyUserPasswordSink.ptr(), readOnlyUserPasswordSink.size())
-            );
-        } else if (defaultUserEnabled) {
-            defaultUserPasswordSink.put(defaultPassword);
-            return new StaticUsernamePasswordMatcher(defaultUsername, defaultUserPasswordSink.ptr(), defaultUserPasswordSink.size());
-        } else if (readOnlyUserEnabled) {
-            readOnlyUserPasswordSink.put(readOnlyPassword);
-            return new StaticUsernamePasswordMatcher(readOnlyUsername, readOnlyUserPasswordSink.ptr(), readOnlyUserPasswordSink.size());
-        } else {
-            return NeverMatchUsernamePasswordMatcher.INSTANCE;
         }
     }
 
@@ -218,6 +202,7 @@ public class ServerMain implements Closeable {
         if (closed.compareAndSet(false, true)) {
             if (initialized) {
                 workerPoolManager.halt();
+                fileWatcher = Misc.free(fileWatcher);
             }
             freeOnExit.close();
         }
@@ -298,6 +283,19 @@ public class ServerMain implements Closeable {
         final boolean isReadOnly = config.getCairoConfiguration().isReadOnlyInstance();
         final boolean walApplyEnabled = config.getCairoConfiguration().isWalApplyEnabled();
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
+
+        if (config instanceof DynamicServerConfiguration) {
+            if (((DynamicServerConfiguration) config).isConfigReloadEnabled()) {
+                try (Path path = new Path()) {
+                    path.of(cairoConfig.getConfRoot()).concat(Bootstrap.CONFIG_FILE).$();
+                    fileWatcher = FileWatcherFactory.getFileWatcher(
+                            path,
+                            (DynamicServerConfiguration) config
+                    );
+                }
+                fileWatcher.start();
+            }
+        }
 
         workerPoolManager = new WorkerPoolManager(config, metrics) {
             @Override
@@ -380,11 +378,18 @@ public class ServerMain implements Closeable {
         ));
 
         // pg wire
-        freeOnExit.register(services().createPGWireServer(
+        PGWireServer pgWireServer;
+        freeOnExit.register(pgWireServer = services().createPGWireServer(
                 config.getPGWireConfiguration(),
                 engine,
                 workerPoolManager,
                 metrics
+        ));
+
+        workerPoolManager.getSharedPool().assign(new FlushQueryCacheJob(
+                engine.getMessageBus(),
+                httpServer,
+                pgWireServer
         ));
 
         if (!isReadOnly && config.getLineTcpReceiverConfiguration().isEnabled()) {

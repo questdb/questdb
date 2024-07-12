@@ -1268,18 +1268,16 @@ public class GroupByTest extends AbstractCairoTest {
                             "    GroupBy vectorized: false\n" +
                             "      keys: [x,case,x1]\n" +
                             "      values: [max(y)]\n" +
-                            "        VirtualRecord\n" +
-                            "          functions: [x,y,case([1<x,30*x,20*x1]),x1]\n" +
-                            "            SelectedRecord\n" +
-                            "                Hash Join Light\n" +
-                            "                  condition: t2.y=t1.y\n" +
+                            "        SelectedRecord\n" +
+                            "            Hash Join Light\n" +
+                            "              condition: t2.y=t1.y\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: t1\n" +
+                            "                Hash\n" +
                             "                    DataFrame\n" +
                             "                        Row forward scan\n" +
-                            "                        Frame forward scan on: t1\n" +
-                            "                    Hash\n" +
-                            "                        DataFrame\n" +
-                            "                            Row forward scan\n" +
-                            "                            Frame forward scan on: t2\n"
+                            "                        Frame forward scan on: t2\n"
             );
 
             assertQueryNoLeakCheck(
@@ -1315,18 +1313,16 @@ public class GroupByTest extends AbstractCairoTest {
                             "        GroupBy vectorized: false\n" +
                             "          keys: [x,x1,dateadd]\n" +
                             "          values: [max(y)]\n" +
-                            "            VirtualRecord\n" +
-                            "              functions: [x,y,x1,dateadd('d',1677628800000000,x)]\n" +
-                            "                SelectedRecord\n" +
-                            "                    Hash Join Light\n" +
-                            "                      condition: t2.y=t1.y\n" +
+                            "            SelectedRecord\n" +
+                            "                Hash Join Light\n" +
+                            "                  condition: t2.y=t1.y\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: t1\n" +
+                            "                    Hash\n" +
                             "                        DataFrame\n" +
                             "                            Row forward scan\n" +
-                            "                            Frame forward scan on: t1\n" +
-                            "                        Hash\n" +
-                            "                            DataFrame\n" +
-                            "                                Row forward scan\n" +
-                            "                                Frame forward scan on: t2\n"
+                            "                            Frame forward scan on: t2\n"
             );
 
             assertQueryNoLeakCheck(
@@ -1362,18 +1358,16 @@ public class GroupByTest extends AbstractCairoTest {
                             "        GroupBy vectorized: false\n" +
                             "          keys: [x,dateadd,x1]\n" +
                             "          values: [max(y)]\n" +
-                            "            VirtualRecord\n" +
-                            "              functions: [x,y,dateadd('d',1677628800000000,x),x1]\n" +
-                            "                SelectedRecord\n" +
-                            "                    Hash Join Light\n" +
-                            "                      condition: t2.y=t1.y\n" +
+                            "            SelectedRecord\n" +
+                            "                Hash Join Light\n" +
+                            "                  condition: t2.y=t1.y\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: t1\n" +
+                            "                    Hash\n" +
                             "                        DataFrame\n" +
                             "                            Row forward scan\n" +
-                            "                            Frame forward scan on: t1\n" +
-                            "                        Hash\n" +
-                            "                            DataFrame\n" +
-                            "                                Row forward scan\n" +
-                            "                                Frame forward scan on: t2\n"
+                            "                            Frame forward scan on: t2\n"
             );
 
             assertQueryNoLeakCheck(
@@ -1402,6 +1396,182 @@ public class GroupByTest extends AbstractCairoTest {
                 true,
                 true
         );
+    }
+
+    @Test
+    public void testGroupByWithLeftJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(
+                    "create table dim_apTemperature as (" +
+                            "  select x::int id," +
+                            "         rnd_str('a','b','c') as category," +
+                            "         rnd_float() aparent_temperature" +
+                            "  from long_sequence(10)" +
+                            ");"
+            );
+            ddl(
+                    "create table fact_table as (" +
+                            "  select x::int id_aparent_temperature," +
+                            "         (x * 120000000)::timestamp date_time," +
+                            "         rnd_float() radiation," +
+                            "         rnd_float() energy_power" +
+                            "  from long_sequence(10)" +
+                            ");"
+            );
+
+            final String expectedResult = "dim_ap_temperature__category\tfact_table__date_time_day\tfact_table__avg_radiation\tfact_table__energy_power\n" +
+                    "c\t1970-01-01T00:00:00.000000Z\t0.5421442091464996\t0.6145070195198059\n" +
+                    "b\t1970-01-01T00:00:00.000000Z\t0.525111973285675\t0.6171746551990509\n" +
+                    "a\t1970-01-01T00:00:00.000000Z\t0.33940355479717255\t0.47865718603134155\n";
+
+            // With GROUP BY clause
+            // This query is generated by Cube.js
+            final String query1 = "SELECT\n" +
+                    "  \"dim_ap_temperature\".category \"dim_ap_temperature__category\",\n" +
+                    "  timestamp_floor('d', to_timezone(\"fact_table\".date_time, 'UTC')) \"fact_table__date_time_day\",\n" +
+                    "  avg(\"fact_table\".radiation) \"fact_table__avg_radiation\",\n" +
+                    "  avg(\"fact_table\".energy_power) \"fact_table__energy_power\"\n" +
+                    "FROM\n" +
+                    "  fact_table AS \"fact_table\"\n" +
+                    "  LEFT JOIN dim_apTemperature AS \"dim_ap_temperature\" ON \"fact_table\".id_aparent_temperature = \"dim_ap_temperature\".id\n" +
+                    "GROUP BY\n" +
+                    "  \"dim_ap_temperature__category\",\n" +
+                    "  \"fact_table__date_time_day\"\n" +
+                    "ORDER BY\n" +
+                    "  \"fact_table__avg_radiation\" DESC\n" +
+                    "LIMIT\n" +
+                    "  10000;";
+            assertSql(expectedResult, query1);
+            assertPlanNoLeakCheck(
+                    query1,
+                    "Sort light lo: 10000\n" +
+                            "  keys: [fact_table__avg_radiation desc]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [dim_ap_temperature__category,fact_table__date_time_day,fact_table__avg_radiation,fact_table__energy_power]\n" +
+                            "        GroupBy vectorized: false\n" +
+                            "          keys: [dim_ap_temperature__category,fact_table__date_time_day]\n" +
+                            "          values: [avg(radiation),avg(energy_power)]\n" +
+                            "            SelectedRecord\n" +
+                            "                Hash Outer Join Light\n" +
+                            "                  condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: fact_table\n" +
+                            "                    Hash\n" +
+                            "                        DataFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: dim_apTemperature\n"
+            );
+
+            // With no aliases in GROUP BY clause - 1
+            final String query2 = "SELECT\n" +
+                    "  \"dim_ap_temperature\".category \"dim_ap_temperature__category\",\n" +
+                    "  timestamp_floor('d', to_timezone(\"fact_table\".date_time, 'UTC')) \"fact_table__date_time_day\",\n" +
+                    "  avg(\"fact_table\".radiation) \"fact_table__avg_radiation\",\n" +
+                    "  avg(\"fact_table\".energy_power) \"fact_table__energy_power\"\n" +
+                    "FROM\n" +
+                    "  fact_table AS \"fact_table\"\n" +
+                    "  LEFT JOIN dim_apTemperature AS \"dim_ap_temperature\" ON \"fact_table\".id_aparent_temperature = \"dim_ap_temperature\".id\n" +
+                    "GROUP BY\n" +
+                    "  \"dim_ap_temperature\".category,\n" +
+                    "  timestamp_floor('d', to_timezone(\"fact_table\".date_time, 'UTC'))\n" +
+                    "ORDER BY\n" +
+                    "  \"fact_table__avg_radiation\" DESC\n" +
+                    "LIMIT\n" +
+                    "  10000;";
+            assertSql(expectedResult, query2);
+            assertPlanNoLeakCheck(
+                    query2,
+                    "Sort light lo: 10000\n" +
+                            "  keys: [fact_table__avg_radiation desc]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [category,timestamp_floor,fact_table__avg_radiation,fact_table__energy_power]\n" +
+                            "        GroupBy vectorized: false\n" +
+                            "          keys: [category,timestamp_floor]\n" +
+                            "          values: [avg(radiation),avg(energy_power)]\n" +
+                            "            SelectedRecord\n" +
+                            "                Hash Outer Join Light\n" +
+                            "                  condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: fact_table\n" +
+                            "                    Hash\n" +
+                            "                        DataFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: dim_apTemperature\n"
+            );
+
+            // With no aliases in GROUP BY clause - 2
+            final String query3 = "SELECT\n" +
+                    "  category \"dim_ap_temperature__category\",\n" +
+                    "  timestamp_floor('d', to_timezone(date_time, 'UTC')) \"fact_table__date_time_day\",\n" +
+                    "  avg(radiation) \"fact_table__avg_radiation\",\n" +
+                    "  avg(energy_power) \"fact_table__energy_power\"\n" +
+                    "FROM\n" +
+                    "  fact_table AS \"fact_table\"\n" +
+                    "  LEFT JOIN dim_apTemperature AS \"dim_ap_temperature\" ON \"fact_table\".id_aparent_temperature = \"dim_ap_temperature\".id\n" +
+                    "GROUP BY\n" +
+                    "  category,\n" +
+                    "  timestamp_floor('d', to_timezone(date_time, 'UTC'))\n" +
+                    "ORDER BY\n" +
+                    "  \"fact_table__avg_radiation\" DESC\n" +
+                    "LIMIT\n" +
+                    "  10000;";
+            assertSql(expectedResult, query3);
+            assertPlanNoLeakCheck(
+                    query3,
+                    "Sort light lo: 10000\n" +
+                            "  keys: [fact_table__avg_radiation desc]\n" +
+                            "    VirtualRecord\n" +
+                            "      functions: [category,timestamp_floor,fact_table__avg_radiation,fact_table__energy_power]\n" +
+                            "        GroupBy vectorized: false\n" +
+                            "          keys: [category,timestamp_floor]\n" +
+                            "          values: [avg(radiation),avg(energy_power)]\n" +
+                            "            SelectedRecord\n" +
+                            "                Hash Outer Join Light\n" +
+                            "                  condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: fact_table\n" +
+                            "                    Hash\n" +
+                            "                        DataFrame\n" +
+                            "                            Row forward scan\n" +
+                            "                            Frame forward scan on: dim_apTemperature\n"
+            );
+
+            // Without GROUP BY clause
+            final String query4 = "SELECT\n" +
+                    "  \"dim_ap_temperature\".category \"dim_ap_temperature__category\",\n" +
+                    "  timestamp_floor('d', to_timezone(\"fact_table\".date_time, 'UTC')) \"fact_table__date_time_day\",\n" +
+                    "  avg(\"fact_table\".radiation) \"fact_table__avg_radiation\",\n" +
+                    "  avg(\"fact_table\".energy_power) \"fact_table__energy_power\"\n" +
+                    "FROM\n" +
+                    "  fact_table AS \"fact_table\"\n" +
+                    "  LEFT JOIN dim_apTemperature AS \"dim_ap_temperature\" ON \"fact_table\".id_aparent_temperature = \"dim_ap_temperature\".id\n" +
+                    "ORDER BY\n" +
+                    "  \"fact_table__avg_radiation\" DESC\n" +
+                    "LIMIT\n" +
+                    "  10000;";
+            assertSql(expectedResult, query4);
+            assertPlanNoLeakCheck(
+                    query4,
+                    "Sort light lo: 10000\n" +
+                            "  keys: [fact_table__avg_radiation desc]\n" +
+                            "    GroupBy vectorized: false\n" +
+                            "      keys: [dim_ap_temperature__category,fact_table__date_time_day]\n" +
+                            "      values: [avg(radiation),avg(energy_power)]\n" +
+                            "        SelectedRecord\n" +
+                            "            Hash Outer Join Light\n" +
+                            "              condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: fact_table\n" +
+                            "                Hash\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: dim_apTemperature\n"
+            );
+        });
     }
 
     @Test
@@ -1519,11 +1689,9 @@ public class GroupByTest extends AbstractCairoTest {
                     "GroupBy vectorized: false\n" +
                             "  keys: [concat]\n" +
                             "  values: [sum(l)]\n" +
-                            "    VirtualRecord\n" +
-                            "      functions: [concat(['_',s2,'_']),l]\n" +
-                            "        LatestByDeferredListValuesFiltered\n" +
-                            "          filter: s2 in [d]\n" +
-                            "            Frame backward scan on: t\n"
+                            "    LatestByDeferredListValuesFiltered\n" +
+                            "      filter: s2 in [d]\n" +
+                            "        Frame backward scan on: t\n"
             );
             assertQueryNoLeakCheck(
                     "concat\tsum\n" +
@@ -2161,18 +2329,16 @@ public class GroupByTest extends AbstractCairoTest {
                             "        GroupBy vectorized: false\n" +
                             "          keys: [x,dateadd,x1]\n" +
                             "          values: [max(y)]\n" +
-                            "            VirtualRecord\n" +
-                            "              functions: [x,y,dateadd('d',1677628800000000,x),x1]\n" +
-                            "                SelectedRecord\n" +
-                            "                    Hash Join Light\n" +
-                            "                      condition: t2.y=t1.y\n" +
+                            "            SelectedRecord\n" +
+                            "                Hash Join Light\n" +
+                            "                  condition: t2.y=t1.y\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: t1\n" +
+                            "                    Hash\n" +
                             "                        DataFrame\n" +
                             "                            Row forward scan\n" +
-                            "                            Frame forward scan on: t1\n" +
-                            "                        Hash\n" +
-                            "                            DataFrame\n" +
-                            "                                Row forward scan\n" +
-                            "                                Frame forward scan on: t2\n"
+                            "                            Frame forward scan on: t2\n"
             );
 
             assertQueryNoLeakCheck(
@@ -2448,14 +2614,13 @@ public class GroupByTest extends AbstractCairoTest {
                             "  keys: [hour, sym]\n" +
                             "    VirtualRecord\n" +
                             "      functions: [sym,hour,avgBid]\n" +
-                            "        GroupBy vectorized: false\n" +
+                            "        Async Group By workers: 1\n" +
                             "          keys: [sym,hour]\n" +
                             "          values: [avg(bid)]\n" +
-                            "            VirtualRecord\n" +
-                            "              functions: [sym,hour(ts),bid]\n" +
-                            "                DataFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: x\n"
+                            "          filter: null\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n"
             );
             assertQueryNoLeakCheck(
                     "sym\thour\tavgBid\n" +

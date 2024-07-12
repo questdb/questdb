@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.str;
 
+import io.questdb.PropertyKey;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -71,6 +72,64 @@ public class VarcharFunctionsTest extends AbstractCairoTest {
                 false,
                 true,
                 false
+        );
+    }
+
+    @Test
+    public void testToDate() throws Exception {
+        assertQuery(
+                "c\n" +
+                        "1999-07-05\n",
+                "select c from x where to_date(c, 'yyyy-MM-dd') = to_date('1999-07-05', 'yyyy-MM-dd')",
+                "create table x as (select cast('1999-07-05' as varchar) c from long_sequence(1))",
+                null, true, false
+        );
+    }
+
+    @Test
+    public void testToDateUkr() throws Exception {
+        setProperty(PropertyKey.CAIRO_DATE_LOCALE, "uk");
+        assertQuery(
+                "c\n" +
+                        "5 лип. 1999\n",
+                "select c from x where to_date(c, 'd MMM y') = '1999-07-05'",
+                "create table x as (select cast('5 лип. 1999' as varchar) c from long_sequence(1))",
+                null, true, false
+        );
+    }
+
+    @Test
+    public void testToDateUs() throws Exception {
+        setProperty(PropertyKey.CAIRO_DATE_LOCALE, "en-US");
+        assertQuery(
+                "c\n" +
+                        "5 Jul 1999\n",
+                "select c from x where to_date(c, 'd MMM y') = to_date('1999-07-05', 'yyyy-MM-dd')",
+                "create table x as (select cast('5 Jul 1999' as varchar) c from long_sequence(1))",
+                null, true, false
+        );
+    }
+
+    @Test
+    public void testToPgDate() throws Exception {
+        assertQuery(
+                "c\n" +
+                        "1999-07-05\n",
+                "select c from x where to_pg_date(c) = to_date('1999-07-05', 'yyyy-MM-dd')",
+                "create table x as (select cast('1999-07-05' as varchar) c from long_sequence(1))",
+                null, true, false
+        );
+    }
+
+    @Test
+    public void testToPgDateUkr() throws Exception {
+        setProperty(PropertyKey.PG_DATE_LOCALE, "uk");
+        assertQuery(
+                "c\n" +
+                        "1999-07-05\n",
+                "select c from x where to_pg_date(c) = '1999-07-05'",
+                "create table x as (select cast('1999-07-05' as varchar) c from long_sequence(1))",
+                null, true, false
         );
     }
 

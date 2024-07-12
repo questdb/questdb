@@ -211,6 +211,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.page.frame.shard.count\tQDB_CAIRO_PAGE_FRAME_SHARD_COUNT\t2\tdefault\tfalse\tfalse\n" +
                                     "cairo.parallel.index.threshold\tQDB_CAIRO_PARALLEL_INDEX_THRESHOLD\t100000\tdefault\tfalse\tfalse\n" +
                                     "cairo.parallel.indexing.enabled\tQDB_CAIRO_PARALLEL_INDEXING_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.query.cache.event.queue.capacity\tQDB_CAIRO_QUERY_CACHE_EVENT_QUEUE_CAPACITY\t4\tdefault\tfalse\tfalse\n" +
                                     "cairo.reader.pool.max.segments\tQDB_CAIRO_READER_POOL_MAX_SEGMENTS\t10\tdefault\tfalse\tfalse\n" +
                                     "cairo.repeat.migration.from.version\tQDB_CAIRO_REPEAT_MIGRATION_FROM_VERSION\t426\tdefault\tfalse\tfalse\n" +
                                     "cairo.rnd.memory.max.pages\tQDB_CAIRO_RND_MEMORY_MAX_PAGES\t128\tdefault\tfalse\tfalse\n" +
@@ -355,9 +356,12 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.writer.tick.rows.count\tQDB_CAIRO_WRITER_TICK_ROWS_COUNT\t1024\tdefault\tfalse\tfalse\n" +
                                     "circuit.breaker.buffer.size\tQDB_CIRCUIT_BREAKER_BUFFER_SIZE\t64\tdefault\tfalse\tfalse\n" +
                                     "circuit.breaker.throttle\tQDB_CIRCUIT_BREAKER_THROTTLE\t2000000\tdefault\tfalse\tfalse\n" +
+                                    "config.reload.enabled\tQDB_CONFIG_RELOAD_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "config.validation.strict\tQDB_CONFIG_VALIDATION_STRICT\tfalse\tdefault\tfalse\tfalse\n" +
                                     "http.allow.deflate.before.send\tQDB_HTTP_ALLOW_DEFLATE_BEFORE_SEND\tfalse\tdefault\tfalse\tfalse\n" +
                                     "http.bind.to\tQDB_HTTP_BIND_TO\t0.0.0.0:9010\tconf\tfalse\tfalse\n" +
+                                    "http.user\tQDB_HTTP_USER\t\tdefault\tfalse\tfalse\n" +
+                                    "http.password\tQDB_HTTP_PASSWORD\t****\tdefault\ttrue\tfalse\n" +
                                     "http.busy.retry.exponential.wait.multiplier\tQDB_HTTP_BUSY_RETRY_EXPONENTIAL_WAIT_MULTIPLIER\t2.0\tdefault\tfalse\tfalse\n" +
                                     "http.busy.retry.initialWaitQueueSize\tQDB_HTTP_BUSY_RETRY_INITIALWAITQUEUESIZE\t64\tdefault\tfalse\tfalse\n" +
                                     "http.busy.retry.maxProcessingQueueSize\tQDB_HTTP_BUSY_RETRY_MAXPROCESSINGQUEUESIZE\t4096\tdefault\tfalse\tfalse\n" +

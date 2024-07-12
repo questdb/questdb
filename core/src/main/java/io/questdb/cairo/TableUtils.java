@@ -25,7 +25,6 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
-import io.questdb.TelemetryConfigLogger;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
@@ -205,7 +204,31 @@ public final class TableUtils {
         return (int) (checkSum ^ (checkSum >>> 32));
     }
 
-    public static Path charFileName(Path path, CharSequence columnName, long columnNameTxn) {
+    public static int changeColumnTypeInMetadata(CharSequence columnName, int newType, LowerCaseCharSequenceIntHashMap columnNameIndexMap, ObjList<TableColumnMetadata> columnMetadata) {
+        int existingIndex = columnNameIndexMap.get(columnName);
+        if (existingIndex < 0) {
+            throw CairoException.nonCritical().put("cannot change type, column '").put(columnName).put("' does not exist");
+        }
+        String columnNameStr = columnMetadata.getQuick(existingIndex).getName();
+        int columnIndex = columnMetadata.size();
+        columnMetadata.add(
+                new TableColumnMetadata(
+                        columnNameStr,
+                        newType,
+                        false,
+                        0,
+                        false,
+                        null,
+                        columnIndex,
+                        false
+                )
+        );
+        columnMetadata.getQuick(existingIndex).markDeleted();
+        columnNameIndexMap.put(columnNameStr, columnIndex);
+        return existingIndex;
+    }
+
+    public static LPSZ charFileName(Path path, CharSequence columnName, long columnNameTxn) {
         path.concat(columnName).put(".c");
         if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
             path.put('.').put(columnNameTxn);
@@ -379,12 +402,12 @@ public final class TableUtils {
     ) {
         LOG.debug().$("create table [name=").utf8(tableDir).I$();
         path.of(root).concat(tableDir).$();
-        if (ff.isDirOrSoftLinkDir(path)) {
+        if (ff.isDirOrSoftLinkDir(path.$())) {
             throw CairoException.critical(ff.errno()).put("table directory already exists [path=").put(path).put(']');
         }
         int rootLen = path.size();
         try {
-            if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
+            if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
                 throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path.trimTo(rootLen).$()).put(']');
             }
             createTableFiles(ff, memory, path, rootLen, tableDir, structure, tableVersion, tableId);
@@ -477,23 +500,23 @@ public final class TableUtils {
             int tableId
     ) {
         LOG.info().$("create table in volume [path=").$(path).I$();
-        Path normalPath = Path.getThreadLocal2(root).concat(tableDir).$();
+        Path normalPath = Path.getThreadLocal2(root).concat(tableDir);
         assert normalPath != path;
-        if (ff.isDirOrSoftLinkDir(normalPath)) {
+        if (ff.isDirOrSoftLinkDir(normalPath.$())) {
             throw CairoException.critical(ff.errno()).put("table directory already exists [path=").put(normalPath).put(']');
         }
         // path has been set by CREATE TABLE ... [IN VOLUME 'path'].
         // it is a valid directory, or link to a directory, checked at bootstrap
-        if (ff.isDirOrSoftLinkDir(path)) {
+        if (ff.isDirOrSoftLinkDir(path.$())) {
             throw CairoException.critical(ff.errno()).put("table directory already exists in volume [path=").put(path).put(']');
         }
         int rootLen = path.size();
         try {
-            if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
+            if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
                 throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path).put(']');
             }
-            if (ff.softLink(path.trimTo(rootLen).$(), normalPath) != 0) {
-                if (!ff.rmdir(path.slash$())) {
+            if (ff.softLink(path.trimTo(rootLen).$(), normalPath.$()) != 0) {
+                if (!ff.rmdir(path.slash())) {
                     LOG.error().$("cannot remove table directory in volume [errno=").$(ff.errno()).$(", path=").$(path.trimTo(rootLen).$()).I$();
                 }
                 throw CairoException.critical(ff.errno()).put("could not create soft link [src=").put(path.trimTo(rootLen).$()).put(", tableDir=").put(tableDir).put(']');
@@ -567,15 +590,15 @@ public final class TableUtils {
     }
 
     public static int exists(FilesFacade ff, Path path, CharSequence root, CharSequence name) {
-        return exists(ff, path.of(root).concat(name).$());
+        return exists(ff, path.of(root).concat(name));
     }
 
     public static int exists(FilesFacade ff, Path path, CharSequence root, Utf8Sequence name) {
-        return exists(ff, path.of(root).concat(name).$());
+        return exists(ff, path.of(root).concat(name));
     }
 
     public static int existsInVolume(FilesFacade ff, Path volumePath, CharSequence name) {
-        return exists(ff, volumePath.concat(name).$());
+        return exists(ff, volumePath.concat(name));
     }
 
     public static void freeTransitionIndex(long address) {
@@ -615,6 +638,13 @@ public final class TableUtils {
             throw validationException(metaMem).put("Invalid column type ").put(type).put(" at [").put(columnIndex).put(']');
         }
         return type;
+    }
+
+    public static int getInt(MemoryMR metaMem, long memSize, long offset) {
+        if (memSize < offset + Integer.BYTES) {
+            throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(offset + Integer.BYTES);
+        }
+        return metaMem.getInt(offset);
     }
 
     public static int getMaxUncommittedRows(TableRecordMetadata metadata, CairoEngine engine) {
@@ -752,7 +782,7 @@ public final class TableUtils {
                         .$(", error=").utf8(ex.getFlyweightMessage()).I$();
                 Os.pause();
             } else {
-                LOG.error().$("metadata read timeout [timeout=").$(spinLockTimeout).utf8("μs]").$();
+                LOG.error().$("metadata read timeout [timeout=").$(spinLockTimeout).utf8("ms]").$();
                 throw CairoException.critical(ex.getErrno()).put("Metadata read timeout. Last error: ").put(ex.getFlyweightMessage());
             }
         } else {
@@ -778,11 +808,6 @@ public final class TableUtils {
 
     public static boolean isSymbolCached(MemoryMR metaMem, int columnIndex) {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_SYMBOL_CACHE) != 0;
-    }
-
-    public static boolean isSystemTable(@NotNull CharSequence tableName, @NotNull CairoConfiguration configuration) {
-        return Chars.startsWith(tableName, configuration.getSystemTableNamePrefix())
-                || Chars.equals(tableName, TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME);
     }
 
     public static boolean isValidColumnName(CharSequence columnName, int fsFileNameLimit) {
@@ -898,7 +923,7 @@ public final class TableUtils {
         return columnValue != null ? columnValue.length() : NULL_LEN;
     }
 
-    public static int lock(FilesFacade ff, Path path, boolean verbose) {
+    public static int lock(FilesFacade ff, LPSZ path, boolean verbose) {
         // workaround for https://github.com/docker/for-mac/issues/7004
         if (Files.VIRTIO_FS_DETECTED) {
             if (!ff.touch(path)) {
@@ -930,12 +955,12 @@ public final class TableUtils {
         return fd;
     }
 
-    public static int lock(FilesFacade ff, Path path) {
+    public static int lock(FilesFacade ff, LPSZ path) {
         return lock(ff, path, true);
     }
 
-    public static void lockName(Path path) {
-        path.put(".lock").$();
+    public static LPSZ lockName(Path path) {
+        return path.put(".lock").$();
     }
 
     public static long mapAppendColumnBuffer(FilesFacade ff, int fd, long offset, long size, boolean rw, int memoryTag) {
@@ -1091,7 +1116,7 @@ public final class TableUtils {
         ff.msync(alignedAddr, len + alignedExtraLen, async);
     }
 
-    public static Path offsetFileName(Path path, CharSequence columnName, long columnNameTxn) {
+    public static LPSZ offsetFileName(Path path, CharSequence columnName, long columnNameTxn) {
         path.concat(columnName).put(".o");
         if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
             path.put('.').put(columnNameTxn);
@@ -1109,9 +1134,9 @@ public final class TableUtils {
 
     public static int openRO(FilesFacade ff, Path path, CharSequence fileName, Log log) {
         final int rootLen = path.size();
-        path.concat(fileName).$();
+        path.concat(fileName);
         try {
-            return TableUtils.openRO(ff, path, log);
+            return TableUtils.openRO(ff, path.$(), log);
         } finally {
             path.trimTo(rootLen);
         }
@@ -1136,9 +1161,9 @@ public final class TableUtils {
     }
 
     public static void openSmallFile(FilesFacade ff, Path path, int rootLen, MemoryMR metaMem, CharSequence fileName, int memoryTag) {
-        path.concat(fileName).$();
+        path.concat(fileName);
         try {
-            metaMem.smallFile(ff, path, memoryTag);
+            metaMem.smallFile(ff, path.$(), memoryTag);
         } finally {
             path.trimTo(rootLen);
         }
@@ -1148,8 +1173,8 @@ public final class TableUtils {
         // Update name in _name file.
         // This is potentially racy but the file only read on startup when the tables.d file is missing
         // so very limited circumstances.
-        Path nameFilePath = tablePath.concat(TABLE_NAME_FILE).$();
-        memory.smallFile(ff, nameFilePath, MemoryTag.MMAP_TABLE_WRITER);
+        Path nameFilePath = tablePath.concat(TABLE_NAME_FILE);
+        memory.smallFile(ff, nameFilePath.$(), MemoryTag.MMAP_TABLE_WRITER);
         memory.jumpTo(0);
         createTableNameFile(memory, tableName);
         memory.close(true, Vm.TRUNCATE_TO_POINTER);
@@ -1214,7 +1239,7 @@ public final class TableUtils {
         return Unsafe.getUnsafe().getInt(tempMem8b);
     }
 
-    public static long readLongAtOffset(FilesFacade ff, Path path, long tempMem8b, long offset) {
+    public static long readLongAtOffset(FilesFacade ff, LPSZ path, long tempMem8b, long offset) {
         final int fd = TableUtils.openRO(ff, path, LOG);
         try {
             return readLongOrFail(ff, fd, offset, tempMem8b, path);
@@ -1223,7 +1248,7 @@ public final class TableUtils {
         }
     }
 
-    public static long readLongOrFail(FilesFacade ff, int fd, long offset, long tempMem8b, @Nullable Path path) {
+    public static long readLongOrFail(FilesFacade ff, int fd, long offset, long tempMem8b, @Nullable LPSZ path) {
         if (ff.read(fd, tempMem8b, Long.BYTES, offset) != Long.BYTES) {
             if (path != null) {
                 throw CairoException.critical(ff.errno()).put("could not read long [path=").put(path).put(", fd=").put(fd).put(", offset=").put(offset);
@@ -1236,8 +1261,9 @@ public final class TableUtils {
     public static String readTableName(Path path, int rootLen, MemoryCMR mem, FilesFacade ff) {
         int fd = -1;
         try {
-            path.concat(TableUtils.TABLE_NAME_FILE).$();
-            fd = ff.openRO(path);
+            path.concat(TableUtils.TABLE_NAME_FILE);
+            LPSZ $path = path.$();
+            fd = ff.openRO($path);
             if (fd < 1) {
                 return null;
             }
@@ -1250,7 +1276,7 @@ public final class TableUtils {
                     return null;
                 }
 
-                mem.of(ff, path, fileLen, fileLen, MemoryTag.MMAP_DEFAULT);
+                mem.of(ff, $path, fileLen, fileLen, MemoryTag.MMAP_DEFAULT);
                 return Chars.toString(mem.getStrA(0));
             } else {
                 LOG.error().$("invalid table name file [path=").$(path).$(", fileLen=").$(fileLen).I$();
@@ -1262,7 +1288,7 @@ public final class TableUtils {
         }
     }
 
-    public static String readText(FilesFacade ff, Path path1) {
+    public static String readText(FilesFacade ff, LPSZ path1) {
         int fd = ff.openRO(path1);
         long bytes = 0;
         long length = 0;
@@ -1324,30 +1350,7 @@ public final class TableUtils {
         columnNameIndexMap.put(newNameStr, columnIndex);
     }
 
-    public static void changeColumnTypeInMetadata(CharSequence columnName, int newType, LowerCaseCharSequenceIntHashMap columnNameIndexMap, ObjList<TableColumnMetadata> columnMetadata) {
-        int existingIndex = columnNameIndexMap.get(columnName);
-        if (existingIndex < 0) {
-            throw CairoException.nonCritical().put("cannot change type, column '").put(columnName).put("' does not exist");
-        }
-        String columnNameStr = columnMetadata.getQuick(existingIndex).getName();
-        int columnIndex = columnMetadata.size();
-        columnMetadata.add(
-                new TableColumnMetadata(
-                        columnNameStr,
-                        newType,
-                        false,
-                        0,
-                        false,
-                        null,
-                        columnIndex,
-                        false
-                )
-        );
-        columnMetadata.getQuick(existingIndex).markDeleted();
-        columnNameIndexMap.put(columnNameStr, columnIndex);
-    }
-
-    public static void renameOrFail(FilesFacade ff, Path src, Path dst) {
+    public static void renameOrFail(FilesFacade ff, LPSZ src, LPSZ dst) {
         if (ff.rename(src, dst) != Files.FILES_RENAME_OK) {
             throw CairoException.critical(ff.errno()).put("could not rename ").put(src).put(" -> ").put(dst);
         }
@@ -1565,11 +1568,72 @@ public final class TableUtils {
         }
     }
 
-    public static int getInt(MemoryMR metaMem, long memSize, long offset) {
-        if (memSize < offset + Integer.BYTES) {
-            throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(offset + Integer.BYTES);
+    public static void validateMeta(
+            MemoryMR metaMem,
+            LowerCaseCharSequenceIntHashMap nameIndex,
+            int expectedVersion
+    ) {
+        try {
+            final long memSize = checkMemSize(metaMem, META_OFFSET_COLUMN_TYPES);
+            validateMetaVersion(metaMem, META_OFFSET_VERSION, expectedVersion);
+            final int columnCount = getColumnCount(metaMem, META_OFFSET_COUNT);
+
+            long offset = getColumnNameOffset(columnCount);
+            if (memSize < offset) {
+                throw validationException(metaMem).put("File is too small, column types are missing ").put(memSize);
+            }
+
+            // validate designated timestamp column
+            final int timestampIndex = getTimestampIndex(metaMem, META_OFFSET_TIMESTAMP_INDEX, columnCount);
+            if (timestampIndex != -1) {
+                final int timestampType = getColumnType(metaMem, timestampIndex);
+                if (!ColumnType.isTimestamp(timestampType)) {
+                    throw validationException(metaMem).put("Timestamp column must be TIMESTAMP, but found ").put(ColumnType.nameOf(timestampType));
+                }
+            }
+
+            // validate column types and index attributes
+            for (int i = 0; i < columnCount; i++) {
+                final int type = Math.abs(getColumnType(metaMem, i));
+                if (ColumnType.sizeOf(type) == -1) {
+                    throw validationException(metaMem).put("Invalid column type ").put(type).put(" at [").put(i).put(']');
+                }
+
+                if (isColumnDedupKey(metaMem, i)) {
+                    if (ColumnType.isVarSize(type)) {
+                        throw validationException(metaMem).put("DEDUPLICATION KEY flag is only supported for fixed size column types").put(" at [").put(i).put(']');
+                    }
+                }
+
+                if (isColumnIndexed(metaMem, i)) {
+                    if (!ColumnType.isSymbol(type)) {
+                        throw validationException(metaMem).put("Index flag is only supported for SYMBOL").put(" at [").put(i).put(']');
+                    }
+
+                    if (getIndexBlockCapacity(metaMem, i) < 2) {
+                        throw validationException(metaMem).put("Invalid index value block capacity ").put(getIndexBlockCapacity(metaMem, i)).put(" at [").put(i).put(']');
+                    }
+                }
+            }
+
+            // validate column names
+            int denseCount = 0;
+            if (nameIndex != null) {
+                for (int i = 0; i < columnCount; i++) {
+                    final CharSequence name = getColumnName(metaMem, memSize, offset, i);
+                    if (getColumnType(metaMem, i) < 0 || nameIndex.put(name, denseCount++)) {
+                        offset += Vm.getStorageLength(name);
+                    } else {
+                        throw validationException(metaMem).put("Duplicate column [name=").put(name).put("] at ").put(i);
+                    }
+                }
+            }
+        } catch (Throwable e) {
+            if (nameIndex != null) {
+                nameIndex.clear();
+            }
+            throw e;
         }
-        return metaMem.getInt(offset);
     }
 
     public static void validateMetaVersion(MemoryMR metaMem, long metaVersionOffset, int expectedVersion) {
@@ -1675,7 +1739,7 @@ public final class TableUtils {
     }
 
     private static int exists(FilesFacade ff, Path path) {
-        if (ff.exists(path)) { // it can also be a file, for example created with touch
+        if (ff.exists(path.$())) { // it can also be a file, for example created with touch
             if (ff.exists(path.concat(TXN_FILE_NAME).$())) {
                 return TABLE_EXISTS;
             } else {
@@ -1696,74 +1760,6 @@ public final class TableUtils {
             throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(offset + storageLength);
         }
         return metaMem.getStrA(offset);
-    }
-
-    public static void validateMeta(
-            MemoryMR metaMem,
-            LowerCaseCharSequenceIntHashMap nameIndex,
-            int expectedVersion
-    ) {
-        try {
-            final long memSize = checkMemSize(metaMem, META_OFFSET_COLUMN_TYPES);
-            validateMetaVersion(metaMem, META_OFFSET_VERSION, expectedVersion);
-            final int columnCount = getColumnCount(metaMem, META_OFFSET_COUNT);
-
-            long offset = getColumnNameOffset(columnCount);
-            if (memSize < offset) {
-                throw validationException(metaMem).put("File is too small, column types are missing ").put(memSize);
-            }
-
-            // validate designated timestamp column
-            final int timestampIndex = getTimestampIndex(metaMem, META_OFFSET_TIMESTAMP_INDEX, columnCount);
-            if (timestampIndex != -1) {
-                final int timestampType = getColumnType(metaMem, timestampIndex);
-                if (!ColumnType.isTimestamp(timestampType)) {
-                    throw validationException(metaMem).put("Timestamp column must be TIMESTAMP, but found ").put(ColumnType.nameOf(timestampType));
-                }
-            }
-
-            // validate column types and index attributes
-            for (int i = 0; i < columnCount; i++) {
-                final int type = Math.abs(getColumnType(metaMem, i));
-                if (ColumnType.sizeOf(type) == -1) {
-                    throw validationException(metaMem).put("Invalid column type ").put(type).put(" at [").put(i).put(']');
-                }
-
-                if (isColumnDedupKey(metaMem, i)) {
-                    if (ColumnType.isVarSize(type)) {
-                        throw validationException(metaMem).put("DEDUPLICATION KEY flag is only supported for fixed size column types").put(" at [").put(i).put(']');
-                    }
-                }
-
-                if (isColumnIndexed(metaMem, i)) {
-                    if (!ColumnType.isSymbol(type)) {
-                        throw validationException(metaMem).put("Index flag is only supported for SYMBOL").put(" at [").put(i).put(']');
-                    }
-
-                    if (getIndexBlockCapacity(metaMem, i) < 2) {
-                        throw validationException(metaMem).put("Invalid index value block capacity ").put(getIndexBlockCapacity(metaMem, i)).put(" at [").put(i).put(']');
-                    }
-                }
-            }
-
-            // validate column names
-            int denseCount = 0;
-            if (nameIndex != null) {
-                for (int i = 0; i < columnCount; i++) {
-                    final CharSequence name = getColumnName(metaMem, memSize, offset, i);
-                    if (getColumnType(metaMem, i) < 0 || nameIndex.put(name, denseCount++)) {
-                        offset += Vm.getStorageLength(name);
-                    } else {
-                        throw validationException(metaMem).put("Duplicate column [name=").put(name).put("] at ").put(i);
-                    }
-                }
-            }
-        } catch (Throwable e) {
-            if (nameIndex != null) {
-                nameIndex.clear();
-            }
-            throw e;
-        }
     }
 
     // Utility method for debugging. This method is not used in production.
@@ -1814,12 +1810,12 @@ public final class TableUtils {
             do {
                 if (index > 0) {
                     path.trimTo(l).put('.').put(index);
-                    path.$();
                 }
 
-                if (ff.removeQuiet(path)) {
+                LPSZ lpsz = path.$();
+                if (ff.removeQuiet(lpsz)) {
                     try {
-                        mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+                        mem.smallFile(ff, lpsz, MemoryTag.MMAP_DEFAULT);
                         mem.jumpTo(0);
                         return index;
                     } catch (CairoException e) {
@@ -1848,8 +1844,7 @@ public final class TableUtils {
             if (swapIndex > 0) {
                 path.put('.').put(swapIndex);
             }
-            path.$();
-            mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+            mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
         } finally {
             path.trimTo(rootLen);
         }

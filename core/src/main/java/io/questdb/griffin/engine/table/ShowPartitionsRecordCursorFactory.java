@@ -250,14 +250,14 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                         if (detachedMetaReader == null) {
                             detachedMetaReader = new TableReaderMetadata(cairoConfig);
                         }
-                        detachedMetaReader.load(path);
+                        detachedMetaReader.load(path.$());
                         if (tableToken.getTableId() == detachedMetaReader.getTableId() && partitionBy == detachedMetaReader.getPartitionBy()) {
                             if (ff.exists(path.parent().concat(TableUtils.TXN_FILE_NAME).$())) {
                                 try {
                                     if (detachedTxReader == null) {
                                         detachedTxReader = new TxReader(FilesFacadeImpl.INSTANCE);
                                     }
-                                    detachedTxReader.ofRO(path, partitionBy);
+                                    detachedTxReader.ofRO(path.$(), partitionBy);
                                     detachedTxReader.unsafeLoadAll();
                                     int length = partitionName.indexOf(".");
                                     if (length < 0) {
@@ -293,14 +293,14 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 path.parent();
             }
 
-            partitionSize = ff.getDirSize(path.$());
+            partitionSize = ff.getDirSize(path);
             partitionSizeSink.clear();
             SizePrettyFunctionFactory.toSizePretty(partitionSizeSink, partitionSize);
             if (PartitionBy.isPartitioned(partitionBy) && numRows > 0L) {
-                TableUtils.dFile(path.slash$(), dynamicTsColName, TableUtils.COLUMN_NAME_TXN_NONE);
+                TableUtils.dFile(path.slash(), dynamicTsColName, TableUtils.COLUMN_NAME_TXN_NONE);
                 int fd = -1;
                 try {
-                    fd = TableUtils.openRO(ff, path, LOG);
+                    fd = TableUtils.openRO(ff, path.$(), LOG);
                     long lastOffset = (numRows - 1) * ColumnType.sizeOf(ColumnType.TIMESTAMP);
                     minTimestamp = ff.readNonNegativeLong(fd, 0);
                     maxTimestamp = ff.readNonNegativeLong(fd, lastOffset);
@@ -316,7 +316,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         private void scanDetachedAndAttachablePartitions() {
-            long pFind = ff.findFirst(path);
+            long pFind = ff.findFirst(path.$());
             if (pFind > 0L) {
                 try {
                     attachablePartitions.clear();

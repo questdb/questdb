@@ -50,10 +50,18 @@ public final class SwarUtils {
     /**
      * Returns non-zero result in case if the input contains a zero byte.
      * <p>
-     * First zero byte will be replaced with 0x80 while all preceding bytes (non-zero) - with zero values
-     * Note, that markZeroBytes gives no guarantees about output bytes following after position of the least significant zero byte from the arg w
+     * For the technique, see:
+     * <a href="http://graphics.stanford.edu/~seander/bithacks.html">Bit Twiddling Hacks</a>
+     * (Determine if a word has a byte equal to n).
+     * <p>
+     * <strong>Caveat</strong>:
+     * there are false positives, but they only occur if there is a real match.
+     * The false positives occur only to the left of the correct match, and only for
+     * a 0x01 byte.
+     * <p>
+     * Make sure to handle false positives gracefully by subsequent checks in code.
      */
     public static long markZeroBytes(long w) {
-        return ((w - 0x0101010101010101L) & ~(w) & 0x8080808080808080L);
+        return ((w - 0x0101010101010101L) & (~w) & 0x8080808080808080L);
     }
 }

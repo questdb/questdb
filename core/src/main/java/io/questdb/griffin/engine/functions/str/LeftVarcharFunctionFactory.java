@@ -38,7 +38,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
@@ -90,20 +89,6 @@ public class LeftVarcharFunctionFactory implements FunctionFactory {
         @Override
         public Function getArg() {
             return varcharFunc;
-        }
-
-        @Override
-        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-            Utf8Sequence value = varcharFunc.getVarcharA(rec);
-            if (value != null) {
-                final int len = Utf8s.validateUtf8(value);
-                if (len == -1) {
-                    // Invalid UTF-8.
-                    return;
-                }
-                final int charHi = getCharPos(len);
-                Utf8s.strCpy(value, 0, charHi, utf8Sink);
-            }
         }
 
         @Override
@@ -168,21 +153,6 @@ public class LeftVarcharFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return countFunc;
-        }
-
-        @Override
-        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-            final Utf8Sequence value = varcharFunc.getVarcharA(rec);
-            final int count = countFunc.getInt(rec);
-            if (value != null && count != Numbers.INT_NULL) {
-                final int len = Utf8s.validateUtf8(value);
-                if (len == -1) {
-                    // Invalid UTF-8.
-                    return;
-                }
-                final int charHi = getCharPos(len, count);
-                Utf8s.strCpy(value, 0, charHi, utf8Sink);
-            }
         }
 
         @Override

@@ -205,6 +205,13 @@ public final class Utf8s {
         return true;
     }
 
+    public static boolean equals(DirectUtf8Sink l, long rPtr, int rLen) {
+        if (l.size() != rLen) {
+            return false;
+        }
+        return Vect.memeq(l.ptr(), rPtr, rLen);
+    }
+
     public static boolean equalsAscii(@NotNull CharSequence lAsciiSeq, int lLo, int lHi, @NotNull Utf8Sequence rSeq, int rLo, int rHi) {
         int ll = lHi - lLo;
         if (ll != rHi - rLo) {

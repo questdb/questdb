@@ -436,13 +436,13 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
             TableToken tableToken = engine.verifyTableName(tableName);
             try (Path path = new Path().of(engine.getConfiguration().getRoot()).concat(tableToken)) {
                 path.concat("2020-01-01.1").concat("timestamp.d").$();
-                Assert.assertTrue(TestFilesFacadeImpl.INSTANCE.exists(path));
+                Assert.assertTrue(TestFilesFacadeImpl.INSTANCE.exists(path.$()));
                 engine.releaseAllReaders();
 
                 ddl("alter table x drop partition where timestamp = '2020-01-01'", sqlExecutionContext);
 
                 assertPartitionResult("count\n0\n", "2020-01-01");
-                Assert.assertFalse(TestFilesFacadeImpl.INSTANCE.exists(path));
+                Assert.assertFalse(TestFilesFacadeImpl.INSTANCE.exists(path.$()));
             }
         });
     }

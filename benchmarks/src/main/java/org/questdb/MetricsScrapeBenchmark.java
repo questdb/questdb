@@ -29,7 +29,10 @@ import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.MetricsRegistry;
 import io.questdb.metrics.MetricsRegistryImpl;
 import io.questdb.std.bytes.NativeByteSink;
-import io.questdb.std.str.*;
+import io.questdb.std.str.BorrowableUtf8Sink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
+import org.jetbrains.annotations.NotNull;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
@@ -84,7 +87,7 @@ public class MetricsScrapeBenchmark {
     private static class NullUtf8Sink implements BorrowableUtf8Sink {
 
         @Override
-        public NativeByteSink borrowDirectByteSink() {
+        public @NotNull NativeByteSink borrowDirectByteSink() {
             return new NativeByteSink() {
                 @Override
                 public void close() {

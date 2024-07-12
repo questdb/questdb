@@ -86,17 +86,17 @@ public class Table2IlpTest {
     }
 
     public static void createTestPath(CharSequence root) {
-        try (Path path = new Path().of(root).$()) {
-            if (Files.exists(path)) {
+        try (Path path = new Path().of(root)) {
+            if (Files.exists(path.$())) {
                 return;
             }
-            Files.mkdirs(path.of(root).slash$(), 509);
+            Files.mkdirs(path.of(root).slash(), 509);
         }
     }
 
     public static void removeTestPath(CharSequence root) {
         Path path = Path.getThreadLocal(root);
-        Files.rmdir(path.slash$(), true);
+        Files.rmdir(path.slash(), true);
     }
 
     public static void setCairoStatic() {
