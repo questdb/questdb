@@ -4547,6 +4547,7 @@ public class SqlOptimiser implements Mutable {
                     }
                 }
 
+
                 // These lists collect timestamp copies that we remove from the group-by model.
                 // The goal is to re-populate the wrapper model with the copies in the correct positions.
                 ObjList<QueryColumn> insetColumnAliases = new ObjList<>();

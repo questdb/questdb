@@ -1690,50 +1690,54 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (!isFillStridePresent(model.getNestedModel())) {
             return groupByFactory;
         } else {
-            final QueryModel nested = model.getNestedModel();
-            Function fillFromFunc = TimestampConstant.NULL;
-            Function fillToFunc = TimestampConstant.NULL;
-            final ExpressionNode fillFrom = nested.getFillFrom();
-            final ExpressionNode fillTo = nested.getFillTo();
-            final ExpressionNode fillStride = nested.getFillStride();
+            try {
+                final QueryModel nested = model.getNestedModel();
+                Function fillFromFunc = TimestampConstant.NULL;
+                Function fillToFunc = TimestampConstant.NULL;
+                final ExpressionNode fillFrom = nested.getFillFrom();
+                final ExpressionNode fillTo = nested.getFillTo();
+                final ExpressionNode fillStride = nested.getFillStride();
 
-            ObjList<ExpressionNode> fillValuesExprs = nested.getFillValue();
-            ObjList<Function> fillValues = new ObjList<>(fillValuesExprs.size());
+                ObjList<ExpressionNode> fillValuesExprs = nested.getFillValue();
+                ObjList<Function> fillValues = new ObjList<>(fillValuesExprs.size());
 
+                ExpressionNode expr;
+                for (int i = 0, n = fillValuesExprs.size(); i < n; i++) {
+                    expr = fillValuesExprs.getQuick(0);
+                    if (isNoneKeyword(expr.token)) {
+                        return groupByFactory;
+                    }
+                    final Function fillValueFunc = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, executionContext);
+                    fillValues.add(fillValueFunc);
+                }
 
-            ExpressionNode expr;
-            for (int i = 0, n = fillValuesExprs.size(); i < n; i++) {
-                expr = fillValuesExprs.getQuick(0);
-                if (isNoneKeyword(expr.token)) {
+                if (fillValues.size() == 0) {
                     return groupByFactory;
                 }
-                final Function fillValueFunc = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, executionContext);
-                fillValues.add(fillValueFunc);
+
+                if (fillValues.size() == 1 && isNoneKeyword(fillValues.getQuick(0).getName())) {
+                    return groupByFactory;
+                }
+
+                if (fillFrom != null) {
+                    fillFromFunc = functionParser.parseFunction(fillFrom, EmptyRecordMetadata.INSTANCE, executionContext);
+                    coerceRuntimeConstantType(fillFromFunc, ColumnType.TIMESTAMP, executionContext, "from lower bound must be a constant expression convertible to a TIMESTAMP", -1);
+                }
+
+                if (fillTo != null) {
+                    fillToFunc = functionParser.parseFunction(fillTo, EmptyRecordMetadata.INSTANCE, executionContext);
+                    coerceRuntimeConstantType(fillToFunc, ColumnType.TIMESTAMP, executionContext, "to upper bound must be a constant expression convertible to a TIMESTAMP", -1);
+                }
+
+                fillFromFunc.init(null, executionContext);
+                fillToFunc.init(null, executionContext);
+
+
+                return new FillRangeRecordCursorFactory(groupByFactory.getMetadata(), groupByFactory, fillFromFunc, fillToFunc, fillStride.token, fillValues, getTimestampIndex(nested, groupByFactory.getMetadata()));
+            } catch (Throwable e) {
+                Misc.free(groupByFactory);
+                throw e;
             }
-
-            if (fillValues.size() == 0) {
-                return groupByFactory;
-            }
-
-            if (fillValues.size() == 1 && isNoneKeyword(fillValues.getQuick(0).getName())) {
-                return groupByFactory;
-            }
-
-            if (fillFrom != null) {
-                fillFromFunc = functionParser.parseFunction(fillFrom, EmptyRecordMetadata.INSTANCE, executionContext);
-                coerceRuntimeConstantType(fillFromFunc, ColumnType.TIMESTAMP, executionContext, "from lower bound must be a constant expression convertible to a TIMESTAMP", -1);
-            }
-
-            if (fillTo != null) {
-                fillToFunc = functionParser.parseFunction(fillTo, EmptyRecordMetadata.INSTANCE, executionContext);
-                coerceRuntimeConstantType(fillToFunc, ColumnType.TIMESTAMP, executionContext, "to upper bound must be a constant expression convertible to a TIMESTAMP", -1);
-            }
-
-            fillFromFunc.init(null, executionContext);
-            fillToFunc.init(null, executionContext);
-
-
-            return new FillRangeRecordCursorFactory(groupByFactory.getMetadata(), groupByFactory, fillFromFunc, fillToFunc, fillStride.token, fillValues, getTimestampIndex(nested, groupByFactory.getMetadata()));
         }
     }
 
