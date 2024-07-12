@@ -1,10 +1,10 @@
 [package]
-name = "qdbr-test"
+name = "qdbr-sqllogictest"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "questdbrtest"
+name = "qdbsqllogictest"
 crate-type = ["dylib"]
 
 [dependencies]

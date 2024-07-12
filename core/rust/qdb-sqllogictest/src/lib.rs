@@ -22,8 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+mod sqllogictest;
 
-public class Sqllogictest {
-    public static native void run(short port, long testNamePathPtr);
-}
+extern crate core;
+pub extern crate jni;
+

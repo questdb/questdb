@@ -26,10 +26,24 @@ package io.questdb.test;
 
 import io.questdb.std.Os;
 
+import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.attribute.FileTime;
+import java.util.concurrent.TimeUnit;
 
 public class TestOs {
     public static void init() {
+    }
+
+    private static FileTime getLastModifiedTime(Path absoluteDevReleasePath) {
+        try {
+            return Files.getLastModifiedTime(absoluteDevReleasePath);
+        } catch (IOException e) {
+            return FileTime.from(0, TimeUnit.MILLISECONDS);
+        }
     }
 
     // This is copy of main Os class to load test jni library
@@ -45,22 +59,34 @@ public class TestOs {
             throw new Error("Unsupported OS: " + Os.name);
         }
 
-        String devRustLibRoot = "/io/questdb/rust/";
         final String rustLibName;
         if (Os.type == Os.WINDOWS) {
-            rustLibName = "questdbrtest" + outputLibExt;
+            rustLibName = "qdbsqllogictest" + outputLibExt;
         } else {
-            rustLibName = "libquestdbrtest" + outputLibExt;
+            rustLibName = "libqdbsqllogictest" + outputLibExt;
         }
 
-        final String devRustLib = devRustLibRoot + rustLibName;
-        InputStream libRustStream = TestOs.class.getResourceAsStream(devRustLib);
-        String prdLibRoot = "/io/questdb/bin/" + Os.name + '-' + Os.archName + '/';
-        if (libRustStream == null) {
-            InputStream is = TestOs.class.getResourceAsStream(prdLibRoot + rustLibName);
-            Os.loadLib(devRustLib, is);
+        Path absoluteDevReleasePath = Paths.get("rust/qdbr-test/target/release/" + rustLibName).toAbsolutePath();
+        Path absoluteDevDebugPath = Paths.get("rust/qdbr-test/target/debug/" + rustLibName).toAbsolutePath();
+        Path absolutePrdPath = Paths.get("src/test/resources/io/questdb/bin/" + Os.name + '-' + Os.archName + '/' + rustLibName).toAbsolutePath();
+
+        FileTime tsDevRel = getLastModifiedTime(absoluteDevReleasePath);
+        FileTime tsDevDeb = getLastModifiedTime(absoluteDevDebugPath);
+        FileTime tsPrd = getLastModifiedTime(absolutePrdPath);
+
+        Path devRustLibRoot;
+        if (tsDevRel.compareTo(tsPrd) > 0 && tsDevRel.compareTo(tsDevDeb) > 0) {
+            devRustLibRoot = absoluteDevReleasePath;
+        } else if (tsDevDeb.compareTo(tsPrd) > 0) {
+            devRustLibRoot = absoluteDevDebugPath;
         } else {
-            Os.loadLib(devRustLib, libRustStream);
+            devRustLibRoot = absolutePrdPath;
+        }
+
+        try (InputStream is = Files.newInputStream(devRustLibRoot)) {
+            Os.loadLib(devRustLibRoot.toString(), is);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
         }
     }
 }

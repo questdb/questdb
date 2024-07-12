@@ -24,7 +24,7 @@
 
 package io.questdb.test.sqllogictest.parquet;
 
-import io.questdb.Sqllogictest;
+import io.questdb.test.Sqllogictest;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;

@@ -22,40 +22,8 @@
  *
  ******************************************************************************/
 
-mod sqllogictest;
+package io.questdb.test;
 
-extern crate core;
-pub extern crate jni;
-
-use jni::sys::jlong;
-use jni::{objects::JClass, JNIEnv};
-
-// Static size eq assertion: Ensures we can write pointers in place of jlong in our signatures.
-const _: fn() = || {
-    let _ = core::mem::transmute::<jlong, *const i32>;
-};
-
-#[no_mangle]
-pub extern "system" fn Java_io_questdb_std_Os_initRust(_env: JNIEnv, _class: JClass) {
-    if std::env::var("RUST_BACKTRACE").is_err() {
-        std::env::set_var("RUST_BACKTRACE", "1");
-    }
-}
-
-#[no_mangle]
-pub extern "system" fn Java_io_questdb_std_Os_rustSmokeTest(
-    _env: JNIEnv,
-    _class: JClass,
-    a: i64,
-    b: i64,
-) -> i64 {
-    a + b
-}
-
-#[no_mangle]
-pub extern "system" fn Java_io_questdb_std_Os_isRustReleaseBuild(
-    _env: JNIEnv,
-    _class: JClass,
-) -> bool {
-    !cfg!(debug_assertions)
+public class Sqllogictest {
+    public static native void run(short port, long testNamePathPtr);
 }

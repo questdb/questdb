@@ -11,7 +11,7 @@ use sqllogictest_engines::postgres::{PostgresConfig, PostgresExtended};
 use tokio::runtime::Runtime;
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_Sqllogictest_run(
+pub extern "system" fn Java_io_questdb_test_Sqllogictest_run(
     mut env: JNIEnv,
     _class: JClass,
     port: i16,
