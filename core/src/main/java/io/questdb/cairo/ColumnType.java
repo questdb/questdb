@@ -126,7 +126,7 @@ public final class ColumnType {
             case VARCHAR:
                 return VarcharTypeDriver.INSTANCE;
             default:
-                throw CairoException.critical(0).put("there is no driver to type: ").put(columnType);
+                throw CairoException.critical(0).put("no driver for type: ").put(columnType);
         }
     }
 
