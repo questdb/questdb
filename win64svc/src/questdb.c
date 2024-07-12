@@ -354,7 +354,7 @@ int qdbConsole(CONFIG *config) {
 
     char hello_txt[MAX_PATH];
     strcpy(hello_txt, config->dir);
-    strcat(hello_txt, "\\log\\hello.txt");
+    strcat(hello_txt, "\\hello.txt");
     for (int i = 0; i < 80; i++) {
         DWORD exit_code = 0;
         if (GetExitCodeProcess(pi.hProcess, &exit_code) && exit_code != STILL_ACTIVE) {

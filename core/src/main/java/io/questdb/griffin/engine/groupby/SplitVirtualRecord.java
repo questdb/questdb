@@ -31,7 +31,6 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 
 public class SplitVirtualRecord implements Record {
     private final ObjList<? extends Function> functionsA;
@@ -185,11 +184,6 @@ public class SplitVirtualRecord implements Record {
     @Override
     public long getTimestamp(int col) {
         return getFunction(col).getTimestamp(base);
-    }
-
-    @Override
-    public void getVarchar(int col, Utf8Sink utf8Sink) {
-        getFunction(col).getVarchar(base, utf8Sink);
     }
 
     @Override

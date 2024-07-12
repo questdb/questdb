@@ -51,6 +51,7 @@ public class SqlOptimiser implements Mutable {
     private static final int JOIN_OP_EQUAL = 1;
     private static final int JOIN_OP_OR = 3;
     private static final int JOIN_OP_REGEX = 4;
+    private static final String LONG_MAX_VALUE_STR = "" + Long.MAX_VALUE;
     private static final int NOT_OP_AND = 2;
     private static final int NOT_OP_EQUAL = 8;
     private static final int NOT_OP_GREATER = 4;
@@ -197,26 +198,6 @@ public class SqlOptimiser implements Mutable {
         constNameToIndex.clear();
         constNameToNode.clear();
         constNameToToken.clear();
-    }
-
-    public CharSequence findColumnByAst(ObjList<ExpressionNode> groupByNodes, ObjList<CharSequence> groupByAliases, ExpressionNode node) {
-        for (int i = 0, max = groupByNodes.size(); i < max; i++) {
-            ExpressionNode n = groupByNodes.getQuick(i);
-            if (ExpressionNode.compareNodesExact(node, n)) {
-                return groupByAliases.getQuick(i);
-            }
-        }
-        return null;
-    }
-
-    public int findColumnIdxByAst(ObjList<ExpressionNode> groupByNodes, ExpressionNode node) {
-        for (int i = 0, max = groupByNodes.size(); i < max; i++) {
-            ExpressionNode n = groupByNodes.getQuick(i);
-            if (ExpressionNode.compareNodesExact(node, n)) {
-                return i;
-            }
-        }
-        return -1;
     }
 
     private static boolean isOrderedByDesignatedTimestamp(QueryModel model) {
@@ -427,7 +408,6 @@ public class SqlOptimiser implements Mutable {
             QueryModel outerVirtualModel,
             QueryModel distinctModel
     ) throws SqlException {
-
         // Adds what intended to be a function (rather than a literal) to the
         // inner virtual model. It is possible that the function will have
         // the same alias as the existing table columns. We will "temporarily"
@@ -463,7 +443,7 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    //add table prefix to all column references to make it easier to compare expressions
+    // add table prefix to all column references to make it easier to compare expressions
     private void addMissingTablePrefixes(ExpressionNode node, QueryModel baseModel) throws SqlException {
         sqlNodeStack.clear();
 
@@ -1687,7 +1667,6 @@ public class SqlOptimiser implements Mutable {
             @Nullable QueryModel innerModel,
             QueryModel validatingModel
     ) throws SqlException {
-
         final LowerCaseCharSequenceObjHashMap<CharSequence> map = translatingModel.getColumnNameToAliasMap();
         int index = map.keyIndex(node.token);
         final CharSequence alias;
@@ -1858,7 +1837,6 @@ public class SqlOptimiser implements Mutable {
 
         while (!sqlNodeStack.isEmpty() || node != null) {
             if (node != null) {
-
                 if (node.rhs != null) {
                     final ExpressionNode n = replaceIfCursor(
                             node.rhs,
@@ -1897,7 +1875,7 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    //warning: this method replaces literal with aliases (changes node)
+    // warning: this method replaces literal with aliases (changes node)
     private void emitLiterals(
             @Transient ExpressionNode node,
             QueryModel translatingModel,
@@ -2105,6 +2083,26 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return Long.MAX_VALUE;
+    }
+
+    private CharSequence findColumnByAst(ObjList<ExpressionNode> groupByNodes, ObjList<CharSequence> groupByAliases, ExpressionNode node) {
+        for (int i = 0, max = groupByNodes.size(); i < max; i++) {
+            ExpressionNode n = groupByNodes.getQuick(i);
+            if (ExpressionNode.compareNodesExact(node, n)) {
+                return groupByAliases.getQuick(i);
+            }
+        }
+        return null;
+    }
+
+    private int findColumnIdxByAst(ObjList<ExpressionNode> groupByNodes, ExpressionNode node) {
+        for (int i = 0, max = groupByNodes.size(); i < max; i++) {
+            ExpressionNode n = groupByNodes.getQuick(i);
+            if (ExpressionNode.compareNodesExact(node, n)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private CharSequence findQueryColumnByAst(ObjList<QueryColumn> bottomUpColumns, ExpressionNode node) {
@@ -2378,7 +2376,6 @@ public class SqlOptimiser implements Mutable {
         // check if we are merging a.x = b.x to a.y = b.y
         // or a.x = b.x to a.x = b.y, e.g. one of columns in the same table
         for (int i = 0, n = b.aNames.size(); i < n; i++) {
-
             CharSequence ban = b.aNames.getQuick(i);
             int bai = b.aIndexes.getQuick(i);
             ExpressionNode bao = b.aNodes.getQuick(i);
@@ -3101,7 +3098,7 @@ public class SqlOptimiser implements Mutable {
                 // Set artificial limit to trigger LimitRCF use, so that parent models don't use the followedOrderByAdvice flag and skip necessary sort
                 // Currently the only way to delineate order by advice is through use of factory that returns false for followedOrderByAdvice().
                 // TODO: factories should provide order metadata to enable better sort-skipping
-                model.setLimit(expressionNodePool.next().of(CONSTANT, "" + Long.MAX_VALUE, Integer.MIN_VALUE, 0), null);
+                model.setLimit(expressionNodePool.next().of(CONSTANT, LONG_MAX_VALUE_STR, Integer.MIN_VALUE, 0), null);
             }
         }
 
@@ -3689,7 +3686,6 @@ public class SqlOptimiser implements Mutable {
                 return expressionNodePool.next().of(LITERAL, prefixedCol, node.precedence, node.position);
             }
         }
-
         return node;
     }
 
@@ -3872,6 +3868,132 @@ public class SqlOptimiser implements Mutable {
         for (int i = 1, n = joinModels.size(); i < n; i++) {
             rewriteCountDistinct(joinModels.getQuick(i));
         }
+    }
+
+    /**
+     * Rewrites
+     * SELECT LAST(timestamp) FROM table_name;
+     * AND
+     * SELECT max(timestamp) FROM table_name;
+     * into query which can is optimised search
+     * SELECT timestamp from (SELECT timestamp from table_name order by timestamp) limit 1
+     * This enables FrameBackwardScan for aggregation queries containing LAST keyword
+     * AND
+     * Rewrites
+     * SELECT FIRST(timestamp) FROM table_name;
+     * AND
+     * SELECT min(timestamp) FROM table_name;
+     * into query which can is optimised search
+     * SELECT timestamp from (SELECT timestamp from table_name) limit 1
+     * This disables invoking group by workers
+     */
+    private void rewriteGroupByForFirstLastMaxMinAggregateFunctions(QueryModel parent) {
+        //base condition to stop recursion
+        if (parent == null)
+            return;
+
+        final QueryModel union = parent.getUnionModel();
+        if (union != null) {
+            rewriteGroupByForFirstLastMaxMinAggregateFunctions(union);
+        }
+
+        QueryModel nestedModel = parent.getNestedModel();
+        if (nestedModel != null
+                && nestedModel.getJoinModels().size() == 1
+                && nestedModel.getNestedModel() == null
+                && nestedModel.getTableName() != null
+                && parent.getSampleBy() == null
+                && parent.getGroupBy().size() == 0
+        ) {
+            ObjList<QueryColumn> queryColumns = parent.getBottomUpColumns();
+            CharSequence designatedTimestampColumn;
+
+            /**if FIRST/LAST/min/max(column) does not contain designated-timestamp column
+             * OR
+             * another column present in select clause
+             * then don't apply optimisations to base model
+             */
+            if (nestedModel.getTimestamp() == null || queryColumns.size() > 1) {
+                rewriteGroupByForFirstLastMaxMinAggregateFunctions(nestedModel);
+                return;
+            }
+
+            //get designated timestamp column name
+            designatedTimestampColumn = nestedModel.getTimestamp().token;
+            QueryColumn column = queryColumns.get(0);
+            ExpressionNode ast = column.getAst();
+            CharSequence token = null;
+            CharSequence rhs = null;
+            if (ast != null) {
+                token = ast.token;
+                rhs = ast.rhs == null ? null : ast.rhs.token;
+            }
+
+            /**
+             Type 1 Optimisations: Will be optimised by adding order by clause and changing model type
+             Type 2 Optimisations: Will be done only by changing model type to prevent invoking group by workers
+             */
+            int optimisationType = 0;
+            if (rhs != null && ast.type == 8 && Chars.equals(designatedTimestampColumn, rhs)) {
+                if (Chars.equalsIgnoreCase(token, "LAST") || Chars.equalsIgnoreCase(token, "MAX"))
+                    optimisationType = 1;
+                else if (Chars.equalsIgnoreCase(token, "FIRST") || Chars.equalsIgnoreCase(token, "MIN"))
+                    optimisationType = 2;
+            }
+
+            /**
+             Core logic for issue #4231 will be applicable under two conditions
+             Condition1: QueryColumn contains FIRST/LAST/max/min function keyword
+             Condition2: QueryColumn for LAST/max keyword should be same as designatedTimestamp column
+             Core logic for changing query plan
+             - Add limit 1 via expressionNode to parent model
+             - Change model to select-choose from select-group-by
+             - Column alias by default is LAST/max if alias is not provided, replace with original column name
+             - Add order by clause to nested model
+             Call this recursively for nested models
+             */
+            if (optimisationType == 1 || optimisationType == 2) {
+                QueryModel newNestedModel = queryModelPool.next();
+                ExpressionNode lowerLimitNode = expressionNodePool.next();
+                lowerLimitNode.token = "1";
+                lowerLimitNode.type = CONSTANT;
+                parent.setLimit(lowerLimitNode, null);
+
+                //change model type to select-choose
+                parent.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
+
+                //change ast params
+                ast.token = rhs;
+                ast.paramCount = 0;
+                ast.type = LITERAL;
+
+                ExpressionNode newTimestampNode = expressionNodePool.next();
+                newTimestampNode.token = designatedTimestampColumn.toString();
+                if (optimisationType == 1)
+                    newNestedModel.addOrderBy(newTimestampNode, QueryModel.ORDER_DIRECTION_DESCENDING);
+                ObjList<QueryModel> joinModels = parent.getNestedModel().getJoinModels();
+                for (int i = 1, n = joinModels.size(); i < n; i++) {
+                    newNestedModel.addJoinModel(joinModels.getQuick(i));
+                }
+                newNestedModel.setTableNameExpr(nestedModel.getTableNameExpr());
+                newNestedModel.setModelType(nestedModel.getModelType());
+                newNestedModel.setTimestamp(nestedModel.getTimestamp());
+                newNestedModel.setWhereClause(nestedModel.getWhereClause());
+                newNestedModel.copyColumnsFrom(nestedModel, queryColumnPool, expressionNodePool);
+                parent.setNestedModel(newNestedModel);
+                return;
+            }
+
+        }
+
+        if (nestedModel != null)
+            rewriteGroupByForFirstLastMaxMinAggregateFunctions(nestedModel);
+
+        ObjList<QueryModel> joinModels = parent.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            rewriteGroupByForFirstLastMaxMinAggregateFunctions(joinModels.getQuick(i));
+        }
+
     }
 
     // push aggregate function calls to group by model, replace key column expressions with group by aliases
@@ -4666,7 +4788,6 @@ public class SqlOptimiser implements Mutable {
             SqlExecutionContext sqlExecutionContext,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-
         if (model.getUnionModel() != null) {
             QueryModel rewrittenUnionModel = rewriteSelectClause(
                     model.getUnionModel(),
@@ -4757,8 +4878,8 @@ public class SqlOptimiser implements Mutable {
 
         // cursor model should have all columns that base model has to properly resolve duplicate names
         cursorModel.getAliasToColumnMap().putAll(baseModel.getAliasToColumnMap());
-        // create virtual columns from select list
 
+        // take a look at the select list
         for (int i = 0, k = columns.size(); i < k; i++) {
             QueryColumn qc = columns.getQuick(i);
             final boolean window = qc.isWindowColumn();
@@ -4818,20 +4939,20 @@ public class SqlOptimiser implements Mutable {
         boolean explicitGroupBy = groupBy.size() > 0;
 
         if (explicitGroupBy) {
-            // Outer model is not needed only if select clauses is the same as group by plus aggregate function calls
+            // Outer model is not needed only if select clause is the same as group by plus aggregate function calls
             for (int i = 0, n = groupBy.size(); i < n; i++) {
                 ExpressionNode node = groupBy.getQuick(i);
                 CharSequence alias = null;
                 int originalNodePosition = -1;
 
-                //group by select clause alias
+                // group by select clause alias
                 if (node.type == LITERAL) {
                     // If literal is select clause alias then use its AST //sym1 -> ccy x -> a
                     // NOTE: this is merely a shortcut and doesn't mean that alias exists at group by stage !
                     // while
-                    //   select a as d  from t group by d
+                    //   select a as d from t group by d;
                     // works, the following does not
-                    //  select a as d  from t group by d + d
+                    //   select a as d from t group by d + d;
                     QueryColumn qc = model.getAliasToColumnMap().get(node.token);
                     if (qc != null && (qc.getAst().type != LITERAL || !Chars.equals(node.token, qc.getAst().token))) {
                         originalNodePosition = node.position;
@@ -5073,15 +5194,25 @@ public class SqlOptimiser implements Mutable {
                         continue;
                     }
 
-                    addMissingTablePrefixes(qc.getAst(), baseModel);
                     final int beforeSplit = groupByModel.getBottomUpColumns().size();
+
+                    final ExpressionNode originalNode = qc.getAst();
+                    // if the alias is in groupByAliases, it means that we've already seen
+                    // the column in the GROUP BY clause and emitted literals for it to
+                    // the inner models; in this case, if we add a missing table prefix to
+                    // column's nodes, it may break the references; to avoid that, clone the node
+                    ExpressionNode node = groupByAliases.indexOf(qc.getAlias()) != -1
+                            ? deepClone(expressionNodePool, originalNode)
+                            : originalNode;
+                    addMissingTablePrefixes(node, baseModel);
+
                     // if there is explicit GROUP BY clause then we've to replace matching expressions with aliases in outer virtual model
-                    ExpressionNode en = rewriteGroupBySelectExpression(qc.getAst(), groupByModel, groupByNodes, groupByAliases);
-                    if (qc.getAst() == en) {
+                    node = rewriteGroupBySelectExpression(node, groupByModel, groupByNodes, groupByAliases);
+                    if (originalNode == node) {
                         useOuterModel = true;
                     } else {
-                        if (Chars.equalsIgnoreCase(qc.getAst().token, qc.getAlias())) {
-                            int idx = groupByAliases.indexOf(qc.getAst().token);
+                        if (Chars.equalsIgnoreCase(originalNode.token, qc.getAlias())) {
+                            int idx = groupByAliases.indexOf(originalNode.token);
                             if (i != idx) {
                                 useOuterModel = true;
                             }
@@ -5089,7 +5220,7 @@ public class SqlOptimiser implements Mutable {
                         } else {
                             useOuterModel = true;
                         }
-                        qc.of(qc.getAlias(), en, qc.isIncludeIntoWildcard(), qc.getColumnType());
+                        qc.of(qc.getAlias(), node, qc.isIncludeIntoWildcard(), qc.getColumnType());
                     }
 
                     emitCursors(qc.getAst(), cursorModel, innerVirtualModel, translatingModel, baseModel, sqlExecutionContext, sqlParserCallback);
@@ -5696,6 +5827,7 @@ public class SqlOptimiser implements Mutable {
             enumerateTableColumns(rewrittenModel, sqlExecutionContext, sqlParserCallback);
             rewriteTopLevelLiteralsToFunctions(rewrittenModel);
             rewrittenModel = rewriteSampleBy(rewrittenModel);
+            rewriteGroupByForFirstLastMaxMinAggregateFunctions(rewrittenModel);
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
             resolveJoinColumns(rewrittenModel);
             optimiseBooleanNot(rewrittenModel);

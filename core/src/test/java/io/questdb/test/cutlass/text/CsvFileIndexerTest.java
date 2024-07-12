@@ -143,7 +143,7 @@ public class CsvFileIndexerTest extends AbstractCairoTest {
             }
 
             @Override
-            public int mkdir(Path path, int mode) {
+            public int mkdir(LPSZ path, int mode) {
                 if (Utf8s.endsWithAscii(path, partition)) {
                     return -1;
                 }

@@ -34,7 +34,6 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 
 public class CastSymbolToVarcharFunctionFactory implements FunctionFactory {
 
@@ -62,11 +61,6 @@ public class CastSymbolToVarcharFunctionFactory implements FunctionFactory {
 
         public Func(Function arg) {
             super(arg);
-        }
-
-        @Override
-        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-            arg.getVarchar(rec, utf8Sink);
         }
 
         @Override

@@ -32,11 +32,10 @@ import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
-
-import java.util.function.Predicate;
 
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.CONVERT_FILE_NAME;
@@ -47,7 +46,7 @@ public class TableConverter {
     public static ObjList<TableToken> convertTables(
             CairoConfiguration configuration,
             TableSequencerAPI tableSequencerAPI,
-            Predicate<CharSequence> protectedTableResolver
+            TableFlagResolver tableFlagResolver
     ) {
         final ObjList<TableToken> convertedTables = new ObjList<>();
         if (!configuration.isTableTypeConversionEnabled()) {
@@ -72,7 +71,7 @@ public class TableConverter {
                         continue;
                     }
                     try {
-                        final boolean walEnabled = readWalEnabled(path, ff);
+                        final boolean walEnabled = readWalEnabled(path.$(), ff);
                         LOG.info().$("converting table [dirName=").$(dirNameSink)
                                 .$(", walEnabled=").$(walEnabled)
                                 .I$();
@@ -93,9 +92,10 @@ public class TableConverter {
                                 }
 
                                 final int tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
-                                boolean isProtected = protectedTableResolver.test(tableName);
-                                boolean isSystem = TableUtils.isSystemTable(tableName, configuration);
-                                final TableToken token = new TableToken(tableName, dirName, tableId, walEnabled, isSystem, isProtected);
+                                boolean isProtected = tableFlagResolver.isProtected(tableName);
+                                boolean isSystem = tableFlagResolver.isSystem(tableName);
+                                boolean isPublic = tableFlagResolver.isPublic(tableName);
+                                final TableToken token = new TableToken(tableName, dirName, tableId, walEnabled, isSystem, isProtected, isPublic);
 
                                 if (txWriter == null) {
                                     txWriter = new TxWriter(ff, configuration);
@@ -124,8 +124,8 @@ public class TableConverter {
                                 convertedTables.add(token);
                             }
 
-                            path.trimTo(rootLen).concat(dirNameSink).concat(CONVERT_FILE_NAME).$();
-                            if (!ff.removeQuiet(path)) {
+                            path.trimTo(rootLen).concat(dirNameSink).concat(CONVERT_FILE_NAME);
+                            if (!ff.removeQuiet(path.$())) {
                                 LOG.critical().$("could not remove _convert file [path=").$(path).I$();
                             }
                         }
@@ -144,7 +144,7 @@ public class TableConverter {
         return convertedTables;
     }
 
-    private static boolean readWalEnabled(Path path, FilesFacade ff) {
+    private static boolean readWalEnabled(LPSZ path, FilesFacade ff) {
         int fd = -1;
         try {
             fd = ff.openRO(path);
@@ -175,18 +175,18 @@ public class TableConverter {
                     .I$();
         }
 
-        path.trimTo(rootLen).concat(dirName).$();
+        path.trimTo(rootLen).concat(dirName);
         int plen = path.size();
-        final long pFind = ff.findFirst(path);
+        final long pFind = ff.findFirst(path.$());
         if (pFind > 0) {
             try {
                 do {
                     long name = ff.findName(pFind);
                     int type = ff.findType(pFind);
                     if (CairoKeywords.isWal(name)) {
-                        path.trimTo(plen).concat(name).$();
+                        path.trimTo(plen).concat(name);
                         if (type == Files.DT_FILE && CairoKeywords.isLock(name)) {
-                            if (!ff.removeQuiet(path)) {
+                            if (!ff.removeQuiet(path.$())) {
                                 LOG.error()
                                         .$("could not remove wal lock file [errno=").$(ff.errno())
                                         .$(", path=").$(path)

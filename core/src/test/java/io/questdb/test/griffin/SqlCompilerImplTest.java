@@ -3040,8 +3040,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
                 @Override
                 public int softLink(LPSZ src, LPSZ softLink) {
-                    Assert.assertEquals(target, src.toString());
-                    Assert.assertEquals(root + Files.SEPARATOR + dirName, softLink.toString());
+                    Assert.assertEquals(target, Misc.getThreadLocalUtf8Sink().put(src).toString());
+                    Assert.assertEquals(root + Files.SEPARATOR + dirName, Misc.getThreadLocalUtf8Sink().put(softLink).toString());
                     return -1;
                 }
             };
@@ -3070,7 +3070,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 File table = new File(target);
                 Assert.assertTrue(table.exists());
                 Assert.assertTrue(table.isDirectory());
-                Assert.assertTrue(FilesFacadeImpl.INSTANCE.rmdir(path.of(target).slash$()));
+                Assert.assertTrue(FilesFacadeImpl.INSTANCE.rmdir(path.of(target).slash()));
                 Assert.assertTrue(volume.delete());
             }
         });
@@ -4720,7 +4720,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             @Override
             public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
-                if (inError.get() && pageCount++ == 13) {
+                if (inError.get() && pageCount++ == 14) {
                     return -1;
                 }
                 return super.mmap(fd, len, offset, flags, memoryTag);

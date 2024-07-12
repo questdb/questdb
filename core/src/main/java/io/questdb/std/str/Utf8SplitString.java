@@ -43,6 +43,7 @@ public class Utf8SplitString implements DirectUtf8Sequence, Mutable {
     private final boolean stable;
     private boolean ascii;
     private long dataLo;
+    private long dataLim;
     private long prefixLo;
     private int size;
 
@@ -85,13 +86,20 @@ public class Utf8SplitString implements DirectUtf8Sequence, Mutable {
      * @param prefixLo address of the first UTF-8 byte of the prefix inlined into the auxiliary vector
      * @param dataLo   address of the first UTF-8 byte of the full string value.
      *                 When the full value is inlined into the auxiliary vector, this must be equal to prefixLo.
+     * @param dataLim  end ptr of the contiguously addressable buffer containing the full value.
+     *                 this is usually past the end of the full value, used to compute the `tailPadding` value.
      * @param size     size in bytes of the UTF-8 value
      * @param ascii    whether the value is all-ASCII
      * @return this
      */
-    public Utf8SplitString of(long prefixLo, long dataLo, int size, boolean ascii) {
+    public Utf8SplitString of(long prefixLo, long dataLo, long dataLim, int size, boolean ascii) {
+        if (dataLim < (dataLo + size)) {
+            throw new IllegalArgumentException("dataLim < dataLo + size");
+        }
+        assert dataLim >= (dataLo + size);
         this.prefixLo = prefixLo;
         this.dataLo = dataLo;
+        this.dataLim = dataLim;
         this.size = size;
         this.ascii = ascii;
         return this;
@@ -105,6 +113,11 @@ public class Utf8SplitString implements DirectUtf8Sequence, Mutable {
     @Override
     public int size() {
         return size;
+    }
+
+    @Override
+    public long tailPadding() {
+        return dataLim - dataLo - size;
     }
 
     @Override

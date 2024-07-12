@@ -206,8 +206,14 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             } else if (e.isInterruption()) {
                 code = 408;
             }
-            internalError(context.getChunkedResponse(), context.getLastRequestBytesSent(), e.getFlyweightMessage(),
-                    code, e, state, context.getMetrics()
+            internalError(
+                    context.getChunkedResponse(),
+                    context.getLastRequestBytesSent(),
+                    e.getFlyweightMessage(),
+                    code,
+                    e,
+                    state,
+                    context.getMetrics()
             );
             readyForNextRequest(context);
             if (e.isEntityDisabled()) {
@@ -307,9 +313,14 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             }
             try {
                 doResumeSend(state, context, sqlExecutionContext);
-            } catch (CairoError | CairoException e) {
+            } catch (CairoError e) {
                 internalError(context.getChunkedResponse(), context.getLastRequestBytesSent(), e.getFlyweightMessage(),
                         400, e, state, context.getMetrics()
+                );
+            } catch (CairoException e) {
+                int statusCode = e.isInterruption() && !e.isCancellation() ? 408 : 400;
+                internalError(context.getChunkedResponse(), context.getLastRequestBytesSent(), e.getFlyweightMessage(),
+                        statusCode, e, state, context.getMetrics()
                 );
             }
         }
@@ -658,8 +669,15 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         if (e instanceof CairoException) {
             position = ((CairoException) e).getPosition();
         }
-
-        sendException(response, state.getHttpConnectionContext(), position, message, state.getQuery(), configuration.getKeepAliveHeader(), code);
+        sendException(
+                response,
+                state.getHttpConnectionContext(),
+                position,
+                message,
+                state.getQuery(),
+                configuration.getKeepAliveHeader(),
+                code
+        );
     }
 
     private boolean parseUrl(

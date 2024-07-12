@@ -41,13 +41,20 @@ import io.questdb.std.ObjList;
  * Expects a target size, and then pairs of (order size, order amount).
  */
 public class LevelTwoPriceFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "l2price(DV)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         if (args.size() % 2 == 0) {
             throw SqlException.position(argPositions.getLast()).put("l2price requires an odd number of arguments.");
         }
@@ -140,19 +147,26 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
      * Unrolled loop for 1 pair.
      */
     private static class L2PriceFunction1 extends L2PriceBaseFunction {
+        private final Function size0Func;
+        private final Function targetFunc;
+        private final Function value0Func;
+
         public L2PriceFunction1(ObjList<Function> args, IntList argPositions) {
             super(args, argPositions);
+            targetFunc = args.getQuick(0);
+            size0Func = args.getQuick(1);
+            value0Func = args.getQuick(2);
         }
 
         @Override
         public double getDouble(Record rec) {
-            final double target = args.getQuick(0).getDouble(rec);
-            final double size_0 = args.getQuick(1).getDouble(rec);
-            final double value_0 = args.getQuick(2).getDouble(rec);
+            final double target = targetFunc.getDouble(rec);
+            final double size0 = size0Func.getDouble(rec);
+            final double value0 = value0Func.getDouble(rec);
 
-            if (size_0 >= target)
-                return value_0;
-
+            if (size0 >= target) {
+                return value0;
+            }
             return Double.NaN;
         }
     }
@@ -161,26 +175,37 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
      * Unrolled loop for 2 pairs.
      */
     private static class L2PriceFunction2 extends L2PriceBaseFunction {
+        private final Function size0Func;
+        private final Function size1Func;
+        private final Function targetFunc;
+        private final Function value0Func;
+        private final Function value1Func;
+
         public L2PriceFunction2(ObjList<Function> args, IntList argPositions) {
             super(args, argPositions);
+            targetFunc = args.getQuick(0);
+            size0Func = args.getQuick(1);
+            value0Func = args.getQuick(2);
+            size1Func = args.getQuick(3);
+            value1Func = args.getQuick(4);
         }
 
         @Override
         public double getDouble(Record rec) {
-            final double target = args.getQuick(0).getDouble(rec);
-            final double size_0 = args.getQuick(1).getDouble(rec);
-            final double value_0 = args.getQuick(2).getDouble(rec);
+            final double target = targetFunc.getDouble(rec);
+            final double size0 = size0Func.getDouble(rec);
+            final double value0 = value0Func.getDouble(rec);
 
-            if (size_0 >= target)
-                return value_0;
-
-            final double size_1 = args.getQuick(3).getDouble(rec);
-            final double value_1 = args.getQuick(4).getDouble(rec);
-
-            if (size_0 + size_1 >= target) {
-                return ((size_0 * value_0) + (target - size_0) * value_1) / target;
+            if (size0 >= target) {
+                return value0;
             }
 
+            final double size1 = size1Func.getDouble(rec);
+            final double value1 = value1Func.getDouble(rec);
+
+            if (size0 + size1 >= target) {
+                return ((size0 * value0) + (target - size0) * value1) / target;
+            }
             return Double.NaN;
         }
     }
@@ -189,35 +214,48 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
      * Unrolled loop for 3 pairs.
      */
     private static class L2PriceFunction3 extends L2PriceBaseFunction {
+        private final Function size0Func;
+        private final Function size1Func;
+        private final Function size2Func;
+        private final Function targetFunc;
+        private final Function value0Func;
+        private final Function value1Func;
+        private final Function value2Func;
+
         public L2PriceFunction3(ObjList<Function> args, IntList argPositions) {
             super(args, argPositions);
+            targetFunc = args.getQuick(0);
+            size0Func = args.getQuick(1);
+            value0Func = args.getQuick(2);
+            size1Func = args.getQuick(3);
+            value1Func = args.getQuick(4);
+            size2Func = args.getQuick(5);
+            value2Func = args.getQuick(6);
         }
 
         @Override
         public double getDouble(Record rec) {
-            final double target = args.getQuick(0).getDouble(rec);
-            final double size_0 = args.getQuick(1).getDouble(rec);
-            final double value_0 = args.getQuick(2).getDouble(rec);
+            final double target = targetFunc.getDouble(rec);
+            final double size0 = size0Func.getDouble(rec);
+            final double value0 = value0Func.getDouble(rec);
 
-            if (size_0 >= target)
-                return value_0;
-
-            final double size_1 = args.getQuick(3).getDouble(rec);
-            final double value_1 = args.getQuick(4).getDouble(rec);
-
-            if (size_0 + size_1 >= target) {
-                return ((size_0 * value_0) + (target - size_0) * value_1) / target;
+            if (size0 >= target) {
+                return value0;
             }
 
-            final double size_2 = args.getQuick(5).getDouble(rec);
-            final double value_2 = args.getQuick(6).getDouble(rec);
+            final double size1 = size1Func.getDouble(rec);
+            final double value1 = value1Func.getDouble(rec);
 
-            if (size_0 + size_1 + size_2 >= target) {
-                return ((size_0 * value_0)
-                        + (size_1 * value_1)
-                        + (target - size_0 - size_1) * value_2) / target;
+            if (size0 + size1 >= target) {
+                return ((size0 * value0) + (target - size0) * value1) / target;
             }
 
+            final double size2 = size2Func.getDouble(rec);
+            final double value2 = value2Func.getDouble(rec);
+
+            if (size0 + size1 + size2 >= target) {
+                return ((size0 * value0) + (size1 * value1) + (target - size0 - size1) * value2) / target;
+            }
             return Double.NaN;
         }
     }
@@ -226,45 +264,59 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
      * Unrolled loop for 4 pairs.
      */
     private static class L2PriceFunction4 extends L2PriceBaseFunction {
+        private final Function size0Func;
+        private final Function size1Func;
+        private final Function size2Func;
+        private final Function size3Func;
+        private final Function targetFunc;
+        private final Function value0Func;
+        private final Function value1Func;
+        private final Function value2Func;
+        private final Function value3Func;
+
         public L2PriceFunction4(ObjList<Function> args, IntList argPositions) {
             super(args, argPositions);
+            targetFunc = args.getQuick(0);
+            size0Func = args.getQuick(1);
+            value0Func = args.getQuick(2);
+            size1Func = args.getQuick(3);
+            value1Func = args.getQuick(4);
+            size2Func = args.getQuick(5);
+            value2Func = args.getQuick(6);
+            size3Func = args.getQuick(7);
+            value3Func = args.getQuick(8);
         }
 
         @Override
         public double getDouble(Record rec) {
-            final double target = args.getQuick(0).getDouble(rec);
-            final double size_0 = args.getQuick(1).getDouble(rec);
-            final double value_0 = args.getQuick(2).getDouble(rec);
+            final double target = targetFunc.getDouble(rec);
+            final double size0 = size0Func.getDouble(rec);
+            final double value0 = value0Func.getDouble(rec);
 
-            if (size_0 >= target)
-                return value_0;
-
-            final double size_1 = args.getQuick(3).getDouble(rec);
-            final double value_1 = args.getQuick(4).getDouble(rec);
-
-            if (size_0 + size_1 >= target) {
-                return ((size_0 * value_0) + (target - size_0) * value_1) / target;
+            if (size0 >= target) {
+                return value0;
             }
 
-            final double size_2 = args.getQuick(5).getDouble(rec);
-            final double value_2 = args.getQuick(6).getDouble(rec);
+            final double size1 = size1Func.getDouble(rec);
+            final double value1 = value1Func.getDouble(rec);
 
-            if (size_0 + size_1 + size_2 >= target) {
-                return ((size_0 * value_0)
-                        + (size_1 * value_1)
-                        + (target - size_0 - size_1) * value_2) / target;
+            if (size0 + size1 >= target) {
+                return ((size0 * value0) + (target - size0) * value1) / target;
             }
 
-            final double size_3 = args.getQuick(7).getDouble(rec);
-            final double value_3 = args.getQuick(8).getDouble(rec);
+            final double size2 = size2Func.getDouble(rec);
+            final double value2 = value2Func.getDouble(rec);
 
-            if (size_0 + size_1 + size_2 + size_3 >= target) {
-                return ((size_0 * value_0)
-                        + (size_1 * value_1)
-                        + (size_2 * value_2)
-                        + (target - size_0 - size_1 - size_2) * value_3) / target;
+            if (size0 + size1 + size2 >= target) {
+                return ((size0 * value0) + (size1 * value1) + (target - size0 - size1) * value2) / target;
             }
 
+            final double size3 = size3Func.getDouble(rec);
+            final double value3 = value3Func.getDouble(rec);
+
+            if (size0 + size1 + size2 + size3 >= target) {
+                return ((size0 * value0) + (size1 * value1) + (size2 * value2) + (target - size0 - size1 - size2) * value3) / target;
+            }
             return Double.NaN;
         }
     }
@@ -273,62 +325,78 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
      * Unrolled loop for 5 pairs.
      */
     private static class L2PriceFunction5 extends L2PriceBaseFunction {
+        private final Function size0Func;
+        private final Function size1Func;
+        private final Function size2Func;
+        private final Function size3Func;
+        private final Function size4Func;
+        private final Function targetFunc;
+        private final Function value0Func;
+        private final Function value1Func;
+        private final Function value2Func;
+        private final Function value3Func;
+        private final Function value4Func;
+
         public L2PriceFunction5(ObjList<Function> args, IntList argPositions) {
             super(args, argPositions);
+            targetFunc = args.getQuick(0);
+            size0Func = args.getQuick(1);
+            value0Func = args.getQuick(2);
+            size1Func = args.getQuick(3);
+            value1Func = args.getQuick(4);
+            size2Func = args.getQuick(5);
+            value2Func = args.getQuick(6);
+            size3Func = args.getQuick(7);
+            value3Func = args.getQuick(8);
+            size4Func = args.getQuick(9);
+            value4Func = args.getQuick(10);
         }
 
         @Override
         public double getDouble(Record rec) {
-            final double target = args.getQuick(0).getDouble(rec);
-            final double size_0 = args.getQuick(1).getDouble(rec);
-            final double value_0 = args.getQuick(2).getDouble(rec);
+            final double target = targetFunc.getDouble(rec);
+            final double size0 = size0Func.getDouble(rec);
+            final double value0 = value0Func.getDouble(rec);
 
-
-            if (size_0 >= target)
-                return value_0;
-
-            final double size_1 = args.getQuick(3).getDouble(rec);
-            final double value_1 = args.getQuick(4).getDouble(rec);
-
-            if (size_0 + size_1 >= target) {
-                return ((size_0 * value_0) + (target - size_0) * value_1) / target;
+            if (size0 >= target) {
+                return value0;
             }
 
-            final double size_2 = args.getQuick(5).getDouble(rec);
-            final double value_2 = args.getQuick(6).getDouble(rec);
+            final double size1 = size1Func.getDouble(rec);
+            final double value1 = value1Func.getDouble(rec);
 
-            if (size_0 + size_1 + size_2 >= target) {
-                return ((size_0 * value_0)
-                        + (size_1 * value_1)
-                        + (target - size_0 - size_1) * value_2) / target;
+            if (size0 + size1 >= target) {
+                return ((size0 * value0) + (target - size0) * value1) / target;
             }
 
-            final double size_3 = args.getQuick(7).getDouble(rec);
-            final double value_3 = args.getQuick(8).getDouble(rec);
+            final double size2 = size2Func.getDouble(rec);
+            final double value2 = value2Func.getDouble(rec);
 
-            if (size_0 + size_1 + size_2 + size_3 >= target) {
-                return ((size_0 * value_0)
-                        + (size_1 * value_1)
-                        + (size_2 * value_2)
-                        + (target - size_0 - size_1 - size_2) * value_3) / target;
+            if (size0 + size1 + size2 >= target) {
+                return ((size0 * value0) + (size1 * value1) + (target - size0 - size1) * value2) / target;
             }
 
-            final double size_4 = args.getQuick(9).getDouble(rec);
-            final double value_4 = args.getQuick(10).getDouble(rec);
+            final double size3 = size3Func.getDouble(rec);
+            final double value3 = value3Func.getDouble(rec);
 
-            if (size_0 + size_1 + size_2 + size_3 + size_4 >= target) {
-                return ((size_0 * value_0)
-                        + (size_1 * value_1)
-                        + (size_2 * value_2)
-                        + (size_3 * value_3)
-                        + (target - size_0 - size_1 - size_2 - size_3) * value_4) / target;
+            if (size0 + size1 + size2 + size3 >= target) {
+                return ((size0 * value0) + (size1 * value1) + (size2 * value2) + (target - size0 - size1 - size2) * value3) / target;
             }
 
+            final double size4 = size4Func.getDouble(rec);
+            final double value4 = value4Func.getDouble(rec);
+
+            if (size0 + size1 + size2 + size3 + size4 >= target) {
+                return ((size0 * value0) + (size1 * value1)
+                        + (size2 * value2) + (size3 * value3)
+                        + (target - size0 - size1 - size2 - size3) * value4) / target;
+            }
             return Double.NaN;
         }
     }
 
     private static class L2PriceFunctionN extends L2PriceBaseFunction {
+
         public L2PriceFunctionN(ObjList<Function> args, IntList argPositions) {
             super(args, argPositions);
         }

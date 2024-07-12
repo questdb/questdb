@@ -30,6 +30,7 @@ import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.TableUtils.validationException;
@@ -59,10 +60,10 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             this.ff = configuration.getFilesFacade();
             this.tableToken = tableToken;
             this.path = new Path();
-            this.path.of(configuration.getRoot()).concat(tableToken.getDirName()).$();
+            this.path.of(configuration.getRoot()).concat(tableToken.getDirName());
             this.plen = path.size();
-            this.isSoftLink = Files.isSoftLink(path);
-            this.metaMem = Vm.getMRInstance();
+            this.isSoftLink = Files.isSoftLink(path.$());
+            this.metaMem = Vm.getCMRInstance();
         } catch (Throwable th) {
             close();
             throw th;
@@ -74,7 +75,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
         this.tableToken = null;
-        this.metaMem = Vm.getMRInstance();
+        this.metaMem = Vm.getCMRInstance();
     }
 
     public TableReaderMetadataTransitionIndex applyTransition() {
@@ -275,7 +276,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         return walEnabled;
     }
 
-    public void load(Path path) {
+    public void load(LPSZ path) {
         try {
             this.metaMem.smallFile(ff, path, MemoryTag.NATIVE_TABLE_READER);
             TableUtils.validateMeta(metaMem, null, ColumnType.VERSION);
@@ -341,16 +342,16 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         final long timeout = configuration.getSpinLockTimeout();
         final MillisecondClock millisecondClock = configuration.getMillisecondClock();
         long deadline = configuration.getMillisecondClock().getTicks() + timeout;
-        this.path.trimTo(plen).concat(TableUtils.META_FILE_NAME).$();
+        this.path.trimTo(plen).concat(TableUtils.META_FILE_NAME);
         boolean existenceChecked = false;
         while (true) {
             try {
-                load(path);
+                load(path.$());
                 return;
             } catch (CairoException ex) {
                 if (!existenceChecked) {
-                    path.trimTo(plen).slash$();
-                    if (!ff.exists(path)) {
+                    path.trimTo(plen).slash();
+                    if (!ff.exists(path.$())) {
                         throw CairoException.tableDoesNotExist(tableToken.getTableName());
                     }
                     path.trimTo(plen).concat(TableUtils.META_FILE_NAME).$();
@@ -363,10 +364,10 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
 
     public boolean prepareTransition(long txnMetadataVersion) {
         if (transitionMeta == null) {
-            transitionMeta = Vm.getMRInstance();
+            transitionMeta = Vm.getCMRInstance();
         }
 
-        transitionMeta.smallFile(ff, path, MemoryTag.NATIVE_TABLE_READER);
+        transitionMeta.smallFile(ff, path.$(), MemoryTag.NATIVE_TABLE_READER);
         if (transitionMeta.size() >= TableUtils.META_OFFSET_METADATA_VERSION + 8
                 && txnMetadataVersion != transitionMeta.getLong(TableUtils.META_OFFSET_METADATA_VERSION)) {
             // No match

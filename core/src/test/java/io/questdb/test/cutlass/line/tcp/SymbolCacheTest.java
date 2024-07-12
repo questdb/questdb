@@ -445,7 +445,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                 TableToken tableToken = engine.verifyTableName(tableName);
                 try (
                         TableWriter writer = newOffPoolWriter(configuration, tableName, metrics);
-                        MemoryMR txMem = Vm.getMRInstance();
+                        MemoryMR txMem = Vm.getCMRInstance();
                         TxReader txReader = new TxReader(ff).ofRO(
                                 path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
                                 PartitionBy.DAY
@@ -457,7 +457,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
 
                     txMem.of(
                             configuration.getFilesFacade(),
-                            path,
+                            path.$(),
                             transientSymCountOffset + Integer.BYTES,
                             transientSymCountOffset + Integer.BYTES,
                             MemoryTag.MMAP_DEFAULT
@@ -604,7 +604,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                 TableToken tableToken = engine.verifyTableName(tableName);
                 try (
                         TableWriter writer = newOffPoolWriter(configuration, tableName, metrics);
-                        MemoryMR txMem = Vm.getMRInstance();
+                        MemoryMR txMem = Vm.getCMRInstance();
                         TxReader txReader = new TxReader(ff).ofRO(
                                 path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
                                 PartitionBy.DAY
@@ -615,7 +615,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
 
                     txMem.of(
                             configuration.getFilesFacade(),
-                            path,
+                            path.$(),
                             transientSymCountOffset + Integer.BYTES,
                             transientSymCountOffset + Integer.BYTES,
                             MemoryTag.MMAP_DEFAULT
@@ -687,7 +687,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                 TableToken tableToken = engine.verifyTableName(tableName);
                 try (
                         TableWriter writer = newOffPoolWriter(configuration, tableName, metrics);
-                        MemoryMR txMem = Vm.getMRInstance();
+                        MemoryMR txMem = Vm.getCMRInstance();
                         TxReader txReader = new TxReader(ff).ofRO(
                                 path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
                                 PartitionBy.DAY
@@ -698,7 +698,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
 
                     txMem.of(
                             configuration.getFilesFacade(),
-                            path,
+                            path.$(),
                             transientSymCountOffset + Integer.BYTES,
                             transientSymCountOffset + Integer.BYTES,
                             MemoryTag.MMAP_DEFAULT

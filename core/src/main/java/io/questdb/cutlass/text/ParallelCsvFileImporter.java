@@ -602,7 +602,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 updateImportStatus(CopyTask.STATUS_STARTED, Numbers.LONG_NULL, Numbers.LONG_NULL, 0);
 
                 try {
-                    fd = TableUtils.openRO(ff, inputFilePath, LOG);
+                    fd = TableUtils.openRO(ff, inputFilePath.$(), LOG);
                 } catch (CairoException e) {
                     throw TextImportException.instance(CopyTask.PHASE_SETUP, e.getFlyweightMessage(), e.getErrno());
                 }
@@ -776,9 +776,9 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     private void createWorkDir() {
         // First, create the work root dir, if it doesn't exist.
-        Path workDirPath = tmpPath.of(inputWorkRoot).slash$();
-        if (!ff.exists(workDirPath)) {
-            int result = ff.mkdir(workDirPath, configuration.getMkDirMode());
+        Path workDirPath = tmpPath.of(inputWorkRoot).slash();
+        if (!ff.exists(workDirPath.$())) {
+            int result = ff.mkdir(workDirPath.$(), configuration.getMkDirMode());
             if (result != 0) {
                 throw CairoException.critical(ff.errno()).put("could not create import work root directory [path='").put(workDirPath).put("']");
             }
@@ -786,8 +786,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
         // Next, remove and recreate the per-table sub-dir.
         removeWorkDir();
-        workDirPath = tmpPath.of(importRoot).slash$();
-        int result = ff.mkdir(workDirPath, configuration.getMkDirMode());
+        workDirPath = tmpPath.of(importRoot).slash();
+        int result = ff.mkdir(workDirPath.$(), configuration.getMkDirMode());
         if (result != 0) {
             throw CairoException.critical(ff.errno()).put("could not create temporary import work directory [path='").put(workDirPath).put("']");
         }
@@ -966,11 +966,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                             throw TextException.$("could not create partition directory [path='").put(dstPath).put("', errno=").put(ff.errno()).put(']');
                         }
 
-                        ff.iterateDir(srcPath, (long name, int type) -> {
+                        ff.iterateDir(srcPath.$(), (long name, int type) -> {
                             if (type == Files.DT_FILE) {
-                                srcPath.trimTo(srcPlen).concat(partitionName).concat(name).$();
-                                dstPath.trimTo(dstPlen).concat(partitionName).put(configuration.getAttachPartitionSuffix()).concat(name).$();
-                                if (ff.copy(srcPath, dstPath) < 0) {
+                                srcPath.trimTo(srcPlen).concat(partitionName).concat(name);
+                                dstPath.trimTo(dstPlen).concat(partitionName).put(configuration.getAttachPartitionSuffix()).concat(name);
+                                if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
                                     throw TextException.$("could not copy partition file [to='").put(dstPath).put("', errno=").put(ff.errno()).put(']');
                                 }
                             }
@@ -1316,8 +1316,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     private void removeWorkDir() {
-        Path workDirPath = tmpPath.of(importRoot).$();
-        if (ff.exists(workDirPath)) {
+        Path workDirPath = tmpPath.of(importRoot);
+        if (ff.exists(workDirPath.$())) {
             if (isOneOfMainDirectories(importRoot)) {
                 throw TextException.$("could not remove import work directory because it points to one of main directories [path='").put(workDirPath).put("'] .");
             }

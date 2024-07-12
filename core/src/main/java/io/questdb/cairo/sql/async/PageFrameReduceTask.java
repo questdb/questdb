@@ -48,6 +48,7 @@ public class PageFrameReduceTask implements Closeable {
     private final DirectLongList filteredRows; // Used for TYPE_FILTER.
     private final long pageFrameQueueCapacity;
     private final DirectLongList varSizeAux;
+    private int errorMessagePosition;
     private int frameIndex = Integer.MAX_VALUE;
     private PageFrameSequence<?> frameSequence;
     private long frameSequenceId;
@@ -78,6 +79,10 @@ public class PageFrameReduceTask implements Closeable {
      */
     public DirectLongList getData() {
         return columns;
+    }
+
+    public int getErrorMessagePosition() {
+        return errorMessagePosition;
     }
 
     public CharSequence getErrorMsg() {
@@ -188,6 +193,7 @@ public class PageFrameReduceTask implements Closeable {
 
         if (th instanceof CairoException) {
             isCancelled = ((CairoException) th).isCancellation();
+            errorMessagePosition = ((CairoException) th).getPosition();
         }
     }
 

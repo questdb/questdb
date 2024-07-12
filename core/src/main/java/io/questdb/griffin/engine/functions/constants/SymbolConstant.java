@@ -31,7 +31,6 @@ import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.std.Chars;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8String;
 import org.jetbrains.annotations.Nullable;
 
@@ -85,11 +84,6 @@ public class SymbolConstant extends SymbolFunction implements ConstantFunction {
     @Override
     public CharSequence getSymbolB(Record rec) {
         return value;
-    }
-
-    @Override
-    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-        utf8Sink.put(utf8Value);
     }
 
     @Override

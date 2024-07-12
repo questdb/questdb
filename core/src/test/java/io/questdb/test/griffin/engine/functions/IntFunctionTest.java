@@ -26,29 +26,14 @@ package io.questdb.test.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.IntFunction;
-import io.questdb.std.str.Utf16Sink;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class IntFunctionTest {
     // assert that all type casts that are not possible will throw exception
 
-    private static final IntFunction function = new IntFunction() {
-        @Override
-        public int getInt(Record rec) {
-            return 150;
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return true;
-        }
-    };
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetChar() {
-        function.getChar(null);
-    }
+    private static final IntFunction function = makeIntFunction(150);
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGeoByte() {
@@ -90,6 +75,11 @@ public class IntFunctionTest {
         function.getByte(null);
     }
 
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetChar() {
+        function.getChar(null);
+    }
+
     @Test
     public void testGetDate() {
         Assert.assertEquals(150, function.getDate(null));
@@ -103,6 +93,31 @@ public class IntFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetIPv4() {
         function.getIPv4(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong128Hi() {
+        function.getLong128Hi(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong128Lo() {
+        function.getLong128Lo(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong256() {
+        function.getLong256(null, null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong256A() {
+        function.getLong256A(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong256B() {
+        function.getLong256B(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -151,36 +166,6 @@ public class IntFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetLong128Hi() {
-        function.getLong128Hi(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetLong128Lo() {
-        function.getLong128Lo(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetLong256() {
-        function.getLong256(null, null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetLong256A() {
-        function.getLong256A(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetLong256B() {
-        function.getLong256B(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetVarcharUtf8Sink() {
-        function.getVarchar(null, null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
     public void testGetVarcharA() {
         function.getVarcharA(null);
     }
@@ -188,5 +173,19 @@ public class IntFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetVarcharB() {
         function.getVarcharB(null);
+    }
+
+    private static @NotNull IntFunction makeIntFunction(int value) {
+        return new IntFunction() {
+            @Override
+            public int getInt(Record rec) {
+                return value;
+            }
+
+            @Override
+            public boolean isReadThreadSafe() {
+                return true;
+            }
+        };
     }
 }

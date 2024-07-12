@@ -24,9 +24,86 @@
 
 package io.questdb.griffin.engine.functions.date;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.microtime.TimestampFormatFactory;
+import io.questdb.std.str.Utf8Sequence;
+
 public final class VarcharToTimestampVCFunctionFactory extends ToTimestampVCFunctionFactory {
     @Override
     public String getSignature() {
         return "to_timestamp(Øs)";
     }
+
+    @Override
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        final Function arg = args.getQuick(0);
+        final CharSequence pattern = args.getQuick(1).getStrA(null);
+        if (pattern == null) {
+            throw SqlException.$(argPositions.getQuick(1), "pattern is required");
+        }
+        DateLocale defaultDateLocale = configuration.getDefaultDateLocale();
+        if (arg.isConstant()) {
+            return evaluateConstant(arg, TimestampFormatFactory.INSTANCE.get(pattern), defaultDateLocale);
+        } else {
+            if ("en".equals(defaultDateLocale.getName()) || (defaultDateLocale.getName() != null && defaultDateLocale.getName().startsWith("en-"))) {
+                return new ToAsciiTimestampFuc(arg, TimestampFormatFactory.INSTANCE.get(pattern), defaultDateLocale);
+            }
+            return new Func(arg, TimestampFormatFactory.INSTANCE.get(pattern), defaultDateLocale);
+        }
+    }
+
+    protected static final class ToAsciiTimestampFuc extends TimestampFunction implements UnaryFunction {
+
+        private final Function arg;
+        private final DateLocale locale;
+        private final DateFormat timestampFormat;
+
+        public ToAsciiTimestampFuc(Function arg, DateFormat timestampFormat, DateLocale locale) {
+            this.arg = arg;
+            this.timestampFormat = timestampFormat;
+            this.locale = locale;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            Utf8Sequence value = arg.getVarcharA(rec);
+            try {
+                if (value != null && value.isAscii()) {
+                    return timestampFormat.parse(value.asAsciiCharSequence(), locale);
+                }
+            } catch (NumericException ignore) {
+            }
+            return Numbers.LONG_NULL;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("to_timestamp(").val(arg).val(')');
+        }
+    }
+
 }

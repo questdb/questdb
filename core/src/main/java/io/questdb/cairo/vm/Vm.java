@@ -116,7 +116,7 @@ public class Vm {
         return new MemoryCMRImpl();
     }
 
-    public static MemoryMR getMRInstance(FilesFacade ff, LPSZ name, long size, int memoryTag) {
+    public static MemoryCMR getCMRInstance(FilesFacade ff, LPSZ name, long size, int memoryTag) {
         return new MemoryCMRImpl(ff, name, size, memoryTag, false);
     }
 
@@ -127,7 +127,7 @@ public class Vm {
      * @see StableDirectString
      * @see Utf8Sequence#isStable()
      */
-    public static MemoryMR getMRInstance(FilesFacade ff, LPSZ name, long size, int memoryTag, boolean stableStrings) {
+    public static MemoryCMR getCMRInstance(FilesFacade ff, LPSZ name, long size, int memoryTag, boolean stableStrings) {
         return new MemoryCMRImpl(ff, name, size, memoryTag, stableStrings);
     }
 

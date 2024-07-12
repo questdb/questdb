@@ -33,8 +33,6 @@ import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
-import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -415,6 +413,21 @@ public class StrFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetBin() {
+        function.getBin(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetBinLen() {
+        function.getBinLen(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetBool() {
+        function.getBool(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetGeoByte() {
         function.getGeoByte(null);
     }
@@ -432,41 +445,6 @@ public class StrFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetGeoShort() {
         function.getGeoShort(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetBin() {
-        function.getBin(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetBinLen() {
-        function.getBinLen(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetBool() {
-        function.getBool(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetRecordCursorFactory() {
-        function.getRecordCursorFactory();
-    }
-
-    @Test
-    public void testGetStrLen() {
-        Assert.assertEquals(1, function.getStrLen(null));
-    }
-
-    @Test
-    public void testGetSymbol() {
-        TestUtils.assertEquals("a", function.getSymbol(null));
-    }
-
-    @Test
-    public void testGetSymbolB() {
-        TestUtils.assertEquals("a", function.getSymbolB(null));
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -494,11 +472,24 @@ public class StrFunctionTest {
         function.getLong256B(null);
     }
 
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetRecordCursorFactory() {
+        function.getRecordCursorFactory();
+    }
+
     @Test
-    public void testGetVarcharToSink() {
-        Utf8Sink sink = new Utf8StringSink();
-        function.getVarchar(null, sink);
-        TestUtils.assertEquals("a", sink.toString());
+    public void testGetStrLen() {
+        Assert.assertEquals(1, function.getStrLen(null));
+    }
+
+    @Test
+    public void testGetSymbol() {
+        TestUtils.assertEquals("a", function.getSymbol(null));
+    }
+
+    @Test
+    public void testGetSymbolB() {
+        TestUtils.assertEquals("a", function.getSymbolB(null));
     }
 
     @Test
