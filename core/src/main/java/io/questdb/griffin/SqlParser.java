@@ -79,7 +79,13 @@ public class SqlParser {
     private int digit;
     private boolean overClauseMode = false;
     private boolean subQueryMode = false;
-
+private void parseFillFunction() {
+        // Parse the new fill function
+        if (isToken("fill_prev")) {
+            expect('(');
+            // Logic to parse and handle the new fill function
+            expect(')');
+        }
     SqlParser(
             CairoConfiguration configuration,
             SqlOptimiser optimiser,
