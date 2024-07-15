@@ -1793,11 +1793,6 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public boolean convertPartition(long partitionTimestamp) {
-            return false;
-        }
-
-        @Override
         public void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName, SecurityContext securityContext) {
             validateExistingColumnName(columnName, "cannot rename");
             int columnIndexNew = metadata.getColumnIndexQuiet(newName);
@@ -2047,11 +2042,6 @@ public class WalWriter implements TableWriterAPI {
             } else {
                 throw CairoException.nonCritical().put("column '").put(columnName).put("' does not exists");
             }
-        }
-
-        @Override
-        public boolean convertPartition(long partitionTimestamp) {
-            return false;
         }
 
         @Override

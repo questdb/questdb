@@ -412,6 +412,21 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
+    private void applyConvertPartition(MetadataService svc) {
+        // long list is a set of two longs per partition - (timestamp, partitionNamePosition)
+        for (int i = 0, n = extraInfo.size() / 2; i < n; i++) {
+            long partitionTimestamp = extraInfo.getQuick(i * 2);
+            if (!svc.convertPartition(partitionTimestamp)) {
+                throw CairoException.partitionManipulationRecoverable()
+                        .put("could not convert partition [table=").put(tableToken != null ? tableToken.getTableName() : "<null>")
+                        .put(", partitionTimestamp=").ts(partitionTimestamp)
+                        .put(", partitionBy=").put(PartitionBy.toString(svc.getPartitionBy()))
+                        .put(']')
+                        .position((int) extraInfo.getQuick(i * 2 + 1));
+            }
+        }
+    }
+
     private void applyDetachPartition(MetadataService svc) {
         for (int i = 0, n = extraInfo.size() / 2; i < n; i++) {
             final long partitionTimestamp = extraInfo.getQuick(i * 2);
@@ -460,20 +475,6 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
-    private void applyConvertPartition(MetadataService svc) {
-        // long list is a set of two longs per partition - (timestamp, partitionNamePosition)
-        for (int i = 0, n = extraInfo.size() / 2; i < n; i++) {
-            long partitionTimestamp = extraInfo.getQuick(i * 2);
-            if (!svc.convertPartition(partitionTimestamp)) {
-                throw CairoException.partitionManipulationRecoverable()
-                        .put("could not convert partition [table=").put(tableToken != null ? tableToken.getTableName() : "<null>")
-                        .put(", partitionTimestamp=").ts(partitionTimestamp)
-                        .put(", partitionBy=").put(PartitionBy.toString(svc.getPartitionBy()))
-                        .put(']')
-                        .position((int) extraInfo.getQuick(i * 2 + 1));
-            }
-        }
-    }
     private void applyParamO3MaxLag(MetadataService svc) {
         long o3MaxLag = extraInfo.get(0);
         try {
