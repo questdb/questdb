@@ -75,7 +75,8 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
 
             if (this.values.size() == 1 && this.values.getQuick(0).isNullConstant()) {
                 final int diff = (metadata.getColumnCount() - 1);
-                for (int i = 0; i < diff; i++) {
+                // skip one entry as it should be the designated timestamp
+                for (int i = 1; i < diff; i++) {
                     values.add(NullConstant.NULL);
                 }
             } else {
@@ -83,7 +84,6 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             }
 
         }
-
 
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
