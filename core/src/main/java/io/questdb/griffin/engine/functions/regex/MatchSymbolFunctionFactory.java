@@ -27,22 +27,24 @@ package io.questdb.griffin.engine.functions.regex;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 import java.util.regex.Matcher;
 
-public class MatchStrFunctionFactory implements FunctionFactory {
+public class MatchSymbolFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "~(SS)";
+        return "~(KS)";
     }
 
     @Override
@@ -53,35 +55,60 @@ public class MatchStrFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final Function value = args.getQuick(0);
+        final SymbolFunction fun = (SymbolFunction) args.getQuick(0);
         final Function pattern = args.getQuick(1);
         final int patternPosition = argPositions.getQuick(1);
-        if (pattern.isConstant()) {
-            return new MatchStrConstPatternFunction(value, RegexUtils.createMatcher(pattern, patternPosition));
-        } else if (pattern.isRuntimeConstant()) {
-            return new MatchStrRuntimeConstPatternFunction(value, pattern, patternPosition);
+        if (fun.isSymbolTableStatic()) {
+            if (pattern.isConstant()) {
+                return new MatchStaticSymbolTableConstPatternFunction(fun, RegexUtils.createMatcher(pattern, patternPosition));
+            } else if (pattern.isRuntimeConstant()) {
+                return new MatchStaticSymbolTableRuntimeConstPatternFunction(fun, pattern, patternPosition);
+            }
+        } else {
+            if (pattern.isConstant()) {
+                return new MatchStrFunctionFactory.MatchStrConstPatternFunction(fun, RegexUtils.createMatcher(pattern, patternPosition));
+            } else if (pattern.isRuntimeConstant()) {
+                return new MatchStrFunctionFactory.MatchStrRuntimeConstPatternFunction(fun, pattern, patternPosition);
+            }
         }
         throw SqlException.$(patternPosition, "not implemented: dynamic pattern would be very slow to execute");
     }
 
-    static class MatchStrConstPatternFunction extends BooleanFunction implements UnaryFunction {
-        private final Matcher matcher;
-        private final Function value;
+    private static void extractSymbolKeys(SymbolFunction symbolFun, IntList symbolKeys, Matcher matcher) {
+        final StaticSymbolTable symbolTable = symbolFun.getStaticSymbolTable();
+        assert symbolTable != null;
+        symbolKeys.clear();
+        for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
+            if (matcher.reset(symbolTable.valueOf(i)).find()) {
+                symbolKeys.add(i);
+            }
+        }
+    }
 
-        public MatchStrConstPatternFunction(Function value, Matcher matcher) {
-            this.value = value;
+    private static class MatchStaticSymbolTableConstPatternFunction extends BooleanFunction implements UnaryFunction {
+        private final Matcher matcher;
+        private final SymbolFunction symbolFun;
+        private final IntList symbolKeys = new IntList();
+
+        public MatchStaticSymbolTableConstPatternFunction(SymbolFunction symbolFun, Matcher matcher) {
+            this.symbolFun = symbolFun;
             this.matcher = matcher;
         }
 
         @Override
         public Function getArg() {
-            return value;
+            return symbolFun;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            CharSequence cs = getArg().getStrA(rec);
-            return cs != null && matcher.reset(cs).find();
+            return symbolKeys.binarySearchUniqueList(getArg().getInt(rec)) > -1;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            UnaryFunction.super.init(symbolTableSource, executionContext);
+            extractSymbolKeys(symbolFun, symbolKeys, matcher);
         }
 
         @Override
@@ -91,38 +118,37 @@ public class MatchStrFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(value).val(" ~ ").val(matcher.pattern().toString());
+            sink.val(symbolFun).val(" ~ ").val(matcher.pattern().toString());
         }
     }
 
-    static class MatchStrRuntimeConstPatternFunction extends BooleanFunction implements UnaryFunction {
+    private static class MatchStaticSymbolTableRuntimeConstPatternFunction extends BooleanFunction implements UnaryFunction {
         private final Function pattern;
         private final int patternPosition;
-        private final Function value;
-        private Matcher matcher;
+        private final SymbolFunction symbolFun;
+        private final IntList symbolKeys = new IntList();
 
-        public MatchStrRuntimeConstPatternFunction(Function value, Function pattern, int patternPosition) {
-            this.value = value;
+        public MatchStaticSymbolTableRuntimeConstPatternFunction(SymbolFunction symbolFun, Function pattern, int patternPosition) {
+            this.symbolFun = symbolFun;
             this.pattern = pattern;
             this.patternPosition = patternPosition;
         }
 
         @Override
         public Function getArg() {
-            return value;
+            return symbolFun;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            CharSequence cs = getArg().getStrA(rec);
-            return cs != null && matcher.reset(cs).find();
+            return symbolKeys.binarySearchUniqueList(getArg().getInt(rec)) > -1;
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
             pattern.init(symbolTableSource, executionContext);
-            this.matcher = RegexUtils.createMatcher(pattern, patternPosition);
+            extractSymbolKeys(symbolFun, symbolKeys, RegexUtils.createMatcher(pattern, patternPosition));
         }
 
         @Override
@@ -142,7 +168,7 @@ public class MatchStrFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(value).val(" ~ ").val(pattern.toString());
+            sink.val(symbolFun).val(" ~ ").val(pattern.toString());
         }
     }
 }
