@@ -53,4 +53,6 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
 
     @TestOnly
     void testParseExpression(CharSequence expression, ExpressionParserListener listener) throws SqlException;
+       // New method to process GROUPS frame
+    void processGroupsFrame(RecordCursor cursor, CairoEngine engine, SqlExecutionContext context, QueryModel model) throws SqlException;
 }
