@@ -207,7 +207,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     /**
      * Iterates over all outstanding transactions in the WAL.
      * Interrupts if time limit is reached or termination is requested.
-     * Returns true if the application is finished and false if it's early terminated.
+     * Returns true if it applied all the transactions, and false if it was terminated early
      *
      * @param tableToken        table token
      * @param writer            table writer
