@@ -25,6 +25,8 @@ jobs:
         fetchDepth: 1
         lfs: false
         submodules: false
-      - bash: wget https://download.jetbrains.com/product?code=IIC&latest&distribution=linux | tar xvz -C /opt/intellij
-      - bash: ls -lhA
+      - bash: |
+          wget "https://download.jetbrains.com/product?code=IIC&latest&distribution=linux" | tar xvz -C /opt/intellij
+        displayName: "Install IntelliJ"
       - bash: ls -lhA /opt/intellij
+        displayName: "List IntelliJ installation"
