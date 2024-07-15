@@ -5525,10 +5525,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
         } while (this.o3PartitionUpdRemaining.get() > 0);
-
-//        if (o3ErrorCount.get() == 0) {
-//            o3ConsumePartitionUpdateSink();
-//        }
     }
 
     private void o3CopySafe(
