@@ -77,6 +77,11 @@ public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
     }
 
     @Override
+    public boolean isDevModeEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean mangleTableDirNames() {
         return true;
     }

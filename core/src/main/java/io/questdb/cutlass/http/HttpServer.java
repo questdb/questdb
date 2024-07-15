@@ -193,6 +193,19 @@ public class HttpServer implements Closeable {
             }
         });
 
+        final WarningsProcessor warningsProcessor = new WarningsProcessor(serverConfiguration.getCairoConfiguration());
+        server.bind(new HttpRequestProcessorFactory() {
+            @Override
+            public String getUrl() {
+                return "/warnings";
+            }
+
+            @Override
+            public HttpRequestProcessor newInstance() {
+                return warningsProcessor;
+            }
+        });
+
         server.bind(new HttpRequestProcessorFactory() {
             @Override
             public String getUrl() {

@@ -22,12 +22,13 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.test;
+package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cutlass.http.processors.WarningsProcessor;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -37,12 +38,11 @@ import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class TestNPEFactory implements FunctionFactory {
-    public static final String SIGNATURE = "npe()";
+public class SimulateWarningsFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return SIGNATURE;
+        return "simulate_warnings(SS)";
     }
 
     @Override
@@ -53,18 +53,28 @@ public class TestNPEFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
+
         if (configuration.isDevModeEnabled()) {
-            return NPEFunction.INSTANCE;
+            final String tag = args.get(0).getStrA(null).toString();
+            final String warning = args.get(1).getStrA(null).toString();
+            return new SimulateWarningsFunction(tag, warning);
         }
         return BooleanConstant.FALSE;
     }
 
-    private static class NPEFunction extends BooleanFunction {
-        private static final NPEFunction INSTANCE = new NPEFunction();
+    private static class SimulateWarningsFunction extends BooleanFunction {
+        final String tag;
+        final String warning;
+
+        SimulateWarningsFunction(String tag, String warning) {
+            this.tag = tag;
+            this.warning = warning;
+        }
 
         @Override
         public boolean getBool(Record rec) {
-            throw new NullPointerException();
+            WarningsProcessor.override(tag, warning);
+            return true;
         }
 
         @Override
@@ -80,7 +90,7 @@ public class TestNPEFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(SIGNATURE);
+            sink.val("simulate_warnings(").val(tag).val(", ").val(warning).val(")");
         }
     }
 }
