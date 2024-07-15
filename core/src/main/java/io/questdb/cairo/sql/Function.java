@@ -36,7 +36,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -75,6 +74,9 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     @Override
     default void close() {
+    }
+
+    default void cursorClosed() {
     }
 
     int getArrayLength();
@@ -163,8 +165,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     int getType();
 
-    void getVarchar(Record rec, Utf8Sink utf8Sink);
-
     @Nullable
     Utf8Sequence getVarcharA(Record rec);
 
@@ -180,7 +180,7 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
      * Returns true if function is constant, i.e. its value does not require
      * any input from the record.
      * <p>
-     * Constant functions can evaluated by passing a null record to {@link #getStr(Record, Utf16Sink)}
+     * Constant functions can evaluate by passing a null record to {@link #getStr(Record, Utf16Sink)}
      * or other methods. This often happens inside FunctionFactory at query planning stage.
      *
      * @return true if function is constant

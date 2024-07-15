@@ -37,7 +37,9 @@ import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
-import io.questdb.std.str.*;
+import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 
 public class RndVarcharListFunctionFactory implements FunctionFactory {
     @Override
@@ -88,11 +90,6 @@ public class RndVarcharListFunctionFactory implements FunctionFactory {
         public RndVarcharListFunction(ObjList<Utf8String> symbols) {
             this.symbols = symbols;
             this.count = symbols.size();
-        }
-
-        @Override
-        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-            utf8Sink.put(rndSymbol());
         }
 
         @Override

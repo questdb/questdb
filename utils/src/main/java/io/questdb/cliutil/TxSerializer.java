@@ -170,7 +170,7 @@ public class TxSerializer {
                 System.err.printf("file does not exist: %s%n", srcTxFilePath);
                 return null;
             }
-            try (MemoryMR roTxMem = Vm.getMRInstance(ff, path.$(), ff.length(path.$()), MemoryTag.MMAP_DEFAULT)) {
+            try (MemoryMR roTxMem = Vm.getCMRInstance(ff, path.$(), ff.length(path.$()), MemoryTag.MMAP_DEFAULT)) {
                 roTxMem.growToFileSize();
                 final long version = roTxMem.getLong(TX_BASE_OFFSET_VERSION_64);
                 final boolean isA = (version & 1L) == 0L;

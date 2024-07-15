@@ -25,8 +25,8 @@
 package io.questdb.metrics;
 
 import io.questdb.std.CharSequenceHashSet;
-import io.questdb.std.str.CharSink;
 import io.questdb.std.str.BorrowableUtf8Sink;
+import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
 import java.lang.management.GarbageCollectorMXBean;

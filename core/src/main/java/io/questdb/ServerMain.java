@@ -73,7 +73,6 @@ public class ServerMain implements Closeable {
     private FileWatcher fileWatcher;
     private HttpServer httpServer;
     private boolean initialized;
-    private PGWireServer pgWireServer;
     private WorkerPoolManager workerPoolManager;
 
     public ServerMain(String... args) {
@@ -379,6 +378,7 @@ public class ServerMain implements Closeable {
         ));
 
         // pg wire
+        PGWireServer pgWireServer;
         freeOnExit.register(pgWireServer = services().createPGWireServer(
                 config.getPGWireConfiguration(),
                 engine,

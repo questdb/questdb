@@ -36,6 +36,11 @@ public interface UnaryFunction extends Function {
         getArg().close();
     }
 
+    @Override
+    default void cursorClosed() {
+        getArg().cursorClosed();
+    }
+
     Function getArg();
 
     @Override

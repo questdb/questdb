@@ -40,6 +40,14 @@ public interface QuaternaryFunction extends Function {
         getFunc3().close();
     }
 
+    @Override
+    default void cursorClosed() {
+        getFunc0().cursorClosed();
+        getFunc1().cursorClosed();
+        getFunc2().cursorClosed();
+        getFunc3().cursorClosed();
+    }
+
     Function getFunc0();
 
     Function getFunc1();

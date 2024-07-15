@@ -125,16 +125,30 @@ JNIEXPORT jint JNICALL Java_io_questdb_KqueueAccessor_kqueue
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_KqueueAccessor_kevent
-        (JNIEnv *e, jclass cl, jint kq, jlong changelist, jint nChanges, jlong eventlist, jint nEvents, jint timeout) {
-    int tv_sec = timeout / 1000;
-    struct timespec _timeout = {tv_sec, (timeout - tv_sec * 1000) * 1000 * 1000};
-    return (jint) kevent(
-            kq, (const struct kevent *) changelist,
-            nChanges,
-            (struct kevent *) eventlist,
-            nEvents,
-            &_timeout
-    );
+        (JNIEnv *e, jclass cl, jint kq, jlong changelist, jint nChanges, jlong eventlist, jint nEvents, jint timeout_msec) {
+    long MILLION = 1000 * 1000;
+    long BILLION = 1000 * MILLION;
+
+    long remaining_timeout_nsec = timeout_msec * MILLION;
+    int res = -1;
+    do {
+        int tv_sec = remaining_timeout_nsec / BILLION;
+        struct timespec _timeout = { tv_sec, remaining_timeout_nsec - tv_sec * BILLION };
+        clock_t start = clock();
+        res = kevent(
+                kq, (const struct kevent *) changelist,
+                nChanges,
+                (struct kevent *) eventlist,
+                nEvents,
+                &_timeout
+        );
+        if (timeout_msec != 0) {
+            clock_t end = clock();
+            long elapsed_nsec = (end - start) * BILLION / CLOCKS_PER_SEC;
+            remaining_timeout_nsec -= elapsed_nsec;
+        }
+    } while ( res == -1 && errno == EINTR && remaining_timeout_nsec >= 0 );
+    return res;
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_KqueueAccessor_keventRegister

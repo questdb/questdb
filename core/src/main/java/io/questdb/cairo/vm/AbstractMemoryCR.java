@@ -113,13 +113,13 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     }
 
     @Override
-    public Utf8SplitString getSplitVarcharA(long auxLo, long dataLo, int size, boolean ascii) {
-        return utf8SplitViewA.of(auxLo, dataLo, size, ascii);
+    public Utf8SplitString getSplitVarcharA(long auxLo, long dataLo, long dataLim, int size, boolean ascii) {
+        return utf8SplitViewA.of(auxLo, dataLo, dataLim, size, ascii);
     }
 
     @Override
-    public Utf8SplitString getSplitVarcharB(long auxLo, long dataLo, int size, boolean ascii) {
-        return utf8SplitViewB.of(auxLo, dataLo, size, ascii);
+    public Utf8SplitString getSplitVarcharB(long auxLo, long dataLo, long dataLim, int size, boolean ascii) {
+        return utf8SplitViewB.of(auxLo, dataLo, dataLim, size, ascii);
     }
 
     public final CharSequence getStrA(long offset) {
