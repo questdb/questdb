@@ -3,7 +3,7 @@ jobs:
     displayName: "on"
     strategy:
       matrix:
-        linux-jdk11:
+        linux-jdk17:
           imageName: "ubuntu-latest"
           poolName: "Azure Pipelines"
           os: Linux
@@ -33,5 +33,5 @@ jobs:
           cd /opt/intellij
           ln -s idea-* idea
         displayName: "Install IntelliJ"
-      - bash: find /opt/intellij/idea
+      - bash: find /opt/intellij
         displayName: "List IntelliJ installation"
