@@ -5,7 +5,6 @@ jobs:
       vmImage: "ubuntu-latest"
     steps:
       - checkout: none
-      - bash: sudo apt-get install -y jq
         name: check_changes
         env:
           PRID: $(System.PullRequest.PullRequestNumber)
@@ -21,7 +20,7 @@ jobs:
               ANY=$(echo $FILES | grep '"filename":')
               if [ -z "$ANY" ]; then
                 if [ -n "$ALL_CHANGES" ]; then
-                  echo "##vso[task.setvariable variable=COVERAGE_DIFF;isOutput=true]+:*.$ALL_CHANGES"
+                  echo "##vso[task.setvariable variable=COVERAGE_DIFF;isOutput=true]$ALL_CHANGES"
                   echo "##vso[task.setvariable variable=CODE_COVERAGE_TOOL_OPTION;isOutput=true]JaCoCo"
                 else 
                   echo "##vso[task.setvariable variable=COVERAGE_DIFF;isOutput=true]-:*"
@@ -38,14 +37,18 @@ jobs:
               fi
           
               COV_CLASSES=$(echo $FILES | jq -r '.[].filename' | grep '.java' | grep 'core/src/main/java' \
-                  | sed 's/\.java$//' \
+                  | sed 's#.*/##; s/\.java$//' \
                   | tr '\n' ',' | sed -e 's/,/,+:*./g' | sed 's/,+:\*\.$//')
           
               if [ -z "$COV_CLASSES" ]; then
                 echo no match found
               else
                 echo match found
-                ALL_CHANGES="${ALL_CHANGES},+:*.${COV_CLASSES}"
+                if [-z "$ALL_CHANGES"]; then
+                  ALL_CHANGES="${ALL_CHANGES},+:*.${COV_CLASSES}"
+                else
+                  ALL_CHANGES="+:*.${COV_CLASSES}"
+                fi
               fi
               CHANGED_CORE_FILES="${CHANGED_CORE_FILES}$(echo $FILES | jq -r '.[].filename' | grep -oP 'filename": "(core|benchmarks|compat|utils)/*\/\K[^.]+')"
             done
