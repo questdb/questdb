@@ -44,7 +44,7 @@ jobs:
                 echo no match found
               else
                 echo match found
-                if [ -z "$ALL_CHANGES" ]; then
+                if [ -n "$ALL_CHANGES" ]; then
                   ALL_CHANGES="${ALL_CHANGES},+:*.${COV_CLASSES}"
                 else
                   ALL_CHANGES="+:*.${COV_CLASSES}"
