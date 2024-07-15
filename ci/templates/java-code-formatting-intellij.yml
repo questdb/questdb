@@ -25,6 +25,11 @@ jobs:
         fetchDepth: 1
         lfs: false
         submodules: false
+      - task: JavaToolInstaller@0
+        inputs:
+          versionSpec: '17'
+          jdkArchitectureOption: 'x64'
+          jdkSourceOption: 'PreInstalled'
       - bash: |
           wget "https://download.jetbrains.com/product?code=IIC&latest&distribution=linux" -O intellij.tar.gz
           mkdir -p /opt/intellij
@@ -32,6 +37,11 @@ jobs:
           rm intellij.tar.gz
           cd /opt/intellij
           ln -s idea-* idea
+          echo "JAVA_HOME: $JAVA_HOME"
+          echo "java --version"
+          java --version
         displayName: "Install IntelliJ"
       - bash: find /opt/intellij
         displayName: "List IntelliJ installation"
+      - bash: /opt/intellij/idea/bin/idea.sh format -s .idea/codeStyleSettings.xml -m "*.java" -dry -r .
+        displayName: "Check formatting"
