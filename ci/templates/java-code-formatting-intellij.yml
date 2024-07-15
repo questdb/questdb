@@ -7,7 +7,7 @@ jobs:
           imageName: "ubuntu-latest"
           poolName: "Azure Pipelines"
           os: Linux
-          jdk: "1.11"
+          jdk: "1.17"
           testset: "none"
           javadoc_step: "javadoc:javadoc"
           javadoc_profile: ",javadoc"
@@ -26,7 +26,12 @@ jobs:
         lfs: false
         submodules: false
       - bash: |
-          wget "https://download.jetbrains.com/product?code=IIC&latest&distribution=linux" | tar xvz -C /opt/intellij
+          wget "https://download.jetbrains.com/product?code=IIC&latest&distribution=linux" -O intellij.tar.gz
+          mkdir -p /opt/intellij
+          tar xvz -C /opt/intellij -f intellij.tar.gz
+          rm intellij.tar.gz
+          cd /opt/intellij
+          ln -s idea-* idea
         displayName: "Install IntelliJ"
-      - bash: ls -lhA /opt/intellij
+      - bash: find /opt/intellij/idea
         displayName: "List IntelliJ installation"
