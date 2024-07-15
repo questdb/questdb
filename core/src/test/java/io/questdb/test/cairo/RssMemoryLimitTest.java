@@ -70,7 +70,7 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateAtomicTable_wal() throws Exception {
+    public void testLargeTxEventuallySucceeds() throws Exception {
         long limitMiB = 5;
         assertMemoryLeak(limitMiB, () -> {
             int batchCount = 100;
