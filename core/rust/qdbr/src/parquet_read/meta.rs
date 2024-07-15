@@ -77,21 +77,18 @@ impl ParquetDecoder {
             (
                 PhysicalType::Int64,
                 Some(Timestamp {
-                         unit: TimeUnit::Microseconds,
-                         is_adjusted_to_utc: _,
-                     }) |
-                Some(Timestamp {
-                         unit: TimeUnit::Nanoseconds,
-                         is_adjusted_to_utc: _,
-                     }),
+                    unit: TimeUnit::Microseconds,
+                    is_adjusted_to_utc: _,
+                })
+                | Some(Timestamp { unit: TimeUnit::Nanoseconds, is_adjusted_to_utc: _ }),
                 _,
             ) => Some(ColumnType::Timestamp),
             (
                 PhysicalType::Int64,
                 Some(Timestamp {
-                         unit: TimeUnit::Milliseconds,
-                         is_adjusted_to_utc: _,
-                     }),
+                    unit: TimeUnit::Milliseconds,
+                    is_adjusted_to_utc: _,
+                }),
                 _,
             ) => Some(ColumnType::Date),
             (PhysicalType::Int64, None, _) => Some(ColumnType::Long),
@@ -168,6 +165,7 @@ mod tests {
     fn test_decode_column_type_fixed() {
         let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
         let row_count = 10;
+        let mut buffers_columns = Vec::new();
         let mut columns = Vec::new();
 
         let cols = vec![
@@ -191,12 +189,9 @@ mod tests {
         ];
 
         for (col_type, value_size, name) in cols.iter() {
-            columns.push(crate::parquet_read::meta::tests::create_fix_column(
-                row_count,
-                *col_type,
-                *value_size,
-                name,
-            ));
+            let (buff, column) = create_fix_column(row_count, *col_type, *value_size, name);
+            columns.push(column);
+            buffers_columns.push(buff);
         }
 
         let column_count = columns.len();
@@ -230,6 +225,9 @@ mod tests {
         }
 
         temp_file.close().expect("Failed to delete temp file");
+
+        // make sure buffer live until the end of the test
+        assert_eq!(buffers_columns.len(), column_count);
     }
 
     fn to_storage_type(column_type: ColumnType) -> ColumnType {
@@ -247,7 +245,7 @@ mod tests {
         col_type: ColumnType,
         value_size: usize,
         name: &'static str,
-    ) -> Column {
+    ) -> (Vec<u8>, Column) {
         let mut buff = vec![0u8; row_count * value_size];
         for i in 0..row_count {
             let value = i as u8;
@@ -260,19 +258,24 @@ mod tests {
             ColumnType::try_from(col_type_i32).expect("invalid colum type")
         );
 
-        Column::from_raw_data(
-            0,
-            name,
-            col_type as i32,
-            0,
-            row_count,
-            buff.as_ptr(),
-            buff.len(),
-            null(),
-            0,
-            null(),
-            0,
+        let ptr = buff.as_ptr();
+        let data_size = buff.len();
+        (
+            buff,
+            Column::from_raw_data(
+                0,
+                name,
+                col_type as i32,
+                0,
+                row_count,
+                ptr,
+                data_size,
+                null(),
+                0,
+                null(),
+                0,
+            )
+            .unwrap(),
         )
-            .unwrap()
     }
 }

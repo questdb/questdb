@@ -25,7 +25,9 @@ use parquet2::encoding::{bitpacked, hybrid_rle, Encoding};
 use parquet2::indexes::Interval;
 use parquet2::page::{split_buffer, DataPage, DictPage, Page};
 use parquet2::read::{decompress, get_page_iterator};
-use parquet2::schema::types::{PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType, TimeUnit};
+use parquet2::schema::types::{
+    PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType, TimeUnit,
+};
 use parquet2::write::Version;
 use std::collections::VecDeque;
 use std::ptr;
@@ -154,16 +156,16 @@ impl ParquetDecoder {
                 Page::Data(page) => {
                     row_count += decoder_page(version, &page, dict.as_ref(), buffers, column_type)
                         .with_context(|| {
-                            format!(
-                                "failed to decode row group [column={}, group={}]",
-                                self.metadata.schema_descr.columns()[file_column_index]
-                                    .descriptor
-                                    .primitive_type
-                                    .field_info
-                                    .name,
-                                row_group
-                            )
-                        })?
+                        format!(
+                            "failed to decode row group [column={}, group={}]",
+                            self.metadata.schema_descr.columns()[file_column_index]
+                                .descriptor
+                                .primitive_type
+                                .field_info
+                                .name,
+                            row_group
+                        )
+                    })?
                 }
             };
         }
@@ -409,35 +411,35 @@ pub fn decoder_page(
                     Encoding::Plain,
                     _,
                     Some(PrimitiveLogicalType::Timestamp {
-                             is_adjusted_to_utc: _,
-                             unit: TimeUnit::Nanoseconds | TimeUnit::Milliseconds
-                         }),
-                    | ColumnType::Timestamp
+                        is_adjusted_to_utc: _,
+                        unit: TimeUnit::Nanoseconds | TimeUnit::Milliseconds,
+                    }),
+                    ColumnType::Timestamp,
                 ) => {
                     if let Some(PrimitiveLogicalType::Timestamp {
-                                 is_adjusted_to_utc: _,
-                                 unit: ts_unit,
-                             }) = logical_type {
-                        let mut slicer = ValueConvertSlicer::<8, _, _>::new(DataPageFixedSlicer::<8>::new(values_buffer, row_count),
-                                                                            |nano_ts, out_buff| {
-                                                                                let ts = unsafe { ptr::read_unaligned(nano_ts.as_ptr() as *const i64) };
-                                                                                let ts = match ts_unit {
-                                                                                    TimeUnit::Nanoseconds => ts / 1000,
-                                                                                    TimeUnit::Microseconds => ts,
-                                                                                    TimeUnit::Milliseconds => ts * 1000,
-                                                                                };
-                                                                                out_buff.copy_from_slice(&ts.to_le_bytes());
-                                                                            });
+                        is_adjusted_to_utc: _,
+                        unit: ts_unit,
+                    }) = logical_type
+                    {
+                        let mut slicer = ValueConvertSlicer::<8, _, _>::new(
+                            DataPageFixedSlicer::<8>::new(values_buffer, row_count),
+                            |nano_ts, out_buff| {
+                                let ts =
+                                    unsafe { ptr::read_unaligned(nano_ts.as_ptr() as *const i64) };
+                                let ts = match ts_unit {
+                                    TimeUnit::Nanoseconds => ts / 1000,
+                                    TimeUnit::Microseconds => ts,
+                                    TimeUnit::Milliseconds => ts * 1000,
+                                };
+                                out_buff.copy_from_slice(&ts.to_le_bytes());
+                            },
+                        );
 
                         decode_page(
                             version,
                             page,
                             row_count,
-                            &mut FixedLongColumnSink::new(
-                                &mut slicer,
-                                buffers,
-                                &LONG_NULL,
-                            ),
+                            &mut FixedLongColumnSink::new(&mut slicer, buffers, &LONG_NULL),
                         )?;
                     } else {
                         assert!(false, "Timestamp logical type must be set");
@@ -1499,7 +1501,7 @@ mod tests {
             null(),
             0,
         )
-            .unwrap()
+        .unwrap()
     }
 
     fn create_var_column(
@@ -1523,7 +1525,7 @@ mod tests {
             null(),
             0,
         )
-            .unwrap()
+        .unwrap()
     }
 
     fn create_symbol_column(
@@ -1548,6 +1550,6 @@ mod tests {
             offsets.as_ptr(),
             offsets.len(),
         )
-            .unwrap()
+        .unwrap()
     }
 }
