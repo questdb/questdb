@@ -121,8 +121,37 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testTooLargeTxEventuallyGivesUp() throws Exception {
+        // even reducing parallelism still won't help with extreme transaction
+        // this tests that we eventually give up and suspend the table
+        long limitMiB = 1;
+        assertMemoryLeak(limitMiB, () -> {
+            int batchCount = 100;
+            int batchSize = 500_000;
+
+            ddl("create table x (ts timestamp) timestamp(ts) partition by day wal;");
+
+            for (int i = 0; i < batchCount; i++) {
+                insert("insert into x select" +
+                        " rnd_timestamp(to_timestamp('2024-01-01', 'yyyy-mm-dd'), to_timestamp('2025-01-01', 'yyyy-mm-dd'), 0) ts" +
+                        " from long_sequence(" + batchSize + ");");
+            }
+
+            TestUtils.assertEventually(() -> {
+                drainWalQueue();
+                assertTableSuspended("x");
+            }, 600);
+        });
+    }
+
     private static void assertTableNotSuspended(CharSequence tableName) {
         TableToken tt = engine.getTableTokenIfExists(tableName);
         Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tt));
+    }
+
+    private static void assertTableSuspended(CharSequence tableName) {
+        TableToken tt = engine.getTableTokenIfExists(tableName);
+        Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tt));
     }
 }
