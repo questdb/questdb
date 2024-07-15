@@ -1,8 +1,6 @@
 use std::ffi::CStr;
-use std::ops::Deref;
 use std::os::raw::c_char;
 use std::path::Path;
-use std::sync::Arc;
 
 use jni::objects::JClass;
 use jni::JNIEnv;
@@ -17,42 +15,27 @@ pub extern "system" fn Java_io_questdb_test_Sqllogictest_run(
     port: i16,
     path_ptr: *const c_char,
 ) {
-    // Create a new Tokio runtime
-    let runtime = Runtime::new().unwrap();
-
-    let file_path = unsafe {
-        let c_str = CStr::from_ptr(path_ptr);
-        c_str.to_string_lossy().into_owned()
-    };
-
-    if !Path::new(&file_path).exists() {
-        eprintln!("Test file not found: {}", file_path);
-        throw_state_msg(
-            &mut env,
-            "run",
-            &format!("file not found: {}", file_path),
-            (),
-        );
+    let file_path = Path::new(unsafe { CStr::from_ptr(path_ptr).to_str().expect("Invalid UTF-8") });
+    if !file_path.exists() {
+        let error_msg = format!("file not found: {:?}", file_path);
+        eprintln!("{}", &error_msg);
+        throw_state_msg(&mut env, "run", &error_msg, ());
     }
 
-    let mut config = PostgresConfig::new();
-    config.port(port as u16);
-    config.dbname("quest");
-    config.user("admin");
-    config.password("quest");
-    config.host("localhost");
+    let mut runner = Runner::new(move || {
+        let mut config = PostgresConfig::new();
+        config.port(port as u16);
+        config.dbname("quest");
+        config.user("admin");
+        config.password("quest");
+        config.host("localhost");
+        PostgresExtended::connect(config)
+    });
 
-    let runner_future = async {
-        let config = Arc::new(config);
-        let mut runner = Runner::new({
-            move || {
-                let config = Arc::clone(&config);
-                async move { PostgresExtended::connect(config.deref().clone()).await }
-            }
-        });
-
+    let runtime = Runtime::new().expect("Failed to create Tokio runtime");
+    let result = runtime.block_on(async {
         // You can also parse the script and execute the records separately:
-        let records = sqllogictest::parse_file(&file_path);
+        let records = sqllogictest::parse_file(file_path);
         match records {
             Ok(records) => {
                 for record in records {
@@ -84,18 +67,12 @@ pub extern "system" fn Java_io_questdb_test_Sqllogictest_run(
             }
             Err(e) => Err(anyhow::Error::from(e)),
         }
-    };
+    });
 
-    // Execute the future within the runtime
-    let result = runtime.block_on(runner_future);
     if let Err(e) = result {
-        eprintln!("Error running test file '{}': {}", file_path, e);
-        throw_state_msg(
-            &mut env,
-            "run",
-            &format!("Error running test file '{}': {}", file_path, e),
-            (),
-        );
+        let error_msg = format!("Error running test file '{}': {}", file_path.display(), e);
+        eprintln!("{}", &error_msg);
+        throw_state_msg(&mut env, "run", &error_msg, ());
     }
 }
 
