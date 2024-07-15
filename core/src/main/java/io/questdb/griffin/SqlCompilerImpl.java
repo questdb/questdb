@@ -62,6 +62,26 @@ import static io.questdb.griffin.SqlKeywords.*;
 public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallback {
     static final ObjList<String> sqlControlSymbols = new ObjList<>(8);
     // null object used to skip null checks in batch method
+      public void processGroupsFrame(RecordCursor cursor, CairoEngine engine, SqlExecutionContext context, QueryModel model) throws SqlException {
+        // Sample implementation to process GROUPS frame
+        double sum = 0;
+        double count = 0;
+
+        cursor.toTop();
+        while (cursor.hasNext()) {
+            Record record = cursor.getRecord();
+            sum += record.getDouble("score"); // Assuming "score" is the column to aggregate
+            count++;
+        }
+
+        if (model.getFunction().getFunctionName().equals("SUM")) {
+            SumFunction sumFunction = new SumFunction();
+            sumFunction.setValue(sum);
+        } else if (model.getFunction().getFunctionName().equals("AVG")) {
+            AvgFunction avgFunction = new AvgFunction();
+            avgFunction.setValue(sum / count);
+        }
+    }
     private static final BatchCallback EMPTY_CALLBACK = new BatchCallback() {
         @Override
         public void postCompile(SqlCompiler compiler, CompiledQuery cq, CharSequence queryText) {
