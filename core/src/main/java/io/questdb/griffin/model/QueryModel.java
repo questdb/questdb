@@ -1792,6 +1792,43 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             }
         }
 
+        if (groupBy.size() > 0) {
+            sink.putAscii(" group by");
+            for (int i = 0, n = groupBy.size(); i < n; i++) {
+                if (i > 0) {
+                    sink.putAscii(", ");
+                }
+                sink.put(groupBy.get(i));
+            }
+        }
+
+        if (fillValue != null && fillValue.size() > 0) {
+            sink.putAscii(" fill(");
+            for (int i = 0, n = fillValue.size(); i < n; i++) {
+                if (i > 0) {
+                    sink.put(',');
+                }
+                sink.put(fillValue.getQuick(i));
+            }
+            sink.put(')');
+        }
+
+        if (fillFrom != null || fillTo != null) {
+            if (fillFrom != null) {
+                sink.putAscii(" from ");
+                sink.put(fillFrom);
+            }
+            if (fillTo != null) {
+                sink.putAscii(" to ");
+                sink.put(fillTo);
+            }
+        }
+
+        if (fillStride != null) {
+            sink.putAscii(" stride ");
+            sink.put(fillStride);
+        }
+
         if (showOrderBy && orderBy.size() > 0) {
             sink.putAscii(" order by ");
             for (int i = 0, n = orderBy.size(); i < n; i++) {

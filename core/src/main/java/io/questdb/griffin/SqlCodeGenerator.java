@@ -203,14 +203,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
-    public static void coerceRuntimeConstantType(Function func, short type, SqlExecutionContext context, CharSequence message, int pos) throws SqlException {
-        if (ColumnType.isUndefined(func.getType())) {
-            func.assignType(type, context.getBindVariableService());
-        } else if ((!func.isConstant() && !func.isRuntimeConstant()) || !(ColumnType.isAssignableFrom(func.getType(), type))) {
-            throw SqlException.$(pos, message);
-        }
-    }
-
     public static int getUnionCastType(int typeA, int typeB) {
         short tagA = ColumnType.tagOf(typeA);
         short tagB = ColumnType.tagOf(typeB);
@@ -338,6 +330,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         return true;
+    }
+
+    private static void coerceRuntimeConstantType(Function func, short type, SqlExecutionContext context, CharSequence message, int pos) throws SqlException {
+        if (ColumnType.isUndefined(func.getType())) {
+            func.assignType(type, context.getBindVariableService());
+        } else if ((!func.isConstant() && !func.isRuntimeConstant()) || !ColumnType.isAssignableFrom(func.getType(), type)) {
+            throw SqlException.$(pos, message);
+        }
     }
 
     private static RecordCursorFactory createFullFatAsOfJoin(
@@ -1689,19 +1689,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateFill(QueryModel model, RecordCursorFactory groupByFactory, SqlExecutionContext executionContext) throws SqlException {
-        if (!isFillStridePresent(model.getNestedModel())) {
+        if (model.getNestedModel().getFillStride() == null) {
             return groupByFactory;
         } else {
-            try {
-                final QueryModel nested = model.getNestedModel();
-                Function fillFromFunc = TimestampConstant.NULL;
-                Function fillToFunc = TimestampConstant.NULL;
-                final ExpressionNode fillFrom = nested.getFillFrom();
-                final ExpressionNode fillTo = nested.getFillTo();
-                final ExpressionNode fillStride = nested.getFillStride();
+            final QueryModel nested = model.getNestedModel();
+            Function fillFromFunc = TimestampConstant.NULL;
+            Function fillToFunc = TimestampConstant.NULL;
+            final ExpressionNode fillFrom = nested.getFillFrom();
+            final ExpressionNode fillTo = nested.getFillTo();
+            final ExpressionNode fillStride = nested.getFillStride();
+            ObjList<ExpressionNode> fillValuesExprs = nested.getFillValue();
 
-                ObjList<ExpressionNode> fillValuesExprs = nested.getFillValue();
+            try {
+                if (fillValuesExprs == null) {
+                    throw SqlException.$(-1, "fill values were null");
+                }
+
                 ObjList<Function> fillValues = new ObjList<>(fillValuesExprs.size());
+
+                fillValues.clear();
 
                 ExpressionNode expr;
                 for (int i = 0, n = fillValuesExprs.size(); i < n; i++) {
@@ -1723,17 +1729,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 if (fillFrom != null) {
                     fillFromFunc = functionParser.parseFunction(fillFrom, EmptyRecordMetadata.INSTANCE, executionContext);
-                    coerceRuntimeConstantType(fillFromFunc, ColumnType.TIMESTAMP, executionContext, "from lower bound must be a constant expression convertible to a TIMESTAMP", -1);
+                    coerceRuntimeConstantType(fillFromFunc, ColumnType.TIMESTAMP, executionContext, "from lower bound must be a constant expression convertible to a TIMESTAMP", fillFrom.position);
                 }
 
                 if (fillTo != null) {
                     fillToFunc = functionParser.parseFunction(fillTo, EmptyRecordMetadata.INSTANCE, executionContext);
-                    coerceRuntimeConstantType(fillToFunc, ColumnType.TIMESTAMP, executionContext, "to upper bound must be a constant expression convertible to a TIMESTAMP", -1);
+                    coerceRuntimeConstantType(fillToFunc, ColumnType.TIMESTAMP, executionContext, "to upper bound must be a constant expression convertible to a TIMESTAMP", fillTo.position);
                 }
 
                 fillFromFunc.init(null, executionContext);
                 fillToFunc.init(null, executionContext);
-
 
                 return new FillRangeRecordCursorFactory(groupByFactory.getMetadata(), groupByFactory, fillFromFunc, fillToFunc, fillStride.token, fillValues, getTimestampIndex(nested, groupByFactory.getMetadata()));
             } catch (Throwable e) {
@@ -2846,9 +2851,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final ExpressionNode offset = model.getSampleByOffset();
         final Function offsetFunc;
         final int offsetFuncPos;
-        Function sampleFromFunc = null;
+        Function sampleFromFunc;
         final int sampleFromFuncPos;
-        Function sampleToFunc = null;
+        Function sampleToFunc;
         final int sampleToFuncPos;
 
         if (timezoneName != null) {
@@ -3902,46 +3907,47 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 ), executionContext);
                     }
 
-                    return generateFill(model, new AsyncGroupByRecordCursorFactory(
-                            asm,
-                            configuration,
-                            executionContext.getMessageBus(),
-                            factory,
-                            groupByMetadata,
-                            listColumnFilterCopy,
-                            keyTypesCopy,
-                            valueTypesCopy,
-                            groupByFunctions,
-                            compileWorkerGroupByFunctionsConditionally(
-                                    executionContext,
-                                    model,
+                    return generateFill(model,
+                            new AsyncGroupByRecordCursorFactory(
+                                    asm,
+                                    configuration,
+                                    executionContext.getMessageBus(),
+                                    factory,
+                                    groupByMetadata,
+                                    listColumnFilterCopy,
+                                    keyTypesCopy,
+                                    valueTypesCopy,
                                     groupByFunctions,
-                                    executionContext.getSharedWorkerCount(),
-                                    factory.getMetadata()
-                            ),
-                            keyFunctions,
-                            compileWorkerKeyFunctionsConditionally(
-                                    executionContext,
+                                    compileWorkerGroupByFunctionsConditionally(
+                                            executionContext,
+                                            model,
+                                            groupByFunctions,
+                                            executionContext.getSharedWorkerCount(),
+                                            factory.getMetadata()
+                                    ),
                                     keyFunctions,
-                                    executionContext.getSharedWorkerCount(),
-                                    keyFunctionNodes,
-                                    factory.getMetadata()
-                            ),
-                            recordFunctions,
-                            compiledFilter,
-                            bindVarMemory,
-                            bindVarFunctions,
-                            filter,
-                            reduceTaskFactory,
-                            compileWorkerFilterConditionally(
-                                    executionContext,
+                                    compileWorkerKeyFunctionsConditionally(
+                                            executionContext,
+                                            keyFunctions,
+                                            executionContext.getSharedWorkerCount(),
+                                            keyFunctionNodes,
+                                            factory.getMetadata()
+                                    ),
+                                    recordFunctions,
+                                    compiledFilter,
+                                    bindVarMemory,
+                                    bindVarFunctions,
                                     filter,
-                                    executionContext.getSharedWorkerCount(),
-                                    nested.getWhereClause(),
-                                    factory.getMetadata()
-                            ),
-                            executionContext.getSharedWorkerCount()
-                    ), executionContext);
+                                    reduceTaskFactory,
+                                    compileWorkerFilterConditionally(
+                                            executionContext,
+                                            filter,
+                                            executionContext.getSharedWorkerCount(),
+                                            nested.getWhereClause(),
+                                            factory.getMetadata()
+                                    ),
+                                    executionContext.getSharedWorkerCount())
+                            , executionContext);
                 }
             }
 
@@ -5497,10 +5503,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (isFromTo) {
             throw SqlException.$(0, "FROM-TO intervals are not supported for keyed sample by queries");
         }
-    }
-
-    private boolean isFillStridePresent(QueryModel model) {
-        return model.getFillStride() != null;
     }
 
     private boolean isKeyedTemporalJoin(RecordMetadata masterMetadata, RecordMetadata slaveMetadata) {

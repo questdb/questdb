@@ -184,8 +184,9 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
 
                 if (timestamp > maxTimestamp) {
                     maxTimestamp = timestamp;
-                    presentRecords.checkCapacity(bucketIndex);
                 }
+
+                assert presentRecords.capacity() > bucketIndex;
 
                 return true;
 
@@ -198,8 +199,6 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                     if (rangeBound == RANGE_UPPER_BOUND || rangeBound == RANGE_UNBOUNDED) {
                         fillOffset = timestampSampler.bucketIndex(minTimestamp);
                         nextBucket = minTimestamp;
-
-
                     }
 
                     while (recordWasPresent()) {

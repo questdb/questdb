@@ -42,7 +42,6 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayDeque;
 
-import static io.questdb.griffin.SqlKeywords.isHourKeyword;
 import static io.questdb.griffin.SqlKeywords.isNoneKeyword;
 import static io.questdb.griffin.model.ExpressionNode.*;
 
@@ -2594,8 +2593,8 @@ public class SqlOptimiser implements Mutable {
     private void moveWhereInsideSubQueries(QueryModel model) throws SqlException {
         if (
                 model.getSelectModelType() != QueryModel.SELECT_MODEL_DISTINCT
-                // in theory, we could push down predicates as long as they align with ALL partition by clauses and remove whole partition(s)
-                && model.getSelectModelType() != QueryModel.SELECT_MODEL_WINDOW
+                        // in theory, we could push down predicates as long as they align with ALL partition by clauses and remove whole partition(s)
+                        && model.getSelectModelType() != QueryModel.SELECT_MODEL_WINDOW
         ) {
             model.getParsedWhere().clear();
             final ObjList<ExpressionNode> nodes = model.parseWhereClause();
