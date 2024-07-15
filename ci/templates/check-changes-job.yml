@@ -5,7 +5,7 @@ jobs:
       vmImage: "ubuntu-latest"
     steps:
       - checkout: none
-      - bash: apt install jq
+      - bash: sudo apt-get install -y jq
         name: check_changes
         env:
           PRID: $(System.PullRequest.PullRequestNumber)
