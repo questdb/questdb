@@ -442,7 +442,7 @@ pub fn decoder_page(
                             &mut FixedLongColumnSink::new(&mut slicer, buffers, &LONG_NULL),
                         )?;
                     } else {
-                        assert!(false, "Timestamp logical type must be set");
+                        unreachable!("Timestamp logical type must be set");
                     }
                     Ok(row_count)
                 }
