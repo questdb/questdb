@@ -87,7 +87,7 @@ public class BinarySearchTest extends AbstractCairoTest {
                     }
 
                     long max = 100 * 3 - 1;
-                    try (MemoryMR mem = Vm.getMRInstance(TestFilesFacadeImpl.INSTANCE, path.$(), 400 * Long.BYTES, MemoryTag.MMAP_DEFAULT)) {
+                    try (MemoryMR mem = Vm.getCMRInstance(TestFilesFacadeImpl.INSTANCE, path.$(), 400 * Long.BYTES, MemoryTag.MMAP_DEFAULT)) {
                         long index = BinarySearch.find(mem, -20, 0, max, BinarySearch.SCAN_DOWN);
                         Assert.assertEquals(-1, index);
                     }
@@ -111,7 +111,7 @@ public class BinarySearchTest extends AbstractCairoTest {
                 appendMem.putLong(1);
                 appendMem.putLong(3);
 
-                try (MemoryMR mem = Vm.getMRInstance(TestFilesFacadeImpl.INSTANCE, path.$(), 400 * Long.BYTES, MemoryTag.MMAP_DEFAULT)) {
+                try (MemoryMR mem = Vm.getCMRInstance(TestFilesFacadeImpl.INSTANCE, path.$(), 400 * Long.BYTES, MemoryTag.MMAP_DEFAULT)) {
                     Assert.assertEquals(0, BinarySearch.find(mem, 2, 0, 1, BinarySearch.SCAN_DOWN));
                 }
             }
@@ -159,7 +159,7 @@ public class BinarySearchTest extends AbstractCairoTest {
                     appendMem.putLong(1);
                     appendMem.putLong(3);
 
-                    try (MemoryMR mem = Vm.getMRInstance(TestFilesFacadeImpl.INSTANCE, path.$(), 400 * Long.BYTES, MemoryTag.MMAP_DEFAULT)) {
+                    try (MemoryMR mem = Vm.getCMRInstance(TestFilesFacadeImpl.INSTANCE, path.$(), 400 * Long.BYTES, MemoryTag.MMAP_DEFAULT)) {
                         Assert.assertEquals(0, BinarySearch.find(mem, 2, 0, 1, BinarySearch.SCAN_UP));
                     }
                 }
@@ -241,7 +241,7 @@ public class BinarySearchTest extends AbstractCairoTest {
                     }
 
                     long max = distinctValueCount * repeatCount - 1;
-                    try (MemoryMR mem = Vm.getMRInstance(TestFilesFacadeImpl.INSTANCE, path.$(), 400 * Long.BYTES, MemoryTag.MMAP_DEFAULT)) {
+                    try (MemoryMR mem = Vm.getCMRInstance(TestFilesFacadeImpl.INSTANCE, path.$(), 400 * Long.BYTES, MemoryTag.MMAP_DEFAULT)) {
                         long index = BinarySearch.find(mem, searchValue, 0, max, scanDirection);
                         if (searchValue > distinctValueCount - 1) {
                             Assert.assertEquals(max, index);

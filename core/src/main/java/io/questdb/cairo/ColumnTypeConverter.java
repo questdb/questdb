@@ -154,7 +154,16 @@ public class ColumnTypeConverter {
         }
     }
 
-    private static boolean convertFixedToFixed(long rowCount, long skipRows, int srcFixFd, int dstFixFd, int srcColumnType, int dstColumnType, FilesFacade ff, ColumnConversionOffsetSink columnSizesSink) {
+    private static boolean convertFixedToFixed(
+            long rowCount,
+            long skipRows,
+            int srcFixFd,
+            int dstFixFd,
+            int srcColumnType,
+            int dstColumnType,
+            FilesFacade ff,
+            ColumnConversionOffsetSink columnSizesSink
+    ) {
         final long srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
         final long dstColumnTypeSize = ColumnType.sizeOf(dstColumnType);
         long srcMapAddress = 0;

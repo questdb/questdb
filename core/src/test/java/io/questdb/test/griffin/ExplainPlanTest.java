@@ -48,6 +48,7 @@ import io.questdb.griffin.engine.functions.constants.*;
 import io.questdb.griffin.engine.functions.date.*;
 import io.questdb.griffin.engine.functions.eq.*;
 import io.questdb.griffin.engine.functions.finance.LevelTwoPriceFunctionFactory;
+import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
 import io.questdb.griffin.engine.functions.lt.LtIPv4StrFunctionFactory;
 import io.questdb.griffin.engine.functions.lt.LtStrIPv4FunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
@@ -2414,6 +2415,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 } else if (factory instanceof InUuidFunctionFactory && p == 1) {
                                     // this factory requires valid UUID string, otherwise it will fail
                                     args.add(new StrConstant("11111111-1111-1111-1111-111111111111"));
+                                } else if ((factory instanceof JsonExtractTypedFunctionFactory)) {
+                                    if (p == 0) {
+                                        args.add(new VarcharConstant("{\"a\": 1}"));
+                                        args.add(new VarcharConstant(".a"));
+                                        args.add(new IntConstant(ColumnType.INT));
+                                    }
                                 } else if (Chars.equals(key, "approx_count_distinct") && sigArgCount == 2 && p == 1 && sigArgType == ColumnType.INT) {
                                     args.add(new IntConstant(4)); // precision has to be in the range of 4 to 18
                                 } else if (!useConst) {
@@ -2573,6 +2580,49 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testGroupByHourAndFilterIsParallel() throws Exception {
+        assertPlan(
+                "create table a (ts timestamp, d double)",
+                "select hour(ts), min(d) from a where d > 0 group by hour(ts)",
+                "Async JIT Group By workers: 1\n" +
+                        "  keys: [hour]\n" +
+                        "  values: [min(d)]\n" +
+                        "  filter: 0<d\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: a\n"
+        );
+    }
+
+    @Test
+    public void testGroupByHourNonTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table a (ts timestamp, d double)");
+            assertException(
+                    "select hour(d), min(d) from a",
+                    7,
+                    "unexpected argument for function: hour. expected args: (TIMESTAMP). actual args: (DOUBLE)"
+            );
+        });
+    }
+
+    @Test
+    public void testGroupByHourUnorderedColumns() throws Exception {
+        assertPlan(
+                "create table a (ts timestamp, d double)",
+                "select min(d), hour(ts) from a group by hour(ts)",
+                "VirtualRecord\n" +
+                        "  functions: [min,hour]\n" +
+                        "    GroupBy vectorized: true workers: 1\n" +
+                        "      keys: [ts]\n" +
+                        "      values: [min(d)]\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: a\n"
         );
     }
 
@@ -10662,7 +10712,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
         }
     }
 
-    private <T> ObjList<T> list(T... values) {
+    // you cannot win with JDK8, without "SafeVarargs" - a warning we corrupt something
+    // with "SafeVarargs" - JDK8 wants private method to be "final", even more final than private.
+    // this bunch of suppressions is to shut intellij code inspection up
+    @SuppressWarnings("FinalPrivateMethod")
+    @SafeVarargs
+    private final <T> ObjList<T> list(T... values) {
         return new ObjList<>(values);
     }
 

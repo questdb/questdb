@@ -397,17 +397,6 @@ public interface Record {
     }
 
     /**
-     * Reads bytes from varchar-specific storage and prints them into UTF8 encoded
-     * sink.
-     *
-     * @param col      numeric index of the column, 0-based
-     * @param utf8Sink the destination sink
-     */
-    default void getVarchar(int col, Utf8Sink utf8Sink) {
-        utf8Sink.put(getVarcharA(col));
-    }
-
-    /**
      * Reads bytes from varchar-specific storage and prints them into UTF16 encoded
      * sink.
      *

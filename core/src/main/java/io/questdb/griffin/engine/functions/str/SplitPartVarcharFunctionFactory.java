@@ -72,90 +72,6 @@ public class SplitPartVarcharFunctionFactory implements FunctionFactory {
         return new SplitPartVarcharFunction(varcharFunc, delimiterFunc, indexFunc, indexPosition);
     }
 
-    private static abstract class AbstractSplitPartVarcharFunction extends VarcharFunction implements TernaryFunction {
-        protected final Function delimiterFunc;
-        protected final Function indexFunc;
-        protected final Function varcharFunc;
-        private final int indexPosition;
-        private final Utf8StringSink sinkA = new Utf8StringSink();
-        private final Utf8StringSink sinkB = new Utf8StringSink();
-
-        public AbstractSplitPartVarcharFunction(Function varcharFunc, Function delimiterFunc, Function indexFunc, int indexPosition) {
-            this.varcharFunc = varcharFunc;
-            this.delimiterFunc = delimiterFunc;
-            this.indexFunc = indexFunc;
-            this.indexPosition = indexPosition;
-        }
-
-        @Override
-        public final Function getCenter() {
-            return delimiterFunc;
-        }
-
-        @Override
-        public final Function getLeft() {
-            return varcharFunc;
-        }
-
-        @Override
-        public String getName() {
-            return "split_part";
-        }
-
-        @Override
-        public final Function getRight() {
-            return indexFunc;
-        }
-
-        @Override
-        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-            Utf8Sequence utf8Str = varcharFunc.getVarcharA(rec);
-            Utf8Sequence delimiter = delimiterFunc.getVarcharA(rec);
-            int index = getIndex(rec);
-            if (utf8Str == null || delimiter == null || index == Numbers.INT_NULL) {
-                return;
-            }
-            splitToSink(utf8Sink, index, utf8Str, delimiter);
-        }
-
-        @Override
-        public Utf8Sequence getVarcharA(Record rec) {
-            return getVarcharWithClear(rec, sinkA);
-        }
-
-        @Override
-        public Utf8Sequence getVarcharB(Record rec) {
-            return getVarcharWithClear(rec, sinkB);
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            TernaryFunction.super.init(symbolTableSource, executionContext);
-            if (indexFunc.isRuntimeConstant()) {
-                int index = indexFunc.getInt(null);
-                if (index == 0) {
-                    throw SqlException.$(indexPosition, "field position must not be zero");
-                }
-            }
-        }
-
-        @Nullable
-        private Utf8StringSink getVarcharWithClear(Record rec, Utf8StringSink sink) {
-            sink.clear();
-
-            Utf8Sequence utf8Str = varcharFunc.getVarcharA(rec);
-            Utf8Sequence delimiter = delimiterFunc.getVarcharA(rec);
-            int index = getIndex(rec);
-            if (utf8Str == null || delimiter == null || index == Numbers.INT_NULL) {
-                return null;
-            }
-            splitToSink(sink, index, utf8Str, delimiter);
-            return sink;
-        }
-
-        abstract int getIndex(Record rec);
-    }
-
     private static void splitToSink(Utf8Sink sink, int index, Utf8Sequence utf8Str, Utf8Sequence delimiter) {
         if (index == 0) {
             return;
@@ -202,6 +118,79 @@ public class SplitPartVarcharFunctionFactory implements FunctionFactory {
         }
 
         sink.put(utf8Str, start, end);
+    }
+
+    private static abstract class AbstractSplitPartVarcharFunction extends VarcharFunction implements TernaryFunction {
+        protected final Function delimiterFunc;
+        protected final Function indexFunc;
+        protected final Function varcharFunc;
+        private final int indexPosition;
+        private final Utf8StringSink sinkA = new Utf8StringSink();
+        private final Utf8StringSink sinkB = new Utf8StringSink();
+
+        public AbstractSplitPartVarcharFunction(Function varcharFunc, Function delimiterFunc, Function indexFunc, int indexPosition) {
+            this.varcharFunc = varcharFunc;
+            this.delimiterFunc = delimiterFunc;
+            this.indexFunc = indexFunc;
+            this.indexPosition = indexPosition;
+        }
+
+        @Override
+        public final Function getCenter() {
+            return delimiterFunc;
+        }
+
+        @Override
+        public final Function getLeft() {
+            return varcharFunc;
+        }
+
+        @Override
+        public String getName() {
+            return "split_part";
+        }
+
+        @Override
+        public final Function getRight() {
+            return indexFunc;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(Record rec) {
+            return getVarcharWithClear(rec, sinkA);
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(Record rec) {
+            return getVarcharWithClear(rec, sinkB);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            TernaryFunction.super.init(symbolTableSource, executionContext);
+            if (indexFunc.isRuntimeConstant()) {
+                int index = indexFunc.getInt(null);
+                if (index == 0) {
+                    throw SqlException.$(indexPosition, "field position must not be zero");
+                }
+            }
+        }
+
+        @Nullable
+        private Utf8StringSink getVarcharWithClear(Record rec, Utf8StringSink sink) {
+            sink.clear();
+
+            Utf8Sequence utf8Str = varcharFunc.getVarcharA(rec);
+            Utf8Sequence delimiter = delimiterFunc.getVarcharA(rec);
+            int index = getIndex(rec);
+            if (utf8Str == null || delimiter == null || index == Numbers.INT_NULL) {
+                return null;
+            }
+            splitToSink(sink, index, utf8Str, delimiter);
+            return sink;
+        }
+
+        abstract int getIndex(Record rec);
     }
 
     private static class SplitPartVarcharConstIndexFunction extends AbstractSplitPartVarcharFunction {
