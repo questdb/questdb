@@ -1,0 +1,19 @@
+jobs:
+  - job: RunOn
+    displayName: "IntelliJ Code Format"
+    strategy:
+      matrix:
+        linux: "ubuntu-latest"
+        poolName: "Azure Pipelines"
+        os: Linux
+        jdk: "1.11"
+    pool:
+      vmImage: $(imageName)
+      name: $(poolName)
+    timeoutInMinutes: 15
+    steps:
+      - checkout: self
+        fetchDepth: 1
+        lfs: false
+        submodules: false
+      - bash: echo w00t
