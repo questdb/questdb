@@ -1,9 +1,10 @@
 package io.questdb.cairo;
 
-import io.questdb.std.Chars;
+import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Os;
 import org.jetbrains.annotations.NotNull;
 
+@SuppressWarnings("ForLoopReplaceableByForEach")
 public enum ErrorTag {
     NONE(""),
     UNSUPPORTED_FILE_SYSTEM("UNSUPPORTED FILE SYSTEM"),
@@ -12,6 +13,7 @@ public enum ErrorTag {
     OUT_OF_MMAP_AREAS("OUT OF MMAP AREAS"),
     OUT_OF_MEMORY("OUT OF MEMORY");
 
+    private static final CharSequenceObjHashMap<ErrorTag> resolveMap = new CharSequenceObjHashMap<>();
     private final String text;
 
     ErrorTag(String text) {
@@ -19,21 +21,11 @@ public enum ErrorTag {
     }
 
     public static ErrorTag resolveTag(@NotNull CharSequence text) {
-        if (Chars.equals(text, UNSUPPORTED_FILE_SYSTEM.text)) {
-            return UNSUPPORTED_FILE_SYSTEM;
-        } else if (Chars.equals(text, DISK_FULL.text)) {
-            return DISK_FULL;
-        } else if (Chars.equals(text, TOO_MANY_OPEN_FILES.text)) {
-            return TOO_MANY_OPEN_FILES;
-        } else if (Chars.equals(text, OUT_OF_MMAP_AREAS.text)) {
-            return OUT_OF_MMAP_AREAS;
-        } else if (Chars.equals(text, OUT_OF_MEMORY.text)) {
-            return OUT_OF_MEMORY;
-        } else if (Chars.equals(text, NONE.text)) {
-            return NONE;
-        } else {
+        final ErrorTag errorTag = resolveMap.get(text);
+        if (errorTag == null) {
             throw CairoException.nonCritical().put("Invalid WAL error tag [").put(text).put("]");
         }
+        return errorTag;
     }
 
     public static ErrorTag resolveTag(int code) {
@@ -68,6 +60,14 @@ public enum ErrorTag {
                 return OUT_OF_MMAP_AREAS;
             default:
                 return NONE;
+        }
+    }
+
+    static {
+        final ErrorTag[] values = values();
+        for (int i = 0; i < values.length; i++) {
+            final ErrorTag tag = values[i];
+            resolveMap.put(tag.text, tag);
         }
     }
 }

@@ -746,10 +746,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (!SqlKeywords.isWalKeyword(tok)) {
                     throw SqlException.$(lexer.lastTokenPosition(), "'wal' expected");
                 }
+                if (!engine.isWalTable(tableToken)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), tableToken.getTableName()).put(" is not a WAL table.");
+                }
+                if (!configuration.isDevModeEnabled()) {
+                    throw SqlException.$(0, "Cannot suspend table, database is not in dev mode");
+                }
 
-                tok = SqlUtil.fetchNext(lexer); // optional WITH part
                 ErrorTag errorTag = ErrorTag.NONE;
                 String errorMessage = "";
+
+                tok = SqlUtil.fetchNext(lexer); // optional WITH part
                 if (tok != null && !Chars.equals(tok, ';')) {
                     if (SqlKeywords.isWithKeyword(tok)) {
                         tok = expectToken(lexer, "error code/tag");
@@ -777,12 +784,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "'with' expected");
                     }
-                }
-                if (!engine.isWalTable(tableToken)) {
-                    throw SqlException.$(lexer.lastTokenPosition(), tableToken.getTableName()).put(" is not a WAL table.");
-                }
-                if (!configuration.isDevModeEnabled()) {
-                    throw SqlException.$(0, "Cannot suspend table, database is not in dev mode");
                 }
                 alterTableSuspend(tableNamePosition, tableToken, errorTag, errorMessage, executionContext);
             } else if (SqlKeywords.isSquashKeyword(tok)) {
