@@ -51,6 +51,7 @@ import io.questdb.test.cairo.Overrides;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -67,6 +68,12 @@ import static io.questdb.std.Files.SEPARATOR;
 import static io.questdb.test.tools.TestUtils.assertEventually;
 
 public class WalTableFailureTest extends AbstractCairoTest {
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
+    }
 
     @Test
     public void testAddColumnFailToApplySequencerMetadataStructureChangeTransaction() throws Exception {

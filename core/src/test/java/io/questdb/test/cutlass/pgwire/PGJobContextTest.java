@@ -139,8 +139,8 @@ public class PGJobContextTest extends BasePGTest {
     private static final Log LOG = LogFactory.getLog(PGJobContextTest.class);
     private static final int count = 200;
     private static final String createDatesTblStmt = "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + ")) timestamp(ts) partition by DAY";
-    private static String stringTypeName;
     private static List<Object[]> datesArr;
+    private static String stringTypeName;
     private final Rnd bufferSizeRnd = TestUtils.generateRandom(LOG);
     private final boolean walEnabled;
 
@@ -183,6 +183,7 @@ public class PGJobContextTest extends BasePGTest {
                 .$(", forceRecvFragmentationChunkSize=").$(forceRecvFragmentationChunkSize)
                 .I$();
         node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, walEnabled);
+        node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
     }
 
     @After
@@ -2355,13 +2356,11 @@ if __name__ == "__main__":
 
     @Test
     public void testCancelRunningQuery() throws Exception {
-        String[] queries = {"create table new_tab as (select count(*) from tab t1 join tab t2 on t1.x = t2.x where sleep(120000))",
+        String[] queries = {
+                "create table new_tab as (select count(*) from tab t1 join tab t2 on t1.x = t2.x where sleep(120000))",
                 "select count(*) from tab t1 join tab t2 on t1.x = t2.x where sleep(120000)",
                 "insert into dest select count(*)::timestamp, 0, 0.0 from tab t1 join tab t2 on t1.x = t2.x where sleep(120000)",
-                "update dest \n" +
-                        "set l = t1.x \n" +
-                        "from (tab where d > 0  limit 1, -1 ) t1 \n" +
-                        "where sleep(120000)"
+                "update dest set l = t1.x from (tab where d > 0 limit 1, -1 ) t1 where sleep(120000)"
         };
 
         assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary, mode, port) -> {

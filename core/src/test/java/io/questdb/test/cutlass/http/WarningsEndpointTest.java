@@ -53,7 +53,6 @@ import org.junit.Test;
 
 import java.util.HashMap;
 
-import static io.questdb.PropertyKey.CAIRO_SIMULATE_WARNINGS_ENABLED;
 import static io.questdb.cairo.ErrorTag.*;
 
 public class WarningsEndpointTest extends AbstractBootstrapTest {
@@ -133,7 +132,7 @@ public class WarningsEndpointTest extends AbstractBootstrapTest {
     public void testWarningsWithSimulation() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
-                put(CAIRO_SIMULATE_WARNINGS_ENABLED.getEnvVarName(), "true");
+                put(PropertyKey.DEV_MODE_ENABLED.getEnvVarName(), "true");
             }})
             ) {
                 serverMain.start();

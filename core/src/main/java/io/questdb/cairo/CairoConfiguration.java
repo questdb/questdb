@@ -343,10 +343,6 @@ public interface CairoConfiguration {
 
     long getSequencerCheckInterval();
 
-    boolean getSimulateCrashEnabled();
-
-    boolean getSimulateWarningsEnabled();
-
     /**
      * Returns database instance id. The instance id is used by the snapshot recovery mechanism:
      * on database start the id is compared with the id stored in a snapshot, if any. If the ids
@@ -571,6 +567,8 @@ public interface CairoConfiguration {
     long getWriterFileOpenOpts();
 
     int getWriterTickRowsCountMod();
+
+    boolean isDevModeEnabled();
 
     boolean isGroupByPresizeEnabled();
 

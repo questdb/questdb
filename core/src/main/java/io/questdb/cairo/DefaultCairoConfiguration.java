@@ -570,16 +570,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public boolean getSimulateCrashEnabled() {
-        return false;
-    }
-
-    @Override
-    public boolean getSimulateWarningsEnabled() {
-        return false;
-    }
-
-    @Override
     public @NotNull CharSequence getSnapshotInstanceId() {
         return "";
     }
@@ -1058,6 +1048,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getWriterTickRowsCountMod() {
         return 1024 - 1;
+    }
+
+    @Override
+    public boolean isDevModeEnabled() {
+        return false;
     }
 
     @Override

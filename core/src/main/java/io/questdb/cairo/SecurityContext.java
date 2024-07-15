@@ -88,8 +88,6 @@ public interface SecurityContext extends Mutable {
 
     void authorizeSelectOnAnyColumn(TableToken tableToken);
 
-    void authorizeSuspendWal(TableToken tableToken);
-
     void authorizeTableBackup(ObjHashSet<TableToken> tableTokens);
 
     void authorizeTableCreate();

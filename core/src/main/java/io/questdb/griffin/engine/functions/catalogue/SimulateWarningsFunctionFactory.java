@@ -54,7 +54,7 @@ public class SimulateWarningsFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) {
 
-        if (configuration.getSimulateWarningsEnabled()) {
+        if (configuration.isDevModeEnabled()) {
             final String tag = args.get(0).getStrA(null).toString();
             final String warning = args.get(1).getStrA(null).toString();
             return new SimulateWarningsFunction(tag, warning);
@@ -90,7 +90,7 @@ public class SimulateWarningsFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("simulate_warnings(tag, warning)");
+            sink.val("simulate_warnings(").val(tag).val(", ").val(warning).val(")");
         }
     }
 }

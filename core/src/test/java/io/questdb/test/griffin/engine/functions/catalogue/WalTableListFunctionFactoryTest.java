@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.catalogue;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -37,12 +38,19 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 import static io.questdb.cairo.ErrorTag.*;
 import static io.questdb.std.Files.SEPARATOR;
 
 public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
+    }
 
     @Test
     public void testWalTablesQueryCache() throws Exception {

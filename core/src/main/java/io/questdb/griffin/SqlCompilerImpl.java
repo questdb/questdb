@@ -781,7 +781,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (!engine.isWalTable(tableToken)) {
                     throw SqlException.$(lexer.lastTokenPosition(), tableToken.getTableName()).put(" is not a WAL table.");
                 }
-                securityContext.authorizeSuspendWal(tableToken);
+                if (!configuration.isDevModeEnabled()) {
+                    throw SqlException.$(0, "Cannot suspend table, database is not in dev mode");
+                }
                 alterTableSuspend(tableNamePosition, tableToken, errorTag, errorMessage, executionContext);
             } else if (SqlKeywords.isSquashKeyword(tok)) {
                 securityContext.authorizeAlterTableDropPartition(tableToken);

@@ -41,7 +41,7 @@ public class SimulateWarningsFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testSimulateWarningsEnabled() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_SIMULATE_WARNINGS_ENABLED, true);
+        node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
 
         assertMemoryLeak(() -> assertSql(
                 "simulate_warnings\n" +

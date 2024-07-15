@@ -571,16 +571,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public boolean getSimulateCrashEnabled() {
-        return getDelegate().getSimulateCrashEnabled();
-    }
-
-    @Override
-    public boolean getSimulateWarningsEnabled() {
-        return getDelegate().getSimulateWarningsEnabled();
-    }
-
-    @Override
     public @NotNull CharSequence getSnapshotInstanceId() {
         return getDelegate().getSnapshotInstanceId();
     }
@@ -1058,6 +1048,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getWriterTickRowsCountMod() {
         return getDelegate().getWriterTickRowsCountMod();
+    }
+
+    @Override
+    public boolean isDevModeEnabled() {
+        return getDelegate().isDevModeEnabled();
     }
 
     @Override
