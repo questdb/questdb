@@ -32,7 +32,7 @@ import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-class LatestByValueListRecordCursor extends AbstractDataFrameRecordCursor {
+class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
 
     private final int columnIndex;
     private final Function filter;

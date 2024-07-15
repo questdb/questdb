@@ -35,9 +35,9 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 
-abstract class AbstractTreeSetRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
+abstract class AbstractTreeSetRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
     final DirectLongList rows;
-    protected DataFrameRecordCursor cursor;
+    protected PageFrameRecordCursor cursor;
 
     public AbstractTreeSetRecordCursorFactory(
             RecordMetadata metadata,

@@ -152,8 +152,8 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public BitmapIndexReader getBitmapIndexReader(int columnIndex, int dirForward) {
-            return baseFrame.getBitmapIndexReader(columnCrossIndex.getQuick(columnIndex), dirForward);
+        public BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {
+            return baseFrame.getBitmapIndexReader(columnCrossIndex.getQuick(columnIndex), direction);
         }
 
         @Override
@@ -208,7 +208,7 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public SymbolTable getSymbolTable(int columnIndex) {
+        public StaticSymbolTable getSymbolTable(int columnIndex) {
             return baseCursor.getSymbolTable(columnCrossIndex.getQuick(columnIndex));
         }
 
@@ -231,11 +231,6 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
         public SelectedPageFrameCursor of(PageFrameCursor baseCursor) {
             this.baseCursor = baseCursor;
             return this;
-        }
-
-        @Override
-        public long size() {
-            return baseCursor.size();
         }
 
         @Override

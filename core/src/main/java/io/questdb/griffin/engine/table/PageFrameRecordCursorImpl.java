@@ -24,15 +24,17 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
+import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-class DataFrameRecordCursorImpl extends AbstractDataFrameRecordCursor {
+class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
 
     private final boolean entityCursor;
     private final Function filter;
@@ -41,14 +43,16 @@ class DataFrameRecordCursorImpl extends AbstractDataFrameRecordCursor {
     private boolean isSkipped;
     private RowCursor rowCursor;
 
-    public DataFrameRecordCursorImpl(
+    public PageFrameRecordCursorImpl(
+            CairoConfiguration configuration,
+            @Transient RecordMetadata metadata,
             RowCursorFactory rowCursorFactory,
             boolean entityCursor,
             // this cursor owns "toTop()" lifecycle of filter
             @Nullable Function filter,
             @NotNull IntList columnIndexes
     ) {
-        super(columnIndexes);
+        super(configuration, metadata, columnIndexes);
         this.rowCursorFactory = rowCursorFactory;
         this.entityCursor = entityCursor;
         this.filter = filter;
@@ -57,11 +61,11 @@ class DataFrameRecordCursorImpl extends AbstractDataFrameRecordCursor {
     @Override
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
         if (!areCursorsPrepared) {
-            rowCursorFactory.prepareCursor(dataFrameCursor.getTableReader());
+            rowCursorFactory.prepareCursor(frameCursor.getTableReader());
             areCursorsPrepared = true;
         }
 
-        if (!dataFrameCursor.supportsRandomAccess() || filter != null || rowCursorFactory.isUsingIndex()) {
+        if (!frameCursor.supportsRandomAccess() || filter != null || rowCursorFactory.isUsingIndex()) {
             while (hasNext()) {
                 counter.inc();
             }
@@ -76,7 +80,7 @@ class DataFrameRecordCursorImpl extends AbstractDataFrameRecordCursor {
             rowCursor = null;
         }
 
-        dataFrameCursor.calculateSize(counter);
+        frameCursor.calculateSize(counter);
     }
 
     public RowCursorFactory getRowCursorFactory() {
@@ -86,18 +90,19 @@ class DataFrameRecordCursorImpl extends AbstractDataFrameRecordCursor {
     @Override
     public boolean hasNext() {
         if (!areCursorsPrepared) {
-            rowCursorFactory.prepareCursor(dataFrameCursor.getTableReader());
+            rowCursorFactory.prepareCursor(frameCursor.getTableReader());
             areCursorsPrepared = true;
         }
 
         try {
             if (rowCursor != null && rowCursor.hasNext()) {
-                recordA.setRecordIndex(rowCursor.next());
+                // TODO(puzpuzpuz): this is broken
+                recordA.setRowIndex(rowCursor.next());
                 return true;
             }
 
             DataFrame dataFrame;
-            while ((dataFrame = dataFrameCursor.next()) != null) {
+            while ((dataFrame = frameCursor.next()) != null) {
                 rowCursor = rowCursorFactory.getCursor(dataFrame);
                 if (rowCursor.hasNext()) {
                     recordA.jumpTo(dataFrame.getPartitionIndex(), rowCursor.next());
@@ -117,21 +122,21 @@ class DataFrameRecordCursorImpl extends AbstractDataFrameRecordCursor {
     }
 
     @Override
-    public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        if (this.dataFrameCursor != dataFrameCursor) {
+    public void of(PageFrameCursor frameCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        if (this.frameCursor != frameCursor) {
             close();
-            this.dataFrameCursor = dataFrameCursor;
+            this.frameCursor = frameCursor;
         }
-        recordA.of(dataFrameCursor.getTableReader());
-        recordB.of(dataFrameCursor.getTableReader());
-        rowCursorFactory.init(dataFrameCursor.getTableReader(), sqlExecutionContext);
+        recordA.of(frameCursor.getTableReader());
+        recordB.of(frameCursor.getTableReader());
+        rowCursorFactory.init(frameCursor.getTableReader(), sqlExecutionContext);
         rowCursor = null;
         areCursorsPrepared = false;
     }
 
     @Override
     public long size() {
-        return entityCursor ? dataFrameCursor.size() : -1;
+        return entityCursor ? frameCursor.size() : -1;
     }
 
     @Override
@@ -141,11 +146,11 @@ class DataFrameRecordCursorImpl extends AbstractDataFrameRecordCursor {
         }
 
         if (!areCursorsPrepared) {
-            rowCursorFactory.prepareCursor(dataFrameCursor.getTableReader());
+            rowCursorFactory.prepareCursor(frameCursor.getTableReader());
             areCursorsPrepared = true;
         }
 
-        if (!dataFrameCursor.supportsRandomAccess() || filter != null || rowCursorFactory.isUsingIndex()) {
+        if (!frameCursor.supportsRandomAccess() || filter != null || rowCursorFactory.isUsingIndex()) {
             while (rowCount.get() > 0 && hasNext()) {
                 rowCount.dec();
             }
@@ -153,7 +158,7 @@ class DataFrameRecordCursorImpl extends AbstractDataFrameRecordCursor {
             return;
         }
 
-        DataFrame dataFrame = dataFrameCursor.skipTo(rowCount);
+        DataFrame dataFrame = frameCursor.skipTo(rowCount);
         isSkipped = true;
         // data frame is null when table has no partitions so there's nothing to skip
         if (dataFrame != null) {
@@ -172,7 +177,7 @@ class DataFrameRecordCursorImpl extends AbstractDataFrameRecordCursor {
         if (filter != null) {
             filter.toTop();
         }
-        dataFrameCursor.toTop();
+        frameCursor.toTop();
         rowCursor = null;
         isSkipped = false;
     }

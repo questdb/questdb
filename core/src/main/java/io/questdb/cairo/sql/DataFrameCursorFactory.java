@@ -89,7 +89,7 @@ public interface DataFrameCursorFactory extends Sinkable, Closeable, Plannable {
      */
     boolean hasInterval();
 
-    boolean supportTableRowId(TableToken tableToken);
+    boolean supportsTableRowId(TableToken tableToken);
 
     /**
      * @param sink to print data frame cursor to

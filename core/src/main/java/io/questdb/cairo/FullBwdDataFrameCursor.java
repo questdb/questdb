@@ -25,23 +25,8 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.DataFrame;
-import io.questdb.cairo.sql.RecordCursor;
-import org.jetbrains.annotations.Nullable;
 
 public class FullBwdDataFrameCursor extends AbstractFullDataFrameCursor {
-    private int skipToPartitionIndex = -1;
-    private long skipToPosition = -1;
-
-    @Override
-    public void calculateSize(RecordCursor.Counter counter) {
-        while (partitionIndex > -1) {
-            final long hi = reader.openPartition(partitionIndex);
-            if (hi > 0) {
-                counter.add(hi);
-            }
-            partitionIndex--;
-        }
-    }
 
     @Override
     public DataFrame next() {
@@ -61,60 +46,7 @@ public class FullBwdDataFrameCursor extends AbstractFullDataFrameCursor {
     }
 
     @Override
-    public @Nullable DataFrame skipTo(RecordCursor.Counter rowsToSkip) {
-        int partitionCount = getTableReader().getPartitionCount();
-
-        if (partitionCount < 1) {
-            return null;
-        }
-
-        if (skipToPartitionIndex == -1) {
-            skipToPosition = rowsToSkip.get();
-            skipToPartitionIndex = partitionCount - 1;
-        }
-
-        long partitionRows = 0;
-        while (skipToPartitionIndex > -1) {
-            partitionRows = getTableReader().openPartition(skipToPartitionIndex);
-            if (partitionRows < 0) {
-                skipToPartitionIndex--;
-                continue;
-            }
-            if (partitionRows > skipToPosition) {
-                rowsToSkip.dec(skipToPosition);
-                break;
-            }
-
-            rowsToSkip.dec(partitionRows);
-
-            if (skipToPartitionIndex != 0) {
-                skipToPosition -= partitionRows;
-            } else {
-                skipToPosition = -1;
-                break;
-            }
-            skipToPartitionIndex--;
-        }
-
-        frame.partitionIndex = skipToPartitionIndex;
-        frame.rowHi = skipToPosition > -1 ? partitionRows - skipToPosition : skipToPosition;
-        frame.rowLo = 0;
-        this.partitionIndex = skipToPartitionIndex - 1;
-
-        skipToPosition = -1;
-        skipToPartitionIndex = -1;
-
-        return frame;
-    }
-
-    public boolean supportsRandomAccess() {
-        return true;
-    }
-
-    @Override
     public void toTop() {
         partitionIndex = partitionHi - 1;
-        skipToPartitionIndex = -1;
-        skipToPosition = -1;
     }
 }

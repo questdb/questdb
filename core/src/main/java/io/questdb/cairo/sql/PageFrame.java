@@ -64,7 +64,7 @@ public interface PageFrame {
      */
     long getAuxPageSize(int columnIndex);
 
-    BitmapIndexReader getBitmapIndexReader(int columnIndex, int dirForward);
+    BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction);
 
     /**
      * Returns page frame format.

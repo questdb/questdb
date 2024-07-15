@@ -24,10 +24,17 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.TableReader;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
 
 public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
+
+    @Override
+    StaticSymbolTable getSymbolTable(int columnIndex);
+
+    // same TableReader is available on each page frame
+    TableReader getTableReader();
 
     /**
      * Return the REAL row id of given row on current page.
@@ -38,16 +45,11 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
      */
     long getUpdateRowId(long rowIndex);
 
-    @Nullable PageFrame next();
-
-    /**
-     * @return size of page in bytes
-     */
-    long size();
+    @Nullable
+    PageFrame next();
 
     /**
      * Return the cursor to the beginning of the page frame.
-     * Sets page address to first column.
      */
     void toTop();
 }

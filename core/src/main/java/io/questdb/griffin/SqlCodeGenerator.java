@@ -2442,7 +2442,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     false
                             );
                         }
-                        return new DataFrameRecordCursorFactory(
+                        return new PageFrameRecordCursorFactory(
                                 configuration,
                                 metadata,
                                 dataFrameCursorFactory,
@@ -4971,7 +4971,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         if (filter == null) {
                             // This special case factory can later be disassembled to framing and index
                             // cursors in SAMPLE BY processing
-                            return new DeferredSingleSymbolFilterDataFrameRecordCursorFactory(
+                            return new DeferredSingleSymbolFilterPageFrameRecordCursorFactory(
                                     configuration,
                                     keyColumnIndex,
                                     symbolFunc,
@@ -4984,7 +4984,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     supportsRandomAccess
                             );
                         }
-                        return new DataFrameRecordCursorFactory(
+                        return new PageFrameRecordCursorFactory(
                                 configuration,
                                 myMeta,
                                 dfcFactory,
@@ -5123,7 +5123,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             model.setWhereClause(intrinsicModel.filter);
-            return new DataFrameRecordCursorFactory(
+            return new PageFrameRecordCursorFactory(
                     configuration,
                     myMeta,
                     dfcFactory,
@@ -5153,7 +5153,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 rowCursorFactory = new DataFrameRowCursorFactory();
             }
 
-            return new DataFrameRecordCursorFactory(
+            return new PageFrameRecordCursorFactory(
                     configuration,
                     myMeta,
                     cursorFactory,

@@ -32,7 +32,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 
-public class LatestByValueIndexedFilteredRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
+public class LatestByValueIndexedFilteredRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
     private final LatestByValueIndexedFilteredRecordCursor cursor;
     private final Function filter;
 

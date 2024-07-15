@@ -33,9 +33,9 @@ import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class LatestByValueFilteredRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
+public class LatestByValueFilteredRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
 
-    private final DataFrameRecordCursor cursor;
+    private final PageFrameRecordCursor cursor;
     private final Function filter;
 
     public LatestByValueFilteredRecordCursorFactory(

@@ -38,7 +38,7 @@ import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
+public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
 
     private final int columnIndex;
     private final IntList columnIndexes;
@@ -66,7 +66,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
         this.func = func;
         cursorFactories = new ObjList<>();
         cursorFactoriesIdx = new int[]{0};
-        final DataFrameRecordCursorImpl dataFrameRecordCursor = new DataFrameRecordCursorImpl(
+        final PageFrameRecordCursorImpl dataFrameRecordCursor = new PageFrameRecordCursorImpl(
                 new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx),
                 false,
                 filter,
@@ -115,12 +115,12 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractDataFrameRecord
 
     private class DataFrameRecordCursorWrapper implements RecordCursor {
 
-        private final DataFrameRecordCursor delegate;
+        private final PageFrameRecordCursor delegate;
         private RecordCursor baseCursor;
         private IntObjHashMap<RowCursorFactory> factories;
         private IntObjHashMap<RowCursorFactory> targetFactories;
 
-        private DataFrameRecordCursorWrapper(DataFrameRecordCursor delegate) {
+        private DataFrameRecordCursorWrapper(PageFrameRecordCursor delegate) {
             this.delegate = delegate;
             this.factories = factoriesA;
         }

@@ -38,12 +38,12 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.Comparator;
 
-public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
+public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
     private static final Comparator<FunctionBasedRowCursorFactory> COMPARATOR = FilterOnValuesRecordCursorFactory::compareStrFunctions;
     private static final Comparator<FunctionBasedRowCursorFactory> COMPARATOR_DESC = FilterOnValuesRecordCursorFactory::compareStrFunctionsDesc;
     private final int columnIndex;
     private final IntList columnIndexes;
-    private final DataFrameRecordCursorImpl cursor;
+    private final PageFrameRecordCursorImpl cursor;
     private final ObjList<FunctionBasedRowCursorFactory> cursorFactories;
     private final int[] cursorFactoriesIdx;
     private final Function filter;
@@ -90,7 +90,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
             heapCursorUsed = true;
             rowCursorFactory = new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx);
         }
-        cursor = new DataFrameRecordCursorImpl(rowCursorFactory, false, filter, columnIndexes);
+        cursor = new PageFrameRecordCursorImpl(rowCursorFactory, false, filter, columnIndexes);
         this.followedOrderByAdvice = orderByKeyColumn || orderByTimestamp;
     }
 

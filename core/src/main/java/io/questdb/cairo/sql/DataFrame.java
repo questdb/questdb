@@ -24,14 +24,16 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.cairo.BitmapIndexReader;
-
 /**
  * Interface for retrieving information about a data frame.
+ * <p>
+ * Each a data frame holds a number of {@link PageFrame}s.
+ * Think, a partition or a slice of a partition.
+ * <p>
+ * Data frame is an internal API and shouldn't be used for data access.
+ * Page frames are meant to be used for data access.
  */
 public interface DataFrame {
-
-    BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction);
 
     /**
      * @return numeric index of the current partition

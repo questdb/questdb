@@ -38,7 +38,7 @@ import org.jetbrains.annotations.Nullable;
  * When the LATEST BY is applied to symbol column QuestDB knows all distinct symbol values
  * and in many cases can stop before scanning all the data when it finds all the expected values
  */
-public class LatestByDeferredListValuesFilteredRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
+public class LatestByDeferredListValuesFilteredRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
     private final LatestByValueListRecordCursor cursor;
     private final ObjList<Function> excludedSymbolFuncs;
     private final Function filter;

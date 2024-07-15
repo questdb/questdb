@@ -36,7 +36,7 @@ import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-class LatestByValuesIndexedFilteredRecordCursor extends AbstractDataFrameRecordCursor {
+class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordCursor {
 
     private final int columnIndex;
     private final IntHashSet deferredSymbolKeys;

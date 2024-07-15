@@ -84,6 +84,11 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
     }
 
     @Override
+    public TableReader getTableReader() {
+        return reader;
+    }
+
+    @Override
     public long getUpdateRowId(long rowIndex) {
         return Rows.toRowID(frame.getPartitionIndex(), frame.getPartitionLo() + rowIndex);
     }
@@ -117,11 +122,6 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
         this.dataFrameCursor = dataFrameCursor;
         toTop();
         return this;
-    }
-
-    @Override
-    public long size() {
-        return reader.size();
     }
 
     @Override

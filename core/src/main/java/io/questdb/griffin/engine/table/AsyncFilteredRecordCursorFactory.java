@@ -241,7 +241,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             atom.releaseFilter(filterId);
         }
 
-        // Pre-touch fixed-size native columns, if asked.
+        // Pre-touch native columns, if asked.
         if (frameMemory.getFrameFormat() == PageFrame.NATIVE_FORMAT) {
             atom.preTouchColumns(record, rows);
         }

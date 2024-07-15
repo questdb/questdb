@@ -65,7 +65,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
             // symbol keys will be added to this hash set
             symbolKeys = new IntHashSet();
             this.indexed = indexed;
-            DataFrameRecordCursor cursor;
+            PageFrameRecordCursor cursor;
             if (indexed) {
                 if (filter != null) {
                     cursor = new LatestByValuesIndexedFilteredRecordCursor(columnIndex, rows, symbolKeys, null, filter, columnIndexes);
@@ -79,7 +79,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
                     cursor = new LatestByValuesRecordCursor(columnIndex, rows, symbolKeys, null, columnIndexes);
                 }
             }
-            this.cursor = new DataFrameRecordCursorWrapper(cursor);
+            this.cursor = new PageFrameRecordCursorWrapper(cursor);
             this.recordCursorFactory = recordCursorFactory;
             this.filter = filter;
             this.columnIndex = columnIndex;
@@ -115,11 +115,11 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         Misc.free(filter);
     }
 
-    private class DataFrameRecordCursorWrapper implements DataFrameRecordCursor {
-        private final DataFrameRecordCursor delegate;
+    private class PageFrameRecordCursorWrapper implements PageFrameRecordCursor {
+        private final PageFrameRecordCursor delegate;
         private RecordCursor baseCursor;
 
-        private DataFrameRecordCursorWrapper(DataFrameRecordCursor delegate) {
+        private PageFrameRecordCursorWrapper(PageFrameRecordCursor delegate) {
             this.delegate = delegate;
         }
 

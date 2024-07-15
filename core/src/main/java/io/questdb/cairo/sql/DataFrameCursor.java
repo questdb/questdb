@@ -27,66 +27,24 @@ package io.questdb.cairo.sql;
 import io.questdb.cairo.TableReader;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
-import org.jetbrains.annotations.TestOnly;
 
 /**
- * A cursor for managing position of operations within data frames
- * <p>
- * Interfaces which extend Closeable are not optionally-closeable.
- * close() method must be called after other calls are complete.
+ * A cursor for navigating through data frames.
  */
 public interface DataFrameCursor extends QuietCloseable, SymbolTableSource {
 
-    default void calculateSize(RecordCursor.Counter counter) {
-    }
-
-    StaticSymbolTable getSymbolTable(int columnIndex);
-
     // same TableReader is available on each data frame
     TableReader getTableReader();
-
-    StaticSymbolTable newSymbolTable(int columnIndex);
 
     /**
      * @return the next element in the data frame
      * @throws io.questdb.cairo.DataUnavailableException when the queried partition is in cold storage
      */
-    @Nullable DataFrame next();
+    @Nullable
+    DataFrame next();
 
     /**
-     * Reload the data frame and return the cursor to the beginning of
-     * the data frame
-     *
-     * @return true when reload data has changed, false otherwise
-     */
-    @TestOnly
-    boolean reload();
-
-    /**
-     * @return number of items in the data frame
-     */
-    long size();
-
-    /**
-     * Positions data frame at the given row number.
-     *
-     * @param rowsToSkip number of rows to skip in table. Rows are numbered 0...row_count-1
-     * @return data frame and position (lo) of given rowsToSkip (according to cursor order).
-     * @throws io.questdb.cairo.DataUnavailableException when the queried partition is in cold storage
-     */
-    default @Nullable DataFrame skipTo(RecordCursor.Counter rowsToSkip) {
-        throw new UnsupportedOperationException();
-    }
-
-    /**
-     * @return true if cursor supports random record access (without having to iterate through all results).
-     */
-    default boolean supportsRandomAccess() {
-        return false;
-    }
-
-    /**
-     * Return the cursor to the beginning of the data frame
+     * Return the cursor to the first data frame.
      */
     void toTop();
 }

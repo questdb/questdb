@@ -29,8 +29,8 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.table.DataFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.DataFrameRowCursorFactory;
+import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexRowCursorFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
@@ -46,7 +46,7 @@ import org.junit.Test;
 import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_DESC;
 
-public class DataFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
+public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testFactory() throws Exception {
@@ -104,7 +104,7 @@ public class DataFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                     final IntList columnIndexes = new IntList();
                     final IntList columnSizes = new IntList();
                     populateColumnTypes(metadata, columnIndexes, columnSizes);
-                    DataFrameRecordCursorFactory factory = new DataFrameRecordCursorFactory(
+                    PageFrameRecordCursorFactory factory = new PageFrameRecordCursorFactory(
                             configuration,
                             metadata,
                             dataFrameFactory,
@@ -241,7 +241,7 @@ public class DataFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
 
                 try (FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, metadata)) {
                     DataFrameRowCursorFactory rowCursorFactory = new DataFrameRowCursorFactory(); // stub RowCursorFactory
-                    DataFrameRecordCursorFactory factory = new DataFrameRecordCursorFactory(
+                    PageFrameRecordCursorFactory factory = new PageFrameRecordCursorFactory(
                             configuration,
                             metadata,
                             dataFrameFactory,
@@ -349,7 +349,7 @@ public class DataFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
 
                 try (FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory(tt, TableUtils.ANY_TABLE_VERSION, metadata)) {
                     DataFrameRowCursorFactory rowCursorFactory = new DataFrameRowCursorFactory(); // stub RowCursorFactory
-                    DataFrameRecordCursorFactory factory = new DataFrameRecordCursorFactory(
+                    PageFrameRecordCursorFactory factory = new PageFrameRecordCursorFactory(
                             configuration,
                             metadata,
                             dataFrameFactory,

@@ -33,14 +33,14 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 
-public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends DataFrameRecordCursorFactory {
+public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends PageFrameRecordCursorFactory {
     private final int symbolColumnIndex;
     private final SingleSymbolFilter symbolFilter;
     private final Function symbolFunc;
     private boolean convertedToFrame;
     private int symbolKey;
 
-    public DeferredSingleSymbolFilterDataFrameRecordCursorFactory(
+    public DeferredSingleSymbolFilterPageFrameRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             int tableSymColIndex,
             Function symbolFunc,
@@ -119,7 +119,7 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("DeferredSingleSymbolFilterDataFrame");
+        sink.type("DeferredSingleSymbolFilterPageFrame");
         super.toPlanInner(sink);
     }
 
@@ -129,6 +129,6 @@ public class DeferredSingleSymbolFilterDataFrameRecordCursorFactory extends Data
             SqlExecutionContext executionContext
     ) throws SqlException {
         assert !convertedToFrame;
-        return super.getCursorInstance(dataFrameCursor, executionContext);
+        return super.initRecordCursor(dataFrameCursor, executionContext);
     }
 }

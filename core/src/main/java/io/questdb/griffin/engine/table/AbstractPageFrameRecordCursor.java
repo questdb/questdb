@@ -24,31 +24,41 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.TableReaderSelectedColumnRecord;
-import io.questdb.cairo.sql.DataFrameCursor;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.StaticSymbolTable;
-import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.*;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Rows;
+import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
-public abstract class AbstractDataFrameRecordCursor implements DataFrameRecordCursor {
+public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCursor {
     protected final IntList columnIndexes;
-    protected final TableReaderSelectedColumnRecord recordA;
-    protected final TableReaderSelectedColumnRecord recordB;
-    protected DataFrameCursor dataFrameCursor;
+    protected final PageFrameAddressCache frameAddressCache;
+    protected final PageFrameMemoryPool frameMemoryPool;
+    protected final PageFrameMemorySelectedRecord recordA;
+    protected final PageFrameMemorySelectedRecord recordB;
+    protected PageFrameCursor frameCursor;
 
-    public AbstractDataFrameRecordCursor(@NotNull IntList columnIndexes) {
+    public AbstractPageFrameRecordCursor(
+            CairoConfiguration configuration,
+            @Transient RecordMetadata metadata,
+            @NotNull IntList columnIndexes
+    ) {
         this.columnIndexes = columnIndexes;
-        this.recordA = new TableReaderSelectedColumnRecord(columnIndexes);
-        this.recordB = new TableReaderSelectedColumnRecord(columnIndexes);
+        this.recordA = new PageFrameMemorySelectedRecord(columnIndexes);
+        this.recordB = new PageFrameMemorySelectedRecord(columnIndexes);
+        this.frameAddressCache = new PageFrameAddressCache(configuration);
+        frameAddressCache.of(metadata);
+        this.frameMemoryPool = new PageFrameMemoryPool();
+        frameMemoryPool.of(frameAddressCache);
     }
 
     @Override
     public void close() {
-        dataFrameCursor = Misc.free(dataFrameCursor);
+        Misc.free(frameMemoryPool);
+        frameCursor = Misc.free(frameCursor);
     }
 
     @Override
@@ -57,8 +67,8 @@ public abstract class AbstractDataFrameRecordCursor implements DataFrameRecordCu
     }
 
     @Override
-    public DataFrameCursor getDataFrameCursor() {
-        return dataFrameCursor;
+    public PageFrameCursor getPageFrameCursor() {
+        return frameCursor;
     }
 
     @Override
@@ -73,16 +83,18 @@ public abstract class AbstractDataFrameRecordCursor implements DataFrameRecordCu
 
     @Override
     public StaticSymbolTable getSymbolTable(int columnIndex) {
-        return dataFrameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
+        return frameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
     }
 
     @Override
     public SymbolTable newSymbolTable(int columnIndex) {
-        return dataFrameCursor.newSymbolTable(columnIndexes.getQuick(columnIndex));
+        return frameCursor.newSymbolTable(columnIndexes.getQuick(columnIndex));
     }
 
     @Override
     public void recordAt(Record record, long atRowId) {
-        ((TableReaderSelectedColumnRecord) record).jumpTo(Rows.toPartitionIndex(atRowId), Rows.toLocalRowID(atRowId));
+        final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(Rows.toPartitionIndex(atRowId));
+        ((PageFrameMemorySelectedRecord) record).init(frameMemory);
+        ((PageFrameMemorySelectedRecord) record).setRowIndex(Rows.toLocalRowID(atRowId));
     }
 }

@@ -27,7 +27,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 
-abstract class AbstractLatestByValueRecordCursor extends AbstractDataFrameRecordCursor {
+abstract class AbstractLatestByValueRecordCursor extends AbstractPageFrameRecordCursor {
 
     protected final int columnIndex;
     protected SqlExecutionCircuitBreaker circuitBreaker;

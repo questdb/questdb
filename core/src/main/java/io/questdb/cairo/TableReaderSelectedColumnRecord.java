@@ -33,6 +33,7 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.TableReaderRecord.ifOffsetNegThen0ElseValue;
 
+@Deprecated
 public class TableReaderSelectedColumnRecord implements Record {
 
     private final IntList columnIndexes;

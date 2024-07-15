@@ -34,8 +34,8 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 
-public class SortedSymbolIndexRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
-    private final DataFrameRecordCursorImpl cursor;
+public class SortedSymbolIndexRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
+    private final PageFrameRecordCursorImpl cursor;
 
     public SortedSymbolIndexRecordCursorFactory(
             @NotNull RecordMetadata metadata,
@@ -46,7 +46,7 @@ public class SortedSymbolIndexRecordCursorFactory extends AbstractDataFrameRecor
             @NotNull IntList columnIndexes
     ) {
         super(metadata, dataFrameCursorFactory);
-        cursor = new DataFrameRecordCursorImpl(
+        cursor = new PageFrameRecordCursorImpl(
                 new SortedSymbolIndexRowCursorFactory(
                         columnIndex,
                         columnOrderAsc,

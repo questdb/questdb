@@ -38,13 +38,13 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.Comparator;
 
-public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
+public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
 
     private final int columnIndex;
     private final IntList columnIndexes;
     private final Comparator<SymbolFunctionRowCursorFactory> comparator;
     private final Comparator<SymbolFunctionRowCursorFactory> comparatorDesc;
-    private final DataFrameRecordCursorImpl cursor;
+    private final PageFrameRecordCursorImpl cursor;
     private final ObjList<SymbolFunctionRowCursorFactory> cursorFactories;
     // Points at the next factory to be reused.
     private final int[] cursorFactoriesIdx;//used to disable unneeded factories if there are duplicate excluded keys 
@@ -94,10 +94,10 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractDataFrame
         cursorFactories = new ObjList<>(nKeyValues);
         if (orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT && !orderByTimestamp) {
             heapCursorUsed = false;
-            cursor = new DataFrameRecordCursorImpl(new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx), false, filter, columnIndexes);
+            cursor = new PageFrameRecordCursorImpl(new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx), false, filter, columnIndexes);
         } else {
             heapCursorUsed = true;
-            cursor = new DataFrameRecordCursorImpl(new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx), false, filter, columnIndexes);
+            cursor = new PageFrameRecordCursorImpl(new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx), false, filter, columnIndexes);
         }
         this.followedOrderByAdvice = orderByKeyColumn || orderByTimestamp;
         this.columnIndexes = columnIndexes;

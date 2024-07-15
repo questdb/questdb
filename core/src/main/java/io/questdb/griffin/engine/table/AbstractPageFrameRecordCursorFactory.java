@@ -26,21 +26,18 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.DataFrameCursorFactory;
+import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
-import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ANY;
-
-abstract class AbstractDataFrameRecordCursorFactory extends AbstractRecordCursorFactory {
-
+abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursorFactory {
     protected final DataFrameCursorFactory dataFrameCursorFactory;
 
-    public AbstractDataFrameRecordCursorFactory(RecordMetadata metadata, DataFrameCursorFactory dataFrameCursorFactory) {
+    public AbstractPageFrameRecordCursorFactory(RecordMetadata metadata, DataFrameCursorFactory dataFrameCursorFactory) {
         super(metadata);
         this.dataFrameCursorFactory = dataFrameCursorFactory;
     }
@@ -52,11 +49,11 @@ abstract class AbstractDataFrameRecordCursorFactory extends AbstractRecordCursor
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext, ORDER_ANY);
+        PageFrameCursor frameCursor = initPageFrameCursor(executionContext);
         try {
-            return getCursorInstance(dataFrameCursor, executionContext);
+            return initRecordCursor(frameCursor, executionContext);
         } catch (Throwable e) {
-            dataFrameCursor.close();
+            frameCursor.close();
             throw e;
         }
     }
@@ -68,7 +65,7 @@ abstract class AbstractDataFrameRecordCursorFactory extends AbstractRecordCursor
 
     @Override
     public boolean supportsUpdateRowId(TableToken tableToken) {
-        return dataFrameCursorFactory.supportTableRowId(tableToken);
+        return dataFrameCursorFactory.supportsTableRowId(tableToken);
     }
 
     @Override
@@ -76,8 +73,10 @@ abstract class AbstractDataFrameRecordCursorFactory extends AbstractRecordCursor
         Misc.free(dataFrameCursorFactory);
     }
 
-    protected abstract RecordCursor getCursorInstance(
-            DataFrameCursor dataFrameCursor,
+    protected abstract PageFrameCursor initPageFrameCursor(SqlExecutionContext executionContext) throws SqlException;
+
+    protected abstract RecordCursor initRecordCursor(
+            PageFrameCursor frameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException;
 }

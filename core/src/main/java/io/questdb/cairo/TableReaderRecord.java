@@ -35,6 +35,7 @@ import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+@Deprecated
 public class TableReaderRecord implements Record, Sinkable {
 
     private int columnBase;

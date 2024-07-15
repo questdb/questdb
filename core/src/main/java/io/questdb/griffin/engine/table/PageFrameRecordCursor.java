@@ -24,7 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.sql.DataFrameCursor;
+import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.griffin.Plannable;
@@ -32,14 +32,14 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 
-public interface DataFrameRecordCursor extends RecordCursor, Plannable {
+public interface PageFrameRecordCursor extends RecordCursor, Plannable {
 
     IntList getColumnIndexes();
 
-    DataFrameCursor getDataFrameCursor();
+    PageFrameCursor getPageFrameCursor();
 
     @Override
     StaticSymbolTable getSymbolTable(int columnIndex);
 
-    void of(DataFrameCursor cursor, SqlExecutionContext executionContext) throws SqlException;
+    void of(PageFrameCursor cursor, SqlExecutionContext executionContext) throws SqlException;
 }

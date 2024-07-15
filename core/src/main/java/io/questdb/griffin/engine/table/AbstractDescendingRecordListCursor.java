@@ -34,7 +34,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 
-abstract class AbstractDescendingRecordListCursor extends AbstractDataFrameRecordCursor {
+abstract class AbstractDescendingRecordListCursor extends AbstractPageFrameRecordCursor {
 
     protected final DirectLongList rows;
     protected SqlExecutionCircuitBreaker circuitBreaker;

@@ -44,7 +44,7 @@ import io.questdb.std.*;
 import io.questdb.tasks.LatestByTask;
 import org.jetbrains.annotations.NotNull;
 
-class LatestByAllIndexedRecordCursor extends AbstractDataFrameRecordCursor {
+class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     protected final long indexShift = 0;
     protected final DirectLongList prefixes;
     protected final DirectLongList rows;

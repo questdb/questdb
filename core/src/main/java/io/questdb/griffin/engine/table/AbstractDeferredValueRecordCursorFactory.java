@@ -34,7 +34,7 @@ import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-abstract class AbstractDeferredValueRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
+abstract class AbstractDeferredValueRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
 
     protected final int columnIndex;
     protected final IntList columnIndexes;

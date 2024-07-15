@@ -38,8 +38,8 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.sql.DataFrameCursorFactory.*;
 
-public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
-    protected final DataFrameRecordCursor cursor;
+public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
+    protected final PageFrameRecordCursor cursor;
     protected final int pageFrameMaxRows;
     protected final int pageFrameMinRows;
     protected final RowCursorFactory rowCursorFactory;
@@ -53,7 +53,7 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     protected FwdTableReaderPageFrameCursor fwdPageFrameCursor;
     protected TableReaderTimeFrameCursor timeFrameCursor;
 
-    public DataFrameRecordCursorFactory(
+    public PageFrameRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             RecordMetadata metadata,
             DataFrameCursorFactory dataFrameCursorFactory,
@@ -69,7 +69,14 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         super(metadata, dataFrameCursorFactory);
 
         this.rowCursorFactory = rowCursorFactory;
-        cursor = new DataFrameRecordCursorImpl(rowCursorFactory, rowCursorFactory.isEntity(), filter, columnIndexes);
+        cursor = new PageFrameRecordCursorImpl(
+                configuration,
+                dataFrameCursorFactory.getMetadata(),
+                rowCursorFactory,
+                rowCursorFactory.isEntity(),
+                filter,
+                columnIndexes
+        );
         this.followsOrderByAdvice = followsOrderByAdvice;
         this.filter = filter;
         this.framingSupported = framingSupported;
@@ -100,9 +107,9 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         if (framingSupported) {
             DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext, order);
             if (order == ORDER_ASC || order == ORDER_ANY) {
-                return initFwdPageFrameCursor(executionContext, dataFrameCursor);
+                return initFwdPageFrameCursor(dataFrameCursor, executionContext);
             }
-            return initBwdPageFrameCursor(executionContext, dataFrameCursor);
+            return initBwdPageFrameCursor(dataFrameCursor, executionContext);
         }
         return null;
     }
@@ -154,13 +161,13 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("DataFrame");
+        sink.type("PageFrame");
         toPlanInner(sink);
     }
 
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
-        sink.putAscii("{\"name\":\"DataFrameRecordCursorFactory\", \"cursorFactory\":");
+        sink.putAscii("{\"name\":\"PageFrameRecordCursorFactory\", \"cursorFactory\":");
         dataFrameCursorFactory.toSink(sink);
         sink.putAscii('}');
     }
@@ -176,21 +183,9 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
         Misc.free(filter);
     }
 
-    @Override
-    protected RecordCursor getCursorInstance(
+    protected PageFrameCursor initBwdPageFrameCursor(
             DataFrameCursor dataFrameCursor,
             SqlExecutionContext executionContext
-    ) throws SqlException {
-        cursor.of(dataFrameCursor, executionContext);
-        if (filter != null) {
-            filter.init(cursor, executionContext);
-        }
-        return cursor;
-    }
-
-    protected PageFrameCursor initBwdPageFrameCursor(
-            SqlExecutionContext executionContext,
-            DataFrameCursor dataFrameCursor
     ) {
         if (bwdPageFrameCursor == null) {
             bwdPageFrameCursor = new BwdTableReaderPageFrameCursor(
@@ -205,8 +200,8 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
     }
 
     protected PageFrameCursor initFwdPageFrameCursor(
-            SqlExecutionContext executionContext,
-            DataFrameCursor dataFrameCursor
+            DataFrameCursor dataFrameCursor,
+            SqlExecutionContext executionContext
     ) {
         if (fwdPageFrameCursor == null) {
             fwdPageFrameCursor = new FwdTableReaderPageFrameCursor(
@@ -218,6 +213,25 @@ public class DataFrameRecordCursorFactory extends AbstractDataFrameRecordCursorF
             );
         }
         return fwdPageFrameCursor.of(dataFrameCursor);
+    }
+
+    @Override
+    protected PageFrameCursor initPageFrameCursor(SqlExecutionContext executionContext) throws SqlException {
+        DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext, ORDER_ANY);
+        // TODO(puzpuzpuz): should we consider the dataFrameCursorFactory's order?
+        return initFwdPageFrameCursor(dataFrameCursor, executionContext);
+    }
+
+    @Override
+    protected RecordCursor initRecordCursor(
+            PageFrameCursor frameCursor,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        cursor.of(frameCursor, executionContext);
+        if (filter != null) {
+            filter.init(cursor, executionContext);
+        }
+        return cursor;
     }
 
     protected void toPlanInner(PlanSink sink) {
