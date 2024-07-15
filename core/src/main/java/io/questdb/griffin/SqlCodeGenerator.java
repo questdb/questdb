@@ -4655,7 +4655,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         boolean requiresTimestamp = joinsRequiringTimestamp[model.getJoinType()];
         final GenericRecordMetadata myMeta = new GenericRecordMetadata();
-        boolean framingSupported;
+        boolean framingSupported = true;
         try {
             if (requiresTimestamp) {
                 executionContext.pushTimestampRequiredFlag(true);
@@ -4665,7 +4665,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // some "sample by" queries don't select any cols but needs timestamp col selected
             // for example "select count() from x sample by 1h" implicitly needs timestamp column selected
             if (topDownColumnCount > 0 || contextTimestampRequired || model.isUpdate()) {
-                framingSupported = true;
                 for (int i = 0; i < topDownColumnCount; i++) {
                     int columnIndex = metadata.getColumnIndexQuiet(topDownColumns.getQuick(i).getName());
                     int type = metadata.getColumnType(columnIndex);
@@ -4700,8 +4699,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     columnIndexes.add(readerTimestampIndex);
                     columnSizes.add((Numbers.msb(ColumnType.TIMESTAMP)));
                 }
-            } else {
-                framingSupported = false;
+//            } else {
+//                framingSupported = false;
             }
         } finally {
             if (requiresTimestamp) {

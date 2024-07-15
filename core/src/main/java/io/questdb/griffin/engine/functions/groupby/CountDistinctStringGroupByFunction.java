@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.Chars;
 import io.questdb.std.CompactCharSequenceHashSet;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -44,11 +43,13 @@ public class CountDistinctStringGroupByFunction extends LongFunction implements 
     private final ObjList<CompactCharSequenceHashSet> sets = new ObjList<>();
     private int setIndex = 0;
     private int valueIndex;
+    private final boolean earlyExit;
 
     public CountDistinctStringGroupByFunction(Function arg, int setInitialCapacity, double setLoadFactor) {
         this.arg = arg;
         this.setInitialCapacity = setInitialCapacity;
         this.setLoadFactor = setLoadFactor;
+        this.earlyExit = arg.isConstant();
     }
 
     @Override
@@ -69,12 +70,22 @@ public class CountDistinctStringGroupByFunction extends LongFunction implements 
 
         final CharSequence val = arg.getStrA(record);
         if (val != null) {
-            set.add(Chars.toString(val));
+            set.add(val);
             mapValue.putLong(valueIndex, 1L);
         } else {
             mapValue.putLong(valueIndex, 0L);
         }
         mapValue.putInt(valueIndex + 1, setIndex++);
+    }
+
+    @Override
+    public boolean earlyExit(MapValue mapValue) {
+        return earlyExit;
+    }
+
+    @Override
+    public boolean isEarlyExitSupported() {
+        return earlyExit;
     }
 
     @Override

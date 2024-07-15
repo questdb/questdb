@@ -2590,8 +2590,8 @@ public class SqlOptimiser implements Mutable {
     private void moveWhereInsideSubQueries(QueryModel model) throws SqlException {
         if (
                 model.getSelectModelType() != QueryModel.SELECT_MODEL_DISTINCT
-                // in theory, we could push down predicates as long as they align with ALL partition by clauses and remove whole partition(s)
-                && model.getSelectModelType() != QueryModel.SELECT_MODEL_WINDOW
+                        // in theory, we could push down predicates as long as they align with ALL partition by clauses and remove whole partition(s)
+                        && model.getSelectModelType() != QueryModel.SELECT_MODEL_WINDOW
         ) {
             model.getParsedWhere().clear();
             final ObjList<ExpressionNode> nodes = model.parseWhereClause();
@@ -3798,6 +3798,41 @@ public class SqlOptimiser implements Mutable {
         return agg;
     }
 
+    // This rewrite should be invoked before the select rewrite!
+    // Rewrites the following:
+    // select count(constant) ... -> select count() ...
+    // select count(column) ... -> select count(), ... from ... where column is not null
+    private void rewriteCount(QueryModel model) {
+
+        if (model == null) {
+            return;
+        }
+
+        if (model.getModelType() == QueryModel.SELECT_MODEL_CHOOSE) {
+            final ObjList<QueryColumn> columns = model.getBottomUpColumns();
+            int columnCount = columns.size();
+
+            for (int i = 0; i < columnCount; i++) {
+                ExpressionNode expr = columns.getQuick(i).getAst();
+                if (SqlKeywords.isCountKeyword(expr.token) && expr.paramCount == 1) {
+                    if (expr.rhs.type == CONSTANT && !SqlKeywords.isNullKeyword(expr.rhs.token)) {
+                        // erase constant
+                        expr.rhs = null;
+                        expr.paramCount = 0;
+                    }
+                }
+            }
+        }
+        rewriteCount(model.getNestedModel());
+        rewriteCount(model.getUnionModel());
+
+        ObjList<QueryModel> joinModels = model.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            rewriteCount(joinModels.getQuick(i));
+        }
+
+    }
+
     /**
      * Rewrites expressions such as :
      * SELECT count_distinct(s) FROM tab WHERE s like '%a' ;
@@ -3813,6 +3848,8 @@ public class SqlOptimiser implements Mutable {
                         && (countDistinctExpr = model.getColumns().getQuick(0).getAst()).type == ExpressionNode.FUNCTION
                         && Chars.equalsIgnoreCase("count_distinct", countDistinctExpr.token)
                         && countDistinctExpr.paramCount == 1
+                        && countDistinctExpr.rhs != null
+                        && countDistinctExpr.rhs.type != CONSTANT
                         && !isSymbolColumn(countDistinctExpr, nested) // don't rewrite for symbol column because there's a separate optimization in count_distinct
                         && model.getJoinModels().size() == 1
                         && model.getUnionModel() == null
@@ -5821,6 +5858,7 @@ public class SqlOptimiser implements Mutable {
             rewrittenModel = rewriteSampleBy(rewrittenModel);
             rewriteGroupByForFirstLastMaxMinAggregateFunctions(rewrittenModel);
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
+            rewriteCount(rewrittenModel);
             resolveJoinColumns(rewrittenModel);
             optimiseBooleanNot(rewrittenModel);
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);

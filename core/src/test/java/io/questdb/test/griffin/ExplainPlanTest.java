@@ -610,12 +610,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "count(dat) cdat, " +
                         "count(ts) cts " +
                         "from x",
-                "GroupBy vectorized: true workers: 1\n" +
-                        "  keys: [k]\n" +
-                        "  values: [count(*),count(*),count(i),count(l),count(d),count(dat),count(ts)]\n" +
-                        "    DataFrame\n" +
-                        "        Row forward scan\n" +
-                        "        Frame forward scan on: x\n"
+                "VirtualRecord\n" +
+                        "  functions: [k,c1,c1,ci,cl,cd,cdat,cts]\n" +
+                        "    GroupBy vectorized: true workers: 1\n" +
+                        "      keys: [k]\n" +
+                        "      values: [count(*),count(i),count(l),count(d),count(dat),count(ts)]\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: x\n"
         );
     }
 
@@ -4612,8 +4614,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 "FROM tab as T1 " +
                                 joinType + " JOIN tab as T2 " + (i == 0 ? " ON T1.created=T2.created " : "") +
                                 "WHERE not T2.value<>T2.value",
-                        "GroupBy vectorized: false\n" +
-                                "  values: [count(*)]\n" +
+                        "Count\n" +
                                 "    Filter filter: T2.value=T2.value\n" +
                                 "        " + factoryType + "\n" +
                                 (i == 0 ? "          condition: T2.created=T1.created\n" : "") +
@@ -4631,8 +4632,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 "FROM tab as T1 " +
                                 joinType + " JOIN tab as T2 " + (i == 0 ? " ON T1.created=T2.created " : "") +
                                 "WHERE not T2.value=1",
-                        "GroupBy vectorized: false\n" +
-                                "  values: [count(*)]\n" +
+                        "Count\n" +
                                 "    Filter filter: T2.value!=1\n" +
                                 "        " + factoryType + "\n" +
                                 (i == 0 ? "          condition: T2.created=T1.created\n" : "") +
@@ -4651,8 +4651,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 "FROM tab as T1 " +
                                 joinType + " JOIN tab as T2 " + (i == 0 ? " ON T1.created=T2.created " : "") +
                                 "WHERE not T1.value=1",
-                        "GroupBy vectorized: false\n" +
-                                "  values: [count(*)]\n" +
+                        "Count\n" +
                                 "    " + factoryType + "\n" +
                                 (i == 0 ? "      condition: T2.created=T1.created\n" : "") +
                                 "        Async JIT Filter workers: 1\n" +
@@ -4675,8 +4674,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "LEFT JOIN tab as T2 ON T1.created=T2.created " +
                             "JOIN tab as T3 ON T2.created=T3.created " +
                             "WHERE T1.value=1",
-                    "GroupBy vectorized: false\n" +
-                            "  values: [count(*)]\n" +
+                    "Count\n" +
                             "    Hash Join Light\n" +
                             "      condition: T3.created=T2.created\n" +
                             "        Hash Outer Join Light\n" +
@@ -4702,8 +4700,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "LEFT JOIN tab as T2 ON T1.created=T2.created " +
                             "JOIN tab as T3 ON T2.created=T3.created " +
                             "WHERE T2.created=1",
-                    "GroupBy vectorized: false\n" +
-                            "  values: [count(*)]\n" +
+                    "Count\n" +
                             "    Hash Join Light\n" +
                             "      condition: T3.created=T2.created\n" +
                             "        Filter filter: T2.created=1\n" +
@@ -4728,8 +4725,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "LEFT JOIN tab as T2 ON T1.created=T2.created " +
                             "JOIN tab as T3 ON T2.created=T3.created " +
                             "WHERE T3.value=1",
-                    "GroupBy vectorized: false\n" +
-                            "  values: [count(*)]\n" +
+                    "Count\n" +
                             "    Hash Join Light\n" +
                             "      condition: T3.created=T2.created\n" +
                             "        Hash Outer Join Light\n" +
@@ -4757,8 +4753,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "FROM tab as T1 " +
                             "LEFT JOIN tab as T2 ON T1.created=T2.created ) e " +
                             "WHERE not value1<>value1",
-                    "GroupBy vectorized: false\n" +
-                            "  values: [count(*)]\n" +
+                    "Count\n" +
                             "    SelectedRecord\n" +
                             "        Filter filter: T2.value=T2.value\n" +
                             "            Hash Outer Join Light\n" +
@@ -4779,8 +4774,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "FROM tab as T1 " +
                             "LEFT JOIN tab as T2 ON T1.created=T2.created ) e " +
                             "WHERE not value<>value",
-                    "GroupBy vectorized: false\n" +
-                            "  values: [count(*)]\n" +
+                    "Count\n" +
                             "    SelectedRecord\n" +
                             "        Hash Outer Join Light\n" +
                             "          condition: T2.created=T1.created\n" +
@@ -6366,12 +6360,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             // no where clause, distinct constant
             assertPlanNoLeakCheck("SELECT count_distinct(10) FROM test",
-                    "Count\n" +
-                            "    GroupBy vectorized: false\n" +
-                            "      keys: [10]\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: test\n");
+                    "Async Group By workers: 1\n" +
+                            "  values: [count_distinct(10)]\n" +
+                            "  filter: null\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: test\n");
 
             // no where clause, distinct column
             assertPlanNoLeakCheck("SELECT count_distinct(s) FROM test",
@@ -7028,13 +7022,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
-    @Test // TODO: this should use Count factory same as queries above
+    @Test
     public void testSelectCount3() throws Exception {
         assertPlan(
                 "create table a ( i int, d double)",
                 "select count(2) from a",
-                "GroupBy vectorized: false\n" +
-                        "  values: [count(*)]\n" +
+                "Count\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"

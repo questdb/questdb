@@ -30,7 +30,6 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CountFloatGroupByFunctionFactory implements FunctionFactory {
@@ -53,16 +52,6 @@ public class CountFloatGroupByFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final Function arg = args.getQuick(0);
-        if (arg.isConstant()) {
-            float val = arg.getFloat(null);
-            if (!Numbers.isNull(val)) {
-                return new CountLongConstGroupByFunction();
-            }
-            throw SqlException.$(argPositions.getQuick(0), "NULL is not allowed");
-        } else {
-            return new CountFloatGroupByFunction(arg);
-        }
-
+        return new CountFloatGroupByFunction(args.getQuick(0));
     }
 }

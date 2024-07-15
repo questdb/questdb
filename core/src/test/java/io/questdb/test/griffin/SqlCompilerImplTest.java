@@ -5047,8 +5047,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     query,
-                    "GroupBy vectorized: false\n" +
-                            "  values: [count(*)]\n" +
+                    "Count\n" +
                             "    Hash Outer Join Light\n" +
                             "      condition: T3.created=T2.created\n" +
                             "        Filter filter: T2.created in [now(),now()]\n" +
