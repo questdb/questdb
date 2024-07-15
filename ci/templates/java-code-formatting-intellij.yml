@@ -1,16 +1,25 @@
 jobs:
   - job: RunOn
-    displayName: "IntelliJ Code Format"
+    displayName: "on"
     strategy:
       matrix:
-        linux: "ubuntu-latest"
-        poolName: "Azure Pipelines"
-        os: Linux
-        jdk: "1.11"
+        linux-jdk11:
+          imageName: "ubuntu-latest"
+          poolName: "Azure Pipelines"
+          os: Linux
+          jdk: "1.11"
+          testset: "none"
+          javadoc_step: "javadoc:javadoc"
+          javadoc_profile: ",javadoc"
     pool:
       vmImage: $(imageName)
       name: $(poolName)
     timeoutInMinutes: 15
+    variables:
+      SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED']]
+      COVERAGE_DIFF: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.COVERAGE_DIFF']]
+      CODE_COVERAGE_TOOL_OPTION: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]
+      ARCHIVED_CRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).log"
     steps:
       - checkout: self
         fetchDepth: 1
@@ -19,4 +28,3 @@ jobs:
       - bash: wget https://download.jetbrains.com/product?code=IIC&latest&distribution=linux | tar xvz -C /opt/intellij
       - bash: ls -lhA
       - bash: ls -lhA /opt/intellij
-
