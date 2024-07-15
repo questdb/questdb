@@ -20,6 +20,7 @@ pub extern "system" fn Java_io_questdb_test_Sqllogictest_run(
         let error_msg = format!("file not found: {:?}", file_path);
         eprintln!("{}", &error_msg);
         throw_state_msg(&mut env, "run", &error_msg, ());
+        return;
     }
 
     let mut runner = Runner::new(move || {
@@ -50,7 +51,7 @@ pub extern "system" fn Java_io_questdb_test_Sqllogictest_run(
                             connection: _connection,
                             sql,
                             ..
-                        } => sql.starts_with("PRAGMA"),
+                        } => sql.to_lowercase().starts_with("pragma"),
                         _ => false,
                     };
 
