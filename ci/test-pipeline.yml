@@ -64,7 +64,7 @@ stages:
     dependsOn:
       - CheckChanges
     jobs:
-      - template/java-code-formatting-intellij.yml
+      - template: templates/java-code-formatting-intellij.yml
 
   - stage: HostedRunCompatTestsBranches
     displayName: "Hosted Running CLI util and compat tests"
