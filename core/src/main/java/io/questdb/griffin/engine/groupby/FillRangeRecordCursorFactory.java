@@ -194,14 +194,16 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 if (!gapFilling) {
                     gapFilling = true;
 
+                    // we need to get up to date, since the sampler started at unix epoch, not min timestamp
                     if (rangeBound == RANGE_UPPER_BOUND || rangeBound == RANGE_UNBOUNDED) {
                         fillOffset = timestampSampler.bucketIndex(minTimestamp);
                         nextBucket = minTimestamp;
 
 
-                        while (recordWasPresent()) {
-                            moveToNextBucket();
-                        }
+                    }
+
+                    while (recordWasPresent()) {
+                        moveToNextBucket();
                     }
 
                     return notAtEndOfBitset();

@@ -64,9 +64,23 @@ public class SampleByTest extends AbstractCairoTest {
     public static final String DDL_FROMTO = "create table fromto as (\n" +
             "  SELECT timestamp_sequence(\n" +
             "            to_timestamp('2018-01-01T00:00:00', 'yyyy-MM-ddTHH:mm:ss'),\n" +
-            "            1800000000L) as ts, x, x::varchar as s\n" +
+            "            1800000000L) as ts, " +
+            "x, " +
+            "x::varchar as s," +
+            "x::byte as b," +
+            "x::short as e," +
+            "x::int as i," +
+            "x::long as l," +
+            "x::float as f," +
+            "x::double as d," +
+            "x::string as str," +
+            "x::char as a," +
+            "x::symbol as k," +
+            "x::boolean as t," +
+            "x::timestamp as n," +
             "FROM long_sequence(480)\n" +
             ") timestamp(ts)";
+
     private static final Log LOG = LogFactory.getLog(SampleByTest.class);
 
     @Test
