@@ -3714,9 +3714,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 throw e;
             }
 
-            if (enableParallelGroupBy
-                    && SqlUtil.isParallelismSupported(keyFunctions)
-                    && GroupByUtils.isParallelismSupported(groupByFunctions)) {
+            if (
+                    enableParallelGroupBy
+                            && SqlUtil.isParallelismSupported(keyFunctions)
+                            && GroupByUtils.isParallelismSupported(groupByFunctions)
+            ) {
                 boolean supportsParallelism = factory.supportsPageFrameCursor();
                 CompiledFilter compiledFilter = null;
                 MemoryCARW bindVarMemory = null;

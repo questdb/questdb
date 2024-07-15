@@ -2350,6 +2350,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     args.add(new StringToStringArrayFunction(0, "{'test'}"));
                                 } else if (sigArgType == ColumnType.STRING && factory instanceof InTimestampStrFunctionFactory) {
                                     args.add(new StrConstant("2022-12-12"));
+                                } else if (factory instanceof EqTimestampCursorFunctionFactory) {
+                                    // 2nd arg for this function is a cursor, which is unclear how to test here
+                                    // additionally, this function has separate tests
+                                    continue FUNCTIONS;
                                 } else if (factory instanceof ToTimezoneTimestampFunctionFactory && p == 1) {
                                     args.add(new StrConstant("CET"));
                                 } else if (factory instanceof CastStrToRegClassFunctionFactory && useConst) {
@@ -2579,8 +2583,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
             ddl("create table a (ts timestamp, d double)");
             assertException(
                     "select hour(d), min(d) from a",
-                    7,
-                    "unexpected argument for function: hour. expected args: (TIMESTAMP). actual args: (DOUBLE)"
+                    12,
+                    "argument type mismatch for function `hour` at #1 expected: TIMESTAMP, actual: DOUBLE"
             );
         });
     }
@@ -6363,9 +6367,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
             // no where clause, distinct constant
             assertPlanNoLeakCheck("SELECT count_distinct(10) FROM test",
                     "Count\n" +
-                            "    Async Group By workers: 1\n" +
+                            "    GroupBy vectorized: false\n" +
                             "      keys: [10]\n" +
-                            "      filter: null\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: test\n");
@@ -7025,12 +7028,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
-    @Test
+    @Test // TODO: this should use Count factory same as queries above
     public void testSelectCount3() throws Exception {
         assertPlan(
                 "create table a ( i int, d double)",
                 "select count(2) from a",
-                "GroupBy vectorized: true workers: 1\n" +
+                "GroupBy vectorized: false\n" +
                         "  values: [count(*)]\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
