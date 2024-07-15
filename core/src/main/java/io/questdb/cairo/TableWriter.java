@@ -420,7 +420,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return Unsafe.getUnsafe().getLong(timestampIndex + indexRow * 16);
     }
 
-    // todo: more elsewhere
     public static boolean isCairoOomError(Throwable t) {
         return t instanceof CairoException && ((CairoException) t).isOutOfMemory();
     }
@@ -3164,6 +3163,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         ", tableDir=" + tableToken.getDirName() + "]");
             } else {
                 throw CairoException.critical(lastErrno)
+                        .setOutOfMemory(o3oomObserved)
                         .put("commit failed, see logs for details [table=")
                         .put(tableToken.getTableName())
                         .put(", tableDir=").put(tableToken.getDirName())
@@ -4789,6 +4789,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 .$(", long2=").$(long2)
                 .$(", long3=").$(long3);
         if (e instanceof CairoException) {
+            o3oomObserved = ((CairoException) e).isOutOfMemory();
             lastErrno = lastErrno == 0 ? ((CairoException) e).errno : lastErrno;
             logRecord.$(", errno=").$(lastErrno)
                     .$(", ex=").$(((CairoException) e).getFlyweightMessage())
