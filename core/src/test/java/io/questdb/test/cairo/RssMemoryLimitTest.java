@@ -53,12 +53,12 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
 
     @Test
     public void testCreateAtomicTable() throws Exception {
-        long limitMiB = 12;
+        long limitMiB = 2;
         assertMemoryLeak(limitMiB, () -> {
             try {
                 ddl("create atomic table x as (select" +
                         " rnd_timestamp(to_timestamp('2024-03-01', 'yyyy-mm-dd'), to_timestamp('2024-04-01', 'yyyy-mm-dd'), 0) ts" +
-                        " from long_sequence(10000000)) timestamp(ts) partition by day;");
+                        " from long_sequence(1000000)) timestamp(ts) partition by day;");
                 fail("Managed to create table with RSS limit " + limitMiB + " MB");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "global RSS memory limit exceeded");
@@ -71,7 +71,7 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
 
     @Test
     public void testLargeTxEventuallySucceeds() throws Exception {
-        long limitMiB = 70;
+        long limitMiB = 60;
         assertMemoryLeak(limitMiB, () -> {
             int batchCount = 10;
             int batchSize = 500_000;
@@ -128,7 +128,7 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
         long limitMiB = 1;
         assertMemoryLeak(limitMiB, () -> {
             int batchCount = 100;
-            int batchSize = 500_000;
+            int batchSize = 50_000;
 
             ddl("create table x (ts timestamp) timestamp(ts) partition by day wal;");
 
