@@ -32,12 +32,36 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class MatchStrFunctionFactoryTest extends AbstractCairoTest {
+public class MatchSymFunctionFactoryTest extends AbstractCairoTest {
+
+    @Test
+    public void testNonStaticSymbolTable() throws Exception {
+        assertMemoryLeak(() -> {
+            final String expected = "name\n" +
+                    "ope\n" +
+                    "ope\n" +
+                    "ope\n" +
+                    "ope\n" +
+                    "ope\n" +
+                    "ope\n" +
+                    "ope\n" +
+                    "ope\n" +
+                    "ope\n";
+            ddl("create table x as (select rnd_str('jjke', 'jio2', 'ope', 'nbbe', null) name from long_sequence(50))");
+
+            try (RecordCursorFactory factory = select("(select name::symbol name from x) where name ~ '^op.*'")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    println(factory, cursor);
+                    TestUtils.assertEquals(expected, sink);
+                }
+            }
+        });
+    }
 
     @Test
     public void testNullRegex() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_str() name from long_sequence(2000))");
+            ddl("create table x as (select rnd_symbol('jjke', 'jio2', 'ope', 'nbbe', null) name from long_sequence(2000))");
             try {
                 assertExceptionNoLeakCheck("select * from x where name ~ null");
             } catch (SqlException e) {
@@ -50,7 +74,7 @@ public class MatchStrFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testRegexSyntaxError() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_str() name from long_sequence(2000))");
+            ddl("create table x as (select rnd_symbol('jjke', 'jio2', 'ope', 'nbbe', null) name from long_sequence(2000))");
             try {
                 assertExceptionNoLeakCheck("select * from x where name ~ 'XJ**'");
             } catch (SqlException e) {
@@ -64,45 +88,18 @@ public class MatchStrFunctionFactoryTest extends AbstractCairoTest {
     public void testSimple() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = "name\n" +
-                    "HZTCQXJOQ\n" +
-                    "LXJNZ\n" +
-                    "TXJBQVYTY\n" +
-                    "XJSJ\n" +
-                    "YMUJXJ\n" +
-                    "MEJXJN\n" +
-                    "PRXJOPHLL\n" +
-                    "GYMXJ\n" +
-                    "XJKL\n" +
-                    "HQXVXJQ\n" +
-                    "UIXJO\n" +
-                    "VXJCPF\n" +
-                    "SVXJHXBY\n" +
-                    "ICFOQEVPXJ\n" +
-                    "XJWJJSRNZL\n" +
-                    "HXJULSPH\n" +
-                    "IPCBXJG\n" +
-                    "XJN\n";
-            ddl("create table x as (select rnd_str() name from long_sequence(2000))");
+                    "ope\n" +
+                    "ope\n" +
+                    "ope\n" +
+                    "ope\n" +
+                    "ope\n" +
+                    "ope\n" +
+                    "ope\n" +
+                    "ope\n" +
+                    "ope\n";
+            ddl("create table x as (select rnd_symbol('jjke', 'jio2', 'ope', 'nbbe', null) name from long_sequence(50))");
 
-            try (RecordCursorFactory factory = select("select * from x where name ~ 'XJ'")) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    println(factory, cursor);
-                    TestUtils.assertEquals(expected, sink);
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testStrWithNulls() throws Exception {
-        assertMemoryLeak(() -> {
-            final String expected = "name\n" +
-                    "NGST\n" +
-                    "NGVP\n" +
-                    "NGTDNKSBXM\n";
-            ddl("create table x as (select rnd_str(4,10,1) name from long_sequence(2000))");
-
-            try (RecordCursorFactory factory = select("select * from x where name ~ '^NG.*'")) {
+            try (RecordCursorFactory factory = select("select * from x where name ~ '^op.*'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     println(factory, cursor);
                     TestUtils.assertEquals(expected, sink);
