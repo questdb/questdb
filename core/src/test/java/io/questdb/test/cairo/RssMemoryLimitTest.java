@@ -89,12 +89,11 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
             int expectedRowCount = batchCount * batchSize;
             TestUtils.assertEventually(() -> {
                 drainWalQueue();
-
                 assertTableNotSuspended("x");
 
                 try {
-                    // cannot use assertQuery, because it clears CairoEngine - this closes all Table Writers and we
-                    // lose information about memory pressure
+                    // cannot use assertQuery, because it clears CairoEngine - this clears all seqTxnTrackers
+                    // and we lose information about memory pressure
                     assertQueryFullFatNoLeakCheck("count\n" +
                                     expectedRowCount + "\n",
                             "select count() from x", null, false, true, false);
