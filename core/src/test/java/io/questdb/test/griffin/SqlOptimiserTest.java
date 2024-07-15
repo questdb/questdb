@@ -2258,6 +2258,29 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSampleByFromToNotEnoughFillValues() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(SampleByTest.DDL_FROMTO);
+            final String query =
+                    "select ts, avg(x), " +
+                            "string_agg(s, ',')," +
+                            "avg(b)," +
+                            "avg(e)," +
+                            "avg(i)," +
+                            "avg(f)," +
+                            "avg(d)," +
+                            "string_agg(str, ',')," +
+                            "avg(a::double)," +
+                            "avg(k::double)," +
+                            "avg(t::double)," +
+                            "avg(n::double)," +
+                            "from fromto sample by 5d from '2018-01-01' to '2018-01-31' fill(42)";
+
+            assertException(query, -1, "not enough fill values");
+        });
+    }
+
+    @Test
     public void testSampleByFromToParallelSampleByRewrite() throws Exception {
         assertMemoryLeak(() -> {
             ddl(SampleByTest.DDL_FROMTO);
