@@ -1198,36 +1198,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         joinModels.setQuick(pos, model);
     }
 
-    public ExpressionNode searchForSampleByFrom() {
-        if (sampleByFrom != null) {
-            return sampleByFrom;
-        } else if (nestedModel != null) {
-            return nestedModel.searchForSampleByFrom();
-        } else {
-            return null;
-        }
-    }
-
-    public ExpressionNode searchForSampleByTo() {
-        if (sampleByTo != null) {
-            return sampleByTo;
-        } else if (nestedModel != null) {
-            return nestedModel.searchForSampleByTo();
-        } else {
-            return null;
-        }
-    }
-
-    public ExpressionNode searchForSampleByUnit() {
-        if (sampleByUnit != null) {
-            return sampleByUnit;
-        } else if (nestedModel != null) {
-            return nestedModel.searchForSampleByUnit();
-        } else {
-            return null;
-        }
-    }
-
     public void setAlias(ExpressionNode alias) {
         this.alias = alias;
     }
