@@ -41,6 +41,7 @@ public class SeqTxnTracker {
     // 0 unknown
     // 1 not suspended
     private volatile int suspendedState = 0;
+    private volatile long walBackoffUntil = -1;
     private volatile long writerTxn = -1;
 
     public String getErrorMessage() {
@@ -58,6 +59,10 @@ public class SeqTxnTracker {
     @TestOnly
     public long getSeqTxn() {
         return seqTxn;
+    }
+
+    public long getWalBackoffUntil() {
+        return walBackoffUntil;
     }
 
     @TestOnly
@@ -144,5 +149,9 @@ public class SeqTxnTracker {
 
         this.errorTag = ErrorTag.NONE;
         this.errorMessage = "";
+    }
+
+    public void setWalBackoffUntil(long walBackoffUntil) {
+        this.walBackoffUntil = walBackoffUntil;
     }
 }

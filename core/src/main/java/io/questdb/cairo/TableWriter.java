@@ -125,7 +125,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final SOCountDownLatch indexLatch = new SOCountDownLatch();
     private final LongList indexSequences = new LongList();
     private final ObjList<ColumnIndexer> indexers;
-    private final O3MemoryPressureRegulator memoryPressureRegulator;
+    //    private final O3MemoryPressureRegulator memoryPressureRegulator;
     // This is the same message bus. When TableWriter instance created via CairoEngine, message bus is shared
     // and is owned by the engine. Since TableWriter would not have ownership of the bus it must not free it up.
     // On other hand when TableWrite is created outside CairoEngine, primarily in tests, the ownership of the
@@ -255,12 +255,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             CharSequence root,
             DdlListener ddlListener,
             DatabaseSnapshotAgent snapshotAgent,
-            Metrics metrics,
-            O3MemoryPressureRegulator memoryPressureRegulator
+            Metrics metrics
     ) {
         LOG.info().$("open '").utf8(tableToken.getTableName()).$('\'').$();
         this.configuration = configuration;
-        this.memoryPressureRegulator = memoryPressureRegulator;
         this.ddlListener = ddlListener;
         this.snapshotAgent = snapshotAgent;
         this.partitionFrameFactory = new PartitionFrameFactory(configuration);
@@ -1014,7 +1012,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long o3TimestampMin,
             long o3TimestampMax,
             SymbolMapDiffCursor mapDiffCursor,
-            long seqTxn
+            long seqTxn,
+            int partitionParallelism
     ) {
         if (inTransaction()) {
             // When writer is returned to pool, it should be rolled back. Having an open transaction is very suspicious.
@@ -1054,13 +1053,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         boolean isLastSegmentUsage = walTxnDetails.isLastSegmentUsage(seqTxn);
         boolean committed;
         try {
-            committed = processWalBlock(walPath, metadata.getTimestampIndex(), inOrder, rowLo, rowHi, o3TimestampMin, o3TimestampMax, mapDiffCursor, commitToTimestamp, walSegmentId, isLastSegmentUsage);
+            committed = processWalBlock(walPath, metadata.getTimestampIndex(), inOrder, rowLo, rowHi, o3TimestampMin, o3TimestampMax, mapDiffCursor, commitToTimestamp, walSegmentId, isLastSegmentUsage, partitionParallelism);
         } catch (CairoException e) {
             if (e.isOutOfMemory()) {
-                if (!memoryPressureRegulator.onPressureIncreased(microsecondClock.getTicks())) {
-                    LOG.error().$("out of memory, cannot commit WAL [table=").utf8(tableToken.getTableName()).I$();
-                    e.setOutOfMemory(false); // reset flag so it won't be retried
-                }
+                // oom -> we cannot rely on internal TableWriter consistency, all bets are off, better to discard it and re-recreate
                 distressed = true;
             }
             throw e;
@@ -1695,10 +1691,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    public void onDecreasedMemoryPressure() {
-        memoryPressureRegulator.onPressureDecreased(microsecondClock.getTicks());
-    }
-
     public void openLastPartition() {
         try {
             openLastPartitionAndSetAppendPosition(txWriter.getLastPartitionTimestamp());
@@ -1747,7 +1739,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             SymbolMapDiffCursor mapDiffCursor,
             long commitToTimestamp,
             long walSegmentId,
-            boolean isLastSegmentUsage
+            boolean isLastSegmentUsage,
+            int partitionParallelism
     ) {
         int walRootPathLen = walPath.size();
         long maxTimestamp = txWriter.getMaxTimestamp();
@@ -1945,7 +1938,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             commitMinTimestamp,
                             commitMaxTimestamp,
                             copiedToMemory,
-                            o3Lo
+                            o3Lo,
+                            partitionParallelism
                     );
 
                     finishO3Commit(initialPartitionTimestampHi);
@@ -2288,10 +2282,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public void setSeqTxn(long seqTxn) {
         assert txWriter.getLagRowCount() == 0 && txWriter.getLagTxnCount() == 0;
         txWriter.setSeqTxn(seqTxn);
-    }
-
-    public boolean shouldBackOff() {
-        return memoryPressureRegulator.shouldBackOff(microsecondClock.getTicks());
     }
 
     public long size() {
@@ -5247,7 +5237,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     o3TimestampMin,
                     o3TimestampMax,
                     true,
-                    0L
+                    0L,
+                    Integer.MAX_VALUE
             );
         } finally {
             finishO3Append(o3LagRowCount);
@@ -5904,7 +5895,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long o3TimestampMin,
             long o3TimestampMax,
             boolean flattenTimestamp,
-            long rowLo
+            long rowLo,
+            int partitionParallelism
     ) {
         o3ErrorCount.set(0);
         o3oomObserved = false;
@@ -5926,9 +5918,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int pCount = 0;
         try {
             resizePartitionUpdateSink();
-
-            int partitionParallelism = memoryPressureRegulator.getMaxO3MergeParallelism();
-            LOG.debug().$("o3 partition task [parallelism=").$(partitionParallelism).I$();
 
             // One loop iteration per partition.
             for (int partitionCount = 1; srcOoo < srcOooMax; partitionCount++) {

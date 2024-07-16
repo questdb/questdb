@@ -1925,8 +1925,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         configuration.getRoot(),
                         engine.getDdlListener(tableToken),
                         getEngine().getSnapshotAgent(),
-                        engine.getMetrics(),
-                        EmptyO3MemoryPressureRegulator.INSTANCE
+                        engine.getMetrics()
                 );
             } else {
                 writerAPI = engine.getTableWriterAPI(tableToken, "create as select");

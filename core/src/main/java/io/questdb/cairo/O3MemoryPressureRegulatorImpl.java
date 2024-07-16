@@ -49,14 +49,12 @@ public final class O3MemoryPressureRegulatorImpl implements O3MemoryPressureRegu
     private final String tableName;
     private final SeqTxnTracker txnTracker;
     private int level;
-    private long walBackoff = -1;
 
     public O3MemoryPressureRegulatorImpl(Rnd rnd, MicrosecondClock clock, SeqTxnTracker txnTracker, String tableName) {
         this.rnd = rnd;
         this.txnTracker = txnTracker;
         this.level = txnTracker.getMemoryPressureLevel();
         this.tableName = tableName;
-        adjustWalBackoff(clock.getTicks());
     }
 
     @TestOnly
@@ -87,6 +85,10 @@ public final class O3MemoryPressureRegulatorImpl implements O3MemoryPressureRegu
         return partitionParallelism;
     }
 
+    public long getWalBackoff() {
+        return txnTracker.getWalBackoffUntil();
+    }
+
     @Override
     public void onPressureDecreased(long nowMicros) {
         if (level == MIN_LEVEL) {
@@ -99,8 +101,6 @@ public final class O3MemoryPressureRegulatorImpl implements O3MemoryPressureRegu
             txnTracker.setMemoryPressureLevel(level);
             adjustWalBackoff(nowMicros);
         } else {
-            assert walBackoff == -1; // no backOff
-
             // we increase parallelism probabilistically - the more pressure the lesser chance of increasing it
             int minTrailingZeros = (level + 2);
             // if memoryPressure == 1  we require 3 trailing zeros -> that's 1 in 8 chance
@@ -139,7 +139,7 @@ public final class O3MemoryPressureRegulatorImpl implements O3MemoryPressureRegu
 
     @Override
     public boolean shouldBackOff(long nowMicros) {
-        return nowMicros < walBackoff;
+        return nowMicros < txnTracker.getWalBackoffUntil();
     }
 
     private void adjustWalBackoff(long nowMicros) {
@@ -151,12 +151,11 @@ public final class O3MemoryPressureRegulatorImpl implements O3MemoryPressureRegu
             // level 9 -> 4096 ms
             // level 10 -> 8192 ms
             long backoffMicros = backoffMillis * 1_000L;
-
-            walBackoff = nowMicros + backoffMicros;
+            txnTracker.setWalBackoffUntil(nowMicros + backoffMicros);
         } else {
             // we reduce parallelism, that's already aggressive enough
             // so no back off
-            walBackoff = -1;
+            txnTracker.setWalBackoffUntil(-1);
         }
     }
 }

@@ -28,6 +28,7 @@ import io.questdb.Telemetry;
 import io.questdb.TelemetryOrigin;
 import io.questdb.TelemetrySystemEvent;
 import io.questdb.cairo.*;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
@@ -39,6 +40,7 @@ import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Job;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
@@ -222,7 +224,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             CairoEngine engine,
             OperationExecutor operationExecutor,
             Path tempPath,
-            RunStatus runStatus
+            RunStatus runStatus,
+            int partitionParallelism
     ) {
         final TableSequencerAPI tableSequencerAPI = engine.getTableSequencerAPI();
         boolean isTerminating;
@@ -344,7 +347,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                     segmentTxn,
                                     operationExecutor,
                                     seqTxn,
-                                    commitTimestamp
+                                    commitTimestamp,
+                                    partitionParallelism
                             );
 
                             if (added > -1L) {
@@ -391,8 +395,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         TelemetryWalTask.store(walTelemetry, event, tableToken.getTableId(), walId, seqTxn, rowCount, physicalRowCount, latencyUs);
     }
 
-    private void handleWalApplyFailure(TableToken tableToken, ErrorTag errorTag, String errorMessage) {
-        if (errorTag == OUT_OF_MEMORY) {
+    private void handleWalApplyFailure(TableToken tableToken, ErrorTag errorTag, String errorMessage, O3MemoryPressureRegulator regulator) {
+        if (errorTag == OUT_OF_MEMORY && regulator != null && regulator.onPressureIncreased(MicrosecondClockImpl.INSTANCE.getTicks())) {
             engine.notifyWalTxnRepublisher(tableToken);
         } else {
             try {
@@ -410,7 +414,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             long segmentTxn,
             OperationExecutor operationExecutor,
             long seqTxn,
-            long commitTimestamp
+            long commitTimestamp,
+            int partitionParallelism
     ) {
         try (WalEventReader eventReader = walEventReader) {
             final WalEventCursor walEventCursor = eventReader.of(walPath, WAL_FORMAT_VERSION, segmentTxn);
@@ -430,7 +435,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 dataInfo.getMinTimestamp(),
                                 dataInfo.getMaxTimestamp(),
                                 dataInfo,
-                                seqTxn
+                                seqTxn,
+                                partitionParallelism
                         );
                         final long latency = microClock.getTicks() - start;
                         long physicalRowCount = writer.getPhysicallyWrittenRowsSinceLastCommit();
@@ -517,6 +523,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             Job.RunStatus runStatus
     ) {
         final Path tempPath = Path.PATH.get();
+        O3MemoryPressureRegulatorImpl regulator = null;
         try {
             // security context is checked on writing to the WAL and can be ignored here
             final TableToken updatedToken = engine.getUpdatedTableToken(tableToken);
@@ -527,14 +534,22 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 // else: table is dropped and fully cleaned, this is late notification.
             } else {
                 long lastWriterTxn;
+
+                // TODO: Remove allocations!!!
+                Rnd rnd = new Rnd();
+                SeqTxnTracker txnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+                regulator = new O3MemoryPressureRegulatorImpl(rnd, MicrosecondClockImpl.INSTANCE, txnTracker, tableToken.getTableName());
+                // TODO !!!!!
+
+
                 try (TableWriter writer = engine.getWriterUnsafe(updatedToken, WAL_2_TABLE_WRITE_REASON)) {
                     assert writer.getMetadata().getTableId() == tableToken.getTableId();
-                    if (writer.shouldBackOff()) {
+                    if (regulator.shouldBackOff(MicrosecondClockImpl.INSTANCE.getTicks())) {
                         engine.notifyWalTxnRepublisher(tableToken);
                         return;
                     }
-                    applyOutstandingWalTransactions(tableToken, writer, engine, operationCompiler, tempPath, runStatus);
-                    writer.onDecreasedMemoryPressure();
+                    applyOutstandingWalTransactions(tableToken, writer, engine, operationCompiler, tempPath, runStatus, regulator.getMaxO3MergeParallelism());
+                    regulator.onPressureIncreased(MicrosecondClockImpl.INSTANCE.getTicks());
                     lastWriterTxn = writer.getSeqTxn();
                 } catch (EntryUnavailableException tableBusy) {
                     //noinspection StringEquality
@@ -563,19 +578,21 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 tryDestroyDroppedTable(tableToken, null, engine, tempPath);
             } else {
                 telemetryFacade.store(TelemetrySystemEvent.WAL_APPLY_SUSPEND, TelemetryOrigin.WAL_APPLY);
+
+                // todo: we do not always suspend a table, this logging is misleading
                 LOG.critical().$("job failed, table suspended [table=").utf8(tableToken.getDirName())
                         .$(", error=").$(ex.getFlyweightMessage())
                         .$(", errno=").$(ex.getErrno())
                         .I$();
                 handleWalApplyFailure(tableToken, ex.isOutOfMemory()
-                        ? OUT_OF_MEMORY : resolveTag(ex.getErrno()), ex.getFlyweightMessage().toString());
+                        ? OUT_OF_MEMORY : resolveTag(ex.getErrno()), ex.getFlyweightMessage().toString(), regulator);
             }
         } catch (Throwable ex) {
             telemetryFacade.store(TelemetrySystemEvent.WAL_APPLY_SUSPEND, TelemetryOrigin.WAL_APPLY);
             LOG.critical().$("job failed, table suspended [table=").utf8(tableToken.getDirName())
                     .$(", error=").$(ex)
                     .I$();
-            handleWalApplyFailure(tableToken, ErrorTag.NONE, ex.getMessage());
+            handleWalApplyFailure(tableToken, ErrorTag.NONE, ex.getMessage(), regulator);
         }
     }
 
