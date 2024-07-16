@@ -183,7 +183,7 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
     }
 
     private static class StringBuilderSink implements CharSequence {
-//#if jdk.version==8
+        //#if jdk.version==8
 //$        private final StringBuffer buffer = new StringBuffer();
 //#else
         private final StringBuilder buffer = new StringBuilder();
