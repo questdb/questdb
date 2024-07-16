@@ -101,7 +101,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
 
             // Check logging is ok. This test reproduces logging failure because of exception in the middle of logging.
             // The result can be that this loop never finishes.
-            for(int i = 0; i < 1025; i++) {
+            for (int i = 0; i < 1025; i++) {
                 LOG.infoW().$("test").$();
             }
         });

@@ -228,7 +228,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     "Async Group By workers: 1\n" +
-                            "  keys: [x]\n"+
+                            "  keys: [x]\n" +
                             "  values: [last(ts)]\n" +
                             "  filter: null\n" +
                             "    DataFrame\n" +
@@ -320,7 +320,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     "GroupBy vectorized: true workers: 1\n" +
-                            "  keys: [x]\n"+
+                            "  keys: [x]\n" +
                             "  values: [max(ts)]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
@@ -409,7 +409,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     "GroupBy vectorized: true workers: 1\n" +
-                            "  keys: [x]\n"+
+                            "  keys: [x]\n" +
                             "  values: [min(ts)]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
@@ -428,10 +428,10 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     "Limit lo: 1\n" +
-                                "    SelectedRecord\n" +
-                                "        DataFrame\n" +
-                                "            Row forward scan\n" +
-                                "            Frame forward scan on: y\n");
+                            "    SelectedRecord\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: y\n");
         });
     }
 
@@ -619,6 +619,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "            Frame forward scan on: y\n");
         });
     }
+
     @Test
     public void testQueryPlanForNestedFirstFunctionOptimisationOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
@@ -666,7 +667,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     "Async Group By workers: 1\n" +
-                            "  keys: [x]\n"+
+                            "  keys: [x]\n" +
                             "  values: [first(ts)]\n" +
                             "  filter: null\n" +
                             "    DataFrame\n" +
