@@ -5530,7 +5530,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private void guardAgainstFromToWithKeyedSampleBy(boolean isFromTo) throws SqlException {
         if (isFromTo) {
-            throw SqlException.$(0, "FROM-TO intervals are not supported for keyed sample by queries");
+            throw SqlException.$(0, "FROM-TO intervals are not supported for keyed SAMPLE BY queries");
         }
     }
 

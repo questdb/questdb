@@ -3803,13 +3803,13 @@ public class SqlOptimiser implements Mutable {
 
     /**
      * Rewrites expressions such as:
-     * <p>
+     * <pre>
      * SELECT count_distinct(s) FROM tab WHERE s like '%a';
-     * </p>
+     * </pre>
      * into more parallel-friendly:
-     * <p>
+     * <pre>
      * SELECT count(*) FROM (SELECT s FROM tab WHERE s like '%a' AND s IS NOT NULL GROUP BY s);
-     * </p>
+     * </pre>
      */
     private void rewriteCountDistinct(QueryModel model) throws SqlException {
         final QueryModel nested = model.getNestedModel();
@@ -4570,17 +4570,11 @@ public class SqlOptimiser implements Mutable {
             ExpressionNode sampleByFrom = nested.getSampleByFrom();
             ExpressionNode sampleByTo = nested.getSampleByTo();
 
-
             if (
                     sampleBy != null
                             && timestamp != null
                             && (sampleByOffset != null && SqlKeywords.isZeroOffset(sampleByOffset.token) && (sampleByTimezoneName == null || SqlKeywords.isUTC(sampleByTimezoneName.token)))
-                            && (sampleByFillSize == 0
-                            || (sampleByFillSize == 1 &&
-                            (
-                                    !SqlKeywords.isPrevKeyword(sampleByFill.getQuick(0).token))
-                            && !SqlKeywords.isLinearKeyword(sampleByFill.getQuick(0).token))
-                    )
+                            && (sampleByFillSize == 0 || (sampleByFillSize == 1 && !SqlKeywords.isPrevKeyword(sampleByFill.getQuick(0).token) && !SqlKeywords.isLinearKeyword(sampleByFill.getQuick(0).token)))
                             && sampleByUnit == null
                             && !((sampleByFrom != null && sampleByFrom.token.charAt(0) == '$') || (sampleByTo != null && sampleByTo.token.charAt(0) == '$'))
             ) {
@@ -4682,7 +4676,6 @@ public class SqlOptimiser implements Mutable {
                     }
                 }
 
-
                 // These lists collect timestamp copies that we remove from the group-by model.
                 // The goal is to re-populate the wrapper model with the copies in the correct positions.
                 ObjList<QueryColumn> insetColumnAliases = new ObjList<>();
@@ -4747,7 +4740,6 @@ public class SqlOptimiser implements Mutable {
                 }
 
                 int timestampPos = model.getColumnAliasIndex(timestampAlias);
-
 
                 ExpressionNode timestampFunc = expressionNodePool.next();
                 timestampFunc.token = "timestamp_floor";
