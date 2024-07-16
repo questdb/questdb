@@ -205,7 +205,7 @@ public class SeqTxnTracker {
                 memPressureLevel--;
             }
         }
-        LOG.info().$("Memory pressure easing off for table, new level=").$(memPressureLevel).$();
+        LOG.info().$("Memory pressure easing off, new level=").$(memPressureLevel).$();
     }
 
     public void setMemoryPressureLevel(int memoryPressureLevel) {
