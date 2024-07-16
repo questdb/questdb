@@ -538,7 +538,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 try (TableWriter writer = engine.getWriterUnsafe(updatedToken, WAL_2_TABLE_WRITE_REASON)) {
                     assert writer.getMetadata().getTableId() == tableToken.getTableId();
                     if (txnTracker.shouldBackOff(MicrosecondClockImpl.INSTANCE.getTicks())) {
-                        engine.notifyWalTxnRepublisher(tableToken);
+                        // rely on CheckWalTransactionsJob to notify us when to apply transactions
                         return;
                     }
                     applyOutstandingWalTransactions(tableToken, writer, engine, operationCompiler, tempPath, runStatus, txnTracker.getMaxO3MergeParallelism());
