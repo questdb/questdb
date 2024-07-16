@@ -94,7 +94,6 @@ public final class O3MemoryPressureRegulatorImpl implements O3MemoryPressureRegu
 
         if (level > PARALLELISM_THROTTLING_LEVEL) {
             level--;
-            LOG.infoW().$("Memory pressure building up, new level=").$(level).$();
             txnTracker.setMemoryPressureLevel(level);
             adjustWalBackOff(nowMicros);
         } else {
@@ -113,6 +112,7 @@ public final class O3MemoryPressureRegulatorImpl implements O3MemoryPressureRegu
                 txnTracker.setMemoryPressureLevel(level);
             }
         }
+        LOG.infoW().$("Memory pressure easing off, new level=").$(level).$();
     }
 
     @Override
@@ -129,9 +129,9 @@ public final class O3MemoryPressureRegulatorImpl implements O3MemoryPressureRegu
             return false;
         }
         level++;
-        LOG.infoW().$("Memory pressure easing off, new level=").$(level).$();
         txnTracker.setMemoryPressureLevel(level);
         adjustWalBackOff(nowMicros);
+        LOG.infoW().$("Memory pressure building up, new level=").$(level).$();
         return true;
     }
 
