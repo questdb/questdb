@@ -29,6 +29,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import org.jetbrains.annotations.TestOnly;
 
 public class SeqTxnTracker {
@@ -144,7 +145,7 @@ public class SeqTxnTracker {
         while (newSeqTxn > stxn && !Unsafe.cas(this, SEQ_TXN_OFFSET, stxn, newSeqTxn)) {
             stxn = seqTxn;
         }
-        return writerTxn < seqTxn && suspendedState > 0;
+        return writerTxn < seqTxn && suspendedState > 0 && MicrosecondClockImpl.INSTANCE.getTicks() > walBackoffUntil;
     }
 
     public boolean notifyOnCommit(long newSeqTxn) {
