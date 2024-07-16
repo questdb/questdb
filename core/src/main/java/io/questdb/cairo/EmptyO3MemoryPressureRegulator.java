@@ -45,7 +45,7 @@ public final class EmptyO3MemoryPressureRegulator implements O3MemoryPressureReg
     }
 
     @Override
-    public boolean shouldBackoff(long nowMicros) {
+    public boolean shouldBackOff(long nowMicros) {
         return false;
     }
 }

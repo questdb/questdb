@@ -95,6 +95,7 @@ public class O3MemoryPressureRegulatorImplTest extends AbstractTest {
                 decreaseCycles++;
                 now += 1_000;
                 regulator.onPressureDecreased(now);
+                assertRegulatorState(regulator, regulator.getLevel(), now);
             } while (regulator.getLevel() == expectedLevel);
             System.out.println("Decreasing pressure level from " + expectedLevel + " to " + regulator.getLevel() + " took " + decreaseCycles + " cycles");
             expectedLevel--;
@@ -116,7 +117,7 @@ public class O3MemoryPressureRegulatorImplTest extends AbstractTest {
         O3MemoryPressureRegulatorImpl regulator = new O3MemoryPressureRegulatorImpl(rnd, MicrosecondClockImpl.INSTANCE, txnTracker);
 
         Assert.assertEquals(Integer.MAX_VALUE, regulator.getMaxO3MergeParallelism());
-        Assert.assertFalse(regulator.shouldBackoff(MicrosecondClockImpl.INSTANCE.getTicks()));
+        Assert.assertFalse(regulator.shouldBackOff(MicrosecondClockImpl.INSTANCE.getTicks()));
     }
 
     @Test
@@ -145,11 +146,11 @@ public class O3MemoryPressureRegulatorImplTest extends AbstractTest {
 
         int expectedBackoff = EXPECTED_BACKOFF_MICROS[expectedLevel];
         if (expectedBackoff == 0) {
-            Assert.assertFalse(regulator.shouldBackoff(now));
+            Assert.assertFalse(regulator.shouldBackOff(now));
         } else {
-            Assert.assertTrue(regulator.shouldBackoff(now));
-            Assert.assertTrue(regulator.shouldBackoff(now + expectedBackoff - 1));
-            Assert.assertFalse(regulator.shouldBackoff(now + expectedBackoff));
+            Assert.assertTrue(regulator.shouldBackOff(now));
+            Assert.assertTrue(regulator.shouldBackOff(now + expectedBackoff - 1));
+            Assert.assertFalse(regulator.shouldBackOff(now + expectedBackoff));
         }
     }
 }

@@ -44,17 +44,17 @@ public final class O3MemoryPressureRegulatorImpl implements O3MemoryPressureRegu
 
     private static final int MAX_LEVEL = 10;
     private static final int MIN_LEVEL = 0;
-    private static final int PARALLELISM_THROTTLING_LEVEL = 5; // when exceeded we start introducing backoff
+    private static final int PARALLELISM_THROTTLING_LEVEL = 5; // when exceeded we start introducing back off
     private final Rnd rnd;
     private final SeqTxnTracker txnTracker;
     private int level;
-    private long walBackoff = -1;
+    private long walBackOff = -1;
 
     public O3MemoryPressureRegulatorImpl(Rnd rnd, MicrosecondClock clock, SeqTxnTracker txnTracker) {
         this.rnd = rnd;
         this.txnTracker = txnTracker;
         this.level = txnTracker.getMemoryPressureLevel();
-        adjustWalBackoff(clock.getTicks());
+        adjustWalBackOff(clock.getTicks());
     }
 
     @TestOnly
@@ -93,12 +93,13 @@ public final class O3MemoryPressureRegulatorImpl implements O3MemoryPressureRegu
         }
 
         if (level > PARALLELISM_THROTTLING_LEVEL) {
-            // we always reduce max. backoff
             level--;
             LOG.infoW().$("Memory pressure building up, new level=").$(level).$();
             txnTracker.setMemoryPressureLevel(level);
-            adjustWalBackoff(nowMicros);
+            adjustWalBackOff(nowMicros);
         } else {
+            assert walBackOff == -1; // no backOff
+
             // we increase parallelism probabilistically - the more pressure the lesser chance of increasing it
             int minTrailingZeros = (level + 2);
             // if memoryPressure == 1  we require 3 trailing zeros -> that's 1 in 8 chance
@@ -110,7 +111,6 @@ public final class O3MemoryPressureRegulatorImpl implements O3MemoryPressureRegu
             if (Integer.numberOfTrailingZeros(i) >= minTrailingZeros) {
                 level--;
                 txnTracker.setMemoryPressureLevel(level);
-                adjustWalBackoff(nowMicros);
             }
         }
     }
@@ -125,36 +125,36 @@ public final class O3MemoryPressureRegulatorImpl implements O3MemoryPressureRegu
             // we are already at max level, we can't increase it further
             // return false to indicate that we can't retry the operation
             // this will likely suspend the table
-            adjustWalBackoff(nowMicros);
+            adjustWalBackOff(nowMicros);
             return false;
         }
         level++;
         LOG.infoW().$("Memory pressure easing off, new level=").$(level).$();
         txnTracker.setMemoryPressureLevel(level);
-        adjustWalBackoff(nowMicros);
+        adjustWalBackOff(nowMicros);
         return true;
     }
 
     @Override
-    public boolean shouldBackoff(long nowMicros) {
-        return nowMicros < walBackoff;
+    public boolean shouldBackOff(long nowMicros) {
+        return nowMicros < walBackOff;
     }
 
-    private void adjustWalBackoff(long nowMicros) {
+    private void adjustWalBackOff(long nowMicros) {
         if (level > 5) {
-            int backoffMillis = (1 << (level + 3));
+            int backOffMillis = (1 << (level + 3));
             // level 6 -> 512 ms
             // level 7 -> 1024 ms
             // level 8 -> 2048 ms
             // level 9 -> 4096 ms
             // level 10 -> 8192 ms
-            long backoffMicros = backoffMillis * 1_000L;
+            long backOffMicros = backOffMillis * 1_000L;
 
-            walBackoff = nowMicros + backoffMicros;
+            walBackOff = nowMicros + backOffMicros;
         } else {
             // we reduce parallelism, that's already aggressive enough
-            // so no backoff
-            walBackoff = -1;
+            // so no back off
+            walBackOff = -1;
         }
     }
 }

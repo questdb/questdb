@@ -37,5 +37,5 @@ public interface O3MemoryPressureRegulator {
      */
     boolean onPressureIncreased(long nowMicros);
 
-    boolean shouldBackoff(long nowMicros);
+    boolean shouldBackOff(long nowMicros);
 }

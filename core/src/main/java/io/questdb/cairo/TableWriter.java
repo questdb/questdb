@@ -2290,8 +2290,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.setSeqTxn(seqTxn);
     }
 
-    public boolean shouldBackoff() {
-        return memoryPressureRegulator.shouldBackoff(microsecondClock.getTicks());
+    public boolean shouldBackOff() {
+        return memoryPressureRegulator.shouldBackOff(microsecondClock.getTicks());
     }
 
     public long size() {
