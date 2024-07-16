@@ -6169,7 +6169,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .I$();
 
             o3ConsumePartitionUpdates();
-            if (o3ErrorCount.get() == 0) {
+            if (o3ErrorCount.get() == 0 && success) {
                 o3ConsumePartitionUpdateSink();
             }
             o3DoneLatch.await(latchCount);
