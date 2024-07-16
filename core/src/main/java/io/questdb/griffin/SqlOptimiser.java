@@ -4541,7 +4541,7 @@ public class SqlOptimiser implements Mutable {
     /**
      * Recursive. Replaces "sample by" models with group-by. Not all forms of "sample by"
      * can be implemented via this method. Therefore, the rewrite avoids the following:
-     * - fills
+     * - linear and prev fills
      * - custom non-wall-clock alignments
      *
      * @param model the input model, it is expected to be very early in optimisation process
@@ -4657,8 +4657,7 @@ public class SqlOptimiser implements Mutable {
                         for (int i = 0, n = maybeKeyed.size(); i < n; i++) {
                             final ExpressionNode expr = maybeKeyed.getQuick(i);
                             // drop out early, since we don't handle keyed
-                            if (!Chars.equalsIgnoreCase(expr.token, timestamp.token) && !Chars.equalsIgnoreCaseNc(expr.token, timestampAlias)
-                                    && sampleByFill.size() != 0) {
+                            if (!Chars.equalsIgnoreCase(expr.token, timestamp.token) && !Chars.equalsIgnoreCaseNc(expr.token, timestampAlias)) {
                                 // recurse nested models
                                 nested.setNestedModel(rewriteSampleBy(nested.getNestedModel()));
 
@@ -4760,6 +4759,10 @@ public class SqlOptimiser implements Mutable {
                 param2.paramCount = 0;
                 param2.type = LITERAL;
 
+                // If SAMPLE BY FROM ... is present, we need to use the variant of timestamp_floor
+                // which includes the `offset` parameter. This value is populated from the FROM clause and anchors
+                // the calendar-aligned buckets to an offset other than the unix epoch.
+
                 if (sampleByFrom != null) {
                     timestampFunc.args.add(sampleByFrom);
                     timestampFunc.args.add(param2);
@@ -4831,8 +4834,16 @@ public class SqlOptimiser implements Mutable {
         return model;
     }
 
-
-    private QueryModel rewriteSampleByFromTo(QueryModel model) throws SqlException {
+    /**
+     * Copies the SAMPLE BY FROM-TO interval into a WHERE clause if no WHERE clause over designated
+     * timestamps has been provided. <br>
+     * This is to allow for the generation of an interval scan and minimise reading of un-needed data.
+     *
+     * @param model
+     * @throws SqlException
+     */
+    @SuppressWarnings("ConstantValue")
+    private void rewriteSampleByFromTo(QueryModel model) throws SqlException {
         QueryModel curr = model;
         QueryModel fromToModel = null;
         QueryModel whereModel = null;
@@ -4853,7 +4864,7 @@ public class SqlOptimiser implements Mutable {
 
         // if no from-to
         if (sampleFrom == null && sampleTo == null) {
-            return model;
+            return;
         }
 
         curr = model;
@@ -4873,22 +4884,16 @@ public class SqlOptimiser implements Mutable {
             traversalAlgo.traverse(whereClause, rewriteSampleByFromToVisitor.of(whereModel.getTimestamp()));
             // if it already considers the timestamp, then we do nothing
             if (rewriteSampleByFromToVisitor.timestampAppears) {
-                return model;
+                return;
             }
 
-            // else we need to add compose the existing clause with AND
+            // else we need to compose the existing clause with AND
         }
 
         ExpressionNode intervalClause = null;
 
         // construct an appropriate where clause
         if (sampleFrom != null && sampleTo != null) {
-//            ExpressionNode betweenNode = expressionNodePool.next().of(SET_OPERATION, "between", 11, 0);
-//            betweenNode.args.add(sampleTo);
-//            betweenNode.args.add(sampleFrom);
-//            betweenNode.args.add(fromToModel.getTimestamp());
-//            betweenNode.paramCount = 3;
-//            intervalClause = betweenNode;
             ExpressionNode greaterThanOrEqualToNode = expressionNodePool.next().of(OPERATION, ">=", 12, 0);
             greaterThanOrEqualToNode.lhs = fromToModel.getTimestamp();
             greaterThanOrEqualToNode.rhs = sampleFrom;
@@ -4931,8 +4936,6 @@ public class SqlOptimiser implements Mutable {
         } else {
             fromToModel.setWhereClause(intervalClause);
         }
-
-        return model;
     }
 
     // flatParent = true means that parent model does not have selected columns
@@ -6064,7 +6067,7 @@ public class SqlOptimiser implements Mutable {
             optimiseExpressionModels(rewrittenModel, sqlExecutionContext, sqlParserCallback);
             enumerateTableColumns(rewrittenModel, sqlExecutionContext, sqlParserCallback);
             rewriteTopLevelLiteralsToFunctions(rewrittenModel);
-            rewrittenModel = rewriteSampleByFromTo(rewrittenModel);
+            rewriteSampleByFromTo(rewrittenModel);
             rewrittenModel = rewriteSampleBy(rewrittenModel);
             rewriteGroupByForFirstLastMaxMinAggregateFunctions(rewrittenModel);
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);

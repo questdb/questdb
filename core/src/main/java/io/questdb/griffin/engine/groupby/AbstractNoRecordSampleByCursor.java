@@ -48,7 +48,6 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
     protected RecordCursor baseCursor;
     protected Record baseRecord;
     protected SqlExecutionCircuitBreaker circuitBreaker;
-    protected boolean endFill;
     // this epoch is generally the same as `sampleLocalEpoch` except for cases where
     // sampler passed thru Daytime Savings Transition date
     // diverging values tell `filling` implementations not to fill this gap
@@ -114,9 +113,8 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         rowId = 0;
         isNotKeyedLoopInitialized = false;
         areTimestampsInitialized = false;
-        endFill = false;
-        sampleFromFunc.init(null, executionContext);
-        sampleToFunc.init(null, executionContext);
+        sampleFromFunc.init(baseCursor, executionContext);
+        sampleToFunc.init(baseCursor, executionContext);
     }
 
     @Override
@@ -138,7 +136,6 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         rowId = 0;
         isNotKeyedLoopInitialized = false;
         areTimestampsInitialized = false;
-        endFill = false;
     }
 
     private void kludge(long newTzOffset) {

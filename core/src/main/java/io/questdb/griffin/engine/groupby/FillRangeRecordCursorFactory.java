@@ -42,6 +42,13 @@ import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
 
 
+/**
+ * Fills missing rows in a result set range based on histogram buckets calculated using time intervals.
+ * Currently only generated as a parent node to a group by, to support parallel SAMPLE BY with fills.
+ * Intended to support FILL(VALUE), FILL(NULL).
+ * Cannot be generated standalone (there's no syntax just to generate this, its only generated
+ * via the above optimisation).
+ */
 public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
     public static final Log LOG = LogFactory.getLog(FillRangeRecordCursorFactory.class);
     private final RecordCursorFactory base;

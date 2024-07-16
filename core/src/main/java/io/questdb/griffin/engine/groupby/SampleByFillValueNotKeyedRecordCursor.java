@@ -26,6 +26,9 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.std.ObjList;
@@ -33,6 +36,7 @@ import io.questdb.std.ObjList;
 public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualRecordSampleByCursor {
     private final SimpleMapValuePeeker peeker;
     private final SimpleMapValue simpleMapValue;
+    private boolean endFill = false;
     private boolean firstRun = true;
     private boolean gapFill = false;
 
@@ -124,6 +128,18 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
         }
 
         return hasNext;
+    }
+
+    @Override
+    public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
+        super.of(baseCursor, executionContext);
+        endFill = false;
+    }
+
+    @Override
+    public void toTop() {
+        super.toTop();
+        endFill = false;
     }
 
     private boolean setActiveA(long expectedLocalEpoch) {

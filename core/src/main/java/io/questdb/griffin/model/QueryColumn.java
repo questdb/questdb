@@ -71,7 +71,8 @@ public class QueryColumn implements Mutable, Sinkable {
         return columnType;
     }
 
-    public CharSequence getColumnTypeName() {
+    @SuppressWarnings("unused")
+    public CharSequence getColumnTypeName() { // for debugging
         return ColumnType.nameOf(columnType);
     }
 
