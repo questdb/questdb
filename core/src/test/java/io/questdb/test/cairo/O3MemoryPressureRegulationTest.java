@@ -24,7 +24,6 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.O3MemoryPressureRegulatorImpl;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -34,7 +33,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class O3MemoryPressureRegulatorImplTest extends AbstractTest {
+public class O3MemoryPressureRegulationTest extends AbstractTest {
 
     private static final int[] EXPECTED_BACKOFF_MICROS = {
             0, // level 0
@@ -67,90 +66,87 @@ public class O3MemoryPressureRegulatorImplTest extends AbstractTest {
     @Test
     public void testDecreasingPressure() {
         Rnd rnd = TestUtils.generateRandom(LOG);
-        SeqTxnTracker txnTracker = new SeqTxnTracker();
+        SeqTxnTracker txnTracker = new SeqTxnTracker(rnd);
         MicrosecondClock clock = MicrosecondClockImpl.INSTANCE;
-        O3MemoryPressureRegulatorImpl regulator = new O3MemoryPressureRegulatorImpl(rnd, clock, txnTracker, "foo");
 
         long now = clock.getTicks();
         for (int i = 0; i < 10; i++) {
             now += 1_000;
-            regulator.onPressureIncreased(now);
+            txnTracker.onPressureIncreased(now);
         }
 
         int expectedLevel = 10;
 
-        // in the level 6..10 range, regulator decrease pressure level on every onPressureDecrease() call
+        // in the level 6..10 range, txnTracker decrease pressure level on every onPressureDecrease() call
         for (int i = 0; i < 5; i++) {
             now += 1_000;
-            regulator.onPressureDecreased(now);
+            txnTracker.onPressureReduced(now);
             expectedLevel--;
 
-            assertRegulatorState(regulator, expectedLevel, now);
+            assertRegulationState(txnTracker, expectedLevel, now);
         }
 
-        // in the level 1..5 range, regulator decrease pressure level only with some probability
+        // in the level 1..5 range, txnTracker decrease pressure level only with some probability
         for (int i = 0; i < 5; i++) {
             int decreaseCycles = 0;
             do {
                 decreaseCycles++;
                 now += 1_000;
-                regulator.onPressureDecreased(now);
-                assertRegulatorState(regulator, regulator.getLevel(), now);
-            } while (regulator.getLevel() == expectedLevel);
-            System.out.println("Decreasing pressure level from " + expectedLevel + " to " + regulator.getLevel() + " took " + decreaseCycles + " cycles");
+                txnTracker.onPressureReduced(now);
+                assertRegulationState(txnTracker, txnTracker.getMemPressureLevel(), now);
+            } while (txnTracker.getMemPressureLevel() == expectedLevel);
+            System.out.println("Decreasing pressure level from " + expectedLevel + " to " + txnTracker.getMemPressureLevel() + " took " + decreaseCycles + " cycles");
             expectedLevel--;
-            assertRegulatorState(regulator, expectedLevel, now);
+            assertRegulationState(txnTracker, expectedLevel, now);
         }
 
         // level 0 is a fast path, it does not change pressure level
         for (int i = 0; i < 5; i++) {
             now += 1_000;
-            regulator.onPressureDecreased(now);
-            assertRegulatorState(regulator, 0, now);
+            txnTracker.onPressureReduced(now);
+            assertRegulationState(txnTracker, 0, now);
         }
     }
 
     @Test
     public void testDefaultState() {
         Rnd rnd = TestUtils.generateRandom(LOG);
-        SeqTxnTracker txnTracker = new SeqTxnTracker();
-        O3MemoryPressureRegulatorImpl regulator = new O3MemoryPressureRegulatorImpl(rnd, MicrosecondClockImpl.INSTANCE, txnTracker, "foo");
+        SeqTxnTracker txnTracker = new SeqTxnTracker(rnd);
 
-        Assert.assertEquals(Integer.MAX_VALUE, regulator.getMaxO3MergeParallelism());
-        Assert.assertFalse(regulator.shouldBackOff(MicrosecondClockImpl.INSTANCE.getTicks()));
+        Assert.assertEquals(Integer.MAX_VALUE, txnTracker.getMaxO3MergeParallelism());
+        Assert.assertFalse(txnTracker.shouldBackOff(MicrosecondClockImpl.INSTANCE.getTicks()));
     }
 
     @Test
     public void testIncreasingPressure() {
         Rnd rnd = TestUtils.generateRandom(LOG);
-        SeqTxnTracker txnTracker = new SeqTxnTracker();
+        SeqTxnTracker txnTracker = new SeqTxnTracker(rnd);
         MicrosecondClock clock = MicrosecondClockImpl.INSTANCE;
-        O3MemoryPressureRegulatorImpl regulator = new O3MemoryPressureRegulatorImpl(rnd, clock, txnTracker, "foo");
 
         long now = clock.getTicks();
         for (int i = 1; i <= 20; i++) {
             now += 1_000;
-            boolean canRetry = regulator.onPressureIncreased(now);
+            boolean canRetry = txnTracker.onPressureIncreased(now);
             Assert.assertEquals(i <= 10, canRetry);
 
             int expectedLevel = Math.min(i, 10);
-            assertRegulatorState(regulator, expectedLevel, now);
+            assertRegulationState(txnTracker, expectedLevel, now);
         }
     }
 
-    private static void assertRegulatorState(O3MemoryPressureRegulatorImpl regulator, int expectedLevel, long now) {
-        Assert.assertEquals(expectedLevel, regulator.getLevel());
+    private static void assertRegulationState(SeqTxnTracker txnTracker, int expectedLevel, long now) {
+        Assert.assertEquals(expectedLevel, txnTracker.getMemPressureLevel());
 
         int expectedParallelism = EXPECTED_PARALLELISMS[expectedLevel];
-        Assert.assertEquals(expectedParallelism, regulator.getMaxO3MergeParallelism());
+        Assert.assertEquals(expectedParallelism, txnTracker.getMaxO3MergeParallelism());
 
         int expectedBackoff = EXPECTED_BACKOFF_MICROS[expectedLevel];
         if (expectedBackoff == 0) {
-            Assert.assertFalse(regulator.shouldBackOff(now));
+            Assert.assertFalse(txnTracker.shouldBackOff(now));
         } else {
-            Assert.assertTrue(regulator.shouldBackOff(now));
-            Assert.assertTrue(regulator.shouldBackOff(now + expectedBackoff - 1));
-            Assert.assertFalse(regulator.shouldBackOff(now + expectedBackoff));
+            Assert.assertTrue(txnTracker.shouldBackOff(now));
+            Assert.assertTrue(txnTracker.shouldBackOff(now + expectedBackoff - 1));
+            Assert.assertFalse(txnTracker.shouldBackOff(now + expectedBackoff));
         }
     }
 }

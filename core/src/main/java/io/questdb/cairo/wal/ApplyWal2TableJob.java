@@ -395,8 +395,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         TelemetryWalTask.store(walTelemetry, event, tableToken.getTableId(), walId, seqTxn, rowCount, physicalRowCount, latencyUs);
     }
 
-    private void handleWalApplyFailure(TableToken tableToken, ErrorTag errorTag, String errorMessage, O3MemoryPressureRegulator regulator) {
-        if (errorTag == OUT_OF_MEMORY && regulator != null && regulator.onPressureIncreased(MicrosecondClockImpl.INSTANCE.getTicks())) {
+    private void handleWalApplyFailure(TableToken tableToken, ErrorTag errorTag, String errorMessage, SeqTxnTracker txnTracker) {
+        if (errorTag == OUT_OF_MEMORY && txnTracker != null && txnTracker.onPressureIncreased(MicrosecondClockImpl.INSTANCE.getTicks())) {
             engine.notifyWalTxnRepublisher(tableToken);
         } else {
             try {
@@ -523,7 +523,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             Job.RunStatus runStatus
     ) {
         final Path tempPath = Path.PATH.get();
-        O3MemoryPressureRegulatorImpl regulator = null;
+        SeqTxnTracker txnTracker = null;
         try {
             // security context is checked on writing to the WAL and can be ignored here
             final TableToken updatedToken = engine.getUpdatedTableToken(tableToken);
@@ -537,19 +537,18 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
                 // TODO: Remove allocations!!!
                 Rnd rnd = new Rnd();
-                SeqTxnTracker txnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
-                regulator = new O3MemoryPressureRegulatorImpl(rnd, MicrosecondClockImpl.INSTANCE, txnTracker, tableToken.getTableName());
+                txnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
                 // TODO !!!!!
 
 
                 try (TableWriter writer = engine.getWriterUnsafe(updatedToken, WAL_2_TABLE_WRITE_REASON)) {
                     assert writer.getMetadata().getTableId() == tableToken.getTableId();
-                    if (regulator.shouldBackOff(MicrosecondClockImpl.INSTANCE.getTicks())) {
+                    if (txnTracker.shouldBackOff(MicrosecondClockImpl.INSTANCE.getTicks())) {
                         engine.notifyWalTxnRepublisher(tableToken);
                         return;
                     }
-                    applyOutstandingWalTransactions(tableToken, writer, engine, operationCompiler, tempPath, runStatus, regulator.getMaxO3MergeParallelism());
-                    regulator.onPressureIncreased(MicrosecondClockImpl.INSTANCE.getTicks());
+                    applyOutstandingWalTransactions(tableToken, writer, engine, operationCompiler, tempPath, runStatus, txnTracker.getMaxO3MergeParallelism());
+                    txnTracker.onPressureReduced(MicrosecondClockImpl.INSTANCE.getTicks());
                     lastWriterTxn = writer.getSeqTxn();
                 } catch (EntryUnavailableException tableBusy) {
                     //noinspection StringEquality
@@ -585,14 +584,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         .$(", errno=").$(ex.getErrno())
                         .I$();
                 handleWalApplyFailure(tableToken, ex.isOutOfMemory()
-                        ? OUT_OF_MEMORY : resolveTag(ex.getErrno()), ex.getFlyweightMessage().toString(), regulator);
+                        ? OUT_OF_MEMORY : resolveTag(ex.getErrno()), ex.getFlyweightMessage().toString(), txnTracker);
             }
         } catch (Throwable ex) {
             telemetryFacade.store(TelemetrySystemEvent.WAL_APPLY_SUSPEND, TelemetryOrigin.WAL_APPLY);
             LOG.critical().$("job failed, table suspended [table=").utf8(tableToken.getDirName())
                     .$(", error=").$(ex)
                     .I$();
-            handleWalApplyFailure(tableToken, ErrorTag.NONE, ex.getMessage(), regulator);
+            handleWalApplyFailure(tableToken, ErrorTag.NONE, ex.getMessage(), txnTracker);
         }
     }
 

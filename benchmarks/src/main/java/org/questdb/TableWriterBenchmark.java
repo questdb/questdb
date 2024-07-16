@@ -92,8 +92,7 @@ public class TableWriterBenchmark {
                 configuration.getRoot(),
                 DefaultDdlListener.INSTANCE,
                 () -> false,
-                Metrics.disabled(),
-                EmptyO3MemoryPressureRegulator.INSTANCE
+                Metrics.disabled()
         );
         writer2 = new TableWriter(
                 configuration,
@@ -105,8 +104,7 @@ public class TableWriterBenchmark {
                 configuration.getRoot(),
                 DefaultDdlListener.INSTANCE,
                 () -> false,
-                Metrics.disabled(),
-                EmptyO3MemoryPressureRegulator.INSTANCE
+                Metrics.disabled()
         );
         writer3 = new TableWriter(
                 configuration,
@@ -118,8 +116,7 @@ public class TableWriterBenchmark {
                 configuration.getRoot(),
                 DefaultDdlListener.INSTANCE,
                 () -> false,
-                Metrics.disabled(),
-                EmptyO3MemoryPressureRegulator.INSTANCE
+                Metrics.disabled()
         );
         rnd.reset();
     }

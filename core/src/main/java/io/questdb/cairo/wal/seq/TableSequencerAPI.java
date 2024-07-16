@@ -29,10 +29,7 @@ import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.ConcurrentHashMap;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.ObjHashSet;
-import io.questdb.std.QuietCloseable;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
@@ -62,7 +59,7 @@ public class TableSequencerAPI implements QuietCloseable {
         this.engine = engine;
         this.inactiveTtlUs = configuration.getInactiveWalWriterTTL() * 1000;
         this.recreateDistressedSequencerAttempts = configuration.getWalRecreateDistressedSequencerAttempts();
-        this.createTxnTracker = dir -> new SeqTxnTracker();
+        this.createTxnTracker = dir -> new SeqTxnTracker(new Rnd());
     }
 
     public void applyRename(TableToken tableToken) {
