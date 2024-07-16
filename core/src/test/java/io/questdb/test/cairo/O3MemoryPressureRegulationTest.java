@@ -93,9 +93,10 @@ public class O3MemoryPressureRegulationTest extends AbstractTest {
                 decreaseCycles++;
                 now += 1_000;
                 txnTracker.onPressureReduced(now);
-                assertRegulationState(txnTracker, txnTracker.getMemPressureLevel(), now);
-            } while (txnTracker.getMemPressureLevel() == expectedLevel);
-            System.out.println("Decreasing pressure level from " + expectedLevel + " to " + txnTracker.getMemPressureLevel() + " took " + decreaseCycles + " cycles");
+                assertRegulationState(txnTracker, txnTracker.getMemoryPressureLevel(), now);
+            } while (txnTracker.getMemoryPressureLevel() == expectedLevel);
+            System.out.format("Decreasing pressure level from %d to %d  took %d cycles%n",
+                    expectedLevel, txnTracker.getMemoryPressureLevel(), decreaseCycles);
             expectedLevel--;
             assertRegulationState(txnTracker, expectedLevel, now);
         }
@@ -135,7 +136,7 @@ public class O3MemoryPressureRegulationTest extends AbstractTest {
     }
 
     private static void assertRegulationState(SeqTxnTracker txnTracker, int expectedLevel, long now) {
-        Assert.assertEquals(expectedLevel, txnTracker.getMemPressureLevel());
+        Assert.assertEquals(expectedLevel, txnTracker.getMemoryPressureLevel());
 
         int expectedParallelism = EXPECTED_PARALLELISMS[expectedLevel];
         Assert.assertEquals(expectedParallelism, txnTracker.getMaxO3MergeParallelism());

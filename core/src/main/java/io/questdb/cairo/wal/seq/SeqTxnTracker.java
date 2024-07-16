@@ -87,11 +87,6 @@ public class SeqTxnTracker {
         return partitionParallelism;
     }
 
-    @TestOnly
-    public int getMemPressureLevel() {
-        return memPressureLevel;
-    }
-
     public int getMemoryPressureLevel() {
         return memoryPressureLevel;
     }
