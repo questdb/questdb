@@ -46,14 +46,16 @@ public final class O3MemoryPressureRegulatorImpl implements O3MemoryPressureRegu
     private static final int MIN_LEVEL = 0;
     private static final int PARALLELISM_THROTTLING_LEVEL = 5; // when exceeded we start introducing back off
     private final Rnd rnd;
+    private final String tableName;
     private final SeqTxnTracker txnTracker;
     private int level;
     private long walBackoff = -1;
 
-    public O3MemoryPressureRegulatorImpl(Rnd rnd, MicrosecondClock clock, SeqTxnTracker txnTracker) {
+    public O3MemoryPressureRegulatorImpl(Rnd rnd, MicrosecondClock clock, SeqTxnTracker txnTracker, String tableName) {
         this.rnd = rnd;
         this.txnTracker = txnTracker;
         this.level = txnTracker.getMemoryPressureLevel();
+        this.tableName = tableName;
         adjustWalBackoff(clock.getTicks());
     }
 
@@ -112,7 +114,7 @@ public final class O3MemoryPressureRegulatorImpl implements O3MemoryPressureRegu
                 txnTracker.setMemoryPressureLevel(level);
             }
         }
-        LOG.infoW().$("Memory pressure easing off, new level=").$(level).$();
+        LOG.infoW().$("Memory pressure easing off for table ").$(tableName).$(" new level=").$(level).$();
     }
 
     @Override
@@ -131,7 +133,7 @@ public final class O3MemoryPressureRegulatorImpl implements O3MemoryPressureRegu
         level++;
         txnTracker.setMemoryPressureLevel(level);
         adjustWalBackoff(nowMicros);
-        LOG.infoW().$("Memory pressure building up, new level=").$(level).$();
+        LOG.infoW().$("Memory pressure building up for table ").$(tableName).$(" new level=").$(level).$();
         return true;
     }
 

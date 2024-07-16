@@ -531,7 +531,8 @@ public class WriterPool extends AbstractPool {
         O3MemoryPressureRegulator regulator;
         if (engine.isWalTable(tableToken)) {
             SeqTxnTracker txnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
-            regulator = new O3MemoryPressureRegulatorImpl(configuration.getRandom(), MicrosecondClockImpl.INSTANCE, txnTracker);
+            regulator = new O3MemoryPressureRegulatorImpl(
+                    configuration.getRandom(), MicrosecondClockImpl.INSTANCE, txnTracker, tableToken.getTableName());
         } else {
             regulator = EmptyO3MemoryPressureRegulator.INSTANCE;
         }
