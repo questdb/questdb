@@ -710,10 +710,6 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 return checkAndCreateFunction(factory, args, argPositions, node, configuration);
             }
 
-//            if (candidateDescriptor == null) {
-//                candidateDescriptor = descriptor;
-//            }
-
             // otherwise, is number of arguments the same?
             if (sigArgCount == argCount || (sigVarArg && argCount >= sigArgCount)) {
                 int match = sigArgCount == 0 ? MATCH_EXACT_MATCH : MATCH_NO_MATCH;
