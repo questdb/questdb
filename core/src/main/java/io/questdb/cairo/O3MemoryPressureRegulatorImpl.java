@@ -25,6 +25,8 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import org.jetbrains.annotations.TestOnly;
@@ -38,6 +40,8 @@ import org.jetbrains.annotations.TestOnly;
  * This class is NOT thread-safe.
  */
 public final class O3MemoryPressureRegulatorImpl implements O3MemoryPressureRegulator {
+    private static final Log LOG = LogFactory.getLog(O3MemoryPressureRegulatorImpl.class);
+
     private static final int MAX_LEVEL = 10;
     private static final int MIN_LEVEL = 0;
     private static final int PARALLELISM_THROTTLING_LEVEL = 5; // when exceeded we start introducing backoff
@@ -91,6 +95,7 @@ public final class O3MemoryPressureRegulatorImpl implements O3MemoryPressureRegu
         if (level > PARALLELISM_THROTTLING_LEVEL) {
             // we always reduce max. backoff
             level--;
+            LOG.infoW().$("Memory pressure building up, new level=").$(level).$();
             txnTracker.setMemoryPressureLevel(level);
             adjustWalBackoff(nowMicros);
         } else {
@@ -124,6 +129,7 @@ public final class O3MemoryPressureRegulatorImpl implements O3MemoryPressureRegu
             return false;
         }
         level++;
+        LOG.infoW().$("Memory pressure easing off, new level=").$(level).$();
         txnTracker.setMemoryPressureLevel(level);
         adjustWalBackoff(nowMicros);
         return true;
