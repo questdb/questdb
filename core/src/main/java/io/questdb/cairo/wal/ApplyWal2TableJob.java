@@ -534,13 +534,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 // else: table is dropped and fully cleaned, this is late notification.
             } else {
                 long lastWriterTxn;
-
-                // TODO: Remove allocations!!!
-                Rnd rnd = new Rnd();
                 txnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
-                // TODO !!!!!
-
-
                 try (TableWriter writer = engine.getWriterUnsafe(updatedToken, WAL_2_TABLE_WRITE_REASON)) {
                     assert writer.getMetadata().getTableId() == tableToken.getTableId();
                     if (txnTracker.shouldBackOff(MicrosecondClockImpl.INSTANCE.getTicks())) {
