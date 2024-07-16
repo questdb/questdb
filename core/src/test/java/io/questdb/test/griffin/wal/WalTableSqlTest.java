@@ -1218,8 +1218,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\n" +
-                    "testEmptyTruncate\tfalse\t1\t0\t1\n", "wal_tables()");
+            assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\n" +
+                    "testEmptyTruncate\tfalse\t1\t0\t1\t\t\n", "wal_tables()");
         });
     }
 
