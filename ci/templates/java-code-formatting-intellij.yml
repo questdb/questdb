@@ -41,7 +41,7 @@ jobs:
           echo "java --version"
           java --version
         displayName: "Install IntelliJ"
-      - bash: /opt/intellij/idea/bin/idea.sh format -s .idea/codeStyleSettings.xml -m "*.java" -r .
+      - bash: /opt/intellij/idea/bin/idea.sh format -s .idea/codeStyles/Project.xml -m "*.java" -r .
         displayName: "Applying formatting"
       - bash: git status -s
         displayName: "List of affected files"
