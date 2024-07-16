@@ -5915,7 +5915,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             resizePartitionUpdateSink();
 
             // One loop iteration per partition.
-            for (int partitionCount = 1; srcOoo < srcOooMax; partitionCount++) {
+            int partitionCount = 0;
+            while (srcOoo < srcOooMax) {
+                partitionCount++;
                 try {
                     final long srcOooLo = srcOoo;
                     final long o3Timestamp = getTimestampIndexValue(sortedTimestampsAddr, srcOoo);
