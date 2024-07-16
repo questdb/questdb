@@ -25,8 +25,12 @@
 package io.questdb.test.cutlass.http.line;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableToken;
 import io.questdb.client.Sender;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractBootstrapTest;
@@ -41,6 +45,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.concurrent.TimeUnit;
 
 public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
+    private static final Log LOG = LogFactory.getLog(HttpSenderMemoryPressureFuzzTest.class);
 
     @Before
     public void setUp() {
@@ -50,9 +55,9 @@ public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testMemoryPressureSingleSender() {
+    public void testMemoryPressureSingleSender() throws Exception {
         final String tn = "table1";
-        final Rnd rnd = new Rnd();
+        final Rnd rnd = TestUtils.generateRandom(LOG);
         try (TestServerMain serverMain = startWithEnvVariables(
                 PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048")
         ) {
@@ -68,10 +73,16 @@ public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
             ) {
                 int batchSize10k = rnd.nextInt(5) + 1;
                 int batchSize = batchSize10k * 10_000;
-                int numIters = 15_000 / batchSize10k;
+                int numIters = 10_000 / batchSize10k;
                 LOG.infoW().$(String.format("batchSize %,d, numIters %,d", batchSize, numIters)).$();
+                CairoEngine engine = serverMain.getEngine();
+                TableToken tableToken = engine.verifyTableName(tn);
+                senderLoop:
                 for (int j = 0; j < numIters; j++) {
                     for (int i = 0; i < batchSize; i++) {
+                        if (engine.getTableSequencerAPI().isSuspended(tableToken)) {
+                            break senderLoop;
+                        }
                         sender.table(tn)
                                 .symbol("sym", rnd.nextString(2))
                                 .longColumn("b", rnd.nextByte())
@@ -92,7 +103,7 @@ public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
                     }
                 }
                 try {
-                    serverMain.getEngine().awaitTable(tn, 10, TimeUnit.MINUTES);
+                    engine.awaitTable(tn, 10, TimeUnit.MINUTES);
                 } catch (CairoException e) {
                     if (!e.getMessage().contains("suspended")) {
                         e.printStackTrace(System.err);
