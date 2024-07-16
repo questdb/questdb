@@ -43,8 +43,7 @@ public class SeqTxnTracker {
     private final Rnd rnd;
     private volatile String errorMessage = "";
     private volatile ErrorTag errorTag = ErrorTag.NONE;
-    private int memPressureLevel;
-    private volatile int memoryPressureLevel;
+    private byte memoryPressureLevel;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile long seqTxn = -1;
     // -1 suspended
@@ -67,12 +66,12 @@ public class SeqTxnTracker {
     }
 
     public int getMaxO3MergeParallelism() {
-        if (memPressureLevel == 0) {
+        if (memoryPressureLevel == 0) {
             // fast path
             return Integer.MAX_VALUE;
         }
 
-        int adjustedLevel = Math.min(memPressureLevel, MEM_PRESSURE_THRESHOLD_TO_START_BACKOFF) * 10;
+        int adjustedLevel = Math.min(memoryPressureLevel, MEM_PRESSURE_THRESHOLD_TO_START_BACKOFF) * 10;
         int partitionParallelism = 51 - adjustedLevel;
         assert partitionParallelism > 0;
         // level 1 = parallelism 41
@@ -170,32 +169,31 @@ public class SeqTxnTracker {
         // when memory pressure is high. For now, we are conservative. It might take multiple cycles
         // to find the right level.
 
-        if (memPressureLevel == MAX_MEM_PRESSURE_LEVEL) {
+        if (memoryPressureLevel == MAX_MEM_PRESSURE_LEVEL) {
             // we are already at max level, we can't increase it further
             // return false to indicate that we can't retry the operation
             // this will likely suspend the table
             adjustWalBackoff(nowMicros);
             return false;
         }
-        memPressureLevel++;
-        setMemoryPressureLevel(memPressureLevel);
+        memoryPressureLevel++;
         adjustWalBackoff(nowMicros);
-        LOG.info().$("Memory pressure building up, new level=").$(memPressureLevel).$();
+        LOG.info().$("Memory pressure building up, new level=").$(memoryPressureLevel).$();
         return true;
     }
 
     public void onPressureReduced(long nowMicros) {
-        if (memPressureLevel == MIN_MEM_PRESSURE_LEVEL) {
+        if (memoryPressureLevel == MIN_MEM_PRESSURE_LEVEL) {
             // fast path
             return;
         }
 
-        if (memPressureLevel > MEM_PRESSURE_THRESHOLD_TO_START_BACKOFF) {
-            memPressureLevel--;
+        if (memoryPressureLevel > MEM_PRESSURE_THRESHOLD_TO_START_BACKOFF) {
+            memoryPressureLevel--;
             adjustWalBackoff(nowMicros);
         } else {
             // we increase parallelism probabilistically - the more pressure the lesser chance of increasing it
-            int minTrailingZeros = (memPressureLevel + 2);
+            int minTrailingZeros = (memoryPressureLevel + 2);
             // if memoryPressure == 1  we require 3 trailing zeros -> that's 1 in 8 chance
             // if memoryPressure == 2  we require 4 trailing zeros -> that's 1 in 16 chance
             // ...
@@ -203,14 +201,10 @@ public class SeqTxnTracker {
             // yes, we are assuming that random number generator is reasonably good
             int i = rnd.nextInt();
             if (Integer.numberOfTrailingZeros(i) >= minTrailingZeros) {
-                memPressureLevel--;
+                memoryPressureLevel--;
             }
         }
-        LOG.info().$("Memory pressure easing off, new level=").$(memPressureLevel).$();
-    }
-
-    public void setMemoryPressureLevel(int memoryPressureLevel) {
-        this.memoryPressureLevel = memoryPressureLevel;
+        LOG.info().$("Memory pressure easing off, new level=").$(memoryPressureLevel).$();
     }
 
     public void setSuspended(ErrorTag errorTag, String errorMessage) {
@@ -240,8 +234,8 @@ public class SeqTxnTracker {
     }
 
     private void adjustWalBackoff(long nowMicros) {
-        if (memPressureLevel > 5) {
-            int backoffMillis = (1 << (memPressureLevel + 3));
+        if (memoryPressureLevel > 5) {
+            int backoffMillis = (1 << (memoryPressureLevel + 3));
             // level 6 -> 512 ms
             // level 7 -> 1024 ms
             // level 8 -> 2048 ms

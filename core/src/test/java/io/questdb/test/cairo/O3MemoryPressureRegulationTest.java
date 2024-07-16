@@ -76,6 +76,7 @@ public class O3MemoryPressureRegulationTest extends AbstractTest {
         }
 
         int expectedLevel = 10;
+        assertRegulationState(txnTracker, expectedLevel, now);
 
         // in the level 6..10 range, txnTracker decrease pressure level on every onPressureDecrease() call
         for (int i = 0; i < 5; i++) {
