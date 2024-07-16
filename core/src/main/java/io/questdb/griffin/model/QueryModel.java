@@ -1792,8 +1792,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             }
         }
 
-        if (groupBy.size() > 0) {
-            sink.putAscii(" group by");
+        if (groupBy.size() > 0 && selectModelType != SELECT_MODEL_GROUP_BY) {
+            sink.putAscii(" group by ");
             for (int i = 0, n = groupBy.size(); i < n; i++) {
                 if (i > 0) {
                     sink.putAscii(", ");
