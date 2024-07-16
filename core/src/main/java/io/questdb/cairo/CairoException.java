@@ -329,5 +329,6 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         authorizationError = false;
         entityDisabled = false;
         messagePosition = 0;
+        outOfMemory = false;
     }
 }
