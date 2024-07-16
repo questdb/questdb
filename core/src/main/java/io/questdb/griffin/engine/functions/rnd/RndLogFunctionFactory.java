@@ -30,8 +30,10 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -48,11 +50,20 @@ public class RndLogFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new TestLogFunction(
-                args.getQuick(0).getLong(null),
-                args.getQuick(1).getDouble(null) % 100d
-        );
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        if (configuration.isDevModeEnabled()) {
+            return new TestLogFunction(
+                    args.getQuick(0).getLong(null),
+                    args.getQuick(1).getDouble(null) % 100d
+            );
+        }
+        return BooleanConstant.FALSE;
     }
 
     private static class TestLogFunction extends BooleanFunction {
@@ -68,22 +79,17 @@ public class RndLogFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             for (long l = 0; l < totalLogLines; l++) {
-                final LogRecord log;
-
-                if (rnd.nextDouble() * 10000 < errorRatio * 100) {
-                    log = LOG.error();
-                } else {
-                    log = LOG.info();
-                }
-
+                final LogRecord log = rnd.nextDouble() * 10000 < errorRatio * 100 ? LOG.error() : LOG.info();
                 log.$(rnd.nextString(25)).$();
             }
             return true;
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            this.rnd = executionContext.getRandom();
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            executionContext.getSecurityContext().authorizeAdminAction();
+            rnd = executionContext.getRandom();
         }
 
         @Override

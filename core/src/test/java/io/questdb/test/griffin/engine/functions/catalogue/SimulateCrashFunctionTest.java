@@ -64,7 +64,7 @@ public class SimulateCrashFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testCrashEnabled() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_SIMULATE_CRASH_ENABLED, true);
+        node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
 
         // select simulate_crash('0'), This is total crash, don't simulate it
 
