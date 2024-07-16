@@ -4699,8 +4699,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     columnIndexes.add(readerTimestampIndex);
                     columnSizes.add((Numbers.msb(ColumnType.TIMESTAMP)));
                 }
-//            } else {
-//                framingSupported = false;
             }
         } finally {
             if (requiresTimestamp) {
