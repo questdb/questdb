@@ -40,7 +40,7 @@ jobs:
             docker run --privileged --rm tonistiigi/binfmt
             docker buildx create --use
             docker buildx build --platform linux/amd64,linux/arm64 --push -t questdb/questdb:nightly .
-            docker buildx build --build-arg tag_name=$branch_name base_image=registry.access.redhat.com/ubi8/ubi --platform linux/amd64 --push -t questdb/questdb:nightly-redhat-ubi .
+            docker buildx build --build-arg tag_name=nightly base_image=registry.access.redhat.com/ubi8/ubi --platform linux/amd64 --push -t questdb/questdb:nightly-redhat-ubi .
           workingDirectory: core
         condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/master'))
 
