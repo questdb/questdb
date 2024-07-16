@@ -1195,11 +1195,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 if (!tableWriter.isDeduplicationEnabled()) {
                     timestampMergeIndexSize = tempIndexSize;
 
-                    // todo: consider if this logging is worth keeping
-                    long mergeDataSize = mergeDataHi - mergeDataLo;
-                    long mergeOOOSize = mergeOOOHi - mergeOOOLo;
-                    LOG.debug().$("creating merge index [size=").$(timestampMergeIndexSize).$(", mergeDataSize=").$(mergeDataSize).$(", mergeOOOSize=").$(mergeOOOSize).I$();
-
                     timestampMergeIndexAddr = createMergeIndex(
                             srcTimestampAddr,
                             sortedTimestampsAddr,
