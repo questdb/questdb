@@ -77,11 +77,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int SET_OPERATION_INTERSECT = 4;
     public static final int SET_OPERATION_INTERSECT_ALL = 5;
     public static final int SET_OPERATION_UNION = 1;
+    // BETWEEN intervals
     public static final int INCLUSIVE_BETWEEN = 1;
     public static final int EXCLUSIVE_BETWEEN = 2;
     public static final int RIGHT_OPEN_BETWEEN = 3;
     public static final int LEFT_OPEN_BETWEEN = 4;
-    // types of set operations betweepublic static final int RIGHT_OPEN_BETWEEN = 3;n this and union model
+    // types of set operations between this and union model
     public static final int SET_OPERATION_UNION_ALL = 0;
     public static final int SHOW_COLUMNS = 2;
     public static final int SHOW_DATE_STYLE = 9;
