@@ -38,6 +38,7 @@ import org.junit.Test;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 
 public class HttpSenderMemoryPressureTest extends AbstractBootstrapTest {
@@ -90,7 +91,7 @@ public class HttpSenderMemoryPressureTest extends AbstractBootstrapTest {
                     }
                 }
                 try {
-                    serverMain.awaitTable(tn);
+                    serverMain.getEngine().awaitTable(tn, 10, TimeUnit.MINUTES);
                 } catch (CairoException e) {
                     if (!e.getMessage().contains("suspended")) {
                         e.printStackTrace(System.err);
