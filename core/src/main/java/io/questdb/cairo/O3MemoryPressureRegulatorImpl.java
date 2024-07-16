@@ -48,13 +48,13 @@ public final class O3MemoryPressureRegulatorImpl implements O3MemoryPressureRegu
     private final Rnd rnd;
     private final SeqTxnTracker txnTracker;
     private int level;
-    private long walBackOff = -1;
+    private long walBackoff = -1;
 
     public O3MemoryPressureRegulatorImpl(Rnd rnd, MicrosecondClock clock, SeqTxnTracker txnTracker) {
         this.rnd = rnd;
         this.txnTracker = txnTracker;
         this.level = txnTracker.getMemoryPressureLevel();
-        adjustWalBackOff(clock.getTicks());
+        adjustWalBackoff(clock.getTicks());
     }
 
     @TestOnly
@@ -95,9 +95,9 @@ public final class O3MemoryPressureRegulatorImpl implements O3MemoryPressureRegu
         if (level > PARALLELISM_THROTTLING_LEVEL) {
             level--;
             txnTracker.setMemoryPressureLevel(level);
-            adjustWalBackOff(nowMicros);
+            adjustWalBackoff(nowMicros);
         } else {
-            assert walBackOff == -1; // no backOff
+            assert walBackoff == -1; // no backOff
 
             // we increase parallelism probabilistically - the more pressure the lesser chance of increasing it
             int minTrailingZeros = (level + 2);
@@ -125,36 +125,36 @@ public final class O3MemoryPressureRegulatorImpl implements O3MemoryPressureRegu
             // we are already at max level, we can't increase it further
             // return false to indicate that we can't retry the operation
             // this will likely suspend the table
-            adjustWalBackOff(nowMicros);
+            adjustWalBackoff(nowMicros);
             return false;
         }
         level++;
         txnTracker.setMemoryPressureLevel(level);
-        adjustWalBackOff(nowMicros);
+        adjustWalBackoff(nowMicros);
         LOG.infoW().$("Memory pressure building up, new level=").$(level).$();
         return true;
     }
 
     @Override
     public boolean shouldBackOff(long nowMicros) {
-        return nowMicros < walBackOff;
+        return nowMicros < walBackoff;
     }
 
-    private void adjustWalBackOff(long nowMicros) {
+    private void adjustWalBackoff(long nowMicros) {
         if (level > 5) {
-            int backOffMillis = (1 << (level + 3));
+            int backoffMillis = (1 << (level + 3));
             // level 6 -> 512 ms
             // level 7 -> 1024 ms
             // level 8 -> 2048 ms
             // level 9 -> 4096 ms
             // level 10 -> 8192 ms
-            long backOffMicros = backOffMillis * 1_000L;
+            long backoffMicros = backoffMillis * 1_000L;
 
-            walBackOff = nowMicros + backOffMicros;
+            walBackoff = nowMicros + backoffMicros;
         } else {
             // we reduce parallelism, that's already aggressive enough
             // so no back off
-            walBackOff = -1;
+            walBackoff = -1;
         }
     }
 }
