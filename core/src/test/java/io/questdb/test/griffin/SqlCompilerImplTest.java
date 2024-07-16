@@ -6447,6 +6447,34 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testConvertPartitionToExpected() throws Exception {
+        final String ddl = "create table x as (select x l," +
+                " timestamp_sequence(400000000000, 500000000) ts" +
+                " from long_sequence(5)) timestamp(ts) partition by DAY";
+
+        assertException(
+                "alter table x convert partition list '1970-01-01' to '1970-01-02'",
+                ddl,
+                32,
+                "'to' expected"
+        );
+    }
+
+    @Test
+    public void testConvertPartitionParquetExpected() throws Exception {
+        final String ddl = "create table x as (select x l," +
+                " timestamp_sequence(400000000000, 500000000) ts" +
+                " from long_sequence(5)) timestamp(ts) partition by DAY";
+
+        assertException(
+                "alter table x convert partition to list '1970-01-01' to '1970-01-02'",
+                ddl,
+                35,
+                "'parquet' expected"
+        );
+    }
+
     private void assertCast(String expectedData, String expectedMeta, String ddl) throws Exception {
         assertMemoryLeak(() -> {
             ddl(ddl);

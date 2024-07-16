@@ -1888,6 +1888,17 @@ public class SqlKeywords {
         }
     }
 
+    public static boolean isParquetKeyword(CharSequence tok) {
+        return tok.length() == 7
+                && (tok.charAt(0) | 32) == 'p'
+                && (tok.charAt(1) | 32) == 'a'
+                && (tok.charAt(2) | 32) == 'r'
+                && (tok.charAt(3) | 32) == 'q'
+                && (tok.charAt(4) | 32) == 'u'
+                && (tok.charAt(5) | 32) == 'e'
+                && (tok.charAt(6) | 32) == 't';
+    }
+
     private static boolean isGeoHashKeywordInternal(CharSequence tok) {
         return (tok.charAt(0) | 32) == 'g'
                 && (tok.charAt(1) | 32) == 'e'

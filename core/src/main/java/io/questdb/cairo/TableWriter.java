@@ -2108,7 +2108,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         if (inTransaction()) {
             LOG.info()
-                    .$("committing open transaction before applying convert partition command [table=")
+                    .$("committing open transaction before applying convert partition to parquet command [table=")
                     .utf8(tableToken.getTableName())
                     .$(", partition=").$ts(partitionTimestamp)
                     .I$();

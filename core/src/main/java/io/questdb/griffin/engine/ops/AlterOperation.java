@@ -418,7 +418,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             long partitionTimestamp = extraInfo.getQuick(i * 2);
             if (!svc.convertPartition(partitionTimestamp)) {
                 throw CairoException.partitionManipulationRecoverable()
-                        .put("could not convert partition [table=").put(tableToken != null ? tableToken.getTableName() : "<null>")
+                        .put("could not convert partition to parquet [table=").put(tableToken != null ? tableToken.getTableName() : "<null>")
                         .put(", partitionTimestamp=").ts(partitionTimestamp)
                         .put(", partitionBy=").put(PartitionBy.toString(svc.getPartitionBy()))
                         .put(']')

@@ -555,11 +555,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 alterTableAddColumn(executionContext.getSecurityContext(), tableNamePosition, tableToken, tableMetadata);
             } else if (SqlKeywords.isConvertKeyword(tok)) {
                 tok = expectToken(lexer, "'partition'");
-                if (SqlKeywords.isPartitionKeyword(tok)) {
-                    alterTableDropConvertDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.CONVERT, executionContext);
-                } else {
+                if (!SqlKeywords.isPartitionKeyword(tok)) {
                     throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
                 }
+                tok = expectToken(lexer, "'to'");
+                if (!SqlKeywords.isToKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'to' expected");
+                }
+                tok = expectToken(lexer, "'parquet'");
+                if (!SqlKeywords.isParquetKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'parquet' expected");
+                }
+                alterTableDropConvertDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.CONVERT, executionContext);
             } else if (SqlKeywords.isDropKeyword(tok)) {
                 tok = expectToken(lexer, "'column' or 'partition'");
                 if (SqlKeywords.isColumnKeyword(tok)) {
