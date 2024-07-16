@@ -32,12 +32,12 @@ import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Misc;
 import io.questdb.test.griffin.engine.groupby.SampleByTest;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.ArrayDeque;
 
 import static io.questdb.griffin.SqlOptimiser.aliasAppearsInFuncArgs;
+import static org.junit.Assert.assertEquals;
 
 public class SqlOptimiserTest extends AbstractSqlParserTest {
 
@@ -188,6 +188,78 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testAliasForFirstAggregateFunctionOnDesignatedTimestampColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y ( x int, ts timestamp) timestamp(ts);");
+            final String query = "select FIRST(ts) as ts1 from y";
+            final QueryModel model = compileModel(query);
+            assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
+            assertPlanNoLeakCheck(
+                    query,
+                    "Limit lo: 1\n" +
+                            "    SelectedRecord\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: y\n"
+            );
+        });
+    }
+
+    @Test
+    public void testAliasForLastAggregateFunctionOnDesignatedTimestampColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y ( x int, ts timestamp) timestamp(ts);");
+            final String query = "select LAST(ts) as ts1 from y";
+            final QueryModel model = compileModel(query);
+            assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) order by ts1 desc limit 1", model.toString0());
+            assertPlanNoLeakCheck(
+                    query,
+                    "Limit lo: 1\n" +
+                            "    SelectedRecord\n" +
+                            "        DataFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: y\n"
+            );
+        });
+    }
+
+    @Test
+    public void testAliasForMaxAggregateFunctionOnDesignatedTimestampColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y ( x int, ts timestamp) timestamp(ts);");
+            final String query = "select MAX(ts) as ts1 from y";
+            final QueryModel model = compileModel(query);
+            assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) order by ts1 desc limit 1", model.toString0());
+            assertPlanNoLeakCheck(
+                    query,
+                    "Limit lo: 1\n" +
+                            "    SelectedRecord\n" +
+                            "        DataFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: y\n"
+            );
+        });
+    }
+
+    @Test
+    public void testAliasForMinAggregateFunctionOnDesignatedTimestampColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y ( x int, ts timestamp) timestamp(ts);");
+            final String query = "select MIN(ts) as ts1 from y";
+            final QueryModel model = compileModel(query);
+            assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
+            assertPlanNoLeakCheck(
+                    query,
+                    "Limit lo: 1\n" +
+                            "    SelectedRecord\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: y\n"
+            );
+        });
+    }
+
+    @Test
     public void testConstantInGroupByDoesNotPreventOptimisation() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table hits (\n" +
@@ -228,6 +300,364 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(q3, expectedPlan);
             assertPlanNoLeakCheck(q4, expectedPlan);
 
+        });
+    }
+
+    @Test
+    public void testFirstAggregateFunctionOnDesignatedTimestampColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y ( x int, ts timestamp) timestamp(ts);");
+            final String query = "select FIRST(ts) from y";
+            final QueryModel model = compileModel(query);
+            assertEquals("select-choose ts FIRST from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
+            assertPlanNoLeakCheck(
+                    query,
+                    "Limit lo: 1\n" +
+                            "    SelectedRecord\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: y\n"
+            );
+        });
+    }
+
+    @Test
+    public void testFirstAggregateFunctionOnNonDesignatedTimestampColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y ( x int, ts timestamp) timestamp(ts);");
+            final String query = "select FIRST(x) from y";
+            final QueryModel model = compileModel(query);
+            assertEquals("select-group-by FIRST(x) FIRST from (select [x] from y timestamp (ts))", model.toString0());
+            assertPlanNoLeakCheck(
+                    query,
+                    "Async Group By workers: 1\n" +
+                            "  values: [first(x)]\n" +
+                            "  filter: null\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: y\n"
+            );
+        });
+    }
+
+    @Test
+    public void testJoinAndUnionQueryWithJoinOnDesignatedTimestampColumnWithLastFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y ( x int, ts timestamp) timestamp(ts);");
+            ddl("create table y1 ( x int, ts timestamp) timestamp(ts);");
+            ddl("create table y2 ( x int, ts timestamp) timestamp(ts);");
+            final String query = "select  * from y \n" +
+                    "left join \n" +
+                    "y1 on \n" +
+                    "y1.x = y.x\n" +
+                    "INNER join (select LAST(ts) from y2) as y2 \n" +
+                    "on y2.LAST = y1.ts";
+            String queryNew = query + " union \n" + query;
+            final QueryModel model = compileModel(queryNew);
+            assertEquals(
+                    "select-choose [y.x x, y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST] y.x x, " +
+                            "y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST from (select [x, ts] from y timestamp (ts) left join " +
+                            "select [x, ts] from y1 timestamp (ts) on y1.x = y.x join select [LAST] from (select-choose " +
+                            "[ts LAST] ts LAST from (select [ts] from y2 timestamp (ts)) order by LAST desc limit 1) y2 on " +
+                            "y2.LAST = y1.ts) union select-choose [y.x x, y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST] y.x x," +
+                            " y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST from (select [x, ts] from y timestamp (ts) " +
+                            "left join select [x, ts] from y1 timestamp (ts) on y1.x = y.x join select [LAST] from " +
+                            "(select-choose [ts LAST] ts LAST from (select [ts] from y2 timestamp (ts)) order by LAST desc " +
+                            "limit 1) y2 on y2.LAST = y1.ts)",
+                    model.toString0()
+            );
+            // TODO: there's a forward scan on y2 whereas it should be a backward scan;
+            //       it could have something to do with SqlOptimiser.optimiseOrderBy()
+            assertPlanNoLeakCheck(
+                    query,
+                    "SelectedRecord\n" +
+                            "    Hash Join Light\n" +
+                            "      condition: y2.LAST=y1.ts\n" +
+                            "        Hash Outer Join Light\n" +
+                            "          condition: y1.x=y.x\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: y\n" +
+                            "            Hash\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: y1\n" +
+                            "        Hash\n" +
+                            "            Sort light lo: 1\n" +
+                            "              keys: [LAST desc]\n" +
+                            "                SelectedRecord\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: y2\n"
+            );
+        });
+    }
+
+    @Test
+    public void testJoinWithSingleCountDistinct() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y (x long, ts timestamp) timestamp(ts);");
+            ddl("create table y1 (x long, ts timestamp) timestamp(ts);");
+            final String query = "select * from y \n" +
+                    "inner join (select count_distinct(x) c from y1) as y1 \n" +
+                    "on y.x = y1.c";
+            final QueryModel model = compileModel(query);
+            assertEquals(
+                    "select-choose y.x x, y.ts ts, y1.c c from (select [x, ts] from y timestamp (ts) " +
+                            "join select [c] from (select-group-by [count() c] count() c from (select-group-by x from " +
+                            "(select [x] from y1 timestamp (ts) where null != x))) y1 on y1.c = y.x)",
+                    model.toString0()
+            );
+            assertPlanNoLeakCheck(
+                    query,
+                    "SelectedRecord\n" +
+                            "    Hash Join\n" +
+                            "      condition: y1.c=y.x\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: y\n" +
+                            "        Hash\n" +
+                            "            Count\n" +
+                            "                Async JIT Group By workers: 1\n" +
+                            "                  keys: [x]\n" +
+                            "                  filter: null!=x\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: y1\n"
+            );
+        });
+    }
+
+    @Test
+    public void testLastAggregateFunctionOnDesignatedTimestampColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y ( x int, ts timestamp) timestamp(ts);");
+            final String query = "select LAST(ts) from y";
+            final QueryModel model = compileModel(query);
+            assertEquals("select-choose ts LAST from (select [ts] from y timestamp (ts)) order by LAST desc limit 1", model.toString0());
+            assertPlanNoLeakCheck(
+                    query,
+                    "Limit lo: 1\n" +
+                            "    SelectedRecord\n" +
+                            "        DataFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: y\n"
+            );
+        });
+    }
+
+    @Test
+    public void testLastAggregateFunctionOnNonDesignatedTimestampColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y ( x int, ts timestamp) timestamp(ts);");
+            final String query = "select LAST(x) from y";
+            final QueryModel model = compileModel(query);
+            assertEquals("select-group-by LAST(x) LAST from (select [x] from y timestamp (ts))", model.toString0());
+            assertPlanNoLeakCheck(
+                    query,
+                    "Async Group By workers: 1\n" +
+                            "  values: [last(x)]\n" +
+                            "  filter: null\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: y\n"
+            );
+        });
+    }
+
+    @Test
+    public void testMaxAggregateFunctionOnDesignatedTimestampColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y ( x int, ts timestamp) timestamp(ts);");
+            final String query = "select max(ts) from y";
+            final QueryModel model = compileModel(query);
+            assertEquals("select-choose ts max from (select [ts] from y timestamp (ts)) order by max desc limit 1", model.toString0());
+            assertPlanNoLeakCheck(
+                    query,
+                    "Limit lo: 1\n" +
+                            "    SelectedRecord\n" +
+                            "        DataFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: y\n"
+            );
+        });
+    }
+
+    @Test
+    public void testMaxAggregateFunctionOnNonDesignatedTimestampColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y ( x int, ts timestamp) timestamp(ts);");
+            final String query = "select MAX(x) from y";
+            final QueryModel model = compileModel(query);
+            assertEquals("select-group-by MAX(x) MAX from (select [x] from y timestamp (ts))", model.toString0());
+            assertPlanNoLeakCheck(
+                    query,
+                    "GroupBy vectorized: true workers: 1\n" +
+                            "  values: [max(x)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: y\n"
+            );
+        });
+    }
+
+    @Test
+    public void testMinAggregateFunctionOnDesignatedTimestampColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y ( x int, ts timestamp) timestamp(ts);");
+            final String query = "select min(ts) from y";
+            final QueryModel model = compileModel(query);
+            assertEquals("select-choose ts min from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
+            assertPlanNoLeakCheck(
+                    query,
+                    "Limit lo: 1\n" +
+                            "    SelectedRecord\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: y\n"
+            );
+        });
+    }
+
+    @Test
+    public void testMinAggregateFunctionOnNonDesignatedTimestampColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y ( x int, ts timestamp) timestamp(ts);");
+            final String query = "select MIN(x) from y";
+            final QueryModel model = compileModel(query);
+            assertEquals("select-group-by MIN(x) MIN from (select [x] from y timestamp (ts))", model.toString0());
+            assertPlanNoLeakCheck(
+                    query,
+                    "GroupBy vectorized: true workers: 1\n" +
+                            "  values: [min(x)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: y\n"
+            );
+        });
+    }
+
+    @Test
+    public void testNestedFirstFunctionOptimisationOnDesignatedTimestampColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y ( x int, ts timestamp) timestamp(ts);");
+            final String query = "select * from (select FIRST(ts) from y)";
+            final QueryModel model = compileModel(query);
+            assertEquals("select-choose FIRST from (select-choose [ts FIRST] ts FIRST from (select [ts] from y timestamp (ts)) limit 1)", model.toString0());
+            assertPlanNoLeakCheck(
+                    query,
+                    "Limit lo: 1\n" +
+                            "    SelectedRecord\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: y\n"
+            );
+        });
+    }
+
+    @Test
+    public void testNestedLastFunctionOptimisationOnDesignatedTimestampColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y ( x int, ts timestamp) timestamp(ts);");
+            final String query = "select * from (select LAST(ts) from y)";
+            final QueryModel model = compileModel(query);
+            assertEquals(
+                    "select-choose LAST from " +
+                            "(select-choose [ts LAST] ts LAST from (select [ts] from y timestamp (ts)) order by LAST desc limit 1)",
+                    model.toString0()
+            );
+            assertPlanNoLeakCheck(
+                    query,
+                    "Limit lo: 1\n" +
+                            "    SelectedRecord\n" +
+                            "        DataFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: y\n"
+            );
+        });
+    }
+
+    @Test
+    public void testNestedMaxFunctionOptimisationOnDesignatedTimestampColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y ( x int, ts timestamp) timestamp(ts);");
+            final String query = "select * from (select MAX(ts) from y)";
+            final QueryModel model = compileModel(query);
+            assertEquals(
+                    "select-choose MAX from " +
+                            "(select-choose [ts MAX] ts MAX from (select [ts] from y timestamp (ts)) order by MAX desc limit 1)",
+                    model.toString0()
+            );
+            assertPlanNoLeakCheck(
+                    query,
+                    "Limit lo: 1\n" +
+                            "    SelectedRecord\n" +
+                            "        DataFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: y\n"
+            );
+        });
+    }
+
+    @Test
+    public void testNestedMinFunctionOptimisationOnDesignatedTimestampColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y ( x int, ts timestamp) timestamp(ts);");
+            final String query = "select * from (select MIN(ts) from y)";
+            final QueryModel model = compileModel(query);
+            assertEquals("select-choose MIN from (select-choose [ts MIN] ts MIN from (select [ts] from y timestamp (ts)) limit 1)", model.toString0());
+            assertPlanNoLeakCheck(
+                    query,
+                    "Limit lo: 1\n" +
+                            "    SelectedRecord\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: y\n"
+            );
+        });
+    }
+
+    @Test
+    public void testNestedUnionQueryOnForMinMaxFirstLastOnAggregateTimestampColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y ( x int, ts timestamp) timestamp(ts);");
+            final String query = "select * from (select FIRST(ts) from y union select LAST(ts) from y union select min(ts) from y  " +
+                    "union select max(ts) from y)";
+            final QueryModel model = compileModel(query);
+            assertEquals(
+                    "select-choose FIRST from (select-choose [ts FIRST] ts FIRST from (select" +
+                            " [ts] from y timestamp (ts)) limit 1 union select-choose [ts LAST] ts LAST from (select " +
+                            "[ts] from y timestamp (ts)) order by LAST desc limit 1 union select-choose [ts min] ts min " +
+                            "from (select [ts] from y timestamp (ts)) limit 1 union select-choose [ts max] ts max from " +
+                            "(select [ts] from y timestamp (ts)) order by max desc limit 1)",
+                    model.toString0()
+            );
+            assertPlanNoLeakCheck(
+                    query,
+                    "Union\n" +
+                            "    Union\n" +
+                            "        Union\n" +
+                            "            Limit lo: 1\n" +
+                            "                SelectedRecord\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: y\n" +
+                            "            Limit lo: 1\n" +
+                            "                SelectedRecord\n" +
+                            "                    DataFrame\n" +
+                            "                        Row backward scan\n" +
+                            "                        Frame backward scan on: y\n" +
+                            "        Limit lo: 1\n" +
+                            "            SelectedRecord\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: y\n" +
+                            "    Limit lo: 1\n" +
+                            "        SelectedRecord\n" +
+                            "            DataFrame\n" +
+                            "                Row backward scan\n" +
+                            "                Frame backward scan on: y\n"
+            );
         });
     }
 
@@ -1446,6 +1876,381 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSelectMultipleColumnsIncludingLastFunctionOnDesignatedTimestampColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y ( x int, ts timestamp) timestamp(ts);");
+            final String query = "select x, LAST(ts) from y";
+            final QueryModel model = compileModel(query);
+            assertEquals("select-group-by x, LAST(ts) LAST from (select [x, ts] from y timestamp (ts))", model.toString0());
+            assertPlanNoLeakCheck(
+                    query,
+                    "Async Group By workers: 1\n" +
+                            "  keys: [x]\n" +
+                            "  values: [last(ts)]\n" +
+                            "  filter: null\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: y\n"
+            );
+        });
+    }
+
+    @Test
+    public void testSelectMultipleColumnsIncludingMaxFunctionOnDesignatedTimestampColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y ( x int, ts timestamp) timestamp(ts);");
+            final String query = "select x, MAX(ts) from y";
+            final QueryModel model = compileModel(query);
+            assertEquals("select-group-by x, MAX(ts) MAX from (select [x, ts] from y timestamp (ts))", model.toString0());
+            assertPlanNoLeakCheck(
+                    query,
+                    "GroupBy vectorized: true workers: 1\n" +
+                            "  keys: [x]\n" +
+                            "  values: [max(ts)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: y\n"
+            );
+        });
+    }
+
+    @Test
+    public void testSelectMultipleColumnsIncludingMinFunctionOnDesignatedTimestampColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y ( x int, ts timestamp) timestamp(ts);");
+            final String query = "select x, MIN(ts) from y";
+            final QueryModel model = compileModel(query);
+            assertEquals("select-group-by x, MIN(ts) MIN from (select [x, ts] from y timestamp (ts))", model.toString0());
+            assertPlanNoLeakCheck(
+                    query,
+                    "GroupBy vectorized: true workers: 1\n" +
+                            "  keys: [x]\n" +
+                            "  values: [min(ts)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: y\n"
+            );
+        });
+    }
+
+    @Test
+    public void testSelectingMultipleColumnsIncludingFirstFunctionOnDesignatedTimestampColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y ( x int, ts timestamp) timestamp(ts);");
+            final String query = "select x, FIRST(ts) from y";
+            final QueryModel model = compileModel(query);
+            assertEquals("select-group-by x, FIRST(ts) FIRST from (select [x, ts] from y timestamp (ts))", model.toString0());
+            assertPlanNoLeakCheck(
+                    query,
+                    "Async Group By workers: 1\n" +
+                            "  keys: [x]\n" +
+                            "  values: [first(ts)]\n" +
+                            "  filter: null\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: y\n"
+            );
+        });
+    }
+
+    @Test
+    public void testSingleCountDistinct() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y (x int, ts timestamp) timestamp(ts) partition by day;");
+            final String query = "select count_distinct(x) from y;";
+            final QueryModel model = compileModel(query);
+            assertEquals(
+                    "select-group-by count() count_distinct from (select-group-by x from (select [x] from y timestamp (ts) where null != x))",
+                    model.toString0()
+            );
+            assertPlanNoLeakCheck(
+                    query,
+                    "Count\n" +
+                            "    Async JIT Group By workers: 1\n" +
+                            "      keys: [x]\n" +
+                            "      filter: x!=null\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: y\n"
+            );
+        });
+    }
+
+    @Test
+    public void testUnionQueryOnForMinMaxFirstLastOnAggregateTimestampColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y ( x int, ts timestamp) timestamp(ts);");
+            final String query = "select FIRST(ts) from y union select LAST(ts) from y union select min(ts) from y  union select max(ts) from y";
+            final QueryModel model = compileModel(query);
+            assertEquals(
+                    "select-choose [ts FIRST] ts FIRST from (select [ts] from y timestamp (ts))" +
+                            " limit 1 union select-choose [ts LAST] ts LAST from (select [ts] from y timestamp (ts)) order by " +
+                            "LAST desc limit 1 union select-choose [ts min] ts min from (select [ts] from y timestamp (ts)) " +
+                            "limit 1 union select-choose [ts max] ts max from (select [ts] from y timestamp (ts)) order by" +
+                            " max desc limit 1",
+                    model.toString0()
+            );
+            assertPlanNoLeakCheck(
+                    query,
+                    "Union\n" +
+                            "    Union\n" +
+                            "        Union\n" +
+                            "            Limit lo: 1\n" +
+                            "                SelectedRecord\n" +
+                            "                    DataFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: y\n" +
+                            "            Limit lo: 1\n" +
+                            "                SelectedRecord\n" +
+                            "                    DataFrame\n" +
+                            "                        Row backward scan\n" +
+                            "                        Frame backward scan on: y\n" +
+                            "        Limit lo: 1\n" +
+                            "            SelectedRecord\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: y\n" +
+                            "    Limit lo: 1\n" +
+                            "        SelectedRecord\n" +
+                            "            DataFrame\n" +
+                            "                Row backward scan\n" +
+                            "                Frame backward scan on: y\n"
+            );
+        });
+    }
+
+    @Test
+    public void testUnionQueryOnSingleCountDistinct() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y (x int, z int);");
+            final String query = "select count_distinct(x) from y union select count_distinct(z) from y;";
+            final QueryModel model = compileModel(query);
+            assertEquals(
+                    "select-group-by [count() count_distinct] count() count_distinct from (select-group-by x from (select [x] from y where null != x)) " +
+                            "union " +
+                            "select-group-by [count() count_distinct] count() count_distinct from (select-group-by z from (select [z] from y where null != z))",
+                    model.toString0()
+            );
+            assertPlanNoLeakCheck(
+                    query,
+                    "Union\n" +
+                            "    Count\n" +
+                            "        Async JIT Group By workers: 1\n" +
+                            "          keys: [x]\n" +
+                            "          filter: x!=null\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: y\n" +
+                            "    Count\n" +
+                            "        Async JIT Group By workers: 1\n" +
+                            "          keys: [z]\n" +
+                            "          filter: z!=null\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: y\n"
+            );
+        });
+    }
+
+    @Test
+    public void testWhereClauseOnNestedModelWithFirstAggregateFunctionOnParentModel() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y ( x int, ts timestamp) timestamp(ts);");
+            final String query = "select FIRST(ts) from (select * from y where x = 3)";
+            final QueryModel model = compileModel(query);
+            assertEquals(
+                    "select-group-by FIRST(ts) FIRST from (select-choose [ts] x, ts from " +
+                            "(select [ts, x] from y timestamp (ts) where x = 3))",
+                    model.toString0()
+            );
+            assertPlanNoLeakCheck(
+                    query,
+                    "GroupBy vectorized: false\n" +
+                            "  values: [first(ts)]\n" +
+                            "    SelectedRecord\n" +
+                            "        Async JIT Filter workers: 1\n" +
+                            "          filter: x=3\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: y\n"
+            );
+        });
+    }
+
+    @Test
+    public void testWhereClauseOnNestedModelWithLastAggregateFunctionOnParentModel() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y ( x int, ts timestamp) timestamp(ts);");
+            final String query = "select LAST(ts) from (select * from y where x = 3)";
+            final QueryModel model = compileModel(query);
+            assertEquals(
+                    "select-group-by LAST(ts) LAST from (select-choose [ts] x, ts from " +
+                            "(select [ts, x] from y timestamp (ts) where x = 3))",
+                    model.toString0()
+            );
+            assertPlanNoLeakCheck(
+                    query,
+                    "GroupBy vectorized: false\n" +
+                            "  values: [last(ts)]\n" +
+                            "    SelectedRecord\n" +
+                            "        Async JIT Filter workers: 1\n" +
+                            "          filter: x=3\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: y\n"
+            );
+        });
+    }
+
+    @Test
+    public void testWhereClauseOnNestedModelWithMaxAggregateFunctionOnParentModel() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y ( x int, ts timestamp) timestamp(ts);");
+            final String query = "select MAX(ts) from (select * from y where x = 3)";
+            final QueryModel model = compileModel(query);
+            assertEquals(
+                    "select-group-by MAX(ts) MAX from (select-choose [ts] x, ts from " +
+                            "(select [ts, x] from y timestamp (ts) where x = 3))",
+                    model.toString0()
+            );
+            assertPlanNoLeakCheck(
+                    query,
+                    "GroupBy vectorized: false\n" +
+                            "  values: [max(ts)]\n" +
+                            "    SelectedRecord\n" +
+                            "        Async JIT Filter workers: 1\n" +
+                            "          filter: x=3\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: y\n"
+            );
+        });
+    }
+
+    @Test
+    public void testWhereClauseOnNestedModelWithMinAggregateFunctionOnParentModel() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y ( x int, ts timestamp) timestamp(ts);");
+            final String query = "select MIN(ts) from (select * from y where x = 3)";
+            final QueryModel model = compileModel(query);
+            assertEquals(
+                    "select-group-by MIN(ts) MIN from (select-choose [ts] x, ts from " +
+                            "(select [ts, x] from y timestamp (ts) where x = 3))",
+                    model.toString0()
+            );
+            assertPlanNoLeakCheck(
+                    query,
+                    "GroupBy vectorized: false\n" +
+                            "  values: [min(ts)]\n" +
+                            "    SelectedRecord\n" +
+                            "        Async JIT Filter workers: 1\n" +
+                            "          filter: x=3\n" +
+                            "            DataFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: y\n"
+            );
+        });
+    }
+
+    @Test
+    public void testWhereClauseWithFirstAggregateFunctions() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y ( x int, ts timestamp) timestamp(ts);");
+            final String query = "select FIRST(ts) from y where x = 3";
+            final QueryModel model = compileModel(query);
+            assertEquals(
+                    "select-choose ts FIRST from " +
+                            "(select [ts, x] from y timestamp (ts) where x = 3) limit 1",
+                    model.toString0()
+            );
+            assertPlanNoLeakCheck(
+                    query,
+                    "SelectedRecord\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      limit: 1\n" +
+                            "      filter: x=3\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: y\n"
+            );
+        });
+    }
+
+    @Test
+    public void testWhereClauseWithLastAggregateFunctions() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y ( x int, ts timestamp) timestamp(ts);");
+            final String query = "select LAST(ts) from y where x = 3";
+            final QueryModel model = compileModel(query);
+            assertEquals(
+                    "select-choose ts LAST from " +
+                            "(select [ts, x] from y timestamp (ts) where x = 3) order " +
+                            "by LAST desc limit 1",
+                    model.toString0()
+            );
+            assertPlanNoLeakCheck(
+                    query,
+                    "SelectedRecord\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      limit: 1\n" +
+                            "      filter: x=3\n" +
+                            "        DataFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: y\n"
+            );
+        });
+    }
+
+    @Test
+    public void testWhereClauseWithMaxAggregateFunctions() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y ( x int, ts timestamp) timestamp(ts);");
+            final String query = "select MAX(ts) from y where x = 3";
+            final QueryModel model = compileModel(query);
+            assertEquals(
+                    "select-choose ts MAX from " +
+                            "(select [ts, x] from y timestamp (ts) where x = 3) order " +
+                            "by MAX desc limit 1",
+                    model.toString0()
+            );
+            assertPlanNoLeakCheck(
+                    query,
+                    "SelectedRecord\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      limit: 1\n" +
+                            "      filter: x=3\n" +
+                            "        DataFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: y\n"
+            );
+        });
+    }
+
+    @Test
+    public void testWhereClauseWithMinAggregateFunctions() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table y ( x int, ts timestamp) timestamp(ts);");
+            final String query = "select MIN(ts) from y where x = 3";
+            final QueryModel model = compileModel(query);
+            assertEquals(
+                    "select-choose ts MIN from " +
+                            "(select [ts, x] from y timestamp (ts) where x = 3) limit 1",
+                    model.toString0()
+            );
+            assertPlanNoLeakCheck(
+                    query,
+                    "SelectedRecord\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      limit: 1\n" +
+                            "      filter: x=3\n" +
+                            "        DataFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: y\n"
+            );
+        });
+    }
+
+    @Test
     public void testQueryPlanForFirstAggregateFunctionOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table y ( x int, ts timestamp) timestamp(ts);");
@@ -2471,7 +3276,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     protected QueryModel compileModel(String query) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             ExecutionModel model = compiler.testCompileModel(query, sqlExecutionContext);
-            Assert.assertEquals(model.getModelType(), ExecutionModel.QUERY);
+            assertEquals(model.getModelType(), ExecutionModel.QUERY);
             return (QueryModel) model;
         }
     }

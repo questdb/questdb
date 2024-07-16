@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.activity;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.security.AllowAllSecurityContext;
@@ -54,6 +55,8 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
     @Override
     public void setUp() {
         super.setUp();
+
+        node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
 
         readOnlyUserContext = new SqlExecutionContextImpl(engine, 1).with(new ReadOnlyUserContext());
         readOnlyUserContext.with(new AtomicBooleanCircuitBreaker());
