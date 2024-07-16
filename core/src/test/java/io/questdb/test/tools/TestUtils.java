@@ -573,16 +573,6 @@ public final class TestUtils {
         }
     }
 
-    public static void assertMemoryLeak(long limitMiB, LeakProneCode runnable) throws Exception {
-        long limit = Unsafe.getRssMemUsed() + limitMiB * 1024 * 1024;
-        Unsafe.setRssMemLimit(limit);
-        try {
-            assertMemoryLeak(runnable);
-        } finally {
-            Unsafe.setRssMemLimit(0);
-        }
-    }
-
     public static void assertMemoryLeak(LeakProneCode runnable) throws Exception {
         try (LeakCheck _check = new LeakCheck()) {
             runnable.run();

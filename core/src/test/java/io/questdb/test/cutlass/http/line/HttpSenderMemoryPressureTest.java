@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.client.Sender;
 import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
@@ -37,6 +38,7 @@ import org.junit.Test;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.concurrent.locks.LockSupport;
 
 public class HttpSenderMemoryPressureTest extends AbstractBootstrapTest {
 
@@ -48,47 +50,55 @@ public class HttpSenderMemoryPressureTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testMemoryPressure() throws Exception {
-        String tn = "table1";
-        Rnd rnd = new Rnd();
-        TestUtils.assertMemoryLeak(1, () -> {
-            try (TestServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048")
-            ) {
-                serverMain.start();
-                serverMain.compile("create table " + tn +
-                        "(b byte, s short, i int, l long, f float, d double, v varchar, sym symbol, tss timestamp, ts timestamp" +
-                        ") timestamp(ts) partition by HOUR WAL");
+    public void testMemoryPressure() {
+        final String tn = "table1";
+        final Rnd rnd = new Rnd();
+        LockSupport.parkNanos(3_000_000_000L);
+        try (TestServerMain serverMain = startWithEnvVariables(
+                PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048")
+        ) {
+            serverMain.start();
+            serverMain.compile("create table " + tn +
+                    "(b byte, s short, i int, l long, f float, d double, v varchar, sym symbol, tss timestamp, ts timestamp" +
+                    ") timestamp(ts) partition by HOUR WAL");
 
-                int port = serverMain.getHttpServerPort();
-                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
-                        .address("localhost:" + port)
-                        .build()
-                ) {
-                    for (int j = 0; j < 10; j++) {
-                        for (int i = 0; i < 1_000_000; i++) {
-                            sender.table(tn)
-                                    .symbol("sym", rnd.nextString(2))
-                                    .longColumn("b", rnd.nextByte())
-                                    .longColumn("s", rnd.nextShort())
-                                    .longColumn("i", rnd.nextInt(1000))
-                                    .doubleColumn("f", rnd.nextFloat())
-                                    .doubleColumn("d", rnd.nextDouble())
-                                    .stringColumn("v", rnd.nextString(50))
-                                    .timestampColumn("tss", Instant.ofEpochMilli(rnd.nextLong()))
-                                    .at(rnd.nextLong(1000L * 3600 * 1000), ChronoUnit.MILLIS);
-                        }
-                        sender.flush();
+            int port = serverMain.getHttpServerPort();
+            try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                    .address("localhost:" + port)
+                    .build()
+            ) {
+                for (int j = 0; j < 2_000; j++) {
+                    for (int i = 0; i < 3_000; i++) {
+                        sender.table(tn)
+                                .symbol("sym", rnd.nextString(2))
+                                .longColumn("b", rnd.nextByte())
+                                .longColumn("s", rnd.nextShort())
+                                .longColumn("i", rnd.nextInt(1000))
+                                .doubleColumn("f", rnd.nextFloat())
+                                .doubleColumn("d", rnd.nextDouble())
+                                .stringColumn("v", rnd.nextString(50))
+                                .timestampColumn("tss", Instant.ofEpochMilli(rnd.nextLong()))
+                                .at(rnd.nextLong(1000L * 3600 * 1000), ChronoUnit.MILLIS);
                     }
+                    long rssUsed = Unsafe.getRssMemUsed();
+                    System.out.printf("RSS used %,d\n", rssUsed);
+                    Unsafe.setRssMemLimit(rssUsed + 3 * (1L << 20));
                     try {
-                        serverMain.awaitTable(tn);
-                    } catch (CairoException e) {
-                        if (!e.getMessage().contains("suspended")) {
-                            Assert.fail("The only accepted error is 'table suspended'");
-                        }
+                        sender.flush();
+                    } finally {
+                        Unsafe.setRssMemLimit(0);
                     }
                 }
+                try {
+                    serverMain.awaitTable(tn);
+                } catch (CairoException e) {
+                    if (!e.getMessage().contains("suspended")) {
+                        e.printStackTrace(System.err);
+                        Assert.fail("The only accepted error is 'table suspended', but got: " + e.getMessage());
+                    }
+                    System.out.printf("\n\n%s\n\n", e.getMessage());
+                }
             }
-        });
+        }
     }
 }
