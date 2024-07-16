@@ -2218,7 +2218,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             int dataFd = TableUtils.openRO(ff, dFile(path.trimTo(partitionLen), columnName, columnNameTxn), LOG);
                             fileDescriptors.add(dataFd);
 
-                            long dataAddr = TableUtils.mapAppendColumnBuffer(ff, dataFd, 0, dataSize, false, memoryTag);
+                            long dataAddr = dataSize == 0 ? 0 : TableUtils.mapAppendColumnBuffer(ff, dataFd, 0, dataSize, false, memoryTag);
                             partitionDescriptor.addColumn(
                                     columnName,
                                     columnType,
