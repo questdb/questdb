@@ -32,7 +32,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class MatchSymFunctionFactoryTest extends AbstractCairoTest {
+public class MatchSymbolFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNonStaticSymbolTable() throws Exception {
@@ -62,12 +62,11 @@ public class MatchSymFunctionFactoryTest extends AbstractCairoTest {
     public void testNullRegex() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table x as (select rnd_symbol('jjke', 'jio2', 'ope', 'nbbe', null) name from long_sequence(2000))");
-            try {
-                assertExceptionNoLeakCheck("select * from x where name ~ null");
-            } catch (SqlException e) {
-                Assert.assertEquals(29, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "NULL regex");
-            }
+            assertQuery(
+                    "name\n",
+                    "select * from x where name ~ null",
+                    false
+            );
         });
     }
 

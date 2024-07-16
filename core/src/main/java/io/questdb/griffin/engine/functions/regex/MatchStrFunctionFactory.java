@@ -36,6 +36,7 @@ import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.regex.Matcher;
 
@@ -68,7 +69,7 @@ public class MatchStrFunctionFactory implements FunctionFactory {
         private final Matcher matcher;
         private final Function value;
 
-        public MatchStrConstPatternFunction(Function value, Matcher matcher) {
+        public MatchStrConstPatternFunction(Function value, @Nullable Matcher matcher) {
             this.value = value;
             this.matcher = matcher;
         }
@@ -80,42 +81,53 @@ public class MatchStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            CharSequence cs = getArg().getStrA(rec);
-            return cs != null && matcher.reset(cs).find();
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
+            if (matcher != null) {
+                CharSequence cs = getArg().getStrA(rec);
+                return cs != null && matcher.reset(cs).find();
+            }
             return false;
         }
 
         @Override
+        public boolean isReadThreadSafe() {
+            return matcher == null;
+        }
+
+        @Override
+        public boolean isConstant() {
+            return UnaryFunction.super.isConstant() || matcher == null;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
-            sink.val(value).val(" ~ ").val(matcher.pattern().toString());
+            sink.val(value).val(" ~ ").val(matcher != null ? matcher.pattern().toString() : null);
         }
     }
 
     static class MatchStrRuntimeConstPatternFunction extends BooleanFunction implements UnaryFunction {
         private final Function pattern;
         private final int patternPosition;
-        private final Function value;
+        private final Function fun;
         private Matcher matcher;
 
-        public MatchStrRuntimeConstPatternFunction(Function value, Function pattern, int patternPosition) {
-            this.value = value;
+        public MatchStrRuntimeConstPatternFunction(Function fun, Function pattern, int patternPosition) {
+            this.fun = fun;
             this.pattern = pattern;
             this.patternPosition = patternPosition;
         }
 
         @Override
         public Function getArg() {
-            return value;
+            return fun;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            CharSequence cs = getArg().getStrA(rec);
-            return cs != null && matcher.reset(cs).find();
+            if (matcher != null) {
+                CharSequence cs = getArg().getStrA(rec);
+                return cs != null && matcher.reset(cs).find();
+            }
+            return false;
         }
 
         @Override
@@ -142,7 +154,7 @@ public class MatchStrFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(value).val(" ~ ").val(pattern.toString());
+            sink.val(fun).val(" ~ ").val(pattern.toString());
         }
     }
 }

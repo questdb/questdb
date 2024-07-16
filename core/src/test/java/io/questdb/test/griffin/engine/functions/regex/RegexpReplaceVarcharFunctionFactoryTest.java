@@ -36,24 +36,28 @@ public class RegexpReplaceVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNonExistingGroupIndex() throws Exception {
         assertFailure(
-                "No group 11",
+                "no group 11",
                 "select regexp_replace('abc'::varchar, '^https?://(?:www\\.)?([^/]+)/.*$', '$11')"
         );
     }
 
     @Test
     public void testNullRegex() throws Exception {
-        assertFailure(
-                "NULL regex",
-                "select regexp_replace('abc'::varchar, null, 'def')"
+        assertQuery(
+                "regexp_replace\n" +
+                        "\n",
+                "select regexp_replace('abc'::varchar, null, 'def')",
+                true
         );
     }
 
     @Test
     public void testNullReplacement() throws Exception {
-        assertFailure(
-                "NULL replacement",
-                "select regexp_replace('abc'::varchar, 'a', null)"
+        assertQuery(
+                "regexp_replace\n" +
+                        "\n",
+                "select regexp_replace('abc'::varchar, 'a', null)",
+                true
         );
     }
 
@@ -112,7 +116,7 @@ public class RegexpReplaceVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testWhenChainedCallsExceedsMaxLengthExceptionIsThrown() throws Exception {
         assertFailure(
-                "[-1] breached memory limit set for regexp_replace(SSS) [maxLength=1048576]",
+                "breached memory limit set for regexp_replace(SSS) [maxLength=1048576]",
                 "select regexp_replace(regexp_replace(regexp_replace(regexp_replace('aaaaaaaaaaaaaaaaaaaa'::varchar, 'a', 'aaaaaaaaaaaaaaaaaaaa'), 'a', 'aaaaaaaaaaaaaaaaaaaa'), 'a', 'aaaaaaaaaaaaaaaaaaaa'), 'a', 'aaaaaaaaaaaaaaaaaaaa')"
         );
     }

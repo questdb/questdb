@@ -38,12 +38,12 @@ public class MatchStrFunctionFactoryTest extends AbstractCairoTest {
     public void testNullRegex() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table x as (select rnd_str() name from long_sequence(2000))");
-            try {
-                assertExceptionNoLeakCheck("select * from x where name ~ null");
-            } catch (SqlException e) {
-                Assert.assertEquals(29, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "NULL regex");
-            }
+            assertQuery(
+                    "name\n",
+                    "select * from x where name ~ null",
+                    false,
+                    true
+            );
         });
     }
 

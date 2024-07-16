@@ -78,9 +78,11 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         final StaticSymbolTable symbolTable = symbolFun.getStaticSymbolTable();
         assert symbolTable != null;
         symbolKeys.clear();
-        for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
-            if (matcher.reset(symbolTable.valueOf(i)).find()) {
-                symbolKeys.add(i);
+        if (matcher != null) {
+            for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
+                if (matcher.reset(symbolTable.valueOf(i)).find()) {
+                    symbolKeys.add(i);
+                }
             }
         }
     }

@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectUtf16Sink;
 import io.questdb.std.str.Utf8Sequence;
@@ -68,20 +69,28 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
         if (!pattern.isRuntimeConstant() && !replacement.isRuntimeConstant()) {
             final CharSequence patternStr = pattern.getStrA(null);
             if (patternStr == null) {
-                throw SqlException.$(patternPos, "NULL regex");
+                return VarcharConstant.NULL;
             }
             CharSequence replacementStr = replacement.getStrA(null);
             if (replacementStr == null) {
-                throw SqlException.$(replacementPos, "NULL replacement");
+                return VarcharConstant.NULL;
             }
             // Optimize for patterns like "^https?://(?:www\.)?([^/]+)/.*$" and replacements like "$1".
-            if (patternStr.length() > 2 && patternStr.charAt(0) == '^' && patternStr.charAt(patternStr.length() - 1) == '$'
-                    && replacementStr.length() > 1 && replacementStr.charAt(0) == '$') {
+            if (
+                    patternStr.length() > 2
+                            && patternStr.charAt(0) == '^'
+                            && patternStr.charAt(patternStr.length() - 1) == '$'
+                            && replacementStr.length() > 1
+                            && replacementStr.charAt(0) == '$'
+            ) {
                 final Matcher matcher = RegexUtils.createMatcher(pattern, patternPos);
+                if (matcher == null) {
+                    return VarcharConstant.NULL;
+                }
                 try {
                     final int group = Numbers.parseInt(replacementStr, 1, replacementStr.length());
                     if (group > matcher.groupCount()) {
-                        throw SqlException.$(replacementPos, "No group ").put(group);
+                        throw SqlException.$(replacementPos, "no group ").put(group);
                     }
                     return new SingleGroupFunc(value, matcher, Chars.toString(replacementStr), group, position);
                 } catch (NumericException ignore) {
@@ -90,7 +99,7 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
         }
 
         final int maxLength = configuration.getStrFunctionMaxBufferLength();
-        return new Func(value, pattern, patternPos, replacement, replacementPos, maxLength, position);
+        return new RegexpReplaceStrFunction(value, pattern, patternPos, replacement, maxLength, position);
     }
 
     private static class SingleGroupFunc extends StrFunction implements UnaryFunction {
