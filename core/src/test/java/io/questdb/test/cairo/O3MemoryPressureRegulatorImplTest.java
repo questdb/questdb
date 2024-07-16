@@ -44,10 +44,10 @@ public class O3MemoryPressureRegulatorImplTest extends AbstractTest {
             0, // level 4
             0, // level 5
             512_000, // level 6
-            1024_000, // level 7
-            2048_000, // level 8
-            4096_000, // level 9
-            8192_000 // level 10
+            1_024_000, // level 7
+            2_048_000, // level 8
+            4_096_000, // level 9
+            8_192_000 // level 10
     };
 
     private static final int[] EXPECTED_PARALLELISMS = {
