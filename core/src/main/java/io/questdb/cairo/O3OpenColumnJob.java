@@ -174,9 +174,10 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long srcTimestampAddr,
             long srcTimestampSize,
             TableWriter tableWriter,
-            FilesFacade ff
+            FilesFacade ff,
+            boolean isOom
     ) {
-        tableWriter.o3BumpErrorCount(false);
+        tableWriter.o3BumpErrorCount(isOom);
         if (columnCounter.decrementAndGet() == 0) {
             O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
             O3Utils.close(ff, srcTimestampFd);
@@ -1298,7 +1299,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     srcTimestampAddr,
                     srcTimestampSize,
                     tableWriter,
-                    ff
+                    ff,
+                    CairoException.isCairoOomError(e)
             );
             throw e;
         }
@@ -1762,7 +1764,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     srcTimestampAddr,
                     srcTimestampSize,
                     tableWriter,
-                    ff
+                    ff,
+                    CairoException.isCairoOomError(e)
             );
             throw e;
         }
@@ -1877,7 +1880,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampAddr,
                         srcTimestampSize,
                         tableWriter,
-                        ff
+                        ff,
+                        CairoException.isCairoOomError(e)
                 );
                 throw e;
             }
@@ -1904,7 +1908,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampAddr,
                         srcTimestampSize,
                         tableWriter,
-                        ff
+                        ff,
+                        CairoException.isCairoOomError(e)
                 );
                 throw e;
             }
@@ -1976,7 +1981,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampAddr,
                         srcTimestampSize,
                         tableWriter,
-                        ff
+                        ff,
+                        CairoException.isCairoOomError(e)
                 );
                 throw e;
             }
@@ -2198,7 +2204,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     srcTimestampAddr,
                     srcTimestampSize,
                     tableWriter,
-                    ff
+                    ff,
+                    CairoException.isCairoOomError(e)
             );
             throw e;
         }
@@ -2699,7 +2706,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampAddr,
                         srcTimestampSize,
                         tableWriter,
-                        ff
+                        ff,
+                        CairoException.isCairoOomError(e)
                 );
                 throw e;
             }
@@ -2725,7 +2733,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampAddr,
                         srcTimestampSize,
                         tableWriter,
-                        ff
+                        ff,
+                        CairoException.isCairoOomError(e)
                 );
                 throw e;
             }
@@ -2794,7 +2803,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         srcTimestampAddr,
                         srcTimestampSize,
                         tableWriter,
-                        ff
+                        ff,
+                        CairoException.isCairoOomError(e)
                 );
                 throw e;
             }
