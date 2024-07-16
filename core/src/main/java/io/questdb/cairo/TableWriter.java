@@ -49,7 +49,6 @@ import io.questdb.log.LogRecord;
 import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.*;
@@ -135,7 +134,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final MemoryMR metaMem;
     private final TableWriterMetadata metadata;
     private final Metrics metrics;
-    private final MicrosecondClock microsecondClock;
     private final boolean mixedIOFlag;
     private final int mkDirMode;
     private final ObjList<Runnable> nullSetters;
@@ -273,7 +271,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
         this.tableToken = tableToken;
         this.o3QuickSortEnabled = configuration.isO3QuickSortEnabled();
-        this.microsecondClock = configuration.getMicrosecondClock();
         try {
             this.path = new Path().of(root).concat(tableToken);
             this.other = new Path().of(root).concat(tableToken);
