@@ -22,6 +22,11 @@
  *
  ******************************************************************************/
 
+// Written by Gil Tene of Azul Systems, and released to the public domain,
+// as explained at http://creativecommons.org/publicdomain/zero/1.0/
+//
+// @author Gil Tene
+
 /**
  * <h2>A High Dynamic Range (HDR) Histogram Package</h2>
  * <p>
