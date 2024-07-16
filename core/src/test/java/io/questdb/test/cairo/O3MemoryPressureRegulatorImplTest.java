@@ -69,7 +69,7 @@ public class O3MemoryPressureRegulatorImplTest extends AbstractTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         SeqTxnTracker txnTracker = new SeqTxnTracker();
         MicrosecondClock clock = MicrosecondClockImpl.INSTANCE;
-        O3MemoryPressureRegulatorImpl regulator = new O3MemoryPressureRegulatorImpl(rnd, clock, txnTracker);
+        O3MemoryPressureRegulatorImpl regulator = new O3MemoryPressureRegulatorImpl(rnd, clock, txnTracker, "foo");
 
         long now = clock.getTicks();
         for (int i = 0; i < 10; i++) {
@@ -114,7 +114,7 @@ public class O3MemoryPressureRegulatorImplTest extends AbstractTest {
     public void testDefaultState() {
         Rnd rnd = TestUtils.generateRandom(LOG);
         SeqTxnTracker txnTracker = new SeqTxnTracker();
-        O3MemoryPressureRegulatorImpl regulator = new O3MemoryPressureRegulatorImpl(rnd, MicrosecondClockImpl.INSTANCE, txnTracker);
+        O3MemoryPressureRegulatorImpl regulator = new O3MemoryPressureRegulatorImpl(rnd, MicrosecondClockImpl.INSTANCE, txnTracker, "foo");
 
         Assert.assertEquals(Integer.MAX_VALUE, regulator.getMaxO3MergeParallelism());
         Assert.assertFalse(regulator.shouldBackOff(MicrosecondClockImpl.INSTANCE.getTicks()));
@@ -125,7 +125,7 @@ public class O3MemoryPressureRegulatorImplTest extends AbstractTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         SeqTxnTracker txnTracker = new SeqTxnTracker();
         MicrosecondClock clock = MicrosecondClockImpl.INSTANCE;
-        O3MemoryPressureRegulatorImpl regulator = new O3MemoryPressureRegulatorImpl(rnd, clock, txnTracker);
+        O3MemoryPressureRegulatorImpl regulator = new O3MemoryPressureRegulatorImpl(rnd, clock, txnTracker, "foo");
 
         long now = clock.getTicks();
         for (int i = 1; i <= 20; i++) {
