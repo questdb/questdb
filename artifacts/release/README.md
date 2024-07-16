@@ -15,6 +15,7 @@ guidelines. Releases should not look too dissimilar.
 ```bash
 git fetch
 git checkout master
+git pull
 git checkout -b v_7_1_1
 ```
 
