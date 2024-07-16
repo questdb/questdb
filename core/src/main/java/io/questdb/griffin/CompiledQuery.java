@@ -65,9 +65,9 @@ public interface CompiledQuery {
     short TABLE_SET_TYPE = TABLE_RESUME + 1; // 27
     short CREATE_USER = TABLE_SET_TYPE + 1; // 28
     short ALTER_USER = CREATE_USER + 1; // 29
-
     short CANCEL_QUERY = ALTER_USER + 1; // 30
-    short TYPES_COUNT = CANCEL_QUERY;
+    short TABLE_SUSPEND = CANCEL_QUERY + 1; // 31
+    short TYPES_COUNT = TABLE_SUSPEND;
 
     /**
      * Executes the query.

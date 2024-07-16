@@ -27,10 +27,13 @@ package io.questdb.griffin.engine.functions.test;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -43,17 +46,31 @@ public class TestNPEFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return NPEFunction.INSTANCE;
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        if (configuration.isDevModeEnabled()) {
+            return NPEFunction.INSTANCE;
+        }
+        return BooleanConstant.FALSE;
     }
 
     private static class NPEFunction extends BooleanFunction {
-
-        private final static NPEFunction INSTANCE = new NPEFunction();
+        private static final NPEFunction INSTANCE = new NPEFunction();
 
         @Override
         public boolean getBool(Record rec) {
             throw new NullPointerException();
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            executionContext.getSecurityContext().authorizeAdminAction();
         }
 
         @Override

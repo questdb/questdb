@@ -24,7 +24,6 @@
 
 package io.questdb.std.bytes;
 
-import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 
 /**

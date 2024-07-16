@@ -38,7 +38,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
@@ -93,11 +92,6 @@ public class QuoteIdentVarcharFunctionFactory implements FunctionFactory {
         @Override
         public String getName() {
             return "quote_ident";
-        }
-
-        @Override
-        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-            quote((Utf8StringSink) utf8Sink, arg.getVarcharA(rec));
         }
 
         @Override

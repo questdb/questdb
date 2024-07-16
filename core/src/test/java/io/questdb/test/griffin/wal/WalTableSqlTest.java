@@ -361,7 +361,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                         .concat(WalUtils.WAL_NAME_BASE).put("1").concat("0")
                         .concat(WalUtils.EVENT_FILE_NAME).$();
                 FilesFacade ff = engine.getConfiguration().getFilesFacade();
-                int fd = TableUtils.openRW(ff, path, LOG, configuration.getWriterFileOpenOpts());
+                int fd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
                 long intAddr = Unsafe.malloc(4, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.getUnsafe().putInt(intAddr, 10);
                 ff.write(fd, intAddr, 4, 0);
@@ -1046,7 +1046,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             @Override
             public boolean rmdir(Path path, boolean lazy) {
                 if (Utf8s.equalsAscii(pretendNotExist.get(), path) && count++ == 0) {
-                    super.rmdir(Path.getThreadLocal(pretendNotExist.get()).concat(SEQ_DIR).$());
+                    super.rmdir(Path.getThreadLocal(pretendNotExist.get()).concat(SEQ_DIR));
                     return false;
                 }
                 return super.rmdir(path, lazy);
@@ -1218,8 +1218,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\n" +
-                    "testEmptyTruncate\tfalse\t1\t0\t1\n", "wal_tables()");
+            assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\n" +
+                    "testEmptyTruncate\tfalse\t1\t0\t1\t\t\n", "wal_tables()");
         });
     }
 

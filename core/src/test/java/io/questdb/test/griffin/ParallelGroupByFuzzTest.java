@@ -2681,6 +2681,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     private void testParallelGroupByFaultTolerance(String query) throws Exception {
         Assume.assumeTrue(enableParallelGroupBy);
+        node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool((() -> 4));
             TestUtils.execute(

@@ -60,7 +60,7 @@ public class BitSet implements Mutable {
      */
     public boolean getAndSet(int bitIndex) {
         int wordIndex = wordIndex(bitIndex);
-        checkCapactiy(wordIndex + 1);
+        checkCapacity(wordIndex + 1);
         boolean old = (words[wordIndex] & 1L << bitIndex) != 0L;
         words[wordIndex] |= 1L << bitIndex;
         return old;
@@ -71,7 +71,7 @@ public class BitSet implements Mutable {
      */
     public void set(int bitIndex) {
         int wordIndex = wordIndex(bitIndex);
-        checkCapactiy(wordIndex + 1);
+        checkCapacity(wordIndex + 1);
         words[wordIndex] |= 1L << bitIndex;
     }
 
@@ -79,7 +79,7 @@ public class BitSet implements Mutable {
         return bitIndex >> 6;
     }
 
-    private void checkCapactiy(int wordsRequired) {
+    private void checkCapacity(int wordsRequired) {
         if (words.length < wordsRequired) {
             int newLen = Math.max(2 * words.length, wordsRequired);
             words = Arrays.copyOf(words, newLen);

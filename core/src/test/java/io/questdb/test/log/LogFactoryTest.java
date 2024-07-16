@@ -1051,13 +1051,13 @@ public class LogFactoryTest {
                 try (Path path = new Path()) {
                     for (int i = 0; i < extraFiles; i++) {
                         path.of(base + extraFilePrefix).put(i).put(".log").$();
-                        int fd = Files.openRW(path);
+                        int fd = Files.openRW(path.$());
                         try {
                             Files.allocate(fd, nSizeLimit + 1);
                         } finally {
                             Files.close(fd);
                         }
-                        Files.setLastModified(path, clock.getTicks() / 1000 - (i + 1) * 24 * Timestamps.HOUR_MICROS / 1000);
+                        Files.setLastModified(path.$(), clock.getTicks() / 1000 - (i + 1) * 24 * Timestamps.HOUR_MICROS / 1000);
                     }
                 }
             }
@@ -1067,8 +1067,8 @@ public class LogFactoryTest {
                 try (Path path = new Path()) {
                     for (int i = 0; i < extraFiles; i++) {
                         path.of(base + extraFilePrefix).put(i).put(".log").$();
-                        Files.touch(path);
-                        Files.setLastModified(path, clock.getTicks() / 1000 - (i + 1) * Numbers.parseLongDuration(lifeDuration) / 1000);
+                        Files.touch(path.$());
+                        Files.setLastModified(path.$(), clock.getTicks() / 1000 - (i + 1) * Numbers.parseLongDuration(lifeDuration) / 1000);
                     }
                 }
             }
@@ -1089,7 +1089,7 @@ public class LogFactoryTest {
         try (Path path = new Path()) {
             StringSink fileNameSink = new StringSink();
             path.of(base).$();
-            long pFind = Files.findFirst(path);
+            long pFind = Files.findFirst(path.$());
             try {
                 Assert.assertNotEquals(0, pFind);
                 do {
@@ -1173,7 +1173,7 @@ public class LogFactoryTest {
         try (Path path = new Path()) {
             StringSink fileNameSink = new StringSink();
             path.of(base).$();
-            long pFind = Files.findFirst(path);
+            long pFind = Files.findFirst(path.$());
             try {
                 Assert.assertNotEquals(0, pFind);
                 do {

@@ -957,7 +957,7 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
         try (Path path = new Path().of(root).concat(tableName).concat(LastPartitionTs)) {
             TestUtils.txnPartitionConditionally(path, txn);
             path.$();
-            Assert.assertFalse(Files.exists(path));
+            Assert.assertFalse(Files.exists(path.$()));
         } finally {
             Misc.free(workerPool);
         }

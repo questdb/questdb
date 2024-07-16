@@ -25,6 +25,8 @@
 #ifndef SYSUTIL_H
 #define SYSUTIL_H
 
+#include <errno.h>
+
 #define RESTARTABLE(_cmd, _result) do { \
     _result = _cmd; \
   } while(((int)_result == -1) && (errno == EINTR))

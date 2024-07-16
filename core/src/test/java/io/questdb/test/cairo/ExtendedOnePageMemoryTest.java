@@ -80,7 +80,7 @@ public class ExtendedOnePageMemoryTest extends AbstractTest {
         createFile();
         try (MemoryMR mem = new MemoryCMRImpl()) {
             int sz = FILE_SIZE / 2;
-            mem.of(ff, path, sz, sz, MemoryTag.MMAP_DEFAULT);
+            mem.of(ff, path.$(), sz, sz, MemoryTag.MMAP_DEFAULT);
             FILE_MAP_FAIL.set(true);
             sz *= 2;
             try {
@@ -98,7 +98,7 @@ public class ExtendedOnePageMemoryTest extends AbstractTest {
         try (MemoryMR mem = new MemoryCMRImpl()) {
             FILE_MAP_FAIL.set(true);
             try {
-                mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+                mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
                 Assert.fail();
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "could not mmap");

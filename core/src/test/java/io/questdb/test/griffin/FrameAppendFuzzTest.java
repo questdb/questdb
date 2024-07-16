@@ -113,8 +113,8 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
     private void copyTableDir(TableToken src, TableToken merged) {
         FilesFacade ff = configuration.getFilesFacade();
 
-        Path pathDest = Path.getThreadLocal(configuration.getRoot()).concat(merged).$();
-        Path pathSrc = Path.getThreadLocal2(configuration.getRoot()).concat(src).$();
+        Path pathDest = Path.getThreadLocal(configuration.getRoot()).concat(merged);
+        Path pathSrc = Path.getThreadLocal2(configuration.getRoot()).concat(src);
 
         ff.rmdir(pathDest);
         ff.copyRecursive(pathSrc, pathDest, configuration.getMkDirMode());
@@ -129,8 +129,8 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
         engine.releaseInactive();
 
         // Force overwrite partitioning to by YEAR
-        Path path = Path.getThreadLocal(configuration.getRoot()).concat(merged).concat(TableUtils.META_FILE_NAME).$();
-        int metaFd = TableUtils.openRW(ff, path, LOG, configuration.getWriterFileOpenOpts());
+        Path path = Path.getThreadLocal(configuration.getRoot()).concat(merged).concat(TableUtils.META_FILE_NAME);
+        int metaFd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
 
         long addr = Unsafe.malloc(4, MemoryTag.NATIVE_DEFAULT);
         Unsafe.getUnsafe().putInt(addr, PartitionBy.YEAR);

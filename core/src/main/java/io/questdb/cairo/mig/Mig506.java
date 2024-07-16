@@ -87,7 +87,7 @@ final class Mig506 {
             TableUtils.setPathForPartition(path, partitionBy, ts, -1);
             if (ff.exists(path.concat(TX_STRUCT_UPDATE_1_ARCHIVE_FILE_NAME).$())) {
                 if (!removedPartitionsIncludes(ts, txMem, symbolsCount)) {
-                    long partitionSize = TableUtils.readLongAtOffset(ff, path, tempMem8b, 0);
+                    long partitionSize = TableUtils.readLongAtOffset(ff, path.$(), tempMem8b, 0);
 
                     // Update tx file with 4 longs per partition
                     writeTo.putLong(ts);
@@ -114,8 +114,8 @@ final class Mig506 {
         final FilesFacade ff = migrationContext.getFf();
         int pathDirLen = path.size();
 
-        path.concat(TXN_FILE_NAME).$();
-        if (!ff.exists(path)) {
+        path.concat(TXN_FILE_NAME);
+        if (!ff.exists(path.$())) {
             MigrationActions.LOG.error().$("tx file does not exist, nothing to migrate [path=").$(path).I$();
             return;
         }

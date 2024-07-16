@@ -341,10 +341,10 @@ public class LogAlertSocketWriterTest {
 
     @Test
     public void testOnLogRecordWithExternalTemplate() throws Exception {
-        final Path dstPath = Path.getThreadLocal(root).concat("test-alert-manager.json").$();
+        final Path dstPath = Path.getThreadLocal(root).concat("test-alert-manager.json");
         String resourcePath = TestUtils.getResourcePath(DEFAULT_ALERT_TPT_FILE);
-        Path template = Path.getThreadLocal2(resourcePath).$();
-        int result = Files.copy(template, dstPath);
+        Path template = Path.getThreadLocal2(resourcePath);
+        int result = Files.copy(template.$(), dstPath.$());
         Assert.assertTrue("Copying " + resourcePath + " to " + dstPath + " result: " + result, result >= 0);
         String location = dstPath.toString();
 
@@ -368,7 +368,7 @@ public class LogAlertSocketWriterTest {
             }
             try (Path path = new Path()) {
                 path.put(fileName).$();
-                int fd = ff.openAppend(path);
+                int fd = ff.openAppend(path.$());
                 ff.truncate(fd, 0);
                 ff.append(fd, buffPtr, bytes.length);
                 ff.close(fd);
@@ -380,7 +380,7 @@ public class LogAlertSocketWriterTest {
                 }
                 LogAlertSocketWriter.readFile(fileName, buffPtr, buffSize, ff, sink);
                 TestUtils.assertEquals(fileContent, sink);
-                ff.remove(path);
+                ff.remove(path.$());
             } finally {
                 Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
             }
@@ -424,7 +424,7 @@ public class LogAlertSocketWriterTest {
                 }
 
                 path.put(fileName).$();
-                fd = ff.openCleanRW(path, buffSize);
+                fd = ff.openCleanRW(path.$(), buffSize);
                 ff.append(fd, buffPtr, len);
                 try {
                     LogAlertSocketWriter.readFile(fileName, buffPtr, 17, ff, sink);
@@ -437,7 +437,7 @@ public class LogAlertSocketWriterTest {
                 }
             } finally {
                 ff.close(fd);
-                ff.remove(path);
+                ff.remove(path.$());
                 path.close();
                 Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
             }

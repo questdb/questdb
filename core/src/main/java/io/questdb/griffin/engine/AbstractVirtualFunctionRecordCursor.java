@@ -53,6 +53,9 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
     @Override
     public void close() {
         baseCursor = Misc.free(baseCursor);
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            functions.getQuick(i).cursorClosed();
+        }
     }
 
     @Override

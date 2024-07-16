@@ -718,7 +718,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     throw SqlException.$(lexer.lastTokenPosition(), "'wal' expected");
                 }
 
-                tok = SqlUtil.fetchNext(lexer); // optional from part
+                tok = SqlUtil.fetchNext(lexer); // optional FROM part
                 long fromTxn = -1;
                 if (tok != null && !Chars.equals(tok, ';')) {
                     if (SqlKeywords.isFromKeyword(tok)) {
@@ -741,6 +741,51 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
                 securityContext.authorizeResumeWal(tableToken);
                 alterTableResume(tableNamePosition, tableToken, fromTxn, executionContext);
+            } else if (SqlKeywords.isSuspendKeyword(tok)) {
+                tok = expectToken(lexer, "'wal'");
+                if (!SqlKeywords.isWalKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'wal' expected");
+                }
+                if (!engine.isWalTable(tableToken)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), tableToken.getTableName()).put(" is not a WAL table.");
+                }
+                if (!configuration.isDevModeEnabled()) {
+                    throw SqlException.$(0, "Cannot suspend table, database is not in dev mode");
+                }
+
+                ErrorTag errorTag = ErrorTag.NONE;
+                String errorMessage = "";
+
+                tok = SqlUtil.fetchNext(lexer); // optional WITH part
+                if (tok != null && !Chars.equals(tok, ';')) {
+                    if (SqlKeywords.isWithKeyword(tok)) {
+                        tok = expectToken(lexer, "error code/tag");
+                        final CharSequence errorCodeOrTagValue = GenericLexer.unquote(tok).toString();
+                        try {
+                            final int errorCode = Numbers.parseInt(errorCodeOrTagValue);
+                            errorTag = ErrorTag.resolveTag(errorCode);
+                        } catch (NumericException e) {
+                            try {
+                                errorTag = ErrorTag.resolveTag(errorCodeOrTagValue);
+                            } catch (CairoException cairoException) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "invalid value [value=").put(errorCodeOrTagValue).put(']');
+                            }
+                        }
+                        final CharSequence comma = expectToken(lexer, "','");
+                        if (!Chars.equals(comma, ',')) {
+                            throw SqlException.position(lexer.getPosition()).put("',' expected");
+                        }
+                        tok = expectToken(lexer, "error message");
+                        errorMessage = GenericLexer.unquote(tok).toString();
+                        tok = SqlUtil.fetchNext(lexer);
+                        if (tok != null && !Chars.equals(tok, ';')) {
+                            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [token=").put(tok).put(']');
+                        }
+                    } else {
+                        throw SqlException.$(lexer.lastTokenPosition(), "'with' expected");
+                    }
+                }
+                alterTableSuspend(tableNamePosition, tableToken, errorTag, errorMessage, executionContext);
             } else if (SqlKeywords.isSquashKeyword(tok)) {
                 securityContext.authorizeAlterTableDropPartition(tableToken);
                 tok = expectToken(lexer, "'partitions'");
@@ -1293,7 +1338,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private void alterTableResume(int tableNamePosition, TableToken tableToken, long resumeFromTxn, SqlExecutionContext executionContext) {
         try {
-
             engine.getTableSequencerAPI().resumeTable(tableToken, resumeFromTxn);
             executionContext.storeTelemetry(TelemetrySystemEvent.WAL_APPLY_RESUME, TelemetryOrigin.WAL_APPLY);
             compiledQuery.ofTableResume();
@@ -1351,6 +1395,21 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.position(pos)
                     .put(e.getFlyweightMessage())
                     .put("[errno=").put(e.getErrno()).put(']');
+        }
+    }
+
+    private void alterTableSuspend(int tableNamePosition, TableToken tableToken, ErrorTag errorTag, String errorMessage, SqlExecutionContext executionContext) {
+        try {
+            engine.getTableSequencerAPI().suspendTable(tableToken, errorTag, errorMessage);
+            executionContext.storeTelemetry(TelemetrySystemEvent.WAL_APPLY_SUSPEND, TelemetryOrigin.WAL_APPLY);
+            compiledQuery.ofTableSuspend();
+        } catch (CairoException ex) {
+            LOG.critical().$("table suspend failed [table=").$(tableToken)
+                    .$(", error=").$(ex.getFlyweightMessage())
+                    .$(", errno=").$(ex.getErrno())
+                    .I$();
+            ex.position(tableNamePosition);
+            throw ex;
         }
     }
 
@@ -1615,8 +1674,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     break;
                 default:
                     final InsertModel insertModel = (InsertModel) executionModel;
+                    QueryProgress.logStart(sqlId, sqlText, executionContext);
                     if (insertModel.getQueryModel() != null) {
-                        QueryProgress.logStart(sqlId, sqlText, executionContext);
                         sqlId = queryRegistry.register(sqlText, executionContext);
                         executeWithRetries(
                                 insertAsSelectMethod,
@@ -1625,7 +1684,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 executionContext
                         );
                     } else {
-                        QueryProgress.logStart(sqlId, sqlText, executionContext);
                         insert(executionModel, executionContext);
                         compiledQuery.getInsertOperation().setInsertSql(sqlText);
                     }
@@ -2400,11 +2458,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         executionContext.setUseSimpleCircuitBreaker(true);
         try (
                 TableWriterAPI writer = engine.getTableWriterAPI(tableToken, "insertAsSelect");
-                RecordCursorFactory factory = generate(model.getQueryModel(), executionContext)
+                RecordCursorFactory factory = generate(model.getQueryModel(), executionContext);
+                TableMetadata writerMetadata = executionContext.getMetadataForWrite(tableToken)
         ) {
             final RecordMetadata cursorMetadata = factory.getMetadata();
             // Convert sparse writer metadata into dense
-            final RecordMetadata writerMetadata = GenericRecordMetadata.copyDense(writer.getMetadata());
             final int writerTimestampIndex = writerMetadata.getTimestampIndex();
             final int cursorTimestampIndex = cursorMetadata.getTimestampIndex();
             final int cursorColumnCount = cursorMetadata.getColumnCount();
@@ -3321,11 +3379,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
 
             String tableName = tableToken.getTableName();
-            auxPath.of(cachedBackupTmpRoot).concat(tableToken).slash$();
+            auxPath.of(cachedBackupTmpRoot).concat(tableToken).slash();
             int tableRootLen = auxPath.size();
             try {
                 try (TableReader reader = engine.getReader(tableToken)) { // acquire reader lock
-                    if (ff.exists(auxPath)) {
+                    if (ff.exists(auxPath.$())) {
                         throw CairoException.nonCritical()
                                 .put("backup dir already exists [path=").put(auxPath)
                                 .put(", table=").put(tableName)
@@ -3445,8 +3503,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } // release reader lock
                 int renameRootLen = dstPath.size();
                 try {
-                    dstPath.trimTo(renameRootLen).concat(tableToken).$();
-                    TableUtils.renameOrFail(ff, auxPath.trimTo(tableRootLen).$(), dstPath);
+                    dstPath.trimTo(renameRootLen).concat(tableToken);
+                    TableUtils.renameOrFail(ff, auxPath.trimTo(tableRootLen).$(), dstPath.$());
                     LOG.info().$("backup complete [table=").utf8(tableName).$(", to=").$(dstPath).I$();
                 } finally {
                     dstPath.trimTo(renameRootLen).$();
@@ -3487,9 +3545,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (n > 0) {
                     dstPath.put('.').put(n);
                 }
-                dstPath.slash$();
+                dstPath.slash();
                 n++;
-            } while (ff.exists(dstPath));
+            } while (ff.exists(dstPath.$()));
             if (ff.mkdirs(dstPath, configuration.getBackupMkDirMode()) != 0) {
                 // the winner will succeed the looser thread will get this exception
                 throw CairoException.critical(ff.errno()).put("could not create backup [dir=").put(dstPath).put(']');
@@ -3533,10 +3591,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // Note: this is unsafe way to back up table name registry,
             //       but since we're going to deprecate BACKUP, that's ok
             int version = TableNameRegistryStore.findLastTablesFileVersion(ff, srcPath, sink);
-            srcPath.trimTo(srcLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).putAscii('.').put(version).$();
-            dstPath.trimTo(dstCurrDirLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).putAscii(".0").$(); // reset to 0
+            srcPath.trimTo(srcLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).putAscii('.').put(version);
+            dstPath.trimTo(dstCurrDirLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).putAscii(".0"); // reset to 0
             LOG.info().$("backup copying file [from=").$(srcPath).$(", to=").$(dstPath).I$();
-            if (ff.copy(srcPath, dstPath) < 0) {
+            if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
                 throw CairoException.critical(ff.errno())
                         .put("cannot backup table registry file [from=").put(srcPath)
                         .put(", to=").put(dstPath)
@@ -3544,10 +3602,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
 
             // backup table index file (_tab_index.d)
-            srcPath.trimTo(srcLen).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
-            dstPath.trimTo(dstCurrDirLen).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
+            srcPath.trimTo(srcLen).concat(TableUtils.TAB_INDEX_FILE_NAME);
+            dstPath.trimTo(dstCurrDirLen).concat(TableUtils.TAB_INDEX_FILE_NAME);
             LOG.info().$("backup copying file [from=").$(srcPath).$(", to=").$(dstPath).I$();
-            if (ff.copy(srcPath, dstPath) < 0) {
+            if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
                 throw CairoException.critical(ff.errno())
                         .put("cannot backup table index file [from=").put(srcPath)
                         .put(", to=").put(dstPath)
@@ -3556,7 +3614,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             // backup conf directory
             mkBackupDstDir(PropServerConfiguration.CONFIG_DIRECTORY, "could not create backup [conf dir=");
-            ff.copyRecursive(srcPath.of(configuration.getConfRoot()).$(), auxPath.of(dstPath).$(), configuration.getMkDirMode());
+            ff.copyRecursive(srcPath.of(configuration.getConfRoot()), auxPath.of(dstPath), configuration.getMkDirMode());
             compiledQuery.ofBackupTable();
         }
 

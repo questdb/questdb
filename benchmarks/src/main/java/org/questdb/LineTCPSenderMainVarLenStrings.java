@@ -54,8 +54,8 @@ public class LineTCPSenderMainVarLenStrings {
         try (Path path = new Path()) {
             int logFd = -1;
             if (args.length == 1) {
-                path.put(args[0]).$();
-                logFd = ff.openRW(path, CairoConfiguration.O_NONE);
+                path.put(args[0]);
+                logFd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
             }
             PlainTcpLineChannel tcpLineChannel = new PlainTcpLineChannel(NetworkFacadeImpl.INSTANCE, Net.parseIPv4(hostIPv4), port, bufferCapacity * 2);
             try (LineTcpSender sender = new LineTcpSender(new LoggingLineChannel(tcpLineChannel, logFd, ff), bufferCapacity)) {

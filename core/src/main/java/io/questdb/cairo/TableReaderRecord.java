@@ -356,7 +356,9 @@ public class TableReaderRecord implements Record, Sinkable {
                 TableReader.getPrimaryColumnIndex(columnBase, col)
         );
         return VarcharTypeDriver.getSplitValue(
-                reader.getColumn(absoluteColumnIndex + 1), reader.getColumn(absoluteColumnIndex), rowNum,
+                reader.getColumn(absoluteColumnIndex + 1),
+                reader.getColumn(absoluteColumnIndex),
+                rowNum,
                 ab
         );
     }
