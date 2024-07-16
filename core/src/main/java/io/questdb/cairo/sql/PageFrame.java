@@ -32,7 +32,7 @@ public interface PageFrame {
 
     /**
      * The count of columns in the page frame. In some cases it is possible to have
-     * page fame with no columns.
+     * page frame with no columns.
      *
      * @return column count
      */
