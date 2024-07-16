@@ -417,10 +417,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return Unsafe.getUnsafe().getLong(timestampIndex + indexRow * 16);
     }
 
-    public static boolean isCairoOomError(Throwable t) {
-        return t instanceof CairoException && ((CairoException) t).isOutOfMemory();
-    }
-
     @Override
     public void addColumn(@NotNull CharSequence columnName, int columnType, SecurityContext securityContext) {
         addColumn(
@@ -6043,7 +6039,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         try {
                             setAppendPosition(srcDataMax, false);
                         } catch (Throwable e) {
-                            o3BumpErrorCount(TableWriter.isCairoOomError(e));
+                            o3BumpErrorCount(CairoException.isCairoOomError(e));
                             o3ClockDownPartitionUpdateCount();
                             o3CountDownDoneLatch();
                             throw e;

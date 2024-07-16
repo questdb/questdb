@@ -116,6 +116,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return critical(METADATA_VALIDATION_RECOVERABLE).put(msg).put(" [column=").put(columnName).put(']');
     }
 
+    public static boolean isCairoOomError(Throwable t) {
+        return t instanceof CairoException && ((CairoException) t).isOutOfMemory();
+    }
+
     public static CairoException nonCritical() {
         return instance(NON_CRITICAL);
     }
