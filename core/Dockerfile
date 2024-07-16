@@ -1,7 +1,7 @@
 ARG base_image=debian:bookworm-slim
-ARG tag_name
 
 FROM debian:bookworm
+ARG tag_name
 
 ENV GOSU_VERSION=1.14
 ENV JDK_VERSION=17.0.11.9-1
@@ -45,6 +45,7 @@ RUN dpkgArch="$(dpkg --print-architecture | awk -F- '{ print $NF }')"; \
     ./gosu nobody true
 
 FROM ${base_image}
+ARG tag_name
 
 WORKDIR /app
 
@@ -62,8 +63,8 @@ LABEL name=QuestDB \
     vendor=QuestDB \
     summary="Provides the latest release of QuestDB" \
     description="QuestDB is an open source time-series database for fast ingest and SQL queries" \
-    version=${tag_name} \
-    release=${tag_name}
+    version=$tag_name \
+    release=$tag_name
 
 
 # Create questdb user and group
