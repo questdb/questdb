@@ -184,7 +184,7 @@ public class SeqTxnTracker {
         memPressureLevel++;
         setMemoryPressureLevel(memPressureLevel);
         adjustWalBackoff(nowMicros);
-        LOG.infoW().$("Memory pressure building up, new level=").$(memPressureLevel).$();
+        LOG.info().$("Memory pressure building up, new level=").$(memPressureLevel).$();
         return true;
     }
 
@@ -210,7 +210,7 @@ public class SeqTxnTracker {
                 memPressureLevel--;
             }
         }
-        LOG.infoW().$("Memory pressure easing off for table, new level=").$(memPressureLevel).$();
+        LOG.info().$("Memory pressure easing off for table, new level=").$(memPressureLevel).$();
     }
 
     public void setMemoryPressureLevel(int memoryPressureLevel) {
