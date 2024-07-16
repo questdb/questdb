@@ -39,9 +39,8 @@ import org.junit.Test;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.locks.LockSupport;
 
-public class HttpSenderMemoryPressureTest extends AbstractBootstrapTest {
+public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
 
     @Before
     public void setUp() {
@@ -51,10 +50,9 @@ public class HttpSenderMemoryPressureTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testMemoryPressure() {
+    public void testMemoryPressureSingleSender() {
         final String tn = "table1";
         final Rnd rnd = new Rnd();
-        LockSupport.parkNanos(3_000_000_000L);
         try (TestServerMain serverMain = startWithEnvVariables(
                 PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048")
         ) {
@@ -68,8 +66,12 @@ public class HttpSenderMemoryPressureTest extends AbstractBootstrapTest {
                     .address("localhost:" + port)
                     .build()
             ) {
-                for (int j = 0; j < 2_000; j++) {
-                    for (int i = 0; i < 3_000; i++) {
+                int batchSize10k = rnd.nextInt(5) + 1;
+                int batchSize = batchSize10k * 10_000;
+                int numIters = 15_000 / batchSize10k;
+                LOG.infoW().$(String.format("batchSize %,d, numIters %,d", batchSize, numIters)).$();
+                for (int j = 0; j < numIters; j++) {
+                    for (int i = 0; i < batchSize; i++) {
                         sender.table(tn)
                                 .symbol("sym", rnd.nextString(2))
                                 .longColumn("b", rnd.nextByte())
@@ -79,10 +81,9 @@ public class HttpSenderMemoryPressureTest extends AbstractBootstrapTest {
                                 .doubleColumn("d", rnd.nextDouble())
                                 .stringColumn("v", rnd.nextString(50))
                                 .timestampColumn("tss", Instant.ofEpochMilli(rnd.nextLong()))
-                                .at(rnd.nextLong(1000L * 3600 * 1000), ChronoUnit.MILLIS);
+                                .at(rnd.nextLong(100L * 3_600_000), ChronoUnit.MILLIS);
                     }
                     long rssUsed = Unsafe.getRssMemUsed();
-                    System.out.printf("RSS used %,d\n", rssUsed);
                     Unsafe.setRssMemLimit(rssUsed + 3 * (1L << 20));
                     try {
                         sender.flush();
