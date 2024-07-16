@@ -77,7 +77,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int SET_OPERATION_INTERSECT = 4;
     public static final int SET_OPERATION_INTERSECT_ALL = 5;
     public static final int SET_OPERATION_UNION = 1;
-    // types of set operations between this and union model
+    public static final int INCLUSIVE_BETWEEN = 1;
+    public static final int EXCLUSIVE_BETWEEN = 2;
+    public static final int RIGHT_OPEN_BETWEEN = 3;
+    public static final int LEFT_OPEN_BETWEEN = 4;
+    // types of set operations betweepublic static final int RIGHT_OPEN_BETWEEN = 3;n this and union model
     public static final int SET_OPERATION_UNION_ALL = 0;
     public static final int SHOW_COLUMNS = 2;
     public static final int SHOW_DATE_STYLE = 9;
@@ -184,6 +188,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private QueryModel updateTableModel;
     private TableToken updateTableToken;
     private ExpressionNode whereClause;
+    // exclusive and inclusive with between
+    private int betweenType = INCLUSIVE_BETWEEN;
 
     private QueryModel() {
         joinModels.add(this);
@@ -433,6 +439,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         explicitTimestamp = false;
         showKind = -1;
         sampleByOffset = ZERO_OFFSET;
+        betweenType = INCLUSIVE_BETWEEN;
     }
 
     public void clearColumnMapStructs() {
@@ -620,7 +627,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && Objects.equals(limitAdviceHi, that.limitAdviceHi)
                 && Objects.equals(unionModel, that.unionModel)
                 && Objects.equals(updateTableModel, that.updateTableModel)
-                && Objects.equals(updateTableToken, that.updateTableToken);
+                && Objects.equals(updateTableToken, that.updateTableToken)
+                && Objects.equals(betweenType, that.betweenType);
     }
 
     public QueryColumn findBottomUpColumnByAst(ExpressionNode node) {
@@ -908,6 +916,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return withClauseModel;
     }
 
+    public int getBetweenType() {
+        return betweenType;
+    }
+
     public boolean hasExplicitTimestamp() {
         return timestamp != null && explicitTimestamp;
     }
@@ -947,7 +959,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 distinct, unionModel, setOperationType,
                 modelPosition, orderByAdviceMnemonic, tableId,
                 isUpdateModel, modelType, updateTableModel,
-                updateTableToken, artificialStar
+                updateTableToken, artificialStar, betweenType
         );
     }
 
@@ -1318,6 +1330,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setWhereClause(ExpressionNode whereClause) {
         this.whereClause = whereClause;
+    }
+
+    public void setBetweenType(int betweenType) {
+        this.betweenType = betweenType;
     }
 
     @Override

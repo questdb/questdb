@@ -2141,6 +2141,26 @@ public class SqlParser {
                                 } else {
                                     throw SqlException.$(lexer.lastTokenPosition(), "'and' expected");
                                 }
+
+                                tok = tok(lexer, "'inclusive' 'exclusive' 'left' 'open' 'right'");
+
+                                if(SqlKeywords.isInclusiveKeyword(tok)) {
+                                    // for INCLUSIVE
+                                } else if(SqlKeywords.isExclusiveKeyword(tok)) {
+                                    // for EXCLUSIVE
+                                } else if (SqlKeywords.isRightKeyword(tok)) {
+                                    if (SqlKeywords.isOpenKeyword(tok)) {
+                                        // for RIGHT OPEN
+                                    }
+                                }  else if (SqlKeywords.isLeftKeyword(tok)) {
+                                    if (SqlKeywords.isOpenKeyword(tok)) {
+                                        // for LEFT OPEN
+                                    }
+                                } else {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "''inclusive' 'exclusive' 'left' 'open' 'right' expected");
+                                }
+
+
                             } else {
                                 // If you omit BETWEEN and specify only one end point, then QuestDB considers it the
                                 // start point, and the end point defaults to the current row.
