@@ -1320,10 +1320,10 @@ public class WalTableFailureTest extends AbstractCairoTest {
     public void testWalTableSuspendResumeStatusTable() throws Exception {
         testWalTableSuspendResumeStatusTable("1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", "table1", 999, NONE.text());
         if (Os.isWindows()) {
-            testWalTableSuspendResumeStatusTable("1\tCD\t2022-02-24T00:00:00.000000Z\tFG\n", "table3", 39, DISK_FULL.text());
+            testWalTableSuspendResumeStatusTable("1\tBC\t2022-02-24T00:00:00.000000Z\tFG\n", "table3", 39, DISK_FULL.text());
             testWalTableSuspendResumeStatusTable("1\tCD\t2022-02-24T00:00:00.000000Z\tFG\n", "table4", 112, DISK_FULL.text());
-            testWalTableSuspendResumeStatusTable("1\tAB\t2022-02-24T00:00:00.000000Z\tDE\n", "table5", 4, TOO_MANY_OPEN_FILES.text());
-            testWalTableSuspendResumeStatusTable("1\tBC\t2022-02-24T00:00:00.000000Z\tDE\n", "table6", 8, OUT_OF_MMAP_AREAS.text());
+            testWalTableSuspendResumeStatusTable("1\tCD\t2022-02-24T00:00:00.000000Z\tFG\n", "table5", 4, TOO_MANY_OPEN_FILES.text());
+            testWalTableSuspendResumeStatusTable("1\tAB\t2022-02-24T00:00:00.000000Z\tDE\n", "table6", 8, OUT_OF_MMAP_AREAS.text());
         } else {
             testWalTableSuspendResumeStatusTable("1\tBC\t2022-02-24T00:00:00.000000Z\tFG\n", "table3", 28, DISK_FULL.text());
             testWalTableSuspendResumeStatusTable("1\tCD\t2022-02-24T00:00:00.000000Z\tFG\n", "table4", 24, TOO_MANY_OPEN_FILES.text());
