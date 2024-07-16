@@ -116,8 +116,10 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
             assertSql(expected, "select * from x where ts = (select 1::timestamp from x where 1 <> 1)");
             assertSql(expected, "select * from x where ts = (select '11' from x where 1 <> 1)");
             assertSql(expected, "select * from x where ts = (select '11'::varchar from x where 1 <> 1)");
-//            assertSql(expected, "select * from x where ts = (select 'hello')");
+            assertException("select * from x where ts = (select 'hello')", 28, "the cursor selected invalid timestamp value: hello");
+            assertException("select * from x where ts = (select 'hello'::varchar)", 28, "the cursor selected invalid timestamp value: hello");
+            assertException("select * from x where ts =(select 'hello'::varchar, 10 x)", 27, "select must provide exactly one column");
+            assertException("select * from x where ts =(select 10 x)", 27, "cannot compare TIMESTAMP and INT");
         });
     }
-
 }

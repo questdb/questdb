@@ -81,6 +81,61 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
         }
     }
 
+    public static class EqTimestampStringFromCursorFunction extends BooleanFunction implements BinaryFunction {
+        private final RecordCursorFactory factory;
+        private final Function leftFn;
+        private final Function rightFn;
+        private final int rightFnPos;
+        private long epoch;
+
+        public EqTimestampStringFromCursorFunction(RecordCursorFactory factory, Function leftFn, Function rightFn, int rightFnPos) {
+            this.factory = factory;
+            this.leftFn = leftFn;
+            this.rightFn = rightFn;
+            this.rightFnPos = rightFnPos;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return leftFn.getTimestamp(rec) == epoch;
+        }
+
+        @Override
+        public Function getLeft() {
+            return leftFn;
+        }
+
+        @Override
+        public Function getRight() {
+            return rightFn;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                if (cursor.hasNext()) {
+                    final CharSequence value = cursor.getRecord().getStrA(0);
+                    try {
+                        epoch = value != null ? IntervalUtils.parseFloorPartialTimestamp(value) : Numbers.LONG_NULL;
+                    } catch (NumericException e) {
+                        throw SqlException.$(rightFnPos, "the cursor selected invalid timestamp value: ").put(value);
+                    }
+                } else {
+                    epoch = Numbers.LONG_NULL;
+                }
+            }
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            // the function is thread safe because its state is epoch, which does not mutate
+            // between frame executions. For non-thread-safe function, which operates a cursor,
+            // the cursor will be re-executed as many times as there are threads. Which is suboptimal.
+            return true;
+        }
+    }
+
     public static class EqTimestampTimestampFromCursorFunction extends BooleanFunction implements BinaryFunction {
         private final RecordCursorFactory factory;
         private final Function leftFn;
@@ -112,7 +167,7 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
         public boolean isReadThreadSafe() {
             // the function is thread safe because its state is epoch, which does not mutate
             // between frame executions. For non-thread-safe function, which operates a cursor,
-            // the cursor will be re-executed as many times as there are threads. Which is sub-optimal.
+            // the cursor will be re-executed as many times as there are threads. Which is suboptimal.
             return true;
         }
 
@@ -122,61 +177,6 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
                 if (cursor.hasNext()) {
                     epoch = cursor.getRecord().getTimestamp(0);
-                } else {
-                    epoch = Numbers.LONG_NULL;
-                }
-            }
-        }
-    }
-
-    public static class EqTimestampStringFromCursorFunction extends BooleanFunction implements BinaryFunction {
-        private final RecordCursorFactory factory;
-        private final Function leftFn;
-        private final Function rightFn;
-        private final int rightFnPos;
-        private long epoch;
-
-        public EqTimestampStringFromCursorFunction(RecordCursorFactory factory, Function leftFn, Function rightFn, int rightFnPos) {
-            this.factory = factory;
-            this.leftFn = leftFn;
-            this.rightFn = rightFn;
-            this.rightFnPos = rightFnPos;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            return leftFn.getTimestamp(rec) == epoch;
-        }
-
-        @Override
-        public Function getLeft() {
-            return leftFn;
-        }
-
-        @Override
-        public Function getRight() {
-            return rightFn;
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            // the function is thread safe because its state is epoch, which does not mutate
-            // between frame executions. For non-thread-safe function, which operates a cursor,
-            // the cursor will be re-executed as many times as there are threads. Which is sub-optimal.
-            return true;
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            super.init(symbolTableSource, executionContext);
-            try (RecordCursor cursor = factory.getCursor(executionContext)) {
-                if (cursor.hasNext()) {
-                    final CharSequence value = cursor.getRecord().getStrA(0);
-                    try {
-                        epoch = value != null ? IntervalUtils.parseFloorPartialTimestamp(value) : Numbers.LONG_NULL;
-                    } catch (NumericException e) {
-                        throw SqlException.$(rightFnPos, "invalid timestamp: ").put(value);
-                    }
                 } else {
                     epoch = Numbers.LONG_NULL;
                 }
@@ -214,14 +214,6 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
-            // the function is thread safe because its state is epoch, which does not mutate
-            // between frame executions. For non-thread-safe function, which operates a cursor,
-            // the cursor will be re-executed as many times as there are threads. Which is sub-optimal.
-            return true;
-        }
-
-        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
@@ -230,12 +222,20 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
                     try {
                         epoch = value != null ? IntervalUtils.parseFloorPartialTimestamp(value) : Numbers.LONG_NULL;
                     } catch (NumericException e) {
-                        throw SqlException.$(rightFnPos, "invalid timestamp: ").put(value);
+                        throw SqlException.$(rightFnPos, "the cursor selected invalid timestamp value: ").put(value);
                     }
                 } else {
                     epoch = Numbers.LONG_NULL;
                 }
             }
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            // the function is thread safe because its state is epoch, which does not mutate
+            // between frame executions. For non-thread-safe function, which operates a cursor,
+            // the cursor will be re-executed as many times as there are threads. Which is suboptimal.
+            return true;
         }
     }
 }

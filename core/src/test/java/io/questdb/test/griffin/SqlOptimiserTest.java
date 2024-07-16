@@ -419,7 +419,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "            Count\n" +
                             "                Async JIT Group By workers: 1\n" +
                             "                  keys: [x]\n" +
-                            "                  filter: null!=x\n" +
+                            "                  filter: x!=null\n" +
                             "                    DataFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: y1\n"
