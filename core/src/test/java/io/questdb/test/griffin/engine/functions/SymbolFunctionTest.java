@@ -193,11 +193,6 @@ public class SymbolFunctionTest {
         function.getStrLen(null);
     }
 
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetStrSink() {
-        function.getStr(null, null);
-    }
-
     @Test
     public void testGetVarcharA() {
         Utf8Sequence value = function.getVarcharA(null);

@@ -32,7 +32,10 @@ import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
-import io.questdb.std.str.*;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 
 public abstract class VarcharFunction implements ScalarFunction {
     private final StringSink utf16SinkA = new StringSink();
@@ -147,14 +150,6 @@ public abstract class VarcharFunction implements ScalarFunction {
     @Override
     public final short getShort(Record rec) {
         return SqlUtil.implicitCastVarcharAsShort(getVarcharA(rec));
-    }
-
-    @Override
-    public void getStr(Record rec, Utf16Sink utf16Sink) {
-        Utf8Sequence utf8seq = getVarcharA(rec);
-        if (utf8seq != null) {
-            Utf8s.utf8ToUtf16(utf8seq, utf16Sink);
-        }
     }
 
     @Override

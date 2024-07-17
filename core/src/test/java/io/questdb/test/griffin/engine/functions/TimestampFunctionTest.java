@@ -183,11 +183,6 @@ public class TimestampFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetStr2() {
-        function.getStr(null, null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
     public void testGetStrB() {
         function.getStrB(null);
     }

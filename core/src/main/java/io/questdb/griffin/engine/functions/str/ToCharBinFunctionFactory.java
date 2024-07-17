@@ -35,7 +35,6 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
@@ -67,11 +66,6 @@ public class ToCharBinFunctionFactory implements FunctionFactory {
         @Override
         public String getName() {
             return "to_char";
-        }
-
-        @Override
-        public void getStr(Record rec, Utf16Sink utf16Sink) {
-            Chars.toSink(arg.getBin(rec), utf16Sink);
         }
 
         @Override

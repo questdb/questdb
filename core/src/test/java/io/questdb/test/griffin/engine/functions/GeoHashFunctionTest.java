@@ -28,7 +28,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GeoByteFunction;
-import io.questdb.std.str.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -119,13 +118,6 @@ public class GeoHashFunctionTest {
     @Test
     public void testGetStrIntoSink1() {
         Assert.assertEquals(GeoHashes.NULL, nullFunction.getGeoByte(null));
-        StringSink sink = new StringSink();
-        try {
-            nullFunction.getStr(null, sink);
-            Assert.fail();
-        } catch (UnsupportedOperationException e) {
-            // Good
-        }
     }
 
     @Test(expected = UnsupportedOperationException.class)

@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.functions.constants;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.StrFunction;
-import io.questdb.std.str.Utf16Sink;
 
 public class StrTypeConstant extends StrFunction implements TypeConstant {
 
@@ -36,10 +35,6 @@ public class StrTypeConstant extends StrFunction implements TypeConstant {
     @Override
     public CharSequence getStrA(Record rec) {
         return null;
-    }
-
-    @Override
-    public void getStr(Record rec, Utf16Sink utf16Sink) {
     }
 
     @Override

@@ -35,7 +35,10 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.json.SimdJsonNumberType;
 import io.questdb.std.json.SimdJsonType;
-import io.questdb.std.str.*;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -284,14 +287,6 @@ public class JsonExtractFunction implements ScalarFunction {
                 pointer,
                 stateA.simdJsonResult
         );
-    }
-
-    @Override
-    public void getStr(Record rec, Utf16Sink utf16Sink) {
-        final Utf8Sequence utf8seq = getVarcharA(rec);
-        if (utf8seq != null) {
-            Utf8s.utf8ToUtf16(utf8seq, utf16Sink);
-        }
     }
 
     @Override

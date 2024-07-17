@@ -42,7 +42,6 @@ import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Worker;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.tasks.VectorAggregateTask;
 import org.jetbrains.annotations.Nullable;
 
@@ -665,10 +664,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             @Override
             public short getShort(int col) {
                 return 0;
-            }
-
-            @Override
-            public void getStr(int col, Utf16Sink utf16Sink) {
             }
 
             @Override
