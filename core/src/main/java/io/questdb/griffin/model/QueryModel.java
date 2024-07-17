@@ -139,6 +139,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private JoinContext context;
     private boolean distinct = false;
     private boolean explicitTimestamp;
+    
+    // used for the parallel sample by rewrite. In future, if we deprecate original SAMPLE BY, then these will
+    // be the only fields for these values.
     private ExpressionNode fillFrom;
     private ExpressionNode fillStride;
     private ExpressionNode fillTo;

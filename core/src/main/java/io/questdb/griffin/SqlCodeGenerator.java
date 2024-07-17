@@ -1689,7 +1689,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateFill(QueryModel model, RecordCursorFactory groupByFactory, SqlExecutionContext executionContext) throws SqlException {
-        if (model.getNestedModel().getFillStride() == null) {
+        // locate fill
+        QueryModel curr = model;
+
+        while (curr != null && curr.getFillStride() == null) {
+            curr = curr.getNestedModel();
+        }
+
+        if (curr == null || curr.getFillStride() == null) {
             return groupByFactory;
         }
 
@@ -1697,11 +1704,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         Function fillFromFunc = TimestampConstant.NULL;
         Function fillToFunc = TimestampConstant.NULL;
 
-        final QueryModel nested = model.getNestedModel();
-        final ExpressionNode fillFrom = nested.getFillFrom();
-        final ExpressionNode fillTo = nested.getFillTo();
-        final ExpressionNode fillStride = nested.getFillStride();
-        ObjList<ExpressionNode> fillValuesExprs = nested.getFillValue();
+        final ExpressionNode fillFrom = curr.getFillFrom();
+        final ExpressionNode fillTo = curr.getFillTo();
+        final ExpressionNode fillStride = curr.getFillStride();
+        ObjList<ExpressionNode> fillValuesExprs = curr.getFillValue();
 
         try {
             if (fillValuesExprs == null) {
@@ -1747,7 +1753,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     fillToFunc,
                     fillStride.token,
                     fillValues,
-                    getTimestampIndex(nested, groupByFactory.getMetadata())
+                    getTimestampIndex(curr, groupByFactory.getMetadata())
             );
         } catch (Throwable e) {
             Misc.freeObjList(fillValues);

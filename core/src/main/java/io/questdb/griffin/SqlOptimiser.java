@@ -2370,6 +2370,16 @@ public class SqlOptimiser implements Mutable {
         return expr;
     }
 
+    private boolean matchesWithOrWithoutTablePrefix(@NotNull CharSequence name, @NotNull CharSequence table, CharSequence target) {
+        if (target == null) {
+            return false;
+        }
+        final int dotIndex = Chars.indexOf(name, '.');
+        return dotIndex > 0
+                ? Chars.equalsIgnoreCase(table, name, 0, dotIndex) && Chars.equalsIgnoreCase(target, name, dotIndex + 1, name.length())
+                : Chars.equalsIgnoreCase(name, target);
+    }
+
     private JoinContext mergeContexts(QueryModel parent, JoinContext a, JoinContext b) {
         assert a.slaveIndex == b.slaveIndex;
 
@@ -4528,10 +4538,12 @@ public class SqlOptimiser implements Mutable {
 
                 if (maybeKeyed.size() > 0 && sampleByFillSize > 0) {
                     if (!isNoneKeyword(sampleByFill.getQuick(0).token)) {
+                        final CharSequence tableName = nested.getTableName();
                         for (int i = 0, n = maybeKeyed.size(); i < n; i++) {
                             final ExpressionNode expr = maybeKeyed.getQuick(i);
                             // drop out early, since we don't handle keyed
-                            if (!Chars.equalsIgnoreCase(expr.token, timestamp.token) && !Chars.equalsIgnoreCaseNc(expr.token, timestampAlias)) {
+                            if (!matchesWithOrWithoutTablePrefix(expr.token, tableName, timestamp.token) &&
+                                    !matchesWithOrWithoutTablePrefix(expr.token, tableName, timestampAlias)) {
                                 // recurse nested models
                                 nested.setNestedModel(rewriteSampleBy(nested.getNestedModel()));
 
@@ -4718,98 +4730,122 @@ public class SqlOptimiser implements Mutable {
      */
     @SuppressWarnings("ConstantValue")
     private void rewriteSampleByFromTo(QueryModel model) throws SqlException {
-        QueryModel curr = model;
-        QueryModel fromToModel = null;
+        QueryModel curr;
+        QueryModel fromToModel;
         QueryModel whereModel = null;
-        ExpressionNode sampleFrom = null;
-        ExpressionNode sampleTo = null;
+        ExpressionNode sampleFrom;
+        ExpressionNode sampleTo;
 
         // extract sample from-to expressions
-        while (curr != null && (sampleFrom == null && sampleTo == null)) {
-            sampleFrom = curr.getSampleByFrom();
-            sampleTo = curr.getSampleByTo();
-
-            if (sampleFrom != null || sampleTo != null) {
-                fromToModel = curr;
-            }
-
-            curr = curr.getNestedModel();
-        }
-
-        // if no from-to
-        if (sampleFrom == null && sampleTo == null) {
+        // these should be in the nested model
+        if (model == null) {
             return;
         }
 
-        curr = model;
+        fromToModel = model.getNestedModel();
 
-        ExpressionNode whereClause = null;
+        if (fromToModel == null) {
+            return;
+        }
 
-        while (curr != null && whereClause == null) {
-            whereClause = curr.getWhereClause();
+        sampleFrom = fromToModel.getSampleByFrom();
+        sampleTo = fromToModel.getSampleByTo();
+
+        // if no from-to
+        if (sampleFrom != null || sampleTo != null) {
+
+            curr = model;
+
+            ExpressionNode whereClause = null;
+
+            while (curr != null && whereClause == null) {
+                whereClause = curr.getWhereClause();
+                if (whereClause != null) {
+                    whereModel = curr;
+                }
+                curr = curr.getNestedModel();
+            }
+
+            if (whereModel != null) {
+                // check if designated timestamp appears
+                traversalAlgo.traverse(whereClause, rewriteSampleByFromToVisitor.of(whereModel.getTimestamp()));
+                // if it already considers the timestamp, then we do nothing
+                if (rewriteSampleByFromToVisitor.timestampAppears) {
+                    return;
+                }
+
+                // else we need to compose the existing clause with AND
+            }
+
+            ExpressionNode intervalClause = null;
+
+            ExpressionNode timestamp = fromToModel.getTimestamp();
+            if (Chars.indexOf(timestamp.token, '.') < 0) {
+                // prefix the timestamp column name
+                CharacterStoreEntry e = characterStore.newEntry();
+                e.put(fromToModel.getTableName()).putAscii('.').put(timestamp.token);
+                CharSequence prefixedTimestamp = e.toImmutable();
+                timestamp = expressionNodePool.next().of(LITERAL, prefixedTimestamp, timestamp.precedence, timestamp.position);
+            }
+
+
+            // construct an appropriate where clause
+            if (sampleFrom != null && sampleTo != null) {
+                ExpressionNode greaterThanOrEqualToNode = expressionNodePool.next().of(OPERATION, ">=", 12, 0);
+                greaterThanOrEqualToNode.lhs = timestamp;
+                greaterThanOrEqualToNode.rhs = sampleFrom;
+                greaterThanOrEqualToNode.paramCount = 2;
+
+                ExpressionNode lesserThanNode = expressionNodePool.next().of(OPERATION, "<", 12, 0);
+                lesserThanNode.lhs = timestamp;
+                lesserThanNode.rhs = sampleTo;
+                lesserThanNode.paramCount = 2;
+
+                ExpressionNode andNode = expressionNodePool.next().of(OPERATION, "and", 15, 0);
+                andNode.lhs = greaterThanOrEqualToNode;
+                andNode.rhs = lesserThanNode;
+                andNode.paramCount = 2;
+                intervalClause = andNode;
+
+            } else if (sampleFrom != null) {
+                ExpressionNode greaterThanOrEqualToNode = expressionNodePool.next().of(OPERATION, ">=", 12, 0);
+                greaterThanOrEqualToNode.lhs = timestamp;
+                greaterThanOrEqualToNode.rhs = sampleFrom;
+                greaterThanOrEqualToNode.paramCount = 2;
+                intervalClause = greaterThanOrEqualToNode;
+            } else if (sampleTo != null) {
+                ExpressionNode lesserThanNode = expressionNodePool.next().of(OPERATION, "<", 12, 0);
+                lesserThanNode.lhs = timestamp;
+                lesserThanNode.rhs = sampleTo;
+                lesserThanNode.paramCount = 2;
+                intervalClause = lesserThanNode;
+            } else {
+                // unreachable
+                assert false;
+            }
+
             if (whereClause != null) {
-                whereModel = curr;
+                ExpressionNode andNode = expressionNodePool.next().of(OPERATION, "and", 15, 0);
+                andNode.lhs = intervalClause;
+                andNode.rhs = whereClause;
+                andNode.paramCount = 2;
+                fromToModel.setWhereClause(andNode);
+            } else {
+                fromToModel.setWhereClause(intervalClause);
             }
-            curr = curr.getNestedModel();
         }
 
-        if (whereModel != null) {
-            // check if designated timestamp appears
-            traversalAlgo.traverse(whereClause, rewriteSampleByFromToVisitor.of(whereModel.getTimestamp()));
-            // if it already considers the timestamp, then we do nothing
-            if (rewriteSampleByFromToVisitor.timestampAppears) {
-                return;
-            }
+        // recurse
+        rewriteSampleByFromTo(fromToModel.getNestedModel());
 
-            // else we need to compose the existing clause with AND
+        // join
+        for (int i = 1, n = fromToModel.getJoinModels().size(); i < n; i++) {
+            QueryModel joinModel = fromToModel.getJoinModels().getQuick(i);
+            rewriteSampleByFromTo(joinModel.getNestedModel());
         }
 
-        ExpressionNode intervalClause = null;
-
-        // construct an appropriate where clause
-        if (sampleFrom != null && sampleTo != null) {
-            ExpressionNode greaterThanOrEqualToNode = expressionNodePool.next().of(OPERATION, ">=", 12, 0);
-            greaterThanOrEqualToNode.lhs = fromToModel.getTimestamp();
-            greaterThanOrEqualToNode.rhs = sampleFrom;
-            greaterThanOrEqualToNode.paramCount = 2;
-
-            ExpressionNode lesserThanNode = expressionNodePool.next().of(OPERATION, "<", 12, 0);
-            lesserThanNode.lhs = fromToModel.getTimestamp();
-            lesserThanNode.rhs = sampleTo;
-            lesserThanNode.paramCount = 2;
-
-            ExpressionNode andNode = expressionNodePool.next().of(OPERATION, "and", 15, 0);
-            andNode.lhs = greaterThanOrEqualToNode;
-            andNode.rhs = lesserThanNode;
-            andNode.paramCount = 2;
-            intervalClause = andNode;
-
-        } else if (sampleFrom != null) {
-            ExpressionNode greaterThanOrEqualToNode = expressionNodePool.next().of(OPERATION, ">=", 12, 0);
-            greaterThanOrEqualToNode.lhs = fromToModel.getTimestamp();
-            greaterThanOrEqualToNode.rhs = sampleFrom;
-            greaterThanOrEqualToNode.paramCount = 2;
-            intervalClause = greaterThanOrEqualToNode;
-        } else if (sampleTo != null) {
-            ExpressionNode lesserThanNode = expressionNodePool.next().of(OPERATION, "<", 12, 0);
-            lesserThanNode.lhs = fromToModel.getTimestamp();
-            lesserThanNode.rhs = sampleTo;
-            lesserThanNode.paramCount = 2;
-            intervalClause = lesserThanNode;
-        } else {
-            // unreachable
-            assert false;
-        }
-
-        if (whereClause != null) {
-            ExpressionNode andNode = expressionNodePool.next().of(OPERATION, "and", 15, 0);
-            andNode.lhs = intervalClause;
-            andNode.rhs = whereClause;
-            andNode.paramCount = 2;
-            fromToModel.setWhereClause(andNode);
-        } else {
-            fromToModel.setWhereClause(intervalClause);
-        }
+        // union
+        rewriteSampleByFromTo(model.getUnionModel());
     }
 
     // flatParent = true means that parent model does not have selected columns
