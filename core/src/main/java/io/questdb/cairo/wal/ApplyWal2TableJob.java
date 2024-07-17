@@ -395,15 +395,41 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         TelemetryWalTask.store(walTelemetry, event, tableToken.getTableId(), walId, seqTxn, rowCount, physicalRowCount, latencyUs);
     }
 
-    private void handleWalApplyFailure(TableToken tableToken, ErrorTag errorTag, String errorMessage, SeqTxnTracker txnTracker) {
+    private void handleWalApplyFailure(TableToken tableToken, Throwable throwable, SeqTxnTracker txnTracker) {
+        ErrorTag errorTag;
+        String errorMessage;
+        if (throwable instanceof CairoException) {
+            CairoException cairoException = (CairoException) throwable;
+            if (cairoException.isOutOfMemory()) {
+                errorTag = OUT_OF_MEMORY;
+            } else {
+                errorTag = resolveTag(cairoException.getErrno());
+            }
+            errorMessage = cairoException.getFlyweightMessage().toString();
+        } else {
+            errorTag = ErrorTag.NONE;
+            errorMessage = throwable.getMessage();
+        }
+
         if (errorTag == OUT_OF_MEMORY && txnTracker != null && txnTracker.onOutOfMemory(MicrosecondClockImpl.INSTANCE.getTicks())) {
             engine.notifyWalTxnRepublisher(tableToken);
-        } else {
-            try {
-                engine.getTableSequencerAPI().suspendTable(tableToken, errorTag, errorMessage);
-            } catch (CairoException e) {
-                LOG.critical().$("could not suspend table [table=").$(tableToken.getTableName()).$(", error=").$(e.getFlyweightMessage()).I$();
+            return;
+        }
+
+        try {
+            telemetryFacade.store(TelemetrySystemEvent.WAL_APPLY_SUSPEND, TelemetryOrigin.WAL_APPLY);
+            LogRecord logRecord = LOG.critical().$("job failed, table suspended [table=").utf8(tableToken.getDirName());
+            if (throwable instanceof CairoException) {
+                CairoException ex = (CairoException) throwable;
+                logRecord.$(", error=").$(ex.getFlyweightMessage())
+                        .$(", errno=").$(ex.getErrno())
+                        .I$();
+            } else {
+                logRecord.$(", error=").$(throwable).I$();
             }
+            engine.getTableSequencerAPI().suspendTable(tableToken, errorTag, errorMessage);
+        } catch (CairoException e) {
+            LOG.critical().$("could not suspend table [table=").$(tableToken.getTableName()).$(", error=").$(e.getFlyweightMessage()).I$();
         }
     }
 
@@ -570,22 +596,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 // Table is dropped, and we received cairo exception in the middle of apply
                 tryDestroyDroppedTable(tableToken, null, engine, tempPath);
             } else {
-                telemetryFacade.store(TelemetrySystemEvent.WAL_APPLY_SUSPEND, TelemetryOrigin.WAL_APPLY);
-
-                // todo: we do not always suspend a table, this logging is misleading
-                LOG.critical().$("job failed, table suspended [table=").utf8(tableToken.getDirName())
-                        .$(", error=").$(ex.getFlyweightMessage())
-                        .$(", errno=").$(ex.getErrno())
-                        .I$();
-                handleWalApplyFailure(tableToken, ex.isOutOfMemory()
-                        ? OUT_OF_MEMORY : resolveTag(ex.getErrno()), ex.getFlyweightMessage().toString(), txnTracker);
+                handleWalApplyFailure(tableToken, ex, txnTracker);
             }
         } catch (Throwable ex) {
-            telemetryFacade.store(TelemetrySystemEvent.WAL_APPLY_SUSPEND, TelemetryOrigin.WAL_APPLY);
-            LOG.critical().$("job failed, table suspended [table=").utf8(tableToken.getDirName())
-                    .$(", error=").$(ex)
-                    .I$();
-            handleWalApplyFailure(tableToken, ErrorTag.NONE, ex.getMessage(), txnTracker);
+            handleWalApplyFailure(tableToken, ex, txnTracker);
         }
     }
 
