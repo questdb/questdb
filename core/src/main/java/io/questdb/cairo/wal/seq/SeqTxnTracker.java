@@ -150,15 +150,16 @@ public class SeqTxnTracker implements O3InflightPartitionRegulator {
                 return false;
             }
             backoffCounter++;
-            LOG.info().$("Memory pressure is high, backoffCounter=").$(backoffCounter).$();
-            walBackoffUntil = nowMicros + rnd.nextInt(4_000_000);
+            int delayMicros = rnd.nextInt(4_000_000);
+            LOG.info().$("Memory pressure is high [backoffCounter=").$(backoffCounter).$(", delay=").$(delayMicros).$(" μs]").$();
+            walBackoffUntil = nowMicros + delayMicros;
             return true;
         }
         backoffCounter = 0;
         walBackoffUntil = -1;
         maxParallelism = maxRecordedInflightPartitions / 2;
         maxRecordedInflightPartitions = 1;
-        LOG.info().$("Memory pressure building up, new max parallelism=").$(maxParallelism).$();
+        LOG.info().$("Memory pressure building up [maxParallelism=").$(maxParallelism).I$();
 
         return true;
     }
@@ -181,7 +182,7 @@ public class SeqTxnTracker implements O3InflightPartitionRegulator {
                 maxParallelism = Integer.MAX_VALUE;
             }
         }
-        LOG.info().$("Memory pressure easing off, new max parallelism=").$(maxParallelism).$();
+        LOG.info().$("Memory pressure easing off [maxParallelism=").$(maxParallelism).I$();
     }
 
     public void setSuspended(ErrorTag errorTag, String errorMessage) {
