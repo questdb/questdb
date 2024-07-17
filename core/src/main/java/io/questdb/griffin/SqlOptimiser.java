@@ -3801,7 +3801,6 @@ public class SqlOptimiser implements Mutable {
     // This rewrite should be invoked before the select rewrite!
     // Rewrites the following:
     // select count(constant) ... -> select count() ...
-    // select count(column) ... -> select count(), ... from ... where column is not null
     private void rewriteCount(QueryModel model) {
 
         if (model == null) {
@@ -3830,7 +3829,6 @@ public class SqlOptimiser implements Mutable {
         for (int i = 1, n = joinModels.size(); i < n; i++) {
             rewriteCount(joinModels.getQuick(i));
         }
-
     }
 
     /**
