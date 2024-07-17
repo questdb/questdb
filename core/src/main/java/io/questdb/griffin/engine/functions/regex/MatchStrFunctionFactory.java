@@ -34,9 +34,10 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.regex.Matcher;
 
@@ -58,7 +59,11 @@ public class MatchStrFunctionFactory implements FunctionFactory {
         final Function pattern = args.getQuick(1);
         final int patternPosition = argPositions.getQuick(1);
         if (pattern.isConstant()) {
-            return new MatchStrConstPatternFunction(value, RegexUtils.createMatcher(pattern, patternPosition));
+            Matcher matcher = RegexUtils.createMatcher(pattern, patternPosition);
+            if (matcher == null) {
+                return BooleanConstant.FALSE;
+            }
+            return new MatchStrConstPatternFunction(value, matcher);
         } else if (pattern.isRuntimeConstant()) {
             return new MatchStrRuntimeConstPatternFunction(value, pattern, patternPosition);
         }
@@ -69,7 +74,7 @@ public class MatchStrFunctionFactory implements FunctionFactory {
         private final Matcher matcher;
         private final Function value;
 
-        public MatchStrConstPatternFunction(Function value, @Nullable Matcher matcher) {
+        public MatchStrConstPatternFunction(Function value, @NotNull Matcher matcher) {
             this.value = value;
             this.matcher = matcher;
         }
@@ -81,33 +86,30 @@ public class MatchStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            if (matcher != null) {
-                CharSequence cs = getArg().getStrA(rec);
-                return cs != null && matcher.reset(cs).find();
-            }
-            return false;
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return matcher == null;
+            CharSequence cs = getArg().getStrA(rec);
+            return cs != null && matcher.reset(cs).find();
         }
 
         @Override
         public boolean isConstant() {
-            return UnaryFunction.super.isConstant() || matcher == null;
+            return UnaryFunction.super.isConstant();
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
         }
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(value).val(" ~ ").val(matcher != null ? matcher.pattern().toString() : null);
+            sink.val(value).val(" ~ ").val(matcher.pattern().toString());
         }
     }
 
     static class MatchStrRuntimeConstPatternFunction extends BooleanFunction implements UnaryFunction {
+        private final Function fun;
         private final Function pattern;
         private final int patternPosition;
-        private final Function fun;
         private Matcher matcher;
 
         public MatchStrRuntimeConstPatternFunction(Function fun, Function pattern, int patternPosition) {
