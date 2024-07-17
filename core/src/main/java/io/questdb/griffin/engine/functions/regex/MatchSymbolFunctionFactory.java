@@ -25,10 +25,8 @@
 package io.questdb.griffin.engine.functions.regex;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.StaticSymbolTable;
-import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -96,6 +94,14 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         }
     }
 
+    private static boolean symbolMatches(Function arg, Record rec, IntList symbolKeys) {
+        final int key = arg.getInt(rec);
+        if (key != SymbolTable.VALUE_IS_NULL) {
+            return symbolKeys.binarySearchUniqueList(key) > -1;
+        }
+        return false;
+    }
+
     private static class MatchStaticSymbolTableConstPatternFunction extends BooleanFunction implements UnaryFunction {
         private final Matcher matcher;
         private final SymbolFunction symbolFun;
@@ -113,7 +119,7 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return symbolKeys.binarySearchUniqueList(getArg().getInt(rec)) > -1;
+            return symbolMatches(symbolFun, rec, symbolKeys);
         }
 
         @Override
@@ -152,7 +158,7 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return symbolKeys.binarySearchUniqueList(getArg().getInt(rec)) > -1;
+            return symbolMatches(symbolFun, rec, symbolKeys);
         }
 
         @Override
