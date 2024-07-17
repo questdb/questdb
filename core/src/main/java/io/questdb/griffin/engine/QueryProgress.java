@@ -52,6 +52,7 @@ public class QueryProgress extends AbstractRecordCursorFactory {
     private SqlExecutionContext executionContext;
     private boolean failed = false;
     private long sqlId;
+    private final boolean jit;
 
     public QueryProgress(QueryRegistry registry, CharSequence sqlText, RecordCursorFactory base) {
         super(base.getMetadata());
@@ -59,15 +60,16 @@ public class QueryProgress extends AbstractRecordCursorFactory {
         this.registry = registry;
         this.sqlText = Chars.toString(sqlText);
         this.cursor = new RegisteredRecordCursor();
+        this.jit = base.usesCompiledFilter();
     }
 
-    public static void logEnd(long sqlId, CharSequence sqlText, SqlExecutionContext executionContext, long beginNanos) {
+    public static void logEnd(long sqlId, CharSequence sqlText, SqlExecutionContext executionContext, long beginNanos, boolean jit) {
         LOG.infoW()
                 .$("fin [id=").$(sqlId)
                 .$(", sql=`").utf8(sqlText).$('`')
                 .$(", principal=").$(executionContext.getSecurityContext().getPrincipal())
                 .$(", cache=").$(executionContext.isCacheHit())
-                .$(", jit=").$(executionContext.isJitUsed())
+                .$(", jit=").$(jit)
                 .$(", time=").$(executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos)
                 .I$();
     }
@@ -77,7 +79,8 @@ public class QueryProgress extends AbstractRecordCursorFactory {
             long sqlId,
             CharSequence sqlText,
             SqlExecutionContext executionContext,
-            long beginNanos
+            long beginNanos,
+            boolean jit
     ) {
         final int errno = e instanceof CairoException ? ((CairoException) e).getErrno() : 0;
         final int pos = e instanceof FlyweightMessageContainer ? ((FlyweightMessageContainer) e).getPosition() : 0;
@@ -87,7 +90,7 @@ public class QueryProgress extends AbstractRecordCursorFactory {
                 .$(", sql=`").utf8(sqlText).$('`')
                 .$(", principal=").$(executionContext.getSecurityContext().getPrincipal())
                 .$(", cache=").$(executionContext.isCacheHit())
-                .$(", jit=").$(executionContext.isJitUsed())
+                .$(", jit=").$(jit)
                 .$(", time=").$(executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos)
                 .$(", msg=").$(e.getMessage())
                 .$(", errno=").$(errno)
@@ -98,7 +101,8 @@ public class QueryProgress extends AbstractRecordCursorFactory {
     public static void logStart(
             long sqlId,
             CharSequence sqlText,
-            SqlExecutionContext executionContext
+            SqlExecutionContext executionContext,
+            boolean jit
     ) {
         LOG.infoW()
                 .$("exe")
@@ -106,7 +110,7 @@ public class QueryProgress extends AbstractRecordCursorFactory {
                 .$(", sql=`").utf8(sqlText).$('`')
                 .$(", principal=").$(executionContext.getSecurityContext().getPrincipal())
                 .$(", cache=").$(executionContext.isCacheHit())
-                .$(", jit=").$(executionContext.isJitUsed())
+                .$(", jit=").$(jit)
                 .I$();
     }
 
@@ -151,7 +155,7 @@ public class QueryProgress extends AbstractRecordCursorFactory {
             this.executionContext = executionContext;
             sqlId = registry.register(sqlText, executionContext);
             beginNanos = executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks();
-            logStart(sqlId, sqlText, executionContext);
+            logStart(sqlId, sqlText, executionContext, jit);
             try {
                 final RecordCursor baseCursor = base.getCursor(executionContext);
                 cursor.of(baseCursor); // this should not fail, it is just variable assigment
@@ -225,7 +229,8 @@ public class QueryProgress extends AbstractRecordCursorFactory {
                 sqlId,
                 sqlText,
                 executionContext,
-                beginNanos
+                beginNanos,
+                jit
         );
     }
 
@@ -253,7 +258,7 @@ public class QueryProgress extends AbstractRecordCursorFactory {
                 isOpen = false;
                 base.close();
                 if (!failed) {
-                    logEnd(sqlId, sqlText, executionContext, beginNanos);
+                    logEnd(sqlId, sqlText, executionContext, beginNanos, jit);
                 }
             }
         }

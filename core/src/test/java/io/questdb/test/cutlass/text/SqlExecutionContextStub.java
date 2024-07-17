@@ -141,11 +141,6 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public boolean isJitUsed() {
-        return false;
-    }
-
-    @Override
     public boolean isParallelFilterEnabled() {
         return false;
     }
@@ -186,10 +181,6 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
 
     @Override
     public void setJitMode(int jitMode) {
-    }
-
-    @Override
-    public void setJitUsed(boolean value) {
     }
 
     @Override

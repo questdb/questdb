@@ -204,9 +204,5 @@ public interface SqlExecutionContext extends Closeable {
 
     void setCacheHit(boolean value);
 
-    void setJitUsed(boolean value);
-
     boolean isCacheHit();
-
-    boolean isJitUsed();
 }

@@ -1588,7 +1588,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         -1,
                         this.sqlText,
                         executionContext,
-                        beginNanos
+                        beginNanos,
+                        false
                 );
                 throw e;
             }
@@ -1599,7 +1600,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (executor == null || compiledQuery.getType() == CompiledQuery.NONE) {
             compileUsingModel(executionContext, beginNanos);
         } else {
-            QueryProgress.logEnd(-1, this.sqlText, executionContext, beginNanos);
+            QueryProgress.logEnd(-1, this.sqlText, executionContext, beginNanos, false);
         }
         final short type = compiledQuery.getType();
         if ((type == CompiledQuery.ALTER || type == CompiledQuery.UPDATE) && !executionContext.isWalApplication()) {
@@ -1639,42 +1640,42 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     break;
                 case ExecutionModel.CREATE_TABLE:
                     sqlId = queryRegistry.register(sqlText, executionContext);
-                    QueryProgress.logStart(sqlId, sqlText, executionContext);
+                    QueryProgress.logStart(sqlId, sqlText, executionContext, false);
                     createTableWithRetries(executionModel, executionContext);
-                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
+                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos, false);
                     break;
                 case ExecutionModel.COPY:
-                    QueryProgress.logStart(sqlId, sqlText, executionContext);
+                    QueryProgress.logStart(sqlId, sqlText, executionContext, false);
                     copy(executionContext, (CopyModel) executionModel);
-                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
+                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos, false);
                     break;
                 case ExecutionModel.RENAME_TABLE:
                     sqlId = queryRegistry.register(sqlText, executionContext);
-                    QueryProgress.logStart(sqlId, sqlText, executionContext);
+                    QueryProgress.logStart(sqlId, sqlText, executionContext, false);
                     final RenameTableModel rtm = (RenameTableModel) executionModel;
                     engine.rename(executionContext.getSecurityContext(), path, mem, GenericLexer.unquote(rtm.getFrom().token), renamePath, GenericLexer.unquote(rtm.getTo().token));
                     compiledQuery.ofRenameTable();
                     break;
                 case ExecutionModel.UPDATE:
-                    QueryProgress.logStart(sqlId, sqlText, executionContext);
+                    QueryProgress.logStart(sqlId, sqlText, executionContext, false);
                     final QueryModel updateQueryModel = (QueryModel) executionModel;
                     TableToken tableToken = executionContext.getTableToken(updateQueryModel.getTableName());
                     try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken)) {
                         final UpdateOperation updateOperation = generateUpdate(updateQueryModel, executionContext, metadata);
                         compiledQuery.ofUpdate(updateOperation);
                     }
-                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
+                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos, false);
                     // update is delayed until operation execution (for non-wal tables) or pushed to wal job completely
                     break;
                 case ExecutionModel.EXPLAIN:
                     sqlId = queryRegistry.register(sqlText, executionContext);
-                    QueryProgress.logStart(sqlId, sqlText, executionContext);
+                    QueryProgress.logStart(sqlId, sqlText, executionContext, false);
                     compiledQuery.ofExplain(generateExplain((ExplainModel) executionModel, executionContext));
-                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
+                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos, false);
                     break;
                 default:
                     final InsertModel insertModel = (InsertModel) executionModel;
-                    QueryProgress.logStart(sqlId, sqlText, executionContext);
+                    QueryProgress.logStart(sqlId, sqlText, executionContext, false);
                     if (insertModel.getQueryModel() != null) {
                         sqlId = queryRegistry.register(sqlText, executionContext);
                         executeWithRetries(
@@ -1687,7 +1688,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         insert(executionModel, executionContext);
                         compiledQuery.getInsertOperation().setInsertSql(sqlText);
                     }
-                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
+                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos, false);
                     break;
             }
 
@@ -1712,7 +1713,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     sqlId,
                     sqlText,
                     executionContext,
-                    beginNanos
+                    beginNanos,
+                    false
             );
             throw e;
         }

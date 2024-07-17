@@ -62,7 +62,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean columnPreTouchEnabled = true;
     private boolean containsSecret;
     private int jitMode;
-    private boolean jitUsed = false;
     private long now;
     private final MicrosecondClock nowClock = () -> now;
     private boolean parallelFilterEnabled;
@@ -239,11 +238,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public boolean isJitUsed() {
-        return jitUsed;
-    }
-
-    @Override
     public boolean isParallelFilterEnabled() {
         return parallelFilterEnabled;
     }
@@ -295,11 +289,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public void setJitUsed(boolean value) {
-        jitUsed = true;
-    }
-
-    @Override
     public void setNowAndFixClock(long now) {
         this.now = now;
         clock = nowClock;
@@ -332,14 +321,12 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.containsSecret = false;
         this.useSimpleCircuitBreaker = false;
         this.cacheHit = false;
-        this.jitUsed = false;
         return this;
     }
 
     public void with(int requestFd) {
         this.requestFd = requestFd;
         this.cacheHit = false;
-        this.jitUsed = false;
         this.containsSecret = false;
     }
 
@@ -374,7 +361,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.containsSecret = false;
         this.useSimpleCircuitBreaker = false;
         this.cacheHit = false;
-        this.jitUsed = false;
         return this;
     }
 
