@@ -70,8 +70,13 @@ public class SeqTxnTracker implements O3InflightPartitionRegulator {
     }
 
     public int getMemoryPressureLevel() {
-        // todo
-        return 42;
+        if (maxParallelism == Integer.MAX_VALUE) {
+            return 0;
+        }
+        if (backoffCounter > 0) {
+            return 2;
+        }
+        return 1;
     }
 
     @TestOnly
