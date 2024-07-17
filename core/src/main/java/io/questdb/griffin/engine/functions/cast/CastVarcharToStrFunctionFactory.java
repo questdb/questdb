@@ -32,9 +32,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
-import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.StringSink;
 
 public class CastVarcharToStrFunctionFactory implements FunctionFactory {
 
@@ -53,9 +51,7 @@ public class CastVarcharToStrFunctionFactory implements FunctionFactory {
     ) {
         final Function arg = args.getQuick(0);
         if (arg.isConstant()) {
-            StringSink sink = Misc.getThreadLocalSink();
-            arg.getStr(null, sink);
-            return new StrConstant(Chars.toString(sink));
+            return new StrConstant(Chars.toString(arg.getStrB(null)));
         }
         return new Func(arg);
     }

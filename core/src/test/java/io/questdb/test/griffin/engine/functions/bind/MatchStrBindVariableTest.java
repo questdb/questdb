@@ -26,10 +26,8 @@ package io.questdb.test.griffin.engine.functions.bind;
 
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
 import org.junit.Test;
 
 public class MatchStrBindVariableTest extends AbstractCairoTest {
@@ -54,13 +52,11 @@ public class MatchStrBindVariableTest extends AbstractCairoTest {
                 TestUtils.assertEquals("x\n", sink);
 
                 bindVariableService.setStr(0, null);
-                try {
-                    factory.getCursor(sqlExecutionContext);
-                    Assert.fail();
-                } catch (SqlException e) {
-                    Assert.assertEquals(47, e.getPosition());
-                    TestUtils.assertContains(e.getFlyweightMessage(), "NULL regex");
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    println(factory, cursor);
                 }
+
+                TestUtils.assertEquals("x\n", sink);
             }
         });
     }
@@ -98,13 +94,11 @@ public class MatchStrBindVariableTest extends AbstractCairoTest {
                         "ZWEVQTQO\n", sink);
 
                 bindVariableService.setStr(0, null);
-                try {
-                    factory.getCursor(sqlExecutionContext);
-                    Assert.fail();
-                } catch (SqlException e) {
-                    Assert.assertEquals(12, e.getPosition());
-                    TestUtils.assertContains(e.getFlyweightMessage(), "NULL regex");
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    println(factory, cursor);
                 }
+
+                TestUtils.assertEquals("s\n", sink);
             }
         });
     }

@@ -36,7 +36,11 @@ public class CountColumnTest extends AbstractCairoTest {
                     "symbol", "geohash(5b)", "geohash(10b)", "geohash(20b)", "geohash(40b) "};
 
             for (String type : types) {
-                assertException("select count(cast(null as " + type + ")) from long_sequence(1)", 13, "NULL is not allowed");
+                assertSql(
+                        "count\n" +
+                                "0\n",
+                        "select count(cast(null as " + type + "))"
+                );
             }
         });
     }

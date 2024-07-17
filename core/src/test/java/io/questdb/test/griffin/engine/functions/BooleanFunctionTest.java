@@ -28,7 +28,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -172,18 +171,6 @@ public class BooleanFunctionTest {
     public void testGetStr() {
         Assert.assertEquals("false", functionA.getStrA(null));
         Assert.assertEquals("true", functionB.getStrA(null));
-    }
-
-    @Test
-    public void testGetStrToSink() {
-        final StringSink sink = new StringSink();
-        functionA.getStr(null, sink);
-        TestUtils.assertEquals("false", sink);
-
-        sink.clear();
-
-        functionB.getStr(null, sink);
-        TestUtils.assertEquals("true", sink);
     }
 
     @Test

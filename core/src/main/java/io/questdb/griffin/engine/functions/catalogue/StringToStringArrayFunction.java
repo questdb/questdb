@@ -32,7 +32,6 @@ import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
@@ -159,16 +158,6 @@ public class StringToStringArrayFunction extends StrArrayFunction {
     @Override
     public CharSequence getStrA(Record rec, int arrayIndex) {
         return items.getQuick(arrayIndex);
-    }
-
-    @Override
-    public void getStr(Record rec, Utf16Sink utf16Sink) {
-        utf16Sink.put(initSink());
-    }
-
-    @Override
-    public void getStr(Record rec, Utf16Sink sink, int arrayIndex) {
-        sink.put(getStrA(rec, arrayIndex));
     }
 
     @Override

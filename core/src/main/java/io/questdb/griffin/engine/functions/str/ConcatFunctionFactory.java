@@ -141,7 +141,7 @@ public class ConcatFunctionFactory implements FunctionFactory {
     }
 
     private static void sinkStr(Utf16Sink sink, Function function, Record record) {
-        function.getStr(record, sink);
+        sink.put(function.getStrA(record));
     }
 
     private static void sinkSymbol(Utf16Sink sink, Function function, Record record) {
@@ -159,7 +159,7 @@ public class ConcatFunctionFactory implements FunctionFactory {
     }
 
     private static void sinkVarchar(Utf16Sink utf16Sink, Function function, Record record) {
-        function.getStr(record, utf16Sink);
+        utf16Sink.put(function.getStrA(record));
     }
 
     @FunctionalInterface
@@ -185,13 +185,6 @@ public class ConcatFunctionFactory implements FunctionFactory {
         @Override
         public ObjList<Function> getArgs() {
             return functions;
-        }
-
-        @Override
-        public void getStr(Record rec, Utf16Sink utf16Sink) {
-            for (int i = 0; i < functionCount; i++) {
-                adapters.getQuick(i).sink(utf16Sink, functions.getQuick(i), rec);
-            }
         }
 
         @Override
@@ -223,6 +216,12 @@ public class ConcatFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("concat(").val(functions).val(')');
         }
+
+        private void getStr(Record rec, Utf16Sink utf16Sink) {
+            for (int i = 0; i < functionCount; i++) {
+                adapters.getQuick(i).sink(utf16Sink, functions.getQuick(i), rec);
+            }
+        }
     }
 
     private static class ConstConcatFunction extends StrFunction implements ConstantFunction {
@@ -238,10 +237,6 @@ public class ConcatFunctionFactory implements FunctionFactory {
             for (int i = 0; i < functionCount; i++) {
                 adapters.getQuick(i).sink(sink, functions.getQuick(i), null);
             }
-        }
-
-        @Override
-        public void getStr(Record rec, Utf16Sink utf16Sink) {
         }
 
         @Override

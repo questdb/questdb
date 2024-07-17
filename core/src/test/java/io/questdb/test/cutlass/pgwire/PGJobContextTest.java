@@ -5081,6 +5081,53 @@ nodejs code:
     }
 
     @Test
+    public void testMatchSymbolBindVariable() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            connection.setAutoCommit(false);
+            connection.prepareStatement("create table x as (select rnd_symbol('jjke', 'jio2', 'ope', 'nbbe', null) name from long_sequence(50))").execute();
+            mayDrainWalQueue();
+
+            sink.clear();
+            try (PreparedStatement ps = connection.prepareStatement("select * from x where name ~ ?")) {
+                ps.setString(1, "^jjk.*");
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "name[VARCHAR]\n" +
+                                    "jjke\n" +
+                                    "jjke\n" +
+                                    "jjke\n" +
+                                    "jjke\n" +
+                                    "jjke\n" +
+                                    "jjke\n" +
+                                    "jjke\n" +
+                                    "jjke\n" +
+                                    "jjke\n",
+                            sink,
+                            rs
+                    );
+                }
+                ps.setString(1, "^op.*");
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "name[VARCHAR]\n" +
+                                    "ope\n" +
+                                    "ope\n" +
+                                    "ope\n" +
+                                    "ope\n" +
+                                    "ope\n" +
+                                    "ope\n" +
+                                    "ope\n" +
+                                    "ope\n" +
+                                    "ope\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testLargeBatchCairoExceptionResume() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
@@ -6127,7 +6174,7 @@ nodejs code:
                         ps1.executeQuery();
                         Assert.fail("PSQLException should be thrown");
                     } catch (PSQLException e) {
-                        assertContains(e.getMessage(), "ERROR: unexpected argument for function: between");
+                        assertContains(e.getMessage(), "there is no matching operator`!=` with the argument types: BOOLEAN != STRING");
                     }
 
                     try (PreparedStatement s = connection.prepareStatement("select 2 a,2 b from long_sequence(1) where x > 0 and x < 10")) {
@@ -6162,7 +6209,7 @@ nodejs code:
                         ps1.executeQuery();
                         Assert.fail("PSQLException should be thrown");
                     } catch (PSQLException e) {
-                        assertContains(e.getMessage(), "ERROR: unexpected argument for function: between");
+                        assertContains(e.getMessage(), "there is no matching operator`!=` with the argument types: BOOLEAN != STRING");
                     }
 
                     try (PreparedStatement s = connection.prepareStatement("select 2 a,2 b from long_sequence(1) where x > 0 and x < 10")) {
