@@ -80,6 +80,7 @@ set(
         src/main/c/share/byte_sink.h
         src/main/c/share/converters.cpp
         src/main/c/share/converters.h
+        src/main/c/share/json.cpp
 )
 
 # JNI includes
@@ -329,14 +330,19 @@ else ()
     )
 endif (ARCH_AARCH64)
 
+#simdjson
+set(SIMDJSON_ENABLE_THREADS OFF CACHE BOOL "Link with thread support" FORCE)
+include(${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/simdjson-cmake/CMakeLists.txt)
+
 if (OS_WINDOWS)
-    target_link_libraries(questdb wsock32 ws2_32 secur32 shlwapi psapi -s -static-libgcc)
+    target_link_libraries(questdb wsock32 ws2_32 secur32 shlwapi psapi -s -static-libgcc -static-libstdc++ _simdjson)
     target_compile_options(questdb PRIVATE -fno-threadsafe-statics)
 elseif (OS_DARWIN)
-    target_link_libraries(questdb -nostdlib++ -dead_strip -lc++)
+    target_link_libraries(questdb -nostdlib++ -dead_strip -lc++ _simdjson)
 else ()
     target_compile_options(questdb PRIVATE -fno-threadsafe-statics -ffunction-sections -fdata-sections)
-    target_link_libraries(questdb rt -Wl,--gc-sections -Wl,--exclude-libs=ALL -static-libgcc)
+    target_link_libraries(questdb rt -Wl,--gc-sections -Wl,--exclude-libs=ALL -static-libgcc _simdjson)
 endif ()
 
+#jemalloc
 include(${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/jemalloc-cmake/CMakeLists.txt)

@@ -51,6 +51,11 @@ public abstract class BaseDoubleWindowFunction extends DoubleFunction implements
     }
 
     @Override
+    public void cursorClosed() {
+        arg.cursorClosed();
+    }
+
+    @Override
     public double getDouble(Record rec) {
         //unused
         throw new UnsupportedOperationException();

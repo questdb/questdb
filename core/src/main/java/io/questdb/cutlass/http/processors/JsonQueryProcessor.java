@@ -123,6 +123,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             this.queryExecutors.extendAndSet(CompiledQuery.DEALLOCATE, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.EXPLAIN, this::executeExplain);
             this.queryExecutors.extendAndSet(CompiledQuery.TABLE_RESUME, sendConfirmation);
+            this.queryExecutors.extendAndSet(CompiledQuery.TABLE_SUSPEND, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.TABLE_SET_TYPE, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.CREATE_USER, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.ALTER_USER, sendConfirmation);
@@ -206,8 +207,14 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             } else if (e.isInterruption()) {
                 code = 408;
             }
-            internalError(context.getChunkedResponse(), context.getLastRequestBytesSent(), e.getFlyweightMessage(),
-                    code, e, state, context.getMetrics()
+            internalError(
+                    context.getChunkedResponse(),
+                    context.getLastRequestBytesSent(),
+                    e.getFlyweightMessage(),
+                    code,
+                    e,
+                    state,
+                    context.getMetrics()
             );
             readyForNextRequest(context);
             if (e.isEntityDisabled()) {
@@ -663,8 +670,15 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         if (e instanceof CairoException) {
             position = ((CairoException) e).getPosition();
         }
-
-        sendException(response, state.getHttpConnectionContext(), position, message, state.getQuery(), configuration.getKeepAliveHeader(), code);
+        sendException(
+                response,
+                state.getHttpConnectionContext(),
+                position,
+                message,
+                state.getQuery(),
+                configuration.getKeepAliveHeader(),
+                code
+        );
     }
 
     private boolean parseUrl(

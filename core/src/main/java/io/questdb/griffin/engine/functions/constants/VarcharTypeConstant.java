@@ -27,19 +27,13 @@ package io.questdb.griffin.engine.functions.constants;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.VarcharFunction;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 
 public class VarcharTypeConstant extends VarcharFunction implements TypeConstant {
     public static final VarcharTypeConstant INSTANCE = new VarcharTypeConstant();
 
     private VarcharTypeConstant() {
         super();
-    }
-
-    @Override
-    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
     }
 
     @Override

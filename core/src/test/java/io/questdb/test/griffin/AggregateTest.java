@@ -111,7 +111,7 @@ public class AggregateTest extends AbstractCairoTest {
 
         String sql = "select ts, count() from tt1 SAMPLE BY d ALIGN TO FIRST OBSERVATION";
 
-        assertSqlWithTypes(sql, expected);
+        assertSqlWithTypes(expected, sql);
     }
 
     @Test
@@ -124,14 +124,14 @@ public class AggregateTest extends AbstractCairoTest {
                 "null:LONG\t0:LONG\n";
         String sql = "select max(tts), count() from tt1";
 
-        assertSqlWithTypes(sql, expected);
-        assertSqlWithTypes(sql + " where now() > '1000-01-01'", expected);
+        assertSqlWithTypes(expected, sql);
+        assertSqlWithTypes(expected, sql + " where now() > '1000-01-01'");
 
         expected = "count\n" +
                 "0:LONG\n";
         sql = "select count() from tt1";
-        assertSqlWithTypes(sql, expected);
-        assertSqlWithTypes(sql + " where now() > '1000-01-01'", expected);
+        assertSqlWithTypes(expected, sql);
+        assertSqlWithTypes(expected, sql + " where now() > '1000-01-01'");
     }
 
     @Test
@@ -169,7 +169,7 @@ public class AggregateTest extends AbstractCairoTest {
 
         String sql = "select ts, count() from tt1 WHERE id > 0 ORDER BY ts LIMIT 2";
 
-        assertSqlWithTypes(sql, expected);
+        assertSqlWithTypes(expected, sql);
     }
 
     @Test
@@ -1931,10 +1931,10 @@ public class AggregateTest extends AbstractCairoTest {
                 }
 
                 String expected = resultHeader.append("\n").append(resultData).append("\n").toString();
-                assertSqlWithTypes(sql, expected);
+                assertSqlWithTypes(expected, sql);
 
                 // Force to go to non-vector execution
-                assertSqlWithTypes(sql + " where now() > '1000-01-01'", expected);
+                assertSqlWithTypes(expected, sql + " where now() > '1000-01-01'");
             }
         }
     }

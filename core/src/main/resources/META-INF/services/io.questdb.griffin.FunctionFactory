@@ -790,6 +790,7 @@ io.questdb.griffin.engine.functions.catalogue.PrefixedCurrentDatabaseFunctionFac
 io.questdb.griffin.engine.functions.catalogue.PrefixedVersionFunctionFactory
 
 io.questdb.griffin.engine.functions.catalogue.SimulateCrashFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.SimulateWarningsFunctionFactory
 
 # PostgreSQL advisory locks functions
 io.questdb.griffin.engine.functions.lock.AdvisoryUnlockAll
@@ -800,6 +801,10 @@ io.questdb.griffin.engine.functions.str.ConcatFunctionFactory
 # replace()
 io.questdb.griffin.engine.functions.str.ReplaceStrFunctionFactory
 io.questdb.griffin.engine.functions.str.ReplaceVarcharFunctionFactory
+
+# json_extract()
+io.questdb.griffin.engine.functions.json.JsonExtractVarcharFunctionFactory
+io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory
 
 # regexp_replace()
 io.questdb.griffin.engine.functions.regex.RegexpReplaceStrFunctionFactory

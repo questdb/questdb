@@ -30,6 +30,7 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.map.OrderedMap;
 import io.questdb.cairo.map.UnorderedVarcharMap;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.*;
@@ -56,10 +57,10 @@ public class UnorderedVarcharMapBenchmark {
     private static final int MIN_SIZE = 5;
     private static final int ROW_COUNT = 1_000_000;
     private static final int WORD_COUNT = 1_000;
-    private MemoryMR auxReadMemStable;
-    private MemoryMR auxReadMemUnstable;
-    private MemoryMR dataReadMemStable;
-    private MemoryMR dataReadMemUnstable;
+    private MemoryCMR auxReadMemStable;
+    private MemoryCMR auxReadMemUnstable;
+    private MemoryCMR dataReadMemStable;
+    private MemoryCMR dataReadMemUnstable;
     private OrderedMap orderedMap;
     private UnorderedVarcharMap varcharMap;
 
@@ -175,11 +176,11 @@ public class UnorderedVarcharMapBenchmark {
 
         try (Path path = new Path()) {
             LPSZ lpsz = path.of(AUX_MEM_FILENAME).$();
-            auxReadMemUnstable = Vm.getMRInstance(ff, lpsz, -1, MemoryTag.NATIVE_DEFAULT, false);
-            auxReadMemStable = Vm.getMRInstance(ff, lpsz, -1, MemoryTag.NATIVE_DEFAULT, true);
+            auxReadMemUnstable = Vm.getCMRInstance(ff, lpsz, -1, MemoryTag.NATIVE_DEFAULT, false);
+            auxReadMemStable = Vm.getCMRInstance(ff, lpsz, -1, MemoryTag.NATIVE_DEFAULT, true);
             path.of(DATA_MEM_FILENAME).$();
-            dataReadMemUnstable = Vm.getMRInstance(ff, lpsz, -1, MemoryTag.NATIVE_DEFAULT, false);
-            dataReadMemStable = Vm.getMRInstance(ff, lpsz, -1, MemoryTag.NATIVE_DEFAULT, true);
+            dataReadMemUnstable = Vm.getCMRInstance(ff, lpsz, -1, MemoryTag.NATIVE_DEFAULT, false);
+            dataReadMemStable = Vm.getCMRInstance(ff, lpsz, -1, MemoryTag.NATIVE_DEFAULT, true);
         }
     }
 

@@ -60,7 +60,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
             roMetaMem = metaMem = Vm.getMARWInstance();
         } else {
             metaMem = null;
-            roMetaMem = Vm.getMRInstance();
+            roMetaMem = Vm.getCMRInstance();
         }
     }
 

@@ -39,6 +39,13 @@ public interface TernaryFunction extends Function {
         getRight().close();
     }
 
+    @Override
+    default void cursorClosed() {
+        getLeft().cursorClosed();
+        getCenter().cursorClosed();
+        getRight().cursorClosed();
+    }
+
     Function getCenter();
 
     Function getLeft();

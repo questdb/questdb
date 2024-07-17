@@ -28,6 +28,7 @@ module io.questdb.benchmarks {
     requires org.apache.logging.log4j;
     requires simpleclient;
     requires simpleclient.common;
+    requires org.jetbrains.annotations;
 
     exports org.questdb.jmh_generated;
 }

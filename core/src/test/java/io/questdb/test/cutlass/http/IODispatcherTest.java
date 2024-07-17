@@ -133,6 +133,8 @@ public class IODispatcherTest extends AbstractTest {
     @BeforeClass
     public static void setUpStatic() throws Exception {
         AbstractTest.setUpStatic();
+        // this method could be called for multiple iterations within single test
+        // we have some synthetic re-runs
         testHttpClient = Misc.free(testHttpClient);
         testHttpClient = new TestHttpClient();
     }

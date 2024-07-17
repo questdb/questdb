@@ -22,34 +22,31 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.str;
+package io.questdb.test.griffin.engine.functions.catalogue;
 
-/**
- * A contiguous chunk of native memory.
- */
-public interface DirectSequence {
+import io.questdb.PropertyKey;
+import io.questdb.test.AbstractCairoTest;
+import org.junit.Test;
 
-    /**
-     * Address one past the last byte.
-     */
-    default long hi() {
-        return ptr() + size();
+public class SimulateWarningsFunctionTest extends AbstractCairoTest {
+
+    @Test
+    public void testSimulateWarningsDisabled() throws Exception {
+        assertMemoryLeak(() -> assertSql(
+                "simulate_warnings\n" +
+                        "false\n",
+                "select simulate_warnings('', '')"
+        ));
     }
 
-    /**
-     * Address of the first byte.
-     */
-    default long lo() {
-        return ptr();
+    @Test
+    public void testSimulateWarningsEnabled() throws Exception {
+        node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
+
+        assertMemoryLeak(() -> assertSql(
+                "simulate_warnings\n" +
+                        "true\n",
+                "select simulate_warnings('DISK FULL', 'Test warning!')"
+        ));
     }
-
-    /**
-     * Address of the first character.
-     */
-    long ptr();
-
-    /**
-     * Number of bytes in the sequence.
-     */
-    int size();
 }

@@ -33,7 +33,6 @@ import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8StringSink;
 
 public class CastLongToVarcharFunctionFactory implements FunctionFactory {
@@ -66,15 +65,6 @@ public class CastLongToVarcharFunctionFactory implements FunctionFactory {
 
         public Func(Function arg) {
             super(arg);
-        }
-
-        @Override
-        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-            final long value = arg.getLong(rec);
-            if (value == Numbers.LONG_NULL) {
-                return;
-            }
-            utf8Sink.put(value);
         }
 
         @Override

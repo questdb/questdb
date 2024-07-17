@@ -55,6 +55,11 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     }
 
     @Override
+    public long addressHi() {
+        return pageAddress + size;
+    }
+
+    @Override
     public void close() {
         clear();
         if (pageAddress != 0) {
