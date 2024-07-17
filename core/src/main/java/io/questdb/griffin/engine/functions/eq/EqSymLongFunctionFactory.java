@@ -196,7 +196,7 @@ public class EqSymLongFunctionFactory implements FunctionFactory {
             if (value != Numbers.LONG_NULL) {
                 sink.clear();
                 sink.put(value);
-                return negated != Chars.equalsNc(left.getSymbol(rec), sink);
+                return negated != Chars.equalsNc(sink, left.getSymbol(rec));
             }
             return negated == (left.getSymbol(rec) != null);
         }

@@ -30,26 +30,15 @@ import org.junit.Test;
 
 public class EqSymLongFunctionFactoryTest extends AbstractCairoTest {
     @Test
-    public void testDynamicSymbolTable() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "x\n" +
-                        "3\n" +
-                        "8\n" +
-                        "10\n",
-                "select x from long_sequence(10) where rnd_symbol('1','3','5') = 3"
-        ));
-    }
-
-    @Test
-    public void testStaticSymbolTable() throws Exception {
-        assertMemoryLeak(() ->  {
-            ddl("create table x as (select rnd_symbol('1','3','5') a from long_sequence(10))");
+    public void testDynamicCast() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as (select rnd_symbol('1','3','5') a, abs(rnd_long())%5 b  from long_sequence(10))");
             assertSql(
-                    "a\n" +
-                            "3\n" +
-                            "3\n" +
-                            "3\n",
-                    "select a from x where a = 3"
+                    "a\tb\n" +
+                            "1\t1\n" +
+                            "1\t1\n" +
+                            "1\t1\n",
+                    "select a,b from x where a = b"
             );
         });
     }
@@ -71,15 +60,43 @@ public class EqSymLongFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDynamicCast() throws Exception {
-        assertMemoryLeak(() ->  {
-            ddl("create table x as (select rnd_symbol('1','3','5') a, abs(rnd_long())%5 b  from long_sequence(10))");
+    public void testDynamicCastNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as (select rnd_symbol('1','3','5', null) a, abs(rnd_long())%5 b  from long_sequence(20))");
             assertSql(
                     "a\tb\n" +
                             "1\t1\n" +
+                            "3\t3\n" +
                             "1\t1\n" +
+                            "1\t1\n" +
+                            "3\t3\n" +
                             "1\t1\n",
                     "select a,b from x where a = b"
+            );
+        });
+    }
+
+    @Test
+    public void testDynamicSymbolTable() throws Exception {
+        assertMemoryLeak(() -> assertSql(
+                "x\n" +
+                        "3\n" +
+                        "8\n" +
+                        "10\n",
+                "select x from long_sequence(10) where rnd_symbol('1','3','5') = 3"
+        ));
+    }
+
+    @Test
+    public void testStaticSymbolTable() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as (select rnd_symbol('1','3','5') a from long_sequence(10))");
+            assertSql(
+                    "a\n" +
+                            "3\n" +
+                            "3\n" +
+                            "3\n",
+                    "select a from x where a = 3"
             );
         });
     }
