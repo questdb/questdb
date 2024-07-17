@@ -119,6 +119,9 @@ public class SqlOptimiser implements Mutable {
     private final PostOrderTreeTraversalAlgo traversalAlgo;
     private int defaultAliasCount = 0;
     private ObjList<JoinContext> emittedJoinClauses;
+    private OperatorExpression opAnd;
+    private OperatorExpression opGeq;
+    private OperatorExpression opLt;
     private CharSequence tempColumnAlias;
     private QueryModel tempQueryModel;
 
@@ -142,6 +145,7 @@ public class SqlOptimiser implements Mutable {
         this.contextPool = new ObjectPool<>(JoinContext.FACTORY, configuration.getSqlJoinContextPoolCapacity());
         this.path = path;
         this.maxRecursion = configuration.getSqlWindowMaxRecursion();
+        initialiseOperatorExpressions();
     }
 
     /**
@@ -2304,6 +2308,13 @@ public class SqlOptimiser implements Mutable {
                 m.setJoinType(QueryModel.JOIN_CROSS);
             }
         }
+    }
+
+    private void initialiseOperatorExpressions() {
+        final OperatorRegistry registry = OperatorExpression.getRegistry();
+        opGeq = registry.map.get(">=");
+        opLt = registry.map.get("<");
+        opAnd = registry.map.get("and");
     }
 
     private boolean isEffectivelyConstantExpression(ExpressionNode node) {
@@ -4791,30 +4802,30 @@ public class SqlOptimiser implements Mutable {
 
             // construct an appropriate where clause
             if (sampleFrom != null && sampleTo != null) {
-                ExpressionNode greaterThanOrEqualToNode = expressionNodePool.next().of(OPERATION, ">=", 12, 0);
+                ExpressionNode greaterThanOrEqualToNode = expressionNodePool.next().of(OPERATION, opGeq.operator.token, opGeq.precedence, 0);
                 greaterThanOrEqualToNode.lhs = timestamp;
                 greaterThanOrEqualToNode.rhs = sampleFrom;
                 greaterThanOrEqualToNode.paramCount = 2;
 
-                ExpressionNode lesserThanNode = expressionNodePool.next().of(OPERATION, "<", 12, 0);
+                ExpressionNode lesserThanNode = expressionNodePool.next().of(OPERATION, opLt.operator.token, opLt.precedence, 0);
                 lesserThanNode.lhs = timestamp;
                 lesserThanNode.rhs = sampleTo;
                 lesserThanNode.paramCount = 2;
 
-                ExpressionNode andNode = expressionNodePool.next().of(OPERATION, "and", 15, 0);
+                ExpressionNode andNode = expressionNodePool.next().of(OPERATION, opAnd.operator.token, opAnd.precedence, 0);
                 andNode.lhs = greaterThanOrEqualToNode;
                 andNode.rhs = lesserThanNode;
                 andNode.paramCount = 2;
                 intervalClause = andNode;
 
             } else if (sampleFrom != null) {
-                ExpressionNode greaterThanOrEqualToNode = expressionNodePool.next().of(OPERATION, ">=", 12, 0);
+                ExpressionNode greaterThanOrEqualToNode = expressionNodePool.next().of(OPERATION, opGeq.operator.token, opGeq.precedence, 0);
                 greaterThanOrEqualToNode.lhs = timestamp;
                 greaterThanOrEqualToNode.rhs = sampleFrom;
                 greaterThanOrEqualToNode.paramCount = 2;
                 intervalClause = greaterThanOrEqualToNode;
             } else if (sampleTo != null) {
-                ExpressionNode lesserThanNode = expressionNodePool.next().of(OPERATION, "<", 12, 0);
+                ExpressionNode lesserThanNode = expressionNodePool.next().of(OPERATION, opLt.operator.token, opLt.precedence, 0);
                 lesserThanNode.lhs = timestamp;
                 lesserThanNode.rhs = sampleTo;
                 lesserThanNode.paramCount = 2;
@@ -4845,7 +4856,7 @@ public class SqlOptimiser implements Mutable {
         }
 
         // union
-        rewriteSampleByFromTo(model.getUnionModel());
+        rewriteSampleByFromTo(model.getUnionModel()); // todo: [NW] test for this
     }
 
     // flatParent = true means that parent model does not have selected columns
@@ -5993,7 +6004,7 @@ public class SqlOptimiser implements Mutable {
             optimiseOrderBy(rewrittenModel, OrderByMnemonic.ORDER_BY_UNKNOWN);
             createOrderHash(rewrittenModel);
             moveWhereInsideSubQueries(rewrittenModel);
-            eraseColumnPrefixInWhereClauses(rewrittenModel);
+//            eraseColumnPrefixInWhereClauses(rewrittenModel);
             collapseStackedChooseModels(rewrittenModel);
             moveTimestampToChooseModel(rewrittenModel);
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());

@@ -2841,9 +2841,15 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             ddl(SampleByTest.DDL_FROMTO);
             ddl(SampleByTest.DDL_FROMTO.replace("fromto", "fromto2"));
 
-            final String query = "select fromto2.ts, avg(fromto.x)\n" +
+//            final String query = "select fromto2.ts, avg(fromto.x)\n" +
+//                    "from fromto\n" +
+//                    "join fromto2 on fromto.ts = fromto2.ts\n" +
+//                    "sample by 5d from '2017-12-20' to '2018-01-31' fill(null)\n";
+
+
+            final String query = "select fromto.ts, avg(fromto.x)\n" +
                     "from fromto\n" +
-                    "join fromto2 on fromto.ts = fromto2.ts\n" +
+                    "asof join fromto2\n" +
                     "sample by 5d from '2017-12-20' to '2018-01-31' fill(null)\n";
 
             assertPlanNoLeakCheck(query, "Sort\n" +
