@@ -25,6 +25,7 @@
 package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.ErrorTag;
+import io.questdb.cairo.wal.O3InflightPartitionRegulator;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Rnd;
@@ -32,18 +33,16 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import org.jetbrains.annotations.TestOnly;
 
-public class SeqTxnTracker {
+public class SeqTxnTracker implements O3InflightPartitionRegulator {
     private static final Log LOG = LogFactory.getLog(SeqTxnTracker.class);
-    private static final int MAX_MEM_PRESSURE_LEVEL = 10;
-    private static final int MEM_PRESSURE_THRESHOLD_TO_START_BACKOFF = 5; // when exceeded we start introducing back off
-    private static final int MIN_MEM_PRESSURE_LEVEL = 0;
     private static final long SEQ_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "seqTxn");
     private static final long SUSPENDED_STATE_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "suspendedState");
     private static final long WRITER_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "writerTxn");
     private final Rnd rnd;
     private volatile String errorMessage = "";
     private volatile ErrorTag errorTag = ErrorTag.NONE;
-    private byte memoryPressureLevel;
+    private int maxParallelism = Integer.MAX_VALUE;
+    private int maxRecordedInflightPartitions = 1;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile long seqTxn = -1;
     // -1 suspended
@@ -66,29 +65,12 @@ public class SeqTxnTracker {
     }
 
     public int getMaxO3MergeParallelism() {
-        if (memoryPressureLevel == 0) {
-            // fast path
-            return Integer.MAX_VALUE;
-        }
-
-        int adjustedLevel = Math.min(memoryPressureLevel, MEM_PRESSURE_THRESHOLD_TO_START_BACKOFF) * 10;
-        int partitionParallelism = 51 - adjustedLevel;
-        assert partitionParallelism > 0;
-        // level 1 = parallelism 41
-        // level 2 = parallelism 31
-        // level 3 = parallelism 21
-        // level 4 = parallelism 11
-        // level 5 = parallelism 1
-        // level 6 = parallelism 1 + backoff
-        // level 7 = parallelism 1 + backoff
-        // level 8 = parallelism 1 + backoff
-        // level 9 = parallelism 1 + backoff
-        // level 10 = parallelism 1 + backoff
-        return partitionParallelism;
+        return maxParallelism;
     }
 
     public int getMemoryPressureLevel() {
-        return memoryPressureLevel;
+        // todo
+        return 42;
     }
 
     @TestOnly
@@ -165,46 +147,34 @@ public class SeqTxnTracker {
     }
 
     public boolean onPressureIncreased(long nowMicros) {
-        // we might consider more aggressive increase in the future to quickly reduce parallelism
-        // when memory pressure is high. For now, we are conservative. It might take multiple cycles
-        // to find the right level.
-
-        if (memoryPressureLevel == MAX_MEM_PRESSURE_LEVEL) {
-            // we are already at max level, we can't increase it further
-            // return false to indicate that we can't retry the operation
-            // this will likely suspend the table
-            adjustWalBackoff(nowMicros);
+        if (maxRecordedInflightPartitions == 1) {
+            // TODO: a few rounds of backoff instead of giving up
             return false;
         }
-        memoryPressureLevel++;
-        adjustWalBackoff(nowMicros);
-        LOG.info().$("Memory pressure building up, new level=").$(memoryPressureLevel).$();
+        maxParallelism = maxRecordedInflightPartitions / 2;
+        maxRecordedInflightPartitions = 1;
+        LOG.info().$("Memory pressure building up, new max parallelism=").$(maxParallelism).$();
+
         return true;
     }
 
     public void onPressureReduced(long nowMicros) {
-        if (memoryPressureLevel == MIN_MEM_PRESSURE_LEVEL) {
+        maxRecordedInflightPartitions = 1;
+        if (maxParallelism == Integer.MAX_VALUE) {
             // fast path
             return;
         }
 
-        if (memoryPressureLevel > MEM_PRESSURE_THRESHOLD_TO_START_BACKOFF) {
-            memoryPressureLevel--;
-            adjustWalBackoff(nowMicros);
-        } else {
-            // we increase parallelism probabilistically - the more pressure the lesser chance of increasing it
-            int minTrailingZeros = (memoryPressureLevel + 2);
-            // if memoryPressure == 1  we require 3 trailing zeros -> that's 1 in 8 chance
-            // if memoryPressure == 2  we require 4 trailing zeros -> that's 1 in 16 chance
-            // ...
-            // if memoryPressure == 5 we require 7 trailing zeros -> that's 1 in 128 chance
-            // yes, we are assuming that random number generator is reasonably good
-            int i = rnd.nextInt();
-            if (Integer.numberOfTrailingZeros(i) >= minTrailingZeros) {
-                memoryPressureLevel--;
+        int i = rnd.nextInt();
+        if (Integer.numberOfTrailingZeros(i) >= 4) { // 1 in 16
+            int origMaxParallelism = maxParallelism;
+            maxParallelism *= 2;
+            if (maxParallelism < origMaxParallelism) {
+                // overflow
+                maxParallelism = Integer.MAX_VALUE;
             }
         }
-        LOG.info().$("Memory pressure easing off, new level=").$(memoryPressureLevel).$();
+        LOG.info().$("Memory pressure easing off, new max parallelism=").$(maxParallelism).$();
     }
 
     public void setSuspended(ErrorTag errorTag, String errorMessage) {
@@ -233,21 +203,8 @@ public class SeqTxnTracker {
         return nowMicros < getWalBackoffUntil();
     }
 
-    private void adjustWalBackoff(long nowMicros) {
-        if (memoryPressureLevel > 5) {
-            int backoffMillis = (1 << (memoryPressureLevel + 3));
-            // level 6 -> 512 ms
-            // level 7 -> 1024 ms
-            // level 8 -> 2048 ms
-            // level 9 -> 4096 ms
-            // level 10 -> 8192 ms
-            long backoffMicros = backoffMillis * 1_000L;
-            setWalBackoffUntil(nowMicros + backoffMicros);
-        } else {
-            // we reduce parallelism, that's already aggressive enough
-            // so no back off
-            setWalBackoffUntil(-1);
-        }
+    @Override
+    public void updateInflightPartitions(int count) {
+        maxRecordedInflightPartitions = Math.max(maxRecordedInflightPartitions, count);
     }
-
 }

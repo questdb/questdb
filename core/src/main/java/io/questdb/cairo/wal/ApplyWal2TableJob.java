@@ -225,7 +225,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             OperationExecutor operationExecutor,
             Path tempPath,
             RunStatus runStatus,
-            int partitionParallelism
+            O3InflightPartitionRegulator regulator
     ) {
         final TableSequencerAPI tableSequencerAPI = engine.getTableSequencerAPI();
         boolean isTerminating;
@@ -348,7 +348,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                     operationExecutor,
                                     seqTxn,
                                     commitTimestamp,
-                                    partitionParallelism
+                                    regulator
                             );
 
                             if (added > -1L) {
@@ -415,7 +415,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             OperationExecutor operationExecutor,
             long seqTxn,
             long commitTimestamp,
-            int partitionParallelism
+            O3InflightPartitionRegulator regulator
     ) {
         try (WalEventReader eventReader = walEventReader) {
             final WalEventCursor walEventCursor = eventReader.of(walPath, WAL_FORMAT_VERSION, segmentTxn);
@@ -436,7 +436,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 dataInfo.getMaxTimestamp(),
                                 dataInfo,
                                 seqTxn,
-                                partitionParallelism
+                                regulator
                         );
                         final long latency = microClock.getTicks() - start;
                         long physicalRowCount = writer.getPhysicallyWrittenRowsSinceLastCommit();
@@ -541,7 +541,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         // rely on CheckWalTransactionsJob to notify us when to apply transactions
                         return;
                     }
-                    applyOutstandingWalTransactions(tableToken, writer, engine, operationCompiler, tempPath, runStatus, txnTracker.getMaxO3MergeParallelism());
+                    applyOutstandingWalTransactions(tableToken, writer, engine, operationCompiler, tempPath, runStatus, txnTracker);
                     txnTracker.onPressureReduced(MicrosecondClockImpl.INSTANCE.getTicks());
                     lastWriterTxn = writer.getSeqTxn();
                 } catch (EntryUnavailableException tableBusy) {
