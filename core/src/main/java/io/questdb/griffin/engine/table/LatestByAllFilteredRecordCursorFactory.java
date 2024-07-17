@@ -41,6 +41,8 @@ import org.jetbrains.annotations.Nullable;
 
 public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
 
+    private Function filter;
+
     public LatestByAllFilteredRecordCursorFactory(
             @NotNull RecordMetadata metadata,
             @NotNull CairoConfiguration configuration,
@@ -52,6 +54,7 @@ public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecor
     ) {
         super(metadata, dataFrameCursorFactory, configuration);
         try {
+            this.filter = filter;
             Map map = MapFactory.createOrderedMap(configuration, columnTypes);
             if (filter == null) {
                 cursor = new LatestByAllRecordCursor(map, rows, recordSink, columnIndexes);
@@ -80,5 +83,6 @@ public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecor
     protected void _close() {
         super._close();
         Misc.free(cursor);
+        filter = Misc.free(filter);
     }
 }

@@ -129,27 +129,27 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
 
     @Test
     public void testDropPartitionExpectListOrWhere() throws Exception {
-        assertFailure("alter table x drop partition", 28, "'list' or 'where' expected");
+        createXAndAssertException("alter table x drop partition", 28, "'list' or 'where' expected");
     }
 
     @Test
     public void testDropPartitionExpectName0() throws Exception {
-        assertFailure("alter table x drop partition list", 33, "partition name expected");
+        createXAndAssertException("alter table x drop partition list", 33, "partition name expected");
     }
 
     @Test
     public void testDropPartitionExpectName1() throws Exception {
-        assertFailure("alter table x drop partition list,", 33, "partition name missing");
+        createXAndAssertException("alter table x drop partition list,", 33, "partition name missing");
     }
 
     @Test
     public void testDropPartitionExpectName2() throws Exception {
-        assertFailure("alter table x drop partition list;", 33, "partition name missing");
+        createXAndAssertException("alter table x drop partition list;", 33, "partition name missing");
     }
 
     @Test
     public void testDropPartitionInvalidTimestampColumn() throws Exception {
-        assertFailure("alter table x drop partition where a > 1", 35, "Invalid column: a");
+        createXAndAssertException("alter table x drop partition where a > 1", 35, "Invalid column: a");
     }
 
     @Test
@@ -272,22 +272,22 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
 
     @Test
     public void testDropPartitionNameMissing0() throws Exception {
-        assertFailure("alter table x drop partition list ,", 34, "partition name missing");
+        createXAndAssertException("alter table x drop partition list ,", 34, "partition name missing");
     }
 
     @Test
     public void testDropPartitionNameMissing1() throws Exception {
-        assertFailure("alter table x drop partition list ;", 34, "partition name missing");
+        createXAndAssertException("alter table x drop partition list ;", 34, "partition name missing");
     }
 
     @Test
     public void testDropPartitionNameMissing2() throws Exception {
-        assertFailure("alter table x drop partition list '202';", 34, "'yyyy' expected, found [ts=202]");
+        createXAndAssertException("alter table x drop partition list '202';", 34, "'yyyy' expected, found [ts=202]");
     }
 
     @Test
     public void testDropPartitionWhereExpressionMissing() throws Exception {
-        assertFailure("alter table x drop partition where ", 34, "boolean expression expected");
+        createXAndAssertException("alter table x drop partition where ", 34, "boolean expression expected");
     }
 
     @Test
@@ -518,7 +518,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
 
     @Test
     public void testDropPartitionWrongSeparator() throws Exception {
-        assertFailure("alter table x DROP partition list '2018';'2018'", 41, "',' expected");
+        createXAndAssertException("alter table x DROP partition list '2018';'2018'", 41, "',' expected");
     }
 
     @Test
@@ -610,7 +610,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
     @Test
     public void testDropSplitLastPartition() throws Exception {
         assertMemoryLeak(() -> {
-                    createXSplit("DAY", Timestamps.DAY_MICROS / 2000, 200); // 300 records per day
+                    createXSplit(Timestamps.DAY_MICROS / 2000); // 300 records per day
                     ddl("alter table x drop partition list '2018-01-01'", sqlExecutionContext);
                     assertSql("count\n0\n", "select count() from x where timestamp in '2018-01-01'");
                 }
@@ -620,7 +620,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
     @Test
     public void testDropSplitMidPartition() throws Exception {
         assertMemoryLeak(() -> {
-                    createXSplit("DAY", Timestamps.DAY_MICROS / 300, 200); // 300 records per day
+                    createXSplit(Timestamps.DAY_MICROS / 300); // 300 records per day
                     ddl("alter table x drop partition list '2018-01-01'", sqlExecutionContext);
                     assertSql("count\n0\n", "select count() from x where timestamp in '2018-01-01'");
                 }
@@ -835,19 +835,6 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
         );
     }
 
-    private void assertFailure(String sql, int position, String message) throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                createX("YEAR", 720000000);
-                select(sql).close();
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(position, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), message);
-            }
-        });
-    }
-
     private void assertPartitionResult(String expectedBeforeDrop, String intervalSearch) throws SqlException {
         assertSql(
                 expectedBeforeDrop, "select count() from x where timestamp in '" + intervalSearch + "'"
@@ -886,13 +873,20 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
         );
     }
 
-    private void createXSplit(String partitionBy, long increment, int splitRecord) throws SqlException {
+    private void createXAndAssertException(String sql, int position, String message) throws Exception {
+        assertMemoryLeak(() -> {
+            createX("YEAR", 720000000);
+            assertExceptionNoLeakCheck(sql, position, message);
+        });
+    }
+
+    private void createXSplit(long increment) throws SqlException {
         Overrides overrides = node1.getConfigurationOverrides();
-        overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, splitRecord / 2);
-        createX(partitionBy, increment);
+        overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 200 / 2);
+        createX("DAY", increment);
 
         try {
-            long nextTimestamp = IntervalUtils.parseFloorPartialTimestamp("2018-01-01") + increment * splitRecord + 1;
+            long nextTimestamp = IntervalUtils.parseFloorPartialTimestamp("2018-01-01") + increment * 200 + 1;
             String nextTsStr = Timestamps.toUSecString(nextTimestamp);
             compile("insert into x " +
                     "select" +

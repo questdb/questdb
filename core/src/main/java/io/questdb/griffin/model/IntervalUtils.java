@@ -31,6 +31,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
 
 public final class IntervalUtils {
@@ -528,8 +529,120 @@ public final class IntervalUtils {
         return ts;
     }
 
+    public static long parseFloorPartialTimestamp(Utf8Sequence seq, final int pos, int lim) throws NumericException {
+        long ts;
+        if (lim - pos < 4) {
+            throw NumericException.INSTANCE;
+        }
+        int p = pos;
+        int year = Numbers.parseInt(seq, p, p += 4);
+        boolean l = Timestamps.isLeapYear(year);
+        if (checkLen(p, lim)) {
+            checkChar(seq, p++, lim, '-');
+            int month = Numbers.parseInt(seq, p, p += 2);
+            checkRange(month, 1, 12);
+            if (checkLen(p, lim)) {
+                checkChar(seq, p++, lim, '-');
+                int day = Numbers.parseInt(seq, p, p += 2);
+                checkRange(day, 1, Timestamps.getDaysPerMonth(month, l));
+                if (checkLen(p, lim)) {
+                    checkChar(seq, p++, lim, 'T', ' ');
+                    int hour = Numbers.parseInt(seq, p, p += 2);
+                    checkRange(hour, 0, 23);
+                    if (checkLen(p, lim)) {
+                        checkChar(seq, p++, lim, ':');
+                        int min = Numbers.parseInt(seq, p, p += 2);
+                        checkRange(min, 0, 59);
+                        if (checkLen(p, lim)) {
+                            checkChar(seq, p++, lim, ':');
+                            int sec = Numbers.parseInt(seq, p, p += 2);
+                            checkRange(sec, 0, 59);
+                            if (p < lim && seq.byteAt(p) == '.') {
+
+                                p++;
+                                // varlen milli and micros
+                                int micrLim = p + 6;
+                                int mlim = Math.min(lim, micrLim);
+                                int micr = 0;
+                                for (; p < mlim; p++) {
+                                    char c = (char) seq.byteAt(p);
+                                    if (Numbers.notDigit(c)) {
+                                        // Timezone
+                                        break;
+                                    }
+                                    micr *= 10;
+                                    micr += c - '0';
+                                }
+                                micr *= tenPow(micrLim - p);
+
+                                // truncate remaining nanos if any
+                                for (int nlim = Math.min(lim, p + 3); p < nlim; p++) {
+                                    char c = (char) seq.byteAt(p);
+                                    if (Numbers.notDigit(c)) {
+                                        // Timezone
+                                        break;
+                                    }
+                                }
+
+                                // micros
+                                ts = Timestamps.yearMicros(year, l)
+                                        + Timestamps.monthOfYearMicros(month, l)
+                                        + (day - 1) * Timestamps.DAY_MICROS
+                                        + hour * Timestamps.HOUR_MICROS
+                                        + min * Timestamps.MINUTE_MICROS
+                                        + sec * Timestamps.SECOND_MICROS
+                                        + micr
+                                        + checkTimezoneTail(seq, p, lim);
+                            } else {
+                                // seconds
+                                ts = Timestamps.yearMicros(year, l)
+                                        + Timestamps.monthOfYearMicros(month, l)
+                                        + (day - 1) * Timestamps.DAY_MICROS
+                                        + hour * Timestamps.HOUR_MICROS
+                                        + min * Timestamps.MINUTE_MICROS
+                                        + sec * Timestamps.SECOND_MICROS
+                                        + checkTimezoneTail(seq, p, lim);
+                            }
+                        } else {
+                            // minute
+                            ts = Timestamps.yearMicros(year, l)
+                                    + Timestamps.monthOfYearMicros(month, l)
+                                    + (day - 1) * Timestamps.DAY_MICROS
+                                    + hour * Timestamps.HOUR_MICROS
+                                    + min * Timestamps.MINUTE_MICROS;
+
+                        }
+                    } else {
+                        // year + month + day + hour
+                        ts = Timestamps.yearMicros(year, l)
+                                + Timestamps.monthOfYearMicros(month, l)
+                                + (day - 1) * Timestamps.DAY_MICROS
+                                + hour * Timestamps.HOUR_MICROS;
+
+                    }
+                } else {
+                    // year + month + day
+                    ts = Timestamps.yearMicros(year, l)
+                            + Timestamps.monthOfYearMicros(month, l)
+                            + (day - 1) * Timestamps.DAY_MICROS;
+                }
+            } else {
+                // year + month
+                ts = (Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(month, l));
+            }
+        } else {
+            // year
+            ts = (Timestamps.yearMicros(year, l) + Timestamps.monthOfYearMicros(1, l));
+        }
+        return ts;
+    }
+
     public static long parseFloorPartialTimestamp(CharSequence seq) throws NumericException {
         return parseFloorPartialTimestamp(seq, 0, seq.length());
+    }
+
+    public static long parseFloorPartialTimestamp(Utf8Sequence seq) throws NumericException {
+        return parseFloorPartialTimestamp(seq, 0, seq.size());
     }
 
     public static void parseInterval(CharSequence seq, int pos, int lim, short operation, LongList out) throws NumericException {
@@ -924,8 +1037,20 @@ public final class IntervalUtils {
         }
     }
 
+    private static void checkChar(Utf8Sequence s, int p, int lim, char c) throws NumericException {
+        if (p >= lim || s.byteAt(p) != c) {
+            throw NumericException.INSTANCE;
+        }
+    }
+
     private static void checkChar(CharSequence s, int p, int lim, char c1, char c2) throws NumericException {
         if (p >= lim || (s.charAt(p) != c1 && s.charAt(p) != c2)) {
+            throw NumericException.INSTANCE;
+        }
+    }
+
+    private static void checkChar(Utf8Sequence s, int p, int lim, char c1, char c2) throws NumericException {
+        if (p >= lim || (s.byteAt(p) != c1 && s.byteAt(p) != c2)) {
             throw NumericException.INSTANCE;
         }
     }
@@ -969,7 +1094,38 @@ public final class IntervalUtils {
         }
 
         if (lim - p > 2) {
-            int tzSign = parseSign(seq, p++);
+            int tzSign = parseSign(seq.charAt(p++));
+            int hour = Numbers.parseInt(seq, p, p += 2);
+            checkRange(hour, 0, 23);
+
+            if (lim - p == 3) {
+                // Optional : separator between hours and mins in timezone
+                checkChar(seq, p++, lim, ':');
+            }
+
+            if (checkLenStrict(p, lim)) {
+                int min = Numbers.parseInt(seq, p, p + 2);
+                checkRange(min, 0, 59);
+                return tzSign * (hour * Timestamps.HOUR_MICROS + min * Timestamps.MINUTE_MICROS);
+            } else {
+                return tzSign * (hour * Timestamps.HOUR_MICROS);
+            }
+        }
+        throw NumericException.INSTANCE;
+    }
+
+    private static long checkTimezoneTail(Utf8Sequence seq, int p, int lim) throws NumericException {
+        if (lim == p) {
+            return 0;
+        }
+
+        if (lim - p < 2) {
+            checkChar(seq, p, lim, 'Z');
+            return 0;
+        }
+
+        if (lim - p > 2) {
+            int tzSign = parseSign((char) seq.byteAt(p++));
             int hour = Numbers.parseInt(seq, p, p += 2);
             checkRange(hour, 0, 23);
 
@@ -1023,9 +1179,9 @@ public final class IntervalUtils {
         }
     }
 
-    private static int parseSign(CharSequence seq, int p) throws NumericException {
+    private static int parseSign(char c) throws NumericException {
         int tzSign;
-        switch (seq.charAt(p)) {
+        switch (c) {
             case '+':
                 tzSign = -1;
                 break;

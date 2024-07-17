@@ -1332,7 +1332,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             typesAndSelect = typesAndSelectCache.poll(queryText);
 
             if (typesAndSelect != null) {
-                LOG.info().$("query cache used [fd=").$(getFd()).I$();
+                sqlExecutionContext.setCacheHit(true);
                 // cache hit, define bind variables
                 bindVariableService.clear();
                 typesAndSelect.defineBindVariables(bindVariableService);
@@ -1341,6 +1341,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             }
 
             // not cached - compile to see what it is
+            sqlExecutionContext.setCacheHit(false);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 final CompiledQuery cc = compiler.compile(queryText, sqlExecutionContext);
                 processCompiledQuery(cc);

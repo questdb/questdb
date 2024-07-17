@@ -33,7 +33,7 @@ import org.junit.Test;
 public class IntFunctionTest {
     // assert that all type casts that are not possible will throw exception
 
-    private static final IntFunction function = makeIntFunction(150);
+    private static final IntFunction function = makeIntFunction();
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGeoByte() {
@@ -136,11 +136,6 @@ public class IntFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetStr2() {
-        function.getStr(null, null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
     public void testGetStrB() {
         function.getStrB(null);
     }
@@ -175,11 +170,11 @@ public class IntFunctionTest {
         function.getVarcharB(null);
     }
 
-    private static @NotNull IntFunction makeIntFunction(int value) {
+    private static @NotNull IntFunction makeIntFunction() {
         return new IntFunction() {
             @Override
             public int getInt(Record rec) {
-                return value;
+                return 150;
             }
 
             @Override

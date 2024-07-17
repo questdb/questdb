@@ -24,8 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -131,6 +133,11 @@ public class SymbolFunctionTest {
         function.getIPv4(null);
     }
 
+    @Test(expected = CairoException.class)
+    public void testGetInvalidTimestamp() {
+        function.getTimestamp(null);
+    }
+
     @Test(expected = UnsupportedOperationException.class)
     public void testGetLong() {
         function.getLong(null);
@@ -186,16 +193,6 @@ public class SymbolFunctionTest {
         function.getStrLen(null);
     }
 
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetStrSink() {
-        function.getStr(null, null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetTimestamp() {
-        function.getTimestamp(null);
-    }
-
     @Test
     public void testGetVarcharA() {
         Utf8Sequence value = function.getVarcharA(null);
@@ -208,5 +205,41 @@ public class SymbolFunctionTest {
         Utf8Sequence value = function.getVarcharB(null);
         Assert.assertNotNull(value);
         TestUtils.assertEquals("XYZ", value.toString());
+    }
+
+    @Test
+    public void testTimestamp() {
+        SymbolFunction symbolFunction = new SymbolFunction() {
+            @Override
+            public int getInt(Record rec) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public CharSequence getSymbol(Record rec) {
+                return "2024-04-09";
+            }
+
+            @Override
+            public CharSequence getSymbolB(Record rec) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public boolean isSymbolTableStatic() {
+                return false;
+            }
+
+            @Override
+            public CharSequence valueBOf(int key) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public CharSequence valueOf(int key) {
+                throw new UnsupportedOperationException();
+            }
+        };
+        Assert.assertEquals("2024-04-09T00:00:00.000Z", Timestamps.toString(symbolFunction.getTimestamp(null)));
     }
 }

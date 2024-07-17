@@ -67,6 +67,10 @@ public class OperatorRegistry {
         assert unarySetNegation != null : "unary set negation operator (e.g. 'not within') must be present in operators list";
     }
 
+    public OperatorExpression getOperatorDefinition(CharSequence symbolName) {
+        return map.get(symbolName);
+    }
+
     public int getOperatorType(CharSequence name) {
         int index = map.keyIndex(name);
         if (index < 0) {
