@@ -65,7 +65,8 @@ public class MatchSymbolFunctionFactoryTest extends AbstractCairoTest {
             assertQuery(
                     "name\n",
                     "select * from x where name ~ null",
-                    false
+                    false,
+                    true
             );
         });
     }

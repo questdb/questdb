@@ -36,6 +36,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -60,13 +61,21 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         final int patternPosition = argPositions.getQuick(1);
         if (fun.isSymbolTableStatic()) {
             if (pattern.isConstant()) {
-                return new MatchStaticSymbolTableConstPatternFunction(fun, RegexUtils.createMatcher(pattern, patternPosition));
+                final Matcher matcher = RegexUtils.createMatcher(pattern, patternPosition);
+                if (matcher == null) {
+                    return BooleanConstant.FALSE;
+                }
+                return new MatchStaticSymbolTableConstPatternFunction(fun, matcher);
             } else if (pattern.isRuntimeConstant()) {
                 return new MatchStaticSymbolTableRuntimeConstPatternFunction(fun, pattern, patternPosition);
             }
         } else {
             if (pattern.isConstant()) {
-                return new MatchStrFunctionFactory.MatchStrConstPatternFunction(fun, RegexUtils.createMatcher(pattern, patternPosition));
+                final Matcher matcher = RegexUtils.createMatcher(pattern, patternPosition);
+                if (matcher == null) {
+                    return BooleanConstant.FALSE;
+                }
+                return new MatchStrFunctionFactory.MatchStrConstPatternFunction(fun, matcher);
             } else if (pattern.isRuntimeConstant()) {
                 return new MatchStrFunctionFactory.MatchStrRuntimeConstPatternFunction(fun, pattern, patternPosition);
             }
