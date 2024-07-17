@@ -82,13 +82,13 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
             return symbolTimestampEpoch == timestampFn.getLong(null) ? BooleanConstant.TRUE : BooleanConstant.FALSE;
         }
 
-        return new variableTimestampFunction(fn0, timestampFn, symbolTimestampEpoch);
+        return new VariableTimestampFunction(fn0, timestampFn, symbolTimestampEpoch);
     }
 
-    private static class variableTimestampFunction extends AbstractEqBinaryFunction {
+    private static class VariableTimestampFunction extends AbstractEqBinaryFunction {
         private final long symbolTimestampEpoch;
 
-        public variableTimestampFunction(Function symFn, Function timestampFn, long symbolTimestampEpoch) {
+        public VariableTimestampFunction(Function symFn, Function timestampFn, long symbolTimestampEpoch) {
             super(symFn, timestampFn);
             this.symbolTimestampEpoch = symbolTimestampEpoch;
         }
