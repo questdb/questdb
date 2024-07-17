@@ -4655,7 +4655,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         boolean requiresTimestamp = joinsRequiringTimestamp[model.getJoinType()];
         final GenericRecordMetadata myMeta = new GenericRecordMetadata();
-        boolean framingSupported = true;
         try {
             if (requiresTimestamp) {
                 executionContext.pushTimestampRequiredFlag(true);
@@ -5128,7 +5127,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     rowFactory,
                     false,
                     null,
-                    framingSupported,
+                    true,
                     columnIndexes,
                     columnSizes,
                     supportsRandomAccess
@@ -5158,7 +5157,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     rowCursorFactory,
                     orderDescendingByDesignatedTimestampOnly || isOrderByDesignatedTimestampOnly(model),
                     null,
-                    framingSupported,
+                    true,
                     columnIndexes,
                     columnSizes,
                     supportsRandomAccess
