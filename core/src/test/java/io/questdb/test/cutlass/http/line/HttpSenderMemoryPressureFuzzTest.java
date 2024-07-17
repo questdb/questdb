@@ -105,9 +105,9 @@ public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
                 try {
                     engine.awaitTable(tn, 10, TimeUnit.MINUTES);
                 } catch (CairoException e) {
-                    if (!e.getMessage().contains("suspended")) {
+                    if (!e.getMessage().contains("table is suspended [tableName=table1]")) {
                         e.printStackTrace(System.err);
-                        Assert.fail("The only accepted error is 'table suspended', but got: " + e.getMessage());
+                        Assert.fail("The only accepted error is 'table is suspended [tableName=table1]', but got: " + e.getMessage());
                     }
                     System.out.printf("\n\n%s\n\n", e.getMessage());
                 }

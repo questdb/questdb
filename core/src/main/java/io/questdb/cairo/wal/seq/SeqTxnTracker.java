@@ -39,6 +39,7 @@ public class SeqTxnTracker implements O3InflightPartitionRegulator {
     private static final long SUSPENDED_STATE_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "suspendedState");
     private static final long WRITER_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "writerTxn");
     private final Rnd rnd;
+    private int backoffCounter = 0;
     private volatile String errorMessage = "";
     private volatile ErrorTag errorTag = ErrorTag.NONE;
     private int maxParallelism = Integer.MAX_VALUE;
@@ -49,7 +50,7 @@ public class SeqTxnTracker implements O3InflightPartitionRegulator {
     // 0 unknown
     // 1 not suspended
     private volatile int suspendedState = 0;
-    private volatile long walBackoffUntil = -1;
+    private long walBackoffUntil = -1;
     private volatile long writerTxn = -1;
 
     public SeqTxnTracker(Rnd rnd) {
@@ -76,10 +77,6 @@ public class SeqTxnTracker implements O3InflightPartitionRegulator {
     @TestOnly
     public long getSeqTxn() {
         return seqTxn;
-    }
-
-    public long getWalBackoffUntil() {
-        return walBackoffUntil;
     }
 
     @TestOnly
@@ -148,9 +145,17 @@ public class SeqTxnTracker implements O3InflightPartitionRegulator {
 
     public boolean onPressureIncreased(long nowMicros) {
         if (maxRecordedInflightPartitions == 1) {
-            // TODO: a few rounds of backoff instead of giving up
-            return false;
+            if (backoffCounter >= 5) {
+                walBackoffUntil = -1;
+                return false;
+            }
+            backoffCounter++;
+            LOG.info().$("Memory pressure is high, backoffCounter=").$(backoffCounter).$();
+            walBackoffUntil = nowMicros + rnd.nextInt(4_000_000);
+            return true;
         }
+        backoffCounter = 0;
+        walBackoffUntil = -1;
         maxParallelism = maxRecordedInflightPartitions / 2;
         maxRecordedInflightPartitions = 1;
         LOG.info().$("Memory pressure building up, new max parallelism=").$(maxParallelism).$();
@@ -160,6 +165,8 @@ public class SeqTxnTracker implements O3InflightPartitionRegulator {
 
     public void onPressureReduced(long nowMicros) {
         maxRecordedInflightPartitions = 1;
+        backoffCounter = 0;
+        walBackoffUntil = -1;
         if (maxParallelism == Integer.MAX_VALUE) {
             // fast path
             return;
@@ -195,12 +202,8 @@ public class SeqTxnTracker implements O3InflightPartitionRegulator {
         this.errorMessage = "";
     }
 
-    public void setWalBackoffUntil(long walBackoffUntil) {
-        this.walBackoffUntil = walBackoffUntil;
-    }
-
     public boolean shouldBackOff(long nowMicros) {
-        return nowMicros < getWalBackoffUntil();
+        return nowMicros < walBackoffUntil;
     }
 
     @Override
