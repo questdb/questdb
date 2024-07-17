@@ -63,8 +63,8 @@ LABEL name=QuestDB \
     vendor=QuestDB \
     summary="Provides the latest release of QuestDB" \
     description="QuestDB is an open source time-series database for fast ingest and SQL queries" \
-    version=$tag_name \
-    release=$tag_name \
+    version=${tag_name:-master} \
+    release=${tag_name:-master} \
     maintainer=QuestDB \
     url="https://github.com/questdb/questdb"
 
