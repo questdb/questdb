@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table.parquet;
 
+import io.questdb.cairo.SymbolMapWriter;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8Sequence;
@@ -98,7 +99,8 @@ public class PartitionDescriptor implements QuietCloseable {
                 Files.munmap(columnSecondaryAddrs.get(i), columnSecondarySizes.get(i), MemoryTag.MMAP_PARTITION_CONVERTER);
             }
             for (long i = 0, n = symbolOffsetsAddrs.size(); i < n; i++) {
-                Files.munmap(symbolOffsetsAddrs.get(i), symbolOffsetsSizes.get(i), MemoryTag.MMAP_PARTITION_CONVERTER);
+                final long offsetsMemSize = SymbolMapWriter.keyToOffset((int)symbolOffsetsSizes.get(i) + 1);
+                Files.munmap(symbolOffsetsAddrs.get(i) - SymbolMapWriter.HEADER_SIZE, offsetsMemSize, MemoryTag.MMAP_PARTITION_CONVERTER);
             }
         }
 

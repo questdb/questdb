@@ -2158,7 +2158,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             fileDescriptors.add(columnFd);
 
                             long columnSize = columnRowCount * ColumnType.sizeOf(columnType);
-                            long columnAddr = TableUtils.mapAppendColumnBuffer(ff, columnFd, 0, columnSize, false, memoryTag);
+                            long columnAddr = TableUtils.mapRO(ff, columnFd, columnSize, memoryTag);
 
                             offsetFileName(path.trimTo(rootLen), columnName, columnNameTxn);
                             if (!ff.exists(path.$())) {
@@ -2173,18 +2173,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             }
 
                             final int symbolCount = getSymbolMapWriter(columnIndex).getSymbolCount();
-                            final long offsetsMemSize = SymbolMapWriter.keyToOffset(symbolCount) + Long.BYTES;
+                            final long offsetsMemSize = SymbolMapWriter.keyToOffset(symbolCount + 1);
 
                             final int symbolOffsetsFd = TableUtils.openRO(ff, path.$(), LOG);
                             fileDescriptors.add(symbolOffsetsFd);
 
-                            long symbolOffsetsAddr = TableUtils.mapAppendColumnBuffer(ff, symbolOffsetsFd, HEADER_SIZE, offsetsMemSize, false, memoryTag);
+                            long symbolOffsetsAddr = TableUtils.mapRO(ff, symbolOffsetsFd, offsetsMemSize, memoryTag);
 
                             int columnSecondaryFd = TableUtils.openRO(ff, charFileName(path.trimTo(rootLen), columnName, columnNameTxn), LOG);
                             fileDescriptors.add(columnSecondaryFd);
 
                             long columnSecondarySize = ff.length(columnSecondaryFd);
-                            long columnSecondaryAddr = TableUtils.mapAppendColumnBuffer(ff, columnSecondaryFd, 0, columnSecondarySize, false, memoryTag);
+                            long columnSecondaryAddr = TableUtils.mapRO(ff, columnSecondaryFd, columnSecondarySize, memoryTag);
 
                             partitionDescriptor.addColumn(
                                     columnName,
@@ -2195,7 +2195,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     columnSize,
                                     columnSecondaryAddr,
                                     columnSecondarySize,
-                                    symbolOffsetsAddr,
+                                    symbolOffsetsAddr + HEADER_SIZE,
                                     symbolCount
                             );
 
@@ -2207,7 +2207,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                             final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
                             long auxVectorSize = columnTypeDriver.getAuxVectorSize(columnRowCount);
-                            long auxVectorAddr = TableUtils.mapAppendColumnBuffer(ff, auxFd, 0, auxVectorSize, false, memoryTag);
+                            long auxVectorAddr = TableUtils.mapRO(ff, auxFd, auxVectorSize, memoryTag);
 
                             long dataSize = columnTypeDriver.getDataVectorSizeAt(auxVectorAddr, columnRowCount - 1);
                             if (dataSize < columnTypeDriver.getDataVectorMinEntrySize() || dataSize >= (1L << 40)) {
@@ -2218,7 +2218,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             int dataFd = TableUtils.openRO(ff, dFile(path.trimTo(partitionLen), columnName, columnNameTxn), LOG);
                             fileDescriptors.add(dataFd);
 
-                            long dataAddr = dataSize == 0 ? 0 : TableUtils.mapAppendColumnBuffer(ff, dataFd, 0, dataSize, false, memoryTag);
+                            long dataAddr = dataSize == 0 ? 0 : TableUtils.mapRO(ff, dataFd, dataSize, memoryTag);
                             partitionDescriptor.addColumn(
                                     columnName,
                                     columnType,
@@ -2235,7 +2235,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             int fixedFd = TableUtils.openRO(ff, dFile(path.trimTo(partitionLen), columnName, columnNameTxn), LOG);
                             fileDescriptors.add(fixedFd);
                             long mapBytes = columnRowCount * ColumnType.sizeOf(columnType);
-                            long fixedAddr = TableUtils.mapAppendColumnBuffer(ff, fixedFd, 0, mapBytes, false, memoryTag);
+                            long fixedAddr = TableUtils.mapRO(ff, fixedFd, mapBytes, memoryTag);
                             partitionDescriptor.addColumn(
                                     columnName,
                                     columnType,
