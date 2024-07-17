@@ -6448,6 +6448,20 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConvertPartitionPartitionExpected() throws Exception {
+        final String ddl = "create table x as (select x l," +
+                " timestamp_sequence(400000000000, 500000000) ts" +
+                " from long_sequence(5)) timestamp(ts) partition by DAY";
+
+        assertException(
+                "alter table x convert to parquet list '1970-01-01' to '1970-01-02'",
+                ddl,
+                22,
+                "'partition' expected"
+        );
+    }
+
+    @Test
     public void testConvertPartitionToExpected() throws Exception {
         final String ddl = "create table x as (select x l," +
                 " timestamp_sequence(400000000000, 500000000) ts" +

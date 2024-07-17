@@ -86,7 +86,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
     @Test
     public void testSmoke() throws Exception {
         assertMemoryLeak(() -> {
-            final long rows = 1001;
+            final long rows = 10000000;
             ddl("create table x as (select" +
                     " x id," +
                     " rnd_boolean() a_boolean," +
@@ -120,8 +120,8 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                     TableReader reader = engine.getReader("x")
             ) {
                 path.of(root).concat("x.parquet").$();
-                long start = System.nanoTime();
                 PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                long start = System.nanoTime();
                 PartitionEncoder.encode(partitionDescriptor, path);
                 LOG.info().$("Took: ").$((System.nanoTime() - start) / 1_000_000).$("ms").$();
             }
