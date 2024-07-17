@@ -30,6 +30,8 @@ import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.log.Log;
@@ -115,9 +117,28 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Fill Range");
-        sink.attr("range").val('(').val(from).val(',').val(to).val(')');
+        if (from != TimestampConstant.NULL || to != TimestampConstant.NULL) {
+            sink.attr("range").val('(').val(from).val(',').val(to).val(')');
+        }
         sink.attr("stride").val('\'').val(stride).val('\'');
-        sink.attr("values").val(values);
+
+        // print values omitting the timestamp column
+        // since we added an extra artificial null
+        sink.attr("values").val('[');
+        for (int i = 0; i < values.size(); i++) {
+            if (i == timestampIndex) {
+                continue;
+            }
+
+            sink.val(values.getQuick(i));
+
+            if (i != 0 && i != values.size() - 1) {
+                sink.val(',');
+            }
+
+        }
+        sink.val(']');
+
         sink.child(base);
     }
 
@@ -149,6 +170,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         private Record baseRecord;
         private int bucketIndex;
         private SqlExecutionCircuitBreaker circuitBreaker;
+        private FillRangeTimestampConstant fillingTimestampFunc = new FillRangeTimestampConstant();
         private long fromTimestamp;
         private boolean gapFilling;
         private long maxTimestamp;
@@ -242,10 +264,10 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
 
         private Function getFillFunction(int col) {
             if (col == timestampIndex) {
-                return TimestampConstant.newInstance(nextBucketTimestamp);
+                return fillingTimestampFunc;
             }
 
-            return values.getQuick(col < timestampIndex ? col : col - 1);
+            return values.getQuick(col);
         }
 
         private void initBounds(Function from, Function to) {
@@ -310,6 +332,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             if (presentRecords == null) {
                 presentRecords = new BitSet(to != TimestampConstant.NULL ? timestampSampler.bucketIndex(toTimestamp) : DEFAULT_BITSET_SIZE);
             }
+            values.insert(timestampIndex, 1, null);
             initBounds(from, to);
             toTop();
         }
@@ -598,6 +621,13 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 } else {
                     return baseRecord.getVarcharSize(col);
                 }
+            }
+        }
+
+        private class FillRangeTimestampConstant extends TimestampFunction implements ConstantFunction {
+            @Override
+            public long getTimestamp(Record rec) {
+                return nextBucketTimestamp;
             }
         }
     }

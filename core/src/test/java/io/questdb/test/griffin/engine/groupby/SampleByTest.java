@@ -8256,7 +8256,6 @@ public class SampleByTest extends AbstractCairoTest {
                             "    Sort\n" +
                             "      keys: [k]\n" +
                             "        Fill Range\n" +
-                            "          range: (null,null)\n" +
                             "          stride: '30m'\n" +
                             "          values: [null]\n" +
                             "            Async Group By workers: 1\n" +
