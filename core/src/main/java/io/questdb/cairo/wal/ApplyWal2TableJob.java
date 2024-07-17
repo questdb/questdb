@@ -396,7 +396,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     }
 
     private void handleWalApplyFailure(TableToken tableToken, ErrorTag errorTag, String errorMessage, SeqTxnTracker txnTracker) {
-        if (errorTag == OUT_OF_MEMORY && txnTracker != null && txnTracker.onPressureIncreased(MicrosecondClockImpl.INSTANCE.getTicks())) {
+        if (errorTag == OUT_OF_MEMORY && txnTracker != null && txnTracker.onOutOfMemory(MicrosecondClockImpl.INSTANCE.getTicks())) {
             engine.notifyWalTxnRepublisher(tableToken);
         } else {
             try {
@@ -542,7 +542,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         return;
                     }
                     applyOutstandingWalTransactions(tableToken, writer, engine, operationCompiler, tempPath, runStatus, txnTracker);
-                    txnTracker.onPressureReduced(MicrosecondClockImpl.INSTANCE.getTicks());
+                    txnTracker.hadEnoughMemory(MicrosecondClockImpl.INSTANCE.getTicks());
                     lastWriterTxn = writer.getSeqTxn();
                 } catch (EntryUnavailableException tableBusy) {
                     //noinspection StringEquality
