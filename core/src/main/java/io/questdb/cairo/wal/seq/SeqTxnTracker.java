@@ -84,6 +84,27 @@ public class SeqTxnTracker implements O3InflightPartitionRegulator {
         return writerTxn;
     }
 
+    public void hadEnoughMemory(long nowMicros) {
+        maxRecordedInflightPartitions = 1;
+        backoffCounter = 0;
+        walBackoffUntil = -1;
+        if (maxParallelism == Integer.MAX_VALUE) {
+            // fast path
+            return;
+        }
+
+        int i = rnd.nextInt();
+        if (Integer.numberOfTrailingZeros(i) >= 4) { // 1 in 16
+            int origMaxParallelism = maxParallelism;
+            maxParallelism *= 2;
+            if (maxParallelism < origMaxParallelism) {
+                // overflow
+                maxParallelism = Integer.MAX_VALUE;
+            }
+        }
+        LOG.info().$("Memory pressure easing off, new max parallelism=").$(maxParallelism).$();
+    }
+
     public boolean initTxns(long newWriterTxn, long newSeqTxn, boolean isSuspended) {
         Unsafe.cas(this, SUSPENDED_STATE_OFFSET, 0, isSuspended ? -1 : 1);
         long wtxn = writerTxn;
@@ -143,7 +164,7 @@ public class SeqTxnTracker implements O3InflightPartitionRegulator {
         return (stxn < 1 || writerTxn == (newSeqTxn - 1)) && suspendedState >= 0;
     }
 
-    public boolean onPressureIncreased(long nowMicros) {
+    public boolean onOutOfMemory(long nowMicros) {
         if (maxRecordedInflightPartitions == 1) {
             if (backoffCounter >= 5) {
                 walBackoffUntil = -1;
@@ -158,30 +179,9 @@ public class SeqTxnTracker implements O3InflightPartitionRegulator {
         walBackoffUntil = -1;
         maxParallelism = maxRecordedInflightPartitions / 2;
         maxRecordedInflightPartitions = 1;
-        LOG.info().$("Memory pressure building up, new max parallelism=").$(maxParallelism).$();
+        LOG.info().$("Memory pressure is high, new max parallelism=").$(maxParallelism).$();
 
         return true;
-    }
-
-    public void onPressureReduced(long nowMicros) {
-        maxRecordedInflightPartitions = 1;
-        backoffCounter = 0;
-        walBackoffUntil = -1;
-        if (maxParallelism == Integer.MAX_VALUE) {
-            // fast path
-            return;
-        }
-
-        int i = rnd.nextInt();
-        if (Integer.numberOfTrailingZeros(i) >= 4) { // 1 in 16
-            int origMaxParallelism = maxParallelism;
-            maxParallelism *= 2;
-            if (maxParallelism < origMaxParallelism) {
-                // overflow
-                maxParallelism = Integer.MAX_VALUE;
-            }
-        }
-        LOG.info().$("Memory pressure easing off, new max parallelism=").$(maxParallelism).$();
     }
 
     public void setSuspended(ErrorTag errorTag, String errorMessage) {

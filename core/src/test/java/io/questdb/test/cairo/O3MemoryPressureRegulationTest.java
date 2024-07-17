@@ -72,7 +72,7 @@ public class O3MemoryPressureRegulationTest extends AbstractTest {
         long now = clock.getTicks();
         for (int i = 0; i < 10; i++) {
             now += 1_000;
-            txnTracker.onPressureIncreased(now);
+            txnTracker.onOutOfMemory(now);
         }
 
         int expectedLevel = 10;
@@ -81,7 +81,7 @@ public class O3MemoryPressureRegulationTest extends AbstractTest {
         // in the level 6..10 range, txnTracker decrease pressure level on every onPressureDecrease() call
         for (int i = 0; i < 5; i++) {
             now += 1_000;
-            txnTracker.onPressureReduced(now);
+            txnTracker.hadEnoughMemory(now);
             expectedLevel--;
 
             assertRegulationState(txnTracker, expectedLevel, now);
@@ -93,7 +93,7 @@ public class O3MemoryPressureRegulationTest extends AbstractTest {
             do {
                 decreaseCycles++;
                 now += 1_000;
-                txnTracker.onPressureReduced(now);
+                txnTracker.hadEnoughMemory(now);
                 assertRegulationState(txnTracker, txnTracker.getMemoryPressureLevel(), now);
             } while (txnTracker.getMemoryPressureLevel() == expectedLevel);
             System.out.format("Decreasing pressure level from %d to %d  took %d cycles%n",
@@ -105,7 +105,7 @@ public class O3MemoryPressureRegulationTest extends AbstractTest {
         // level 0 is a fast path, it does not change pressure level
         for (int i = 0; i < 5; i++) {
             now += 1_000;
-            txnTracker.onPressureReduced(now);
+            txnTracker.hadEnoughMemory(now);
             assertRegulationState(txnTracker, 0, now);
         }
     }
@@ -128,7 +128,7 @@ public class O3MemoryPressureRegulationTest extends AbstractTest {
         long now = clock.getTicks();
         for (int i = 1; i <= 20; i++) {
             now += 1_000;
-            boolean canRetry = txnTracker.onPressureIncreased(now);
+            boolean canRetry = txnTracker.onOutOfMemory(now);
             Assert.assertEquals(i <= 10, canRetry);
 
             int expectedLevel = Math.min(i, 10);
