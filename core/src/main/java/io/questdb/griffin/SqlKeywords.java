@@ -1225,7 +1225,7 @@ public class SqlKeywords {
     }
 
     public static boolean isOpenKeyword(CharSequence tok) {
-        return tok.length() == 9
+        return tok.length() == 4
                 && (tok.charAt(0) | 32) == 'o'
                 && (tok.charAt(1) | 32) == 'p'
                 && (tok.charAt(2) | 32) == 'e'

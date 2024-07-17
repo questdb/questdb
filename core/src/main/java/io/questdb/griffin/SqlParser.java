@@ -2144,22 +2144,29 @@ public class SqlParser {
                                     throw SqlException.$(lexer.lastTokenPosition(), "'and' expected");
                                 }
 
-                                tok = tok(lexer, "'inclusive' 'exclusive' 'left' 'open' 'right'");
+                                tok = tok(lexer, "'inclusive' 'exclusive' 'left' 'right'");
 
                                 if(SqlKeywords.isInclusiveKeyword(tok)) {
                                     // for INCLUSIVE
+
                                 } else if(SqlKeywords.isExclusiveKeyword(tok)) {
                                     // for EXCLUSIVE
                                 } else if (SqlKeywords.isRightKeyword(tok)) {
-                                    if (SqlKeywords.isOpenKeyword(tok)) {
-                                        // for RIGHT OPEN
+                                    tok = tok(lexer, "'open'");
+                                    if(SqlKeywords.isOpenKeyword(tok)) {
+                                        // RIGHT OPEN
+                                    } else {
+                                        throw SqlException.$(lexer.lastTokenPosition(), "'open' expected");
                                     }
                                 }  else if (SqlKeywords.isLeftKeyword(tok)) {
-                                    if (SqlKeywords.isOpenKeyword(tok)) {
-                                        // for LEFT OPEN
+                                    tok = tok(lexer, "'open'");
+                                    if(SqlKeywords.isOpenKeyword(tok)) {
+                                        // LEFT OPEN
+                                    } else {
+                                        throw SqlException.$(lexer.lastTokenPosition(), "'open' expected");
                                     }
                                 } else {
-                                    throw SqlException.$(lexer.lastTokenPosition(), "''inclusive' 'exclusive' 'left' 'open' 'right' expected");
+                                    // equivalent to INCLUSIVE
                                 }
 
 

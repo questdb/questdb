@@ -78,10 +78,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int SET_OPERATION_INTERSECT_ALL = 5;
     public static final int SET_OPERATION_UNION = 1;
     // BETWEEN intervals
-    public static final int INCLUSIVE_BETWEEN = 1;
-    public static final int EXCLUSIVE_BETWEEN = 2;
-    public static final int RIGHT_OPEN_BETWEEN = 3;
-    public static final int LEFT_OPEN_BETWEEN = 4;
+    public static final int BETWEEN_INCLUSIVE = 1;
+    public static final int BETWEEN_EXCLUSIVE = 2;
+    public static final int BETWEEN_RIGHT_OPEN = 3;
+    public static final int BETWEEN_LEFT_OPEN = 4;
     // types of set operations between this and union model
     public static final int SET_OPERATION_UNION_ALL = 0;
     public static final int SHOW_COLUMNS = 2;
@@ -190,7 +190,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private TableToken updateTableToken;
     private ExpressionNode whereClause;
     // exclusive and inclusive with between
-    private int betweenType = INCLUSIVE_BETWEEN;
+    private int betweenType = 0;
 
     private QueryModel() {
         joinModels.add(this);
@@ -440,7 +440,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         explicitTimestamp = false;
         showKind = -1;
         sampleByOffset = ZERO_OFFSET;
-        betweenType = INCLUSIVE_BETWEEN;
+        betweenType = 0;
     }
 
     public void clearColumnMapStructs() {
