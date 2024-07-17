@@ -38,11 +38,9 @@ import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
-import io.questdb.std.Chars;
-import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Equality operator between symbol and long value. Long value is cast to string representation before being
@@ -79,7 +77,8 @@ public class EqSymLongFunctionFactory implements FunctionFactory {
 
         final SymbolFunction symFn = (SymbolFunction) fn0;
         if (longFn.isConstant()) {
-            final String constValue = Long.toString(longFn.getLong(null));
+            final long val = longFn.getLong(null);
+            final String constValue = val != Numbers.LONG_NULL ? Misc.getThreadLocalSink().put(val).toString() : null;
             if (symFn.getStaticSymbolTable() != null) {
                 return new ConstValueStaticSymbolTableFunction(symFn, constValue);
             } else {
@@ -94,7 +93,7 @@ public class EqSymLongFunctionFactory implements FunctionFactory {
         private final Function arg;
         private final String constant;
 
-        public ConstValueDynamicSymbolTableFunction(Function arg, String constant) {
+        public ConstValueDynamicSymbolTableFunction(Function arg, @Nullable String constant) {
             this.arg = arg;
             this.constant = constant;
         }
@@ -106,7 +105,7 @@ public class EqSymLongFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != Chars.equalsNc(arg.getSymbol(rec), constant);
+            return negated != Chars.equalsNullable(arg.getSymbol(rec), constant);
         }
 
         @Override
@@ -124,7 +123,7 @@ public class EqSymLongFunctionFactory implements FunctionFactory {
         private final String constant;
         private int valueIndex;
 
-        public ConstValueStaticSymbolTableFunction(SymbolFunction arg, String constant) {
+        public ConstValueStaticSymbolTableFunction(SymbolFunction arg, @Nullable String constant) {
             this.arg = arg;
             this.constant = constant;
         }

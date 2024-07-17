@@ -55,6 +55,22 @@ public class EqSymLongFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDynamicCastNull() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as (select rnd_symbol('1','3','5', null) a, abs(rnd_long())%5 b  from long_sequence(20))");
+            assertSql(
+                    "a\tb\n" +
+                            "\t3\n" +
+                            "\t1\n" +
+                            "\t2\n" +
+                            "\t0\n" +
+                            "\t3\n",
+                    "select a,b from x where a = null::long"
+            );
+        });
+    }
+
+    @Test
     public void testDynamicCast() throws Exception {
         assertMemoryLeak(() ->  {
             ddl("create table x as (select rnd_symbol('1','3','5') a, abs(rnd_long())%5 b  from long_sequence(10))");
@@ -64,6 +80,25 @@ public class EqSymLongFunctionFactoryTest extends AbstractCairoTest {
                             "1\t1\n" +
                             "1\t1\n",
                     "select a,b from x where a = b"
+            );
+        });
+    }
+
+    @Test
+    public void testStaticSymbolTableNull() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as (select rnd_symbol('1','3','5', null) a from long_sequence(30))");
+            assertSql(
+                    "a\n" +
+                            "\n" +
+                            "\n" +
+                            "\n" +
+                            "\n" +
+                            "\n" +
+                            "\n" +
+                            "\n" +
+                            "\n",
+                    "select a from x where a = null::long"
             );
         });
     }
