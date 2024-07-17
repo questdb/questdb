@@ -172,7 +172,7 @@ public class SeqTxnTracker implements O3InflightPartitionRegulator {
             }
             backoffCounter++;
             int delayMicros = rnd.nextInt(4_000_000);
-            LOG.info().$("Memory pressure is high [backoffCounter=").$(backoffCounter).$(", delay=").$(delayMicros).$(" μs]").$();
+            LOG.info().$("Memory pressure is high [backoffCounter=").$(backoffCounter).$(", delay=").$(delayMicros).$(" us]").$();
             walBackoffUntil = nowMicros + delayMicros;
             return true;
         }
