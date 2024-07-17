@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.model;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.str.CharSink;
@@ -69,11 +68,6 @@ public class QueryColumn implements Mutable, Sinkable {
 
     public int getColumnType() {
         return columnType;
-    }
-
-    @SuppressWarnings("unused")
-    public CharSequence getColumnTypeName() { // for debugging
-        return ColumnType.nameOf(columnType);
     }
 
     public CharSequence getName() {
