@@ -155,6 +155,10 @@ public final class OperatorExpression {
         return registry;
     }
 
+    public int getType() {
+        return type;
+    }
+
     public boolean greaterPrecedence(int otherPrecedence) {
         return (leftAssociative && precedence >= otherPrecedence) || (!leftAssociative && precedence > otherPrecedence);
     }

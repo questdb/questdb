@@ -185,7 +185,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                     "Count\n" +
                             "    Async JIT Group By workers: 1\n" +
                             "      keys: [UserID]\n" +
-                            "      filter: null!=UserID\n" +
+                            "      filter: UserID!=null\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: hits\n"

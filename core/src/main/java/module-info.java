@@ -171,6 +171,9 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.eq.EqStrCharFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqSymStrFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqSymCharFunctionFactory,
+            io.questdb.griffin.engine.functions.eq.EqSymLongFunctionFactory,
+            io.questdb.griffin.engine.functions.eq.EqSymTimestampFunctionFactory,
+            io.questdb.griffin.engine.functions.eq.EqTimestampCursorFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqCharCharFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqIntStrCFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqTimestampFunctionFactory,
@@ -270,6 +273,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.regex.MatchStrFunctionFactory,
             io.questdb.griffin.engine.functions.regex.MatchCharFunctionFactory,
             io.questdb.griffin.engine.functions.regex.MatchVarcharFunctionFactory,
+            io.questdb.griffin.engine.functions.regex.MatchSymbolFunctionFactory,
 //                    like
             io.questdb.griffin.engine.functions.regex.LikeStrFunctionFactory,
             io.questdb.griffin.engine.functions.regex.LikeVarcharFunctionFactory,

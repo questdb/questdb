@@ -75,8 +75,6 @@ public class NullConstantTest {
         StringSink sink = new StringSink();
         constant.getLong256(null, sink);
         Assert.assertEquals(0, sink.length());
-        constant.getStr(null, sink);
-        Assert.assertEquals(0, sink.length());
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -97,10 +95,5 @@ public class NullConstantTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetStrWithIndex() {
         NullConstant.NULL.getStrA(null, 0);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetStrWithSinkAndIndex() {
-        NullConstant.NULL.getStr(null, null, 0);
     }
 }

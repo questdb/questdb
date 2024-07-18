@@ -54,7 +54,8 @@ public interface HttpAuthenticator extends QuietCloseable {
      * Returns list of groups provided by external identity provider, such as OpenID Connect provider.
      * For other authentication types returns null.
      */
-    @Nullable ObjList<CharSequence> getGroups();
+    @Nullable
+    ObjList<CharSequence> getGroups();
 
     CharSequence getPrincipal();
 }

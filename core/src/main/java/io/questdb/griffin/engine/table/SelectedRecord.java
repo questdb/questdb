@@ -29,7 +29,6 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 
 class SelectedRecord implements Record {
@@ -153,11 +152,6 @@ class SelectedRecord implements Record {
     @Override
     public short getShort(int col) {
         return base.getShort(getColumnIndex(col));
-    }
-
-    @Override
-    public void getStr(int col, Utf16Sink utf16Sink) {
-        base.getStr(getColumnIndex(col), utf16Sink);
     }
 
     @Override

@@ -195,7 +195,7 @@ public class CairoMemoryTest extends AbstractTest {
     public void testAppendMemoryJump() throws Exception {
         testVirtualMemoryJump(path -> new MemoryPMARImpl(
                         FF,
-                path.$(),
+                        path.$(),
                         FF.getPageSize(),
                         MemoryTag.MMAP_DEFAULT,
                         CairoConfiguration.O_NONE

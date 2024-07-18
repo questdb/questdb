@@ -33,7 +33,6 @@ import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf16Sink;
 
 public class CastByteToStrFunctionFactory implements FunctionFactory {
     @Override
@@ -63,11 +62,6 @@ public class CastByteToStrFunctionFactory implements FunctionFactory {
             sinkA.clear();
             sinkA.put(arg.getByte(rec));
             return sinkA;
-        }
-
-        @Override
-        public void getStr(Record rec, Utf16Sink utf16Sink) {
-            utf16Sink.put(arg.getByte(rec));
         }
 
         @Override

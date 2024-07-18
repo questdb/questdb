@@ -26,7 +26,6 @@ package io.questdb.test.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.IPv4Function;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -118,13 +117,6 @@ public class IPv4FunctionTest {
     @Test
     public void testGetStr() {
         TestUtils.assertEquals("0.0.0.150", function.getStrA(null));
-    }
-
-    @Test
-    public void testGetStr2() {
-        StringSink sink = new StringSink();
-        function.getStr(null, sink);
-        TestUtils.assertEquals("0.0.0.150", sink);
     }
 
     @Test

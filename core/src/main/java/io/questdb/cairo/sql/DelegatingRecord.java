@@ -27,7 +27,6 @@ package io.questdb.cairo.sql;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 
 public class DelegatingRecord implements Record {
@@ -131,11 +130,6 @@ public class DelegatingRecord implements Record {
     @Override
     public short getShort(int col) {
         return base.getShort(col);
-    }
-
-    @Override
-    public void getStr(int col, Utf16Sink utf16Sink) {
-        base.getStr(col, utf16Sink);
     }
 
     @Override

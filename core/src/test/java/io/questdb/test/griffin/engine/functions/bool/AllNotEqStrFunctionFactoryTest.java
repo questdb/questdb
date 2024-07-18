@@ -80,9 +80,9 @@ public class AllNotEqStrFunctionFactoryTest extends AbstractCairoTest {
     public void testMatchVarcharColumn() throws Exception {
         assertQuery(
                 "a\n" +
-                    "ганьба\n" +
-                    "слава\n" +
-                    "слава\n",
+                        "ганьба\n" +
+                        "слава\n" +
+                        "слава\n",
                 "select * from tab where a <> all('{добрий,вечір}'::text[])",
                 "create table tab as (select rnd_varchar('ганьба','слава','добрий','вечір') a from long_sequence(5));",
                 null,

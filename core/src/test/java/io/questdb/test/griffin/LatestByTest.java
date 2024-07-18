@@ -38,6 +38,34 @@ import org.junit.Test;
 public class LatestByTest extends AbstractCairoTest {
 
     @Test
+    public void testLatestByAllFilteredReentrant() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(
+                    "create table zyzy as (\n" +
+                            "  select \n" +
+                            "  timestamp_sequence(1,1000) ts,\n" +
+                            "  rnd_int(0,5,0) a,\n" +
+                            "  rnd_int(0,5,0) b,\n" +
+                            "  rnd_int(0,5,0) c,\n" +
+                            "  rnd_int(0,5,0) x,\n" +
+                            "  rnd_int(0,5,0) y,\n" +
+                            "  rnd_int(0,5,0) z,\n" +
+                            "  from long_sequence(100)\n" +
+                            ") timestamp(ts);\n"
+            );
+            assertQuery(
+                    "x\tohoh\n" +
+                            "15\t29\n" +
+                            "17\t26\n" +
+                            "9\t29\n" +
+                            "7\t25\n",
+                    "select a+b*c x, sum(z)+25 ohoh from zyzy where a in (x,y) and b = 3 latest on ts partition by x;",
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testLatestByAllFilteredResolvesSymbol() throws Exception {
         assertQuery(
                 "devid\taddress\tvalue\tvalue_decimal\tcreated_at\tts\n",

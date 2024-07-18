@@ -32,7 +32,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Utf16Sink;
 
 public class CastBooleanToStrFunctionFactory implements FunctionFactory {
 
@@ -58,11 +57,6 @@ public class CastBooleanToStrFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getStrA(Record rec) {
             return arg.getStrA(rec);
-        }
-
-        @Override
-        public void getStr(Record rec, Utf16Sink utf16Sink) {
-            arg.getStr(rec, utf16Sink);
         }
 
         @Override

@@ -1,0 +1,49 @@
+jobs:
+  - job: RunOn
+    displayName: "on"
+    strategy:
+      matrix:
+        linux-jdk17:
+          imageName: "ubuntu-latest"
+          poolName: "Azure Pipelines"
+          os: Linux
+          jdk: "1.17"
+          testset: "none"
+          javadoc_step: "javadoc:javadoc"
+          javadoc_profile: ",javadoc"
+    pool:
+      vmImage: $(imageName)
+      name: $(poolName)
+    timeoutInMinutes: 15
+    variables:
+      SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED']]
+      COVERAGE_DIFF: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.COVERAGE_DIFF']]
+      CODE_COVERAGE_TOOL_OPTION: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]
+      ARCHIVED_CRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).log"
+    steps:
+      - checkout: self
+        fetchDepth: 1
+        lfs: false
+        submodules: false
+      - task: JavaToolInstaller@0
+        inputs:
+          versionSpec: '17'
+          jdkArchitectureOption: 'x64'
+          jdkSourceOption: 'PreInstalled'
+      - bash: |
+          wget "https://download.jetbrains.com/product?code=IIC&latest&distribution=linux" -O intellij.tar.gz
+          mkdir -p /opt/intellij
+          tar xvz -C /opt/intellij -f intellij.tar.gz
+          rm intellij.tar.gz
+          cd /opt/intellij
+          ln -s idea-* idea
+          echo "JAVA_HOME: $JAVA_HOME"
+          echo "java --version"
+          java --version
+        displayName: "Install IntelliJ"
+      - bash: /opt/intellij/idea/bin/idea.sh format -s .idea/codeStyles/Project.xml -m "*.java" -r .
+        displayName: "Applying formatting"
+      - bash: git status -s
+        displayName: "List of affected files"
+      - bash: git diff --exit-code
+        displayName: "List of required changes"
