@@ -62,12 +62,15 @@ public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
         long hourAsMillis = 3_600_000L;
         long numPartitions = 100L;
         final Rnd rnd = TestUtils.generateRandom(LOG);
+        boolean shouldGetSuspended = rnd.nextBoolean();
+        boolean didGetSuspended = false;
+        int additionalLoad = shouldGetSuspended ? 50_000 : 0;
         try (TestServerMain serverMain = startWithEnvVariables(
-                PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048",
+                PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "4096",
                 // let's make CAIRO_WAL_MAX_LAG_SIZE a fraction of our max RSS
                 // it's 75MB by default and that's fraction of RSS in the real world
-                // this test has max RSS in 10s of MB, so let's make the MAX LAG size a fraction of that - 15MB
-                PropertyKey.CAIRO_WAL_MAX_LAG_SIZE.getEnvVarName(), "15")
+                // this test has max RSS in 10s of MB, so let's make the MAX LAG size a fraction of that
+                PropertyKey.CAIRO_WAL_MAX_LAG_SIZE.getEnvVarName(), "10")
         ) {
             serverMain.start();
             serverMain.compile("create table " + tn +
@@ -79,28 +82,12 @@ public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
                     .address("localhost:" + port)
                     .build()
             ) {
-                LOG.infoW().$(String.format("batchSize %,d, numIters %,d", 10_000, 2_000)).$();
                 CairoEngine engine = serverMain.getEngine();
                 TableToken tableToken = engine.verifyTableName(tn);
                 TableSequencerAPI sequencer = engine.getTableSequencerAPI();
-
-                for (int j = 0; j < numPartitions; j++) {
-                    sender.table(tn)
-                            .symbol("sym", rnd.nextString(2))
-                            .longColumn("b", rnd.nextByte())
-                            .longColumn("s", rnd.nextShort())
-                            .longColumn("i", rnd.nextInt(1000))
-                            .doubleColumn("f", rnd.nextFloat())
-                            .doubleColumn("d", rnd.nextDouble())
-                            .stringColumn("v", rnd.nextString(50))
-                            .timestampColumn("tss", Instant.ofEpochMilli(rnd.nextLong()))
-                            .at(j * hourAsMillis, ChronoUnit.MILLIS);
-                }
-                sender.flush();
-                engine.awaitTable(tn, 1, TimeUnit.MINUTES);
-                for (int j = 0; j < 100; j++) {
+                for (int j = 0; j < 20; j++) {
                     sequencer.suspendTable(tableToken, ErrorTag.OUT_OF_MEMORY, "test");
-                    for (int i = 0; i < 100_000; i++) {
+                    for (int i = 0; i < 220_000 + additionalLoad; i++) {
                         sender.table(tn)
                                 .symbol("sym", rnd.nextString(2))
                                 .longColumn("b", rnd.nextByte())
@@ -114,8 +101,7 @@ public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
                     }
                     sender.flush();
                     try {
-                        long rssUsed = Unsafe.getRssMemUsed();
-                        Unsafe.setRssMemLimit(rssUsed + ((15 + j) * (1L << 20)));
+                        Unsafe.setRssMemLimit(58 * (1L << 20));
                         try {
                             sequencer.resumeTable(tableToken, 0);
                             engine.awaitTable(tn, 10, TimeUnit.MINUTES);
@@ -127,10 +113,12 @@ public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
                             e.printStackTrace(System.err);
                             Assert.fail("The only accepted error is 'table is suspended [tableName=table1]', but got: " + e.getMessage());
                         }
+                        didGetSuspended = true;
                         System.out.printf("\n%s\n\n", e.getMessage());
                         break;
                     }
                 }
+                Assert.assertEquals("Table suspension state did not meet expectation", shouldGetSuspended, didGetSuspended);
             }
         }
     }
