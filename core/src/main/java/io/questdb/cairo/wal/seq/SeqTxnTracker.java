@@ -174,9 +174,9 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
     }
 
     /**
-     * Increases anti-OOM measures if possible.
-     * If it was possible, returns true => the operation can retry.
-     * If all measures were exhausted, returns false => the operation should now fail.
+     * Increases anti-OOM measures if possible.<br>
+     * If it was possible, returns true → the operation can retry.<br>
+     * If all measures were exhausted, returns false → the operation should now fail.
      */
     public boolean onOutOfMemory(long nowMicros, CharSequence tableName) {
         if (maxRecordedInflightPartitions == 1) {
