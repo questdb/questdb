@@ -889,7 +889,7 @@ public class CairoEngine implements Closeable, WriterSource {
         tableNameRegistry.dropTable(tableToken);
     }
 
-    public void notifyWalTxnCommitted(@NotNull TableToken tableToken) {
+    public boolean notifyWalTxnCommitted(@NotNull TableToken tableToken) {
         final Sequence pubSeq = messageBus.getWalTxnNotificationPubSequence();
         while (true) {
             long cursor = pubSeq.next();
@@ -897,14 +897,14 @@ public class CairoEngine implements Closeable, WriterSource {
                 WalTxnNotificationTask task = messageBus.getWalTxnNotificationQueue().get(cursor);
                 task.of(tableToken);
                 pubSeq.done(cursor);
-                return;
+                return true;
             } else if (cursor == -1L) {
                 LOG.info().$("cannot publish WAL notifications, queue is full [current=").$(pubSeq.current())
                         .$(", table=").utf8(tableToken.getDirName())
                         .I$();
                 // queue overflow, throw away notification and notify a job to rescan all tables
                 notifyWalTxnRepublisher(tableToken);
-                return;
+                return false;
             }
         }
     }

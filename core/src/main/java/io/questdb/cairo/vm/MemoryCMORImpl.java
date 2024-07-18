@@ -54,6 +54,10 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
     @Override
     public long addressOf(long fileOffset) {
         assert checkOffsetMapped(fileOffset) : "offset=" + offset + ", size=" + size + ", fd=" + fd;
+        if (pageAddress == 0) {
+            // Lazy mapping
+            map(ff, size, mapFileOffset);
+        }
         return pageAddress + fileOffset - mapFileOffset;
     }
 
@@ -100,6 +104,13 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
     }
 
     @Override
+    public void map() {
+        if (pageAddress == 0) {
+            map(ff, size, mapFileOffset);
+        }
+    }
+
+    @Override
     public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
         ofOffset(ff, name, 0L, size, memoryTag, opts);
     }
@@ -114,7 +125,7 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
         } else {
             openFile(ff, name);
         }
-        map0(ff, name, lo, hi);
+        mapLazy(ff, name, lo, hi);
     }
 
     @Override
@@ -131,13 +142,12 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
         return size + mapFileOffset - offset;
     }
 
-    private void map0(FilesFacade ff, LPSZ name, long lo, long hi) {
+    private void mapLazy(FilesFacade ff, LPSZ name, long lo, long hi) {
         assert hi >= 0 && hi >= lo : "hi : " + hi + " lo : " + lo;
         if (hi > lo) {
             this.offset = lo;
             this.mapFileOffset = Files.PAGE_SIZE * (lo / Files.PAGE_SIZE);
             this.size = hi - mapFileOffset;
-            map(ff, name, this.size, this.mapFileOffset);
         } else {
             this.size = 0;
         }
@@ -164,7 +174,7 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
         }
     }
 
-    protected void map(FilesFacade ff, LPSZ name, final long size, final long mapOffset) {
+    protected void map(FilesFacade ff, final long size, final long mapOffset) {
         this.size = size;
         if (size > 0) {
             try {
@@ -176,6 +186,6 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
         }
 
         // ---------------V leave a space here for alignment with open log message
-        LOG.debug().$("map  [file=").$(name).$(", fd=").$(fd).$(", pageSize=").$(size).$(", size=").$(this.size).$(']').$();
+        LOG.debug().$("map  [fd=").$(fd).$(", pageSize=").$(size).$(", size=").$(this.size).$(']').$();
     }
 }

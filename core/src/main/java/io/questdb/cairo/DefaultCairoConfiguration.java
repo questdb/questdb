@@ -987,7 +987,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public double getWalSquashUncommittedRowsMultiplier() {
+    public double getWalLagRowsMultiplier() {
         return 20;
     }
 

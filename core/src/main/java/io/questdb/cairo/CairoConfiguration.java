@@ -544,7 +544,7 @@ public interface CairoConfiguration {
      */
     long getWalSegmentRolloverSize();
 
-    double getWalSquashUncommittedRowsMultiplier();
+    double getWalLagRowsMultiplier();
 
     int getWalTxnNotificationQueueCapacity();
 

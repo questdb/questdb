@@ -63,6 +63,7 @@ public class WalWriter implements TableWriterAPI {
     private final AlterOperation alterOp = new AlterOperation();
     private final ObjList<MemoryMA> columns;
     private final CairoConfiguration configuration;
+    private final int dbRootSize;
     private final DdlListener ddlListener;
     private final WalEventWriter events;
     private final FilesFacade ff;
@@ -130,7 +131,9 @@ public class WalWriter implements TableWriterAPI {
         final int walId = tableSequencerAPI.getNextWalId(tableToken);
         this.walName = WAL_NAME_BASE + walId;
         this.walId = walId;
-        this.path = new Path().of(configuration.getRoot()).concat(tableToken).concat(walName);
+        this.path = new Path().of(configuration.getRoot());
+        this.dbRootSize = path.size();
+        this.path.concat(tableToken).concat(walName);
         this.rootLen = path.size();
         this.metrics = metrics;
         this.open = true;
@@ -269,11 +272,11 @@ public class WalWriter implements TableWriterAPI {
                     sync(commitMode);
                 }
                 final long seqTxn = getSequencerTxn();
-                LOG.info().$("committed data block [wal=").$(path).$(Files.SEPARATOR).$(segmentId)
+                LOG.info().$("committed data block [wal=").$sub(dbRootSize, path).$(Files.SEPARATOR).$(segmentId)
                         .$(", segmentTxn=").$(lastSegmentTxn)
                         .$(", seqTxn=").$(seqTxn)
                         .$(", rowLo=").$(currentTxnStartRowNum).$(", roHi=").$(segmentRowCount)
-                        .$(", minTimestamp=").$ts(txnMinTimestamp).$(", maxTimestamp=").$ts(txnMaxTimestamp).I$();
+                        .$(", minTs=").$ts(txnMinTimestamp).$(", maxTs=").$ts(txnMaxTimestamp).I$();
                 resetDataTxnProperties();
                 mayRollSegmentOnNextRow();
                 metrics.walMetrics().addRowsWritten(rowsToCommit);
@@ -1316,7 +1319,7 @@ public class WalWriter implements TableWriterAPI {
                 ff.fsyncAndClose(dirFd);
             }
             lastSegmentTxn = 0;
-            LOG.info().$("opened WAL segment [path='").$(path).$('\'').I$();
+            LOG.info().$("opened WAL segment [path=").$sub(dbRootSize, path).$('\'').I$();
         } finally {
             if (oldSegmentLockFd > -1) {
                 releaseSegmentLock(oldSegmentId, oldSegmentLockFd, oldSegmentRows);
@@ -1901,14 +1904,14 @@ public class WalWriter implements TableWriterAPI {
                     if (securityContext != null) {
                         ddlListener.onColumnAdded(securityContext, metadata.getTableToken(), columnName);
                     }
-                    LOG.info().$("added column to WAL [path=").$(path).$(", columnName=").utf8(columnName).$(", type=").$(ColumnType.nameOf(columnType)).I$();
+                    LOG.info().$("added column to WAL [path=").$sub(dbRootSize, path).$(", columnName=").utf8(columnName).$(", type=").$(ColumnType.nameOf(columnType)).I$();
                 } else {
                     throw CairoException.critical(0).put("column '").put(columnName)
                             .put("' was added, cannot apply commit because of concurrent table definition change");
                 }
             } else {
                 if (metadata.getColumnType(columnIndex) == columnType) {
-                    LOG.info().$("column has already been added by another WAL [path=").$(path).$(", columnName=").utf8(columnName).I$();
+                    LOG.info().$("column has already been added by another WAL [path=").$sub(dbRootSize, path).$(", columnName=").utf8(columnName).I$();
                 } else {
                     throw CairoException.nonCritical().put("column '").put(columnName).put("' already exists");
                 }
@@ -2032,7 +2035,7 @@ public class WalWriter implements TableWriterAPI {
 
                         markColumnRemoved(index, type);
                         path.trimTo(rootLen);
-                        LOG.info().$("removed column from WAL [path=").$(path).$(Files.SEPARATOR).$(segmentId)
+                        LOG.info().$("removed column from WAL [path=").$sub(dbRootSize, path).$(Files.SEPARATOR).$(segmentId)
                                 .$(", columnName=").utf8(columnName).I$();
                     } else {
                         throw CairoException.critical(0).put("column '").put(columnName)
@@ -2085,7 +2088,7 @@ public class WalWriter implements TableWriterAPI {
                         }
 
                         path.trimTo(rootLen);
-                        LOG.info().$("renamed column in WAL [path=").$(path).$(Files.SEPARATOR).$(segmentId)
+                        LOG.info().$("renamed column in WAL [path=").$sub(dbRootSize, path).$(Files.SEPARATOR).$(segmentId)
                                 .$(", columnName=").utf8(columnName).$(", newColumnName=").utf8(newColumnName).I$();
                     } else {
                         throw CairoException.critical(0).put("column '").put(columnName)

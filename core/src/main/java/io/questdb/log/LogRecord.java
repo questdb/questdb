@@ -43,6 +43,8 @@ public interface LogRecord extends Utf8Sink {
 
     LogRecord $(@Nullable DirectUtf8Sequence sequence);
 
+    LogRecord $sub(int skip, @Nullable DirectUtf8Sequence sequence);
+
     LogRecord $(@NotNull CharSequence sequence, int lo, int hi);
 
     LogRecord $(int x);

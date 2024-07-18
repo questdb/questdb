@@ -119,6 +119,20 @@ abstract class AbstractLogRecord implements LogRecord, Log {
     }
 
     @Override
+    public LogRecord $sub(int skip, @Nullable DirectUtf8Sequence sequence) {
+        if (sequence == null) {
+            sink().putAscii("null");
+        } else {
+            if (sequence.size() > skip) {
+                sink().putNonAscii(sequence.lo() + skip, sequence.hi());
+            } else {
+                sink().put(sequence);
+            }
+        }
+        return this;
+    }
+
+    @Override
     public LogRecord $(@NotNull CharSequence sequence, int lo, int hi) {
         sink().putAscii(sequence, lo, hi);
         return this;

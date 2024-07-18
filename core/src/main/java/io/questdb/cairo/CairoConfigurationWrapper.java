@@ -991,8 +991,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public double getWalSquashUncommittedRowsMultiplier() {
-        return getDelegate().getWalSquashUncommittedRowsMultiplier();
+    public double getWalLagRowsMultiplier() {
+        return getDelegate().getWalLagRowsMultiplier();
     }
 
     @Override

@@ -578,6 +578,11 @@ public class LogAlertSocketTest {
         }
 
         @Override
+        public LogRecord $sub(int skip, @Nullable DirectUtf8Sequence sequence) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public LogRecord $(@NotNull CharSequence sequence, int lo, int hi) {
             sink.put(sequence, lo, hi);
             return this;
