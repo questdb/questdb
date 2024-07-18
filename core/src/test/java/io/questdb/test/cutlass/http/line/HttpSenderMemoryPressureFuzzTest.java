@@ -59,6 +59,8 @@ public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
     @Test
     public void testMemoryPressureSingleSender() throws Exception {
         final String tn = "table1";
+        long hourAsMillis = 3_600_000L;
+        long numPartitions = 100L;
         final Rnd rnd = TestUtils.generateRandom(LOG);
         try (TestServerMain serverMain = startWithEnvVariables(
                 PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048")
@@ -77,7 +79,25 @@ public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
                 CairoEngine engine = serverMain.getEngine();
                 TableToken tableToken = engine.verifyTableName(tn);
                 TableSequencerAPI sequencer = engine.getTableSequencerAPI();
+
                 sequencer.suspendTable(tableToken, ErrorTag.OUT_OF_MEMORY, "test");
+                for (int j = 0; j < numPartitions; j++) {
+                    sender.table(tn)
+                            .symbol("sym", rnd.nextString(2))
+                            .longColumn("b", rnd.nextByte())
+                            .longColumn("s", rnd.nextShort())
+                            .longColumn("i", rnd.nextInt(1000))
+                            .doubleColumn("f", rnd.nextFloat())
+                            .doubleColumn("d", rnd.nextDouble())
+                            .stringColumn("v", rnd.nextString(50))
+                            .timestampColumn("tss", Instant.ofEpochMilli(rnd.nextLong()))
+                            .at(j * hourAsMillis, ChronoUnit.MILLIS);
+                }
+                sender.flush();
+                sequencer.resumeTable(tableToken, 0);
+                engine.awaitTable(tn, 1, TimeUnit.MINUTES);
+                Thread.sleep(5_000);
+//                sequencer.suspendTable(tableToken, ErrorTag.OUT_OF_MEMORY, "test");
                 for (int j = 0; j < 10_000; j++) {
                     for (int i = 0; i < 1_000; i++) {
                         sender.table(tn)
@@ -89,16 +109,16 @@ public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
                                 .doubleColumn("d", rnd.nextDouble())
                                 .stringColumn("v", rnd.nextString(50))
                                 .timestampColumn("tss", Instant.ofEpochMilli(rnd.nextLong()))
-                                .at(rnd.nextLong(100L * 3_600_000), ChronoUnit.MILLIS);
+                                .at(rnd.nextLong(numPartitions * hourAsMillis), ChronoUnit.MILLIS);
                     }
                     sender.flush();
                 }
                 try {
                     long rssUsed = Unsafe.getRssMemUsed();
-                    Unsafe.setRssMemLimit(rssUsed + 130 * (1L << 20));
+                    Unsafe.setRssMemLimit(rssUsed + 50 * (1L << 20));
                     try {
                         sequencer.resumeTable(tableToken, 0);
-                        Thread.sleep(1000);
+                        Thread.sleep(1_000);
                         engine.awaitTable(tn, 10, TimeUnit.MINUTES);
                     } finally {
                         Unsafe.setRssMemLimit(0);
@@ -108,7 +128,7 @@ public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
                         e.printStackTrace(System.err);
                         Assert.fail("The only accepted error is 'table is suspended [tableName=table1]', but got: " + e.getMessage());
                     }
-                    System.out.printf("\n\n%s\n\n", e.getMessage());
+                    System.out.printf("\n%s\n\n", e.getMessage());
                 }
             }
         }
