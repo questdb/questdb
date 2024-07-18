@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 
 public abstract class DoubleFunction implements ScalarFunction {
@@ -138,11 +137,6 @@ public abstract class DoubleFunction implements ScalarFunction {
 
     @Override
     public final short getShort(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final void getStr(Record rec, Utf16Sink utf16Sink) {
         throw new UnsupportedOperationException();
     }
 

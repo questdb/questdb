@@ -32,7 +32,6 @@ import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 
@@ -49,15 +48,6 @@ public class VarcharBindVariable extends VarcharFunction implements ScalarFuncti
     public void clear() {
         isNull = true;
         utf8Sink.clear();
-    }
-
-    @Override
-    public void getStr(Record rec, Utf16Sink utf16Sink) {
-        if (isNull) {
-            utf16Sink.put((CharSequence) null);
-        } else {
-            utf16Sink.put(this.utf8Sink);
-        }
     }
 
     @Override

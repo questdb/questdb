@@ -223,7 +223,8 @@ public class AggregateTest extends AbstractCairoTest {
             testAggregations(aggregateFunctions, aggregateColTypes);
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "unexpected argument for function: first");
+            Assert.assertEquals(7, e.getPosition());
+            TestUtils.assertContains(e.getFlyweightMessage(), "there is no matching function `first` with the argument types: (BINARY)");
         }
     }
 

@@ -40,8 +40,8 @@ import io.questdb.std.ObjList;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.millitime.DateFormatFactory;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.Nullable;
 
 public class ToStrDateFunctionFactory implements FunctionFactory {
@@ -109,15 +109,6 @@ public class ToStrDateFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getStrA(Record rec) {
             return toSink(rec, sink1);
-        }
-
-        @Override
-        public void getStr(Record rec, Utf16Sink utf16Sink) {
-            long value = arg.getDate(rec);
-            if (value == Numbers.LONG_NULL) {
-                return;
-            }
-            toSink(value, utf16Sink);
         }
 
         @Override

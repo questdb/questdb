@@ -675,7 +675,7 @@ public class UuidTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table x (l long)");
             insert("insert into x values (42)");
-            assertExceptionNoLeakCheck("select cast(l as uuid) from x", 7, "unexpected argument for function");
+            assertExceptionNoLeakCheck("select cast(l as uuid) from x", 7, "there is no matching function `cast` with the argument types: (LONG, UUID)");
         });
     }
 

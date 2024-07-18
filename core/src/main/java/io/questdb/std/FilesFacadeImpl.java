@@ -199,8 +199,23 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public long getFileLimit() {
+        return Files.getFileLimit();
+    }
+
+    @Override
+    public int getFileSystemStatus(LPSZ lpszName) {
+        return Files.getFileSystemStatus(lpszName);
+    }
+
+    @Override
     public long getLastModified(LPSZ path) {
         return Files.getLastModified(path);
+    }
+
+    @Override
+    public long getMapCountLimit() {
+        return Files.getMapCountLimit();
     }
 
     @Override

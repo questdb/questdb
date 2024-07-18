@@ -247,9 +247,12 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                 workerId = -1;
             }
 
+            // defaults
             try {
                 PageFrame frame;
                 while ((frame = pageFrameCursor.next()) != null) {
+
+                    final long frameRowCount = frame.getPartitionHi() - frame.getPartitionLo();
                     for (int i = 0; i < vafCount; i++) {
                         final VectorAggregateFunction vaf = vafList.getQuick(i);
                         final int columnIndex = vaf.getColumnIndex();
@@ -263,8 +266,6 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                         // need to rethink our way of computing size for the count. This would be either type checking column
                         // 0 and working out size differently or finding any fixed-size column and using that.
                         final long pageAddress = columnIndex > -1 ? frame.getPageAddress(columnIndex) : 0;
-                        final long pageSize = columnIndex > -1 ? frame.getPageSize(columnIndex) : frame.getPageSize(0);
-                        final int colSizeShr = columnIndex > -1 ? frame.getColumnShiftBits(columnIndex) : frame.getColumnShiftBits(0);
 
                         while (true) {
                             long cursor = pubSeq.next();
@@ -277,7 +278,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                                     // aggregate between frames until done
                                     final int slot = perWorkerLocks.acquireSlot(workerId, circuitBreaker);
                                     try {
-                                        vaf.aggregate(pageAddress, pageSize, colSizeShr, slot);
+                                        vaf.aggregate(pageAddress, frameRowCount, slot);
                                     } finally {
                                         perWorkerLocks.releaseSlot(slot);
                                     }
@@ -294,14 +295,13 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                                         null, // null pRosti means that we do not need keyed aggregation
                                         0,
                                         pageAddress,
-                                        pageSize,
-                                        colSizeShr,
                                         startedCounter,
                                         doneLatch,
                                         null,
                                         null,
                                         perWorkerLocks,
-                                        sharedCircuitBreaker
+                                        sharedCircuitBreaker,
+                                        frameRowCount
                                 );
                                 queue.get(cursor).entry = entry;
                                 pubSeq.done(cursor);

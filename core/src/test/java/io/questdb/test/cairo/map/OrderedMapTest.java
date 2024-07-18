@@ -1903,16 +1903,12 @@ public class OrderedMapTest extends AbstractCairoTest {
                 Assert.assertNull(record.getStrB(keyColumnOffset + 8));
                 Assert.assertEquals(-1, record.getStrLen(keyColumnOffset + 8));
                 AbstractCairoTest.sink.clear();
-                record.getStr(keyColumnOffset + 8, AbstractCairoTest.sink);
-                Assert.assertEquals(0, AbstractCairoTest.sink.length());
             } else {
                 CharSequence tmp = rnd.nextChars(5);
                 TestUtils.assertEquals(tmp, record.getStrA(keyColumnOffset + 8));
                 TestUtils.assertEquals(tmp, record.getStrB(keyColumnOffset + 8));
                 Assert.assertEquals(tmp.length(), record.getStrLen(keyColumnOffset + 8));
                 AbstractCairoTest.sink.clear();
-                record.getStr(keyColumnOffset + 8, AbstractCairoTest.sink);
-                TestUtils.assertEquals(tmp, AbstractCairoTest.sink);
             }
 
             // we are storing symbol as string, assert as such

@@ -26,7 +26,6 @@ package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.catalogue.StringToStringArrayFunction;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -85,10 +84,6 @@ public class StringToStringArrayFunctionTest {
         TestUtils.assertEquals("{}", function.getStrA(null));
         TestUtils.assertEquals("{}", function.getStrB(null));
         Assert.assertEquals(2, function.getStrLen(null));
-
-        StringSink sink = new StringSink();
-        function.getStr(null, sink);
-        TestUtils.assertEquals("{}", sink);
     }
 
     @Test
@@ -97,10 +92,6 @@ public class StringToStringArrayFunctionTest {
         TestUtils.assertEquals("{ab,3,true,1.26,test 1}", function.getStrA(null));
         TestUtils.assertEquals("{ab,3,true,1.26,test 1}", function.getStrB(null));
         Assert.assertEquals(23, function.getStrLen(null));
-
-        StringSink sink = new StringSink();
-        function.getStr(null, sink);
-        TestUtils.assertEquals("{ab,3,true,1.26,test 1}", sink);
     }
 
     @Test

@@ -27,7 +27,10 @@ package io.questdb.cairo.sql;
 import io.questdb.cairo.TableUtils;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
-import io.questdb.std.str.*;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.MutableUtf16Sink;
+import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -289,28 +292,6 @@ public interface Record {
      */
     default short getShort(int col) {
         throw new UnsupportedOperationException();
-    }
-
-    /**
-     * Reads bytes from string-specific storage and prints them into UTF16 encoded
-     * sink.
-     *
-     * @param col       numeric index of the column, 0-based
-     * @param utf16Sink the destination sink
-     */
-    default void getStr(int col, Utf16Sink utf16Sink) {
-        utf16Sink.put(getStrA(col));
-    }
-
-    /**
-     * Reads bytes from string-specific storage and prints them into UTF8 encoded
-     * sink.
-     *
-     * @param col      numeric index of the column, 0-based
-     * @param utf8Sink the destination sink
-     */
-    default void getStr(int col, Utf8Sink utf8Sink) {
-        utf8Sink.put(getStrA(col));
     }
 
     /**

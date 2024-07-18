@@ -673,14 +673,8 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
 
     private void assertFailure(String sql, int position, String message) throws Exception {
         assertMemoryLeak(() -> {
-            try {
-                createX();
-                ddl(sql, sqlExecutionContext);
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(position, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), message);
-            }
+            createX();
+            assertExceptionNoLeakCheck(sql, position, message);
         });
     }
 

@@ -91,65 +91,32 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             String booleanError = "boolean expression expected";
 
-            assertFailureNoLeakCheck(
-                    30,
-                    booleanError,
-                    "select * from a " +
-                            "join b on a.i - b.i"
-            );
+            assertExceptionNoLeakCheck("select * from a " +
+                    "join b on a.i - b.i", 30, booleanError);
 
-            assertFailureNoLeakCheck(
-                    35,
-                    booleanError,
-                    "select * from a " +
-                            "left join b on a.i - b.i"
-            );
+            assertExceptionNoLeakCheck("select * from a " +
+                    "left join b on a.i - b.i", 35, booleanError);
 
-            assertFailureNoLeakCheck(
-                    46,
-                    booleanError,
-                    "select * from a " +
-                            "join b on a.ts = b.ts and a.i - b.i"
-            );
+            assertExceptionNoLeakCheck("select * from a " +
+                    "join b on a.ts = b.ts and a.i - b.i", 46, booleanError);
 
-            assertFailureNoLeakCheck(
-                    51,
-                    booleanError,
-                    "select * from a " +
-                            "left join b on a.ts = b.ts and a.i - b.i"
-            );
+            assertExceptionNoLeakCheck("select * from a " +
+                    "left join b on a.ts = b.ts and a.i - b.i", 51, booleanError);
 
             for (String join : Arrays.asList("ASOF  ", "LT    ", "SPLICE")) {
-                assertFailureNoLeakCheck(
-                        37,
-                        "unsupported " + join.trim() + " join expression",
-                        "select * " +
-                                "from a " +
-                                "#JOIN# join b on a.i ^ a.i".replace("#JOIN#", join)
-                );
+                assertExceptionNoLeakCheck("select * " +
+                        "from a " +
+                        "#JOIN# join b on a.i ^ a.i".replace("#JOIN#", join), 37, "unsupported " + join.trim() + " join expression");
             }
 
-            String unexpectedError = "unexpected argument for function: and. expected args: (BOOLEAN,BOOLEAN). actual args: (INT,INT)";
-            assertFailureNoLeakCheck(
-                    44,
-                    unexpectedError,
-                    "select * from a " +
-                            "join b on a.i + b.i and a.i - b.i"
-            );
+            String unexpectedError = "expression type mismatch, expected: BOOLEAN, actual: INT";
+            // position of the first + operator
+            assertExceptionNoLeakCheck("select * from a join b on a.i + b.i and a.i - b.i", 30, unexpectedError);
 
-            assertFailureNoLeakCheck(
-                    49,
-                    unexpectedError,
-                    "select * from a " +
-                            "left join b on a.i + b.i and a.i - b.i"
-            );
+            // position of the first + operator
+            assertExceptionNoLeakCheck("select * from a left join b on a.i + b.i and a.i - b.i", 35, unexpectedError);
 
-            assertFailureNoLeakCheck(
-                    60,
-                    unexpectedError,
-                    "select * from a " +
-                            "join b on a.ts = b.ts and a.i - b.i and b.i - a.i"
-            );
+            assertExceptionNoLeakCheck("select * from a join b on a.ts = b.ts and a.i - b.i and b.i - a.i", 46, unexpectedError);
         });
     }
 
@@ -163,96 +130,40 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             for (String frameType : Arrays.asList("rows ", "range")) {
                 String queryPrefix = prefix + frameType;
 
-                assertFailureNoLeakCheck(
-                        60,
-                        "integer expression expected",
-                        queryPrefix + " between preceding and current row)  from trips"
-                );
+                assertExceptionNoLeakCheck(queryPrefix + " between preceding and current row)  from trips", 60, "integer expression expected");
 
-                assertFailureNoLeakCheck(
-                        77,
-                        "integer expression expected",
-                        queryPrefix + " between 10 preceding and preceding)  from trips"
-                );
+                assertExceptionNoLeakCheck(queryPrefix + " between 10 preceding and preceding)  from trips", 77, "integer expression expected");
 
-                assertFailureNoLeakCheck(
-                        77,
-                        "integer expression expected",
-                        queryPrefix + " between 10 preceding and following)  from trips"
-                );
+                assertExceptionNoLeakCheck(queryPrefix + " between 10 preceding and following)  from trips", 77, "integer expression expected");
 
-                assertFailureNoLeakCheck(
-                        52,
-                        "integer expression expected",
-                        queryPrefix + " preceding)  from trips"
-                );
+                assertExceptionNoLeakCheck(queryPrefix + " preceding)  from trips", 52, "integer expression expected");
 
-                assertFailureNoLeakCheck(
-                        52,
-                        "integer expression expected",
-                        queryPrefix + " following)  from trips"
-                );
+                assertExceptionNoLeakCheck(queryPrefix + " following)  from trips", 52, "integer expression expected");
 
-                assertFailureNoLeakCheck(
-                        59,
-                        "Expression expected",
-                        queryPrefix + " between)  from trips"
-                );
+                assertExceptionNoLeakCheck(queryPrefix + " between)  from trips", 59, "Expression expected");
 
-                assertFailureNoLeakCheck(
-                        60,
-                        "integer expression expected",
-                        queryPrefix + " between '' preceding and current row)  from trips"
-                );
+                assertExceptionNoLeakCheck(queryPrefix + " between '' preceding and current row)  from trips", 60, "integer expression expected");
 
-                assertFailureNoLeakCheck(
-                        60,
-                        "integer expression expected",
-                        queryPrefix + " between null preceding and current row)  from trips"
-                );
+                assertExceptionNoLeakCheck(queryPrefix + " between null preceding and current row)  from trips", 60, "integer expression expected");
 
-                assertFailureNoLeakCheck(
-                        60,
-                        "integer expression expected",
-                        queryPrefix + " between #012 preceding and current row)  from trips"
-                );
+                assertExceptionNoLeakCheck(queryPrefix + " between #012 preceding and current row)  from trips", 60, "integer expression expected");
 
-                assertFailureNoLeakCheck(
-                        60,
-                        "integer expression expected",
-                        queryPrefix + " between 30d preceding and current row)  from trips"
-                );
+                assertExceptionNoLeakCheck(queryPrefix + " between 30d preceding and current row)  from trips", 60, "integer expression expected");
 
-                assertFailureNoLeakCheck(
-                        77,
-                        "integer expression expected",
-                        queryPrefix + " between 30 preceding and 10f preceding)  from trips"
-                );
+                assertExceptionNoLeakCheck(queryPrefix + " between 30 preceding and 10f preceding)  from trips", 77, "integer expression expected");
 
-                assertFailureNoLeakCheck(
-                        77,
-                        "integer expression expected",
-                        queryPrefix + " between 30 preceding and 10.1f preceding)  from trips"
-                );
+                assertExceptionNoLeakCheck(queryPrefix + " between 30 preceding and 10.1f preceding)  from trips", 77, "integer expression expected");
 
-                assertFailureNoLeakCheck(
-                        77,
-                        "invalid constant",
-                        queryPrefix + " between 30 preceding and 10g preceding)  from trips"
-                );
+                assertExceptionNoLeakCheck(queryPrefix + " between 30 preceding and 10g preceding)  from trips", 77, "invalid constant");
 
-                assertFailureNoLeakCheck(
-                        52,
-                        "integer expression expected",
-                        queryPrefix + " 10.2f preceding)  from trips"
-                );
+                assertExceptionNoLeakCheck(queryPrefix + " 10.2f preceding)  from trips", 52, "integer expression expected");
             }
         });
     }
 
     @Test
     public void testCannotCreateTable() throws Exception {
-        assertFailure(
+        assertException(
                 new TestFilesFacadeImpl() {
                     @Override
                     public int mkdirs(Path path, int mode) {
@@ -2014,15 +1925,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testColumnNameWithDot() throws Exception {
-        assertMemoryLeak(() -> assertFailureNoLeakCheck(
-                29,
-                "new column name contains invalid characters",
-                "create table x (" +
-                        "t TIMESTAMP, " +
-                        "`bool.flag` BOOLEAN) " +
-                        "timestamp(t) " +
-                        "partition by MONTH"
-        ));
+        assertMemoryLeak(() -> assertExceptionNoLeakCheck("create table x (" +
+                "t TIMESTAMP, " +
+                "`bool.flag` BOOLEAN) " +
+                "timestamp(t) " +
+                "partition by MONTH", 29, "new column name contains invalid characters"));
     }
 
     @Test
@@ -2064,8 +1971,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             assertSql("column\ntrue\n", "select cast(null as string) = null");
             assertSql("column\ntrue\n", "select cast(null as string) <= null");
             assertSql("column\ntrue\n", "select cast(null as string) >= null");
-
-            assertFailureNoLeakCheck(7, "", "select datediff('ma', 0::timestamp, 1::timestamp) ");
+            assertExceptionNoLeakCheck(
+                    "select datediff('ma', 0::timestamp, 1::timestamp) ",
+                    16,
+                    "argument type mismatch for function `datediff` at #1 expected: CHAR, actual: STRING"
+            );
         });
     }
 
@@ -2343,8 +2253,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             assertSql("column\ntrue\n", "select cast(null as string) = null");
             assertSql("column\ntrue\n", "select cast(null as string) <= null");
             assertSql("column\ntrue\n", "select cast(null as string) >= null");
-
-            assertFailureNoLeakCheck(7, "", "select datediff('ma', 0::timestamp, 1::timestamp) ");
+            assertExceptionNoLeakCheck(
+                    "select datediff('ma', 0::timestamp, 1::timestamp) ",
+                    16,
+                    "argument type mismatch for function `datediff` at #1 expected: CHAR, actual: STRING"
+            );
         });
     }
 
@@ -2841,18 +2754,19 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testCreateAsSelectGeoHashCharsLiteralWithWrongBits() throws Exception {
         assertMemoryLeak(() -> {
-            assertFailureNoLeakCheck(7, "invalid constant: #sp052w92p1p87", "select #sp052w92p1p87");
-            assertFailureNoLeakCheck(20, "missing bits size for GEOHASH constant", "select #sp052w92p1p8/");
-            assertFailureNoLeakCheck(22, "missing bits size for GEOHASH constant", "select #sp052w92p1p8/ R");
-            assertFailureNoLeakCheck(21, "missing bits size for GEOHASH constant", "select #sp052w92p1p8/0R");
-            assertFailureNoLeakCheck(21, "missing bits size for GEOHASH constant", "select #sp052w92p1p8/t");
-            assertFailureNoLeakCheck(21, "missing bits size for GEOHASH constant", "select #sp052w92p1p8/-1");
-            assertFailureNoLeakCheck(7, "invalid bits size for GEOHASH constant", "select #sp052w92p1p8/ 61");
-            assertFailureNoLeakCheck(7, "invalid constant: #sp052w92p1p8/011", "select #sp052w92p1p8/ 011");
-            assertFailureNoLeakCheck(7, "invalid constant: #sp052w92p1p8/045", "select #sp052w92p1p8/045");
-            assertFailureNoLeakCheck(7, "invalid constant: #sp/15", "select #sp/15"); // lacks precision
-            assertFailureNoLeakCheck(7, "invalid bits size for GEOHASH constant: #/0", "select #/0");
-            assertFailureNoLeakCheck(7, "invalid bits size for GEOHASH constant", "select #sp052w92p18/0");
+            assertExceptionNoLeakCheck("select #sp052w92p1p87", 7, "invalid constant: #sp052w92p1p87");
+            assertExceptionNoLeakCheck("select #sp052w92p1p8/", 20, "missing bits size for GEOHASH constant");
+            assertExceptionNoLeakCheck("select #sp052w92p1p8/ R", 22, "missing bits size for GEOHASH constant");
+            assertExceptionNoLeakCheck("select #sp052w92p1p8/0R", 21, "missing bits size for GEOHASH constant");
+            assertExceptionNoLeakCheck("select #sp052w92p1p8/t", 21, "missing bits size for GEOHASH constant");
+            assertExceptionNoLeakCheck("select #sp052w92p1p8/-1", 21, "missing bits size for GEOHASH constant");
+            assertExceptionNoLeakCheck("select #sp052w92p1p8/ 61", 7, "invalid bits size for GEOHASH constant");
+            assertExceptionNoLeakCheck("select #sp052w92p1p8/ 011", 7, "invalid constant: #sp052w92p1p8/011");
+            assertExceptionNoLeakCheck("select #sp052w92p1p8/045", 7, "invalid constant: #sp052w92p1p8/045");
+            // lacks precision
+            assertExceptionNoLeakCheck("select #sp/15", 7, "invalid constant: #sp/15");
+            assertExceptionNoLeakCheck("select #/0", 7, "invalid bits size for GEOHASH constant: #/0");
+            assertExceptionNoLeakCheck("select #sp052w92p18/0", 7, "invalid bits size for GEOHASH constant");
         });
     }
 
@@ -2901,7 +2815,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 return super.mmap(fd, len, offset, flags, memoryTag);
             }
         };
-        assertFailure(
+        assertException(
                 ff,
                 sql,
                 "could not mmap"
@@ -2969,7 +2883,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             }
         };
 
-        assertFailure(
+        assertException(
                 ff,
                 sql,
                 "could not mmap "
@@ -3112,13 +3026,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testCreateAsSelectInvalidTimestamp() throws Exception {
-        assertMemoryLeak(() -> assertFailureNoLeakCheck(
-                97,
-                "TIMESTAMP column expected",
-                "create table y as (" +
-                        "select * from (select rnd_int(0, 30, 2) a from long_sequence(20))" +
-                        ")  timestamp(a) partition by DAY"
-        ));
+        assertMemoryLeak(() -> assertExceptionNoLeakCheck("create table y as (" +
+                "select * from (select rnd_int(0, 30, 2) a from long_sequence(20))" +
+                ")  timestamp(a) partition by DAY", 97, "TIMESTAMP column expected"));
     }
 
     @Test
@@ -3456,7 +3366,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             }
         };
 
-        assertFailure(
+        assertException(
                 ff,
                 "create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(5000000))",
                 "could not mmap column"
@@ -3574,15 +3484,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             );
             engine.releaseAllWriters();
 
-            assertFailureNoLeakCheck(
-                    13,
-                    "table already exists",
-                    "create table x (" +
-                            "t TIMESTAMP, " +
-                            "y BOOLEAN) " +
-                            "timestamp(t) " +
-                            "partition by MONTH"
-            );
+            assertExceptionNoLeakCheck("create table x (" +
+                    "t TIMESTAMP, " +
+                    "y BOOLEAN) " +
+                    "timestamp(t) " +
+                    "partition by MONTH", 13, "table already exists");
         });
     }
 
@@ -3623,11 +3529,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testExecuteQuery() throws Exception {
-        assertMemoryLeak(() -> assertFailureNoLeakCheck(
-                68,
-                "not a TIMESTAMP",
-                "select * from (select rnd_int() x from long_sequence(20)) timestamp(x)"
-        ));
+        assertMemoryLeak(() -> assertExceptionNoLeakCheck("select * from (select rnd_int() x from long_sequence(20)) timestamp(x)", 68, "not a TIMESTAMP"));
     }
 
     @Test
@@ -3647,11 +3549,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table test(time TIMESTAMP, symbol STRING);");
 
-            assertFailureNoLeakCheck(
-                    97,
-                    "unexpected argument for function: SUM. expected args: (DOUBLE). actual args: (INT constant,INT constant)",
-                    "SELECT test.time AS ref0, test.symbol AS ref1 FROM test GROUP BY test.time, test.symbol ORDER BY SUM(1, -1)"
-            );
+            assertExceptionNoLeakCheck("SELECT test.time AS ref0, test.symbol AS ref1 FROM test GROUP BY test.time, test.symbol ORDER BY SUM(1, -1)", 97, "there is no matching function `SUM` with the argument types: (INT, INT)");
         });
     }
 
@@ -3660,8 +3558,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table tab ( ts timestamp)");
 
-            assertFailureNoLeakCheck(32, "Invalid column: ", "SELECT * FROM tab WHERE SUM(\"\", \"\")");
-            assertFailureNoLeakCheck(28, "Invalid column: ", "SELECT * FROM tab WHERE SUM(\"\", \"ts\")");
+            assertExceptionNoLeakCheck("SELECT * FROM tab WHERE SUM(\"\", \"\")", 32, "Invalid column: ");
+            assertExceptionNoLeakCheck("SELECT * FROM tab WHERE SUM(\"\", \"ts\")", 28, "Invalid column: ");
         });
     }
 
@@ -3670,11 +3568,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table tab(event short);");
 
-            assertFailureNoLeakCheck(54, "too few arguments for 'in' [found=1,expected=2]", "SELECT COUNT(*) FROM tab WHERE tab.event > (tab.event IN ) ");
-            assertFailureNoLeakCheck(54, "too few arguments for 'in'", "SELECT COUNT(*) FROM tab WHERE tab.event > (tab.event IN ())");
-            assertFailureNoLeakCheck(54, "too few arguments for 'in'", "SELECT COUNT(*) FROM tab WHERE tab.event > (tab.event IN ()");
-            assertFailureNoLeakCheck(13, "too few arguments for 'in'", "SELECT event IN () FROM tab");
-            assertFailureNoLeakCheck(60, "too few arguments for 'in'", "SELECT COUNT(*) FROM tab a join tab b on a.event > (b.event IN ())");
+            assertExceptionNoLeakCheck("SELECT COUNT(*) FROM tab WHERE tab.event > (tab.event IN ) ", 54, "too few arguments for 'in' [found=1,expected=2]");
+            assertExceptionNoLeakCheck("SELECT COUNT(*) FROM tab WHERE tab.event > (tab.event IN ())", 54, "too few arguments for 'in'");
+            assertExceptionNoLeakCheck("SELECT COUNT(*) FROM tab WHERE tab.event > (tab.event IN ()", 54, "too few arguments for 'in'");
+            assertExceptionNoLeakCheck("SELECT event IN () FROM tab", 13, "too few arguments for 'in'");
+            assertExceptionNoLeakCheck("SELECT COUNT(*) FROM tab a join tab b on a.event > (b.event IN ())", 60, "too few arguments for 'in'");
         });
     }
 
@@ -3873,11 +3771,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testInLongTypeMismatch() throws Exception {
-        assertMemoryLeak(() -> assertFailureNoLeakCheck(
-                43,
-                "cannot compare LONG with type DOUBLE",
-                "select 1 from long_sequence(1) where x in (123.456)"
-        ));
+        assertMemoryLeak(() -> assertExceptionNoLeakCheck("select 1 from long_sequence(1) where x in (123.456)", 43, "cannot compare LONG with type DOUBLE"));
     }
 
     @Test
@@ -4445,11 +4339,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             engine.releaseAllWriters();
 
-            assertFailureNoLeakCheck(
-                    21,
-                    "Duplicate column [name=X]",
-                    "insert into tab ( x, 'X', ts ) values ( 7, 10, 11 )"
-            );
+            assertExceptionNoLeakCheck("insert into tab ( x, 'X', ts ) values ( 7, 10, 11 )", 21, "Duplicate column [name=X]");
         });
     }
 
@@ -4465,11 +4355,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             engine.releaseAllWriters();
 
-            assertFailureNoLeakCheck(
-                    24,
-                    "Duplicate column [name=龜]",
-                    "insert into tabula ( 龜, '龜', ts ) values ( 7, 10, 11 )"
-            );
+            assertExceptionNoLeakCheck("insert into tabula ( 龜, '龜', ts ) values ( 7, 10, 11 )", 24, "Duplicate column [name=龜]");
         });
     }
 
@@ -4509,9 +4395,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         " rnd_int()," +
                         " rnd_char()" +
                         " from long_sequence(30)",
-                -1,
-                "inconvertible value: T [CHAR -> BYTE]",
-                ImplicitCastException.class
+                "inconvertible value: T [CHAR -> BYTE]"
         ));
     }
 
@@ -4538,9 +4422,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         " rnd_int()," +
                         " rnd_char()" +
                         " from long_sequence(30)",
-                -1,
-                "inconvertible value: T [CHAR -> BYTE]",
-                ImplicitCastException.class
+                "inconvertible value: T [CHAR -> BYTE]"
         ));
     }
 
@@ -4553,9 +4435,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         " rnd_int()," +
                         " rnd_char()" +
                         " from long_sequence(30)",
-                -1,
-                "inconvertible value: T [CHAR -> BYTE]",
-                ImplicitCastException.class
+                "inconvertible value: T [CHAR -> BYTE]"
         ));
     }
 
@@ -4581,9 +4461,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         " rnd_int()," +
                         " rnd_str(5,5,0)" +
                         " from long_sequence(30)",
-                -1,
-                "inconvertible value: `JWCPS` [STRING -> FLOAT]",
-                ImplicitCastException.class
+                "inconvertible value: `JWCPS` [STRING -> FLOAT]"
         ));
     }
 
@@ -5169,8 +5047,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     query,
-                    "GroupBy vectorized: false\n" +
-                            "  values: [count(*)]\n" +
+                    "Count\n" +
                             "    Hash Outer Join Light\n" +
                             "      condition: T3.created=T2.created\n" +
                             "        Filter filter: T2.created in [now(),now()]\n" +
@@ -5216,7 +5093,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query1,
                     "SelectedRecord\n" +
-                            "    Filter filter: (T2.created=null or 0<T2.created::long)\n" +
+                            "    Filter filter: (null=T2.created or 0<T2.created::long)\n" +
                             "        Nested Loop Left Join\n" +
                             "          filter: T1.created<T2.created\n" +
                             "            Limit lo: 1\n" +
@@ -5368,7 +5245,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query3,
                     "SelectedRecord\n" +
-                            "    Filter filter: T4.created=null\n" +
+                            "    Filter filter: null=T4.created\n" +
                             "        Nested Loop Left Join\n" +
                             "          filter: T3.created<T4.created\n" +
                             "            Hash Outer Join Light\n" +
@@ -5462,8 +5339,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testOrderByEmptyIdentifier() throws Exception {
         assertMemoryLeak(() -> {
-            assertFailureNoLeakCheck(40, "non-empty literal or expression expected", "select 1 from long_sequence(1) order by ''");
-            assertFailureNoLeakCheck(40, "non-empty literal or expression expected", "select 1 from long_sequence(1) order by \"\"");
+            assertExceptionNoLeakCheck("select 1 from long_sequence(1) order by ''", 40, "non-empty literal or expression expected");
+            assertExceptionNoLeakCheck("select 1 from long_sequence(1) order by \"\"", 40, "non-empty literal or expression expected");
         });
     }
 
@@ -5817,11 +5694,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testRndSymbolEmptyArgs() throws Exception {
-        assertMemoryLeak(() -> assertFailureNoLeakCheck(
-                7,
-                "function rnd_symbol expects arguments but has none",
-                "select rnd_symbol() from long_sequence(1)"
-        ));
+        assertMemoryLeak(() -> assertExceptionNoLeakCheck("select rnd_symbol() from long_sequence(1)", 7, "function rnd_symbol expects arguments but has none"));
     }
 
     @Test
@@ -6016,12 +5889,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "select * from ( select x, x::float from long_sequence(1000000) order by 2 desc limit 999999 ) ";
 
         assertMemoryLeak(() -> {
-            assertFailureNoLeakCheck(96, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "UNION"));
-            assertFailureNoLeakCheck(99, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "UNION ALL"));
-            assertFailureNoLeakCheck(97, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "EXCEPT"));
-            assertFailureNoLeakCheck(100, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "EXCEPT ALL"));
-            assertFailureNoLeakCheck(100, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "INTERSECT"));
-            assertFailureNoLeakCheck(103, "unsupported cast [column=1, from=CHAR, to=DOUBLE]", query.replace("#SETOP#", "INTERSECT ALL"));
+            assertExceptionNoLeakCheck(query.replace("#SETOP#", "UNION"), 96, "unsupported cast [column=1, from=CHAR, to=DOUBLE]");
+            assertExceptionNoLeakCheck(query.replace("#SETOP#", "UNION ALL"), 99, "unsupported cast [column=1, from=CHAR, to=DOUBLE]");
+            assertExceptionNoLeakCheck(query.replace("#SETOP#", "EXCEPT"), 97, "unsupported cast [column=1, from=CHAR, to=DOUBLE]");
+            assertExceptionNoLeakCheck(query.replace("#SETOP#", "EXCEPT ALL"), 100, "unsupported cast [column=1, from=CHAR, to=DOUBLE]");
+            assertExceptionNoLeakCheck(query.replace("#SETOP#", "INTERSECT"), 100, "unsupported cast [column=1, from=CHAR, to=DOUBLE]");
+            assertExceptionNoLeakCheck(query.replace("#SETOP#", "INTERSECT ALL"), 103, "unsupported cast [column=1, from=CHAR, to=DOUBLE]");
         });
     }
 
@@ -6701,35 +6574,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         }
     }
 
-    private void assertFailure(FilesFacade ff, CharSequence sql, CharSequence message) throws Exception {
-        assertMemoryLeak(
-                ff,
-                () -> {
-                    try {
-                        assertExceptionNoLeakCheck(sql);
-                    } catch (SqlException | CairoException e) {
-                        Assert.assertEquals(13, e.getPosition());
-                        TestUtils.assertContains(e.getFlyweightMessage(), message);
-                    }
-                }
-        );
-    }
-
-    private void assertFailure0(int position, CharSequence expectedMessage, CharSequence sql, Class<?> exception) {
-        try {
-            assertExceptionNoLeakCheck(sql);
-        } catch (Throwable e) {
-            Assert.assertSame(exception, e.getClass());
-            if (e instanceof FlyweightMessageContainer) {
-                TestUtils.assertContains(((FlyweightMessageContainer) e).getFlyweightMessage(), expectedMessage);
-                if (position != -1) {
-                    Assert.assertSame(SqlException.class, e.getClass());
-                    Assert.assertEquals(position, ((FlyweightMessageContainer) e).getPosition());
-                }
-            } else {
-                Assert.fail();
-            }
-        }
+    private void assertException(FilesFacade ff, CharSequence sql, CharSequence message) throws Exception {
+        assertMemoryLeak(ff, () -> assertExceptionNoLeakCheck(sql, 13, message));
     }
 
     private void assertInsertAsSelectIOError(AtomicBoolean inError, FilesFacade ff) throws Exception {
@@ -6811,24 +6657,30 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             int errorPosition,
             CharSequence errorMessage
     ) throws Exception {
-        testInsertAsSelectError(ddl, insert, errorPosition, errorMessage, SqlException.class);
+        if (ddl != null) {
+            ddl(ddl);
+        }
+        assertExceptionNoLeakCheck(insert, errorPosition, errorMessage);
     }
 
     private void testInsertAsSelectError(
             CharSequence ddl,
             CharSequence insert,
-            int errorPosition,
-            CharSequence errorMessage,
-            Class<?> exception
+            CharSequence errorMessage
     ) throws Exception {
         if (ddl != null) {
             ddl(ddl);
         }
-        assertFailure0(errorPosition, errorMessage, insert, exception);
-    }
-
-    protected void assertFailureNoLeakCheck(int position, CharSequence expectedMessage, CharSequence sql) {
-        assertFailure0(position, expectedMessage, sql, SqlException.class);
+        try {
+            assertExceptionNoLeakCheck(insert);
+        } catch (Throwable e) {
+            Assert.assertSame(ImplicitCastException.class, e.getClass());
+            if (e instanceof FlyweightMessageContainer) {
+                TestUtils.assertContains(((FlyweightMessageContainer) e).getFlyweightMessage(), errorMessage);
+            } else {
+                Assert.fail();
+            }
+        }
     }
 
     private interface Fiddler {

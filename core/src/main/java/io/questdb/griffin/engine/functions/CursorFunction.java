@@ -32,7 +32,6 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 
 public class CursorFunction implements ScalarFunction {
@@ -154,11 +153,6 @@ public class CursorFunction implements ScalarFunction {
 
     @Override
     public final short getShort(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final void getStr(Record rec, Utf16Sink utf16Sink) {
         throw new UnsupportedOperationException();
     }
 

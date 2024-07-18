@@ -124,11 +124,6 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink utf16Sink) {
-            getStrWithoutClear(rec, utf16Sink);
-        }
-
-        @Override
         public CharSequence getStrA(Record rec) {
             return getStrWithClear(rec, sinkA);
         }
