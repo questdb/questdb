@@ -28,6 +28,7 @@ package io.questdb.griffin.engine.functions.regex;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -43,7 +44,6 @@ import io.questdb.std.ObjList;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import static io.questdb.griffin.engine.functions.regex.MatchSymbolFunctionFactory.extractSymbolKeys;
 import static io.questdb.griffin.engine.functions.regex.MatchSymbolFunctionFactory.symbolMatches;
 
 public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrFunctionFactory {
@@ -87,6 +87,19 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         }
 
         return super.newInstance(position, args, argPositions, configuration, sqlExecutionContext);
+    }
+
+    private static void extractSymbolKeys(SymbolFunction symbolFun, IntList symbolKeys, Matcher matcher) {
+        final StaticSymbolTable symbolTable = symbolFun.getStaticSymbolTable();
+        assert symbolTable != null;
+        symbolKeys.clear();
+        if (matcher != null) {
+            for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
+                if (matcher.reset(symbolTable.valueOf(i)).matches()) {
+                    symbolKeys.add(i);
+                }
+            }
+        }
     }
 
     protected abstract boolean isCaseInsensitive();

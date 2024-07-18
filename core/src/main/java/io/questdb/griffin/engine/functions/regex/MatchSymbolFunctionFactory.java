@@ -42,19 +42,6 @@ import java.util.regex.Matcher;
 
 public class MatchSymbolFunctionFactory implements FunctionFactory {
 
-    public static void extractSymbolKeys(SymbolFunction symbolFun, IntList symbolKeys, Matcher matcher) {
-        final StaticSymbolTable symbolTable = symbolFun.getStaticSymbolTable();
-        assert symbolTable != null;
-        symbolKeys.clear();
-        if (matcher != null) {
-            for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
-                if (matcher.reset(symbolTable.valueOf(i)).matches()) {
-                    symbolKeys.add(i);
-                }
-            }
-        }
-    }
-
     public static boolean symbolMatches(Function arg, Record rec, IntList symbolKeys) {
         final int key = arg.getInt(rec);
         if (key != SymbolTable.VALUE_IS_NULL) {
@@ -101,6 +88,19 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
             }
         }
         throw SqlException.$(patternPosition, "not implemented: dynamic pattern would be very slow to execute");
+    }
+
+    private static void extractSymbolKeys(SymbolFunction symbolFun, IntList symbolKeys, Matcher matcher) {
+        final StaticSymbolTable symbolTable = symbolFun.getStaticSymbolTable();
+        assert symbolTable != null;
+        symbolKeys.clear();
+        if (matcher != null) {
+            for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
+                if (matcher.reset(symbolTable.valueOf(i)).find()) {
+                    symbolKeys.add(i);
+                }
+            }
+        }
     }
 
     private static class MatchStaticSymbolTableConstPatternFunction extends BooleanFunction implements UnaryFunction {
