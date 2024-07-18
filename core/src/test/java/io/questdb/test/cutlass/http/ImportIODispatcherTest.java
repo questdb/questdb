@@ -322,10 +322,10 @@ public class ImportIODispatcherTest extends AbstractTest {
             "]}\r\n" +
             "00\r\n" +
             "\r\n";
-    private final String ImportCreateParamRequestTrue =  ValidImportRequest1
+    private final String ImportCreateParamRequestTrue = ValidImportRequest1
             .replace("POST /upload?name=trips HTTP",
                     "POST /upload?name=trips&timestamp=Pickup_DateTime&createTable=true HTTP");
-    private final String ImportCreateParamRequestFalse =  ValidImportRequest1
+    private final String ImportCreateParamRequestFalse = ValidImportRequest1
             .replace("POST /upload?name=trips HTTP",
                     "POST /upload?name=trips&timestamp=Pickup_DateTime&createTable=false HTTP");
     private final String ImportCreateParamResponse = WarningValidImportResponse1

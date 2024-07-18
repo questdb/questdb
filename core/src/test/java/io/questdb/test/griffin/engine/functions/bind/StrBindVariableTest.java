@@ -27,7 +27,6 @@ package io.questdb.test.griffin.engine.functions.bind;
 import io.questdb.griffin.engine.functions.bind.StrBindVariable;
 import io.questdb.griffin.engine.functions.bind.VarcharBindVariable;
 import io.questdb.std.Numbers;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -40,10 +39,6 @@ public class StrBindVariableTest {
         Assert.assertNull(variable.getStrA(null));
         Assert.assertNull(variable.getStrB(null));
         Assert.assertEquals(-1, variable.getStrLen(null));
-
-        StringSink sink = new StringSink();
-        variable.getStr(null, sink);
-        Assert.assertEquals(0, sink.length());
     }
 
     @Test
@@ -61,10 +56,6 @@ public class StrBindVariableTest {
         TestUtils.assertEquals(expected, variable.getStrA(null));
         TestUtils.assertEquals(expected, variable.getStrB(null));
         Assert.assertEquals(expected.length(), variable.getStrLen(null));
-
-        StringSink sink = new StringSink();
-        variable.getStr(null, sink);
-        TestUtils.assertEquals(expected, sink);
     }
 
     @Test

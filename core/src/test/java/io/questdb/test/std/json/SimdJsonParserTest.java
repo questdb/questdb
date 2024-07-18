@@ -763,33 +763,33 @@ public class SimdJsonParserTest {
 
     @Test
     public void testConvertPathToPointer() throws Exception {
-            TestUtils.assertMemoryLeak(() -> {
-                    try (DirectUtf8Sink dest = new DirectUtf8Sink(100)) {
-                            SimdJsonParser.convertJsonPathToPointer(new GcUtf8String(""), dest);
-                            Assert.assertEquals("", dest.toString());
-                    }
-            });
+        TestUtils.assertMemoryLeak(() -> {
+            try (DirectUtf8Sink dest = new DirectUtf8Sink(100)) {
+                SimdJsonParser.convertJsonPathToPointer(new GcUtf8String(""), dest);
+                Assert.assertEquals("", dest.toString());
+            }
+        });
 
-            TestUtils.assertMemoryLeak(() -> {
-                    try (DirectUtf8Sink dest = new DirectUtf8Sink(100)) {
-                            SimdJsonParser.convertJsonPathToPointer(new GcUtf8String("$"), dest);
-                            Assert.assertEquals("", dest.toString());
-                    }
-            });
+        TestUtils.assertMemoryLeak(() -> {
+            try (DirectUtf8Sink dest = new DirectUtf8Sink(100)) {
+                SimdJsonParser.convertJsonPathToPointer(new GcUtf8String("$"), dest);
+                Assert.assertEquals("", dest.toString());
+            }
+        });
 
-            TestUtils.assertMemoryLeak(() -> {
-                    try (DirectUtf8Sink dest = new DirectUtf8Sink(100)) {
-                            SimdJsonParser.convertJsonPathToPointer(new GcUtf8String(".name[0]"), dest);
-                            Assert.assertEquals("/name/0", dest.toString());
-                    }
-            });
+        TestUtils.assertMemoryLeak(() -> {
+            try (DirectUtf8Sink dest = new DirectUtf8Sink(100)) {
+                SimdJsonParser.convertJsonPathToPointer(new GcUtf8String(".name[0]"), dest);
+                Assert.assertEquals("/name/0", dest.toString());
+            }
+        });
 
-            TestUtils.assertMemoryLeak(() -> {
-                    try (DirectUtf8Sink dest = new DirectUtf8Sink(100)) {
-                            SimdJsonParser.convertJsonPathToPointer(new GcUtf8String("$.name[0]"), dest);
-                            Assert.assertEquals("/name/0", dest.toString());
-                    }
-            });
+        TestUtils.assertMemoryLeak(() -> {
+            try (DirectUtf8Sink dest = new DirectUtf8Sink(100)) {
+                SimdJsonParser.convertJsonPathToPointer(new GcUtf8String("$.name[0]"), dest);
+                Assert.assertEquals("/name/0", dest.toString());
+            }
+        });
     }
 
     @Test

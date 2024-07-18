@@ -60,9 +60,9 @@ public class AvgShortVectorAggregateFunction extends DoubleFunction implements V
     }
 
     @Override
-    public void aggregate(long address, long addressSize, int columnSizeHint, int workerId) {
+    public void aggregate(long address, long frameRowCount, int workerId) {
         if (address != 0) {
-            final double value = Vect.avgShortAcc(address, addressSize / Short.BYTES, countsAddr + (long) workerId * Misc.CACHE_LINE_SIZE);
+            final double value = Vect.avgShortAcc(address, frameRowCount, countsAddr + (long) workerId * Misc.CACHE_LINE_SIZE);
             if (value == value) {
                 final long count = Unsafe.getUnsafe().getLong(countsAddr + (long) workerId * Misc.CACHE_LINE_SIZE);
                 // we have to include "weight" of this avg value in the formula,
@@ -74,11 +74,11 @@ public class AvgShortVectorAggregateFunction extends DoubleFunction implements V
     }
 
     @Override
-    public boolean aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId) {
+    public boolean aggregate(long pRosti, long keyAddress, long valueAddress, long frameRowCount) {
         if (valueAddress == 0) {
-            return distinctFunc.run(pRosti, keyAddress, valueAddressSize / Short.BYTES);
+            return distinctFunc.run(pRosti, keyAddress, frameRowCount);
         } else {
-            return keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize / Short.BYTES, valueOffset);
+            return keyValueFunc.run(pRosti, keyAddress, valueAddress, frameRowCount, valueOffset);
         }
     }
 

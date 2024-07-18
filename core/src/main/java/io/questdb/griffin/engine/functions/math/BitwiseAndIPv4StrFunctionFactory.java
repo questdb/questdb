@@ -36,6 +36,7 @@ public class BitwiseAndIPv4StrFunctionFactory implements FunctionFactory {
     public String getSignature() {
         return "&(Xs)";
     }
+
     @Override
     public Function newInstance(
             int position,

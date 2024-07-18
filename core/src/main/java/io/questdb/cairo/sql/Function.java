@@ -34,7 +34,6 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
 
@@ -141,10 +140,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     short getShort(Record rec);
 
-    void getStr(Record rec, Utf16Sink utf16Sink);
-
-    void getStr(Record rec, Utf16Sink sink, int arrayIndex);
-
     CharSequence getStrA(Record rec);
 
     CharSequence getStrA(Record rec, int arrayIndex);
@@ -179,9 +174,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     /**
      * Returns true if function is constant, i.e. its value does not require
      * any input from the record.
-     * <p>
-     * Constant functions can evaluate by passing a null record to {@link #getStr(Record, Utf16Sink)}
-     * or other methods. This often happens inside FunctionFactory at query planning stage.
      *
      * @return true if function is constant
      * @see #isRuntimeConstant()

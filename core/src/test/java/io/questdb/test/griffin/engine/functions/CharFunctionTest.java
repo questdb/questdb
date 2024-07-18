@@ -27,7 +27,6 @@ package io.questdb.test.griffin.engine.functions;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.CharFunction;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -147,13 +146,6 @@ public class CharFunctionTest {
     }
 
     @Test
-    public void testGetStr2() {
-        StringSink sink = new StringSink();
-        function.getStr(null, sink);
-        TestUtils.assertEquals("4", sink);
-    }
-
-    @Test
     public void testGetStrB() {
         TestUtils.assertEquals("4", function.getStrB(null));
     }
@@ -166,13 +158,6 @@ public class CharFunctionTest {
     @Test
     public void testGetStrZ() {
         Assert.assertNull(zeroFunc.getStrA(null));
-    }
-
-    @Test
-    public void testGetStrZ2() {
-        StringSink sink = new StringSink();
-        zeroFunc.getStr(null, sink);
-        TestUtils.assertEquals("", sink);
     }
 
     @Test

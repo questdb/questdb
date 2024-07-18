@@ -102,7 +102,7 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
         if (openPaths.keyIndex(name) < 0) {
             LOG.info().$("cannot remove, file is open: ").$(name).$(", fd=").$(getFdByPath(name)).$();
             // For reproducing test failures which happen on Windows only while debugging on another OS, change this to
-             return false;
+            return false;
 //            return true;
         }
         return false;

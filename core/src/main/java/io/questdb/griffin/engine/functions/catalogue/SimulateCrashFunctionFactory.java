@@ -35,17 +35,12 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 
 public class SimulateCrashFunctionFactory implements FunctionFactory {
-
-    private static final CairoErrorFunction CairoErrorInstance = new CairoErrorFunction();
-    private static final CairoExceptionFunction CairoExceptionInstance = new CairoExceptionFunction();
-    private static final SimulateCrashFunction CrashInstance = new SimulateCrashFunction();
-    private static final DoNothingInstance Dummy = new DoNothingInstance();
-    private static final OutOfMemoryFunction OutOfMemoryInstance = new OutOfMemoryFunction();
 
     @Override
     public String getSignature() {
@@ -60,24 +55,24 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-
-        if (configuration.getSimulateCrashEnabled()) {
-            char killType = args.get(0).getChar(null);
+        if (configuration.isDevModeEnabled()) {
+            final char killType = args.getQuick(0).getChar(null);
             switch (killType) {
                 case '0':
-                    return CrashInstance;
+                    return SimulateCrashFunction.INSTANCE;
                 case 'M':
-                    return OutOfMemoryInstance;
+                    return OutOfMemoryFunction.INSTANCE;
                 case 'C':
-                    return CairoErrorInstance;
+                    return CairoErrorFunction.INSTANCE;
                 case 'D':
-                    return CairoExceptionInstance;
+                    return CairoExceptionFunction.INSTANCE;
             }
         }
-        return Dummy;
+        return BooleanConstant.FALSE;
     }
 
     private static class CairoErrorFunction extends BooleanFunction {
+        private static final CairoErrorFunction INSTANCE = new CairoErrorFunction();
 
         @Override
         public boolean getBool(Record rec) {
@@ -102,6 +97,7 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
     }
 
     private static class CairoExceptionFunction extends BooleanFunction {
+        private static final CairoExceptionFunction INSTANCE = new CairoExceptionFunction();
 
         @Override
         public boolean getBool(Record rec) {
@@ -125,33 +121,12 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class DoNothingInstance extends BooleanFunction {
-        @Override
-        public boolean getBool(Record rec) {
-            return false;
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            super.init(symbolTableSource, executionContext);
-            executionContext.getSecurityContext().authorizeAdminAction();
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return true;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val("simulate_crash(jvm)");
-        }
-    }
-
     private static class OutOfMemoryFunction extends BooleanFunction {
+        private static final OutOfMemoryFunction INSTANCE = new OutOfMemoryFunction();
+
         @Override
         public boolean getBool(Record rec) {
-            throw new OutOfMemoryError("simulate_crash('M')");
+            throw new OutOfMemoryError("simulated OOM");
         }
 
         @Override
@@ -167,6 +142,8 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
     }
 
     private static class SimulateCrashFunction extends BooleanFunction {
+        private static final SimulateCrashFunction INSTANCE = new SimulateCrashFunction();
+
         @Override
         public boolean getBool(Record rec) {
             Unsafe.getUnsafe().getLong(0L);

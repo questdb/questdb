@@ -31,6 +31,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRandomRecordCursor;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -38,7 +39,7 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractDataFram
 
     protected final int columnIndex;
     protected final IntList columnIndexes;
-    protected final Function filter;
+    protected Function filter;
     private final Function symbolFunc;
     private AbstractLatestByValueRecordCursor cursor;
 
@@ -84,9 +85,7 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractDataFram
     @Override
     protected void _close() {
         super._close();
-        if (filter != null) {
-            filter.close();
-        }
+        filter = Misc.free(filter);
     }
 
     protected abstract AbstractLatestByValueRecordCursor createDataFrameCursorFor(int symbolKey);

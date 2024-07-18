@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
@@ -452,17 +451,6 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
             Assert.assertEquals(ColumnType.SHORT, type);
             callCount++;
             return 1;
-        }
-
-        @Override
-        public void getStr(Record rec, Utf16Sink utf16Sink) {
-            Assert.assertEquals(ColumnType.STRING, type);
-            callCount++;
-        }
-
-        @Override
-        public void getStr(Record rec, Utf16Sink sink, int arrayIndex) {
-            throw new UnsupportedOperationException();
         }
 
         @Override
