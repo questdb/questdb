@@ -139,13 +139,13 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private JoinContext context;
     private boolean distinct = false;
     private boolean explicitTimestamp;
-    
+
     // used for the parallel sample by rewrite. In future, if we deprecate original SAMPLE BY, then these will
     // be the only fields for these values.
     private ExpressionNode fillFrom;
     private ExpressionNode fillStride;
     private ExpressionNode fillTo;
-    private ObjList<ExpressionNode> fillValue;
+    private ObjList<ExpressionNode> fillValues;
 
     //simple flag to mark when limit x,y in current model (part of query) is already taken care of by existing factories e.g. LimitedSizeSortedLightRecordCursorFactory
     //and doesn't need to be enforced by LimitRecordCursor. We need it to detect whether current factory implements limit from this or inner query .
@@ -448,7 +448,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         fillFrom = null;
         fillTo = null;
         fillStride = null;
-        fillValue = null;
+        fillValues = null;
     }
 
     public void clearColumnMapStructs() {
@@ -716,8 +716,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return fillTo;
     }
 
-    public ObjList<ExpressionNode> getFillValue() {
-        return fillValue;
+    public ObjList<ExpressionNode> getFillValues() {
+        return fillValues;
     }
 
     public ObjList<ExpressionNode> getGroupBy() {
@@ -994,7 +994,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 distinct, unionModel, setOperationType,
                 modelPosition, orderByAdviceMnemonic, tableId,
                 isUpdateModel, modelType, updateTableModel,
-                updateTableToken, artificialStar, fillFrom, fillStride, fillTo, fillValue
+                updateTableToken, artificialStar, fillFrom, fillStride, fillTo, fillValues
         );
     }
 
@@ -1241,8 +1241,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.fillTo = fillTo;
     }
 
-    public void setFillValue(ObjList<ExpressionNode> fillValue) {
-        this.fillValue = fillValue;
+    public void setFillValues(ObjList<ExpressionNode> fillValues) {
+        this.fillValues = fillValues;
     }
 
     public void setIsUpdate(boolean isUpdate) {
@@ -1805,13 +1805,13 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             }
         }
 
-        if (fillValue != null && fillValue.size() > 0) {
+        if (fillValues != null && fillValues.size() > 0) {
             sink.putAscii(" fill(");
-            for (int i = 0, n = fillValue.size(); i < n; i++) {
+            for (int i = 0, n = fillValues.size(); i < n; i++) {
                 if (i > 0) {
                     sink.put(',');
                 }
-                sink.put(fillValue.getQuick(i));
+                sink.put(fillValues.getQuick(i));
             }
             sink.put(')');
         }

@@ -4524,7 +4524,7 @@ public class SqlOptimiser implements Mutable {
                     }
 
                     // it might be a keyed expression
-                    if (ast.type == LITERAL) {
+                    if (ast.type == LITERAL /*|| ast.type == FUNCTION || ast.type == OPERATION*/) {
                         maybeKeyed.add(ast);
                     }
                 }
@@ -4728,7 +4728,7 @@ public class SqlOptimiser implements Mutable {
                 nested.setFillFrom(sampleByFrom);
                 nested.setFillTo(sampleByTo);
                 nested.setFillStride(sampleBy);
-                nested.setFillValue(sampleByFill);
+                nested.setFillValues(sampleByFill);
 
                 // clear sample by (but keep FILL and FROM-TO)
                 nested.setSampleBy(null);
@@ -6040,7 +6040,7 @@ public class SqlOptimiser implements Mutable {
             optimiseOrderBy(rewrittenModel, OrderByMnemonic.ORDER_BY_UNKNOWN);
             createOrderHash(rewrittenModel);
             moveWhereInsideSubQueries(rewrittenModel);
-//            eraseColumnPrefixInWhereClauses(rewrittenModel);
+            eraseColumnPrefixInWhereClauses(rewrittenModel);
             collapseStackedChooseModels(rewrittenModel);
             moveTimestampToChooseModel(rewrittenModel);
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());

@@ -38,7 +38,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -529,14 +528,6 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
             }
 
-            @Override
-            public void getStr(int col, Utf16Sink utf16Sink) {
-                if (gapFilling) {
-                    getFillFunction(col).getStr(null, utf16Sink);
-                } else {
-                    baseRecord.getStr(col, utf16Sink);
-                }
-            }
 
             @Override
             public @Nullable CharSequence getStrA(int col) {

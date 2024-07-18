@@ -82,7 +82,7 @@ public class QueryModelTest {
         IntList orderByDirectionAdvice = new IntList();
         orderByDirectionAdvice.add(42);
         model.copyOrderByDirectionAdvice(orderByDirectionAdvice);
-        model.setFillValue(new ObjList<>(newExpressionNode()));
+        model.setFillValues(new ObjList<>(newExpressionNode()));
         model.setFillTo(newExpressionNode());
         model.setFillFrom(newExpressionNode());
         model.setFillStride(newExpressionNode());

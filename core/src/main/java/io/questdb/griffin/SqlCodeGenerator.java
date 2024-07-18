@@ -1707,7 +1707,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final ExpressionNode fillFrom = curr.getFillFrom();
         final ExpressionNode fillTo = curr.getFillTo();
         final ExpressionNode fillStride = curr.getFillStride();
-        ObjList<ExpressionNode> fillValuesExprs = curr.getFillValue();
+        ObjList<ExpressionNode> fillValuesExprs = curr.getFillValues();
 
         try {
             if (fillValuesExprs == null) {
@@ -3742,17 +3742,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
 
                 if (tempKeyIndexesInBase.size() == 0) {
-                    return generateFill(
-                            model,
+                    return
                             new GroupByNotKeyedVectorRecordCursorFactory(
                                     configuration,
                                     factory,
                                     meta,
                                     executionContext.getSharedWorkerCount(),
                                     tempVaf
-                            ),
-                            executionContext
-                    );
+                            );
                 }
 
                 if (tempKeyIndexesInBase.size() == 1) {
@@ -3776,6 +3773,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         Misc.freeObjList(tempVaf);
                         throw e;
                     }
+
+                    guardAgainstFillWithKeyedGroupBy(model, keyTypes);
 
                     return generateFill(
                             model,
@@ -3900,40 +3899,38 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         assert keyFunctions.size() == 0;
                         assert recordFunctions.size() == groupByFunctions.size();
 
-                        return generateFill(
-                                model,
-                                new AsyncGroupByNotKeyedRecordCursorFactory(
-                                        asm,
-                                        configuration,
-                                        executionContext.getMessageBus(),
-                                        factory,
-                                        groupByMetadata,
+                        return new AsyncGroupByNotKeyedRecordCursorFactory(
+                                asm,
+                                configuration,
+                                executionContext.getMessageBus(),
+                                factory,
+                                groupByMetadata,
+                                groupByFunctions,
+                                compileWorkerGroupByFunctionsConditionally(
+                                        executionContext,
+                                        model,
                                         groupByFunctions,
-                                        compileWorkerGroupByFunctionsConditionally(
-                                                executionContext,
-                                                model,
-                                                groupByFunctions,
-                                                executionContext.getSharedWorkerCount(),
-                                                factory.getMetadata()
-                                        ),
-                                        valueTypesCopy.getColumnCount(),
-                                        compiledFilter,
-                                        bindVarMemory,
-                                        bindVarFunctions,
-                                        filter,
-                                        reduceTaskFactory,
-                                        compileWorkerFilterConditionally(
-                                                executionContext,
-                                                filter,
-                                                executionContext.getSharedWorkerCount(),
-                                                nested.getWhereClause(),
-                                                factory.getMetadata()
-                                        ),
-                                        executionContext.getSharedWorkerCount()
+                                        executionContext.getSharedWorkerCount(),
+                                        factory.getMetadata()
                                 ),
-                                executionContext
+                                valueTypesCopy.getColumnCount(),
+                                compiledFilter,
+                                bindVarMemory,
+                                bindVarFunctions,
+                                filter,
+                                reduceTaskFactory,
+                                compileWorkerFilterConditionally(
+                                        executionContext,
+                                        filter,
+                                        executionContext.getSharedWorkerCount(),
+                                        nested.getWhereClause(),
+                                        factory.getMetadata()
+                                ),
+                                executionContext.getSharedWorkerCount()
                         );
                     }
+
+                    guardAgainstFillWithKeyedGroupBy(model, keyTypes);
 
                     return generateFill(
                             model,
@@ -3984,19 +3981,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             if (keyTypes.getColumnCount() == 0) {
                 assert recordFunctions.size() == groupByFunctions.size();
-                return generateFill(
-                        model,
-                        new GroupByNotKeyedRecordCursorFactory(
-                                asm,
-                                configuration,
-                                factory,
-                                groupByMetadata,
-                                groupByFunctions,
-                                valueTypes.getColumnCount()
-                        ),
-                        executionContext
+                new GroupByNotKeyedRecordCursorFactory(
+                        asm,
+                        configuration,
+                        factory,
+                        groupByMetadata,
+                        groupByFunctions,
+                        valueTypes.getColumnCount()
                 );
             }
+
+
+            guardAgainstFillWithKeyedGroupBy(model, keyTypes);
 
             return generateFill(
                     model,
@@ -5530,6 +5526,30 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 throw SqlException.$(advice.getQuick(i).position, "cannot use table-prefixed names in order by");
             }
         }
+    }
+
+    private void guardAgainstFillWithKeyedGroupBy(QueryModel model, ArrayColumnTypes keyTypes) throws SqlException {
+        // locate fill
+        QueryModel curr = model;
+
+        while (curr != null && curr.getFillStride() == null) {
+            curr = curr.getNestedModel();
+        }
+
+        if (curr == null || curr.getFillStride() == null || curr.getFillValues() == null || curr.getFillValues().size() == 0) {
+            return;
+        }
+
+        if (curr.getFillValues().size() == 1 && Chars.equals(curr.getFillValues().getQuick(0).token, "none")) {
+            return;
+        }
+
+        if (keyTypes.getColumnCount() == 1) {
+            return;
+        }
+
+        throw SqlException.$(0, "cannot use a fill with a keyed group by");
+
     }
 
     private void guardAgainstFromToWithKeyedSampleBy(boolean isFromTo) throws SqlException {
