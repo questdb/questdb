@@ -374,12 +374,8 @@ public class TableSequencerImpl implements TableSequencer {
             throw th;
         }
 
-        if (!metadata.isSuspended()) {
-            notifyTxnCommitted(txn);
-            engine.getWalListener().dataTxnCommitted(tableToken, txn, timestamp, walId, segmentId, segmentTxn);
-        } else {
-            engine.getTableSequencerAPI().getTxnTracker(tableToken).notifyOnCommit(txn);
-        }
+        notifyTxnCommitted(txn);
+        engine.getWalListener().dataTxnCommitted(tableToken, txn, timestamp, walId, segmentId, segmentTxn);
         return txn;
     }
 
