@@ -45,7 +45,8 @@ public interface AsyncWriterCommand extends TableMetadataChange, Closeable {
 
     int getTableNamePosition();
 
-    @Nullable TableToken getTableToken();
+    @Nullable
+    TableToken getTableToken();
 
     long getTableVersion();
 

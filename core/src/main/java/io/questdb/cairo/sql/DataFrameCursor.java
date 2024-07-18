@@ -51,7 +51,8 @@ public interface DataFrameCursor extends QuietCloseable, SymbolTableSource {
      * @return the next element in the data frame
      * @throws io.questdb.cairo.DataUnavailableException when the queried partition is in cold storage
      */
-    @Nullable DataFrame next();
+    @Nullable
+    DataFrame next();
 
     /**
      * Reload the data frame and return the cursor to the beginning of
