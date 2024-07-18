@@ -59,12 +59,13 @@ public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
     @Test
     public void testMemoryPressureSingleSender() throws Exception {
         final String tn = "table1";
-        long hourAsMillis = 3_600_000L;
-        long numPartitions = 100L;
+        final long hourAsMillis = 3_600_000L;
+        final long numPartitions = 100L;
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        boolean shouldGetSuspended = rnd.nextBoolean();
+        final boolean shouldGetSuspended = (rnd.nextLong() & 1) == 0; // rnd.nextBoolean() isn't random on first call
+        final int additionalLoad = shouldGetSuspended ? 50_000 : 0;
+
         boolean didGetSuspended = false;
-        int additionalLoad = shouldGetSuspended ? 50_000 : 0;
         try (TestServerMain serverMain = startWithEnvVariables(
                 PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "4096",
                 // let's make CAIRO_WAL_MAX_LAG_SIZE a fraction of our max RSS
