@@ -401,7 +401,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         if (throwable instanceof CairoException) {
             CairoException cairoException = (CairoException) throwable;
             if (cairoException.isOutOfMemory()) {
-                if (txnTracker != null && txnTracker.onOutOfMemory(MicrosecondClockImpl.INSTANCE.getTicks())) {
+                if (txnTracker != null && txnTracker.onOutOfMemory(MicrosecondClockImpl.INSTANCE.getTicks(), tableToken.getTableName())) {
                     engine.notifyWalTxnRepublisher(tableToken);
                     return;
                 }
@@ -567,7 +567,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         return;
                     }
                     applyOutstandingWalTransactions(tableToken, writer, engine, operationCompiler, tempPath, runStatus, txnTracker);
-                    txnTracker.hadEnoughMemory(MicrosecondClockImpl.INSTANCE.getTicks());
+                    txnTracker.hadEnoughMemory(MicrosecondClockImpl.INSTANCE.getTicks(), tableToken.getTableName());
                     lastWriterTxn = writer.getSeqTxn();
                 } catch (EntryUnavailableException tableBusy) {
                     //noinspection StringEquality

@@ -90,7 +90,7 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
         return writerTxn;
     }
 
-    public void hadEnoughMemory(long nowMicros) {
+    public void hadEnoughMemory(long nowMicros, CharSequence tableName) {
         maxRecordedInflightPartitions = 1;
         walBackoffUntil = -1;
         if (regulationValue == Integer.MAX_VALUE) {
@@ -110,7 +110,7 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
                 regulationValue = Integer.MAX_VALUE;
             }
         }
-        LOG.info().$("Memory pressure easing off [maxParallelism=").$(regulationValue).I$();
+        LOG.info().$("Memory pressure easing off [table=").$(tableName).$(", maxParallelism=").$(regulationValue).I$();
     }
 
     public boolean initTxns(long newWriterTxn, long newSeqTxn, boolean isSuspended) {
@@ -177,7 +177,7 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
      * If it was possible, returns true => the operation can retry.
      * If all measures were exhausted, returns false => the operation should now fail.
      */
-    public boolean onOutOfMemory(long nowMicros) {
+    public boolean onOutOfMemory(long nowMicros, CharSequence tableName) {
         if (maxRecordedInflightPartitions == 1) {
             // There was no parallelism
             if (regulationValue <= -5) {
@@ -193,7 +193,7 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
                 regulationValue--;
             }
             int delayMicros = rnd.nextInt(4_000_000);
-            LOG.info().$("Memory pressure is high [backoffCounter=").$(-regulationValue).$(", delay=").$(delayMicros).$(" us]").$();
+            LOG.info().$("Memory pressure is high [table=").$(tableName).$(", backoffCounter=").$(-regulationValue).$(", delay=").$(delayMicros).$(" us]").$();
             walBackoffUntil = nowMicros + delayMicros;
             return true;
         }
@@ -201,7 +201,7 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
         walBackoffUntil = -1;
         regulationValue = maxRecordedInflightPartitions / 2;
         maxRecordedInflightPartitions = 1;
-        LOG.info().$("Memory pressure is high [maxParallelism=").$(regulationValue).I$();
+        LOG.info().$("Memory pressure is high [table=").$(tableName).$(", maxParallelism=").$(regulationValue).I$();
 
         return true;
     }

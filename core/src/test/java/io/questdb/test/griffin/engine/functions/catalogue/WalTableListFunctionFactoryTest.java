@@ -74,7 +74,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
             long now = 0;
             int parallelism = txnTracker.getMaxO3MergeParallelism();
             txnTracker.updateInflightPartitions(parallelism);
-            txnTracker.onOutOfMemory(now);
+            txnTracker.onOutOfMemory(now, "A");
 
             // Memory pressure level should be 1 after the first OOM event - it indicates that the table is under memory pressure
             // and reducing parallelism
@@ -84,7 +84,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
                 now += 1000;
                 parallelism = txnTracker.getMaxO3MergeParallelism();
                 txnTracker.updateInflightPartitions(parallelism);
-                txnTracker.onOutOfMemory(now);
+                txnTracker.onOutOfMemory(now, "A");
             } while (txnTracker.getMemoryPressureLevel() == 1);
 
             // eventually memory pressure level should be 2 after the second OOM event - it indicates that the table is under memory pressure
@@ -96,7 +96,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
             now += 1000;
             parallelism = txnTracker.getMaxO3MergeParallelism();
             txnTracker.updateInflightPartitions(parallelism);
-            txnTracker.hadEnoughMemory(now);
+            txnTracker.hadEnoughMemory(now, "A");
 
             // after a first successful O3 merge memory pressure level should be 1 - still reducing parallelism
             // but no longer applying backoff
@@ -106,7 +106,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
                 now += 1000;
                 parallelism = txnTracker.getMaxO3MergeParallelism();
                 txnTracker.updateInflightPartitions(parallelism);
-                txnTracker.hadEnoughMemory(now);
+                txnTracker.hadEnoughMemory(now, "A");
             } while (txnTracker.getMemoryPressureLevel() == 1);
 
             // eventually the memory pressure should be 0 - no memory pressure at all
