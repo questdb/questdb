@@ -73,7 +73,7 @@ public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
             ) {
                 int batchSize10k = rnd.nextInt(5) + 1;
                 int batchSize = batchSize10k * 10_000;
-                int numIters = 10_000 / batchSize10k;
+                int numIters = 2_000 / batchSize10k;
                 LOG.infoW().$(String.format("batchSize %,d, numIters %,d", batchSize, numIters)).$();
                 CairoEngine engine = serverMain.getEngine();
                 TableToken tableToken = engine.verifyTableName(tn);

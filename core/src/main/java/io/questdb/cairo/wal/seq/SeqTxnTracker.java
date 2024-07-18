@@ -39,11 +39,12 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
     private static final long SUSPENDED_STATE_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "suspendedState");
     private static final long WRITER_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "writerTxn");
     private final Rnd rnd;
-    private int backoffCounter = 0;
     private volatile String errorMessage = "";
     private volatile ErrorTag errorTag = ErrorTag.NONE;
-    private int maxParallelism = Integer.MAX_VALUE;
     private int maxRecordedInflightPartitions = 1;
+    // positive int: holds max parallelism
+    // negative int: holds backoff counter
+    private int regulationValue = Integer.MAX_VALUE;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile long seqTxn = -1;
     // -1 suspended
@@ -66,14 +67,14 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
     }
 
     public int getMaxO3MergeParallelism() {
-        return maxParallelism;
+        return Math.max(1, regulationValue);
     }
 
     public int getMemoryPressureLevel() {
-        if (maxParallelism == Integer.MAX_VALUE) {
+        if (regulationValue == Integer.MAX_VALUE) {
             return 0;
         }
-        if (backoffCounter > 0) {
+        if (regulationValue < 0) {
             return 2;
         }
         return 1;
@@ -91,23 +92,25 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
 
     public void hadEnoughMemory(long nowMicros) {
         maxRecordedInflightPartitions = 1;
-        backoffCounter = 0;
         walBackoffUntil = -1;
-        if (maxParallelism == Integer.MAX_VALUE) {
-            // fast path
+        if (regulationValue == Integer.MAX_VALUE) {
+            // already at max parallelism, can't go more optimistic
             return;
         }
-
-        int i = rnd.nextInt();
-        if (Integer.numberOfTrailingZeros(i) >= 4) { // 1 in 16
-            int origMaxParallelism = maxParallelism;
-            maxParallelism *= 2;
-            if (maxParallelism < origMaxParallelism) {
+        if (regulationValue < 0) {
+            // was in backoff, go back to parallelism = 1
+            regulationValue = 1;
+            return;
+        }
+        if (rnd.nextInt(4) == 0) {
+            int beforeDoubling = regulationValue;
+            regulationValue *= 2;
+            if (regulationValue < beforeDoubling) {
                 // overflow
-                maxParallelism = Integer.MAX_VALUE;
+                regulationValue = Integer.MAX_VALUE;
             }
         }
-        LOG.info().$("Memory pressure easing off [maxParallelism=").$(maxParallelism).I$();
+        LOG.info().$("Memory pressure easing off [maxParallelism=").$(regulationValue).I$();
     }
 
     public boolean initTxns(long newWriterTxn, long newSeqTxn, boolean isSuspended) {
@@ -170,26 +173,35 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
     }
 
     /**
-     * Returns true if the operation that experienced OOM should be retried.
-     * Returns false after measures to avoid OOM were exhausted, and the operation should fail.
+     * Increases anti-OOM measures if possible.
+     * If it was possible, returns true => the operation can retry.
+     * If all measures were exhausted, returns false => the operation should now fail.
      */
     public boolean onOutOfMemory(long nowMicros) {
         if (maxRecordedInflightPartitions == 1) {
-            if (backoffCounter >= 5) {
+            // There was no parallelism
+            if (regulationValue <= -5) {
+                // Maximum backoff already tried => fail
                 walBackoffUntil = -1;
                 return false;
             }
-            backoffCounter++;
+            if (regulationValue > 0) {
+                // Switch from reducing parallelism to backoff
+                regulationValue = -1;
+            } else {
+                // Increase backoff counter
+                regulationValue--;
+            }
             int delayMicros = rnd.nextInt(4_000_000);
-            LOG.info().$("Memory pressure is high [backoffCounter=").$(backoffCounter).$(", delay=").$(delayMicros).$(" us]").$();
+            LOG.info().$("Memory pressure is high [backoffCounter=").$(-regulationValue).$(", delay=").$(delayMicros).$(" us]").$();
             walBackoffUntil = nowMicros + delayMicros;
             return true;
         }
-        backoffCounter = 0;
+        // There was some parallelism, halve max parallelism
         walBackoffUntil = -1;
-        maxParallelism = maxRecordedInflightPartitions / 2;
+        regulationValue = maxRecordedInflightPartitions / 2;
         maxRecordedInflightPartitions = 1;
-        LOG.info().$("Memory pressure is high [maxParallelism=").$(maxParallelism).I$();
+        LOG.info().$("Memory pressure is high [maxParallelism=").$(regulationValue).I$();
 
         return true;
     }
