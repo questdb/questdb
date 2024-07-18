@@ -63,7 +63,11 @@ public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
         long numPartitions = 100L;
         final Rnd rnd = TestUtils.generateRandom(LOG);
         try (TestServerMain serverMain = startWithEnvVariables(
-                PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048")
+                PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048",
+                // let's make CAIRO_WAL_MAX_LAG_SIZE a fraction of our max RSS
+                // it's 75MB by default and that's fraction of RSS in the real world
+                // this test has max RSS in 10s of MB, so let's make the MAX LAG size a fraction of that - 15MB
+                PropertyKey.CAIRO_WAL_MAX_LAG_SIZE.getEnvVarName(), "15")
         ) {
             serverMain.start();
             serverMain.compile("create table " + tn +
