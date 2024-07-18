@@ -225,7 +225,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             OperationExecutor operationExecutor,
             Path tempPath,
             RunStatus runStatus,
-            O3InflightPartitionRegulator regulator
+            O3JobParallelismRegulator regulator
     ) {
         final TableSequencerAPI tableSequencerAPI = engine.getTableSequencerAPI();
         boolean isTerminating;
@@ -440,7 +440,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             OperationExecutor operationExecutor,
             long seqTxn,
             long commitTimestamp,
-            O3InflightPartitionRegulator regulator
+            O3JobParallelismRegulator regulator
     ) {
         try (WalEventReader eventReader = walEventReader) {
             final WalEventCursor walEventCursor = eventReader.of(walPath, WAL_FORMAT_VERSION, segmentTxn);

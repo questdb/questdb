@@ -1005,7 +1005,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long o3TimestampMax,
             SymbolMapDiffCursor mapDiffCursor,
             long seqTxn,
-            O3InflightPartitionRegulator regulator
+            O3JobParallelismRegulator regulator
     ) {
         if (inTransaction()) {
             // When writer is returned to pool, it should be rolled back. Having an open transaction is very suspicious.
@@ -1732,7 +1732,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long commitToTimestamp,
             long walSegmentId,
             boolean isLastSegmentUsage,
-            O3InflightPartitionRegulator regulator
+            O3JobParallelismRegulator regulator
     ) {
         int walRootPathLen = walPath.size();
         long maxTimestamp = txWriter.getMaxTimestamp();
@@ -5230,7 +5230,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     o3TimestampMax,
                     true,
                     0L,
-                    O3InflightPartitionRegulator.EMPTY
+                    O3JobParallelismRegulator.EMPTY
             );
         } finally {
             finishO3Append(o3LagRowCount);
@@ -5888,7 +5888,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long o3TimestampMax,
             boolean flattenTimestamp,
             long rowLo,
-            O3InflightPartitionRegulator regulator
+            O3JobParallelismRegulator regulator
     ) {
         o3ErrorCount.set(0);
         o3oomObserved = false;

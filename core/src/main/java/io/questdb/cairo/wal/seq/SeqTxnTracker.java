@@ -25,7 +25,7 @@
 package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.ErrorTag;
-import io.questdb.cairo.wal.O3InflightPartitionRegulator;
+import io.questdb.cairo.wal.O3JobParallelismRegulator;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Rnd;
@@ -33,7 +33,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import org.jetbrains.annotations.TestOnly;
 
-public class SeqTxnTracker implements O3InflightPartitionRegulator {
+public class SeqTxnTracker implements O3JobParallelismRegulator {
     private static final Log LOG = LogFactory.getLog(SeqTxnTracker.class);
     private static final long SEQ_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "seqTxn");
     private static final long SUSPENDED_STATE_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "suspendedState");
