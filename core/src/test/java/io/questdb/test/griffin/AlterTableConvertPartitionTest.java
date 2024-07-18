@@ -24,12 +24,13 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.*;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -163,6 +164,63 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
             ddl("alter table x convert partition to parquet list '1970-01'");
             assertPartitionExists("x", "1970-01");
+        });
+    }
+
+    @Test
+    public void testConvertPartitionBrokenSymbols() throws Exception {
+        final long rows = 10;
+        final String tableName = "x";
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            ddl("create table " + tableName + " as (select" +
+                    " x id," +
+                    " rnd_symbol('a','b','c') a_symbol," +
+                    " timestamp_sequence(400000000000, 500) designated_ts" +
+                    " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month");
+
+            try (Path path = new Path().of(configuration.getRoot())) {
+                TableToken tableToken = engine.getTableTokenIfExists(tableName);
+                path.concat(tableToken.getDirName()).concat("a_symbol").put(".o");
+                FilesFacade ff = configuration.getFilesFacade();
+                Assert.assertTrue(ff.exists(path.$()));
+                int fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
+                Assert.assertTrue(configuration.getFilesFacade().truncate(fd, SymbolMapWriter.HEADER_SIZE - 2));
+                ff.close(fd);
+            }
+            try {
+                ddl("alter table " + tableName + " convert partition to parquet list '1970-01'");
+                Assert.fail();
+            } catch (Exception e) {
+                TestUtils.assertContains(e.getMessage(), " SymbolMap is too short");
+            }
+            assertPartitionDoesntExists(tableName, "1970-01");
+        });
+    }
+
+    @Test
+    public void testConvertPartitionSymbolMapDoesntExist() throws Exception {
+        final long rows = 10;
+        final String tableName = "x";
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            ddl("create table " + tableName + " as (select" +
+                    " x id," +
+                    " rnd_symbol('a','b','c') a_symbol," +
+                    " timestamp_sequence(400000000000, 500) designated_ts" +
+                    " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month");
+
+            try (Path path = new Path().of(configuration.getRoot())) {
+                TableToken tableToken = engine.getTableTokenIfExists(tableName);
+                path.concat(tableToken.getDirName()).concat("a_symbol").put(".o");
+                FilesFacade ff = configuration.getFilesFacade();
+                ff.remove(path.$());
+            }
+            try {
+                ddl("alter table " + tableName + " convert partition to parquet list '1970-01'");
+                Assert.fail();
+            } catch (Exception e) {
+                TestUtils.assertContains(e.getMessage(), "SymbolMap does not exist");
+            }
+            assertPartitionDoesntExists(tableName, "1970-01");
         });
     }
 
