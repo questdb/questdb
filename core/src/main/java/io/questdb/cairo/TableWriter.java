@@ -1772,10 +1772,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     needFullCommit =
                             // Too many rows in LAG
                             totalUncommitted > maxLagRows
-                            // Can commit without O3 and LAG has just enough rows
-                            || (commitToTimestamp >= newMaxLagTimestamp && totalUncommitted > getMetaMaxUncommittedRows())
-                            // Too many uncommitted transactions in LAG
-                            || (configuration.getWalMaxLagTxnCount() > 0 && txWriter.getLagTxnCount() > configuration.getWalMaxLagTxnCount());
+                                    // Can commit without O3 and LAG has just enough rows
+                                    || (commitToTimestamp >= newMaxLagTimestamp && totalUncommitted > getMetaMaxUncommittedRows())
+                                    // Too many uncommitted transactions in LAG
+                                    || (configuration.getWalMaxLagTxnCount() > 0 && txWriter.getLagTxnCount() > configuration.getWalMaxLagTxnCount());
                 }
 
                 if (!needFullCommit || canFastCommitNew) {
@@ -2655,15 +2655,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return index;
     }
 
-    private boolean applyFromWalLagToLastPartitionPossible(long commitToTimestamp, long lagRowCount, boolean lagOrdered, long committedMaxTimestamp, long lagMinTimestamp, long lagMaxTimestamp) {
-        return !isDeduplicationEnabled()
-                && lagRowCount > 0
-                && lagOrdered
-                && committedMaxTimestamp <= lagMinTimestamp
-                && txWriter.getPartitionTimestampByTimestamp(lagMinTimestamp) == lastPartitionTimestamp
-                && lagMaxTimestamp <= Math.min(commitToTimestamp, partitionTimestampHi);
-    }
-
     private long applyFromWalLagToLastPartition(long commitToTimestamp, boolean allowPartial) {
         long lagMinTimestamp = txWriter.getLagMinTimestamp();
         if (!isDeduplicationEnabled()
@@ -2726,6 +2717,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
         return Long.MIN_VALUE;
+    }
+
+    private boolean applyFromWalLagToLastPartitionPossible(long commitToTimestamp, long lagRowCount, boolean lagOrdered, long committedMaxTimestamp, long lagMinTimestamp, long lagMaxTimestamp) {
+        return !isDeduplicationEnabled()
+                && lagRowCount > 0
+                && lagOrdered
+                && committedMaxTimestamp <= lagMinTimestamp
+                && txWriter.getPartitionTimestampByTimestamp(lagMinTimestamp) == lastPartitionTimestamp
+                && lagMaxTimestamp <= Math.min(commitToTimestamp, partitionTimestampHi);
     }
 
     private void applyLagToLastPartition(long maxTimestamp, int lagRowCount, long lagMinTimestamp) {
