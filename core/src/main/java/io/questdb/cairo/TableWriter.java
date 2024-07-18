@@ -1896,7 +1896,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     copiedToMemory = true;
                 } else {
                     // Wal column can are lazily mapped to improve performance. It works ok, except in this case
-                    // where access getAddress() calls be concurrent. Map the eagerly now.
+                    // where access getAddress() calls be concurrent. Map them eagerly now.
                     mmapWalColsEager();
 
                     timestampAddr = walTimestampColumn.addressOf(0);

@@ -120,7 +120,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
         }
         checkMissingWalTransactions();
         lastProcessedCount = unpublishedWalTxnCount;
-        return true;
+        return !notificationQueueIsFull;
     }
 
     private boolean checkSequencerTrackers() {
