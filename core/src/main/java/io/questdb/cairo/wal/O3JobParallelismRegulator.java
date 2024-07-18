@@ -24,14 +24,14 @@
 
 package io.questdb.cairo.wal;
 
-public interface O3InflightPartitionRegulator {
-    O3InflightPartitionRegulator EMPTY = new EmptyO3InflightPartitionRegulator();
+public interface O3JobParallelismRegulator {
+    O3JobParallelismRegulator EMPTY = new EmptyO3JobParallelismRegulator();
 
     int getMaxO3MergeParallelism();
 
     void updateInflightPartitions(int count);
 
-    class EmptyO3InflightPartitionRegulator implements O3InflightPartitionRegulator {
+    class EmptyO3JobParallelismRegulator implements O3JobParallelismRegulator {
 
         @Override
         public int getMaxO3MergeParallelism() {

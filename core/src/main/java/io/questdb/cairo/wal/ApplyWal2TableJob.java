@@ -225,7 +225,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             OperationExecutor operationExecutor,
             Path tempPath,
             RunStatus runStatus,
-            O3InflightPartitionRegulator regulator
+            O3JobParallelismRegulator regulator
     ) {
         final TableSequencerAPI tableSequencerAPI = engine.getTableSequencerAPI();
         boolean isTerminating;
@@ -401,6 +401,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         if (throwable instanceof CairoException) {
             CairoException cairoException = (CairoException) throwable;
             if (cairoException.isOutOfMemory()) {
+                if (txnTracker != null && txnTracker.onOutOfMemory(MicrosecondClockImpl.INSTANCE.getTicks())) {
+                    engine.notifyWalTxnRepublisher(tableToken);
+                    return;
+                }
                 errorTag = OUT_OF_MEMORY;
             } else {
                 errorTag = resolveTag(cairoException.getErrno());
@@ -409,11 +413,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         } else {
             errorTag = ErrorTag.NONE;
             errorMessage = throwable.getMessage();
-        }
-
-        if (errorTag == OUT_OF_MEMORY && txnTracker != null && txnTracker.onOutOfMemory(MicrosecondClockImpl.INSTANCE.getTicks())) {
-            engine.notifyWalTxnRepublisher(tableToken);
-            return;
         }
 
         try {
@@ -441,7 +440,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             OperationExecutor operationExecutor,
             long seqTxn,
             long commitTimestamp,
-            O3InflightPartitionRegulator regulator
+            O3JobParallelismRegulator regulator
     ) {
         try (WalEventReader eventReader = walEventReader) {
             final WalEventCursor walEventCursor = eventReader.of(walPath, WAL_FORMAT_VERSION, segmentTxn);
