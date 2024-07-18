@@ -161,10 +161,9 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
 
     private void setSize0(long newSize) {
         try {
-            if (size > 0) {
+            if (size > 0 && pageAddress != 0) {
                 pageAddress = TableUtils.mremap(ff, fd, pageAddress, size, newSize, mapFileOffset, Files.MAP_RO, memoryTag);
             } else {
-                assert pageAddress == 0;
                 pageAddress = TableUtils.mapRO(ff, fd, newSize, mapFileOffset, memoryTag);
             }
             size = newSize;
