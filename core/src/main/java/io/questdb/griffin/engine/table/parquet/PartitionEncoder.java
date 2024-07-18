@@ -26,90 +26,23 @@ package io.questdb.griffin.engine.table.parquet;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.vm.api.MemoryR;
-import io.questdb.std.*;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
 
 public class PartitionEncoder {
+    public static int COMPRESSION_BROTLI = 4;
+    public static int COMPRESSION_GZIP = 2;
+    public static int COMPRESSION_LZ4 = 5;
+    public static int COMPRESSION_LZ4_RAW = 7;
+    public static int COMPRESSION_LZO = 3;
+    public static int COMPRESSION_SNAPPY = 1;
+    public static int COMPRESSION_UNCOMPRESSED = 0;
+    public static int COMPRESSION_ZSTD = 6;
     public static int PARQUET_VERSION_V1 = 1;
     public static int PARQUET_VERSION_V2 = 2;
-    public static int COMPRESSION_UNCOMPRESSED = 0;
-    public static int COMPRESSION_SNAPPY = 1;
-    public static int COMPRESSION_GZIP = 2;
-    public static int COMPRESSION_LZO = 3;
-    public static int COMPRESSION_BROTLI = 4;
-    public static int COMPRESSION_LZ4 = 5;
-    public static int COMPRESSION_ZSTD = 6;
-    public static int COMPRESSION_LZ4_RAW = 7;
-
-    public static void populateFromTableReader(TableReader tableReader, PartitionDescriptor descriptor, int partitionIndex) {
-        final long partitionSize = tableReader.openPartition(partitionIndex);
-        assert partitionSize != 0;
-        final int timestampIndex = tableReader.getMetadata().getTimestampIndex();
-        descriptor.of(tableReader.getTableToken().getTableName(), partitionSize, timestampIndex, false);
-
-        final TableReaderMetadata metadata = tableReader.getMetadata();
-        final int columnCount = metadata.getColumnCount();
-        final int columnBase = tableReader.getColumnBase(partitionIndex);
-        for (int i = 0; i < columnCount; i++) {
-            final String columnName = metadata.getColumnName(i);
-            final int columnType = metadata.getColumnType(i);
-            if (columnType > 0) {
-                final int columnId = metadata.getColumnMetadata(i).getWriterIndex();
-                final long colTop = Math.min(tableReader.getColumnTop(columnBase, i), partitionSize);
-
-                final int primaryIndex = TableReader.getPrimaryColumnIndex(columnBase, i);
-                final MemoryR primaryMem = tableReader.getColumn(primaryIndex);
-
-                if (ColumnType.isSymbol(columnType)) {
-                    SymbolMapReader symbolMapReader = tableReader.getSymbolMapReader(i);
-                    final MemoryR symbolValuesMem = symbolMapReader.getSymbolValuesColumn();
-                    final MemoryR symbolOffsetsMem = symbolMapReader.getSymbolOffsetsColumn();
-                    descriptor.addColumn(
-                        columnName,
-                        columnType,
-                        columnId,
-                        colTop,
-                        primaryMem.addressOf(0),
-                        primaryMem.size(),
-                        symbolValuesMem.addressOf(0),
-                        symbolValuesMem.size(),
-                        symbolOffsetsMem.addressOf(HEADER_SIZE),
-                        symbolMapReader.getSymbolCount()
-                    );
-                } else if (ColumnType.isVarSize(columnType)) {
-                    final MemoryR secondaryMem = tableReader.getColumn(primaryIndex + 1);
-                    descriptor.addColumn(
-                        columnName,
-                        columnType,
-                        columnId,
-                        colTop,
-                        primaryMem.addressOf(0),
-                        primaryMem.size(),
-                        secondaryMem.addressOf(0),
-                        secondaryMem.size(),
-                        0,
-                        0
-                    );
-                } else {
-                    descriptor.addColumn(
-                        columnName,
-                        columnType,
-                        columnId,
-                        colTop,
-                        primaryMem.addressOf(0),
-                        primaryMem.size(),
-                        0,
-                        0,
-                        0,
-                        0
-                    );
-                }
-            }
-        }
-    }
 
     public static void encode(PartitionDescriptor descriptor, Path destPath) {
         encodeWithOptions(
@@ -170,6 +103,73 @@ public class PartitionEncoder {
                     .put(']');
         } finally {
             descriptor.clear();
+        }
+    }
+
+    public static void populateFromTableReader(TableReader tableReader, PartitionDescriptor descriptor, int partitionIndex) {
+        final long partitionSize = tableReader.openPartition(partitionIndex);
+        assert partitionSize != 0;
+        final int timestampIndex = tableReader.getMetadata().getTimestampIndex();
+        descriptor.of(tableReader.getTableToken().getTableName(), partitionSize, timestampIndex, false);
+
+        final TableReaderMetadata metadata = tableReader.getMetadata();
+        final int columnCount = metadata.getColumnCount();
+        final int columnBase = tableReader.getColumnBase(partitionIndex);
+        for (int i = 0; i < columnCount; i++) {
+            final String columnName = metadata.getColumnName(i);
+            final int columnType = metadata.getColumnType(i);
+            if (columnType > 0) {
+                final int columnId = metadata.getColumnMetadata(i).getWriterIndex();
+                final long colTop = Math.min(tableReader.getColumnTop(columnBase, i), partitionSize);
+
+                final int primaryIndex = TableReader.getPrimaryColumnIndex(columnBase, i);
+                final MemoryR primaryMem = tableReader.getColumn(primaryIndex);
+
+                if (ColumnType.isSymbol(columnType)) {
+                    SymbolMapReader symbolMapReader = tableReader.getSymbolMapReader(i);
+                    final MemoryR symbolValuesMem = symbolMapReader.getSymbolValuesColumn();
+                    final MemoryR symbolOffsetsMem = symbolMapReader.getSymbolOffsetsColumn();
+                    descriptor.addColumn(
+                            columnName,
+                            columnType,
+                            columnId,
+                            colTop,
+                            primaryMem.addressOf(0),
+                            primaryMem.size(),
+                            symbolValuesMem.addressOf(0),
+                            symbolValuesMem.size(),
+                            symbolOffsetsMem.addressOf(HEADER_SIZE),
+                            symbolMapReader.getSymbolCount()
+                    );
+                } else if (ColumnType.isVarSize(columnType)) {
+                    final MemoryR secondaryMem = tableReader.getColumn(primaryIndex + 1);
+                    descriptor.addColumn(
+                            columnName,
+                            columnType,
+                            columnId,
+                            colTop,
+                            primaryMem.addressOf(0),
+                            primaryMem.size(),
+                            secondaryMem.addressOf(0),
+                            secondaryMem.size(),
+                            0,
+                            0
+                    );
+                } else {
+                    descriptor.addColumn(
+                            columnName,
+                            columnType,
+                            columnId,
+                            colTop,
+                            primaryMem.addressOf(0),
+                            primaryMem.size(),
+                            0,
+                            0,
+                            0,
+                            0
+                    );
+                }
+            }
         }
     }
 

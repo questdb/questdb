@@ -62,11 +62,11 @@ import java.nio.ByteOrder;
 import java.util.List;
 
 public class ParquetTest extends AbstractTest {
-    private final static Log LOG = LogFactory.getLog(ParquetTest.class);
-    private final static int NUMERIC_MIN = -10;
-    private final static int NUMERIC_MAX = 10;
-    private final static long ROW_GROUP_SIZE = 64;
     private final static long DATA_PAGE_SIZE = 128; // bytes
+    private final static Log LOG = LogFactory.getLog(ParquetTest.class);
+    private final static int NUMERIC_MAX = 10;
+    private final static int NUMERIC_MIN = -10;
+    private final static long ROW_GROUP_SIZE = 64;
     private final static long INITIAL_ROWS = ROW_GROUP_SIZE * 2;
     private final static long UPDATE_ROWS = ROW_GROUP_SIZE * 4;
 
@@ -79,8 +79,8 @@ public class ParquetTest extends AbstractTest {
                 " rnd_byte() a_byte," +
                 " rnd_short() a_short," +
                 " rnd_char() a_char," +
-                " rnd_int("+ NUMERIC_MIN +", "+ NUMERIC_MAX +", 0) an_int," +
-                " rnd_long("+ NUMERIC_MIN +", "+ NUMERIC_MAX +", 0) a_long," +
+                " rnd_int(" + NUMERIC_MIN + ", " + NUMERIC_MAX + ", 0) an_int," +
+                " rnd_long(" + NUMERIC_MIN + ", " + NUMERIC_MAX + ", 0) a_long," +
                 " rnd_float() a_float," +
                 " rnd_double() a_double," +
                 " rnd_symbol('a','b','c') a_symbol," +
@@ -128,8 +128,8 @@ public class ParquetTest extends AbstractTest {
                     " a_string_top, a_bin_top, a_varchar_top, a_ip_top, a_uuid_top, a_long128_top, a_long256_top,\n" +
                     " a_date_top, a_ts_top, designated_ts) select\n" +
                     " " + INITIAL_ROWS + " + x," +
-                    " rnd_int("+ NUMERIC_MIN +", "+ NUMERIC_MAX +", 2)," +
-                    " rnd_long("+ NUMERIC_MIN +", "+ NUMERIC_MAX +", 2)," +
+                    " rnd_int(" + NUMERIC_MIN + ", " + NUMERIC_MAX + ", 2)," +
+                    " rnd_long(" + NUMERIC_MIN + ", " + NUMERIC_MAX + ", 2)," +
                     " rnd_float(2)," +
                     " rnd_double(2)," +
                     " rnd_symbol('a','b','c', null)," +
@@ -191,22 +191,6 @@ public class ParquetTest extends AbstractTest {
         }
     }
 
-    private static void assertPrimitiveValue(Object expected, Object value, Object nullValue) {
-        if (value == null) {
-            Assert.assertEquals(expected, nullValue);
-        } else {
-            Assert.assertEquals(expected, value);
-        }
-    }
-
-    private static void assertNullableString(Object expected, Object actual) {
-        if (expected == null) {
-            Assert.assertNull(actual);
-        } else {
-            Assert.assertEquals(expected.toString(), actual.toString());
-        }
-    }
-
     private static void assertBinary(BinarySequence expected, Object actual) {
         if (expected == null) {
             Assert.assertNull(actual);
@@ -219,12 +203,82 @@ public class ParquetTest extends AbstractTest {
         }
     }
 
-    private static void assertVarchar(Utf8Sequence expected, Object actual) {
+    private static void assertGeoHash(long expected, Object value) {
+        if (value == null) {
+            Assert.assertEquals(expected, -1L);
+            return;
+        }
+        if (value instanceof Integer) {
+            Assert.assertEquals(expected, ((Integer) value).longValue());
+        } else if (value instanceof Long) {
+            Assert.assertEquals(expected, (long) value);
+        } else {
+            Assert.fail("Unexpected type: " + value.getClass());
+        }
+    }
+
+    private static void assertLong128(long expectedLo, long expectedHi, Object value) {
+        if (value == null) {
+            Assert.assertEquals(expectedLo, Long.MIN_VALUE);
+            Assert.assertEquals(expectedHi, Long.MIN_VALUE);
+            return;
+        }
+        GenericData.Fixed long128 = (GenericData.Fixed) value;
+        ByteBuffer long128Buf = ByteBuffer.wrap(long128.bytes());
+        long128Buf.order(ByteOrder.LITTLE_ENDIAN);
+        Assert.assertEquals(expectedLo, long128Buf.getLong());
+        Assert.assertEquals(expectedHi, long128Buf.getLong());
+    }
+
+    private static void assertLong256(Long256 expectedLong256, Object value) {
+        if (value == null) {
+            Assert.assertTrue(Long256Impl.isNull(expectedLong256));
+            return;
+        }
+        GenericData.Fixed long256 = (GenericData.Fixed) value;
+        ByteBuffer long256Buf = ByteBuffer.wrap(long256.bytes());
+        long256Buf.order(ByteOrder.LITTLE_ENDIAN);
+        Assert.assertEquals(expectedLong256.getLong0(), long256Buf.getLong());
+        Assert.assertEquals(expectedLong256.getLong1(), long256Buf.getLong());
+        Assert.assertEquals(expectedLong256.getLong2(), long256Buf.getLong());
+        Assert.assertEquals(expectedLong256.getLong3(), long256Buf.getLong());
+    }
+
+    private static <T extends Comparable<T>> void assertMinMaxRange(List<ColumnChunkMetaData> chunks, int index, T min, T max) {
+        Statistics<T> statistics = chunks.get(index).getStatistics();
+        Assert.assertTrue(statistics.compareMinToValue(min) >= 0);
+        Assert.assertTrue(statistics.compareMaxToValue(max) <= 0);
+    }
+
+    private static void assertNullableString(Object expected, Object actual) {
         if (expected == null) {
             Assert.assertNull(actual);
         } else {
-            Assert.assertEquals(Utf8s.toString(expected), actual.toString());
+            Assert.assertEquals(expected.toString(), actual.toString());
         }
+    }
+
+    private static void assertPrimitiveValue(Object expected, Object value, Object nullValue) {
+        if (value == null) {
+            Assert.assertEquals(expected, nullValue);
+        } else {
+            Assert.assertEquals(expected, value);
+        }
+    }
+
+    private static void assertSchema(ColumnDescriptor descriptor, String expectedName, PrimitiveType.PrimitiveTypeName expectedType, int maxDefinitionLevel) {
+        Assert.assertEquals(descriptor.getPath()[0], expectedName);
+        Assert.assertEquals(descriptor.getPrimitiveType().getPrimitiveTypeName(), expectedType);
+        Assert.assertEquals(descriptor.getMaxRepetitionLevel(), 0);
+        Assert.assertEquals(descriptor.getMaxDefinitionLevel(), maxDefinitionLevel);
+    }
+
+    private static void assertSchemaNonNullable(ColumnDescriptor descriptor, String expectedName, PrimitiveType.PrimitiveTypeName expectedType) {
+        assertSchema(descriptor, expectedName, expectedType, 0);
+    }
+
+    private static void assertSchemaNullable(ColumnDescriptor descriptor, String expectedName, PrimitiveType.PrimitiveTypeName expectedType) {
+        assertSchema(descriptor, expectedName, expectedType, 1);
     }
 
     private static void assertUuid(StringSink sink, long expectedLo, long expectedHi, Object actual) {
@@ -239,44 +293,11 @@ public class ParquetTest extends AbstractTest {
         Assert.assertEquals(sink.toString(), actual.toString());
     }
 
-    private static void assertLong256(Long256 expectedLong256, Object value) {
-        if (value == null) {
-            Assert.assertTrue(Long256Impl.isNull(expectedLong256));
-            return;
-        }
-        GenericData.Fixed long256 = (GenericData.Fixed) value;
-        ByteBuffer long256Buf = ByteBuffer.wrap(long256.bytes());
-        long256Buf.order(ByteOrder.LITTLE_ENDIAN);
-        Assert.assertEquals(expectedLong256.getLong0(),  long256Buf.getLong());
-        Assert.assertEquals(expectedLong256.getLong1(),  long256Buf.getLong());
-        Assert.assertEquals(expectedLong256.getLong2(),  long256Buf.getLong());
-        Assert.assertEquals(expectedLong256.getLong3(),  long256Buf.getLong());
-    }
-
-    private static void assertLong128(long expectedLo, long expectedHi, Object value) {
-        if (value == null) {
-            Assert.assertEquals(expectedLo, Long.MIN_VALUE);
-            Assert.assertEquals(expectedHi, Long.MIN_VALUE);
-            return;
-        }
-        GenericData.Fixed long128 = (GenericData.Fixed) value;
-        ByteBuffer long128Buf = ByteBuffer.wrap(long128.bytes());
-        long128Buf.order(ByteOrder.LITTLE_ENDIAN);
-        Assert.assertEquals(expectedLo,  long128Buf.getLong());
-        Assert.assertEquals(expectedHi,  long128Buf.getLong());
-    }
-
-    private static void assertGeoHash(long expected, Object value) {
-        if (value == null) {
-            Assert.assertEquals(expected, -1L);
-            return;
-        }
-        if (value instanceof Integer) {
-            Assert.assertEquals(expected, ((Integer) value).longValue());
-        } else if (value instanceof Long) {
-            Assert.assertEquals(expected, (long) value);
+    private static void assertVarchar(Utf8Sequence expected, Object actual) {
+        if (expected == null) {
+            Assert.assertNull(actual);
         } else {
-            Assert.fail("Unexpected type: " + value.getClass());
+            Assert.assertEquals(Utf8s.toString(expected), actual.toString());
         }
     }
 
@@ -296,9 +317,9 @@ public class ParquetTest extends AbstractTest {
                 Assert.assertEquals(tableReaderRecord.getLong(0), nextParquetRecord.get("id"));
                 Assert.assertEquals(++actualRows, nextParquetRecord.get("id"));
                 Assert.assertEquals(tableReaderRecord.getBool(1), nextParquetRecord.get("a_boolean"));
-                Assert.assertEquals((int)tableReaderRecord.getByte(2), nextParquetRecord.get("a_byte"));
-                Assert.assertEquals((int)tableReaderRecord.getShort(3), nextParquetRecord.get("a_short"));
-                Assert.assertEquals((int)tableReaderRecord.getChar(4), nextParquetRecord.get("a_char"));
+                Assert.assertEquals((int) tableReaderRecord.getByte(2), nextParquetRecord.get("a_byte"));
+                Assert.assertEquals((int) tableReaderRecord.getShort(3), nextParquetRecord.get("a_short"));
+                Assert.assertEquals((int) tableReaderRecord.getChar(4), nextParquetRecord.get("a_char"));
 
                 assertPrimitiveValue(tableReaderRecord.getInt(5), nextParquetRecord.get("an_int"), Integer.MIN_VALUE);
                 assertPrimitiveValue(tableReaderRecord.getLong(6), nextParquetRecord.get("a_long"), Long.MIN_VALUE);
@@ -351,27 +372,6 @@ public class ParquetTest extends AbstractTest {
             }
             Assert.assertEquals(rows, actualRows);
         }
-    }
-
-    private static void assertSchema(ColumnDescriptor descriptor, String expectedName, PrimitiveType.PrimitiveTypeName expectedType, int maxDefinitionLevel) {
-        Assert.assertEquals(descriptor.getPath()[0], expectedName);
-        Assert.assertEquals(descriptor.getPrimitiveType().getPrimitiveTypeName(), expectedType);
-        Assert.assertEquals(descriptor.getMaxRepetitionLevel(), 0);
-        Assert.assertEquals(descriptor.getMaxDefinitionLevel(), maxDefinitionLevel);
-    }
-
-    private static void assertSchemaNullable(ColumnDescriptor descriptor, String expectedName, PrimitiveType.PrimitiveTypeName expectedType) {
-        assertSchema(descriptor, expectedName, expectedType, 1);
-    }
-
-    private static void assertSchemaNonNullable(ColumnDescriptor descriptor, String expectedName, PrimitiveType.PrimitiveTypeName expectedType) {
-        assertSchema(descriptor, expectedName, expectedType, 0);
-    }
-
-    private static <T extends Comparable<T>> void assertMinMaxRange(List<ColumnChunkMetaData> chunks, int index, T min, T max) {
-        Statistics<T> statistics = chunks.get(index).getStatistics();
-        Assert.assertTrue(statistics.compareMinToValue(min) >= 0);
-        Assert.assertTrue(statistics.compareMaxToValue(max) <= 0);
     }
 
     private void validateParquetMetadata(InputFile inputFile, long rows) throws IOException {
@@ -431,7 +431,7 @@ public class ParquetTest extends AbstractTest {
             long rowCount = 0;
             List<BlockMetaData> rowGroups = metadata.getBlocks();
             for (int i = 0; i < rowGroups.size(); i++) {
-               BlockMetaData blockMetaData = rowGroups.get(i);
+                BlockMetaData blockMetaData = rowGroups.get(i);
                 long blockRowCount = blockMetaData.getRowCount();
                 if (i == rowGroups.size() - 1) {
                     Assert.assertTrue(blockRowCount <= ROW_GROUP_SIZE);
@@ -443,7 +443,7 @@ public class ParquetTest extends AbstractTest {
                 // an_int
                 assertMinMaxRange(chunks, 5, NUMERIC_MIN, NUMERIC_MAX);
                 // a_long
-                assertMinMaxRange(chunks, 6, (long)NUMERIC_MIN, (long)NUMERIC_MAX);
+                assertMinMaxRange(chunks, 6, (long) NUMERIC_MIN, (long) NUMERIC_MAX);
                 // a_float
                 assertMinMaxRange(chunks, 7, 0.0f, 1.0f);
                 // a_double
@@ -451,7 +451,7 @@ public class ParquetTest extends AbstractTest {
                 // an_int_top
                 assertMinMaxRange(chunks, 24, NUMERIC_MIN, NUMERIC_MAX);
                 // a_long_top
-                assertMinMaxRange(chunks, 25, (long)NUMERIC_MIN, (long)NUMERIC_MAX);
+                assertMinMaxRange(chunks, 25, (long) NUMERIC_MIN, (long) NUMERIC_MAX);
                 // a_float_top
                 assertMinMaxRange(chunks, 26, 0.0f, 1.0f);
                 // a_double_top

@@ -24,11 +24,14 @@
 
 package io.questdb.test.sqllogictest.parquet;
 
-import io.questdb.std.*;
-import io.questdb.std.str.Utf8s;
-import io.questdb.test.Sqllogictest;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
+import io.questdb.test.Sqllogictest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;

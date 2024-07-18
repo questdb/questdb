@@ -37,16 +37,24 @@ import org.junit.Test;
 public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
     @Test
-    public void testConvertListZeroSizeVarcharData() throws Exception {
+    public void testConvertAllPartitions() throws Exception {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
-                ddl("create table x as (select" +
-                    " case when x % 2 = 0 then rnd_varchar(1, 40, 1) end as a_varchar," +
-                    " to_timestamp('2024-07', 'yyyy-MM') as a_ts," +
-                    " from long_sequence(1)) timestamp (a_ts) partition by MONTH");
+                    final String tableName = testName.getMethodName();
+                    createTable(tableName,
+                            "insert into " + tableName + " values(1, '2024-06-10T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(2, '2024-06-11T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(3, '2024-06-12T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(4, '2024-06-12T00:00:01.000000Z')",
+                            "insert into " + tableName + " values(5, '2024-06-15T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(6, '2024-06-12T00:00:02.000000Z')");
 
-                ddl("alter table x convert partition to parquet where a_ts > 0");
-                assertPartitionExists("x", "2024-07");
-            }
+                    ddl("alter table " + tableName + " convert partition to parquet where timestamp > 0");
+
+                    assertPartitionExists(tableName, "2024-06-10");
+                    assertPartitionExists(tableName, "2024-06-11.0");
+                    assertPartitionExists(tableName, "2024-06-12.1");
+                    assertPartitionExists(tableName, "2024-06-15.3");
+                }
         );
     }
 
@@ -73,59 +81,16 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testConvertTimestampPartitions() throws Exception {
+    public void testConvertListZeroSizeVarcharData() throws Exception {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
-                    final String tableName = testName.getMethodName();
-                    createTable(tableName,
-                            "insert into " + tableName + " values(1, '2024-06-10T00:00:00.000000Z')",
-                            "insert into " + tableName + " values(2, '2024-06-11T00:00:00.000000Z')",
-                            "insert into " + tableName + " values(3, '2024-06-12T00:00:00.000000Z')",
-                            "insert into " + tableName + " values(4, '2024-06-12T00:00:01.000000Z')",
-                            "insert into " + tableName + " values(5, '2024-06-15T00:00:00.000000Z')",
-                            "insert into " + tableName + " values(6, '2024-06-12T00:00:02.000000Z')");
+                    ddl("create table x as (select" +
+                            " case when x % 2 = 0 then rnd_varchar(1, 40, 1) end as a_varchar," +
+                            " to_timestamp('2024-07', 'yyyy-MM') as a_ts," +
+                            " from long_sequence(1)) timestamp (a_ts) partition by MONTH");
 
-                    assertQuery("index\tname\treadOnly\tisParquet\tparquetFileSize\n" +
-                            "0\t2024-06-10\tfalse\tfalse\t-1\n" +
-                            "1\t2024-06-11\tfalse\tfalse\t-1\n" +
-                            "2\t2024-06-12\tfalse\tfalse\t-1\n" +
-                            "3\t2024-06-15\tfalse\tfalse\t-1\n",
-                            "select index, name, readOnly, isParquet, parquetFileSize from table_partitions('" + tableName + "')",
-                            false, true);
-                    ddl("alter table " + tableName + " convert partition to parquet where timestamp = to_timestamp('2024-06-12', 'yyyy-MM-dd')");
-                    assertQuery("index\tname\treadOnly\tisParquet\tparquetFileSize\n" +
-                                    "0\t2024-06-10\tfalse\tfalse\t-1\n" +
-                                    "1\t2024-06-11\tfalse\tfalse\t-1\n" +
-                                    "2\t2024-06-12\ttrue\ttrue\t554\n" +
-                                    "3\t2024-06-15\tfalse\tfalse\t-1\n",
-                            "select index, name, readOnly, isParquet, parquetFileSize from table_partitions('" + tableName + "')",
-                            false, true);
-
-                    assertPartitionDoesntExists(tableName, "2024-06-10");
-                    assertPartitionDoesntExists(tableName, "2024-06-11.0");
-                    assertPartitionExists(tableName, "2024-06-12.1");
-                    assertPartitionDoesntExists(tableName, "2024-06-15.3");
+                    ddl("alter table x convert partition to parquet where a_ts > 0");
+                    assertPartitionExists("x", "2024-07");
                 }
-        );
-    }
-    @Test
-    public void testConvertAllPartitions() throws Exception {
-        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
-                final String tableName = testName.getMethodName();
-                createTable(tableName,
-                    "insert into " + tableName + " values(1, '2024-06-10T00:00:00.000000Z')",
-                    "insert into " + tableName + " values(2, '2024-06-11T00:00:00.000000Z')",
-                    "insert into " + tableName + " values(3, '2024-06-12T00:00:00.000000Z')",
-                    "insert into " + tableName + " values(4, '2024-06-12T00:00:01.000000Z')",
-                    "insert into " + tableName + " values(5, '2024-06-15T00:00:00.000000Z')",
-                    "insert into " + tableName + " values(6, '2024-06-12T00:00:02.000000Z')");
-
-                ddl("alter table " + tableName + " convert partition to parquet where timestamp > 0");
-
-                assertPartitionExists(tableName, "2024-06-10");
-                assertPartitionExists(tableName, "2024-06-11.0");
-                assertPartitionExists(tableName, "2024-06-12.1");
-                assertPartitionExists(tableName, "2024-06-15.3");
-            }
         );
     }
 
@@ -224,12 +189,48 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
         });
     }
 
-    private void assertPartitionExists(String tableName, String partition) {
-       assertPartitionExists0(tableName, false, partition);
+    @Test
+    public void testConvertTimestampPartitions() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+                    final String tableName = testName.getMethodName();
+                    createTable(tableName,
+                            "insert into " + tableName + " values(1, '2024-06-10T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(2, '2024-06-11T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(3, '2024-06-12T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(4, '2024-06-12T00:00:01.000000Z')",
+                            "insert into " + tableName + " values(5, '2024-06-15T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(6, '2024-06-12T00:00:02.000000Z')");
+
+                    assertQuery("index\tname\treadOnly\tisParquet\tparquetFileSize\n" +
+                                    "0\t2024-06-10\tfalse\tfalse\t-1\n" +
+                                    "1\t2024-06-11\tfalse\tfalse\t-1\n" +
+                                    "2\t2024-06-12\tfalse\tfalse\t-1\n" +
+                                    "3\t2024-06-15\tfalse\tfalse\t-1\n",
+                            "select index, name, readOnly, isParquet, parquetFileSize from table_partitions('" + tableName + "')",
+                            false, true);
+                    ddl("alter table " + tableName + " convert partition to parquet where timestamp = to_timestamp('2024-06-12', 'yyyy-MM-dd')");
+                    assertQuery("index\tname\treadOnly\tisParquet\tparquetFileSize\n" +
+                                    "0\t2024-06-10\tfalse\tfalse\t-1\n" +
+                                    "1\t2024-06-11\tfalse\tfalse\t-1\n" +
+                                    "2\t2024-06-12\ttrue\ttrue\t554\n" +
+                                    "3\t2024-06-15\tfalse\tfalse\t-1\n",
+                            "select index, name, readOnly, isParquet, parquetFileSize from table_partitions('" + tableName + "')",
+                            false, true);
+
+                    assertPartitionDoesntExists(tableName, "2024-06-10");
+                    assertPartitionDoesntExists(tableName, "2024-06-11.0");
+                    assertPartitionExists(tableName, "2024-06-12.1");
+                    assertPartitionDoesntExists(tableName, "2024-06-15.3");
+                }
+        );
     }
 
     private void assertPartitionDoesntExists(String tableName, String partition) {
         assertPartitionExists0(tableName, true, partition);
+    }
+
+    private void assertPartitionExists(String tableName, String partition) {
+        assertPartitionExists0(tableName, false, partition);
     }
 
     private void assertPartitionExists0(String tableName, boolean rev, String partition) {

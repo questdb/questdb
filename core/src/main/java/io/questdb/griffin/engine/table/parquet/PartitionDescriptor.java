@@ -30,93 +30,21 @@ import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8Sequence;
 
 public class PartitionDescriptor implements QuietCloseable {
-    private boolean memoryOwner;
-    private DirectUtf8Sink tableName = new DirectUtf8Sink(16);
-    private DirectUtf8Sink columnNames = new DirectUtf8Sink(32);
-    private DirectIntList columnNameLengths = new DirectIntList(16, MemoryTag.NATIVE_DEFAULT);
-    private DirectIntList columnIds = new DirectIntList(16, MemoryTag.NATIVE_DEFAULT);
-    private DirectLongList columnTops = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
-    private DirectIntList columnTypes = new DirectIntList(16, MemoryTag.NATIVE_DEFAULT);
-
     private DirectLongList columnAddrs = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
-    private DirectLongList columnSizes = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
+    private DirectIntList columnIds = new DirectIntList(16, MemoryTag.NATIVE_DEFAULT);
+    private DirectIntList columnNameLengths = new DirectIntList(16, MemoryTag.NATIVE_DEFAULT);
+    private DirectUtf8Sink columnNames = new DirectUtf8Sink(32);
     private DirectLongList columnSecondaryAddrs = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
     private DirectLongList columnSecondarySizes = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
+    private DirectLongList columnSizes = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
+    private DirectLongList columnTops = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
+    private DirectIntList columnTypes = new DirectIntList(16, MemoryTag.NATIVE_DEFAULT);
+    private boolean memoryOwner;
+    private long partitionRowCount;
     private DirectLongList symbolOffsetsAddrs = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
     private DirectLongList symbolOffsetsSizes = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
-
-    private long partitionRowCount;
+    private DirectUtf8Sink tableName = new DirectUtf8Sink(16);
     private int timestampIndex = -1;
-
-    @Override
-    public void close() {
-        clear();
-        tableName = Misc.free(tableName);
-        columnNames = Misc.free(columnNames);
-        columnNameLengths = Misc.free(columnNameLengths);
-        columnTypes = Misc.free(columnTypes);
-        columnIds = Misc.free(columnIds);
-        columnTops = Misc.free(columnTops);
-        columnAddrs = Misc.free(columnAddrs);
-        columnSizes = Misc.free(columnSizes);
-        columnSecondaryAddrs = Misc.free(columnSecondaryAddrs);
-        columnSecondarySizes = Misc.free(columnSecondarySizes);
-        symbolOffsetsAddrs = Misc.free(symbolOffsetsAddrs);
-        symbolOffsetsSizes = Misc.free(symbolOffsetsSizes);
-    }
-
-    public PartitionDescriptor of(final CharSequence tableName, long partitionRowCount, int timestampIndex, boolean memoryOwner) {
-        this.clear();
-        this.tableName.put(tableName);
-        this.memoryOwner = memoryOwner;
-        this.partitionRowCount = partitionRowCount;
-        this.timestampIndex = timestampIndex;
-        return this;
-    }
-
-    public Utf8Sequence getTableName() {
-        return tableName;
-    }
-
-    public int getColumnCount() {
-        return (int) columnAddrs.size();
-    }
-
-    public long getPartitionRowCount() {
-        return partitionRowCount;
-    }
-
-    public int getTimestampIndex() {
-        return timestampIndex;
-    }
-
-    public void clear() {
-        if (memoryOwner) {
-            for (long i = 0, n = columnAddrs.size(); i < n; i++) {
-                Files.munmap(columnAddrs.get(i), columnSizes.get(i), MemoryTag.MMAP_PARTITION_CONVERTER);
-            }
-            for (long i = 0, n = columnSecondaryAddrs.size(); i < n; i++) {
-                Files.munmap(columnSecondaryAddrs.get(i), columnSecondarySizes.get(i), MemoryTag.MMAP_PARTITION_CONVERTER);
-            }
-            for (long i = 0, n = symbolOffsetsAddrs.size(); i < n; i++) {
-                final long offsetsMemSize = SymbolMapWriter.keyToOffset((int)symbolOffsetsSizes.get(i) + 1);
-                Files.munmap(symbolOffsetsAddrs.get(i) - SymbolMapWriter.HEADER_SIZE, offsetsMemSize, MemoryTag.MMAP_PARTITION_CONVERTER);
-            }
-        }
-
-        tableName.clear();
-        columnNames.clear();
-        columnNameLengths.clear();
-        columnIds.clear();
-        columnTops.clear();
-        columnTypes.clear();
-        columnAddrs.clear();
-        columnSizes.clear();
-        columnSecondaryAddrs.clear();
-        columnSecondarySizes.clear();
-        symbolOffsetsAddrs.clear();
-        symbolOffsetsSizes.clear();
-    }
 
     public void addColumn(
             final CharSequence columnName,
@@ -144,36 +72,73 @@ public class PartitionDescriptor implements QuietCloseable {
         symbolOffsetsSizes.add(symbolOffsetsSize);
     }
 
-    public long getColumnNamesPtr() {
-        return columnNames.ptr();
+    public void clear() {
+        if (memoryOwner) {
+            for (long i = 0, n = columnAddrs.size(); i < n; i++) {
+                Files.munmap(columnAddrs.get(i), columnSizes.get(i), MemoryTag.MMAP_PARTITION_CONVERTER);
+            }
+            for (long i = 0, n = columnSecondaryAddrs.size(); i < n; i++) {
+                Files.munmap(columnSecondaryAddrs.get(i), columnSecondarySizes.get(i), MemoryTag.MMAP_PARTITION_CONVERTER);
+            }
+            for (long i = 0, n = symbolOffsetsAddrs.size(); i < n; i++) {
+                final long offsetsMemSize = SymbolMapWriter.keyToOffset((int) symbolOffsetsSizes.get(i) + 1);
+                Files.munmap(symbolOffsetsAddrs.get(i) - SymbolMapWriter.HEADER_SIZE, offsetsMemSize, MemoryTag.MMAP_PARTITION_CONVERTER);
+            }
+        }
+
+        tableName.clear();
+        columnNames.clear();
+        columnNameLengths.clear();
+        columnIds.clear();
+        columnTops.clear();
+        columnTypes.clear();
+        columnAddrs.clear();
+        columnSizes.clear();
+        columnSecondaryAddrs.clear();
+        columnSecondarySizes.clear();
+        symbolOffsetsAddrs.clear();
+        symbolOffsetsSizes.clear();
     }
 
-    public int getColumnNamesSize() {
-        return columnNames.size();
-    }
-
-    public long getColumnNameLengthsPtr() {
-        return columnNameLengths.getAddress();
-    }
-
-    public long getColumnTypesPtr() {
-        return columnTypes.getAddress();
-    }
-
-    public long getColumnIdsPtr() {
-        return columnIds.getAddress();
-    }
-
-    public  long getColumnTopsPtr() {
-        return columnTops.getAddress();
+    @Override
+    public void close() {
+        clear();
+        tableName = Misc.free(tableName);
+        columnNames = Misc.free(columnNames);
+        columnNameLengths = Misc.free(columnNameLengths);
+        columnTypes = Misc.free(columnTypes);
+        columnIds = Misc.free(columnIds);
+        columnTops = Misc.free(columnTops);
+        columnAddrs = Misc.free(columnAddrs);
+        columnSizes = Misc.free(columnSizes);
+        columnSecondaryAddrs = Misc.free(columnSecondaryAddrs);
+        columnSecondarySizes = Misc.free(columnSecondarySizes);
+        symbolOffsetsAddrs = Misc.free(symbolOffsetsAddrs);
+        symbolOffsetsSizes = Misc.free(symbolOffsetsSizes);
     }
 
     public long getColumnAddressesPtr() {
         return columnAddrs.getAddress();
     }
 
-    public long getColumnSizesPtr() {
-        return columnSizes.getAddress();
+    public int getColumnCount() {
+        return (int) columnAddrs.size();
+    }
+
+    public long getColumnIdsPtr() {
+        return columnIds.getAddress();
+    }
+
+    public long getColumnNameLengthsPtr() {
+        return columnNameLengths.getAddress();
+    }
+
+    public long getColumnNamesPtr() {
+        return columnNames.ptr();
+    }
+
+    public int getColumnNamesSize() {
+        return columnNames.size();
     }
 
     public long getColumnSecondaryAddressesPtr() {
@@ -184,12 +149,45 @@ public class PartitionDescriptor implements QuietCloseable {
         return columnSecondarySizes.getAddress();
     }
 
+    public long getColumnSizesPtr() {
+        return columnSizes.getAddress();
+    }
+
+    public long getColumnTopsPtr() {
+        return columnTops.getAddress();
+    }
+
+    public long getColumnTypesPtr() {
+        return columnTypes.getAddress();
+    }
+
+    public long getPartitionRowCount() {
+        return partitionRowCount;
+    }
+
     public long getSymbolOffsetsAddressesPtr() {
         return symbolOffsetsAddrs.getAddress();
     }
 
     public long getSymbolOffsetsSizesPtr() {
         return symbolOffsetsSizes.getAddress();
+    }
+
+    public Utf8Sequence getTableName() {
+        return tableName;
+    }
+
+    public int getTimestampIndex() {
+        return timestampIndex;
+    }
+
+    public PartitionDescriptor of(final CharSequence tableName, long partitionRowCount, int timestampIndex, boolean memoryOwner) {
+        this.clear();
+        this.tableName.put(tableName);
+        this.memoryOwner = memoryOwner;
+        this.partitionRowCount = partitionRowCount;
+        this.timestampIndex = timestampIndex;
+        return this;
     }
 
 }
