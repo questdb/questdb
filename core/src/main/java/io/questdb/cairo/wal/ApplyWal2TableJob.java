@@ -567,7 +567,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         return;
                     }
                     applyOutstandingWalTransactions(tableToken, writer, engine, operationCompiler, tempPath, runStatus, txnTracker);
-                    txnTracker.hadEnoughMemory(MicrosecondClockImpl.INSTANCE.getTicks(), tableToken.getTableName());
+                    txnTracker.hadEnoughMemory(tableToken.getTableName());
                     lastWriterTxn = writer.getSeqTxn();
                 } catch (EntryUnavailableException tableBusy) {
                     //noinspection StringEquality

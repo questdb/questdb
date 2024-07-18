@@ -96,7 +96,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
             now += 1000;
             parallelism = txnTracker.getMaxO3MergeParallelism();
             txnTracker.updateInflightPartitions(parallelism);
-            txnTracker.hadEnoughMemory(now, "A");
+            txnTracker.hadEnoughMemory("A");
 
             // after a first successful O3 merge memory pressure level should be 1 - still reducing parallelism
             // but no longer applying backoff
@@ -106,7 +106,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
                 now += 1000;
                 parallelism = txnTracker.getMaxO3MergeParallelism();
                 txnTracker.updateInflightPartitions(parallelism);
-                txnTracker.hadEnoughMemory(now, "A");
+                txnTracker.hadEnoughMemory("A");
             } while (txnTracker.getMemoryPressureLevel() == 1);
 
             // eventually the memory pressure should be 0 - no memory pressure at all

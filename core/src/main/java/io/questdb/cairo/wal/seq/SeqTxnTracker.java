@@ -90,7 +90,7 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
         return writerTxn;
     }
 
-    public void hadEnoughMemory(long nowMicros, CharSequence tableName) {
+    public void hadEnoughMemory(CharSequence tableName) {
         maxRecordedInflightPartitions = 1;
         walBackoffUntil = -1;
         if (regulationValue == Integer.MAX_VALUE) {
