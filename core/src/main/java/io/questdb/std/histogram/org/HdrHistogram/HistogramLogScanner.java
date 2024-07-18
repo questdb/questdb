@@ -22,12 +22,10 @@
  *
  ******************************************************************************/
 
-/**
- * Written by Gil Tene of Azul Systems, and released to the public domain,
- * as explained at http://creativecommons.org/publicdomain/zero/1.0/
- *
- * @author Gil Tene
- */
+// Written by Gil Tene of Azul Systems, and released to the public domain,
+// as explained at http://creativecommons.org/publicdomain/zero/1.0/
+//
+// @author Gil Tene
 
 package io.questdb.std.histogram.org.HdrHistogram;
 
@@ -62,6 +60,7 @@ public class HistogramLogScanner implements Closeable {
     public HistogramLogScanner(final InputStream inputStream) {
         this(new Scanner(inputStream));
     }
+
     /**
      * Constructs a new HistogramLogReader that produces intervals read from the specified file.
      *

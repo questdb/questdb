@@ -2494,7 +2494,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "          functions: [created]\n" +
                             "            Async JIT Group By workers: 1\n" +
                             "              keys: [created]\n" +
-                            "              filter: created!=null\n" +
+                            "              filter: null!=created\n" +
                             "                DataFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: tab\n"
@@ -2536,7 +2536,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "          functions: [dateadd('h',1,created)]\n" +
                             "            Async JIT Group By workers: 1\n" +
                             "              keys: [created]\n" +
-                            "              filter: created!=null\n" +
+                            "              filter: null!=created\n" +
                             "                DataFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: tab\n"
@@ -2576,7 +2576,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "      keys: created\n" +
                             "        Async JIT Group By workers: 1\n" +
                             "          keys: [created]\n" +
-                            "          filter: created!=null\n" +
+                            "          filter: null!=created\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: tab\n"

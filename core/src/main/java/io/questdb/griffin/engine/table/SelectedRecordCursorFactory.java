@@ -185,6 +185,11 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
             this.baseFrame = basePageFrame;
             return this;
         }
+
+        @Override
+        public int getColumnCount() {
+            return columnCrossIndex.size();
+        }
     }
 
     private static class SelectedPageFrameCursor implements PageFrameCursor {

@@ -53,6 +53,7 @@ import io.questdb.griffin.engine.functions.lt.LtIPv4StrFunctionFactory;
 import io.questdb.griffin.engine.functions.lt.LtStrIPv4FunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndIPv4CCFunctionFactory;
+import io.questdb.griffin.engine.functions.rnd.RndSymbolListFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory;
 import io.questdb.griffin.engine.table.DataFrameRecordCursorFactory;
 import io.questdb.griffin.model.WindowColumn;
@@ -610,12 +611,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "count(dat) cdat, " +
                         "count(ts) cts " +
                         "from x",
-                "GroupBy vectorized: true workers: 1\n" +
-                        "  keys: [k]\n" +
-                        "  values: [count(*),count(*),count(i),count(l),count(d),count(dat),count(ts)]\n" +
-                        "    DataFrame\n" +
-                        "        Row forward scan\n" +
-                        "        Frame forward scan on: x\n"
+                "VirtualRecord\n" +
+                        "  functions: [k,c1,c1,ci,cl,cd,cdat,cts]\n" +
+                        "    GroupBy vectorized: true workers: 1\n" +
+                        "      keys: [k]\n" +
+                        "      values: [count(*),count(i),count(l),count(d),count(dat),count(ts)]\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: x\n"
         );
     }
 
@@ -2293,9 +2296,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                     FunctionFactoryDescriptor descriptor = value.get(i);
                     FunctionFactory factory = descriptor.getFactory();
-                    if (factory instanceof InUuidFunctionFactory) {
-                        System.out.println("ok");
-                    }
                     int sigArgCount = descriptor.getSigArgCount();
 
                     sink.clear();
@@ -2371,12 +2371,21 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     args.add(new FloatConstant(12f));
                                 } else if (factory instanceof ExtractFromTimestampFunctionFactory && sigArgType == ColumnType.STRING) {
                                     args.add(new StrConstant("day"));
+                                } else if (factory instanceof RndSymbolListFunctionFactory) {
+                                    args.add(new StrConstant("a"));
+                                    args.add(new StrConstant("b"));
+                                    args.add(new StrConstant("c"));
+                                    args.add(new StrConstant("d"));
                                 } else if (factory instanceof TimestampCeilFunctionFactory) {
                                     args.add(new StrConstant("d"));
                                 } else if (sigArgType == ColumnType.STRING && isArray) {
                                     args.add(new StringToStringArrayFunction(0, "{'test'}"));
                                 } else if (sigArgType == ColumnType.STRING && factory instanceof InTimestampStrFunctionFactory) {
                                     args.add(new StrConstant("2022-12-12"));
+                                } else if (factory instanceof EqTimestampCursorFunctionFactory) {
+                                    // 2nd arg for this function is a cursor, which is unclear how to test here
+                                    // additionally, this function has separate tests
+                                    continue FUNCTIONS;
                                 } else if (factory instanceof ToTimezoneTimestampFunctionFactory && p == 1) {
                                     args.add(new StrConstant("CET"));
                                 } else if (factory instanceof CastStrToRegClassFunctionFactory && useConst) {
@@ -2412,6 +2421,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 } else if (factory instanceof RndIPv4CCFunctionFactory) {
                                     args.add(new StrConstant("4.12.22.11/12"));
                                     args.add(new IntConstant(2));
+                                } else if (isEqSymTimestampFactory(factory)) {
+                                    continue FUNCTIONS;
                                 } else if (factory instanceof InUuidFunctionFactory && p == 1) {
                                     // this factory requires valid UUID string, otherwise it will fail
                                     args.add(new StrConstant("11111111-1111-1111-1111-111111111111"));
@@ -2604,8 +2615,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
             ddl("create table a (ts timestamp, d double)");
             assertException(
                     "select hour(d), min(d) from a",
-                    7,
-                    "unexpected argument for function: hour. expected args: (TIMESTAMP). actual args: (DOUBLE)"
+                    12,
+                    "argument type mismatch for function `hour` at #1 expected: TIMESTAMP, actual: DOUBLE"
             );
         });
     }
@@ -4633,8 +4644,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 "FROM tab as T1 " +
                                 joinType + " JOIN tab as T2 " + (i == 0 ? " ON T1.created=T2.created " : "") +
                                 "WHERE not T2.value<>T2.value",
-                        "GroupBy vectorized: false\n" +
-                                "  values: [count(*)]\n" +
+                        "Count\n" +
                                 "    Filter filter: T2.value=T2.value\n" +
                                 "        " + factoryType + "\n" +
                                 (i == 0 ? "          condition: T2.created=T1.created\n" : "") +
@@ -4652,8 +4662,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 "FROM tab as T1 " +
                                 joinType + " JOIN tab as T2 " + (i == 0 ? " ON T1.created=T2.created " : "") +
                                 "WHERE not T2.value=1",
-                        "GroupBy vectorized: false\n" +
-                                "  values: [count(*)]\n" +
+                        "Count\n" +
                                 "    Filter filter: T2.value!=1\n" +
                                 "        " + factoryType + "\n" +
                                 (i == 0 ? "          condition: T2.created=T1.created\n" : "") +
@@ -4672,8 +4681,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 "FROM tab as T1 " +
                                 joinType + " JOIN tab as T2 " + (i == 0 ? " ON T1.created=T2.created " : "") +
                                 "WHERE not T1.value=1",
-                        "GroupBy vectorized: false\n" +
-                                "  values: [count(*)]\n" +
+                        "Count\n" +
                                 "    " + factoryType + "\n" +
                                 (i == 0 ? "      condition: T2.created=T1.created\n" : "") +
                                 "        Async JIT Filter workers: 1\n" +
@@ -4696,8 +4704,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "LEFT JOIN tab as T2 ON T1.created=T2.created " +
                             "JOIN tab as T3 ON T2.created=T3.created " +
                             "WHERE T1.value=1",
-                    "GroupBy vectorized: false\n" +
-                            "  values: [count(*)]\n" +
+                    "Count\n" +
                             "    Hash Join Light\n" +
                             "      condition: T3.created=T2.created\n" +
                             "        Hash Outer Join Light\n" +
@@ -4723,8 +4730,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "LEFT JOIN tab as T2 ON T1.created=T2.created " +
                             "JOIN tab as T3 ON T2.created=T3.created " +
                             "WHERE T2.created=1",
-                    "GroupBy vectorized: false\n" +
-                            "  values: [count(*)]\n" +
+                    "Count\n" +
                             "    Hash Join Light\n" +
                             "      condition: T3.created=T2.created\n" +
                             "        Filter filter: T2.created=1\n" +
@@ -4749,8 +4755,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "LEFT JOIN tab as T2 ON T1.created=T2.created " +
                             "JOIN tab as T3 ON T2.created=T3.created " +
                             "WHERE T3.value=1",
-                    "GroupBy vectorized: false\n" +
-                            "  values: [count(*)]\n" +
+                    "Count\n" +
                             "    Hash Join Light\n" +
                             "      condition: T3.created=T2.created\n" +
                             "        Hash Outer Join Light\n" +
@@ -4778,8 +4783,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "FROM tab as T1 " +
                             "LEFT JOIN tab as T2 ON T1.created=T2.created ) e " +
                             "WHERE not value1<>value1",
-                    "GroupBy vectorized: false\n" +
-                            "  values: [count(*)]\n" +
+                    "Count\n" +
                             "    SelectedRecord\n" +
                             "        Filter filter: T2.value=T2.value\n" +
                             "            Hash Outer Join Light\n" +
@@ -4800,8 +4804,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "FROM tab as T1 " +
                             "LEFT JOIN tab as T2 ON T1.created=T2.created ) e " +
                             "WHERE not value<>value",
-                    "GroupBy vectorized: false\n" +
-                            "  values: [count(*)]\n" +
+                    "Count\n" +
                             "    SelectedRecord\n" +
                             "        Hash Outer Join Light\n" +
                             "          condition: T2.created=T1.created\n" +
@@ -6405,12 +6408,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
             // no where clause, distinct constant
             assertPlanNoLeakCheck(
                     "SELECT count_distinct(10) FROM test",
-                    "Count\n" +
-                            "    GroupBy vectorized: false\n" +
-                            "      keys: [10]\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: test\n"
+                    "Async Group By workers: 1\n" +
+                            "  values: [count_distinct(10)]\n" +
+                            "  filter: null\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: test\n"
             );
 
             // no where clause, distinct column
@@ -6479,7 +6482,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Count\n" +
                             "    Async JIT Group By workers: 1\n" +
                             "      keys: [column]\n" +
-                            "      filter: (5<x and null!=x+1)\n" +
+                            "      filter: (5<x and x+1!=null)\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: test\n"
@@ -6491,7 +6494,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Count\n" +
                             "    Async JIT Group By workers: 1\n" +
                             "      keys: [column]\n" +
-                            "      filter: (5<x and null!=x+1)\n" +
+                            "      filter: (5<x and x+1!=null)\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: test\n"
@@ -6509,7 +6512,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Count\n" +
                             "    Async JIT Group By workers: 1\n" +
                             "      keys: [column]\n" +
-                            "      filter: (5<x and null!=x+1)\n" +
+                            "      filter: (5<x and x+1!=null)\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: test\n"
@@ -7088,13 +7091,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
-    @Test // TODO: this should use Count factory same as queries above
+    @Test
     public void testSelectCount3() throws Exception {
         assertPlan(
                 "create table a ( i int, d double)",
                 "select count(2) from a",
-                "GroupBy vectorized: false\n" +
-                        "  values: [count(*)]\n" +
+                "Count\n" +
                         "    DataFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
@@ -7219,7 +7221,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Count\n" +
                         "    Async JIT Group By workers: 1\n" +
                         "      keys: [l]\n" +
-                        "      filter: null!=l\n" +
+                        "      filter: l!=null\n" +
                         "        DataFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: tab\n"
@@ -10632,6 +10634,24 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 sqlExecutionContext.setJitMode(jitMode);
             }
         });
+    }
+
+    private static boolean isEqSymTimestampFactory(FunctionFactory factory) {
+        if (factory instanceof EqSymTimestampFunctionFactory) {
+            return true;
+        }
+        if (factory instanceof SwappingArgsFunctionFactory) {
+            return ((SwappingArgsFunctionFactory) factory).getDelegate() instanceof EqSymTimestampFunctionFactory;
+        }
+
+        if (factory instanceof NegatingFunctionFactory) {
+            if (((NegatingFunctionFactory) factory).getDelegate() instanceof SwappingArgsFunctionFactory) {
+                return ((SwappingArgsFunctionFactory) ((NegatingFunctionFactory) factory).getDelegate()).getDelegate() instanceof EqSymTimestampFunctionFactory;
+            }
+            return ((NegatingFunctionFactory) factory).getDelegate() instanceof EqSymTimestampFunctionFactory;
+        }
+
+        return false;
     }
 
     private static boolean isIPv4StrFactory(FunctionFactory factory) {

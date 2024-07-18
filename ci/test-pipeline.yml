@@ -59,6 +59,13 @@ stages:
     jobs:
       - template: templates/hosted-cover-jobs.yml
 
+  - stage: JavaCodeFormatting
+    displayName: "Check Java Code Formatting with IntelliJ"
+    dependsOn:
+      - CheckChanges
+    jobs:
+      - template: templates/java-code-formatting-intellij.yml
+
   - stage: HostedRunCompatTestsBranches
     displayName: "Hosted Running CLI util and compat tests"
     dependsOn:

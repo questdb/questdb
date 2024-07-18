@@ -31,7 +31,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Utf8Sequence;
 
 public class CountVarcharGroupByFunctionFactory implements FunctionFactory {
 
@@ -53,18 +52,6 @@ public class CountVarcharGroupByFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final Function arg = args.getQuick(0);
-        if (arg.isConstant()) {
-            Utf8Sequence val = arg.getVarcharA(null);
-            // NULL expression would lead to zero matched rows, so it makes
-            // no sense to support it until we support count(expression).
-            if (val == null) {
-                throw SqlException.$(argPositions.getQuick(0), "NULL is not allowed");
-            }
-            return new CountLongConstGroupByFunction();
-        } else {
-            return new CountVarcharGroupByFunction(arg);
-        }
-
+        return new CountVarcharGroupByFunction(args.getQuick(0));
     }
 }

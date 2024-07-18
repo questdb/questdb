@@ -46,8 +46,8 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
     // Empty list means that all tables should be checked.
     private final TxReader txReader;
-    private long lastRunMs;
     private long lastProcessedCount = 0;
+    private long lastRunMs;
     private Path threadLocalPath;
 
     public CheckWalTransactionsJob(CairoEngine engine) {
@@ -92,9 +92,9 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
                             engine.notifyWalTxnCommitted(tableToken);
                         }
                     } catch (CairoException e) {
-                       if (!e.errnoReadPathDoesNotExist()) {
-                           throw e;
-                       } // race, table is dropped, ApplyWal2TableJob is already deleting the files
+                        if (!e.errnoReadPathDoesNotExist()) {
+                            throw e;
+                        } // race, table is dropped, ApplyWal2TableJob is already deleting the files
                     }
                 } // else table is dropped, ApplyWal2TableJob already is deleting the files
             }

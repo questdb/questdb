@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -53,18 +52,6 @@ public class CountSymbolGroupByFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final Function arg = args.getQuick(0);
-        if (arg.isConstant()) {
-            int val = arg.getInt(null);
-            // NULL expression would lead to zero matched rows, so it makes
-            // no sense to support it until we support count(expression).
-            if (val == SymbolTable.VALUE_IS_NULL) {
-                throw SqlException.$(argPositions.getQuick(0), "NULL is not allowed");
-            }
-            return new CountLongConstGroupByFunction();
-        } else {
-            return new CountSymbolGroupByFunction(arg);
-        }
-
+        return new CountSymbolGroupByFunction(args.getQuick(0));
     }
 }

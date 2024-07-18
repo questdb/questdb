@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
@@ -50,14 +49,6 @@ public class CountGeoHashGroupByFunctionFactory implements FunctionFactory {
             throws SqlException {
         Function arg = args.getQuick(0);
         int type = arg.getType();
-        if (arg.isConstant()) {
-            if (value(arg) == GeoHashes.NULL) {
-                throw SqlException.$(argPositions.getQuick(0), "NULL is not allowed");
-            }
-            return new CountLongConstGroupByFunction();
-        }
-
-
         switch (ColumnType.tagOf(type)) {
             case ColumnType.GEOBYTE:
                 return new CountGeoHashGroupByFunctionByte(arg);
@@ -67,19 +58,6 @@ public class CountGeoHashGroupByFunctionFactory implements FunctionFactory {
                 return new CountGeoHashGroupByFunctionInt(arg);
             default:
                 return new CountGeoHashGroupByFunctionLong(arg);
-        }
-    }
-
-    private long value(Function arg) {
-        switch (ColumnType.tagOf(arg.getType())) {
-            case ColumnType.GEOBYTE:
-                return arg.getGeoByte(null);
-            case ColumnType.GEOSHORT:
-                return arg.getGeoShort(null);
-            case ColumnType.GEOINT:
-                return arg.getGeoInt(null);
-            default:
-                return arg.getGeoLong(null);
         }
     }
 }

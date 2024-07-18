@@ -67,7 +67,7 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
 
         final Function value = args.getQuick(0);
         final int maxLength = configuration.getStrFunctionMaxBufferLength();
-        return new Func(value, pattern, patternPos, replacement, replacementPos, maxLength, position);
+        return new RegexpReplaceStrFunction(value, pattern, patternPos, replacement, maxLength, position);
     }
 
     protected void validateInputs(Function pattern, int patternPos, Function replacement, int replacementPos) throws SqlException {
@@ -79,25 +79,30 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
         }
     }
 
-    protected static class Func extends StrFunction implements UnaryFunction {
+    protected static class RegexpReplaceStrFunction extends StrFunction implements UnaryFunction {
         private final int functionPos;
         private final int maxLength;
         private final Function pattern;
         private final int patternPos;
         private final Function replacement;
-        private final int replacementPos;
-        private final StringBuilderSink sink = new StringBuilderSink();
+        private final StringBuilderSink sinkA = new StringBuilderSink();
         private final StringBuilderSink sinkB = new StringBuilderSink();
         private final Function value;
         private Matcher matcher;
         private String replacementStr;
 
-        public Func(Function value, Function pattern, int patternPos, Function replacement, int replacementPos, int maxLength, int functionPos) {
+        public RegexpReplaceStrFunction(
+                Function value,
+                Function pattern,
+                int patternPos,
+                Function replacement,
+                int maxLength,
+                int functionPos
+        ) {
             this.value = value;
             this.pattern = pattern;
             this.patternPos = patternPos;
             this.replacement = replacement;
-            this.replacementPos = replacementPos;
             this.maxLength = maxLength;
             this.functionPos = functionPos;
         }
@@ -108,6 +113,10 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
         }
 
         public CharSequence getStr(Record rec, StringBuilderSink sink) {
+            if (matcher == null || replacementStr == null) {
+                return null;
+            }
+
             CharSequence cs = value.getStrA(rec);
             if (cs == null) {
                 return null;
@@ -123,7 +132,7 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
                 } else {
                     do {
                         if (sink.length() > maxLength) {
-                            throw CairoException.nonCritical()
+                            throw CairoException.critical(0)
                                     .put("breached memory limit set for ").put(SIGNATURE)
                                     .put(" [maxLength=").put(maxLength).put(']');
                         }
@@ -133,14 +142,19 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
                     matcher.appendTail(sink.buffer);
                 }
                 return sink;
-            } catch (Exception e) {
-                throw CairoException.nonCritical().put("regexp_replace failed [position=").put(functionPos).put(", ex=").put(e.getMessage()).put(']');
+            } catch (CairoException e) {
+                throw e;
+            } catch (Throwable e) {
+                throw CairoException.critical(0)
+                        .put("regexp_replace failed [position=").put(functionPos)
+                        .put(", ex=").put(e.getMessage())
+                        .put(']');
             }
         }
 
         @Override
         public CharSequence getStrA(Record rec) {
-            return getStr(rec, sink);
+            return getStr(rec, sinkA);
         }
 
         @Override
@@ -156,9 +170,10 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
             replacement.init(symbolTableSource, executionContext);
             CharSequence cs = replacement.getStrA(null);
             if (cs == null) {
-                throw SqlException.$(replacementPos, "NULL replacement");
+                replacementStr = null;
+            } else {
+                replacementStr = cs.toString();
             }
-            replacementStr = cs.toString();
         }
 
         @Override
@@ -183,7 +198,7 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
     }
 
     private static class StringBuilderSink implements CharSequence {
-//#if jdk.version==8
+        //#if jdk.version==8
 //$        private final StringBuffer buffer = new StringBuffer();
 //#else
         private final StringBuilder buffer = new StringBuilder();

@@ -39,7 +39,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.Nullable;
 
 public class RightStrFunctionFactory implements FunctionFactory {
@@ -89,16 +88,6 @@ public class RightStrFunctionFactory implements FunctionFactory {
         @Override
         public Function getArg() {
             return strFunc;
-        }
-
-        @Override
-        public void getStr(Record rec, Utf16Sink utf16Sink) {
-            CharSequence str = strFunc.getStrA(rec);
-            if (str != null) {
-                final int len = str.length();
-                final int pos = getPos(len);
-                utf16Sink.put(str, pos, len);
-            }
         }
 
         @Override
@@ -166,17 +155,6 @@ public class RightStrFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return countFunc;
-        }
-
-        @Override
-        public void getStr(Record rec, Utf16Sink utf16Sink) {
-            final CharSequence str = strFunc.getStrA(rec);
-            final int count = countFunc.getInt(rec);
-            if (str != null && count != Numbers.INT_NULL) {
-                final int len = str.length();
-                final int pos = getPos(len, count);
-                utf16Sink.put(str, pos, len);
-            }
         }
 
         @Override
