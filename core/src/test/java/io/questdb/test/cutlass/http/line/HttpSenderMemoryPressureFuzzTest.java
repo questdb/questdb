@@ -84,7 +84,6 @@ public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
                 TableToken tableToken = engine.verifyTableName(tn);
                 TableSequencerAPI sequencer = engine.getTableSequencerAPI();
 
-                sequencer.suspendTable(tableToken, ErrorTag.OUT_OF_MEMORY, "test");
                 for (int j = 0; j < numPartitions; j++) {
                     sender.table(tn)
                             .symbol("sym", rnd.nextString(2))
@@ -98,12 +97,10 @@ public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
                             .at(j * hourAsMillis, ChronoUnit.MILLIS);
                 }
                 sender.flush();
-                sequencer.resumeTable(tableToken, 0);
                 engine.awaitTable(tn, 1, TimeUnit.MINUTES);
-                Thread.sleep(5_000);
-//                sequencer.suspendTable(tableToken, ErrorTag.OUT_OF_MEMORY, "test");
-                for (int j = 0; j < 10_000; j++) {
-                    for (int i = 0; i < 1_000; i++) {
+                for (int j = 0; j < 100; j++) {
+                    sequencer.suspendTable(tableToken, ErrorTag.OUT_OF_MEMORY, "test");
+                    for (int i = 0; i < 100_000; i++) {
                         sender.table(tn)
                                 .symbol("sym", rnd.nextString(2))
                                 .longColumn("b", rnd.nextByte())
@@ -116,23 +113,23 @@ public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
                                 .at(rnd.nextLong(numPartitions * hourAsMillis), ChronoUnit.MILLIS);
                     }
                     sender.flush();
-                }
-                try {
-                    long rssUsed = Unsafe.getRssMemUsed();
-                    Unsafe.setRssMemLimit(rssUsed + 50 * (1L << 20));
                     try {
-                        sequencer.resumeTable(tableToken, 0);
-                        Thread.sleep(1_000);
-                        engine.awaitTable(tn, 10, TimeUnit.MINUTES);
-                    } finally {
-                        Unsafe.setRssMemLimit(0);
+                        long rssUsed = Unsafe.getRssMemUsed();
+                        Unsafe.setRssMemLimit(rssUsed + ((15 + j) * (1L << 20)));
+                        try {
+                            sequencer.resumeTable(tableToken, 0);
+                            engine.awaitTable(tn, 10, TimeUnit.MINUTES);
+                        } finally {
+                            Unsafe.setRssMemLimit(0);
+                        }
+                    } catch (CairoException e) {
+                        if (!e.getMessage().contains("table is suspended [tableName=table1]")) {
+                            e.printStackTrace(System.err);
+                            Assert.fail("The only accepted error is 'table is suspended [tableName=table1]', but got: " + e.getMessage());
+                        }
+                        System.out.printf("\n%s\n\n", e.getMessage());
+                        break;
                     }
-                } catch (CairoException e) {
-                    if (!e.getMessage().contains("table is suspended [tableName=table1]")) {
-                        e.printStackTrace(System.err);
-                        Assert.fail("The only accepted error is 'table is suspended [tableName=table1]', but got: " + e.getMessage());
-                    }
-                    System.out.printf("\n%s\n\n", e.getMessage());
                 }
             }
         }
