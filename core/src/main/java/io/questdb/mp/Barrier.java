@@ -24,7 +24,7 @@
 
 package io.questdb.mp;
 
-public interface Barrier  {
+public interface Barrier {
     long availableIndex(long lo);
 
     long current();

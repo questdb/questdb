@@ -31,7 +31,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 /**
  * Same as #Logger but does not lose messages.
  */
-public final class GuaranteedLogger extends AbstractLogRecord  {
+public final class GuaranteedLogger extends AbstractLogRecord {
 
     GuaranteedLogger(
             MicrosecondClock clock,

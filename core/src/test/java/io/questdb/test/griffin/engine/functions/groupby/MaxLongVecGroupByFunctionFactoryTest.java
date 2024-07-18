@@ -35,8 +35,8 @@ public class MaxLongVecGroupByFunctionFactoryTest extends AbstractCairoTest {
         // fix page frame size, because it affects AVG accuracy
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10_000);
         assertQuery("avg\n" +
-                        "5261.376146789\n", "select round(avg(f),9) avg from tab", "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))", null, "alter table tab add column b long", "avg\n" +
-                        "5261.376146789\n", false, true, false);
+                "5261.376146789\n", "select round(avg(f),9) avg from tab", "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))", null, "alter table tab add column b long", "avg\n" +
+                "5261.376146789\n", false, true, false);
 
         assertQuery(
                 "avg\tmax\n" +
@@ -53,7 +53,7 @@ public class MaxLongVecGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testAllNullThenOne() throws Exception {
         assertQuery("max\n" +
                 "null\n", "select max(f) from tab", "create table tab as (select cast(null as long) f from long_sequence(33))", null, "insert into tab select 99999999999995L from long_sequence(1)", "max\n" +
-                        "99999999999995\n", false, true, false);
+                "99999999999995\n", false, true, false);
     }
 
     @Test
