@@ -77,7 +77,6 @@ public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
                 CairoEngine engine = serverMain.getEngine();
                 TableToken tableToken = engine.verifyTableName(tn);
                 TableSequencerAPI sequencer = engine.getTableSequencerAPI();
-                long lastTxn = sequencer.lastTxn(tableToken);
                 sequencer.suspendTable(tableToken, ErrorTag.OUT_OF_MEMORY, "test");
                 for (int j = 0; j < 10_000; j++) {
                     for (int i = 0; i < 1_000; i++) {
