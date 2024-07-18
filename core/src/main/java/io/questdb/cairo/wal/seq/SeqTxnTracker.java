@@ -100,6 +100,7 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
         if (regulationValue < 0) {
             // was in backoff, go back to parallelism = 1
             regulationValue = 1;
+            LOG.info().$("Memory pressure easing off, removing backoff").I$();
             return;
         }
         if (rnd.nextInt(4) == 0) {
