@@ -28,5 +28,6 @@ import io.questdb.cairo.CairoEngine;
 import org.jetbrains.annotations.NotNull;
 
 public interface FactoryProviderFactory {
-    @NotNull FactoryProvider getInstance(ServerConfiguration configuration, CairoEngine engine, FreeOnExit freeOnExit);
+    @NotNull
+    FactoryProvider getInstance(ServerConfiguration configuration, CairoEngine engine, FreeOnExit freeOnExit);
 }

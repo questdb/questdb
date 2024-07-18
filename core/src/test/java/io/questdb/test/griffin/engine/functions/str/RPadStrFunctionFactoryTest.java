@@ -99,7 +99,7 @@ public class RPadStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
         ddl("create table x as (select rnd_str(1, 40, 0) s from long_sequence(100))");
         assertSql(
                 "count\n" +
-                "100\n",
+                        "100\n",
                 "select count (*) from x where rpad(s, 20, '.') = rpad(s, 20, '.')"
         );
     }

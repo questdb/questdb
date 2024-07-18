@@ -118,8 +118,8 @@ public class PGMemoryLimitTest extends BasePGTest {
             Unsafe.setRssMemLimit(8_900_000);
             try (
                     PreparedStatement ps = connection.prepareStatement("UPDATE up SET x = ?" +
-                    " FROM down " +
-                    " WHERE up.ts = down.ts and x < 4")
+                            " FROM down " +
+                            " WHERE up.ts = down.ts and x < 4")
             ) {
                 // Set RSS limit, so that the UPDATE will fail with OOM.
                 try {

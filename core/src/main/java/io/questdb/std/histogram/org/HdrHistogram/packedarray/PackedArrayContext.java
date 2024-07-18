@@ -48,6 +48,7 @@ class PackedArrayContext extends AbstractPackedArrayContext {
                        final int initialPhysicalLength) {
         this(virtualLength, initialPhysicalLength, true);
     }
+
     PackedArrayContext(final int virtualLength,
                        final AbstractPackedArrayContext from,
                        final int newPhysicalArrayLength) {
