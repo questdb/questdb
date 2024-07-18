@@ -430,7 +430,8 @@ public class ExpressionParser {
                                         ExpressionNode.CONSTANT,
                                         lexer.immutablePairOf(geohashTok, tok),
                                         Integer.MIN_VALUE,
-                                        lastPos));
+                                        lastPos
+                                ));
                                 tok = SqlUtil.fetchNext(lexer);
                                 if (tok == null || tok.charAt(0) != ')') {
                                     throw SqlException.$(lexer.lastTokenPosition(), "invalid GEOHASH, missing ')'");
@@ -456,7 +457,8 @@ public class ExpressionParser {
                                         ExpressionNode.CONSTANT,
                                         geohashTok, // standard token, no suffix '/d', '/dd'
                                         Integer.MIN_VALUE,
-                                        lastPos));
+                                        lastPos
+                                ));
                                 break;
                             }
                             tok = SqlUtil.fetchNext(lexer);
@@ -467,7 +469,8 @@ public class ExpressionParser {
                                     ExpressionNode.CONSTANT,
                                     lexer.immutablePairOf(geohashTok, '/', tok), // token plus suffix '/d', '/dd', where d in [0..9]
                                     Integer.MIN_VALUE,
-                                    lastPos));
+                                    lastPos
+                            ));
                             break;
                         }
 
@@ -477,7 +480,8 @@ public class ExpressionParser {
                                     ExpressionNode.CONSTANT,
                                     GenericLexer.immutableOf(tok), // geohash bit literals do not allow suffix syntax
                                     Integer.MIN_VALUE,
-                                    lastPos));
+                                    lastPos
+                            ));
                             break;
                         }
 
@@ -828,7 +832,8 @@ public class ExpressionParser {
                                     );
 
                                     // replace const node with 'to_timezone' function node
-                                    constNode = expressionNodePool.next().of(ExpressionNode.FUNCTION,
+                                    constNode = expressionNodePool.next().of(
+                                            ExpressionNode.FUNCTION,
                                             "to_timezone",
                                             Integer.MIN_VALUE,
                                             lastPos
@@ -959,14 +964,12 @@ public class ExpressionParser {
                                     opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, cse.toImmutable(), Integer.MIN_VALUE, en.position));
                                 }
                             } else {
-                                opStack.push(
-                                        expressionNodePool.next().of(
-                                                ExpressionNode.CONSTANT,
-                                                lexer.immutableBetween(lastPos - 1, lexer.getTokenHi()),
-                                                0,
-                                                lastPos
-                                        )
-                                );
+                                opStack.push(expressionNodePool.next().of(
+                                        ExpressionNode.CONSTANT,
+                                        lexer.immutableBetween(lastPos - 1, lexer.getTokenHi()),
+                                        0,
+                                        lastPos
+                                ));
                             }
                             break;
                         }

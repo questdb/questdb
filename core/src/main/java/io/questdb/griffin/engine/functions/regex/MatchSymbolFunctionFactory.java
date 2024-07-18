@@ -41,6 +41,28 @@ import io.questdb.std.ObjList;
 import java.util.regex.Matcher;
 
 public class MatchSymbolFunctionFactory implements FunctionFactory {
+
+    public static void extractSymbolKeys(SymbolFunction symbolFun, IntList symbolKeys, Matcher matcher) {
+        final StaticSymbolTable symbolTable = symbolFun.getStaticSymbolTable();
+        assert symbolTable != null;
+        symbolKeys.clear();
+        if (matcher != null) {
+            for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
+                if (matcher.reset(symbolTable.valueOf(i)).matches()) {
+                    symbolKeys.add(i);
+                }
+            }
+        }
+    }
+
+    public static boolean symbolMatches(Function arg, Record rec, IntList symbolKeys) {
+        final int key = arg.getInt(rec);
+        if (key != SymbolTable.VALUE_IS_NULL) {
+            return symbolKeys.binarySearchUniqueList(key) > -1;
+        }
+        return false;
+    }
+
     @Override
     public String getSignature() {
         return "~(KS)";
@@ -54,18 +76,18 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final SymbolFunction fun = (SymbolFunction) args.getQuick(0);
+        final SymbolFunction func = (SymbolFunction) args.getQuick(0);
         final Function pattern = args.getQuick(1);
         final int patternPosition = argPositions.getQuick(1);
-        if (fun.isSymbolTableStatic()) {
+        if (func.isSymbolTableStatic()) {
             if (pattern.isConstant()) {
                 final Matcher matcher = RegexUtils.createMatcher(pattern, patternPosition);
                 if (matcher == null) {
                     return BooleanConstant.FALSE;
                 }
-                return new MatchStaticSymbolTableConstPatternFunction(fun, matcher);
+                return new MatchStaticSymbolTableConstPatternFunction(func, matcher);
             } else if (pattern.isRuntimeConstant()) {
-                return new MatchStaticSymbolTableRuntimeConstPatternFunction(fun, pattern, patternPosition);
+                return new MatchStaticSymbolTableRuntimeConstPatternFunction(func, pattern, patternPosition);
             }
         } else {
             if (pattern.isConstant()) {
@@ -73,33 +95,12 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
                 if (matcher == null) {
                     return BooleanConstant.FALSE;
                 }
-                return new MatchStrFunctionFactory.MatchStrConstPatternFunction(fun, matcher);
+                return new MatchStrFunctionFactory.MatchStrConstPatternFunction(func, matcher);
             } else if (pattern.isRuntimeConstant()) {
-                return new MatchStrFunctionFactory.MatchStrRuntimeConstPatternFunction(fun, pattern, patternPosition);
+                return new MatchStrFunctionFactory.MatchStrRuntimeConstPatternFunction(func, pattern, patternPosition);
             }
         }
         throw SqlException.$(patternPosition, "not implemented: dynamic pattern would be very slow to execute");
-    }
-
-    private static void extractSymbolKeys(SymbolFunction symbolFun, IntList symbolKeys, Matcher matcher) {
-        final StaticSymbolTable symbolTable = symbolFun.getStaticSymbolTable();
-        assert symbolTable != null;
-        symbolKeys.clear();
-        if (matcher != null) {
-            for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
-                if (matcher.reset(symbolTable.valueOf(i)).find()) {
-                    symbolKeys.add(i);
-                }
-            }
-        }
-    }
-
-    private static boolean symbolMatches(Function arg, Record rec, IntList symbolKeys) {
-        final int key = arg.getInt(rec);
-        if (key != SymbolTable.VALUE_IS_NULL) {
-            return symbolKeys.binarySearchUniqueList(key) > -1;
-        }
-        return false;
     }
 
     private static class MatchStaticSymbolTableConstPatternFunction extends BooleanFunction implements UnaryFunction {
