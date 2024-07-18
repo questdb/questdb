@@ -169,6 +169,10 @@ public class SeqTxnTracker implements O3InflightPartitionRegulator {
         return (stxn < 1 || writerTxn == (newSeqTxn - 1)) && suspendedState >= 0;
     }
 
+    /**
+     * Returns true if the operation that experienced OOM should be retried.
+     * Returns false after measures to avoid OOM were exhausted, and the operation should fail.
+     */
     public boolean onOutOfMemory(long nowMicros) {
         if (maxRecordedInflightPartitions == 1) {
             if (backoffCounter >= 5) {
