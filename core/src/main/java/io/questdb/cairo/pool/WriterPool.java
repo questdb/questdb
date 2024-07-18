@@ -387,7 +387,6 @@ public class WriterPool extends AbstractPool {
         try {
             checkClosed();
             LOG.info().$("open [table=`").utf8(tableToken.getDirName()).$("`, thread=").$(thread).$(']').$();
-
             e.writer = new TableWriter(
                     configuration,
                     tableToken,
