@@ -26,8 +26,11 @@ package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ErrorTag;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -41,6 +44,8 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.concurrent.TimeUnit;
+
 import static io.questdb.cairo.ErrorTag.*;
 import static io.questdb.std.Files.SEPARATOR;
 
@@ -50,6 +55,63 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
+    }
+
+    @Test
+    public void testMemoryPressureIndicator() throws Exception {
+        assertMemoryLeak(() -> {
+            TableSequencerAPI tableSequencerAPI = engine.getTableSequencerAPI();
+
+            createTable("A", true);
+            engine.awaitTable("A", 30, TimeUnit.SECONDS);
+
+            TableToken token = engine.getTableTokenIfExists("A");
+            Assert.assertNotNull(token);
+
+            SeqTxnTracker txnTracker = tableSequencerAPI.getTxnTracker(token);
+            assertMemoryPressureLevel("A", 0);
+
+            long now = 0;
+            int parallelism = txnTracker.getMaxO3MergeParallelism();
+            txnTracker.updateInflightPartitions(parallelism);
+            txnTracker.onOutOfMemory(now);
+
+            // Memory pressure level should be 1 after the first OOM event - it indicates that the table is under memory pressure
+            // and reducing parallelism
+            assertMemoryPressureLevel("A", 1);
+
+            do {
+                now += 1000;
+                parallelism = txnTracker.getMaxO3MergeParallelism();
+                txnTracker.updateInflightPartitions(parallelism);
+                txnTracker.onOutOfMemory(now);
+            } while (txnTracker.getMemoryPressureLevel() == 1);
+
+            // eventually memory pressure level should be 2 after the second OOM event - it indicates that the table is under memory pressure
+            // and is applying backoff
+            assertMemoryPressureLevel("A", 2);
+
+
+            // now let's simulate reducing memory pressure
+            now += 1000;
+            parallelism = txnTracker.getMaxO3MergeParallelism();
+            txnTracker.updateInflightPartitions(parallelism);
+            txnTracker.hadEnoughMemory(now);
+
+            // after a first successful O3 merge memory pressure level should be 1 - still reducing parallelism
+            // but no longer applying backoff
+            assertMemoryPressureLevel("A", 1);
+
+            do {
+                now += 1000;
+                parallelism = txnTracker.getMaxO3MergeParallelism();
+                txnTracker.updateInflightPartitions(parallelism);
+                txnTracker.hadEnoughMemory(now);
+            } while (txnTracker.getMemoryPressureLevel() == 1);
+
+            // eventually the memory pressure should be 0 - no memory pressure at all
+            assertMemoryPressureLevel("A", 0);
+        });
     }
 
     @Test
@@ -142,6 +204,12 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
         testWalTablesSuspendedWithError("alter table B suspend wal with 'TOO MANY OPEN FILES', 'test error message 4'", TOO_MANY_OPEN_FILES, "test error message 4");
         testWalTablesSuspendedWithError("alter table B suspend wal with '', 'test error message 5'", NONE, "test error message 5");
         testWalTablesSuspendedWithError("alter table B suspend wal", NONE, "");
+    }
+
+    private void assertMemoryPressureLevel(CharSequence tableName, int expectedMemoryPressureLevel) throws SqlException {
+        assertQuery("memoryPressure\n" +
+                        +expectedMemoryPressureLevel + "\n",
+                "select memoryPressure from wal_tables() where name = '" + tableName + "'", false, false);
     }
 
     private void createTable(final String tableName, boolean isWal) throws SqlException {
