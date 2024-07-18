@@ -27,7 +27,9 @@ package io.questdb.test.cutlass.http.line;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.client.Sender;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -71,18 +73,13 @@ public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
                     .address("localhost:" + port)
                     .build()
             ) {
-                int batchSize10k = rnd.nextInt(5) + 1;
-                int batchSize = batchSize10k * 10_000;
-                int numIters = 2_000 / batchSize10k;
-                LOG.infoW().$(String.format("batchSize %,d, numIters %,d", batchSize, numIters)).$();
+                LOG.infoW().$(String.format("batchSize %,d, numIters %,d", 10_000, 2_000)).$();
                 CairoEngine engine = serverMain.getEngine();
                 TableToken tableToken = engine.verifyTableName(tn);
-                senderLoop:
-                for (int j = 0; j < numIters; j++) {
-                    for (int i = 0; i < batchSize; i++) {
-                        if (engine.getTableSequencerAPI().isSuspended(tableToken)) {
-                            break senderLoop;
-                        }
+                TableSequencerAPI sequencer = engine.getTableSequencerAPI();
+                sequencer.suspendTable(tableToken, ErrorTag.OUT_OF_MEMORY, "test");
+                for (int j = 0; j < 10_000; j++) {
+                    for (int i = 0; i < 1_000; i++) {
                         sender.table(tn)
                                 .symbol("sym", rnd.nextString(2))
                                 .longColumn("b", rnd.nextByte())
@@ -94,16 +91,18 @@ public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
                                 .timestampColumn("tss", Instant.ofEpochMilli(rnd.nextLong()))
                                 .at(rnd.nextLong(100L * 3_600_000), ChronoUnit.MILLIS);
                     }
+                    sender.flush();
+                }
+                try {
                     long rssUsed = Unsafe.getRssMemUsed();
-                    Unsafe.setRssMemLimit(rssUsed + 3 * (1L << 20));
+                    Unsafe.setRssMemLimit(rssUsed + 130 * (1L << 20));
                     try {
-                        sender.flush();
+                        sequencer.resumeTable(tableToken, 0);
+                        Thread.sleep(1000);
+                        engine.awaitTable(tn, 10, TimeUnit.MINUTES);
                     } finally {
                         Unsafe.setRssMemLimit(0);
                     }
-                }
-                try {
-                    engine.awaitTable(tn, 10, TimeUnit.MINUTES);
                 } catch (CairoException e) {
                     if (!e.getMessage().contains("table is suspended [tableName=table1]")) {
                         e.printStackTrace(System.err);
