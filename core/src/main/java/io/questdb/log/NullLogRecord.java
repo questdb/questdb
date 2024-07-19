@@ -60,6 +60,11 @@ final class NullLogRecord implements LogRecord {
     }
 
     @Override
+    public LogRecord $substr(int from, @Nullable DirectUtf8Sequence sequence) {
+        return this;
+    }
+
+    @Override
     public LogRecord $(@NotNull CharSequence sequence, int lo, int hi) {
         return this;
     }
