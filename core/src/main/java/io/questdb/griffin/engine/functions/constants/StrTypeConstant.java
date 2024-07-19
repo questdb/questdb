@@ -29,7 +29,6 @@ import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.StrFunction;
 
 public class StrTypeConstant extends StrFunction implements TypeConstant {
-
     public static final StrTypeConstant INSTANCE = new StrTypeConstant();
 
     @Override

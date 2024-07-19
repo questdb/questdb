@@ -118,6 +118,11 @@ public class TouchTableFunctionFactory implements FunctionFactory {
             this.sqlExecutionContext = executionContext;
         }
 
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
+        }
+
         private void clearCounters() {
             dataPages = 0;
             indexKeyPages = 0;

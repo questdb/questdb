@@ -75,9 +75,8 @@ public class LeftVarcharFunctionFactory implements FunctionFactory {
     }
 
     private static class ConstCountFunc extends VarcharFunction implements UnaryFunction {
-
         private final int count;
-        private final Utf8StringSink sink = new Utf8StringSink();
+        private final Utf8StringSink sinkA = new Utf8StringSink();
         private final Utf8StringSink sinkB = new Utf8StringSink();
         private final Function varcharFunc;
 
@@ -93,12 +92,17 @@ public class LeftVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public @Nullable Utf8Sequence getVarcharA(Record rec) {
-            return getVarchar0(rec, sink);
+            return getVarchar0(rec, sinkA);
         }
 
         @Override
         public @Nullable Utf8Sequence getVarcharB(Record rec) {
             return getVarchar0(rec, sinkB);
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
         }
 
         @Override
@@ -129,9 +133,8 @@ public class LeftVarcharFunctionFactory implements FunctionFactory {
     }
 
     private static class Func extends VarcharFunction implements BinaryFunction {
-
         private final Function countFunc;
-        private final Utf8StringSink sink = new Utf8StringSink();
+        private final Utf8StringSink sinkA = new Utf8StringSink();
         private final Utf8StringSink sinkB = new Utf8StringSink();
         private final Function varcharFunc;
 
@@ -157,12 +160,17 @@ public class LeftVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public @Nullable Utf8Sequence getVarcharA(Record rec) {
-            return getVarchar0(rec, sink);
+            return getVarchar0(rec, sinkA);
         }
 
         @Override
         public @Nullable Utf8Sequence getVarcharB(Record rec) {
             return getVarchar0(rec, sinkB);
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
         }
 
         @Nullable

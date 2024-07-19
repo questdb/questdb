@@ -50,8 +50,11 @@ public class TrimVarcharFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(
-            int position, ObjList<Function> args, IntList argPositions,
-            CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
     ) {
         final Function arg = args.get(0);
         if (!arg.isConstant()) {
@@ -68,11 +71,10 @@ public class TrimVarcharFunctionFactory implements FunctionFactory {
     }
 
     private static class ConstFunc extends VarcharFunction implements UnaryFunction {
-
         private final Function arg;
         private final DirectUtf8Sink sink;
 
-        ConstFunc(Function arg, TrimType type) {
+        public ConstFunc(Function arg, TrimType type) {
             this.arg = arg;
             Utf8Sequence value = getArg().getVarcharA(null);
             if (value == null) {
@@ -117,11 +119,11 @@ public class TrimVarcharFunctionFactory implements FunctionFactory {
 
     private static class Func extends VarcharFunction implements UnaryFunction {
         private final Function arg;
-        private final DirectUtf8Sink sink1 = new DirectUtf8Sink(4);
-        private final DirectUtf8Sink sink2 = new DirectUtf8Sink(4);
+        private final DirectUtf8Sink sinkA = new DirectUtf8Sink(4);
+        private final DirectUtf8Sink sinkB = new DirectUtf8Sink(4);
         private final TrimType type;
 
-        Func(Function arg, TrimType type) {
+        public Func(Function arg, TrimType type) {
             this.arg = arg;
             this.type = type;
         }
@@ -129,8 +131,8 @@ public class TrimVarcharFunctionFactory implements FunctionFactory {
         @Override
         public void close() {
             UnaryFunction.super.close();
-            sink1.close();
-            sink2.close();
+            sinkA.close();
+            sinkB.close();
         }
 
         @Override
@@ -156,9 +158,9 @@ public class TrimVarcharFunctionFactory implements FunctionFactory {
             if (utf8Sequence == null) {
                 return null;
             }
-            sink1.clear();
-            trim(type, utf8Sequence, sink1);
-            return sink1;
+            sinkA.clear();
+            trim(type, utf8Sequence, sinkA);
+            return sinkA;
         }
 
         @Override
@@ -167,9 +169,9 @@ public class TrimVarcharFunctionFactory implements FunctionFactory {
             if (charSequence == null) {
                 return null;
             }
-            sink2.clear();
-            trim(type, charSequence, sink2);
-            return sink2;
+            sinkB.clear();
+            trim(type, charSequence, sinkB);
+            return sinkB;
         }
 
         @Override

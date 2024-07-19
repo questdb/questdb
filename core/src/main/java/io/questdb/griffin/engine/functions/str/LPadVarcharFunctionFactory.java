@@ -63,10 +63,9 @@ public class LPadVarcharFunctionFactory implements FunctionFactory {
     }
 
     public static class LPadFunc extends VarcharFunction implements BinaryFunction {
-
         private final Function lenFunc;
         private final int maxLength;
-        private final Utf8StringSink sink = new Utf8StringSink();
+        private final Utf8StringSink sinkA = new Utf8StringSink();
         private final Utf8StringSink sinkB = new Utf8StringSink();
         private final Function strFunc;
 
@@ -93,12 +92,17 @@ public class LPadVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public Utf8Sequence getVarcharA(final Record rec) {
-            return lPad(strFunc.getVarcharA(rec), lenFunc.getInt(rec), sink);
+            return lPad(strFunc.getVarcharA(rec), lenFunc.getInt(rec), sinkA);
         }
 
         @Override
         public Utf8Sequence getVarcharB(final Record rec) {
             return lPad(strFunc.getVarcharB(rec), lenFunc.getInt(rec), sinkB);
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
         }
 
         @Nullable
