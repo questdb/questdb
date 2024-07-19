@@ -38,7 +38,6 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
     private static final long SEQ_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "seqTxn");
     private static final long SUSPENDED_STATE_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "suspendedState");
     private static final long WRITER_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "writerTxn");
-    private final Rnd rnd;
     private volatile String errorMessage = "";
     private volatile ErrorTag errorTag = ErrorTag.NONE;
     private int maxRecordedInflightPartitions = 1;
@@ -53,10 +52,6 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
     private volatile int suspendedState = 0;
     private long walBackoffUntil = -1;
     private volatile long writerTxn = -1;
-
-    public SeqTxnTracker(Rnd rnd) {
-        this.rnd = rnd;
-    }
 
     public String getErrorMessage() {
         return errorMessage;
@@ -90,7 +85,7 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
         return writerTxn;
     }
 
-    public void hadEnoughMemory(CharSequence tableName) {
+    public void hadEnoughMemory(CharSequence tableName, Rnd rnd) {
         maxRecordedInflightPartitions = 1;
         walBackoffUntil = -1;
         if (memoryPressureRegulationValue == Integer.MAX_VALUE) {
@@ -178,7 +173,7 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
      * If it was possible to apply more measures, returns true → the operation can retry.<br>
      * If all measures were exhausted, returns false → the operation should now fail.
      */
-    public boolean onOutOfMemory(long nowMicros, CharSequence tableName) {
+    public boolean onOutOfMemory(long nowMicros, CharSequence tableName, Rnd rnd) {
         if (maxRecordedInflightPartitions == 1) {
             // There was no parallelism
             if (memoryPressureRegulationValue <= -5) {

@@ -71,6 +71,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private final WalMetrics metrics;
     private final MicrosecondClock microClock;
     private final OperationExecutor operationExecutor;
+    private final Rnd rnd = new Rnd();
     private final long tableTimeQuotaMicros;
     private final Telemetry<TelemetryTask> telemetry;
     private final TelemetryFacade telemetryFacade;
@@ -401,7 +402,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         if (throwable instanceof CairoException) {
             CairoException cairoException = (CairoException) throwable;
             if (cairoException.isOutOfMemory()) {
-                if (txnTracker != null && txnTracker.onOutOfMemory(MicrosecondClockImpl.INSTANCE.getTicks(), tableToken.getTableName())) {
+                if (txnTracker != null && txnTracker.onOutOfMemory(
+                        MicrosecondClockImpl.INSTANCE.getTicks(), tableToken.getTableName(), rnd)
+                ) {
                     engine.notifyWalTxnRepublisher(tableToken);
                     return;
                 }
@@ -567,7 +570,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         return;
                     }
                     applyOutstandingWalTransactions(tableToken, writer, engine, operationCompiler, tempPath, runStatus, txnTracker);
-                    txnTracker.hadEnoughMemory(tableToken.getTableName());
+                    txnTracker.hadEnoughMemory(tableToken.getTableName(), rnd);
                     lastWriterTxn = writer.getSeqTxn();
                 } catch (EntryUnavailableException tableBusy) {
                     //noinspection StringEquality

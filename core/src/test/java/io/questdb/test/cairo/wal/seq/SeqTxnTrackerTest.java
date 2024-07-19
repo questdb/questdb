@@ -44,7 +44,7 @@ public class SeqTxnTrackerTest {
         TestUtils.assertMemoryLeak(() -> {
             final int threads = 4;
 
-            final SeqTxnTracker tracker = new SeqTxnTracker(null);
+            final SeqTxnTracker tracker = new SeqTxnTracker();
             Assert.assertFalse(tracker.isInitialised());
 
             final CyclicBarrier startBarrier = new CyclicBarrier(threads);
@@ -85,7 +85,7 @@ public class SeqTxnTrackerTest {
         TestUtils.assertMemoryLeak(() -> {
             final int threads = 4;
 
-            final SeqTxnTracker tracker = new SeqTxnTracker(null);
+            final SeqTxnTracker tracker = new SeqTxnTracker();
             tracker.initTxns(1, 1, false);
             Assert.assertTrue(tracker.isInitialised());
 
@@ -127,7 +127,7 @@ public class SeqTxnTrackerTest {
         TestUtils.assertMemoryLeak(() -> {
             final int threads = 4;
 
-            final SeqTxnTracker tracker = new SeqTxnTracker(null);
+            final SeqTxnTracker tracker = new SeqTxnTracker();
             tracker.initTxns(1, 1, false);
             Assert.assertTrue(tracker.isInitialised());
 
