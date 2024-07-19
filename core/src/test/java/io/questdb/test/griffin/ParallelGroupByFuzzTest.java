@@ -2515,6 +2515,19 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelToStrFunctionKeyGroupBy() throws Exception {
+        testParallelSymbolKeyGroupBy(
+                "SELECT to_str(ts, 'yyyy-MM-dd') ts, max(price) FROM tab ORDER BY ts LIMIT 5",
+                "ts\tmax\n" +
+                        "1970-01-01\t99.0\n" +
+                        "1970-01-02\t199.0\n" +
+                        "1970-01-03\t299.0\n" +
+                        "1970-01-04\t399.0\n" +
+                        "1970-01-05\t499.0\n"
+        );
+    }
+
+    @Test
     public void testStringKeyGroupByEmptyTable() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
