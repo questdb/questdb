@@ -369,6 +369,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
     ) {
         Unsafe.getUnsafe().putLong(startAddress, keyHashSizeFlags);
         if ((keyPtrWithUnstableFlag & PTR_UNSTABLE_MASK) == 0) {
+            // stable pointer
             Unsafe.getUnsafe().putLong(startAddress + 8L, keyPtrWithUnstableFlag);
         } else {
             // unstable pointer, copy key to our memory
@@ -558,9 +559,11 @@ public class UnorderedVarcharMap implements Map, Reopenable {
                 // stable pointer
                 ptrWithUnstableFlag = srcVarcharKey.ptrWithUnstableFlag;
             } else {
-                // TODO: introduce intermediate buffer
-                long ptr = allocator.malloc(size);
-                Vect.memcpy(ptr, srcVarcharKey.ptrWithUnstableFlag & PTR_MASK, size);
+                // unstable pointer, copy key to key memory
+                keySink.clear();
+                long srcPtr = srcVarcharKey.ptrWithUnstableFlag & PTR_MASK;
+                keySink.put(srcPtr, srcPtr + size);
+                long ptr = keySink.ptr();
                 ptrWithUnstableFlag = ptr | PTR_UNSTABLE_MASK;
             }
         }
@@ -724,6 +727,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
                 if (value.isStable()) {
                     ptrWithUnstableFlag = value.ptr();
                 } else {
+                    // unstable pointer, copy key to key memory
                     keySink.clear();
                     // Try to use Vect#memcpy() if possible.
                     if (value.ptr() != -1) {
@@ -778,6 +782,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
                 // stable pointer
                 ptrWithUnstableFlag = srcPtrWithUnstableFlag;
             } else {
+                // unstable pointer, copy key to key memory
                 keySink.clear();
                 long srcPtr = srcPtrWithUnstableFlag & PTR_MASK;
                 keySink.put(srcPtr, srcPtr + srcSize);
