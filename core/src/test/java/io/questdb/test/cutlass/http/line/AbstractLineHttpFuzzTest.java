@@ -67,8 +67,8 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
     private static final int MAX_NUM_OF_SKIPPED_COLS = 2;
     private static final int NEW_COLUMN_RANDOMIZE_FACTOR = 2;
     private static final int SEND_SYMBOLS_WITH_SPACE_RANDOMIZE_FACTOR = 2;
-    private static final StringSink sink = new StringSink();
     private static final short[] integerColumnTypes = new short[]{ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG};
+    private static final StringSink sink = new StringSink();
     private static int defaultFloatScale;
     protected final short[] colTypes = new short[]{STRING, DOUBLE, DOUBLE, DOUBLE, STRING, DOUBLE};
     private final int batchSize = 10;
@@ -233,7 +233,7 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
                         }
                     }
                 } catch (Exception e) {
-                    getLog().error().$(e).$();
+                    getLog().errorW().$(e).$();
                     setError(e.getMessage());
                 }
             }

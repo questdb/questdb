@@ -50,10 +50,10 @@ public class LogFactory implements Closeable {
     public static final String CONFIG_SYSTEM_PROPERTY = "out";
     public static final String DEBUG_TRIGGER = "ebug";
     public static final String DEBUG_TRIGGER_ENV = "QDB_DEBUG";
+    // name of default logging configuration file (in jar and in $root/conf/ dir)
     public static final String DEFAULT_CONFIG_NAME = "log.conf";
     // placeholder that can be used in log.conf to point to $root/log/ dir
     public static final String LOG_DIR_VAR = "${log.dir}";
-    // name of default logging configuration file (in jar and in $root/conf/ dir)
     private static final String DEFAULT_CONFIG = "/io/questdb/site/conf/" + DEFAULT_CONFIG_NAME;
     private static final int DEFAULT_LOG_LEVEL = LogLevel.INFO | LogLevel.ERROR | LogLevel.CRITICAL | LogLevel.ADVISORY;
     private static final int DEFAULT_MSG_SIZE = 4 * 1024;
@@ -931,11 +931,6 @@ public class LogFactory implements Closeable {
         }
 
         @Override
-        public LogRecord $uuid(long lo, long hi) {
-            return this;
-        }
-
-        @Override
         public LogRecord $(@Nullable Sinkable x) {
             return this;
         }
@@ -966,12 +961,22 @@ public class LogFactory implements Closeable {
         }
 
         @Override
+        public LogRecord $substr(int from, @Nullable DirectUtf8Sequence sequence) {
+            return this;
+        }
+
+        @Override
         public LogRecord $ts(long x) {
             return this;
         }
 
         @Override
         public LogRecord $utf8(long lo, long hi) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $uuid(long lo, long hi) {
             return this;
         }
 

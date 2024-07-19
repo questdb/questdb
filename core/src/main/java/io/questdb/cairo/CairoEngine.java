@@ -69,6 +69,7 @@ public class CairoEngine implements Closeable, WriterSource {
     public static final String REASON_BUSY_TABLE_READER_METADATA_POOL = "busyTableReaderMetaPool";
     public static final String REASON_SNAPSHOT_IN_PROGRESS = "snapshotInProgress";
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
+    private static final int MAX_SLEEP_MILLIS = 250;
     protected final CairoConfiguration configuration;
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
     private final CopyContext copyContext;
@@ -249,7 +250,8 @@ public class CairoEngine implements Closeable, WriterSource {
                 try {
                     tableToken = verifyTableName(tableName);
                 } catch (CairoException ex) {
-                    Os.sleep(sleep *= 2);
+                    Os.sleep(sleep);
+                    sleep = Math.min(MAX_SLEEP_MILLIS, sleep * 2);
                     continue;
                 }
             }
@@ -265,7 +267,8 @@ public class CairoEngine implements Closeable, WriterSource {
                 if (isSuspended) {
                     throw CairoException.nonCritical().put("table is suspended [tableName=").put(tableName).put(']');
                 }
-                Os.sleep(sleep *= 2);
+                Os.sleep(sleep);
+                sleep = Math.min(MAX_SLEEP_MILLIS, sleep * 2);
             }
         }
         throw CairoException.nonCritical().put("txn timed out [table=").put(tableName).put(", expectedTxn=").put(seqTxn).put(", writerTxn=").put(writerTxn);
@@ -889,7 +892,16 @@ public class CairoEngine implements Closeable, WriterSource {
         tableNameRegistry.dropTable(tableToken);
     }
 
-    public void notifyWalTxnCommitted(@NotNull TableToken tableToken) {
+    /**
+     * Publishes notification of table transaction to the queue. The intent is to notify Apply2WalJob that
+     * there are WAL files to be merged into the table. Notification can fail if the queue is full, in
+     * which case it will have to be republished from a persisted storage. However, this method does not
+     * care about that.
+     *
+     * @param tableToken table token of the table that has to be processed by the Apply2WalJob
+     * @return true if the message was successfully put on the queue and false otherwise.
+     */
+    public boolean notifyWalTxnCommitted(@NotNull TableToken tableToken) {
         final Sequence pubSeq = messageBus.getWalTxnNotificationPubSequence();
         while (true) {
             long cursor = pubSeq.next();
@@ -897,14 +909,14 @@ public class CairoEngine implements Closeable, WriterSource {
                 WalTxnNotificationTask task = messageBus.getWalTxnNotificationQueue().get(cursor);
                 task.of(tableToken);
                 pubSeq.done(cursor);
-                return;
+                return true;
             } else if (cursor == -1L) {
                 LOG.info().$("cannot publish WAL notifications, queue is full [current=").$(pubSeq.current())
                         .$(", table=").utf8(tableToken.getDirName())
                         .I$();
                 // queue overflow, throw away notification and notify a job to rescan all tables
                 notifyWalTxnRepublisher(tableToken);
-                return;
+                return false;
             }
         }
     }

@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.wal;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
@@ -41,6 +42,7 @@ import io.questdb.tasks.WalTxnNotificationTask;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.griffin.AbstractMultiNodeTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -823,6 +825,39 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     @Test
     public void testUpdateViaWal_SysTimestamp() throws Exception {
         testUpdateToNowFunction("systimestamp");
+    }
+
+    @Test
+    public void testWalTxnAutoRepublishing() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_WAL_SEQUENCER_CHECK_INTERVAL, 1);
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            final String tableCopyName = tableName + "_copy";
+            TableToken tableToken = createTable(createTableModel(tableName).wal());
+            TableToken tableCopyToken = createTable(createTableModel(tableCopyName).wal());
+
+            insert("INSERT INTO " + tableName + " (ts) VALUES ('2014')");
+            insert("INSERT INTO " + tableCopyName + " (ts) VALUES ('2015')");
+
+            CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
+            checkWalTransactionsJob.runSerially();
+
+            // Artificially notify transactions up to fill the queue
+            boolean full;
+            do {
+                engine.notifyWalTxnCommitted(tableToken);
+                full = !engine.notifyWalTxnCommitted(tableCopyToken);
+            } while (!full);
+
+            // This supposed to republish the transactions
+            long currentRepublishCounter = engine.getUnpublishedWalTxnCount();
+            for (int i = 0; i < 10; i++) {
+                currentMicros += 200000;
+                Assert.assertFalse(checkWalTransactionsJob.runSerially());
+                // Check that only 1 attempt is made to publish notification and then the job backs off
+                Assert.assertEquals(currentRepublishCounter + i + 1, engine.getUnpublishedWalTxnCount());
+            }
+        });
     }
 
     @Test

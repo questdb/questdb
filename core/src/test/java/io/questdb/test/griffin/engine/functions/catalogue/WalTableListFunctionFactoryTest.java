@@ -26,12 +26,16 @@ package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ErrorTag;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
@@ -40,6 +44,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.util.concurrent.TimeUnit;
 
 import static io.questdb.cairo.ErrorTag.*;
 import static io.questdb.std.Files.SEPARATOR;
@@ -50,6 +56,64 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
+    }
+
+    @Test
+    public void testMemoryPressureIndicator() throws Exception {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        assertMemoryLeak(() -> {
+            TableSequencerAPI tableSequencerAPI = engine.getTableSequencerAPI();
+
+            createTable("A", true);
+            engine.awaitTable("A", 30, TimeUnit.SECONDS);
+
+            TableToken token = engine.getTableTokenIfExists("A");
+            Assert.assertNotNull(token);
+
+            SeqTxnTracker txnTracker = tableSequencerAPI.getTxnTracker(token);
+            assertMemoryPressureLevel("A", 0);
+
+            long now = 0;
+            int parallelism = txnTracker.getMaxO3MergeParallelism();
+            txnTracker.updateInflightPartitions(parallelism);
+            txnTracker.onOutOfMemory(now, "A", rnd);
+
+            // Memory pressure level should be 1 after the first OOM event - it indicates that the table is under memory pressure
+            // and reducing parallelism
+            assertMemoryPressureLevel("A", 1);
+
+            do {
+                now += 1000;
+                parallelism = txnTracker.getMaxO3MergeParallelism();
+                txnTracker.updateInflightPartitions(parallelism);
+                txnTracker.onOutOfMemory(now, "A", rnd);
+            } while (txnTracker.getMemoryPressureLevel() == 1);
+
+            // eventually memory pressure level should be 2 after the second OOM event - it indicates that the table is under memory pressure
+            // and is applying backoff
+            assertMemoryPressureLevel("A", 2);
+
+
+            // now let's simulate reducing memory pressure
+            now += 1000;
+            parallelism = txnTracker.getMaxO3MergeParallelism();
+            txnTracker.updateInflightPartitions(parallelism);
+            txnTracker.hadEnoughMemory("A", rnd);
+
+            // after a first successful O3 merge memory pressure level should be 1 - still reducing parallelism
+            // but no longer applying backoff
+            assertMemoryPressureLevel("A", 1);
+
+            do {
+                now += 1000;
+                parallelism = txnTracker.getMaxO3MergeParallelism();
+                txnTracker.updateInflightPartitions(parallelism);
+                txnTracker.hadEnoughMemory("A", rnd);
+            } while (txnTracker.getMemoryPressureLevel() == 1);
+
+            // eventually the memory pressure should be 0 - no memory pressure at all
+            assertMemoryPressureLevel("A", 0);
+        });
     }
 
     @Test
@@ -65,9 +129,9 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
                 for (int i = 0; i < 5; i++) {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         println(factory, cursor);
-                        TestUtils.assertEquals("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\n" +
-                                "B\tfalse\t0\t0\t0\t\t\n" +
-                                "C\tfalse\t0\t0\t0\t\t\n", sink);
+                        TestUtils.assertEquals("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
+                                "B\tfalse\t0\t0\t0\t\t\t0\n" +
+                                "C\tfalse\t0\t0\t0\t\t\t0\n", sink);
                     }
                 }
             }
@@ -112,10 +176,10 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("C")));
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("D")));
 
-            assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\n" +
-                    "B\ttrue\t1\t0\t3\t\tcould not open read-write [file=" + root + SEPARATOR + "B~2" + SEPARATOR + "2022-12-05" + SEPARATOR + "x.d.1]\n" +
-                    "C\tfalse\t2\t0\t2\t\t\n" +
-                    "D\tfalse\t1\t0\t1\t\t\n", "wal_tables() order by name");
+            assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
+                    "B\ttrue\t1\t0\t3\t\tcould not open read-write [file=" + root + SEPARATOR + "B~2" + SEPARATOR + "2022-12-05" + SEPARATOR + "x.d.1]\t0\n" +
+                    "C\tfalse\t2\t0\t2\t\t\t0\n" +
+                    "D\tfalse\t1\t0\t1\t\t\t0\n", "wal_tables() order by name");
 
             assertSql("name\tsuspended\twriterTxn\n" +
                     "B\ttrue\t1\n" +
@@ -142,6 +206,12 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
         testWalTablesSuspendedWithError("alter table B suspend wal with 'TOO MANY OPEN FILES', 'test error message 4'", TOO_MANY_OPEN_FILES, "test error message 4");
         testWalTablesSuspendedWithError("alter table B suspend wal with '', 'test error message 5'", NONE, "test error message 5");
         testWalTablesSuspendedWithError("alter table B suspend wal", NONE, "");
+    }
+
+    private void assertMemoryPressureLevel(CharSequence tableName, int expectedMemoryPressureLevel) throws SqlException {
+        assertQuery("memoryPressure\n" +
+                        +expectedMemoryPressureLevel + "\n",
+                "select memoryPressure from wal_tables() where name = '" + tableName + "'", false, false);
     }
 
     private void createTable(final String tableName, boolean isWal) throws SqlException {
@@ -171,8 +241,8 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
 
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("B")));
 
-            assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\n" +
-                    "B\ttrue\t2\t0\t2\t" + expectedErrorTag.text() + "\t" + expectedErrorMessage + "\n", "wal_tables()");
+            assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
+                    "B\ttrue\t2\t0\t2\t" + expectedErrorTag.text() + "\t" + expectedErrorMessage + "\t0\n", "wal_tables()");
 
             compile("alter table B resume wal");
 
@@ -180,8 +250,8 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("B")));
 
-            assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\n" +
-                    "B\tfalse\t2\t0\t2\t\t\n", "wal_tables()");
+            assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
+                    "B\tfalse\t2\t0\t2\t\t\t0\n", "wal_tables()");
 
             dropTable("A");
             dropTable("B");

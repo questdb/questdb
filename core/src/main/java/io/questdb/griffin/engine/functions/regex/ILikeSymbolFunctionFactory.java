@@ -22,27 +22,16 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.constants;
+package io.questdb.griffin.engine.functions.regex;
 
-import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.TypeConstant;
-import io.questdb.griffin.engine.functions.StrFunction;
-
-public class StrTypeConstant extends StrFunction implements TypeConstant {
-    public static final StrTypeConstant INSTANCE = new StrTypeConstant();
-
+public class ILikeSymbolFunctionFactory extends AbstractLikeSymbolFunctionFactory {
     @Override
-    public CharSequence getStrA(Record rec) {
-        return null;
+    public String getSignature() {
+        return "ilike(KS)";
     }
 
     @Override
-    public CharSequence getStrB(Record rec) {
-        return null;
-    }
-
-    @Override
-    public int getStrLen(Record rec) {
-        return -1;
+    protected boolean isCaseInsensitive() {
+        return true;
     }
 }

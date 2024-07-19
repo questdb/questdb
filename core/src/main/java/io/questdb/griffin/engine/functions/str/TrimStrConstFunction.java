@@ -24,25 +24,24 @@
 
 package io.questdb.griffin.engine.functions.str;
 
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.str.StringSink;
 
 import static io.questdb.std.Chars.trim;
 
-public class TrimFunction extends StrFunction implements UnaryFunction {
-
+public class TrimStrConstFunction extends StrFunction implements UnaryFunction {
     private final Function arg;
-    private final StringSink sink1 = new StringSink();
-    private final StringSink sink2 = new StringSink();
-    private final TrimType type;
+    private final StringSink sinkA = new StringSink();
+    private final StringSink sinkB = new StringSink();
 
-    public TrimFunction(Function arg, TrimType type) {
+    public TrimStrConstFunction(Function arg, TrimType type) {
         this.arg = arg;
-        this.type = type;
+        trim(type, getArg().getStrA(null), sinkA);
+        trim(type, getArg().getStrA(null), sinkB);
     }
 
     @Override
@@ -51,49 +50,22 @@ public class TrimFunction extends StrFunction implements UnaryFunction {
     }
 
     @Override
-    public String getName() {
-        switch (type) {
-            case LTRIM:
-                return "ltrim";
-            case RTRIM:
-                return "rtrim";
-            default:
-                return "trim";
-        }
+    public CharSequence getStrA(Record rec) {
+        return sinkA;
     }
 
     @Override
-    public CharSequence getStrA(final Record rec) {
-        final CharSequence charSequence = getArg().getStrA(rec);
-        if (charSequence == null) {
-            return null;
-        }
-        trim(type, charSequence, sink1);
-        return sink1;
-    }
-
-    @Override
-    public CharSequence getStrB(final Record rec) {
-        final CharSequence charSequence = getArg().getStrA(rec);
-        if (charSequence == null) {
-            return null;
-        }
-        trim(type, charSequence, sink2);
-        return sink2;
-    }
-
-    @Override
-    public int getStrLen(Record rec) {
-        final int len = arg.getStrLen(rec);
-        if (len == TableUtils.NULL_LEN) {
-            return TableUtils.NULL_LEN;
-        }
-        trim(type, getArg().getStrA(rec), sink1);
-        return sink1.length();
+    public CharSequence getStrB(Record rec) {
+        return sinkB;
     }
 
     @Override
     public boolean isReadThreadSafe() {
         return false;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.val('\'').val(sinkA).val('\'');
     }
 }
