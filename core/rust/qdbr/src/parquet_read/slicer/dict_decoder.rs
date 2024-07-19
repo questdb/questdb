@@ -60,7 +60,7 @@ impl<'a> VarDictDecoder<'a> {
             }
 
             let str_slice = &dict_data[offset..offset + str_len];
-            if is_utf8 && !std::str::from_utf8(str_slice).is_ok() {
+            if is_utf8 && std::str::from_utf8(str_slice).is_err() {
                 return Err(Error::OutOfSpec(format!(
                     "dictionary value {} is not valid utf8",
                     i
