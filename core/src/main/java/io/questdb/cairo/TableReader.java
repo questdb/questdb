@@ -57,6 +57,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final MillisecondClock clock;
     private final ColumnVersionReader columnVersionReader;
     private final CairoConfiguration configuration;
+    private final int dbRootSize;
     private final FilesFacade ff;
     private final int maxOpenPartitions;
     private final MessageBus messageBus;
@@ -103,7 +104,9 @@ public class TableReader implements Closeable, SymbolTableSource {
         this.messageBus = messageBus;
         try {
             this.path = new Path();
-            this.path.of(configuration.getRoot()).concat(this.tableToken.getDirName());
+            this.path.of(configuration.getRoot());
+            this.dbRootSize = this.path.size();
+            path.concat(this.tableToken.getDirName());
             this.rootLen = path.size();
             path.trimTo(rootLen);
 
@@ -602,7 +605,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, -1L);
             openPartitionCount--;
 
-            LOG.debug().$("closed partition [path=").$(path).$(", timestamp=").$ts(partitionTimestamp).I$();
+            LOG.debug().$("closed partition [path=").$substr(dbRootSize, path).$(", timestamp=").$ts(partitionTimestamp).I$();
         }
     }
 
@@ -869,8 +872,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                 final long partitionSize = txFile.getPartitionSize(partitionIndex);
                 if (partitionSize > -1L) {
                     LOG.info()
-                            .$("open partition ").$(path)
-                            .$(" [rowCount=").$(partitionSize)
+                            .$("open partition [path=").$substr(dbRootSize, path)
+                            .$(", rowCount=").$(partitionSize)
                             .$(", partitionIndex=").$(partitionIndex)
                             .$(", partitionCount=").$(partitionCount)
                             .I$();
@@ -1090,10 +1093,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                         LOG.critical().$("Invalid var len column size [column=").$(name).$(", size=").$(dataSize).$(", path=").$(path).I$();
                         throw CairoException.critical(0).put("Invalid column size [column=").put(path).put(", size=").put(dataSize).put(']');
                     }
-                    if (columnRowCount > 0) {
-                        TableUtils.dFile(path.trimTo(plen), name, columnTxn);
-                        openOrCreateMemory(path, columns, primaryIndex, dataMem, dataSize);
-                    }
+                    TableUtils.dFile(path.trimTo(plen), name, columnTxn);
+                    openOrCreateMemory(path, columns, primaryIndex, dataMem, dataSize);
                 } else {
                     TableUtils.dFile(path.trimTo(plen), name, columnTxn);
                     openOrCreateMemory(

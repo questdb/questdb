@@ -961,6 +961,11 @@ public class LogFactory implements Closeable {
         }
 
         @Override
+        public LogRecord $substr(int from, @Nullable DirectUtf8Sequence sequence) {
+            return this;
+        }
+
+        @Override
         public LogRecord $ts(long x) {
             return this;
         }
