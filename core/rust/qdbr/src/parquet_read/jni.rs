@@ -6,16 +6,6 @@ use crate::parquet_write::schema::ColumnType;
 use jni::objects::JClass;
 use jni::JNIEnv;
 
-// These constants should match constants in Java's PartitionDecoder.
-pub const BOOLEAN: u32 = 0;
-pub const INT32: u32 = 1;
-pub const INT64: u32 = 2;
-pub const INT96: u32 = 3;
-pub const FLOAT: u32 = 4;
-pub const DOUBLE: u32 = 5;
-pub const BYTE_ARRAY: u32 = 6;
-pub const FIXED_LEN_BYTE_ARRAY: u32 = 7;
-
 fn from_raw_file_descriptor(raw: i32) -> File {
     unsafe {
         #[cfg(unix)]
@@ -38,11 +28,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     _class: JClass,
     raw_fd: i32,
 ) -> *mut ParquetDecoder {
-    let init = || -> anyhow::Result<ParquetDecoder> {
-        ParquetDecoder::read(from_raw_file_descriptor(raw_fd))
-    };
-
-    match init() {
+    match ParquetDecoder::read(from_raw_file_descriptor(raw_fd)) {
         Ok(decoder) => Box::into_raw(Box::new(decoder)),
         Err(err) => throw_state_ex(
             &mut env,
@@ -59,7 +45,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     _class: JClass,
     decoder: *mut ParquetDecoder,
 ) {
-    assert!(!decoder.is_null(), "decoder pointer is null");
+    if decoder.is_null() {
+        panic!("decoder pointer is null");
+    }
 
     unsafe {
         drop(Box::from_raw(decoder));
@@ -159,14 +147,6 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     _class: JClass,
 ) -> usize {
     offset_of!(ColumnMeta, typ)
-}
-
-#[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_columnRecordPhysicalTypeOffset(
-    _env: JNIEnv,
-    _class: JClass,
-) -> usize {
-    offset_of!(ColumnMeta, physical_type)
 }
 
 #[no_mangle]

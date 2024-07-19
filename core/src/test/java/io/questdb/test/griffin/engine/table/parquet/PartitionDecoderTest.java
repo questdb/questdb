@@ -109,7 +109,6 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                 for (int i = 0; i < columns; i++) {
                     TestUtils.assertEquals("column: " + i, readerMeta.getColumnName(i), partitionDecoder.getMetadata().columnName(i));
                     Assert.assertEquals("column: " + i, i, partitionDecoder.getMetadata().columnId(i));
-                    Assert.assertEquals("column: " + i, expectedPhysicalTypes[i], partitionDecoder.getMetadata().columnPhysicalType(i));
                     Assert.assertEquals("column: " + i, toParquetStorageType(readerMeta.getColumnType(i)), partitionDecoder.getMetadata().getColumnType(i));
                 }
             }

@@ -48,7 +48,6 @@ public class PartitionDecoder implements QuietCloseable {
     private static final long COLUMNS_PTR_OFFSET;
     private static final long COLUMN_COUNT_OFFSET;
     private final static long COLUMN_IDS_OFFSET;
-    private static final long COLUMN_PHYSICAL_TYPES_OFFSET;
     private static final long COLUMN_RECORD_NAME_PTR_OFFSET;
     private static final long COLUMN_RECORD_NAME_SIZE_OFFSET;
     private static final long COLUMN_RECORD_SIZE;
@@ -75,7 +74,7 @@ public class PartitionDecoder implements QuietCloseable {
         return Unsafe.getUnsafe().getLong(chunkPtr + CHUNK_DATA_PTR_OFFSET);
     }
 
-    public static long getRowGroupCount(long chunkPtr) {
+    public static long getRowGroupRowCount(long chunkPtr) {
         return Unsafe.getUnsafe().getLong(chunkPtr + CHUNK_ROW_GROUP_COUNT_PTR_OFFSET);
     }
 
@@ -188,10 +187,6 @@ public class PartitionDecoder implements QuietCloseable {
             return columnNames.getQuick(index);
         }
 
-        public long columnPhysicalType(int index) {
-            return Unsafe.getUnsafe().getLong(columnsPtr + index * COLUMN_RECORD_SIZE + COLUMN_PHYSICAL_TYPES_OFFSET);
-        }
-
         public void copyTo(GenericRecordMetadata metadata) {
             metadata.clear();
             final int columnCount = columnCount();
@@ -239,7 +234,6 @@ public class PartitionDecoder implements QuietCloseable {
         COLUMN_RECORD_TYPE_OFFSET = columnRecordTypeOffset();
         COLUMN_RECORD_NAME_SIZE_OFFSET = columnRecordNameSizeOffset();
         COLUMN_RECORD_NAME_PTR_OFFSET = columnRecordNamePtrOffset();
-        COLUMN_PHYSICAL_TYPES_OFFSET = columnRecordPhysicalTypeOffset();
         ROW_GROUP_COUNT_OFFSET = rowGroupCountOffset();
         COLUMN_IDS_OFFSET = columnIdsOffset();
         CHUNK_DATA_PTR_OFFSET = chunkDataPtrOffset();

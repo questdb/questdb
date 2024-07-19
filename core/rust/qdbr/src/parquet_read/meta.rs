@@ -7,42 +7,25 @@ use parquet2::schema::types::{
 };
 use std::fs::File;
 
-use crate::parquet_read::jni::{
-    BOOLEAN, BYTE_ARRAY, DOUBLE, FIXED_LEN_BYTE_ARRAY, FLOAT, INT32, INT64, INT96,
-};
 use crate::parquet_write::schema::ColumnType;
 
 impl ParquetDecoder {
     pub fn read(mut reader: File) -> anyhow::Result<Self> {
         let metadata = read_metadata(&mut reader)?;
 
-        let mut columns = vec![];
-        let mut column_buffers = vec![];
+        let col_len = metadata.schema_descr.columns().len();
+        let mut columns = Vec::with_capacity(col_len);
+        let mut column_buffers = Vec::with_capacity(col_len);
 
         for (column_id, f) in metadata.schema_descr.columns().iter().enumerate() {
             // Some types are not supported, this will skip them.
             if let Some(typ) = Self::descriptor_to_column_type(&f.descriptor) {
-                let physical_type = match f.descriptor.primitive_type.physical_type {
-                    PhysicalType::Boolean => BOOLEAN as i64,
-                    PhysicalType::Int32 => INT32 as i64,
-                    PhysicalType::Int64 => INT64 as i64,
-                    PhysicalType::Int96 => INT96 as i64,
-                    PhysicalType::Float => FLOAT as i64,
-                    PhysicalType::Double => DOUBLE as i64,
-                    PhysicalType::ByteArray => BYTE_ARRAY as i64,
-                    PhysicalType::FixedLenByteArray(length) => {
-                        // Should match Numbers#encodeLowHighInts().
-                        i64::overflowing_shl(length as i64, 32).0 | (FIXED_LEN_BYTE_ARRAY as i64)
-                    }
-                };
-
                 let name_str = &f.descriptor.primitive_type.field_info.name;
                 let name: Vec<u16> = name_str.encode_utf16().collect();
 
                 columns.push(ColumnMeta {
                     typ,
                     id: column_id as i32,
-                    physical_type,
                     name_size: name.len() as u32,
                     name_ptr: name.as_ptr(),
                     name_vec: name,
@@ -137,8 +120,7 @@ impl ParquetDecoder {
             }
             (PhysicalType::ByteArray, None, _) => Some(ColumnType::Binary),
             (PhysicalType::Int96, None, None) => Some(ColumnType::Timestamp),
-            (ph, log, conv) => {
-                println!("Unsupported column type: {:?} {:?} {:?}", ph, log, conv);
+            (_, _, _) => {
                 None
             }
         }

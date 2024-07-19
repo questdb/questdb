@@ -46,28 +46,7 @@ impl ColumnChunkBuffers {
     }
 }
 
-const UUID_NULL: [u8; 16] = {
-    const MIN_BYTES: [u8; 8] = i64::MIN.to_le_bytes();
-    const CONCATENATED: [u8; 16] = [
-        MIN_BYTES[0],
-        MIN_BYTES[1],
-        MIN_BYTES[2],
-        MIN_BYTES[3],
-        MIN_BYTES[4],
-        MIN_BYTES[5],
-        MIN_BYTES[6],
-        MIN_BYTES[7],
-        MIN_BYTES[0],
-        MIN_BYTES[1],
-        MIN_BYTES[2],
-        MIN_BYTES[3],
-        MIN_BYTES[4],
-        MIN_BYTES[5],
-        MIN_BYTES[6],
-        MIN_BYTES[7],
-    ];
-    CONCATENATED
-};
+const UUID_NULL: [u8; 16] = unsafe {std::mem::transmute([i64::MIN; 2]) };
 
 const LONG256_NULL: [u8; 32] = {
     const MIN_BYTES: [u8; 8] = i64::MIN.to_le_bytes();
@@ -110,7 +89,7 @@ const LONG256_NULL: [u8; 32] = {
 
 const BYTE_NULL: [u8; 1] = [0u8];
 const INT_NULL: [u8; 4] = i32::MIN.to_le_bytes();
-const SHORT_NULL: [u8; 2] = i16::MIN.to_le_bytes();
+const SHORT_NULL: [u8; 2] = 0i16.to_le_bytes();
 const LONG_NULL: [u8; 8] = i64::MIN.to_le_bytes();
 const DOUBLE_NULL: [u8; 8] = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf8, 0x7f];
 const FLOAT_NULL: [u8; 4] = [0, 0, 192, 127];
