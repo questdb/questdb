@@ -26,13 +26,13 @@ package io.questdb.test.griffin.engine.functions.str;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.str.RTrimStrFunctionFactory;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
-import io.questdb.griffin.engine.functions.str.LTrimFunctionFactory;
 import org.junit.Test;
 
-public class LTrimFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class RTrimStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
-    public void testEmptyLTrimSpace() throws SqlException {
+    public void testEmptyRTrimSpace() throws SqlException {
         call("").andAssert("");
         call(" ").andAssert("");
         call("    ").andAssert("");
@@ -40,22 +40,22 @@ public class LTrimFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
-    public void testLTrimSpace() throws SqlException {
-        call("    abc     ").andAssert("abc     ");
-        call("     abc").andAssert("abc");
-        call(" a b c ").andAssert("a b c ");
-    }
-
-    @Test
-    public void testNoLTrimSpace() throws SqlException {
-        call("abc     ").andAssert("abc     ");
+    public void testNoRTrimSpace() throws SqlException {
+        call("     abc").andAssert("     abc");
         call("a b c").andAssert("a b c");
         call("kkk").andAssert("kkk");
         call("()  /  {}").andAssert("()  /  {}");
     }
 
+    @Test
+    public void testRTrimSpace() throws SqlException {
+        call("    abc     ").andAssert("    abc");
+        call("abc     ").andAssert("abc");
+        call(" a b c ").andAssert(" a b c");
+    }
+
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new LTrimFunctionFactory();
+        return new RTrimStrFunctionFactory();
     }
 }

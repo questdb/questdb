@@ -942,8 +942,8 @@ open module io.questdb {
 
             // trim
             io.questdb.griffin.engine.functions.str.TrimStrFunctionFactory,
-            io.questdb.griffin.engine.functions.str.LTrimFunctionFactory,
-            io.questdb.griffin.engine.functions.str.RTrimFunctionFactory,
+            io.questdb.griffin.engine.functions.str.LTrimStrFunctionFactory,
+            io.questdb.griffin.engine.functions.str.RTrimStrFunctionFactory,
             io.questdb.griffin.engine.functions.str.TrimVarcharFunctionFactory,
             io.questdb.griffin.engine.functions.str.LTrimVarcharFunctionFactory,
             io.questdb.griffin.engine.functions.str.RTrimVarcharFunctionFactory,
