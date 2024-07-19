@@ -578,7 +578,7 @@ public class LogAlertSocketTest {
         }
 
         @Override
-        public LogRecord $sub(int skip, @Nullable DirectUtf8Sequence sequence) {
+        public LogRecord $substr(int from, @Nullable DirectUtf8Sequence sequence) {
             throw new UnsupportedOperationException();
         }
 

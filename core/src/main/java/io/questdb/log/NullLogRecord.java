@@ -60,7 +60,7 @@ final class NullLogRecord implements LogRecord {
     }
 
     @Override
-    public LogRecord $sub(int skip, @Nullable DirectUtf8Sequence sequence) {
+    public LogRecord $substr(int from, @Nullable DirectUtf8Sequence sequence) {
         return this;
     }
 

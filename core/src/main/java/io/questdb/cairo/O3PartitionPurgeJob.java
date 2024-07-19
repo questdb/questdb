@@ -267,7 +267,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 purgePartition(tableToken, ff, path, tableRootLen - tableToken.getDirNameUtf8().size() - 1, "purging dropped partition directory [path=");
                 lastTxn = nameTxn;
             } else {
-                LOG.debug().$("cannot purge partition directory, locked for reading [path=").$sub(tableRootLen - tableToken.getDirNameUtf8().size() - 1, path).I$();
+                LOG.debug().$("cannot purge partition directory, locked for reading [path=").$substr(tableRootLen - tableToken.getDirNameUtf8().size() - 1, path).I$();
                 break;
             }
         }
@@ -354,18 +354,18 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                     // See comments of why +1 added there in parsePartitionDateVersion()
                     purgePartition(tableToken, ff, path, tableRootLen - tableToken.getDirNameUtf8().size() - 1, "purging overwritten partition directory [path=");
                 } else {
-                    LOG.info().$("cannot purge overwritten partition directory, locked for reading path=").$sub(tableRootLen - tableToken.getDirNameUtf8().size() - 1, path).I$();
+                    LOG.info().$("cannot purge overwritten partition directory, locked for reading path=").$substr(tableRootLen - tableToken.getDirNameUtf8().size() - 1, path).I$();
                 }
             }
         }
     }
 
-    private void purgePartition(TableToken tableToken, FilesFacade ff, Path path, int pathLogSkip, String message) {
+    private void purgePartition(TableToken tableToken, FilesFacade ff, Path path, int pathFrom, String message) {
         if (engine.lockTableCreate(tableToken)) {
             try {
                 TableToken lastToken = engine.getUpdatedTableToken(tableToken);
                 if (lastToken == tableToken) {
-                    LOG.info().$(message).$sub(pathLogSkip, path).I$();
+                    LOG.info().$(message).$substr(pathFrom, path).I$();
                     ff.unlinkOrRemove(path, LOG);
                 } else {
                     // table is dropped and recreated since we started processing it.

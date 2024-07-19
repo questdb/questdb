@@ -114,7 +114,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
             final long t = millisecondClock.getTicks();
             if (lastRunMs + checkInterval < t) {
                 lastRunMs = t;
-                notificationQueueIsFull = !checkSequencerTrackers();
+                notificationQueueIsFull = !republishNotificationsFromTrackers();
             }
             return false;
         }
@@ -123,7 +123,7 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
         return !notificationQueueIsFull;
     }
 
-    private boolean checkSequencerTrackers() {
+    private boolean republishNotificationsFromTrackers() {
         engine.getTableTokens(tableTokenBucket, false);
         for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
             TableToken tableToken = tableTokenBucket.get(i);

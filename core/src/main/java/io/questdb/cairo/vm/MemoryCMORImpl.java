@@ -33,14 +33,9 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 
-import java.util.concurrent.atomic.AtomicLong;
-
 // Contiguous mapped with offset readable memory
-// todo: investigate if we can map file from 0 offset and have the logic in this class done by the OS
 public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
-    private static final AtomicLong ID_GENERATOR = new AtomicLong(0);
     private static final Log LOG = LogFactory.getLog(MemoryCMORImpl.class);
-    private final long id = ID_GENERATOR.incrementAndGet();
     private long mapFileOffset;
     private long offset;
 
@@ -125,7 +120,7 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
         } else {
             openFile(ff, name);
         }
-        mapLazy(ff, name, lo, hi);
+        mapLazy(lo, hi);
     }
 
     @Override
@@ -142,7 +137,7 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
         return size + mapFileOffset - offset;
     }
 
-    private void mapLazy(FilesFacade ff, LPSZ name, long lo, long hi) {
+    private void mapLazy(long lo, long hi) {
         assert hi >= 0 && hi >= lo : "hi : " + hi + " lo : " + lo;
         if (hi > lo) {
             this.offset = lo;
@@ -185,6 +180,6 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
         }
 
         // ---------------V leave a space here for alignment with open log message
-        LOG.debug().$("map  [fd=").$(fd).$(", pageSize=").$(size).$(", size=").$(this.size).$(']').$();
+        LOG.debug().$("map  [fd=").$(fd).$(", size=").$(this.size).$(']').$();
     }
 }

@@ -605,7 +605,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, -1L);
             openPartitionCount--;
 
-            LOG.debug().$("closed partition [path=").$sub(dbRootSize, path).$(", timestamp=").$ts(partitionTimestamp).I$();
+            LOG.debug().$("closed partition [path=").$substr(dbRootSize, path).$(", timestamp=").$ts(partitionTimestamp).I$();
         }
     }
 
@@ -872,7 +872,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 final long partitionSize = txFile.getPartitionSize(partitionIndex);
                 if (partitionSize > -1L) {
                     LOG.info()
-                            .$("open partition [path=").$sub(dbRootSize, path)
+                            .$("open partition [path=").$substr(dbRootSize, path)
                             .$(", rowCount=").$(partitionSize)
                             .$(", partitionIndex=").$(partitionIndex)
                             .$(", partitionCount=").$(partitionCount)

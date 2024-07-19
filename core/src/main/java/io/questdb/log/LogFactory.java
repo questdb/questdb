@@ -886,11 +886,6 @@ public class LogFactory implements Closeable {
         }
 
         @Override
-        public LogRecord $sub(int skip, @Nullable DirectUtf8Sequence sequence) {
-            return this;
-        }
-
-        @Override
         public LogRecord $(@NotNull CharSequence sequence, int lo, int hi) {
             return this;
         }
@@ -936,11 +931,6 @@ public class LogFactory implements Closeable {
         }
 
         @Override
-        public LogRecord $uuid(long lo, long hi) {
-            return this;
-        }
-
-        @Override
         public LogRecord $(@Nullable Sinkable x) {
             return this;
         }
@@ -971,12 +961,22 @@ public class LogFactory implements Closeable {
         }
 
         @Override
+        public LogRecord $substr(int from, @Nullable DirectUtf8Sequence sequence) {
+            return this;
+        }
+
+        @Override
         public LogRecord $ts(long x) {
             return this;
         }
 
         @Override
         public LogRecord $utf8(long lo, long hi) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $uuid(long lo, long hi) {
             return this;
         }
 
