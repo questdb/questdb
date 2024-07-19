@@ -79,11 +79,10 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
     }
 
     private static class Func extends StrFunction implements TernaryFunction {
-
         private final int maxLength;
         private final Function newSubStr;
         private final Function oldSubStr;
-        private final StringSink sink = new StringSink();
+        private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
         private final Function value;
 
@@ -113,8 +112,8 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
         public CharSequence getStrA(Record rec) {
             final CharSequence value = this.value.getStrA(rec);
             if (value != null) {
-                sink.clear();
-                return (CharSequence) replace(value, oldSubStr.getStrA(rec), newSubStr.getStrA(rec), sink);
+                sinkA.clear();
+                return (CharSequence) replace(value, oldSubStr.getStrA(rec), newSubStr.getStrA(rec), sinkA);
             }
             return null;
         }
@@ -148,7 +147,7 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
             }
         }
 
-        //if result is null then return null; otherwise return sink
+        // if result is null then return null; otherwise return sink
         private Utf16Sink replace(@NotNull CharSequence value, CharSequence term, CharSequence withWhat, Utf16Sink sink) throws CairoException {
             int valueLen = value.length();
             if (valueLen < 1) {

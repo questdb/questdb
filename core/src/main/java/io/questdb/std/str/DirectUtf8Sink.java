@@ -75,7 +75,6 @@ public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, Dire
     @Override
     public void clear() {
         sink.clear();
-        setAscii(true);
     }
 
     @Override

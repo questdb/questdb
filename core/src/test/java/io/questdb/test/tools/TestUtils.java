@@ -577,75 +577,6 @@ public final class TestUtils {
         }
     }
 
-    public static class LeakCheck implements QuietCloseable {
-        private final long mem;
-        private final long[] memoryUsageByTag = new long[MemoryTag.SIZE];
-        private final long fileCount;
-        private final String fileDebugInfo;
-        private final int addrInfoCount;
-        private final int sockAddrCount;
-
-        public LeakCheck() {
-            Path.clearThreadLocals();
-            mem = Unsafe.getMemUsed();
-            for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
-                memoryUsageByTag[i] = Unsafe.getMemUsedByTag(i);
-            }
-
-            Assert.assertTrue("Initial file unsafe mem should be >= 0", mem >= 0);
-            fileCount = Files.getOpenFileCount();
-            fileDebugInfo = Files.getOpenFdDebugInfo();
-            Assert.assertTrue("Initial file count should be >= 0", fileCount >= 0);
-
-            addrInfoCount = Net.getAllocatedAddrInfoCount();
-            Assert.assertTrue("Initial allocated addrinfo count should be >= 0", addrInfoCount >= 0);
-
-            sockAddrCount = Net.getAllocatedSockAddrCount();
-            Assert.assertTrue("Initial allocated sockaddr count should be >= 0", sockAddrCount >= 0);
-        }
-
-        @Override
-        public void close() {
-            Path.clearThreadLocals();
-            if (fileCount != Files.getOpenFileCount()) {
-                Assert.assertEquals("file descriptors, expected: " + fileDebugInfo + ", actual: " + Files.getOpenFdDebugInfo(), fileCount, Files.getOpenFileCount());
-            }
-
-            // Checks that the same tag used for allocation and freeing native memory
-            long memAfter = Unsafe.getMemUsed();
-            long memNativeSqlCompilerDiff = 0;
-            Assert.assertTrue(memAfter > -1);
-            if (mem != memAfter) {
-                for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
-                    long actualMemByTag = Unsafe.getMemUsedByTag(i);
-                    if (memoryUsageByTag[i] != actualMemByTag) {
-                        if (i != MemoryTag.NATIVE_SQL_COMPILER) {
-                            Assert.assertEquals("Memory usage by tag: " + MemoryTag.nameOf(i) + ", difference: " + (actualMemByTag - memoryUsageByTag[i]), memoryUsageByTag[i], actualMemByTag);
-                            Assert.assertTrue(actualMemByTag > -1);
-                        } else {
-                            // SqlCompiler memory is not released immediately as compilers are pooled
-                            Assert.assertTrue(actualMemByTag >= memoryUsageByTag[i]);
-                            memNativeSqlCompilerDiff = actualMemByTag - memoryUsageByTag[i];
-                        }
-                    }
-                }
-                Assert.assertEquals(mem + memNativeSqlCompilerDiff, memAfter);
-            }
-
-            int addrInfoCountAfter = Net.getAllocatedAddrInfoCount();
-            Assert.assertTrue(addrInfoCountAfter > -1);
-            if (addrInfoCount != addrInfoCountAfter) {
-                Assert.fail("AddrInfo allocation count before the test: " + addrInfoCount + ", after the test: " + addrInfoCountAfter);
-            }
-
-            int sockAddrCountAfter = Net.getAllocatedSockAddrCount();
-            Assert.assertTrue(sockAddrCountAfter > -1);
-            if (sockAddrCount != sockAddrCountAfter) {
-                Assert.fail("SockAddr allocation count before the test: " + sockAddrCount + ", after the test: " + sockAddrCountAfter);
-            }
-        }
-    }
-
     public static void assertMemoryLeak(LeakProneCode runnable) throws Exception {
         try (LeakCheck _check = new LeakCheck()) {
             runnable.run();
@@ -1746,5 +1677,74 @@ public final class TestUtils {
     @FunctionalInterface
     public interface LeakProneCode {
         void run() throws Exception;
+    }
+
+    public static class LeakCheck implements QuietCloseable {
+        private final int addrInfoCount;
+        private final long fileCount;
+        private final String fileDebugInfo;
+        private final long mem;
+        private final long[] memoryUsageByTag = new long[MemoryTag.SIZE];
+        private final int sockAddrCount;
+
+        public LeakCheck() {
+            Path.clearThreadLocals();
+            mem = Unsafe.getMemUsed();
+            for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
+                memoryUsageByTag[i] = Unsafe.getMemUsedByTag(i);
+            }
+
+            Assert.assertTrue("Initial file unsafe mem should be >= 0", mem >= 0);
+            fileCount = Files.getOpenFileCount();
+            fileDebugInfo = Files.getOpenFdDebugInfo();
+            Assert.assertTrue("Initial file count should be >= 0", fileCount >= 0);
+
+            addrInfoCount = Net.getAllocatedAddrInfoCount();
+            Assert.assertTrue("Initial allocated addrinfo count should be >= 0", addrInfoCount >= 0);
+
+            sockAddrCount = Net.getAllocatedSockAddrCount();
+            Assert.assertTrue("Initial allocated sockaddr count should be >= 0", sockAddrCount >= 0);
+        }
+
+        @Override
+        public void close() {
+            Path.clearThreadLocals();
+            if (fileCount != Files.getOpenFileCount()) {
+                Assert.assertEquals("file descriptors, expected: " + fileDebugInfo + ", actual: " + Files.getOpenFdDebugInfo(), fileCount, Files.getOpenFileCount());
+            }
+
+            // Checks that the same tag used for allocation and freeing native memory
+            long memAfter = Unsafe.getMemUsed();
+            long memNativeSqlCompilerDiff = 0;
+            Assert.assertTrue(memAfter > -1);
+            if (mem != memAfter) {
+                for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
+                    long actualMemByTag = Unsafe.getMemUsedByTag(i);
+                    if (memoryUsageByTag[i] != actualMemByTag) {
+                        if (i != MemoryTag.NATIVE_SQL_COMPILER) {
+                            Assert.assertEquals("Memory usage by tag: " + MemoryTag.nameOf(i) + ", difference: " + (actualMemByTag - memoryUsageByTag[i]), memoryUsageByTag[i], actualMemByTag);
+                            Assert.assertTrue(actualMemByTag > -1);
+                        } else {
+                            // SqlCompiler memory is not released immediately as compilers are pooled
+                            Assert.assertTrue(actualMemByTag >= memoryUsageByTag[i]);
+                            memNativeSqlCompilerDiff = actualMemByTag - memoryUsageByTag[i];
+                        }
+                    }
+                }
+                Assert.assertEquals(mem + memNativeSqlCompilerDiff, memAfter);
+            }
+
+            int addrInfoCountAfter = Net.getAllocatedAddrInfoCount();
+            Assert.assertTrue(addrInfoCountAfter > -1);
+            if (addrInfoCount != addrInfoCountAfter) {
+                Assert.fail("AddrInfo allocation count before the test: " + addrInfoCount + ", after the test: " + addrInfoCountAfter);
+            }
+
+            int sockAddrCountAfter = Net.getAllocatedSockAddrCount();
+            Assert.assertTrue(sockAddrCountAfter > -1);
+            if (sockAddrCount != sockAddrCountAfter) {
+                Assert.fail("SockAddr allocation count before the test: " + sockAddrCount + ", after the test: " + sockAddrCountAfter);
+            }
+        }
     }
 }

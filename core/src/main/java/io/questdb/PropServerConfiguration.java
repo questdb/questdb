@@ -2915,7 +2915,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public double getWalSquashUncommittedRowsMultiplier() {
+        public double getWalLagRowsMultiplier() {
             return walSquashUncommittedRowsMultiplier;
         }
 
