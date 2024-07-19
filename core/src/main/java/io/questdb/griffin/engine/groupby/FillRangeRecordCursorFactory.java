@@ -94,6 +94,10 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         final RecordCursor baseCursor = base.getCursor(executionContext);
+
+        from.init(baseCursor, executionContext);
+        to.init(baseCursor, executionContext);
+
         try {
             cursor.of(baseCursor, executionContext.getCircuitBreaker(), from, to, stride, values, timestampIndex);
             return cursor;

@@ -128,20 +128,19 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ObjList<CharSequence> updateTableColumnNames = new ObjList<>();
     private final IntList updateTableColumnTypes = new IntList();
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauseModel = new LowerCaseCharSequenceObjHashMap<>();
+    // used for the parallel sample by rewrite. In future, if we deprecate original SAMPLE BY, then these will
+    // be the only fields for these values.
+    public ExpressionNode fillTimestampAlias;
     private ExpressionNode alias;
     private boolean artificialStar;
     // Used to store a deep copy of the whereClause field
     // since whereClause can be changed during optimization/generation stage.
     private ExpressionNode backupWhereClause;
-
     // where clause expressions that do not reference any tables, not necessarily constants
     private ExpressionNode constWhereClause;
     private JoinContext context;
     private boolean distinct = false;
     private boolean explicitTimestamp;
-
-    // used for the parallel sample by rewrite. In future, if we deprecate original SAMPLE BY, then these will
-    // be the only fields for these values.
     private ExpressionNode fillFrom;
     private ExpressionNode fillStride;
     private ExpressionNode fillTo;

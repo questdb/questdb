@@ -4522,11 +4522,6 @@ public class SqlOptimiser implements Mutable {
                     if (ast.isWildcard()) {
                         throw SqlException.$(column.getAst().position, "wildcard column select is not allowed in sample-by queries");
                     }
-
-                    // it might be a keyed expression
-                    if (ast.type == LITERAL /*|| ast.type == FUNCTION || ast.type == OPERATION*/) {
-                        maybeKeyed.add(ast);
-                    }
                 }
 
                 // When timestamp is not explicitly selected, we will
@@ -4578,31 +4573,6 @@ public class SqlOptimiser implements Mutable {
 
                         if (timestampAlias != null) {
                             timestampColumn = tableNamePrefixedTimestampColumn;
-                        }
-                    }
-                }
-
-                if (maybeKeyed.size() > 0 && sampleByFillSize > 0) {
-                    if (!isNoneKeyword(sampleByFill.getQuick(0).token)) {
-                        final CharSequence tableName = nested.getTableName();
-                        for (int i = 0, n = maybeKeyed.size(); i < n; i++) {
-                            final ExpressionNode expr = maybeKeyed.getQuick(i);
-                            // drop out early, since we don't handle keyed
-                            if (!matchesWithOrWithoutTablePrefix(expr.token, tableName, timestamp.token) &&
-                                    !matchesWithOrWithoutTablePrefix(expr.token, tableName, timestampAlias)) {
-                                // recurse nested models
-                                nested.setNestedModel(rewriteSampleBy(nested.getNestedModel()));
-
-                                // join models
-                                for (int j = 1, m = nested.getJoinModels().size(); j < m; j++) {
-                                    QueryModel joinModel = nested.getJoinModels().getQuick(j);
-                                    joinModel.setNestedModel(rewriteSampleBy(joinModel.getNestedModel()));
-                                }
-
-                                // unions
-                                model.setUnionModel(rewriteSampleBy(model.getUnionModel()));
-                                return model;
-                            }
                         }
                     }
                 }
@@ -4852,7 +4822,6 @@ public class SqlOptimiser implements Mutable {
                 andNode.rhs = lesserThanNode;
                 andNode.paramCount = 2;
                 intervalClause = andNode;
-
             } else if (sampleFrom != null) {
                 ExpressionNode greaterThanOrEqualToNode = expressionNodePool.next().of(OPERATION, opGeq.operator.token, opGeq.precedence, 0);
                 greaterThanOrEqualToNode.lhs = timestamp;

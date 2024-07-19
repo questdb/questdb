@@ -1742,9 +1742,35 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 coerceRuntimeConstantType(fillToFunc, ColumnType.TIMESTAMP, executionContext, "to upper bound must be a constant expression convertible to a TIMESTAMP", fillTo.position);
             }
 
-            // TODO: move to getCursor in FillRangeRecordCursorFactory
-            fillFromFunc.init(null, executionContext);
-            fillToFunc.init(null, executionContext);
+
+            QueryModel temp = model;
+            ExpressionNode timestamp = model.getTimestamp();
+
+            while (timestamp == null && temp != null) {
+                temp = temp.getNestedModel();
+
+                if (temp != null) {
+                    timestamp = temp.getTimestamp();
+                }
+            }
+
+            assert timestamp != null;
+
+            // look for timestamp_floor to check for an alias
+            CharSequence alias = timestamp.token;
+            final CharSequence currTimestamp = curr.getTimestamp().token;
+            for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
+                final QueryColumn col = model.getColumns().getQuick(i);
+                final ExpressionNode ast = col.getAst();
+                if (Chars.equals(ast.token, "timestamp_floor")) {
+                    final CharSequence ts = ast.paramCount == 3 ? ast.args.getQuick(1).token : ast.rhs.token;
+                    if (Chars.equals(ts, currTimestamp)) {
+                        alias = col.getAlias();
+                    }
+                }
+            }
+
+            int timestampIndex = groupByFactory.getMetadata().getColumnIndexQuiet(alias);
 
             return new FillRangeRecordCursorFactory(
                     groupByFactory.getMetadata(),
@@ -1753,7 +1779,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     fillToFunc,
                     fillStride.token,
                     fillValues,
-                    getTimestampIndex(curr, groupByFactory.getMetadata())
+                    timestampIndex
             );
         } catch (Throwable e) {
             Misc.freeObjList(fillValues);
