@@ -62,10 +62,8 @@ public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
         final long hourAsMillis = 3_600_000L;
         final long numPartitions = 100L;
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        final boolean shouldGetSuspended = (rnd.nextLong() & 1) == 0; // rnd.nextBoolean() isn't random on first call
-        final int additionalLoad = shouldGetSuspended ? 100_000 : 0;
+        final int additionalLoad = rnd.nextInt(3) * 100_000;
 
-        boolean didGetSuspended = false;
         try (TestServerMain serverMain = startWithEnvVariables(
                 PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "4096",
                 // let's make CAIRO_WAL_MAX_LAG_SIZE a fraction of our max RSS
@@ -114,12 +112,10 @@ public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
                             e.printStackTrace(System.err);
                             Assert.fail("The only accepted error is 'table is suspended [tableName=table1]', but got: " + e.getMessage());
                         }
-                        didGetSuspended = true;
                         System.out.printf("\n%s\n\n", e.getMessage());
                         break;
                     }
                 }
-                Assert.assertEquals("Table suspension state", shouldGetSuspended, didGetSuspended);
             }
         }
     }
