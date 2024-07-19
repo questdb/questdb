@@ -74,9 +74,8 @@ public class LeftStrFunctionFactory implements FunctionFactory {
     }
 
     private static class ConstCountFunc extends StrFunction implements UnaryFunction {
-
         private final int count;
-        private final StringSink sink = new StringSink();
+        private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
         private final Function strFunc;
 
@@ -92,7 +91,7 @@ public class LeftStrFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStrA(Record rec) {
-            return getStr0(rec, sink);
+            return getStr0(rec, sinkA);
         }
 
         @Override
@@ -104,6 +103,11 @@ public class LeftStrFunctionFactory implements FunctionFactory {
         public int getStrLen(Record rec) {
             int len = strFunc.getStrLen(rec);
             return len != TableUtils.NULL_LEN ? getPos(len) : TableUtils.NULL_LEN;
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
         }
 
         @Override
@@ -130,9 +134,8 @@ public class LeftStrFunctionFactory implements FunctionFactory {
     }
 
     private static class Func extends StrFunction implements BinaryFunction {
-
         private final Function countFunc;
-        private final StringSink sink = new StringSink();
+        private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
         private final Function strFunc;
 
@@ -158,7 +161,7 @@ public class LeftStrFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStrA(Record rec) {
-            return getStr0(rec, sink);
+            return getStr0(rec, sinkA);
         }
 
         @Override
@@ -174,6 +177,11 @@ public class LeftStrFunctionFactory implements FunctionFactory {
                 return getPos(len, count);
             }
             return TableUtils.NULL_LEN;
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
         }
 
         @Nullable

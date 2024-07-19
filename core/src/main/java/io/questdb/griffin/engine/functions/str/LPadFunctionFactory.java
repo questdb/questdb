@@ -62,10 +62,9 @@ public class LPadFunctionFactory implements FunctionFactory {
     }
 
     public static class LPadFunc extends StrFunction implements BinaryFunction {
-
         private final Function lenFunc;
         private final int maxLength;
-        private final StringSink sink = new StringSink();
+        private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
         private final Function strFunc;
 
@@ -92,7 +91,7 @@ public class LPadFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStrA(final Record rec) {
-            return lPad(strFunc.getStrA(rec), lenFunc.getInt(rec), sink);
+            return lPad(strFunc.getStrA(rec), lenFunc.getInt(rec), sinkA);
         }
 
         @Override
@@ -109,6 +108,11 @@ public class LPadFunctionFactory implements FunctionFactory {
             } else {
                 return TableUtils.NULL_LEN;
             }
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
         }
 
         @Nullable
@@ -134,5 +138,4 @@ public class LPadFunctionFactory implements FunctionFactory {
             return null;
         }
     }
-
 }
