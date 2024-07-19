@@ -33,7 +33,7 @@
       "launch_block_device_mappings": [
         {
           "device_name": "/dev/xvdb",
-          "volume_size": 100,
+          "volume_size": 50,
           "delete_on_termination": false,
           "volume_type": "gp3",
           "iops": 3000,
