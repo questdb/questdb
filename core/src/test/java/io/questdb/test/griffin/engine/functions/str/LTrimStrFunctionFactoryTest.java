@@ -26,11 +26,11 @@ package io.questdb.test.griffin.engine.functions.str;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.str.LTrimStrFunctionFactory;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
-import io.questdb.griffin.engine.functions.str.LTrimFunctionFactory;
 import org.junit.Test;
 
-public class LTrimFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class LTrimStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testEmptyLTrimSpace() throws SqlException {
         call("").andAssert("");
@@ -56,6 +56,6 @@ public class LTrimFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new LTrimFunctionFactory();
+        return new LTrimStrFunctionFactory();
     }
 }

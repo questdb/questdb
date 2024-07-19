@@ -168,6 +168,11 @@ public class SplitPartFunctionFactory implements FunctionFactory {
             }
         }
 
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
+        }
+
         private StringSink getStrWithClear(Record rec, StringSink sink) {
             sink.clear();
             CharSequence str = strFunc.getStrA(rec);
@@ -186,8 +191,13 @@ public class SplitPartFunctionFactory implements FunctionFactory {
     private static class SplitPartConstIndexFunction extends AbstractSplitPartFunction {
         private final int index;
 
-        public SplitPartConstIndexFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition,
-                                           int index) {
+        public SplitPartConstIndexFunction(
+                Function strFunc,
+                Function delimiterFunc,
+                Function indexFunc,
+                int indexPosition,
+                int index
+        ) {
             super(strFunc, delimiterFunc, indexFunc, indexPosition);
             this.index = index;
         }
@@ -199,7 +209,13 @@ public class SplitPartFunctionFactory implements FunctionFactory {
     }
 
     private static class SplitPartFunction extends AbstractSplitPartFunction implements TernaryFunction {
-        public SplitPartFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition) {
+
+        public SplitPartFunction(
+                Function strFunc,
+                Function delimiterFunc,
+                Function indexFunc,
+                int indexPosition
+        ) {
             super(strFunc, delimiterFunc, indexFunc, indexPosition);
         }
 
