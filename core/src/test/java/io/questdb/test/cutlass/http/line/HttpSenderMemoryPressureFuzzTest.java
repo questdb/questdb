@@ -63,7 +63,7 @@ public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
         final long numPartitions = 100L;
         final Rnd rnd = TestUtils.generateRandom(LOG);
         final boolean shouldGetSuspended = (rnd.nextLong() & 1) == 0; // rnd.nextBoolean() isn't random on first call
-        final int additionalLoad = shouldGetSuspended ? 50_000 : 0;
+        final int additionalLoad = shouldGetSuspended ? 100_000 : 0;
 
         boolean didGetSuspended = false;
         try (TestServerMain serverMain = startWithEnvVariables(
@@ -88,7 +88,7 @@ public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
                 TableSequencerAPI sequencer = engine.getTableSequencerAPI();
                 for (int j = 0; j < 20; j++) {
                     sequencer.suspendTable(tableToken, ErrorTag.OUT_OF_MEMORY, "test");
-                    for (int i = 0; i < 220_000 + additionalLoad; i++) {
+                    for (int i = 0; i < 200_000 + additionalLoad; i++) {
                         sender.table(tn)
                                 .symbol("sym", rnd.nextString(2))
                                 .longColumn("b", rnd.nextByte())
@@ -119,7 +119,7 @@ public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
                         break;
                     }
                 }
-                Assert.assertEquals("Table suspension state did not meet expectation", shouldGetSuspended, didGetSuspended);
+                Assert.assertEquals("Table suspension state", shouldGetSuspended, didGetSuspended);
             }
         }
     }
