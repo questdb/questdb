@@ -32,6 +32,7 @@ import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocatorArena;
 import io.questdb.std.*;
 import io.questdb.std.bytes.Bytes;
+import io.questdb.std.bytes.DirectByteSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
 
@@ -77,12 +78,14 @@ public class UnorderedVarcharMap implements Map, Reopenable {
     static final long PTR_UNSTABLE_MASK = 0x8000000000000000L; // 63 bits
     static final long PTR_MASK = ~PTR_UNSTABLE_MASK;
     static final int SIZE_IS_NULL = 1 << 30;
+    private static final int KEY_SINK_INITIAL_CAPACITY = 16;
     private static final long MAX_SAFE_INT_POW_2 = 1L << 31;
     private static final int MIN_KEY_CAPACITY = 16;
     private final GroupByAllocator allocator;
     private final UnorderedVarcharMapCursor cursor;
     private final long entrySize;
     private final Key key;
+    private final DirectByteSink keySink; // Used to copy keys with unstable pointers.
     private final double loadFactor;
     private final int maxResizes;
     private final int memoryTag;
@@ -155,6 +158,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             memStart = Unsafe.malloc(sizeBytes, memoryTag);
             Vect.memset(memStart, sizeBytes, 0);
             memLimit = memStart + sizeBytes;
+            keySink = new DirectByteSink(KEY_SINK_INITIAL_CAPACITY);
 
             value = new UnorderedVarcharMapValue(valueSize, valueOffsets);
             value2 = new UnorderedVarcharMapValue(valueSize, valueOffsets);
@@ -192,7 +196,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         mapSize = 0;
         nResizes = 0;
         Vect.memset(memStart, memLimit - memStart, 0);
-        allocator.close(); // free all memory, but allocator remains usable for further allocations
+        Misc.free(allocator); // free all memory, but allocator remains usable for further allocations
     }
 
     @Override
@@ -202,6 +206,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             free = 0;
             mapSize = 0;
         }
+        Misc.free(keySink);
         Misc.free(allocator);
     }
 
@@ -323,6 +328,8 @@ public class UnorderedVarcharMap implements Map, Reopenable {
                 memStart = Unsafe.realloc(memStart, memLimit - memStart, sizeBytes, memoryTag);
             }
             memLimit = memStart + sizeBytes;
+
+            keySink.reopen();
         }
 
         clear();
@@ -352,19 +359,35 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         return key.init();
     }
 
-    private UnorderedVarcharMapValue asNew(long startAddress, long hash, long ptrWithUnstableFlag, int size, long newEntryPackedHashSizeFlags, UnorderedVarcharMapValue value) {
-        Unsafe.getUnsafe().putLong(startAddress, newEntryPackedHashSizeFlags);
-        Unsafe.getUnsafe().putLong(startAddress + 8L, ptrWithUnstableFlag);
+    private UnorderedVarcharMapValue asNew(
+            long startAddress,
+            long hash,
+            long keyPtrWithUnstableFlag,
+            int keySize,
+            long keyHashSizeFlags,
+            UnorderedVarcharMapValue value
+    ) {
+        Unsafe.getUnsafe().putLong(startAddress, keyHashSizeFlags);
+        if ((keyPtrWithUnstableFlag & PTR_UNSTABLE_MASK) == 0) {
+            // stable pointer
+            Unsafe.getUnsafe().putLong(startAddress + 8L, keyPtrWithUnstableFlag);
+        } else {
+            // unstable pointer, copy key to our memory
+            long arenaPtr = allocator.malloc(keySize);
+            Vect.memcpy(arenaPtr, keyPtrWithUnstableFlag & PTR_MASK, keySize);
+            long arenaPtrWithUnstableFlags = arenaPtr | PTR_UNSTABLE_MASK;
+            Unsafe.getUnsafe().putLong(startAddress + 8, arenaPtrWithUnstableFlags);
+        }
         if (--free == 0) {
             rehash();
             // Index may have changed after rehash, so we need to find the key.
             startAddress = getStartAddress(hash & mask);
-            long ptr = ptrWithUnstableFlag & PTR_MASK;
+            long ptr = keyPtrWithUnstableFlag & PTR_MASK;
             for (; ; ) {
                 long loadedHashSizeFlags = Unsafe.getUnsafe().getLong(startAddress);
-                if (loadedHashSizeFlags == newEntryPackedHashSizeFlags) {
+                if (loadedHashSizeFlags == keyHashSizeFlags) {
                     long entryPtrWithUnstableFlag = Unsafe.getUnsafe().getLong(startAddress + 8);
-                    if (Vect.memeq(entryPtrWithUnstableFlag & PTR_MASK, ptr, size)) {
+                    if (Vect.memeq(entryPtrWithUnstableFlag & PTR_MASK, ptr, keySize)) {
                         break;
                     }
                 }
@@ -393,7 +416,14 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         return getStartAddress(memStart, index);
     }
 
-    private UnorderedVarcharMapValue probe0(long startAddress, long hash, long ptrWithUnstableFlag, int size, long packedHashSizeFlagsToFind, UnorderedVarcharMapValue value) {
+    private UnorderedVarcharMapValue probe0(
+            long startAddress,
+            long hash,
+            long ptrWithUnstableFlag,
+            int size,
+            long packedHashSizeFlagsToFind,
+            UnorderedVarcharMapValue value
+    ) {
         long ptr = ptrWithUnstableFlag & PTR_MASK;
         for (; ; ) {
             startAddress = getNextAddress(startAddress);
@@ -490,7 +520,6 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         return (sizeAndFlags & SIZE_IS_NULL) != 0;
     }
 
-
     static byte unpackFlags(long packedHashSizeFlags) {
         return (byte) (packedHashSizeFlags >>> 56);
     }
@@ -530,8 +559,11 @@ public class UnorderedVarcharMap implements Map, Reopenable {
                 // stable pointer
                 ptrWithUnstableFlag = srcVarcharKey.ptrWithUnstableFlag;
             } else {
-                long ptr = allocator.malloc(size);
-                Vect.memcpy(ptr, srcVarcharKey.ptrWithUnstableFlag & PTR_MASK, size);
+                // unstable pointer, copy key to key memory
+                keySink.clear();
+                long srcPtr = srcVarcharKey.ptrWithUnstableFlag & PTR_MASK;
+                keySink.put(srcPtr, srcPtr + size);
+                long ptr = keySink.ptr();
                 ptrWithUnstableFlag = ptr | PTR_UNSTABLE_MASK;
             }
         }
@@ -670,7 +702,6 @@ public class UnorderedVarcharMap implements Map, Reopenable {
 
         @Override
         public void putStr(CharSequence value) {
-
             throw new UnsupportedOperationException();
         }
 
@@ -696,8 +727,15 @@ public class UnorderedVarcharMap implements Map, Reopenable {
                 if (value.isStable()) {
                     ptrWithUnstableFlag = value.ptr();
                 } else {
-                    long ptr = allocator.malloc(size);
-                    value.writeTo(ptr, 0, size);
+                    // unstable pointer, copy key to key memory
+                    keySink.clear();
+                    // Try to use Vect#memcpy() if possible.
+                    if (value.ptr() != -1) {
+                        keySink.put(value.ptr(), value.ptr() + size);
+                    } else {
+                        keySink.put(value);
+                    }
+                    long ptr = keySink.ptr();
                     ptrWithUnstableFlag = ptr | PTR_UNSTABLE_MASK;
                 }
                 flags = value.isAscii() ? FLAG_IS_ASCII : 0;
@@ -740,8 +778,19 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             int srcSize = UnorderedVarcharMap.unpackSize(srcPackedHashAndSize);
             long srcPtrWithUnstableFlag = Unsafe.getUnsafe().getLong(address + Long.BYTES);
 
+            if ((srcPtrWithUnstableFlag & PTR_UNSTABLE_MASK) == 0) {
+                // stable pointer
+                ptrWithUnstableFlag = srcPtrWithUnstableFlag;
+            } else {
+                // unstable pointer, copy key to key memory
+                keySink.clear();
+                long srcPtr = srcPtrWithUnstableFlag & PTR_MASK;
+                keySink.put(srcPtr, srcPtr + srcSize);
+                long ptr = keySink.ptr();
+                ptrWithUnstableFlag = ptr | PTR_UNSTABLE_MASK;
+            }
+
             size = srcSize;
-            ptrWithUnstableFlag = srcPtrWithUnstableFlag;
             flags = srcFlags;
         }
     }
