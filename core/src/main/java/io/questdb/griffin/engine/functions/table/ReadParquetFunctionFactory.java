@@ -85,7 +85,11 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
         }
 
         // Absolute path allowed
-        if (filePath.length() > sqlCopyInputRoot.length() && Chars.startsWith(filePath, sqlCopyInputRoot)) {
+        if (filePath.length() > sqlCopyInputRoot.length() &&
+                (Chars.startsWith(filePath, sqlCopyInputRoot)
+                        // Path is not case-sensitive on Windows and OSX
+                        || ((Os.isWindows() || Os.isOSX()) && Chars.startsWithIgnoreCase(filePath, sqlCopyInputRoot)))) {
+
             if (sqlCopyInputRoot.charAt(sqlCopyInputRoot.length() - 1) == Files.SEPARATOR || filePath.charAt(sqlCopyInputRoot.length()) == Files.SEPARATOR
                     // On Windows, it's acceptable to use / as a separator
                     || (Os.isWindows() && filePath.charAt(sqlCopyInputRoot.length()) == '/')) {

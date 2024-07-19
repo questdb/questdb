@@ -120,9 +120,7 @@ impl ParquetDecoder {
             }
             (PhysicalType::ByteArray, None, _) => Some(ColumnType::Binary),
             (PhysicalType::Int96, None, None) => Some(ColumnType::Timestamp),
-            (_, _, _) => {
-                None
-            }
+            (_, _, _) => None
         }
     }
 }
