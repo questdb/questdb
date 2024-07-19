@@ -266,10 +266,14 @@ abstract class AbstractLogRecord implements LogRecord, Log {
         if (sequence == null) {
             sink().putAscii("null");
         } else {
-            if (sequence.size() > from) {
+            if (from > -1 && sequence.size() > from) {
                 sink().putNonAscii(sequence.lo() + from, sequence.hi());
             } else {
-                sink().put(sequence);
+                sink()
+                        .put("WTF? substr? [from:").put(from)
+                        .put(", sequence=").put(sequence)
+                        .put(", size=").put(sequence.size())
+                        .put(']');
             }
         }
         return this;
