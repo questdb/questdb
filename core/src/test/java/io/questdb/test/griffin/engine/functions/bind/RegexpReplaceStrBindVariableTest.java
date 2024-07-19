@@ -57,8 +57,8 @@ public class RegexpReplaceStrBindVariableTest extends AbstractCairoTest {
 
                 TestUtils.assertEquals(
                         "regexp_replace\n" +
-                        "foobar\n" +
-                        "foobar\n" +
+                                "foobar\n" +
+                                "foobar\n" +
                                 "barbaz\n", sink
                 );
 
