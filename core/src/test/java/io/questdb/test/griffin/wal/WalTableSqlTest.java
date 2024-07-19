@@ -1276,6 +1276,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             insert("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T01', 'a2a2')");
             insert("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T02', 'a2a2')");
             insert("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T03', 'a2a2')");
+            // Out of order
             insert("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T02', 'a2a2')");
 
 
@@ -1668,7 +1669,15 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 Assert.assertEquals("2022-02-24T01:00:00.000Z", Timestamps.toString(txReader.getLagMaxTimestamp()));
 
                 runApplyOnce();
+                txReader.unsafeLoadAll();
 
+                Assert.assertEquals(2, txReader.getLagTxnCount());
+                Assert.assertEquals(2, txReader.getLagRowCount());
+                Assert.assertFalse(txReader.isLagOrdered());
+                Assert.assertEquals(IntervalUtils.parseFloorPartialTimestamp("2022-02-24T00"), txReader.getLagMinTimestamp());
+                Assert.assertEquals(IntervalUtils.parseFloorPartialTimestamp("2022-02-24T01"), txReader.getLagMaxTimestamp());
+
+                runApplyOnce();
                 txReader.unsafeLoadAll();
 
                 Assert.assertEquals(0, txReader.getLagTxnCount());

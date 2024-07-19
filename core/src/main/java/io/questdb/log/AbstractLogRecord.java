@@ -180,12 +180,6 @@ abstract class AbstractLogRecord implements LogRecord, Log {
     }
 
     @Override
-    public LogRecord $uuid(long lo, long hi) {
-        Numbers.appendUuid(lo, hi, this);
-        return this;
-    }
-
-    @Override
     public LogRecord $(boolean x) {
         sink().put(x);
         return this;
@@ -268,6 +262,24 @@ abstract class AbstractLogRecord implements LogRecord, Log {
     }
 
     @Override
+    public LogRecord $substr(int from, @Nullable DirectUtf8Sequence sequence) {
+        if (sequence == null) {
+            sink().putAscii("null");
+        } else {
+            if (from > -1 && sequence.size() > from) {
+                sink().putNonAscii(sequence.lo() + from, sequence.hi());
+            } else {
+                sink()
+                        .put("WTF? substr? [from:").put(from)
+                        .put(", sequence=").put(sequence)
+                        .put(", size=").put(sequence.size())
+                        .put(']');
+            }
+        }
+        return this;
+    }
+
+    @Override
     public LogRecord $ts(long x) {
         sink().putISODate(x);
         return this;
@@ -276,6 +288,12 @@ abstract class AbstractLogRecord implements LogRecord, Log {
     @Override
     public LogRecord $utf8(long lo, long hi) {
         sink().putNonAscii(lo, hi);
+        return this;
+    }
+
+    @Override
+    public LogRecord $uuid(long lo, long hi) {
+        Numbers.appendUuid(lo, hi, this);
         return this;
     }
 

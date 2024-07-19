@@ -264,10 +264,10 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 // nameTxn can be deleted
                 // -1 here is to compensate +1 added when partition version parsed from folder name
                 // See comments of why +1 added there in parsePartitionDateVersion()
-                purgePartition(tableToken, ff, path, "purging dropped partition directory [path=");
+                purgePartition(tableToken, ff, path, tableRootLen - tableToken.getDirNameUtf8().size() - 1, "purging dropped partition directory [path=");
                 lastTxn = nameTxn;
             } else {
-                LOG.info().$("cannot purge partition directory, locked for reading [path=").$(path).I$();
+                LOG.debug().$("cannot purge partition directory, locked for reading [path=").$substr(tableRootLen - tableToken.getDirNameUtf8().size() - 1, path).I$();
                 break;
             }
         }
@@ -352,21 +352,20 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                     // previousNameVersion can be deleted
                     // -1 here is to compensate +1 added when partition version parsed from folder name
                     // See comments of why +1 added there in parsePartitionDateVersion()
-                    LOG.info().$("purging overwritten partition directory [path=").$(path).I$();
-                    purgePartition(tableToken, ff, path, "purging overwritten partition directory [path=");
+                    purgePartition(tableToken, ff, path, tableRootLen - tableToken.getDirNameUtf8().size() - 1, "purging overwritten partition directory [path=");
                 } else {
-                    LOG.info().$("cannot purge overwritten partition directory, locked for reading [path=").$(path).I$();
+                    LOG.info().$("cannot purge overwritten partition directory, locked for reading path=").$substr(tableRootLen - tableToken.getDirNameUtf8().size() - 1, path).I$();
                 }
             }
         }
     }
 
-    private void purgePartition(TableToken tableToken, FilesFacade ff, Path path, String message) {
+    private void purgePartition(TableToken tableToken, FilesFacade ff, Path path, int pathFrom, String message) {
         if (engine.lockTableCreate(tableToken)) {
             try {
                 TableToken lastToken = engine.getUpdatedTableToken(tableToken);
                 if (lastToken == tableToken) {
-                    LOG.info().$(message).$(path).I$();
+                    LOG.info().$(message).$substr(pathFrom, path).I$();
                     ff.unlinkOrRemove(path, LOG);
                 } else {
                     // table is dropped and recreated since we started processing it.

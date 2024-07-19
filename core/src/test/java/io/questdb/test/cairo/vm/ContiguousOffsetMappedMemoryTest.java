@@ -120,6 +120,7 @@ public class ContiguousOffsetMappedMemoryTest extends AbstractTest {
 
                     memoryROffset.ofOffset(ff, path.$(), Files.PAGE_SIZE - 10, 2 * Files.PAGE_SIZE + 10, MemoryTag.NATIVE_DEFAULT);
                     try {
+                        memoryROffset.map();
                         memoryROffset.growToFileSize();
                         Assert.fail();
                     } catch (CairoException ex) {
