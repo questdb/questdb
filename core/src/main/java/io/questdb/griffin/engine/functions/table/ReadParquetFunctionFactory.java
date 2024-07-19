@@ -80,8 +80,8 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
         if (Chars.isBlank(filePath)) {
             throw SqlException.$(position, "parquet file path pattern is empty");
         }
-        if (Chars.contains(filePath, "/../") || Chars.contains(filePath, "\\..\\")) {
-            throw SqlException.$(position, "parquet file path pattern is not allowed");
+        if (Chars.contains(filePath, "../") || Chars.contains(filePath, "..\\")) {
+            throw SqlException.$(position, "relative path is not allowed");
         }
 
         // Absolute path allowed

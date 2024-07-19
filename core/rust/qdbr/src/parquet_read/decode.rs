@@ -46,7 +46,7 @@ impl ColumnChunkBuffers {
     }
 }
 
-const UUID_NULL: [u8; 16] = unsafe {std::mem::transmute([i64::MIN; 2]) };
+const UUID_NULL: [u8; 16] = unsafe { std::mem::transmute([i64::MIN; 2]) };
 
 const LONG256_NULL: [u8; 32] = {
     const MIN_BYTES: [u8; 8] = i64::MIN.to_le_bytes();
