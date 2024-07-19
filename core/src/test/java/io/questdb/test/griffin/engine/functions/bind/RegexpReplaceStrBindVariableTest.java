@@ -59,7 +59,8 @@ public class RegexpReplaceStrBindVariableTest extends AbstractCairoTest {
                         "regexp_replace\n" +
                                 "foobar\n" +
                                 "foobar\n" +
-                                "barbaz\n", sink
+                                "barbaz\n",
+                        sink
                 );
 
                 bindVariableService.setStr(0, null);

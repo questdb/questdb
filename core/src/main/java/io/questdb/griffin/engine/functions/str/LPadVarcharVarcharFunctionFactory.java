@@ -44,6 +44,30 @@ public class LPadVarcharVarcharFunctionFactory implements FunctionFactory {
 
     private static final String SIGNATURE = "lpad(ØIØ)";
 
+    @Override
+    public String getSignature() {
+        return SIGNATURE;
+    }
+
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions,
+                                CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        final Function strFunc = args.getQuick(0);
+        final Function lenFunc = args.getQuick(1);
+        final Function fillTextFunc = args.getQuick(2);
+        final int maxLength = configuration.getStrFunctionMaxBufferLength();
+
+        if (strFunc.isConstant() && !fillTextFunc.isConstant()) {
+            return new LPadVarcharFuncStrConst(strFunc, lenFunc, fillTextFunc, maxLength);
+        }
+
+        if (!strFunc.isConstant() && fillTextFunc.isConstant()) {
+            return new LPadVarcharFuncFillTextConst(strFunc, lenFunc, fillTextFunc, maxLength);
+        }
+
+        return new LPadVarcharFunc(strFunc, lenFunc, fillTextFunc, maxLength);
+    }
+
     private static Utf8StringSink lPadVarchar0(
             Utf8Sequence str,
             int strLength,
@@ -73,32 +97,7 @@ public class LPadVarcharVarcharFunctionFactory implements FunctionFactory {
         return sink;
     }
 
-    @Override
-    public String getSignature() {
-        return SIGNATURE;
-    }
-
-    @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions,
-                                CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        final Function strFunc = args.getQuick(0);
-        final Function lenFunc = args.getQuick(1);
-        final Function fillTextFunc = args.getQuick(2);
-        final int maxLength = configuration.getStrFunctionMaxBufferLength();
-
-        if (strFunc.isConstant() && !fillTextFunc.isConstant()) {
-            return new LPadVarcharFuncStrConst(strFunc, lenFunc, fillTextFunc, maxLength);
-        }
-
-        if (!strFunc.isConstant() && fillTextFunc.isConstant()) {
-            return new LPadVarcharFuncFillTextConst(strFunc, lenFunc, fillTextFunc, maxLength);
-        }
-
-        return new LPadVarcharFunc(strFunc, lenFunc, fillTextFunc, maxLength);
-    }
-
     public static class LPadVarcharFunc extends VarcharFunction implements TernaryFunction {
-
         protected final Function fillTextFunc;
         protected final Function lenFunc;
         protected final int maxLength;
@@ -141,6 +140,11 @@ public class LPadVarcharVarcharFunctionFactory implements FunctionFactory {
         @Override
         public Utf8Sequence getVarcharB(final Record rec) {
             return lPadVarchar(strFunc.getVarcharB(rec), lenFunc.getInt(rec), fillTextFunc.getVarcharB(rec), sinkB);
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
         }
 
         @Nullable

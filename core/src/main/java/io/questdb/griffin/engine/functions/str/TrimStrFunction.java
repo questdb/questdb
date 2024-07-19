@@ -24,25 +24,24 @@
 
 package io.questdb.griffin.engine.functions.str;
 
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.str.StringSink;
 
 import static io.questdb.std.Chars.trim;
 
-public class TrimConstFunction extends StrFunction implements UnaryFunction {
-
+public class TrimStrFunction extends StrFunction implements UnaryFunction {
     private final Function arg;
-    private final StringSink sink1 = new StringSink();
-    private final StringSink sink2 = new StringSink();
+    private final StringSink sinkA = new StringSink();
+    private final StringSink sinkB = new StringSink();
+    private final TrimType type;
 
-    public TrimConstFunction(Function arg, TrimType type) {
+    public TrimStrFunction(Function arg, TrimType type) {
         this.arg = arg;
-        trim(type, getArg().getStrA(null), sink1);
-        trim(type, getArg().getStrA(null), sink2);
+        this.type = type;
     }
 
     @Override
@@ -51,22 +50,49 @@ public class TrimConstFunction extends StrFunction implements UnaryFunction {
     }
 
     @Override
-    public CharSequence getStrA(Record rec) {
-        return sink1;
+    public String getName() {
+        switch (type) {
+            case LTRIM:
+                return "ltrim";
+            case RTRIM:
+                return "rtrim";
+            default:
+                return "trim";
+        }
     }
 
     @Override
-    public CharSequence getStrB(Record rec) {
-        return sink2;
+    public CharSequence getStrA(final Record rec) {
+        final CharSequence charSequence = getArg().getStrA(rec);
+        if (charSequence == null) {
+            return null;
+        }
+        trim(type, charSequence, sinkA);
+        return sinkA;
+    }
+
+    @Override
+    public CharSequence getStrB(final Record rec) {
+        final CharSequence charSequence = getArg().getStrA(rec);
+        if (charSequence == null) {
+            return null;
+        }
+        trim(type, charSequence, sinkB);
+        return sinkB;
+    }
+
+    @Override
+    public int getStrLen(Record rec) {
+        final int len = arg.getStrLen(rec);
+        if (len == TableUtils.NULL_LEN) {
+            return TableUtils.NULL_LEN;
+        }
+        trim(type, getArg().getStrA(rec), sinkA);
+        return sinkA.length();
     }
 
     @Override
     public boolean isReadThreadSafe() {
         return false;
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.val('\'').val(sink1).val('\'');
     }
 }
