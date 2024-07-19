@@ -223,6 +223,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long o3RowCount;
     private MemoryMAT o3TimestampMem;
     private MemoryARW o3TimestampMemCpy;
+    private volatile boolean o3oomObserved;
     private long partitionTimestampHi;
     private boolean performRecovery;
     private boolean processingQueue;
@@ -1013,7 +1014,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long o3TimestampMin,
             long o3TimestampMax,
             SymbolMapDiffCursor mapDiffCursor,
-            long seqTxn
+            long seqTxn,
+            O3JobParallelismRegulator regulator
     ) {
         if (hasO3() || columnVersionWriter.hasChanges()) {
             // When writer is returned to pool, it should be rolled back. Having an open transaction is very suspicious.
@@ -1036,19 +1038,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long committedRowCount = txWriter.getRowCount();
         final long walSegmentId = walTxnDetails.getWalSegmentId(seqTxn);
         boolean isLastSegmentUsage = walTxnDetails.isLastSegmentUsage(seqTxn);
-        boolean committed = processWalBlock(
-                walPath,
-                metadata.getTimestampIndex(),
-                inOrder,
-                rowLo,
-                rowHi,
-                o3TimestampMin,
-                o3TimestampMax,
-                mapDiffCursor,
-                commitToTimestamp,
-                walSegmentId,
-                isLastSegmentUsage
-        );
+        boolean committed;
+        try {
+            committed = processWalBlock(
+                    walPath,
+                    metadata.getTimestampIndex(),
+                    inOrder,
+                    rowLo,
+                    rowHi,
+                    o3TimestampMin,
+                    o3TimestampMax,
+                    mapDiffCursor,
+                    commitToTimestamp,
+                    walSegmentId,
+                    isLastSegmentUsage,
+                    regulator
+            );
+        } catch (CairoException e) {
+            if (e.isOutOfMemory()) {
+                // oom -> we cannot rely on internal TableWriter consistency, all bets are off, better to discard it and re-recreate
+                distressed = true;
+            }
+            throw e;
+        }
         final long rowsAdded = txWriter.getRowCount() - committedRowCount;
 
         if (committed) {
@@ -1670,8 +1682,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         throw new UnsupportedOperationException();
     }
 
-    public void o3BumpErrorCount() {
+    public void o3BumpErrorCount(boolean oom) {
         o3ErrorCount.incrementAndGet();
+        if (oom) {
+            o3oomObserved = true;
+        }
     }
 
     public void openLastPartition() {
@@ -1709,6 +1724,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    // returns true if the tx was committed into the table and can be made visible to readers
+    // returns false if the tx was only copied to LAG and not committed - in this case the tx is not visible to readers
     public boolean processWalBlock(
             @Transient Path walPath,
             int timestampIndex,
@@ -1720,7 +1737,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             SymbolMapDiffCursor mapDiffCursor,
             long commitToTimestamp,
             long walSegmentId,
-            boolean isLastSegmentUsage
+            boolean isLastSegmentUsage,
+            O3JobParallelismRegulator regulator
     ) {
         int walRootPathLen = walPath.size();
         long maxTimestamp = txWriter.getMaxTimestamp();
@@ -1955,7 +1973,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             commitMinTimestamp,
                             commitMaxTimestamp,
                             copiedToMemory,
-                            o3Lo
+                            o3Lo,
+                            regulator
                     );
 
                     finishO3Commit(initialPartitionTimestampHi);
@@ -3357,6 +3376,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         ", tableDir=" + tableToken.getDirName() + "]");
             } else {
                 throw CairoException.critical(lastErrno)
+                        .setOutOfMemory(o3oomObserved)
                         .put("commit failed, see logs for details [table=")
                         .put(tableToken.getTableName())
                         .put(", tableDir=").put(tableToken.getDirName())
@@ -4982,6 +5002,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 .$(", long2=").$(long2)
                 .$(", long3=").$(long3);
         if (e instanceof CairoException) {
+            o3oomObserved = ((CairoException) e).isOutOfMemory();
             lastErrno = lastErrno == 0 ? ((CairoException) e).errno : lastErrno;
             logRecord.$(", errno=").$(lastErrno)
                     .$(", ex=").$(((CairoException) e).getFlyweightMessage())
@@ -5448,7 +5469,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     o3TimestampMin,
                     o3TimestampMax,
                     true,
-                    0L
+                    0L,
+                    O3JobParallelismRegulator.EMPTY
             );
         } finally {
             finishO3Append(o3LagRowCount);
@@ -5726,10 +5748,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
         } while (this.o3PartitionUpdRemaining.get() > 0);
-
-        if (o3ErrorCount.get() == 0) {
-            o3ConsumePartitionUpdateSink();
-        }
     }
 
     private void o3CopySafe(
@@ -6109,9 +6127,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long o3TimestampMin,
             long o3TimestampMax,
             boolean flattenTimestamp,
-            long rowLo
+            long rowLo,
+            O3JobParallelismRegulator regulator
     ) {
         o3ErrorCount.set(0);
+        o3oomObserved = false;
         lastErrno = 0;
         partitionRemoveCandidates.clear();
         o3ColumnCounters.clear();
@@ -6128,11 +6148,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int latchCount = 0;
         long srcOoo = rowLo;
         int pCount = 0;
+        int partitionParallelism = regulator.getMaxO3MergeParallelism();
         try {
             resizePartitionUpdateSink();
 
             // One loop iteration per partition.
+            int inflightPartitions = 0;
             while (srcOoo < srcOooMax) {
+                inflightPartitions++;
+                regulator.updateInflightPartitions(inflightPartitions);
                 try {
                     final long srcOooLo = srcOoo;
                     final long o3Timestamp = getTimestampIndexValue(sortedTimestampsAddr, srcOoo);
@@ -6253,7 +6277,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         try {
                             setAppendPosition(srcDataMax, false);
                         } catch (Throwable e) {
-                            o3BumpErrorCount();
+                            o3BumpErrorCount(CairoException.isCairoOomError(e));
                             o3ClockDownPartitionUpdateCount();
                             o3CountDownDoneLatch();
                             throw e;
@@ -6363,6 +6387,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     success = false;
                     throw e;
                 }
+                if (inflightPartitions % partitionParallelism == 0) {
+                    o3ConsumePartitionUpdates();
+                    o3DoneLatch.await(latchCount);
+                    inflightPartitions = 0;
+                }
             } // end while(srcOoo < srcOooMax)
 
             // at this point we should know the last partition row count
@@ -6379,12 +6408,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .I$();
 
             o3ConsumePartitionUpdates();
+            if (o3ErrorCount.get() == 0 && success) {
+                o3ConsumePartitionUpdateSink();
+            }
             o3DoneLatch.await(latchCount);
 
             o3InError = !success || o3ErrorCount.get() > 0;
             if (success && o3ErrorCount.get() > 0) {
                 //noinspection ThrowFromFinallyBlock
-                throw CairoException.critical(0).put("bulk update failed and will be rolled back");
+                throw CairoException.critical(0).put("bulk update failed and will be rolled back").setOutOfMemory(o3oomObserved);
             }
         }
 

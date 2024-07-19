@@ -375,7 +375,8 @@ public class SqlOptimiser implements Mutable {
 
         if (ai == bi) {
             // (same table)
-            ExpressionNode node = expressionNodePool.next().of(ExpressionNode.OPERATION, "=", 0, 0);
+            OperatorExpression eqOp = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence()).getOperatorDefinition("=");
+            ExpressionNode node = expressionNodePool.next().of(OPERATION, eqOp.operator.token, eqOp.precedence, 0);
             node.paramCount = 2;
             node.lhs = ao;
             node.rhs = bo;
@@ -571,8 +572,8 @@ public class SqlOptimiser implements Mutable {
                     queryColumnPool.next().of(
                             name,
                             expressionNodePool.next().of(node.type, name, node.precedence, node.position)
-                    )
-                    , name
+                    ),
+                    name
             );
         }
     }
@@ -598,7 +599,8 @@ public class SqlOptimiser implements Mutable {
                 for (int k = 0, kn = jc.bNames.size(); k < kn; k++) {
                     CharSequence name = jc.bNames.getQuick(k);
                     if (constNameToIndex.get(name) == jc.bIndexes.getQuick(k)) {
-                        ExpressionNode node = expressionNodePool.next().of(ExpressionNode.OPERATION, constNameToToken.get(name), 0, 0);
+                        OperatorExpression op = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence()).getOperatorDefinition(constNameToToken.get(name));
+                        ExpressionNode node = expressionNodePool.next().of(OPERATION, op.operator.token, op.precedence, 0);
                         node.lhs = jc.aNodes.getQuick(k);
                         node.rhs = constNameToNode.get(name);
                         node.paramCount = 2;
@@ -1147,11 +1149,12 @@ public class SqlOptimiser implements Mutable {
         if (old == null) {
             return filter;
         } else {
-            ExpressionNode n = expressionNodePool.next().of(ExpressionNode.OPERATION, "and", 0, filter.position);
-            n.paramCount = 2;
-            n.lhs = old;
-            n.rhs = filter;
-            return n;
+            OperatorExpression andOp = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence()).getOperatorDefinition("and");
+            ExpressionNode node = expressionNodePool.next().of(OPERATION, andOp.operator.token, andOp.precedence, filter.position);
+            node.paramCount = 2;
+            node.lhs = old;
+            node.rhs = filter;
+            return node;
         }
     }
 
@@ -2360,11 +2363,12 @@ public class SqlOptimiser implements Mutable {
     }
 
     private ExpressionNode makeOperation(CharSequence token, ExpressionNode lhs, ExpressionNode rhs) {
-        ExpressionNode expr = expressionNodePool.next().of(ExpressionNode.OPERATION, token, 0, 0);
-        expr.paramCount = 2;
-        expr.lhs = lhs;
-        expr.rhs = rhs;
-        return expr;
+        OperatorExpression op = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence()).getOperatorDefinition(token);
+        ExpressionNode node = expressionNodePool.next().of(OPERATION, op.operator.token, op.precedence, 0);
+        node.paramCount = 2;
+        node.lhs = lhs;
+        node.rhs = rhs;
+        return node;
     }
 
     private JoinContext mergeContexts(QueryModel parent, JoinContext a, JoinContext b) {
@@ -3514,7 +3518,7 @@ public class SqlOptimiser implements Mutable {
         }
         count.position = agg.position;
 
-        OperatorExpression mulOp = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence()).map.get("*");
+        OperatorExpression mulOp = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence()).getOperatorDefinition("*");
         ExpressionNode mul = expressionNodePool.next().of(OPERATION, mulOp.operator.token, mulOp.precedence, agg.position);
         mul.paramCount = 2;
         mul.lhs = count;
@@ -3877,7 +3881,7 @@ public class SqlOptimiser implements Mutable {
             nullExpr.token = "null";
             nullExpr.precedence = 0;
 
-            OperatorExpression neqOp = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence()).map.get("!=");
+            OperatorExpression neqOp = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence()).getOperatorDefinition("!=");
             ExpressionNode node = expressionNodePool.next().of(OPERATION, neqOp.operator.token, neqOp.precedence, 0);
             node.paramCount = 2;
             node.lhs = nullExpr;

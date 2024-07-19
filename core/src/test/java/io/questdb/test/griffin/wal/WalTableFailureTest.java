@@ -884,16 +884,16 @@ public class WalTableFailureTest extends AbstractCairoTest {
             assertSql("x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableToken.getTableName());
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
             assertSql(
-                    "name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\n" +
-                            tableToken.getTableName() + "\tfalse\t1\t0\t1\t\t\n",
+                    "name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
+                            tableToken.getTableName() + "\tfalse\t1\t0\t1\t\t\t0\n",
                     "wal_tables()"
             );
 
             compile("alter table " + tableToken.getTableName() + " suspend wal");
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
             assertSql(
-                    "name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\n" +
-                            tableToken.getTableName() + "\ttrue\t1\t0\t1\t\t\n",
+                    "name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
+                            tableToken.getTableName() + "\ttrue\t1\t0\t1\t\t\t0\n",
                     "wal_tables()"
             );
 
@@ -905,16 +905,16 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     + (Os.isWindows() ? 112 : 28) + ", 'test error message'");
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
             assertSql(
-                    "name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\n" +
-                            tableToken.getTableName() + "\ttrue\t1\t0\t2\tDISK FULL\ttest error message\n",
+                    "name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
+                            tableToken.getTableName() + "\ttrue\t1\t0\t2\tDISK FULL\ttest error message\t0\n",
                     "wal_tables()"
             );
 
             compile("alter table " + tableToken.getTableName() + " resume wal;");
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
             assertSql(
-                    "name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\n" +
-                            tableToken.getTableName() + "\tfalse\t1\t0\t2\t\t\n",
+                    "name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
+                            tableToken.getTableName() + "\tfalse\t1\t0\t2\t\t\t0\n",
                     "wal_tables()"
             );
 
@@ -1205,8 +1205,8 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     "1111\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
                     "1\tAB\t2022-02-24T01:00:00.000000Z\tEF\n" +
                     "2\tAB\t2022-02-24T02:00:00.000000Z\tEF\n", tableToken.getTableName());
-            assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\n" +
-                    tableToken.getTableName() + "\tfalse\t4\t0\t4\t\t\n", "wal_tables()");
+            assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
+                    tableToken.getTableName() + "\tfalse\t4\t0\t4\t\t\t0\n", "wal_tables()");
         });
     }
 
@@ -1319,16 +1319,15 @@ public class WalTableFailureTest extends AbstractCairoTest {
     @Test
     public void testWalTableSuspendResumeStatusTable() throws Exception {
         testWalTableSuspendResumeStatusTable("1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", "table1", 999, NONE.text());
-        testWalTableSuspendResumeStatusTable("1\tBC\t2022-02-24T00:00:00.000000Z\tFG\n", "table2", -1, OUT_OF_MEMORY.text());
         if (Os.isWindows()) {
-            testWalTableSuspendResumeStatusTable("1\tCD\t2022-02-24T00:00:00.000000Z\tFG\n", "table3", 39, DISK_FULL.text());
+            testWalTableSuspendResumeStatusTable("1\tBC\t2022-02-24T00:00:00.000000Z\tFG\n", "table3", 39, DISK_FULL.text());
             testWalTableSuspendResumeStatusTable("1\tCD\t2022-02-24T00:00:00.000000Z\tFG\n", "table4", 112, DISK_FULL.text());
-            testWalTableSuspendResumeStatusTable("1\tAB\t2022-02-24T00:00:00.000000Z\tDE\n", "table5", 4, TOO_MANY_OPEN_FILES.text());
-            testWalTableSuspendResumeStatusTable("1\tBC\t2022-02-24T00:00:00.000000Z\tDE\n", "table6", 8, OUT_OF_MMAP_AREAS.text());
+            testWalTableSuspendResumeStatusTable("1\tCD\t2022-02-24T00:00:00.000000Z\tFG\n", "table5", 4, TOO_MANY_OPEN_FILES.text());
+            testWalTableSuspendResumeStatusTable("1\tAB\t2022-02-24T00:00:00.000000Z\tDE\n", "table6", 8, OUT_OF_MMAP_AREAS.text());
         } else {
-            testWalTableSuspendResumeStatusTable("1\tCD\t2022-02-24T00:00:00.000000Z\tFG\n", "table3", 28, DISK_FULL.text());
+            testWalTableSuspendResumeStatusTable("1\tBC\t2022-02-24T00:00:00.000000Z\tFG\n", "table3", 28, DISK_FULL.text());
             testWalTableSuspendResumeStatusTable("1\tCD\t2022-02-24T00:00:00.000000Z\tFG\n", "table4", 24, TOO_MANY_OPEN_FILES.text());
-            testWalTableSuspendResumeStatusTable("1\tAB\t2022-02-24T00:00:00.000000Z\tDE\n", "table5", 12, OUT_OF_MMAP_AREAS.text());
+            testWalTableSuspendResumeStatusTable("1\tCD\t2022-02-24T00:00:00.000000Z\tFG\n", "table5", 12, OUT_OF_MMAP_AREAS.text());
         }
     }
 
@@ -1591,7 +1590,6 @@ public class WalTableFailureTest extends AbstractCairoTest {
     }
 
     private void testWalTableSuspendResumeStatusTable(String startState, String tableName, int errorCode, String expectedTag) throws Exception {
-        final String OOM_message = "Test OOM";
         final FilesFacade filesFacade = new TestFilesFacadeImpl() {
             private int attempt = 0;
 
@@ -1603,9 +1601,6 @@ public class WalTableFailureTest extends AbstractCairoTest {
             @Override
             public int openRW(LPSZ name, long opts) {
                 if (Utf8s.containsAscii(name, "x.d.1") && attempt++ == 0) {
-                    if (errorCode == -1) {
-                        throw CairoException.nonCritical().setOutOfMemory(true).put(OOM_message);
-                    }
                     return -1;
                 }
                 return Files.openRW(name, opts);
@@ -1632,9 +1627,9 @@ public class WalTableFailureTest extends AbstractCairoTest {
             assertSql("x\tsym\tts\tsym2\n" + startState, tableToken.getTableName());
 
             assertSql(
-                    "name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\n" +
+                    "name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
                             tableToken.getTableName() + "\ttrue\t1\t0\t4\t" + expectedTag +
-                            "\t" + (errorCode == -1 ? OOM_message : errorMessage) + "\n",
+                            "\t" + errorMessage + "\t0\n",
                     "wal_tables()"
             );
 
@@ -1645,8 +1640,8 @@ public class WalTableFailureTest extends AbstractCairoTest {
             engine.releaseInactive(); // release writer from the pool
             drainWalQueue();
             assertSql("x\tsym\tts\tsym2\n1111\tXXX\t2022-02-24T00:00:00.000000Z\tYYY\n", tableToken.getTableName());
-            assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\n" +
-                    tableToken.getTableName() + "\tfalse\t4\t0\t4\t\t\n", "wal_tables()");
+            assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
+                    tableToken.getTableName() + "\tfalse\t4\t0\t4\t\t\t0\n", "wal_tables()");
 
             compile("drop table " + tableToken.getTableName());
         });

@@ -957,7 +957,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static void assertMemoryLeak(long limitMiB, TestUtils.LeakProneCode code) throws Exception {
         engine.clear();
-        long lim = Unsafe.getMemUsed() + limitMiB * 1024 * 1024;
+        long lim = Unsafe.getRssMemUsed() + limitMiB * 1024 * 1024;
         Unsafe.setRssMemLimit(lim);
         try {
             assertMemoryLeak(AbstractCairoTest.ff, code);
