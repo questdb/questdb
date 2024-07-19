@@ -416,7 +416,6 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         }
     }
 
-
     private static void copyData(
             FilesFacade ff,
             int columnType,
@@ -702,7 +701,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     .$("sync error [table=").utf8(tableWriter.getTableToken().getTableName())
                     .$(", e=").$(e)
                     .I$();
-            tableWriter.o3BumpErrorCount();
+            tableWriter.o3BumpErrorCount(false);
             copyIdleQuick(
                     columnCounter,
                     timestampMergeIndexAddr,
@@ -777,7 +776,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     .$("index error [table=").utf8(tableWriter.getTableToken().getTableName())
                     .$(", e=").$(e)
                     .I$();
-            tableWriter.o3BumpErrorCount();
+            tableWriter.o3BumpErrorCount(false);
             copyIdleQuick(
                     columnCounter,
                     timestampMergeIndexAddr,

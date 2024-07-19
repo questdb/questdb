@@ -114,7 +114,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     LOG.error().$("process new partition error [table=").utf8(tableWriter.getTableToken().getTableName())
                             .$(", e=").$(e)
                             .I$();
-                    tableWriter.o3BumpErrorCount();
+                    tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
                     tableWriter.o3ClockDownPartitionUpdateCount();
                     tableWriter.o3CountDownDoneLatch();
                     throw e;
@@ -596,7 +596,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         .I$();
                 O3Utils.unmap(ff, srcTimestampAddr, srcTimestampSize);
                 O3Utils.close(ff, srcTimestampFd);
-                tableWriter.o3BumpErrorCount();
+                tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
                 tableWriter.o3ClockDownPartitionUpdateCount();
                 tableWriter.o3CountDownDoneLatch();
                 throw e;
@@ -1194,6 +1194,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             try {
                 if (!tableWriter.isDeduplicationEnabled()) {
                     timestampMergeIndexSize = tempIndexSize;
+
                     timestampMergeIndexAddr = createMergeIndex(
                             srcTimestampAddr,
                             sortedTimestampsAddr,
@@ -1250,7 +1251,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 }
             } catch (Throwable e) {
-                tableWriter.o3BumpErrorCount();
+                tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
                 LOG.error().$("open column error [table=").utf8(tableWriter.getTableToken().getTableName())
                         .$(", e=").$(e)
                         .I$();
@@ -1425,7 +1426,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         );
                     }
                 } catch (Throwable e) {
-                    tableWriter.o3BumpErrorCount();
+                    tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
                     LOG.critical().$("open column error [table=").utf8(tableWriter.getTableToken().getTableName())
                             .$(", e=").$(e)
                             .I$();

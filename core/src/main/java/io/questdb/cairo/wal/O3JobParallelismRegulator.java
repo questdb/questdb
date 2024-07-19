@@ -22,32 +22,25 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.str;
+package io.questdb.cairo.wal;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.constants.StrConstant;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
+public interface O3JobParallelismRegulator {
+    O3JobParallelismRegulator EMPTY = new EmptyO3JobParallelismRegulator();
 
-public class LTrimFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "ltrim(S)";
-    }
+    int getMaxO3MergeParallelism();
 
-    @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        final Function arg = args.get(0);
-        if (arg.isConstant()) {
-            if (arg.getStrA(null) == null) {
-                return StrConstant.NULL;
-            } else {
-                return new TrimConstFunction(args.getQuick(0), TrimType.LTRIM);
-            }
+    void updateInflightPartitions(int count);
+
+    class EmptyO3JobParallelismRegulator implements O3JobParallelismRegulator {
+
+        @Override
+        public int getMaxO3MergeParallelism() {
+            return Integer.MAX_VALUE;
         }
-        return new TrimFunction(args.getQuick(0), TrimType.LTRIM);
+
+        @Override
+        public void updateInflightPartitions(int count) {
+            // do nothing
+        }
     }
 }

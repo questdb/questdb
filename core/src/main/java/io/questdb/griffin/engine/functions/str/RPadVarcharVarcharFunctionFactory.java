@@ -106,7 +106,6 @@ public class RPadVarcharVarcharFunctionFactory implements FunctionFactory {
     }
 
     public static class RPadVarcharFunc extends VarcharFunction implements TernaryFunction {
-
         protected final Function fillTextFunc;
         protected final Function lenFunc;
         protected final int maxLength;
@@ -149,6 +148,11 @@ public class RPadVarcharVarcharFunctionFactory implements FunctionFactory {
         @Override
         public Utf8Sequence getVarcharB(final Record rec) {
             return rPadVarchar(strFunc.getVarcharB(rec), lenFunc.getInt(rec), fillTextFunc.getVarcharB(rec), sinkB);
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
         }
 
         @Nullable

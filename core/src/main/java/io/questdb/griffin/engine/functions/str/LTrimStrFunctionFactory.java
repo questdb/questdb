@@ -32,22 +32,28 @@ import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class TrimFunctionFactory implements FunctionFactory {
+public class LTrimStrFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "trim(S)";
+        return "ltrim(S)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        final Function arg = args.getQuick(0);
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        final Function arg = args.get(0);
         if (arg.isConstant()) {
             if (arg.getStrA(null) == null) {
                 return StrConstant.NULL;
             } else {
-                return new TrimConstFunction(args.getQuick(0), TrimType.TRIM);
+                return new TrimStrConstFunction(args.getQuick(0), TrimType.LTRIM);
             }
         }
-        return new TrimFunction(args.getQuick(0), TrimType.TRIM);
+        return new TrimStrFunction(args.getQuick(0), TrimType.LTRIM);
     }
 }

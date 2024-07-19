@@ -32,8 +32,10 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.griffin.engine.functions.eq.EqVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.str.StartsWithVarcharFunctionFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Utf8Sequence;
@@ -71,7 +73,10 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
                     int anyCount = countChar(likeSeq, '%');
                     if (anyCount == 1) {
                         if (len == 1) {
-                            return BooleanConstant.TRUE; // LIKE '%' case
+                            // LIKE '%' case
+                            final NegatableBooleanFunction notNullFunc = new EqVarcharFunctionFactory.NullCheckFunc(value);
+                            notNullFunc.setNegated();
+                            return notNullFunc;
                         } else if (likeSeq.charAt(0) == '%') {
                             // LIKE/ILIKE '%abc' case
                             final CharSequence subPattern = likeSeq.subSequence(1, len);
@@ -99,7 +104,10 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
                         }
                     } else if (anyCount == 2) {
                         if (len == 2) {
-                            return BooleanConstant.TRUE; // LIKE '%%' case
+                            // LIKE '%%' case
+                            final NegatableBooleanFunction notNullFunc = new EqVarcharFunctionFactory.NullCheckFunc(value);
+                            notNullFunc.setNegated();
+                            return notNullFunc;
                         } else if (likeSeq.charAt(0) == '%' && likeSeq.charAt(len - 1) == '%') {
                             // LIKE/ILIKE '%abc%' case
                             final CharSequence subPattern = likeSeq.subSequence(1, len - 1);
