@@ -2950,9 +2950,9 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "sample by 5d from '2017-12-20' fill(null) align to calendar with offset '10:00'";
 
 
-            assertException(shouldFail1a, 0, "cannot use");
+            assertException(shouldFail1a, 0, "FROM-TO");
             assertException(shouldFail1b, 0, "FROM-TO");
-            assertException(shouldFail2a, 0, "cannot use");
+            assertException(shouldFail2a, 0, "FROM-TO");
             assertException(shouldFail2b, 0, "FROM-TO");
 
 
