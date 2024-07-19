@@ -1459,7 +1459,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     public void testTimestampSymbolDateAdd() throws Exception {
         assertQuery(
                 "dateadd\n" +
-                "2020-01-02T00:00:00.000000Z\n",
+                        "2020-01-02T00:00:00.000000Z\n",
                 "select dateadd('d', 1, cast('2020-01-01' as symbol))",
                 null,
                 null,

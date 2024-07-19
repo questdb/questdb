@@ -38,11 +38,11 @@ import java.util.Iterator;
 import java.util.Map;
 
 public final class WriterPoolRecordCursorFactory extends AbstractRecordCursorFactory {
+    private static final int LAST_ACCESS_TIMESTAMP_COLUMN_INDEX = 2;
     private static final RecordMetadata METADATA;
+    private static final int OWNERSHIP_REASON_COLUMN_INDEX = 3;
     private static final int OWNER_THREAD_COLUMN_INDEX = 1;
     private static final int TABLE_NAME_COLUMN_INDEX = 0;
-    private static final int LAST_ACCESS_TIMESTAMP_COLUMN_INDEX = 2;
-    private static final int OWNERSHIP_REASON_COLUMN_INDEX = 3;
     private final CairoEngine cairoEngine;
 
     public WriterPoolRecordCursorFactory(CairoEngine cairoEngine) {
@@ -70,11 +70,12 @@ public final class WriterPoolRecordCursorFactory extends AbstractRecordCursorFac
     private static class WriterPoolCursor implements NoRandomAccessRecordCursor {
         private final ReaderPoolEntryRecord record = new ReaderPoolEntryRecord();
         private Iterator<Map.Entry<CharSequence, WriterPool.Entry>> iterator;
-        private long owner_thread;
-        private Map<CharSequence, WriterPool.Entry> writerPoolEntries;
-        private TableToken tableToken;
-        private String ownershipReason;
         private long lastAccessTimestamp;
+        private long owner_thread;
+        private String ownershipReason;
+        private TableToken tableToken;
+        private Map<CharSequence, WriterPool.Entry> writerPoolEntries;
+
         @Override
         public void close() {
         }
