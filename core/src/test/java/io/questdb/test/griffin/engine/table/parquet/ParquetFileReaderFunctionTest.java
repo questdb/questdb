@@ -75,7 +75,7 @@ public class ParquetFileReaderFunctionTest extends AbstractCairoTest {
                     " timestamp_sequence('2015',2) as a_ts," +
                     " from long_sequence(" + rows + ")) timestamp (a_ts) partition by YEAR");
 
-            ddl("alter table x convert partition where a_ts > 0");
+            ddl("alter table x convert partition to parquet where a_ts > 0");
 
             engine.releaseInactive();
             try (Path path = new Path()) {
