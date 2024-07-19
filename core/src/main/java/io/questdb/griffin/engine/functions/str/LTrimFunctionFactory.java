@@ -45,9 +45,9 @@ public class LTrimFunctionFactory implements FunctionFactory {
             if (arg.getStrA(null) == null) {
                 return StrConstant.NULL;
             } else {
-                return new TrimConstFunction(args.getQuick(0), TrimType.LTRIM);
+                return new TrimStrConstFunction(args.getQuick(0), TrimType.LTRIM);
             }
         }
-        return new TrimFunction(args.getQuick(0), TrimType.LTRIM);
+        return new TrimStrFunction(args.getQuick(0), TrimType.LTRIM);
     }
 }
