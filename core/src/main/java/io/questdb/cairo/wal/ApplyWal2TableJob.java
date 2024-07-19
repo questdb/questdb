@@ -562,7 +562,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 txnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
                 try (TableWriter writer = engine.getWriterUnsafe(updatedToken, WAL_2_TABLE_WRITE_REASON)) {
                     assert writer.getMetadata().getTableId() == tableToken.getTableId();
-                    if (txnTracker.shouldBackOff(MicrosecondClockImpl.INSTANCE.getTicks())) {
+                    if (txnTracker.shouldBackOffDueToMemoryPressure(MicrosecondClockImpl.INSTANCE.getTicks())) {
                         // rely on CheckWalTransactionsJob to notify us when to apply transactions
                         return;
                     }

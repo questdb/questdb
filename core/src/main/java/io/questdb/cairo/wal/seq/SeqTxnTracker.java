@@ -44,7 +44,7 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
     private int maxRecordedInflightPartitions = 1;
     // positive int: holds max parallelism
     // negative int: holds backoff counter
-    private int regulationValue = Integer.MAX_VALUE;
+    private int memoryPressureRegulationValue = Integer.MAX_VALUE;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile long seqTxn = -1;
     // -1 suspended
@@ -67,14 +67,14 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
     }
 
     public int getMaxO3MergeParallelism() {
-        return Math.max(1, regulationValue);
+        return Math.max(1, memoryPressureRegulationValue);
     }
 
     public int getMemoryPressureLevel() {
-        if (regulationValue == Integer.MAX_VALUE) {
+        if (memoryPressureRegulationValue == Integer.MAX_VALUE) {
             return 0;
         }
-        if (regulationValue < 0) {
+        if (memoryPressureRegulationValue < 0) {
             return 2;
         }
         return 1;
@@ -93,25 +93,25 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
     public void hadEnoughMemory(CharSequence tableName) {
         maxRecordedInflightPartitions = 1;
         walBackoffUntil = -1;
-        if (regulationValue == Integer.MAX_VALUE) {
+        if (memoryPressureRegulationValue == Integer.MAX_VALUE) {
             // already at max parallelism, can't go more optimistic
             return;
         }
-        if (regulationValue < 0) {
+        if (memoryPressureRegulationValue < 0) {
             // was in backoff, go back to parallelism = 1
-            regulationValue = 1;
-            LOG.info().$("Memory pressure easing off, removing backoff").I$();
+            memoryPressureRegulationValue = 1;
+            LOG.info().$("Memory pressure easing off, removing backoff [table=").$(tableName).I$();
             return;
         }
         if (rnd.nextInt(4) == 0) { // 25% chance to double parallelism
-            int beforeDoubling = regulationValue;
-            regulationValue *= 2;
-            if (regulationValue < beforeDoubling) {
+            int beforeDoubling = memoryPressureRegulationValue;
+            memoryPressureRegulationValue *= 2;
+            if (memoryPressureRegulationValue < beforeDoubling) {
                 // overflow
-                regulationValue = Integer.MAX_VALUE;
+                memoryPressureRegulationValue = Integer.MAX_VALUE;
             }
         }
-        LOG.info().$("Memory pressure easing off [table=").$(tableName).$(", maxParallelism=").$(regulationValue).I$();
+        LOG.info().$("Memory pressure easing off [table=").$(tableName).$(", maxParallelism=").$(memoryPressureRegulationValue).I$();
     }
 
     public boolean initTxns(long newWriterTxn, long newSeqTxn, boolean isSuspended) {
@@ -174,35 +174,35 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
     }
 
     /**
-     * Increases anti-OOM measures if possible.<br>
-     * If it was possible, returns true → the operation can retry.<br>
+     * Applies anti-OOM measures if possible, either by reducing job parallelism, or applying backoff.<br>
+     * If it was possible to apply more measures, returns true → the operation can retry.<br>
      * If all measures were exhausted, returns false → the operation should now fail.
      */
     public boolean onOutOfMemory(long nowMicros, CharSequence tableName) {
         if (maxRecordedInflightPartitions == 1) {
             // There was no parallelism
-            if (regulationValue <= -5) {
+            if (memoryPressureRegulationValue <= -5) {
                 // Maximum backoff already tried => fail
                 walBackoffUntil = -1;
                 return false;
             }
-            if (regulationValue > 0) {
+            if (memoryPressureRegulationValue > 0) {
                 // Switch from reducing parallelism to backoff
-                regulationValue = -1;
+                memoryPressureRegulationValue = -1;
             } else {
                 // Increase backoff counter
-                regulationValue--;
+                memoryPressureRegulationValue--;
             }
             int delayMicros = rnd.nextInt(4_000_000);
-            LOG.info().$("Memory pressure is high [table=").$(tableName).$(", backoffCounter=").$(-regulationValue).$(", delay=").$(delayMicros).$(" us]").$();
+            LOG.info().$("Memory pressure is high [table=").$(tableName).$(", backoffCounter=").$(-memoryPressureRegulationValue).$(", delay=").$(delayMicros).$(" us]").$();
             walBackoffUntil = nowMicros + delayMicros;
             return true;
         }
         // There was some parallelism, halve max parallelism
         walBackoffUntil = -1;
-        regulationValue = maxRecordedInflightPartitions / 2;
+        memoryPressureRegulationValue = maxRecordedInflightPartitions / 2;
         maxRecordedInflightPartitions = 1;
-        LOG.info().$("Memory pressure is high [table=").$(tableName).$(", maxParallelism=").$(regulationValue).I$();
+        LOG.info().$("Memory pressure is high [table=").$(tableName).$(", maxParallelism=").$(memoryPressureRegulationValue).I$();
 
         return true;
     }
@@ -225,7 +225,7 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
         this.errorMessage = "";
     }
 
-    public boolean shouldBackOff(long nowMicros) {
+    public boolean shouldBackOffDueToMemoryPressure(long nowMicros) {
         return nowMicros < walBackoffUntil;
     }
 
