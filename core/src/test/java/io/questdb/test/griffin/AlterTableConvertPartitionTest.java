@@ -143,6 +143,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                     " timestamp_sequence(400000000000, 500) designated_ts" +
                     " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month");
 
+            engine.releaseInactive();
             try (Path path = new Path().of(configuration.getRoot())) {
                 TableToken tableToken = engine.getTableTokenIfExists(tableName);
                 path.concat(tableToken.getDirName()).concat("a_symbol").put(".o");
@@ -173,6 +174,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                     " timestamp_sequence(400000000000, 500) designated_ts" +
                     " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month");
 
+            engine.releaseInactive();
             try (Path path = new Path().of(configuration.getRoot())) {
                 TableToken tableToken = engine.getTableTokenIfExists(tableName);
                 path.concat(tableToken.getDirName()).concat("a_symbol").put(".o");

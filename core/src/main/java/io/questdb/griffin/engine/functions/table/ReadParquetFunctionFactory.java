@@ -33,10 +33,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
-import io.questdb.std.Chars;
-import io.questdb.std.Files;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
 public class ReadParquetFunctionFactory implements FunctionFactory {
@@ -89,7 +86,9 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
 
         // Absolute path allowed
         if (filePath.length() > sqlCopyInputRoot.length() && Chars.startsWith(filePath, sqlCopyInputRoot)) {
-            if (sqlCopyInputRoot.charAt(sqlCopyInputRoot.length() - 1) == Files.SEPARATOR || filePath.charAt(sqlCopyInputRoot.length()) == Files.SEPARATOR) {
+            if (sqlCopyInputRoot.charAt(sqlCopyInputRoot.length() - 1) == Files.SEPARATOR || filePath.charAt(sqlCopyInputRoot.length()) == Files.SEPARATOR
+                    // On Windows, it's acceptable to use / as a separator
+                    || (Os.isWindows() && filePath.charAt(sqlCopyInputRoot.length()) == '/')) {
                 path.of(filePath);
                 return;
             }
