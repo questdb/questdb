@@ -34,14 +34,14 @@ import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 
-public class ParquetFileRecordCursorFactory extends AbstractRecordCursorFactory {
-    private ParquetFileRecordCursor cursor;
+public class ReadParquetRecordCursorFactory extends AbstractRecordCursorFactory {
+    private ReadParquetRecordCursor cursor;
     private Path path;
 
-    public ParquetFileRecordCursorFactory(@Transient Path path, RecordMetadata metadata, FilesFacade ff) {
+    public ReadParquetRecordCursorFactory(@Transient Path path, RecordMetadata metadata, FilesFacade ff) {
         super(metadata);
         this.path = new Path().of(path);
-        this.cursor = new ParquetFileRecordCursor(ff, metadata);
+        this.cursor = new ReadParquetRecordCursor(ff, metadata);
     }
 
     @Override

@@ -38,7 +38,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.*;
 import org.jetbrains.annotations.Nullable;
 
-public class ParquetFileRecordCursor implements NoRandomAccessRecordCursor {
+public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     private final LongList auxPtrs = new LongList();
     private final LongList columnChunkBufferPtrs = new LongList();
     private final LongList dataPtrs = new LongList();
@@ -49,7 +49,7 @@ public class ParquetFileRecordCursor implements NoRandomAccessRecordCursor {
     private int rowGroup;
     private long rowGroupRowCount;
 
-    public ParquetFileRecordCursor(FilesFacade ff, RecordMetadata metadata) {
+    public ReadParquetRecordCursor(FilesFacade ff, RecordMetadata metadata) {
         this.metadata = metadata;
         this.decoder = new PartitionDecoder(ff);
         this.record = new ParquetRecord();
@@ -288,6 +288,12 @@ public class ParquetFileRecordCursor implements NoRandomAccessRecordCursor {
             long auxPtr = auxPtrs.get(col);
             long dataPtr = dataPtrs.get(col);
             return VarcharTypeDriver.getSplitValue(auxPtr, Long.MAX_VALUE, dataPtr, Long.MAX_VALUE, currentRowInRowGroup, utf8SplitViewB);
+        }
+
+        @Override
+        public int getVarcharSize(int col) {
+            long auxPtr = auxPtrs.get(col);
+            return VarcharTypeDriver.getValueSize(auxPtr, currentRowInRowGroup);
         }
 
         private DirectString getStr(long addr, DirectString view) {

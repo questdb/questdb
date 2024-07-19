@@ -33,7 +33,7 @@ impl<'a> DictDecoder for VarDictDecoder<'a> {
 }
 
 impl<'a> VarDictDecoder<'a> {
-    pub fn try_new(dict_page: &'a DictPage) -> ParquetResult<Self> {
+    pub fn try_new(dict_page: &'a DictPage, is_utf8: bool) -> ParquetResult<Self> {
         let mut dict_values: Vec<&[u8]> = Vec::with_capacity(dict_page.num_values);
         let mut offset = 0usize;
         let dict_data = &dict_page.buffer;
@@ -60,7 +60,12 @@ impl<'a> VarDictDecoder<'a> {
             }
 
             let str_slice = &dict_data[offset..offset + str_len];
-            debug_assert!(std::str::from_utf8(str_slice).is_ok());
+            if is_utf8 && !std::str::from_utf8(str_slice).is_ok() {
+                return Err(Error::OutOfSpec(format!(
+                    "dictionary value {} is not valid utf8",
+                    i
+                )));
+            }
 
             dict_values.push(str_slice);
             offset += str_len;

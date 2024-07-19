@@ -34,15 +34,16 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.std.Chars;
+import io.questdb.std.Files;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 
-public class ParquetFileReaderFunctionFactory implements FunctionFactory {
+public class ReadParquetFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "parquet_scan(s)";
+        return "read_parquet(s)";
     }
 
     public boolean isCursor() {
@@ -65,7 +66,7 @@ public class ParquetFileReaderFunctionFactory implements FunctionFactory {
                 file.of(path.$());
                 GenericRecordMetadata metadata = new GenericRecordMetadata();
                 file.getMetadata().copyTo(metadata);
-                return new CursorFunction(new ParquetFileRecordCursorFactory(path, metadata, config.getFilesFacade()));
+                return new CursorFunction(new ReadParquetRecordCursorFactory(path, metadata, config.getFilesFacade()));
             }
         } catch (CairoException e) {
             throw SqlException.$(argPos.getQuick(0), "error reading parquet file ").put('[').put(e.getErrno()).put("]: ").put(e.getFlyweightMessage());
@@ -75,7 +76,8 @@ public class ParquetFileReaderFunctionFactory implements FunctionFactory {
     }
 
     private void checkPathIsSafeToRead(Path path, CharSequence filePath, int position, CairoConfiguration config) throws SqlException {
-        if (Chars.isBlank(config.getSqlCopyInputRoot())) {
+        CharSequence sqlCopyInputRoot = config.getSqlCopyInputRoot();
+        if (Chars.isBlank(sqlCopyInputRoot)) {
             throw SqlException.$(position, "parquet files can only be read from sql.copy.input.root, please add sql.copy.input.root=<path> to your configuration");
         }
         if (Chars.isBlank(filePath)) {
@@ -84,6 +86,14 @@ public class ParquetFileReaderFunctionFactory implements FunctionFactory {
         if (Chars.contains(filePath, "/../") || Chars.contains(filePath, "\\..\\")) {
             throw SqlException.$(position, "parquet file path pattern is not allowed");
         }
-        path.of(config.getSqlCopyInputRoot()).concat(filePath);
+
+        // Absolute path allowed
+        if (filePath.length() > sqlCopyInputRoot.length() && Chars.startsWith(filePath, sqlCopyInputRoot)) {
+            if (sqlCopyInputRoot.charAt(sqlCopyInputRoot.length() - 1) == Files.SEPARATOR || filePath.charAt(sqlCopyInputRoot.length()) == Files.SEPARATOR) {
+                path.of(filePath);
+                return;
+            }
+        }
+        path.of(sqlCopyInputRoot).concat(filePath);
     }
 }

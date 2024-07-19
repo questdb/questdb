@@ -247,3 +247,4 @@ SELECT MIN(comments), MAX(comments) FROM parquet_scan('data/parquet-testing/user
 statement error
 SELECT * FROM parquet_scan('data/parquet-testing/broken-arrow.parquet')
 ----
+

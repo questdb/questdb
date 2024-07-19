@@ -26,4 +26,6 @@ package io.questdb.test;
 
 public class Sqllogictest {
     public static native void run(short port, long testNamePathPtr);
+
+    public static native void setEnvVar(long keyPtr, long valuePtr);
 }

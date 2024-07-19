@@ -1,12 +1,23 @@
-use std::ffi::CStr;
-use std::os::raw::c_char;
-use std::path::Path;
-
 use jni::objects::JClass;
 use jni::JNIEnv;
 use sqllogictest::{Record, Runner};
 use sqllogictest_engines::postgres::{PostgresConfig, PostgresExtended};
+use std::ffi::CStr;
+use std::os::raw::c_char;
+use std::path::Path;
 use tokio::runtime::Runtime;
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_test_Sqllogictest_setEnvVar(
+    _env: JNIEnv,
+    _class: JClass,
+    var_name: *const c_char,
+    var_value: *const c_char,
+) {
+    let var_name = unsafe { CStr::from_ptr(var_name).to_str().expect("Invalid UTF-8") };
+    let var_value = unsafe { CStr::from_ptr(var_value).to_str().expect("Invalid UTF-8") };
+    std::env::set_var(var_name, var_value);
+}
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_test_Sqllogictest_run(

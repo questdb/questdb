@@ -22,7 +22,15 @@
  *
  ******************************************************************************/
 
-mod sqllogictest;
+package io.questdb.griffin.engine.functions.table;
 
-extern crate core;
-pub extern crate jni;
+
+public class ParquetScanFunctionFactory extends ReadParquetFunctionFactory {
+
+    // This is simply an alias for ParquetFileReaderFunctionFactory
+    // needed to support .test files syntax already using parquet_scan function
+    @Override
+    public String getSignature() {
+        return "parquet_scan(s)";
+    }
+}

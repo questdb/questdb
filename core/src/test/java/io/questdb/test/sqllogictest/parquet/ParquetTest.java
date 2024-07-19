@@ -35,6 +35,7 @@ import io.questdb.test.Sqllogictest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -71,13 +72,17 @@ public class ParquetTest extends AbstractBootstrapTest {
         }
     }
 
-    public static String getTestResourcePath() {
-        URL resource = TestUtils.class.getResource("/sqllogictest");
-        assertNotNull("Someone accidentally deleted test resource /sqllogictest?", resource);
-        try {
-            return Paths.get(resource.toURI()).toFile().getAbsolutePath();
-        } catch (URISyntaxException e) {
-            throw new RuntimeException("Could not determine resource path", e);
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        AbstractBootstrapTest.setUpStatic();
+        try (Path key = new Path(); Path value = new Path()) {
+            key.of("DB_ROOT");
+            value.of(root);
+            Sqllogictest.setEnvVar(key.$().ptr(), value.$().ptr());
+
+            key.of("TEST_RESOURCE_ROOT");
+            value.of(getTestResourcePath());
+            Sqllogictest.setEnvVar(key.$().ptr(), value.$().ptr());
         }
     }
 
@@ -97,6 +102,16 @@ public class ParquetTest extends AbstractBootstrapTest {
                 serverMain.start();
                 Sqllogictest.run(pgPort, path.$().ptr());
             }
+        }
+    }
+
+    private static String getTestResourcePath() {
+        URL resource = TestUtils.class.getResource("/sqllogictest");
+        assertNotNull("Someone accidentally deleted test resource /sqllogictest?", resource);
+        try {
+            return Paths.get(resource.toURI()).toFile().getAbsolutePath();
+        } catch (URISyntaxException e) {
+            throw new RuntimeException("Could not determine resource path", e);
         }
     }
 
@@ -140,61 +155,4 @@ public class ParquetTest extends AbstractBootstrapTest {
 
         return 0;
     }
-
-//    @Test
-//    public void parquet_10279() {
-//        short pgPort = 6465;
-//
-//        try (Path path = new Path()) {
-//            String testResourcePath = getTestResourcePath();
-//            path.concat(testResourcePath).concat("test/parquet/parquet_10279.test");
-//            Assert.assertTrue(Misc.getThreadLocalUtf8Sink().put(path).toString(), FilesFacadeImpl.INSTANCE.exists(path.$()));
-//
-//            try (final TestServerMain serverMain = startWithEnvVariables(
-//                    PG_NET_BIND_TO.getEnvVarName(), "0.0.0.0:" + pgPort,
-//                    CAIRO_SQL_COPY_ROOT.getEnvVarName(), testResourcePath
-//            )) {
-//                serverMain.start();
-//                Sqllogictest.run(pgPort, path.$().ptr());
-//            }
-//        }
-//    }
-//
-//    @Test
-//    public void test_aws_files() {
-//        short pgPort = 6465;
-//
-//        try (Path path = new Path()) {
-//            String testResourcePath = getTestResourcePath();
-//            path.concat(testResourcePath).concat("test/parquet/test_aws_files.test");
-//            Assert.assertTrue(Misc.getThreadLocalUtf8Sink().put(path).toString(), FilesFacadeImpl.INSTANCE.exists(path.$()));
-//
-//            try (final TestServerMain serverMain = startWithEnvVariables(
-//                    PG_NET_BIND_TO.getEnvVarName(), "0.0.0.0:" + pgPort,
-//                    CAIRO_SQL_COPY_ROOT.getEnvVarName(), testResourcePath
-//            )) {
-//                serverMain.start();
-//                Sqllogictest.run(pgPort, path.$().ptr());
-//            }
-//        }
-//    }
-//
-//    @Test
-//    public void test_parquet_scan() {
-//        short pgPort = 6465;
-//
-//        try (Path path = new Path()) {
-//            String testResourcePath = getTestResourcePath();
-//            path.concat(testResourcePath).concat("test/parquet/test_parquet_scan.test");
-//            Assert.assertTrue(Misc.getThreadLocalUtf8Sink().put(path).toString(), FilesFacadeImpl.INSTANCE.exists(path.$()));
-//
-//            try (final TestServerMain serverMain = startWithEnvVariables(
-//                    PG_NET_BIND_TO.getEnvVarName(), "0.0.0.0:" + pgPort,
-//                    CAIRO_SQL_COPY_ROOT.getEnvVarName(), testResourcePath
-//            )) {
-//                serverMain.start();
-//                Sqllogictest.run(pgPort, path.$().ptr());
-//            }
-//        }
-//    }
 }

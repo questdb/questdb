@@ -584,7 +584,7 @@ pub fn decoder_page(
                     Some(dict_page),
                     ColumnType::Varchar,
                 ) => {
-                    let dict_decoder = VarDictDecoder::try_new(dict_page)?;
+                    let dict_decoder = VarDictDecoder::try_new(dict_page, true)?;
                     let mut slicer = RleDictionarySlicer::try_new(
                         values_buffer,
                         dict_decoder,
@@ -664,7 +664,7 @@ pub fn decoder_page(
                     Some(dict_page),
                     ColumnType::Binary,
                 ) => {
-                    let dict_decoder = VarDictDecoder::try_new(dict_page)?;
+                    let dict_decoder = VarDictDecoder::try_new(dict_page, false)?;
                     let mut slicer =
                         RleDictionarySlicer::try_new(values_buffer, dict_decoder, row_count, &[])?;
                     decode_page(

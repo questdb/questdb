@@ -11,7 +11,8 @@ use crate::parquet_write::{ParquetError, ParquetResult};
 use super::util::ExactSizedIter;
 
 const HEADER_FLAG_INLINED: u8 = 1 << 0;
-const _HEADER_FLAG_ASCII: u8 = 1 << 1;
+const HEADER_FLAG_ASCII: u8 = 1 << 1;
+const HEADER_FLAG_ASCII_32: u32 = 1 << 1;
 const HEADER_FLAG_NULL: u8 = 1 << 2;
 const HEADER_FLAGS_WIDTH: u32 = 4;
 const VARCHAR_MAX_BYTES_FULLY_INLINED: usize = 9;
@@ -168,7 +169,7 @@ fn is_inlined(header: u8) -> bool {
 pub fn append_varchar(aux_mem: &mut Vec<u8>, data_mem: &mut Vec<u8>, value: &[u8]) {
     let size = value.len();
     if size <= VARCHAR_MAX_BYTES_FULLY_INLINED {
-        let flags = HEADER_FLAG_INLINED;
+        let flags = HEADER_FLAG_INLINED | is_ascii_inlined(value);
         let header = (size << HEADER_FLAGS_WIDTH) as u8 | flags;
         aux_mem.push(header);
         aux_mem.extend_from_slice(value);
@@ -177,12 +178,30 @@ pub fn append_varchar(aux_mem: &mut Vec<u8>, data_mem: &mut Vec<u8>, value: &[u8
         append_offset(aux_mem, data_mem.len());
     } else {
         assert!(size <= LENGTH_LIMIT_BYTES);
-        let header = (size as u32) << HEADER_FLAGS_WIDTH;
+        let header = (size as u32) << HEADER_FLAGS_WIDTH | is_ascii(value);
         aux_mem.extend_from_slice(&header.to_le_bytes());
         aux_mem.extend_from_slice(&value[0..VARCHAR_INLINED_PREFIX_BYTES]);
         data_mem.extend_from_slice(value);
         append_offset(aux_mem, data_mem.len() - size);
     }
+}
+
+fn is_ascii_inlined(value: &[u8]) -> u8 {
+    for &c in value {
+        if c > 127 {
+            return 0u8;
+        }
+    }
+    HEADER_FLAG_ASCII
+}
+
+fn is_ascii(value: &[u8]) -> u32 {
+    for &c in value {
+        if c > 127 {
+            return 0u32;
+        }
+    }
+    HEADER_FLAG_ASCII_32
 }
 
 pub fn append_varchar_null(aux_mem: &mut Vec<u8>, data_mem: &[u8]) {
