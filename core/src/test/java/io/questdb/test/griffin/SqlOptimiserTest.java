@@ -2949,12 +2949,10 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String shouldFail2b = "select ts, avg(x), sum(x), concat('1', s) from fromto\n" +
                     "sample by 5d from '2017-12-20' fill(null) align to calendar with offset '10:00'";
 
-
             assertException(shouldFail1a, 0, "FROM-TO");
             assertException(shouldFail1b, 0, "FROM-TO");
             assertException(shouldFail2a, 0, "FROM-TO");
             assertException(shouldFail2b, 0, "FROM-TO");
-
 
             final String shouldSucceedParallel = "select ts, avg(x), sum(x) from fromto\n" +
                     "sample by 5d from '2017-12-20' fill(null) ";
@@ -2984,7 +2982,6 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "                Interval forward scan on: fromto\n" +
                     "                  intervals: [(\"2017-12-20T00:00:00.000000Z\",\"MAX\")]\n");
             assertSql(shouldSucceedResult, shouldSucceedParallel);
-
 
             assertPlanNoLeakCheck(shouldSucceedSequential, "Sample By\n" +
                     "  fill: null\n" +

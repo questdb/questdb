@@ -4506,7 +4506,8 @@ public class SqlOptimiser implements Mutable {
                             && (sampleByOffset != null && SqlKeywords.isZeroOffset(sampleByOffset.token) && (sampleByTimezoneName == null || SqlKeywords.isUTC(sampleByTimezoneName.token)))
                             && (sampleByFillSize == 0 || (sampleByFillSize == 1 && !SqlKeywords.isPrevKeyword(sampleByFill.getQuick(0).token) && !SqlKeywords.isLinearKeyword(sampleByFill.getQuick(0).token)))
                             && sampleByUnit == null
-                            && !((sampleByFrom != null && sampleByFrom.token.charAt(0) == '$') || (sampleByTo != null && sampleByTo.token.charAt(0) == '$'))
+                            &&
+                            (sampleByFrom == null || (sampleByFrom.type != BIND_VARIABLE))
             ) {
                 // Validate that the model does not have wildcard column names.
                 // Using wildcard in group-by expression makes SQL ambiguous and
@@ -4589,13 +4590,10 @@ public class SqlOptimiser implements Mutable {
                         final CharSequence tableName = nested.getTableName();
                         for (int i = 0, n = maybeKeyed.size(); i < n; i++) {
                             final ExpressionNode expr = maybeKeyed.getQuick(i);
-                            // drop out early, since we don't handle keyed
-
                             switch (expr.type) {
                                 case LITERAL:
                                     if (!matchesWithOrWithoutTablePrefix(expr.token, tableName, timestamp.token) &&
                                             !matchesWithOrWithoutTablePrefix(expr.token, tableName, timestampAlias)) {
-
                                         isKeyed = true;
                                     }
                                     break;
@@ -4608,11 +4606,11 @@ public class SqlOptimiser implements Mutable {
                                     }
                                     break;
                             }
-
                         }
                     }
 
                     if (isKeyed) {
+                        // drop out early, since we don't handle keyed
                         nested.setNestedModel(rewriteSampleBy(nested.getNestedModel()));
 
                         // join models
