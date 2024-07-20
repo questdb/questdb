@@ -39,7 +39,7 @@ import io.questdb.std.ObjList;
 public class WeightedMidPriceFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "wmid(DDDD)";
+        return "wmid(DIDI)";
     }
 
     @Override
@@ -54,9 +54,9 @@ public class WeightedMidPriceFunctionFactory implements FunctionFactory {
         private final Function ask;
         private final Function askSize;
 
-        public WeightedMidPriceFunction(Function bid, Function bidSize, Function ask, Function askSize) {
-            this.bid = bid;
+        public WeightedMidPriceFunction(Function bidSize, Function bid, Function ask, Function askSize) {
             this.bidSize = bidSize;
+            this.bid = bid;
             this.ask = ask;
             this.askSize = askSize;
         }
