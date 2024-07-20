@@ -40,16 +40,16 @@ public class WeightedMidPriceFunctionFactoryTest extends AbstractFunctionFactory
         assertQuery("wmid\n1.5550000000000002\n", "select wmid(100, 1.5, 1.61, 100)");
         assertQuery("wmid\n0.0\n", "select wmid(200, 0.0, 0.0, 0)");
         assertQuery("wmid\n0.0\n", "select wmid(200, -1.0, 1.0, 100)");
-        assertQuery("wmid\n-0.5\n", "select wmid(100, -1.0, 0.0, -0.5)");
+        assertQuery("wmid\n-0.5\n", "select wmid(100, -1.0, 0.0, 200)");
         assertQuery("wmid\n-1.5\n", "select wmid(100, -2.0, -1.0, 100)");
-        assertQuery("wmid\n-1.6666655000000001\n", "select wmid(10,, -2.22222 -1.111111, 200)");
+        assertQuery("wmid\n-1.6666655000000001\n", "select wmid(100, -2.22222 -1.111111, 200)");
     }
 
     @Test
     public void testNonFiniteNumber() throws Exception {
         final String expected = "wmid\nnull\n";
         assertQuery(expected, "select wmid(NULL, 1.0, 1.0, 100)");
-        assertQuery(expected, "select wmid(1.0, NULL, 1.0, 100)");
+        assertQuery(expected, "select wmid(100, NULL, 1.0, 100)");
         assertQuery(expected, "select wmid(NULL, NULL, 1.0, 100)");
         assertQuery(expected, "select wmid(NULL, 1.0, NULL, 100)");
         assertQuery(expected, "select wmid(NULL, 1.0, 1.0, NULL)");
