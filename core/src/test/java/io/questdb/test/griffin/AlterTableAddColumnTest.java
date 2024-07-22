@@ -667,6 +667,17 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testQueryVarcharAboveColumnTop() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as (select x id, from long_sequence(3))");
+            ddl("alter table x add column a_varchar varchar");
+            insert("insert into x values (4, 'added-1'), (5, 'added-2')");
+            assertQuery("a_varchar\n\n\n\nadded-1\nadded-2\n",
+                    "select a_varchar from x", null, null, true, true);
+        });
+    }
+
+    @Test
     public void testTableDoesNotExist() throws Exception {
         assertFailure("alter table y", 12, "table does not exist [table=y]");
     }
