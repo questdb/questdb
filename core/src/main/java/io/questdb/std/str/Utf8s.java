@@ -31,6 +31,7 @@ import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_BYTES;
 import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_MASK;
@@ -39,8 +40,8 @@ import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_MASK;
  * UTF-8 specific variant of the {@link Chars} utility.
  */
 public final class Utf8s {
-
-    private final static io.questdb.std.ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
+    private static final long ASCII_MASK = 0x8080808080808080L;
+    private static final io.questdb.std.ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
 
     private Utf8s() {
     }
@@ -685,17 +686,31 @@ public final class Utf8s {
         return -1;
     }
 
+    @TestOnly
     public static boolean isAscii(Utf8Sequence utf8) {
-        boolean ascii = true;
         if (utf8 != null) {
             for (int k = 0, kl = utf8.size(); k < kl; k++) {
                 if (utf8.byteAt(k) < 0) {
-                    ascii = false;
-                    break;
+                    return false;
                 }
             }
         }
-        return ascii;
+        return true;
+    }
+
+    public static boolean isAscii(long ptr, int size) {
+        long i = 0;
+        for (; i + 7 < size; i += 8) {
+            if ((Unsafe.getUnsafe().getLong(ptr + i) & ASCII_MASK) != 0) {
+                return false;
+            }
+        }
+        for (; i < size; i++) {
+            if (Unsafe.getUnsafe().getByte(ptr + i) < 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public static int lastIndexOfAscii(@NotNull Utf8Sequence seq, char asciiTerm) {

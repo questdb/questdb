@@ -180,10 +180,10 @@ public class EqVarcharFunctionFactory implements FunctionFactory {
         }
     }
 
-    static class NullCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
+    public static class NullCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final Function arg;
 
-        NullCheckFunc(Function arg) {
+        public NullCheckFunc(Function arg) {
             this.arg = arg;
         }
 

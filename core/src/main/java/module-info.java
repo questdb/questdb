@@ -275,8 +275,10 @@ open module io.questdb {
 //                    like
             io.questdb.griffin.engine.functions.regex.LikeStrFunctionFactory,
             io.questdb.griffin.engine.functions.regex.LikeVarcharFunctionFactory,
+            io.questdb.griffin.engine.functions.regex.LikeSymbolFunctionFactory,
             io.questdb.griffin.engine.functions.regex.ILikeStrFunctionFactory,
             io.questdb.griffin.engine.functions.regex.ILikeVarcharFunctionFactory,
+            io.questdb.griffin.engine.functions.regex.ILikeSymbolFunctionFactory,
 //                     '!~',
             io.questdb.griffin.engine.functions.regex.NotMatchStrFunctionFactory,
             io.questdb.griffin.engine.functions.regex.NotMatchVarcharFunctionFactory,
