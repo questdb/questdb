@@ -6615,7 +6615,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Sort\n" +
                             "      keys: [ts]\n" +
                             "        Fill Range\n" +
-                            "          range: (null,null)\n" +
                             "          stride: '1h'\n" +
                             "          values: [null]\n" +
                             "            Async Group By workers: 1\n" +
@@ -6744,7 +6743,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Sort\n" +
                             "      keys: [ts]\n" +
                             "        Fill Range\n" +
-                            "          range: (null,null)\n" +
                             "          stride: '1h'\n" +
                             "          values: [1]\n" +
                             "            Async Group By workers: 1\n" +
@@ -10127,15 +10125,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "from cpu_ts " +
                             "order by ts asc\n" +
                             ") order by sm ",
-                    "Sort\n" +
+                    "Sort light\n" +
                             "  keys: [sm]\n" +
                             "    GroupBy vectorized: false\n" +
                             "      values: [sum(avg),sum(sum),sum(first_value)]\n" +
                             "        Window\n" +
-                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
-                            "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
-                            "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)" +
-                            "]\n" +
+                            "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: cpu_ts\n"

@@ -2343,7 +2343,7 @@ public class IPv4Test extends AbstractCairoTest {
                         "  from long_sequence(100)" +
                         ") ",
                 null,
-                false,
+                true,
                 true
         );
     }

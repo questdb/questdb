@@ -91,7 +91,7 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
                 "select count_distinct(s) from x",
                 "create table x as (select * from (select rnd_symbol('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 null,
-                false,
+                true,
                 true
         );
     }
@@ -104,7 +104,7 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
                 "select count_distinct(s) from x",
                 "create table x as (select * from (select rnd_symbol(null, 'xx2', '00s', '544', 'rraa', null) s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 null,
-                false,
+                true,
                 true
         );
     }

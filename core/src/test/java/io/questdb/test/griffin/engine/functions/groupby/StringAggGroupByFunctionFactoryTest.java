@@ -37,7 +37,7 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractCairoTest {
                 "select string_agg(null, ',') from x",
                 "create table x as (select * from (select timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))",
                 null,
-                false,
+                true,
                 true
         );
     }
@@ -50,7 +50,7 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractCairoTest {
                 "select string_agg('aaa', ',') from x",
                 "create table x as (select * from (select timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))",
                 null,
-                false,
+                true,
                 true
         );
     }
@@ -117,7 +117,7 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "   from long_sequence(1000)" +
                         ") timestamp(ts))",
                 null,
-                false,
+                true,
                 true
         );
     }
@@ -151,7 +151,7 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractCairoTest {
                 "select string_agg(s, ',') from x",
                 "create table x as (select * from (select rnd_str('abc', 'aaa', 'bbb', 'ccc') s, timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))",
                 null,
-                false,
+                true,
                 true
         );
     }
@@ -167,7 +167,7 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractCairoTest {
                 "insert into x select 'abc' from long_sequence(1)",
                 "string_agg\n" +
                         "abc\n",
-                false,
+                true,
                 true,
                 false
         );

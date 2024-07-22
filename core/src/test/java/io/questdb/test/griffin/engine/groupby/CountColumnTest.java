@@ -350,7 +350,7 @@ public class CountColumnTest extends AbstractCairoTest {
                         " gl geohash(40b) " +
                         ")",
                 null,
-                false,
+                true,
                 true
         );
     }
@@ -382,7 +382,7 @@ public class CountColumnTest extends AbstractCairoTest {
                         " select null, null, null, null, null, null, null, null, null, null, null, null, null from long_sequence(1)" +
                         ")",
                 null,
-                false,
+                true,
                 true
         );
     }
@@ -414,7 +414,7 @@ public class CountColumnTest extends AbstractCairoTest {
                         " select null, null , null, null, null, null, null, null, null, null, null, null, null from long_sequence(1000)" +
                         ")",
                 null,
-                false,
+                true,
                 true
         );
     }
@@ -459,7 +459,7 @@ public class CountColumnTest extends AbstractCairoTest {
                         " long_sequence(100000)" +
                         ")",
                 null,
-                false,
+                true,
                 true
         );
     }

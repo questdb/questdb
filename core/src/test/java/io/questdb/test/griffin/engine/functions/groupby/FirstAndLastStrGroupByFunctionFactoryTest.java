@@ -122,7 +122,7 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
                         "   from long_sequence(10)" +
                         ") timestamp(ts))",
                 null,
-                false,
+                true,
                 true
         );
     }

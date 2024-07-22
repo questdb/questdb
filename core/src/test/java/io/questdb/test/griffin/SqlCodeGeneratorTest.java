@@ -488,7 +488,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "  );\n",
                 "create table mdc_data as (select rnd_double() total_revenue, timestamp_sequence(dateadd('d', -1, now()),2) timestamp from long_sequence(10000)) timestamp(timestamp) partition by day",
                 null,
-                false,
+                true,
                 true
         );
     }

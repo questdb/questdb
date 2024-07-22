@@ -317,7 +317,7 @@ public class SecurityTest extends AbstractCairoTest {
                             "165.6121723103405\n",
                     "select sum(d1) from tb1 where d1 < 0.2",
                     null,
-                    false,
+                    true,
                     readOnlyExecutionContext,
                     true
             );
@@ -329,7 +329,7 @@ public class SecurityTest extends AbstractCairoTest {
                         "sym1\nWCP\nICC\nUOJ\nFJG\nOZZ\nGHV\nWEK\nVDZ\nETJ\nUED\n",
                         "select sum(d1) from tb1 where d1 < 0.2",
                         null,
-                        false,
+                        true,
                         readOnlyExecutionContext,
                         true
                 );

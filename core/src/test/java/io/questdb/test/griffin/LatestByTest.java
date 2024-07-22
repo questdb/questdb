@@ -655,7 +655,7 @@ public class LatestByTest extends AbstractCairoTest {
                             "1970-01-11T15:33:16.000000Z\t1970-01-12T13:46:39.000000Z\n",
                     "select min(ts), max(ts) from (select ts, x, s from t latest on ts partition by s)",
                     null,
-                    false,
+                    true,
                     true
             );
 
@@ -669,7 +669,7 @@ public class LatestByTest extends AbstractCairoTest {
                             "latest on ts partition by s" +
                             ")",
                     null,
-                    false,
+                    true,
                     true
             );
         });

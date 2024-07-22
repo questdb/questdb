@@ -41,7 +41,7 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                             "3\t7\t23\t27\n",
                     "SELECT sum(ax), sum(bx), sum(ax+10), sum(bx+10) " +
                             "FROM taba " +
-                            "join tabb on aid = bid", null, false, false, true);
+                            "join tabb on aid = bid", null, true, true, true);
         });
     }
 
