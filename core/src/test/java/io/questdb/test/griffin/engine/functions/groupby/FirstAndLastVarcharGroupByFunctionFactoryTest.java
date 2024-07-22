@@ -122,7 +122,7 @@ public class FirstAndLastVarcharGroupByFunctionFactoryTest extends AbstractCairo
                         "   from long_sequence(10)" +
                         ") timestamp(ts))",
                 null,
-                true,
+                false,
                 true
         );
     }
@@ -169,7 +169,7 @@ public class FirstAndLastVarcharGroupByFunctionFactoryTest extends AbstractCairo
                         "   from long_sequence(3000)" +
                         ") timestamp(ts))",
                 null,
-                true,
+                false,
                 true
         );
     }

@@ -96,7 +96,7 @@ public class CountDistinctSymbolGroupByFunctionFactoryTest extends AbstractCairo
                 "select count_distinct(s) from x",
                 "create table x as (select * from (select rnd_symbol(1000, 1, 10, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(10000)) timestamp(ts))",
                 null,
-                true,
+                false,
                 true
         );
     }
@@ -124,7 +124,7 @@ public class CountDistinctSymbolGroupByFunctionFactoryTest extends AbstractCairo
                     "select count_distinct(s) from x",
                     "create table x as (select * from (select rnd_symbol(100, 10, 10, 0) s, timestamp_sequence(10, 100000) ts from long_sequence(100)) timestamp(ts)) timestamp(ts) PARTITION BY YEAR",
                     null,
-                    true,
+                    false,
                     true
             );
 

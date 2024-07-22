@@ -527,7 +527,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                             "1.382992963766362\n",
                     sql,
                     null,
-                    true,
+                    false,
                     sqlExecutionContext,
                     true
             );

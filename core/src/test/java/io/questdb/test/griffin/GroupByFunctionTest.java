@@ -847,7 +847,7 @@ public class GroupByFunctionTest extends AbstractCairoTest {
                         " long_sequence(100)" +
                         ") timestamp(k) partition by day",
                 null,
-                true,
+                false,
                 true
         );
     }
