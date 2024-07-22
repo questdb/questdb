@@ -3768,14 +3768,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
 
                 if (tempKeyIndexesInBase.size() == 0) {
-                    return
-                            new GroupByNotKeyedVectorRecordCursorFactory(
-                                    configuration,
-                                    factory,
-                                    meta,
-                                    executionContext.getSharedWorkerCount(),
-                                    tempVaf
-                            );
+                    return new GroupByNotKeyedVectorRecordCursorFactory(
+                            configuration,
+                            factory,
+                            meta,
+                            executionContext.getSharedWorkerCount(),
+                            tempVaf
+                    );
                 }
 
                 if (tempKeyIndexesInBase.size() == 1) {
@@ -4007,7 +4006,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             if (keyTypes.getColumnCount() == 0) {
                 assert recordFunctions.size() == groupByFunctions.size();
-                new GroupByNotKeyedRecordCursorFactory(
+                return new GroupByNotKeyedRecordCursorFactory(
                         asm,
                         configuration,
                         factory,

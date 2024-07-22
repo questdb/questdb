@@ -6615,7 +6615,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Sort\n" +
                             "      keys: [ts]\n" +
                             "        Fill Range\n" +
-                            "          range: (null,null)\n" +
                             "          stride: '1h'\n" +
                             "          values: [null]\n" +
                             "            Async Group By workers: 1\n" +
@@ -6744,7 +6743,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Sort\n" +
                             "      keys: [ts]\n" +
                             "        Fill Range\n" +
-                            "          range: (null,null)\n" +
                             "          stride: '1h'\n" +
                             "          values: [1]\n" +
                             "            Async Group By workers: 1\n" +
