@@ -4,9 +4,9 @@ use parquet2::encoding::{delta_bitpacked, Encoding};
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
 
-use crate::parquet_write::{ParquetError, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
-use crate::parquet_write::util::{BinaryMaxMin, build_plain_page, encode_bool_iter};
+use crate::parquet_write::util::{build_plain_page, encode_bool_iter, BinaryMaxMin};
+use crate::parquet_write::{ParquetError, ParquetResult};
 
 use super::util::ExactSizedIter;
 
@@ -80,7 +80,10 @@ pub fn varchar_to_page(
                 let header = entry.header;
                 let size = (header >> HEADER_FLAGS_WIDTH) as usize;
                 let offset = entry.offset_lo as usize | (entry.offset_hi as usize) << 16;
-                assert!(offset + size <= data.len(), "Data corruption in VARCHAR column");
+                assert!(
+                    offset + size <= data.len(),
+                    "Data corruption in VARCHAR column"
+                );
                 Some(&data[offset..][..size])
             }
         })
@@ -124,7 +127,7 @@ pub fn varchar_to_page(
         options,
         encoding,
     )
-        .map(Page::Data)
+    .map(Page::Data)
 }
 
 fn encode_plain(utf8_slices: &[Option<&[u8]>], buffer: &mut Vec<u8>, stats: &mut BinaryMaxMin) {
