@@ -59,6 +59,29 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConvertLastPartition() throws Exception {
+        final long rows = 10;
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            ddl("create table x as (select" +
+                    " x id," +
+                    " rnd_boolean() a_boolean," +
+                    " rnd_byte() a_byte," +
+                    " timestamp_sequence('2024-06', 500) designated_ts" +
+                    " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month");
+
+            ddl("alter table x convert partition to parquet list '2024-06'");
+            assertPartitionExists("x", "2024-06");
+
+            // RO partition, should be ignored
+            insert("insert into x(designated_ts) values('2024-06-20')");
+
+            insert("insert into x(designated_ts) values('1970-01')");
+            ddl("alter table x convert partition to parquet list '1970-01'");
+            assertPartitionExists("x", "1970-01.1");
+        });
+    }
+
+    @Test
     public void testConvertListPartitions() throws Exception {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
                     final String tableName = testName.getMethodName();
@@ -70,12 +93,12 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                             "insert into " + tableName + " values(5, '2024-06-15T00:00:00.000000Z')",
                             "insert into " + tableName + " values(6, '2024-06-12T00:00:02.000000Z')");
 
-                    ddl("alter table " + tableName + " convert partition to parquet list '2024-06-10', '2024-06-11', '2024-06-12', '2024-06-15'");
+            ddl("alter table " + tableName + " convert partition to parquet list '2024-06-10', '2024-06-11', '2024-06-12'");
 
                     assertPartitionExists(tableName, "2024-06-10");
                     assertPartitionExists(tableName, "2024-06-11.0");
                     assertPartitionExists(tableName, "2024-06-12.1");
-                    assertPartitionExists(tableName, "2024-06-15.3");
+            assertPartitionDoesntExists(tableName, "2024-06-15.3");
                 }
         );
     }
@@ -125,11 +148,35 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                     " timestamp_sequence(400000000000, 500) designated_ts" +
                     " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month");
 
-            assertException("alter table x convert partition to parquet list '2024-06'", 48, "could not convert partition to parquet");
+            assertException("alter table x convert partition to parquet list '2024-06'", 0, "cannot convert partition to parquet, partition does not exist");
 
             ddl("alter table x convert partition to parquet list '1970-01'");
             assertPartitionExists("x", "1970-01");
         });
+    }
+
+    @Test
+    public void testConvertPartitionsWithColTops() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+                    final String tableName = testName.getMethodName();
+                    createTable(tableName,
+                            "insert into " + tableName + " values(1, '2024-06-10T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(2, '2024-06-11T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(3, '2024-06-12T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(4, '2024-06-12T00:00:01.000000Z')",
+                            "insert into " + tableName + " values(5, '2024-06-15T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(6, '2024-06-12T00:00:02.000000Z')");
+
+                    ddl("alter table " + tableName + " add column a int");
+                    insert("insert into " + tableName + " values(7, '2024-06-10T00:00:00.000000Z', 1)");
+
+                    ddl("alter table " + tableName + " convert partition to parquet where timestamp > 0 and timestamp < '2024-06-15'");
+
+                    assertPartitionExists(tableName, "2024-06-10");
+                    assertPartitionExists(tableName, "2024-06-11.0");
+                    assertPartitionExists(tableName, "2024-06-12.1");
+                }
+        );
     }
 
     @Test
@@ -211,12 +258,12 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                             "select index, name, readOnly, isParquet, parquetFileSize from table_partitions('" + tableName + "')",
                             false, true);
                     ddl("alter table " + tableName + " convert partition to parquet where timestamp = to_timestamp('2024-06-12', 'yyyy-MM-dd')");
-                    assertQuery("index\tname\treadOnly\tisParquet\tparquetFileSize\n" +
-                                    "0\t2024-06-10\tfalse\tfalse\t-1\n" +
-                                    "1\t2024-06-11\tfalse\tfalse\t-1\n" +
-                                    "2\t2024-06-12\ttrue\ttrue\t554\n" +
-                                    "3\t2024-06-15\tfalse\tfalse\t-1\n",
-                            "select index, name, readOnly, isParquet, parquetFileSize from table_partitions('" + tableName + "')",
+            assertQuery("index\tname\treadOnly\tisParquet\tparquetFileSize\tminTimestamp\tmaxTimestamp\n" +
+                            "0\t2024-06-10\tfalse\tfalse\t-1\t2024-06-10T00:00:00.000000Z\t2024-06-10T00:00:00.000000Z\n" +
+                            "1\t2024-06-11\tfalse\tfalse\t-1\t2024-06-11T00:00:00.000000Z\t2024-06-11T00:00:00.000000Z\n" +
+                            "2\t2024-06-12\ttrue\ttrue\t554\t\t\n" +
+                            "3\t2024-06-15\tfalse\tfalse\t-1\t2024-06-15T00:00:00.000000Z\t2024-06-15T00:00:00.000000Z\n",
+                    "select index, name, readOnly, isParquet, parquetFileSize, minTimestamp, maxTimestamp from table_partitions('" + tableName + "')",
                             false, true);
 
                     assertPartitionDoesntExists(tableName, "2024-06-10");

@@ -307,20 +307,25 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             partitionSizeSink.clear();
             SizePrettyFunctionFactory.toSizePretty(partitionSizeSink, partitionSize);
             if (PartitionBy.isPartitioned(partitionBy) && numRows > 0L) {
-                TableUtils.dFile(path.slash(), dynamicTsColName, TableUtils.COLUMN_NAME_TXN_NONE);
-                int fd = -1;
-                try {
-                    fd = TableUtils.openRO(ff, path.$(), LOG);
-                    long lastOffset = (numRows - 1) * ColumnType.sizeOf(ColumnType.TIMESTAMP);
-                    minTimestamp = ff.readNonNegativeLong(fd, 0);
-                    maxTimestamp = ff.readNonNegativeLong(fd, lastOffset);
-                } catch (CairoException e) {
-                    dynamicPartitionIndex = Numbers.INT_NULL;
-                    LOG.error().$("no file found for designated timestamp column [path=").$(path).I$();
-                } finally {
-                    if (fd != -1) {
-                        ff.close(fd);
+                if (partitionIndex >= partitionCount || !tableTxReader.isPartitionParquet(partitionIndex)) {
+                    TableUtils.dFile(path.slash(), dynamicTsColName, TableUtils.COLUMN_NAME_TXN_NONE);
+                    int fd = -1;
+                    try {
+                        fd = TableUtils.openRO(ff, path.$(), LOG);
+                        long lastOffset = (numRows - 1) * ColumnType.sizeOf(ColumnType.TIMESTAMP);
+                        minTimestamp = ff.readNonNegativeLong(fd, 0);
+                        maxTimestamp = ff.readNonNegativeLong(fd, lastOffset);
+                    } catch (CairoException e) {
+                        dynamicPartitionIndex = Numbers.INT_NULL;
+                        LOG.error().$("no file found for designated timestamp column [path=").$(path).I$();
+                    } finally {
+                        if (fd != -1) {
+                            ff.close(fd);
+                        }
                     }
+                } else {
+                    minTimestamp = Long.MIN_VALUE;
+                    maxTimestamp = Long.MIN_VALUE;
                 }
             }
         }

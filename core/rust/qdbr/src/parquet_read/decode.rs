@@ -47,52 +47,13 @@ impl ColumnChunkBuffers {
 }
 
 const UUID_NULL: [u8; 16] = unsafe { std::mem::transmute([i64::MIN; 2]) };
-
-const LONG256_NULL: [u8; 32] = {
-    const MIN_BYTES: [u8; 8] = i64::MIN.to_le_bytes();
-    const CONCATENATED: [u8; 32] = [
-        MIN_BYTES[0],
-        MIN_BYTES[1],
-        MIN_BYTES[2],
-        MIN_BYTES[3],
-        MIN_BYTES[4],
-        MIN_BYTES[5],
-        MIN_BYTES[6],
-        MIN_BYTES[7],
-        MIN_BYTES[0],
-        MIN_BYTES[1],
-        MIN_BYTES[2],
-        MIN_BYTES[3],
-        MIN_BYTES[4],
-        MIN_BYTES[5],
-        MIN_BYTES[6],
-        MIN_BYTES[7],
-        MIN_BYTES[0],
-        MIN_BYTES[1],
-        MIN_BYTES[2],
-        MIN_BYTES[3],
-        MIN_BYTES[4],
-        MIN_BYTES[5],
-        MIN_BYTES[6],
-        MIN_BYTES[7],
-        MIN_BYTES[0],
-        MIN_BYTES[1],
-        MIN_BYTES[2],
-        MIN_BYTES[3],
-        MIN_BYTES[4],
-        MIN_BYTES[5],
-        MIN_BYTES[6],
-        MIN_BYTES[7],
-    ];
-    CONCATENATED
-};
-
+const LONG256_NULL: [u8; 32] = unsafe { std::mem::transmute([i64::MIN; 4]) };
 const BYTE_NULL: [u8; 1] = [0u8];
 const INT_NULL: [u8; 4] = i32::MIN.to_le_bytes();
 const SHORT_NULL: [u8; 2] = 0i16.to_le_bytes();
 const LONG_NULL: [u8; 8] = i64::MIN.to_le_bytes();
-const DOUBLE_NULL: [u8; 8] = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf8, 0x7f];
-const FLOAT_NULL: [u8; 4] = [0, 0, 192, 127];
+const DOUBLE_NULL: [u8; 8] = unsafe { std::mem::transmute([f64::NAN]) };
+const FLOAT_NULL: [u8; 4] = unsafe { std::mem::transmute([f32::NAN]) };
 const TIMESTAMP_96_EMPTY: [u8; 12] = [0; 12];
 
 impl ParquetDecoder {
