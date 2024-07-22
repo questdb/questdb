@@ -86,10 +86,6 @@ public class PageFrameMemoryPool implements QuietCloseable {
         auxPageSizes = null;
     }
 
-    public int getColumnShiftBits(int columnIndex) {
-        return addressCache.getColumnShiftBits(columnIndex);
-    }
-
     public PageFrameMemory navigateTo(int frameIndex) {
         if (this.frameIndex == frameIndex) {
             return frameMemory;

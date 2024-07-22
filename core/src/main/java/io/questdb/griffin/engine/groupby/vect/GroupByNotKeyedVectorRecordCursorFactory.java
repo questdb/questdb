@@ -47,7 +47,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
 
 public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCursorFactory {
-
     private static final Log LOG = LogFactory.getLog(GroupByNotKeyedVectorRecordCursorFactory.class);
     private final RecordCursorFactory base;
     private final GroupByNotKeyedVectorRecordCursor cursor;
@@ -278,6 +277,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                 }
 
                 for (int frameIndex = 0; frameIndex < frameCount; frameIndex++) {
+                    final long frameRowCount = frameAddressCache.getFrameSize(frameIndex);
                     for (int vafIndex = 0; vafIndex < vafCount; vafIndex++) {
                         final VectorAggregateFunction vaf = vafList.getQuick(vafIndex);
                         final int columnIndex = vaf.getColumnIndex();
@@ -292,6 +292,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                                             workerId,
                                             null,
                                             frameIndex,
+                                            frameRowCount,
                                             -1,
                                             columnIndex,
                                             null,

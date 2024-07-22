@@ -169,7 +169,6 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
 
     @Override
     public void setCancelledFlag(AtomicBoolean cancelled) {
-
     }
 
     @Override

@@ -126,10 +126,6 @@ public class PageFrameAddressCache implements Mutable {
         return columnCount;
     }
 
-    public int getColumnShiftBits(int columnIndex) {
-        return ColumnType.pow2SizeOf(columnTypes.getQuick(columnIndex));
-    }
-
     public IntList getColumnTypes() {
         return columnTypes;
     }

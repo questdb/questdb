@@ -147,6 +147,9 @@ public interface MemoryCR extends MemoryC, MemoryR {
         return false;
     }
 
+    default void map() {
+    }
+
     class ByteSequenceView implements BinarySequence, Mutable {
         private long address;
         private long len = -1;

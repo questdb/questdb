@@ -22,32 +22,31 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.str;
+package io.questdb.test.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.constants.StrConstant;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
+import io.questdb.PropertyKey;
+import io.questdb.test.AbstractCairoTest;
+import org.junit.Test;
 
-public class LTrimFunctionFactory implements FunctionFactory {
-    @Override
-    public String getSignature() {
-        return "ltrim(S)";
+public class SimulateWarningsFunctionTest extends AbstractCairoTest {
+
+    @Test
+    public void testSimulateWarningsDisabled() throws Exception {
+        assertMemoryLeak(() -> assertSql(
+                "simulate_warnings\n" +
+                        "false\n",
+                "select simulate_warnings('', '')"
+        ));
     }
 
-    @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        final Function arg = args.get(0);
-        if (arg.isConstant()) {
-            if (arg.getStrA(null) == null) {
-                return StrConstant.NULL;
-            } else {
-                return new TrimConstFunction(args.getQuick(0), TrimType.LTRIM);
-            }
-        }
-        return new TrimFunction(args.getQuick(0), TrimType.LTRIM);
+    @Test
+    public void testSimulateWarningsEnabled() throws Exception {
+        node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
+
+        assertMemoryLeak(() -> assertSql(
+                "simulate_warnings\n" +
+                        "true\n",
+                "select simulate_warnings('DISK FULL', 'Test warning!')"
+        ));
     }
 }

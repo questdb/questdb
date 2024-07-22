@@ -571,11 +571,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public boolean getSimulateCrashEnabled() {
-        return getDelegate().getSimulateCrashEnabled();
-    }
-
-    @Override
     public @NotNull CharSequence getSnapshotInstanceId() {
         return getDelegate().getSnapshotInstanceId();
     }
@@ -996,8 +991,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public double getWalSquashUncommittedRowsMultiplier() {
-        return getDelegate().getWalSquashUncommittedRowsMultiplier();
+    public double getWalLagRowsMultiplier() {
+        return getDelegate().getWalLagRowsMultiplier();
     }
 
     @Override
@@ -1053,6 +1048,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getWriterTickRowsCountMod() {
         return getDelegate().getWriterTickRowsCountMod();
+    }
+
+    @Override
+    public boolean isDevModeEnabled() {
+        return getDelegate().isDevModeEnabled();
     }
 
     @Override

@@ -58,11 +58,10 @@ public class LPadStrFunctionFactory implements FunctionFactory {
     }
 
     public static class LPadStrFunc extends StrFunction implements TernaryFunction {
-
         private final Function fillTextFunc;
         private final Function lenFunc;
         private final int maxLength;
-        private final StringSink sink = new StringSink();
+        private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
         private final Function strFunc;
 
@@ -95,7 +94,7 @@ public class LPadStrFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStrA(final Record rec) {
-            return lPadStr(strFunc.getStrA(rec), lenFunc.getInt(rec), fillTextFunc.getStrA(rec), sink);
+            return lPadStr(strFunc.getStrA(rec), lenFunc.getInt(rec), fillTextFunc.getStrA(rec), sinkA);
         }
 
         @Override
@@ -113,6 +112,11 @@ public class LPadStrFunctionFactory implements FunctionFactory {
             } else {
                 return TableUtils.NULL_LEN;
             }
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
         }
 
         @Nullable

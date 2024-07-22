@@ -240,6 +240,11 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
         }
 
         @Override
+        public int getColumnCount() {
+            return columnCount;
+        }
+
+        @Override
         public byte getFormat() {
             return formats.getQuick(partitionIndex);
         }

@@ -30,8 +30,6 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
-import io.questdb.std.Long256;
-import io.questdb.std.Long256Impl;
 import io.questdb.std.ObjList;
 
 public class CountLong256GroupByFunctionFactory implements FunctionFactory {
@@ -54,15 +52,6 @@ public class CountLong256GroupByFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final Function arg = args.getQuick(0);
-        if (arg.isConstant()) {
-            Long256 val = arg.getLong256A(null);
-            if (val.equals(Long256Impl.NULL_LONG256)) {
-                throw SqlException.$(argPositions.getQuick(0), "NULL is not allowed");
-            }
-            return new CountLongConstGroupByFunction();
-        } else {
-            return new CountLong256GroupByFunction(arg);
-        }
+        return new CountLong256GroupByFunction(args.getQuick(0));
     }
 }

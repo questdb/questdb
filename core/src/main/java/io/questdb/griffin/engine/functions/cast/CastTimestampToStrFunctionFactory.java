@@ -33,7 +33,6 @@ import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf16Sink;
 
 public class CastTimestampToStrFunctionFactory implements FunctionFactory {
     @Override
@@ -69,15 +68,6 @@ public class CastTimestampToStrFunctionFactory implements FunctionFactory {
             }
             TimestampFormatUtils.appendDateTimeUSec(sinkA, value);
             return sinkA;
-        }
-
-        @Override
-        public void getStr(Record rec, Utf16Sink utf16Sink) {
-            final long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NULL) {
-                return;
-            }
-            TimestampFormatUtils.appendDateTimeUSec(utf16Sink, value);
         }
 
         @Override

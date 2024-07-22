@@ -28,7 +28,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 
 public class JoinRecord implements Record {
@@ -220,15 +219,6 @@ public class JoinRecord implements Record {
             return master.getShort(col);
         }
         return slave.getShort(col - split);
-    }
-
-    @Override
-    public void getStr(int col, Utf16Sink utf16Sink) {
-        if (col < split) {
-            master.getStr(col, utf16Sink);
-        } else {
-            slave.getStr(col - split, utf16Sink);
-        }
     }
 
     @Override

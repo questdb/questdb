@@ -42,7 +42,6 @@ import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Worker;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.tasks.VectorAggregateTask;
 import org.jetbrains.annotations.Nullable;
 
@@ -51,9 +50,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
 
 public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
-
     private final static Log LOG = LogFactory.getLog(GroupByRecordCursorFactory.class);
-
     private final static int ROSTI_MINIMIZED_SIZE = 16; // 16 is the minimum size usable on arm
     private final RecordCursorFactory base;
     private final RostiRecordCursor cursor;
@@ -414,6 +411,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 }
 
                 for (int frameIndex = 0; frameIndex < frameCount; frameIndex++) {
+                    final long frameRowCount = frameAddressCache.getFrameSize(frameIndex);
                     for (int vafIndex = 0; vafIndex < vafCount; vafIndex++) {
                         final VectorAggregateFunction vaf = vafList.getQuick(vafIndex);
                         // when column index = -1 we assume that vector function does not have value
@@ -430,6 +428,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                             workerId,
                                             oomCounter,
                                             frameIndex,
+                                            frameRowCount,
                                             keyColumnIndex,
                                             valueColumnIndex,
                                             pRosti,
@@ -669,10 +668,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             @Override
             public short getShort(int col) {
                 return 0;
-            }
-
-            @Override
-            public void getStr(int col, Utf16Sink utf16Sink) {
             }
 
             @Override

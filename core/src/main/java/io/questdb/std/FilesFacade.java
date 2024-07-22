@@ -76,7 +76,13 @@ public interface FilesFacade {
 
     long getDiskFreeSpace(LPSZ path);
 
+    long getFileLimit();
+
+    int getFileSystemStatus(LPSZ lpszName);
+
     long getLastModified(LPSZ path);
+
+    long getMapCountLimit();
 
     long getMapPageSize();
 

@@ -588,8 +588,6 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                 Assert.assertNull(func.getStrB(record));
                 Assert.assertEquals(-1, func.getStrLen(record));
                 sink.clear();
-                func.getStr(record, sink);
-                Assert.assertEquals(0, sink.length());
             } else {
                 CharSequence a = func.getStrA(record);
                 CharSequence b = func.getStrB(record);
@@ -602,10 +600,6 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
                 // repeat call to make sure there is correct object reuse
                 TestUtils.assertEquals(expected, func.getStrA(record));
                 TestUtils.assertEquals(expected, func.getStrB(record));
-
-                sink.clear();
-                func.getStr(record, sink);
-                TestUtils.assertEquals(expected, sink);
                 Assert.assertEquals(expected.length(), func.getStrLen(record));
             }
         }

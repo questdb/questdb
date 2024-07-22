@@ -700,6 +700,34 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelJsonKeyGroupBy() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        testParallelJsonKeyGroupBy(
+                "SELECT json_extract(key, '.key')::varchar key, max(price) FROM tab ORDER BY key",
+                "key\tmax\n" +
+                        "k0\t4000.0\n" +
+                        "k1\t3996.0\n" +
+                        "k2\t3997.0\n" +
+                        "k3\t3998.0\n" +
+                        "k4\t3999.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelJsonKeyGroupByWithFilter() throws Exception {
+        testParallelJsonKeyGroupBy(
+                "SELECT json_extract(key, '.key')::varchar key, max(price) FROM tab WHERE json_extract(key, '.foo')::varchar = 'bar' ORDER BY key",
+                "key\tmax\n" +
+                        "k0\t4000.0\n" +
+                        "k1\t3996.0\n" +
+                        "k2\t3997.0\n" +
+                        "k3\t3998.0\n" +
+                        "k4\t3999.0\n"
+        );
+    }
+
+    @Test
     public void testParallelKSumNSum() throws Exception {
         testParallelStringAndVarcharKeyGroupBy(
                 "SELECT key, round(ksum(value)) ksum, round(nsum(value)) nsum " +
@@ -724,6 +752,26 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "k2\t338.86\t338.86\n" +
                         "k1\t350.17\t350.17\n" +
                         "k0\t327.49\t327.49\n"
+        );
+    }
+
+    @Test
+    public void testParallelMultiJsonKeyGroupBy() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        testParallelJsonKeyGroupBy(
+                "SELECT json_extract(key, '.key')::varchar key, date_trunc('month', ts) ts, max(price) FROM tab ORDER BY key, ts",
+                "key\tts\tmax\n" +
+                        "k0\t1970-01-01T00:00:00.000000Z\t3095.0\n" +
+                        "k0\t1970-02-01T00:00:00.000000Z\t4000.0\n" +
+                        "k1\t1970-01-01T00:00:00.000000Z\t3096.0\n" +
+                        "k1\t1970-02-01T00:00:00.000000Z\t3996.0\n" +
+                        "k2\t1970-01-01T00:00:00.000000Z\t3097.0\n" +
+                        "k2\t1970-02-01T00:00:00.000000Z\t3997.0\n" +
+                        "k3\t1970-01-01T00:00:00.000000Z\t3098.0\n" +
+                        "k3\t1970-02-01T00:00:00.000000Z\t3998.0\n" +
+                        "k4\t1970-01-01T00:00:00.000000Z\t3099.0\n" +
+                        "k4\t1970-02-01T00:00:00.000000Z\t3999.0\n"
         );
     }
 
@@ -2515,6 +2563,21 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelToStrFunctionKeyGroupBy() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        testParallelSymbolKeyGroupBy(
+                "SELECT to_str(ts, 'yyyy-MM-dd') ts, max(price) FROM tab ORDER BY ts LIMIT 5",
+                "ts\tmax\n" +
+                        "1970-01-01\t99.0\n" +
+                        "1970-01-02\t199.0\n" +
+                        "1970-01-03\t299.0\n" +
+                        "1970-01-04\t399.0\n" +
+                        "1970-01-05\t499.0\n"
+        );
+    }
+
+    @Test
     public void testStringKeyGroupByEmptyTable() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
@@ -2681,6 +2744,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     private void testParallelGroupByFaultTolerance(String query) throws Exception {
         Assume.assumeTrue(enableParallelGroupBy);
+        node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool((() -> 4));
             TestUtils.execute(
@@ -2774,6 +2838,36 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                 );
                 Misc.free(circuitBreaker);
             }
+        });
+    }
+
+    private void testParallelJsonKeyGroupBy(String... queriesAndExpectedResults) throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool((() -> 4));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
+                        ddl(
+                                compiler,
+                                "CREATE TABLE tab (" +
+                                        "  ts TIMESTAMP," +
+                                        "  key VARCHAR," +
+                                        "  price DOUBLE," +
+                                        "  quantity LONG) timestamp (ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        insert(
+                                compiler,
+                                "insert into tab select (x * 864000000)::timestamp, '{\"key\": \"k' || (x % 5) || '\", \"foo\": \"bar\"}', x, x from long_sequence(" + ROW_COUNT + ")",
+                                sqlExecutionContext
+                        );
+                        assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
+                    },
+                    configuration,
+                    LOG
+            );
         });
     }
 

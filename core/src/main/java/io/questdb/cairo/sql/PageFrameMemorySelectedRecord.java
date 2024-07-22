@@ -28,7 +28,6 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 
 /**
@@ -152,11 +151,6 @@ public class PageFrameMemorySelectedRecord extends PageFrameMemoryRecord {
     @Override
     public short getShort(int col) {
         return super.getShort(deferenceColumn(col));
-    }
-
-    @Override
-    public void getStr(int col, Utf16Sink utf16Sink) {
-        super.getStr(deferenceColumn(col), utf16Sink);
     }
 
     @Override

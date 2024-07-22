@@ -27,27 +27,43 @@ package io.questdb.std.json;
 
 import org.jetbrains.annotations.TestOnly;
 
-/** Maps to the constants of the C++ `simdjson::ondemand::json_type` enum. */
+/**
+ * Maps to the constants of the C++ `simdjson::ondemand::json_type` enum.
+ */
 public class SimdJsonType {
-    /** An unset `SimdJsonType`. */
+    /**
+     * An unset `SimdJsonType`.
+     */
     public static final int UNSET = 0;  // 0
 
-    /** A JSON array   ( [ 1, 2, 3 ... ] ) */
+    /**
+     * A JSON array   ( [ 1, 2, 3 ... ] )
+     */
     public static final int ARRAY = UNSET + 1;  // 1
 
-    /** A JSON object  ( { "a": 1, "b" 2, ... } ) */
+    /**
+     * A JSON object  ( { "a": 1, "b" 2, ... } )
+     */
     public static final int OBJECT = ARRAY + 1;  // 2
 
-    /** A JSON number  ( 1 or -2.3 or 4.5e6 ...) */
+    /**
+     * A JSON number  ( 1 or -2.3 or 4.5e6 ...)
+     */
     public static final int NUMBER = OBJECT + 1;  // 3
 
-    /** A JSON string  ( "a" or "hello world\n" ...) */
+    /**
+     * A JSON string  ( "a" or "hello world\n" ...)
+     */
     public static final int STRING = NUMBER + 1;  // 4
 
-    /** A JSON boolean (true or false) */
+    /**
+     * A JSON boolean (true or false)
+     */
     public static final int BOOLEAN = STRING + 1;  // 5
 
-    /** A JSON null    (null) */
+    /**
+     * A JSON null    (null)
+     */
     public static final int NULL = BOOLEAN + 1;  // 6
 
     @TestOnly

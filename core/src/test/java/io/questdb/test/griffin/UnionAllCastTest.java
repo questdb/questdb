@@ -151,7 +151,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
 
     @Test
     public void testBoolNull() throws Exception {
-        testUnionAll("a\tc\n" +
+        testUnionAllWithNull("a\tc\n" +
                         "false\tfalse\n" +
                         "true\tfalse\n" +
                         "true\tfalse\n" +
@@ -162,12 +162,11 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         "false\tfalse\n" +
                         "false\ttrue\n" +
                         "false\tfalse\n",
-                "create table x as (select rnd_boolean() a, null c from long_sequence(5))",
-                "create table y as (select null b, rnd_boolean() c from long_sequence(5))",
+                "rnd_boolean()",
                 false
         );
 
-        testUnion(
+        testUnionWithNull(
                 "a\tc\n" +
                         "false\tfalse\n" +
                         "true\tfalse\n" +
@@ -249,7 +248,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
 
     @Test
     public void testByteNull() throws Exception {
-        testUnionAll(
+        testUnionAllWithNull(
                 "a\tc\n" +
                         "79\t0\n" +
                         "122\t0\n" +
@@ -261,8 +260,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         "0\t27\n" +
                         "0\t87\n" +
                         "0\t79\n",
-                "create table x as (select rnd_byte() a, null c from long_sequence(5))",
-                "create table y as (select null b, rnd_byte() c from long_sequence(5))"
+                "rnd_byte()"
         );
     }
 
@@ -318,7 +316,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
 
     @Test
     public void testCharNull() throws Exception {
-        testUnionAll(
+        testUnionAllWithNull(
                 "a\tc\n" +
                         "P\t\n" +
                         "S\t\n" +
@@ -330,8 +328,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         "\tJ\n" +
                         "\tW\n" +
                         "\tC\n",
-                "create table x as (select rnd_char() a, null c from long_sequence(5))",
-                "create table y as (select null b, rnd_char() c from long_sequence(5))"
+                "rnd_char()"
         );
     }
 
@@ -423,7 +420,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
 
     @Test
     public void testDateNull() throws Exception {
-        testUnionAll(
+        testUnionAllWithNull(
                 "a\tc\n" +
                         "1970-01-01T02:07:40.373Z\t\n" +
                         "1970-01-01T00:18:02.998Z\t\n" +
@@ -435,8 +432,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         "\t1970-01-01T01:45:29.025Z\n" +
                         "\t1970-01-01T01:15:01.475Z\n" +
                         "\t1970-01-01T00:43:07.029Z\n",
-                "create table x as (select rnd_date() a, null c from long_sequence(5))",
-                "create table y as (select null b, rnd_date() c from long_sequence(5))"
+                "rnd_date()"
         );
     }
 
@@ -578,7 +574,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
 
     @Test
     public void testDoubleNull() throws Exception {
-        testUnionAll(
+        testUnionAllWithNull(
                 "a\tc\n" +
                         "0.6508594025855301\tnull\n" +
                         "0.8423410920883345\tnull\n" +
@@ -590,8 +586,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         "null\t0.08486964232560668\n" +
                         "null\t0.299199045961845\n" +
                         "null\t0.20447441837877756\n",
-                "create table x as (select rnd_double() a, null c from long_sequence(5))",
-                "create table y as (select null b, rnd_double() c from long_sequence(5))"
+                "rnd_double()"
         );
     }
 
@@ -870,7 +865,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
 
     @Test
     public void testFloatNull() throws Exception {
-        testUnionAll(
+        testUnionAllWithNull(
                 "a\tc\n" +
                         "0.2846\tnull\n" +
                         "0.2992\tnull\n" +
@@ -882,8 +877,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         "null\t0.2246\n" +
                         "null\t0.1297\n" +
                         "null\t0.0849\n",
-                "create table x as (select rnd_float() a, null c from long_sequence(5))",
-                "create table y as (select null b, rnd_float() c from long_sequence(5))"
+                "rnd_float()"
         );
     }
 
@@ -929,7 +923,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
 
     @Test
     public void testGeoByteNull() throws Exception {
-        testUnionAll(
+        testUnionAllWithNull(
                 "a\tc\n" +
                         "1110010\t\n" +
                         "1100000\t\n" +
@@ -941,8 +935,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         "\t1000110\n" +
                         "\t1111101\n" +
                         "\t1000010\n",
-                "create table x as (select rnd_geohash(7) a, null c from long_sequence(5))",
-                "create table y as (select null b, rnd_geohash(7) c from long_sequence(5))"
+                "rnd_geohash(7)"
         );
     }
 
@@ -1021,7 +1014,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
 
     @Test
     public void testGeoIntNull() throws Exception {
-        testUnionAll(
+        testUnionAllWithNull(
                 "a\tc\n" +
                         "wh4b6v\t\n" +
                         "s2z2fy\t\n" +
@@ -1033,8 +1026,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         "\tjnw97u\n" +
                         "\tzfuqd3\n" +
                         "\thp4muv\n",
-                "create table x as (select rnd_geohash(30) a, null c from long_sequence(5))",
-                "create table y as (select null b, rnd_geohash(30) c from long_sequence(5))"
+                "rnd_geohash(30)"
         );
     }
 
@@ -1158,7 +1150,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
 
     @Test
     public void testGeoLongNull() throws Exception {
-        testUnionAll(
+        testUnionAllWithNull(
                 "a\tc\n" +
                         "wh4b6vnt\t\n" +
                         "s2z2fyds\t\n" +
@@ -1170,8 +1162,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         "\tjnw97u4y\n" +
                         "\tzfuqd3bf\n" +
                         "\thp4muv5t\n",
-                "create table x as (select rnd_geohash(40) a, null c from long_sequence(5))",
-                "create table y as (select null b, rnd_geohash(40) c from long_sequence(5))"
+                "rnd_geohash(40)"
         );
     }
 
@@ -1277,7 +1268,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
 
     @Test
     public void testGeoShortNull() throws Exception {
-        testUnionAll(
+        testUnionAllWithNull(
                 "a\tc\n" +
                         "wh4\t\n" +
                         "s2z\t\n" +
@@ -1289,8 +1280,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         "\tjnw\n" +
                         "\tzfu\n" +
                         "\thp4\n",
-                "create table x as (select rnd_geohash(15) a, null c from long_sequence(5))",
-                "create table y as (select null b, rnd_geohash(15) c from long_sequence(5))"
+                "rnd_geohash(15)"
         );
     }
 
@@ -1427,7 +1417,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
 
     @Test
     public void testIntNull() throws Exception {
-        testUnionAll(
+        testUnionAllWithNull(
                 "a\tc\n" +
                         "-948263339\tnull\n" +
                         "1326447242\tnull\n" +
@@ -1439,8 +1429,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         "null\t1548800833\n" +
                         "null\t-727724771\n" +
                         "null\t73575701\n",
-                "create table x as (select rnd_int() a, null c from long_sequence(5))",
-                "create table y as (select null b, rnd_int() c from long_sequence(5))"
+                "rnd_int()"
         );
     }
 
@@ -1539,7 +1528,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
 
     @Test
     public void testLong256Null() throws Exception {
-        testUnionAll(
+        testUnionAllWithNull(
                 "a\tc\n" +
                         "0x73b27651a916ab1b568bc2d7a4aa860483881d4171847cf36e60a01a5b3ea0db\t\n" +
                         "0xa0d8cea7196b33a07e828f56aaa12bde8d076bf991c0ee88c8b1863d4316f9c7\t\n" +
@@ -1551,8 +1540,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         "\t0x322a2198864beb14797fa69eb8fec6cce8beef38cd7bb3d8db2d34586f6275fa\n" +
                         "\t0xc1e631285c1ab288c72bfc5230158059980eca62a219a0f16846d7a3aa5aecce\n" +
                         "\t0x4b0f595f143e5d722f1a8266e7921e3b716de3d25dcc2d919fa2397a5d8c84c4\n",
-                "create table x as (select rnd_long256() a, null c from long_sequence(5))",
-                "create table y as (select null b, rnd_long256() c from long_sequence(5))"
+                "rnd_long256()"
         );
     }
 
@@ -1671,7 +1659,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
 
     @Test
     public void testLongNull() throws Exception {
-        testUnionAll(
+        testUnionAllWithNull(
                 "a\tc\n" +
                         "8920866532787660373\tnull\n" +
                         "-7611843578141082998\tnull\n" +
@@ -1683,8 +1671,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         "null\t7746536061816329025\n" +
                         "null\t-6945921502384501475\n" +
                         "null\t8260188555232587029\n",
-                "create table x as (select rnd_long() a, null c from long_sequence(5))",
-                "create table y as (select null b, rnd_long() c from long_sequence(5))"
+                "rnd_long()"
         );
     }
 
@@ -1819,7 +1806,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
 
     @Test
     public void testShortNull() throws Exception {
-        testUnionAll(
+        testUnionAllWithNull(
                 "a\tc\n" +
                         "-22955\t0\n" +
                         "-1398\t0\n" +
@@ -1831,8 +1818,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         "0\t-11455\n" +
                         "0\t-13027\n" +
                         "0\t-21227\n",
-                "create table x as (select rnd_short() a, null c from long_sequence(5))",
-                "create table y as (select null b, rnd_short() c from long_sequence(5))"
+                "rnd_short()"
         );
     }
 
@@ -1939,7 +1925,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
 
     @Test
     public void testStringNull() throws Exception {
-        testUnionAll(
+        testUnionAllWithNull(
                 "a\tc\n" +
                         "\t\n" +
                         "ZSX\t\n" +
@@ -1951,12 +1937,11 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         "\tSWH\n" +
                         "\tRXP\n" +
                         "\tHNR\n",
-                "create table x as (select rnd_str(3,3,1) a, null c from long_sequence(5))",
-                "create table y as (select null b, rnd_str(3,3,1) c from long_sequence(5))",
+                "rnd_str(3,3,1)",
                 false
         );
 
-        testUnion(
+        testUnionWithNull(
                 "a\tc\n" +
                         "\t\n" +
                         "ZSX\t\n" +
@@ -1977,7 +1962,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
 
     @Test
     public void testSymNull() throws Exception {
-        testUnionAll("a\tc\n" +
+        testUnionAllWithNull("a\tc\n" +
                         "bb\t\n" +
                         "aa\t\n" +
                         "bb\t\n" +
@@ -1988,12 +1973,11 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         "\tbb\n" +
                         "\tbb\n" +
                         "\tbb\n",
-                "create table x as (select rnd_symbol('aa','bb') a, null c from long_sequence(5))",
-                "create table y as (select null b, rnd_symbol('aa','bb') c from long_sequence(5))",
+                "rnd_symbol('aa','bb')",
                 false
         );
 
-        testUnion(
+        testUnionWithNull(
                 "a\tc\n" +
                         "bb\t\n" +
                         "aa\t\n" +
@@ -2148,7 +2132,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampNull() throws Exception {
-        testUnionAll(
+        testUnionAllWithNull(
                 "a\tc\n" +
                         "1970-01-01T00:00:00.023853Z\t\n" +
                         "1970-01-01T00:00:00.083620Z\t\n" +
@@ -2160,12 +2144,11 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         "\t1970-01-01T00:00:00.045299Z\n" +
                         "\t1970-01-01T00:00:00.078334Z\n" +
                         "\t\n",
-                "create table x as (select rnd_timestamp(0, 100000, 2) a, null c from long_sequence(5))",
-                "create table y as (select null b, rnd_timestamp(0, 100000, 2) c from long_sequence(5))",
+                "rnd_timestamp(0, 100000, 2)",
                 false
         );
 
-        testUnion(
+        testUnionWithNull(
                 "a\tc\n" +
                         "1970-01-01T00:00:00.023853Z\t\n" +
                         "1970-01-01T00:00:00.083620Z\t\n" +
@@ -2189,7 +2172,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
 
     @Test
     public void testUuidNull() throws Exception {
-        testUnionAll(
+        testUnionAllWithNull(
                 "a\tc\n" +
                         "322a2198-864b-4b14-b97f-a69eb8fec6cc\t\n" +
                         "980eca62-a219-40f1-a846-d7a3aa5aecce\t\n" +
@@ -2201,8 +2184,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         "\t7bcd48d8-c77a-4655-b2a2-15ba0462ad15\n" +
                         "\tb5b2159a-2356-4217-965d-4c984f0ffa8a\n" +
                         "\te8beef38-cd7b-43d8-9b2d-34586f6275fa\n",
-                "create table x as (select rnd_uuid4() a, null c from long_sequence(5))",
-                "create table y as (select null b, rnd_uuid4() c from long_sequence(5))"
+                "rnd_uuid4()"
         );
     }
 
@@ -2282,7 +2264,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
 
     @Test
     public void testVarcharNull() throws Exception {
-        testUnionAll(
+        testUnionAllWithNull(
                 "a\tc\n" +
                         "衞͛Ԉ\t\n" +
                         "\uD93C\uDEC1ӍK\t\n" +
@@ -2294,9 +2276,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         "\tȞ鼷G\n" +
                         "\t\uF644䶓z\n" +
                         "\t\n",
-                "create table x as (select rnd_varchar(3,3,1) a, null c from long_sequence(5))",
-                "create table y as (select null b, rnd_varchar(3,3,1) c from long_sequence(5))",
-                true
+                "rnd_varchar(3,3,1)"
         );
     }
 
@@ -2318,6 +2298,41 @@ public class UnionAllCastTest extends AbstractCairoTest {
                         "103\tL➤~2\n",
                 "create table x as (select rnd_boolean() a, rnd_varchar(3,3,1) c from long_sequence(5))",
                 "create table y as (select rnd_byte() b, rnd_varchar(4,4,1) c from long_sequence(5))"
+        );
+    }
+
+    private static void testUnionAllWithNull(String expected, String function) throws Exception {
+        testUnionAllWithNull(expected, function, true);
+    }
+
+    private static void testUnionAllWithNull(String expected, String function, boolean testUnion) throws Exception {
+        ddl("create table y as (select " + function + " c from long_sequence(5))");
+        ddl("create table x as (select " + function + " a from long_sequence(5))");
+        engine.releaseAllWriters();
+
+
+        assertQuery(
+                expected,
+                "(select a, null c from x) union all (select null b, c from y)",
+                null,
+                null,
+                false,
+                true
+        );
+
+        if (testUnion) {
+            testUnionWithNull(expected);
+        }
+    }
+
+    private static void testUnionWithNull(String expected) throws Exception {
+        assertQuery(
+                expected,
+                "(select a, null c from x) union (select null b, c from y)",
+                null,
+                null,
+                false,
+                false
         );
     }
 

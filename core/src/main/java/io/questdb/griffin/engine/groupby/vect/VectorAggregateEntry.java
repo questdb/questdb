@@ -44,6 +44,7 @@ public class VectorAggregateEntry implements Mutable {
     private CountDownLatchSPI doneLatch;
     private int frameIndex;
     private ObjList<PageFrameMemoryPool> frameMemoryPools;
+    private long frameRowCount;
     private VectorAggregateFunction func;
     private int keyColIndex;
     private AtomicInteger oomCounter;
@@ -57,6 +58,7 @@ public class VectorAggregateEntry implements Mutable {
             int workerId,
             @Nullable AtomicInteger oomCounter,
             int frameIndex,
+            long frameRowCount,
             int keyColIndex,
             int valueColIndex,
             long @Nullable [] pRosti,
@@ -81,15 +83,12 @@ public class VectorAggregateEntry implements Mutable {
             // need to rethink our way of computing size for the count. This would be either type checking column
             // 0 and working out size differently or finding any fixed-size column and using that.
             final long valueAddress = valueColIndex > -1 ? frameMemory.getPageAddress(valueColIndex) : 0;
-            final int effectiveValueColIndex = valueColIndex > -1 ? valueColIndex : 0;
-            final long valuePageSize = frameMemory.getPageSize(effectiveValueColIndex);
-            final int valueColumnSizeShr = frameMemoryPool.getColumnShiftBits(effectiveValueColIndex);
 
             // Zero keyAddress means non-keyed aggregation or column top.
             final long keyAddress = keyColIndex > -1 ? frameMemory.getPageAddress(keyColIndex) : 0;
             if (pRosti != null && keyAddress != 0) {
                 final long oldSize = Rosti.getAllocMemory(pRosti[slot]);
-                if (!func.aggregate(pRosti[slot], keyAddress, valueAddress, valuePageSize, valueColumnSizeShr, slot)) {
+                if (!func.aggregate(pRosti[slot], keyAddress, valueAddress, frameRowCount)) {
                     if (oomCounter != null) {
                         oomCounter.incrementAndGet();
                     }
@@ -98,7 +97,7 @@ public class VectorAggregateEntry implements Mutable {
                     raf.updateMemoryUsage(pRosti[slot], oldSize);
                 }
             } else {
-                func.aggregate(valueAddress, valuePageSize, valueColumnSizeShr, slot);
+                func.aggregate(valueAddress, frameRowCount, slot);
             }
         } finally {
             perWorkerLocks.releaseSlot(slot);
@@ -116,11 +115,15 @@ public class VectorAggregateEntry implements Mutable {
         this.raf = null;
         this.perWorkerLocks = null;
         this.circuitBreaker = null;
+        this.frameRowCount = 0;
+        this.keyColIndex = -1;
+        this.valueColIndex = -1;
     }
 
     public void run(int workerId, Sequence seq, long cursor) {
         AtomicInteger oomCounter = this.oomCounter;
         int frameIndex = this.frameIndex;
+        long frameRowCount = this.frameRowCount;
         int keyColIndex = this.keyColIndex;
         int valueColIndex = this.valueColIndex;
         long[] pRosti = this.pRosti;
@@ -137,6 +140,7 @@ public class VectorAggregateEntry implements Mutable {
                 workerId,
                 oomCounter,
                 frameIndex,
+                frameRowCount,
                 keyColIndex,
                 valueColIndex,
                 pRosti,
@@ -154,6 +158,7 @@ public class VectorAggregateEntry implements Mutable {
             int workerId,
             AtomicInteger oomCounter,
             int frameIndex,
+            long frameRowCount,
             int keyColIndex,
             int valueColIndex,
             long[] pRosti,
@@ -177,6 +182,7 @@ public class VectorAggregateEntry implements Mutable {
                     workerId,
                     oomCounter,
                     frameIndex,
+                    frameRowCount,
                     keyColIndex,
                     valueColIndex,
                     pRosti,

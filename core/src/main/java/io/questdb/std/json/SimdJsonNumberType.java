@@ -26,21 +26,33 @@ package io.questdb.std.json;
 
 import org.jetbrains.annotations.TestOnly;
 
-/** Maps to the constants of the C++ `simdjson::ondemand::number_type` enum. */
+/**
+ * Maps to the constants of the C++ `simdjson::ondemand::number_type` enum.
+ */
 public class SimdJsonNumberType {
-    /** An unset `SimdJsonNumberType`. */
+    /**
+     * An unset `SimdJsonNumberType`.
+     */
     public static final int UNSET = 0;  // 0
 
-    /** a binary64 number */
+    /**
+     * a binary64 number
+     */
     public static final int FLOATING_POINT_NUMBER = UNSET + 1;  // 1
 
-    /** a signed integer that fits in a 64-bit word using two's complement */
+    /**
+     * a signed integer that fits in a 64-bit word using two's complement
+     */
     public static final int SIGNED_INTEGER = FLOATING_POINT_NUMBER + 1;  // 2
 
-    /** a positive integer larger or equal to 2^63 */
+    /**
+     * a positive integer larger or equal to 2^63
+     */
     public static final int UNSIGNED_INTEGER = SIGNED_INTEGER + 1;  // 3
 
-    /** a big integer that does not fit in a 64-bit word */
+    /**
+     * a big integer that does not fit in a 64-bit word
+     */
     public static final int BIG_INTEGER = UNSIGNED_INTEGER + 1;  // 4
 
     @TestOnly
