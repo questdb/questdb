@@ -87,18 +87,6 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         }
     }
 
-    private void assertMetadataSame(RecordMetadata metadata, PartitionDecoder decoder) {
-        if (metadata.getColumnCount() != decoder.getMetadata().columnCount()) {
-            throw CairoException.nonCritical().put("parquet file mismatch earlier read schema");
-        }
-
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            if (metadata.getColumnType(i) != decoder.getMetadata().getColumnType(i)) {
-                throw new RuntimeException("parquet file mismatch earlier read schema");
-            }
-        }
-    }
-
     @Override
     public long size() throws DataUnavailableException {
         return decoder.getMetadata().rowCount();
@@ -109,6 +97,18 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         rowGroup = -1;
         rowGroupRowCount = -1;
         currentRowInRowGroup = -1;
+    }
+
+    private void assertMetadataSame(RecordMetadata metadata, PartitionDecoder decoder) {
+        if (metadata.getColumnCount() != decoder.getMetadata().columnCount()) {
+            throw CairoException.nonCritical().put("parquet file mismatch vs. the schema read earlier");
+        }
+
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (metadata.getColumnType(i) != decoder.getMetadata().getColumnType(i)) {
+                throw new RuntimeException("parquet file mismatch vs. the schema read earlier");
+            }
+        }
     }
 
     private boolean switchToNextRowGroup() {
