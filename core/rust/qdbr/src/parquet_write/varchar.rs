@@ -80,9 +80,7 @@ pub fn varchar_to_page(
                 let header = entry.header;
                 let size = (header >> HEADER_FLAGS_WIDTH) as usize;
                 let offset = entry.offset_lo as usize | (entry.offset_hi as usize) << 16;
-                if offset + size > data.len() {
-                    println!("disaster!");
-                }
+                assert!(offset + size <= data.len(), "Data corruption in VARCHAR column");
                 Some(&data[offset..][..size])
             }
         })
