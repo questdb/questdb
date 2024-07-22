@@ -1,10 +1,12 @@
 use std::fs::File;
 use std::mem::{offset_of, size_of};
+use std::ptr;
+
+use jni::objects::JClass;
+use jni::JNIEnv;
 
 use crate::parquet_read::{ColumnChunkBuffers, ColumnMeta, ParquetDecoder};
 use crate::parquet_write::schema::ColumnType;
-use jni::objects::JClass;
-use jni::JNIEnv;
 
 fn from_raw_file_descriptor(raw: i32) -> File {
     unsafe {
@@ -30,12 +32,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 ) -> *mut ParquetDecoder {
     match ParquetDecoder::read(from_raw_file_descriptor(raw_fd)) {
         Ok(decoder) => Box::into_raw(Box::new(decoder)),
-        Err(err) => throw_state_ex(
-            &mut env,
-            "create_parquet_decoder",
-            err,
-            std::ptr::null_mut(),
-        ),
+        Err(err) => throw_state_ex(&mut env, "create_parquet_decoder", err),
     }
 }
 
@@ -67,7 +64,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     let decoder = unsafe { &mut *decoder };
 
     if column >= decoder.columns.len() {
-        throw_state_msg(
+        return throw_state_msg(
             &mut env,
             "decodeColumnChunk",
             &format!(
@@ -75,36 +72,27 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
                 column,
                 decoder.columns.len()
             ),
-            (),
         );
     }
 
     let column_type = decoder.columns[column].typ;
     if Ok(column_type) != ColumnType::try_from(to_column_type) {
-        throw_state_msg(
+        return throw_state_msg(
             &mut env,
             "decode_column_chunk",
             &format!(
                 "requested column type {} does not match file column type {:?}, column index: {}",
                 to_column_type, column_type, column
             ),
-            (),
         );
     } else {
         let column_file_index = decoder.columns[column].id;
-        match decoder.decode_column_chunk(
-            row_group,
-            column_file_index as usize,
-            column,
-            column_type,
-        ) {
-            Ok(_) => (),
-            Err(err) => {
-                throw_state_ex(&mut env, "decode_column_chunk", err, ());
-            }
-        };
+        if let Err(err) =
+            decoder.decode_column_chunk(row_group, column_file_index as usize, column, column_type)
+        {
+            return throw_state_ex(&mut env, "decode_column_chunk", err);
+        }
     }
-
     let buffer = &decoder.column_buffers[column];
     buffer as *const ColumnChunkBuffers
 }
@@ -205,7 +193,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     offset_of!(ColumnChunkBuffers, row_count)
 }
 
-fn throw_state_ex<T>(env: &mut JNIEnv, method_name: &str, err: anyhow::Error, def: T) -> T {
+fn throw_state_ex<T>(env: &mut JNIEnv, method_name: &str, err: anyhow::Error) -> *mut T {
     if let Some(jni_err) = err.downcast_ref::<jni::errors::Error>() {
         match jni_err {
             jni::errors::Error::JavaException => {
@@ -222,12 +210,12 @@ fn throw_state_ex<T>(env: &mut JNIEnv, method_name: &str, err: anyhow::Error, de
         env.throw_new("java/lang/RuntimeException", msg)
             .expect("failed to throw exception");
     }
-    def
+    ptr::null_mut()
 }
 
-fn throw_state_msg<T>(env: &mut JNIEnv, method_name: &str, err: &String, def: T) -> T {
+fn throw_state_msg<T>(env: &mut JNIEnv, method_name: &str, err: &String) -> *mut T {
     let msg = format!("error while {}: {}", method_name, err);
     env.throw_new("java/lang/RuntimeException", msg)
         .expect("failed to throw exception");
-    def
+    ptr::null_mut()
 }
