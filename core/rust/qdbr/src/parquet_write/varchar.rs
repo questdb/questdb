@@ -167,22 +167,23 @@ fn is_inlined(header: u8) -> bool {
 }
 
 pub fn append_varchar(aux_mem: &mut Vec<u8>, data_mem: &mut Vec<u8>, value: &[u8]) {
-    let size = value.len();
-    if size <= VARCHAR_MAX_BYTES_FULLY_INLINED {
+    let value_size = value.len();
+    if value_size <= VARCHAR_MAX_BYTES_FULLY_INLINED {
         let flags = HEADER_FLAG_INLINED | is_ascii_inlined(value);
-        let header = (size << HEADER_FLAGS_WIDTH) as u8 | flags;
+        let header = (value_size << HEADER_FLAGS_WIDTH) as u8 | flags;
         aux_mem.push(header);
+        let len_before_value = aux_mem.len();
         aux_mem.extend_from_slice(value);
         // Add zeroes to align to 16 bytes.
-        aux_mem.resize(aux_mem.len() + VARCHAR_MAX_BYTES_FULLY_INLINED - size, 0u8);
+        aux_mem.resize(len_before_value + VARCHAR_MAX_BYTES_FULLY_INLINED, 0u8);
         append_offset(aux_mem, data_mem.len());
     } else {
-        assert!(size <= LENGTH_LIMIT_BYTES);
-        let header = (size as u32) << HEADER_FLAGS_WIDTH | is_ascii(value);
+        assert!(value_size <= LENGTH_LIMIT_BYTES);
+        let header = (value_size as u32) << HEADER_FLAGS_WIDTH | is_ascii(value);
         aux_mem.extend_from_slice(&header.to_le_bytes());
         aux_mem.extend_from_slice(&value[0..VARCHAR_INLINED_PREFIX_BYTES]);
         data_mem.extend_from_slice(value);
-        append_offset(aux_mem, data_mem.len() - size);
+        append_offset(aux_mem, data_mem.len() - value_size);
     }
 }
 
