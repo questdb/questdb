@@ -156,30 +156,6 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testConvertPartitionsWithColTops() throws Exception {
-        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
-                    final String tableName = testName.getMethodName();
-                    createTable(tableName,
-                            "insert into " + tableName + " values(1, '2024-06-10T00:00:00.000000Z')",
-                            "insert into " + tableName + " values(2, '2024-06-11T00:00:00.000000Z')",
-                            "insert into " + tableName + " values(3, '2024-06-12T00:00:00.000000Z')",
-                            "insert into " + tableName + " values(4, '2024-06-12T00:00:01.000000Z')",
-                            "insert into " + tableName + " values(5, '2024-06-15T00:00:00.000000Z')",
-                            "insert into " + tableName + " values(6, '2024-06-12T00:00:02.000000Z')");
-
-                    ddl("alter table " + tableName + " add column a int");
-                    insert("insert into " + tableName + " values(7, '2024-06-10T00:00:00.000000Z', 1)");
-
-                    ddl("alter table " + tableName + " convert partition to parquet where timestamp > 0 and timestamp < '2024-06-15'");
-
-                    assertPartitionExists(tableName, "2024-06-10");
-                    assertPartitionExists(tableName, "2024-06-11.0");
-                    assertPartitionExists(tableName, "2024-06-12.1");
-                }
-        );
-    }
-
-    @Test
     public void testConvertPartitionBrokenSymbols() throws Exception {
         final long rows = 10;
         final String tableName = "x";
@@ -236,6 +212,30 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             }
             assertPartitionDoesntExists(tableName, "1970-01");
         });
+    }
+
+    @Test
+    public void testConvertPartitionsWithColTops() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+                    final String tableName = testName.getMethodName();
+                    createTable(tableName,
+                            "insert into " + tableName + " values(1, '2024-06-10T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(2, '2024-06-11T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(3, '2024-06-12T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(4, '2024-06-12T00:00:01.000000Z')",
+                            "insert into " + tableName + " values(5, '2024-06-15T00:00:00.000000Z')",
+                            "insert into " + tableName + " values(6, '2024-06-12T00:00:02.000000Z')");
+
+                    ddl("alter table " + tableName + " add column a int");
+                    insert("insert into " + tableName + " values(7, '2024-06-10T00:00:00.000000Z', 1)");
+
+                    ddl("alter table " + tableName + " convert partition to parquet where timestamp > 0 and timestamp < '2024-06-15'");
+
+                    assertPartitionExists(tableName, "2024-06-10");
+                    assertPartitionExists(tableName, "2024-06-11.0");
+                    assertPartitionExists(tableName, "2024-06-12.1");
+                }
+        );
     }
 
     @Test
