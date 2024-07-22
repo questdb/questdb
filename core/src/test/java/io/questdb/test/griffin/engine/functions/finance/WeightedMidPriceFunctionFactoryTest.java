@@ -32,44 +32,44 @@ import org.junit.Test;
 public class WeightedMidPriceFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testWeightedMidPrice() throws Exception {
-        assertQuery("wmid\n2.0\n", "select wmid(100, 2.0, 2.0, 100)");
-        assertQuery("wmid\n2.0\n", "select wmid(300, 1.0, 3.0, 200)");
-        assertQuery("wmid\n2.0\n", "select wmid(400, 0.0, 4.0, 300)");
-        assertQuery("wmid\n1.5\n", "select wmid(100, 1.0, 2.0, 100)");
-        assertQuery("wmid\n1.625\n", "select wmid(100, 1.5, 1.75, 1000)");
-        assertQuery("wmid\n1.5550000000000002\n", "select wmid(100, 1.5, 1.61, 100)");
-        assertQuery("wmid\n0.0\n", "select wmid(200, 0.0, 0.0, 0)");
-        assertQuery("wmid\n0.0\n", "select wmid(200, -1.0, 1.0, 100)");
-        assertQuery("wmid\n-0.5\n", "select wmid(100, -1.0, 0.0, 200)");
-        assertQuery("wmid\n-1.5\n", "select wmid(100, -2.0, -1.0, 100)");
-        assertQuery("wmid\n-1.6666655000000001\n", "select wmid(100, -2.22222 -1.111111, 200)");
+        assertQuery("wmid\n2.0\n", "select wmid(100.0, 2.0, 2.0, 100.0)");
+        assertQuery("wmid\n2.0\n", "select wmid(300.0, 1.0, 3.0, 200.0)");
+        assertQuery("wmid\n2.0\n", "select wmid(400.0, 0.0, 4.0, 300.0)");
+        assertQuery("wmid\n1.5\n", "select wmid(100.0, 1.0, 2.0, 100.0)");
+        assertQuery("wmid\n1.625\n", "select wmid(100.0, 1.5, 1.75, 1000.0)");
+        assertQuery("wmid\n1.5550000000000002\n", "select wmid(100.0, 1.5, 1.61, 100.5)");
+        assertQuery("wmid\n0.0\n", "select wmid(200.0, 0.0, 0.0, 0.01)");
+        assertQuery("wmid\n0.0\n", "select wmid(200.0, -1.0, 1.0, 100.0)");
+        assertQuery("wmid\n-0.5\n", "select wmid(100.3, -1.0, 0.0, 200.1)");
+        assertQuery("wmid\n-1.5\n", "select wmid(100.5, -2.0, -1.0, 100.4)");
+        assertQuery("wmid\n-1.6666655000000001\n", "select wmid(100.2, -2.22222 -1.111111, 200.4)");
     }
 
     @Test
     public void testNonFiniteNumber() throws Exception {
         final String expected = "wmid\nnull\n";
-        assertQuery(expected, "select wmid(NULL, 1.0, 1.0, 100)");
-        assertQuery(expected, "select wmid(100, NULL, 1.0, 100)");
-        assertQuery(expected, "select wmid(NULL, NULL, 1.0, 100)");
-        assertQuery(expected, "select wmid(NULL, 1.0, NULL, 100)");
+        assertQuery(expected, "select wmid(NULL, 1.0, 1.0, 1.0)");
+        assertQuery(expected, "select wmid(100.0, NULL, 1.0, 0.4)");
+        assertQuery(expected, "select wmid(NULL, NULL, 1.0, 100.1)");
+        assertQuery(expected, "select wmid(NULL, 1.0, NULL, 100.0)");
         assertQuery(expected, "select wmid(NULL, 1.0, 1.0, NULL)");
     }
 
     @Test
     public void testNullBehavior() throws Exception {
         final String expected = "wmid\nnull\n";
-        assertQuery(expected, "select wmid(100, NULL, 1.0, 100");
-        assertQuery(expected, "select wmid(NULL, 1.0, 1.0, 100");
-        assertQuery(expected, "select wmid(100, 1.0, NULL, 100");
-        assertQuery(expected, "select wmid(100, 1.0, 1.0, NULL");
+        assertQuery(expected, "select wmid(100.1, NULL, 1.0, 100.34");
+        assertQuery(expected, "select wmid(NULL, 1.0, 1.0, 1.2");
+        assertQuery(expected, "select wmid(100.3, 1.0, NULL, 100.0");
+        assertQuery(expected, "select wmid(30.0, 1.0, 1.0, NULL");
         assertQuery(expected, "select wmid(NULL, NULL, NULL, NULL)");
     }
 
     @Test
     public void testThatOrderDoesNotMatter() throws Exception {
         final String expected = "wmid\n4.0\n";
-        assertQuery(expected, "select wmid(100, 1.0, 3.0, 100)");
-        assertQuery(expected, "select wmid(100, 3.0, 1.0, 100)");
+        assertQuery(expected, "select wmid(100, 1.0, 3.0, 100.0)");
+        assertQuery(expected, "select wmid(100, 3.0, 1.0, 100.0)");
     }
 
     @Override

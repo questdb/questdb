@@ -30,8 +30,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.griffin.engine.functions.QuaternaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -39,7 +39,7 @@ import io.questdb.std.ObjList;
 public class WeightedMidPriceFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "wmid(DIDI)";
+        return "wmid(DDDD)";
     }
 
     @Override
@@ -48,7 +48,7 @@ public class WeightedMidPriceFunctionFactory implements FunctionFactory {
         return new WeightedMidPriceFunction(args.getQuick(0), args.getQuick(1), args.getQuick(2), args.getQuick(3));
     }
 
-    private static class WeightedMidPriceFunction extends DoubleFunction implements BinaryFunction {
+    private static class WeightedMidPriceFunction extends DoubleFunction implements QuaternaryFunction {
         private final Function bid;
         private final Function bidSize;
         private final Function ask;
@@ -64,9 +64,9 @@ public class WeightedMidPriceFunctionFactory implements FunctionFactory {
         @Override
         public double getDouble(Record rec) {
             final double b = bid.getDouble(rec);
-            final double bs = Numbers.intToDouble(bidSize.getInt(rec));
+            final double bs = bidSize.getDouble(rec);
             final double a = bid.getDouble(rec);
-            final double as = Numbers.intToDouble(askSize.getInt(rec));
+            final double as = askSize.getDouble(rec);
 
             if (Numbers.isNull(b) || Numbers.isNull(bs) || Numbers.isNull(a) || Numbers.isNull(as)) {
                 return Double.NaN;
@@ -78,18 +78,28 @@ public class WeightedMidPriceFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getLeft() {
+        public Function getFunc0() {
+            return bidSize;
+        }
+
+        @Override
+        public Function getFunc1() {
             return bid;
         }
 
         @Override
-        public Function getRight() {
+        public Function getFunc2() {
             return ask;
         }
 
         @Override
+        public Function getFunc3() {
+            return askSize;
+        }
+
+        @Override
         public String getName() {
-            return "weighted_mid";
+            return "wmid";
         }
     }
 }
