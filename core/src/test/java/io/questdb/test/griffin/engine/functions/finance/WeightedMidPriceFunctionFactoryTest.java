@@ -24,56 +24,54 @@
 
 package io.questdb.test.griffin.engine.functions.finance;
 
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.engine.functions.finance.WeightedMidPriceFunctionFactory;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class WeightedMidPriceFunctionFactoryTest extends AbstractFunctionFactoryTest {
+public class WeightedMidPriceFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testWeightedMidPrice() throws Exception {
-        assertQuery("wmid\n2.0\n", "select wmid(100.0, 2.0, 2.0, 100.0)");
-        assertQuery("wmid\n2.0\n", "select wmid(300.0, 1.0, 3.0, 200.0)");
-        assertQuery("wmid\n2.0\n", "select wmid(400.0, 0.0, 4.0, 300.0)");
-        assertQuery("wmid\n1.5\n", "select wmid(100.0, 1.0, 2.0, 100.0)");
-        assertQuery("wmid\n1.625\n", "select wmid(100.0, 1.5, 1.75, 1000.0)");
-        assertQuery("wmid\n1.5550000000000002\n", "select wmid(100.0, 1.5, 1.61, 100.5)");
-        assertQuery("wmid\n0.0\n", "select wmid(200.0, 0.0, 0.0, 0.01)");
-        assertQuery("wmid\n0.0\n", "select wmid(200.0, -1.0, 1.0, 100.0)");
-        assertQuery("wmid\n-0.5\n", "select wmid(100.3, -1.0, 0.0, 200.1)");
-        assertQuery("wmid\n-1.5\n", "select wmid(100.5, -2.0, -1.0, 100.4)");
-        assertQuery("wmid\n-1.6666655000000001\n", "select wmid(100.2, -2.22222 -1.111111, 200.4)");
+        assertMemoryLeak(() -> {
+            assertSql("wmid\n2.0\n", "select wmid(100.0, 2.0, 2.0, 100.0)");
+            assertSql("wmid\n2.0\n", "select wmid(300.0, 1.0, 3.0, 200.0)");
+            assertSql("wmid\n2.0\n", "select wmid(400.0, 0.0, 4.0, 300.0)");
+            assertSql("wmid\n1.5\n", "select wmid(100.0, 1.0, 2.0, 100.0)");
+            assertSql("wmid\n1.625\n", "select wmid(100.0, 1.5, 1.75, 1000.0)");
+            assertSql("wmid\n1.5550000000000002\n", "select wmid(100.0, 1.5, 1.61, 100.5)");
+            assertSql("wmid\n0.0\n", "select wmid(200.0, 0.0, 0.0, 0.01)");
+            assertSql("wmid\n0.0\n", "select wmid(200.0, -1.0, 1.0, 100.0)");
+            assertSql("wmid\n-0.5\n", "select wmid(100.3, -1.0, 0.0, 200.1)");
+            assertSql("wmid\n-1.5\n", "select wmid(100.5, -2.0, -1.0, 100.4)");
+            assertSql("wmid\n-1.6666655000000001\n", "select wmid(100.2, -2.22222 -1.111111, 200.4)");
+        });
     }
 
     @Test
     public void testNonFiniteNumber() throws Exception {
-        final String expected = "wmid\nnull\n";
-        assertQuery(expected, "select wmid(NULL, 1.0, 1.0, 1.0)");
-        assertQuery(expected, "select wmid(100.0, NULL, 1.0, 0.4)");
-        assertQuery(expected, "select wmid(NULL, NULL, 1.0, 100.1)");
-        assertQuery(expected, "select wmid(NULL, 1.0, NULL, 100.0)");
-        assertQuery(expected, "select wmid(NULL, 1.0, 1.0, NULL)");
+        assertMemoryLeak(() -> {
+            assertSql("wmid\nnull\n", "select wmid(NULL, 1.0, 1.0, 1.0)");
+            assertSql("wmid\nnull\n", "select wmid(100.0, NULL, 1.0, 0.4)");
+            assertSql("wmid\nnull\n", "select wmid(NULL, NULL, 1.0, 100.1)");
+            assertSql("wmid\nnull\n", "select wmid(NULL, 1.0, NULL, 100.0)");
+            assertSql("wmid\nnull\n", "select wmid(NULL, 1.0, 1.0, NULL)");
+        });
     }
 
     @Test
     public void testNullBehavior() throws Exception {
-        final String expected = "wmid\nnull\n";
-        assertQuery(expected, "select wmid(100.1, NULL, 1.0, 100.34");
-        assertQuery(expected, "select wmid(NULL, 1.0, 1.0, 1.2");
-        assertQuery(expected, "select wmid(100.3, 1.0, NULL, 100.0");
-        assertQuery(expected, "select wmid(30.0, 1.0, 1.0, NULL");
-        assertQuery(expected, "select wmid(NULL, NULL, NULL, NULL)");
+        assertMemoryLeak(() -> {
+            assertSql("wmid\nnull\n", "select wmid(100.1, NULL, 1.0, 100.34");
+            assertSql("wmid\nnull\n", "select wmid(NULL, 1.0, 1.0, 1.2");
+            assertSql("wmid\nnull\n", "select wmid(100.3, 1.0, NULL, 100.0");
+            assertSql("wmid\nnull\n", "select wmid(30.0, 1.0, 1.0, NULL");
+            assertSql("wmid\nnull\n", "select wmid(NULL, NULL, NULL, NULL)");
+        });
     }
 
     @Test
     public void testThatOrderDoesNotMatter() throws Exception {
-        final String expected = "wmid\n4.0\n";
-        assertQuery(expected, "select wmid(100, 1.0, 3.0, 100.0)");
-        assertQuery(expected, "select wmid(100, 3.0, 1.0, 100.0)");
-    }
-
-    @Override
-    protected FunctionFactory getFunctionFactory() {
-        return new WeightedMidPriceFunctionFactory();
+        assertMemoryLeak(() -> {
+            assertSql("wmid\n4.0\n", "select wmid(100, 1.0, 3.0, 100.0)");
+            assertSql("wmid\n4.0\n", "select wmid(100, 3.0, 1.0, 100.0)");
+        });
     }
 }
