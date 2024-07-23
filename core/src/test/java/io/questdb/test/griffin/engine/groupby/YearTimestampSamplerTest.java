@@ -35,12 +35,12 @@ import org.junit.Test;
 public class YearTimestampSamplerTest {
 
     @Test
-    public void testBucketIndex() {
+    public void testBucketIndex() throws NumericException {
         for (int i = 0; i < 1000; i++) {
             YearTimestampSampler sampler = new YearTimestampSampler(4);
-            long startTimestamp = 0;
-            long currentTimestamp = startTimestamp;
+            long startTimestamp = TimestampFormatUtils.parseUTCTimestamp("2018-11-16T15:00:00.000000Z");
             sampler.setStart(startTimestamp);
+            long currentTimestamp = startTimestamp;
             for (int j = 0; j < 100; j++) {
                 currentTimestamp = sampler.nextTimestamp(currentTimestamp);
                 Assert.assertEquals(j + 2, sampler.bucketIndex(currentTimestamp));
