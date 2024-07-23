@@ -288,7 +288,6 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             rangeBound = RANGE_UNBOUNDED;
         }
 
-
         private void initTimestamps(Function fromFunc, Function toFunc, CharSequence stride) throws SqlException {
             if (fromFunc != TimestampConstant.NULL) {
                 fromTimestamp = fromFunc.getTimestamp(null);
@@ -521,7 +520,6 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             }
 
             @Override
-            @SuppressWarnings("unused")
             public long getLongIPv4(int col) {
                 return getLong(col);
             }
