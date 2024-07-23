@@ -4510,8 +4510,7 @@ public class SqlOptimiser implements Mutable {
                             && (sampleByOffset != null && SqlKeywords.isZeroOffset(sampleByOffset.token) && (sampleByTimezoneName == null || SqlKeywords.isUTC(sampleByTimezoneName.token)))
                             && (sampleByFillSize == 0 || (sampleByFillSize == 1 && !SqlKeywords.isPrevKeyword(sampleByFill.getQuick(0).token) && !SqlKeywords.isLinearKeyword(sampleByFill.getQuick(0).token)))
                             && sampleByUnit == null
-                            &&
-                            (sampleByFrom == null || (sampleByFrom.type != BIND_VARIABLE))
+                            && (sampleByFrom == null || (sampleByFrom.type != BIND_VARIABLE))
             ) {
                 // Validate that the model does not have wildcard column names.
                 // Using wildcard in group-by expression makes SQL ambiguous and
@@ -4595,8 +4594,8 @@ public class SqlOptimiser implements Mutable {
                             final ExpressionNode expr = maybeKeyed.getQuick(i);
                             switch (expr.type) {
                                 case LITERAL:
-                                    if (!matchesWithOrWithoutTablePrefix(expr.token, tableName, timestamp.token) &&
-                                            !matchesWithOrWithoutTablePrefix(expr.token, tableName, timestampAlias)) {
+                                    if (!matchesWithOrWithoutTablePrefix(expr.token, tableName, timestamp.token)
+                                            && !matchesWithOrWithoutTablePrefix(expr.token, tableName, timestampAlias)) {
                                         isKeyed = true;
                                     }
                                     break;
@@ -4715,7 +4714,6 @@ public class SqlOptimiser implements Mutable {
                 // If SAMPLE BY FROM ... is present, we need to use the variant of timestamp_floor
                 // which includes the `offset` parameter. This value is populated from the FROM clause and anchors
                 // the calendar-aligned buckets to an offset other than the unix epoch.
-
                 if (sampleByFrom != null) {
                     timestampFunc.args.add(sampleByFrom);
                     timestampFunc.args.add(param2);
@@ -4789,11 +4787,9 @@ public class SqlOptimiser implements Mutable {
 
     /**
      * Copies the SAMPLE BY FROM-TO interval into a WHERE clause if no WHERE clause over designated
-     * timestamps has been provided. <br>
+     * timestamps has been provided.
+     * <p>
      * This is to allow for the generation of an interval scan and minimise reading of un-needed data.
-     *
-     * @param model
-     * @throws SqlException
      */
     @SuppressWarnings("ConstantValue")
     private void rewriteSampleByFromTo(QueryModel model) throws SqlException {
@@ -4820,7 +4816,6 @@ public class SqlOptimiser implements Mutable {
 
         // if no from-to
         if (sampleFrom != null || sampleTo != null) {
-
             curr = model;
 
             ExpressionNode whereClause = null;
@@ -4855,36 +4850,35 @@ public class SqlOptimiser implements Mutable {
                 timestamp = expressionNodePool.next().of(LITERAL, prefixedTimestamp, timestamp.precedence, timestamp.position);
             }
 
-
             // construct an appropriate where clause
             if (sampleFrom != null && sampleTo != null) {
-                ExpressionNode greaterThanOrEqualToNode = expressionNodePool.next().of(OPERATION, opGeq.operator.token, opGeq.precedence, 0);
-                greaterThanOrEqualToNode.lhs = timestamp;
-                greaterThanOrEqualToNode.rhs = sampleFrom;
-                greaterThanOrEqualToNode.paramCount = 2;
+                ExpressionNode geqNode = expressionNodePool.next().of(OPERATION, opGeq.operator.token, opGeq.precedence, 0);
+                geqNode.lhs = timestamp;
+                geqNode.rhs = sampleFrom;
+                geqNode.paramCount = 2;
 
-                ExpressionNode lesserThanNode = expressionNodePool.next().of(OPERATION, opLt.operator.token, opLt.precedence, 0);
-                lesserThanNode.lhs = timestamp;
-                lesserThanNode.rhs = sampleTo;
-                lesserThanNode.paramCount = 2;
+                ExpressionNode ltNode = expressionNodePool.next().of(OPERATION, opLt.operator.token, opLt.precedence, 0);
+                ltNode.lhs = timestamp;
+                ltNode.rhs = sampleTo;
+                ltNode.paramCount = 2;
 
                 ExpressionNode andNode = expressionNodePool.next().of(OPERATION, opAnd.operator.token, opAnd.precedence, 0);
-                andNode.lhs = greaterThanOrEqualToNode;
-                andNode.rhs = lesserThanNode;
+                andNode.lhs = geqNode;
+                andNode.rhs = ltNode;
                 andNode.paramCount = 2;
                 intervalClause = andNode;
             } else if (sampleFrom != null) {
-                ExpressionNode greaterThanOrEqualToNode = expressionNodePool.next().of(OPERATION, opGeq.operator.token, opGeq.precedence, 0);
-                greaterThanOrEqualToNode.lhs = timestamp;
-                greaterThanOrEqualToNode.rhs = sampleFrom;
-                greaterThanOrEqualToNode.paramCount = 2;
-                intervalClause = greaterThanOrEqualToNode;
+                ExpressionNode geqNode = expressionNodePool.next().of(OPERATION, opGeq.operator.token, opGeq.precedence, 0);
+                geqNode.lhs = timestamp;
+                geqNode.rhs = sampleFrom;
+                geqNode.paramCount = 2;
+                intervalClause = geqNode;
             } else if (sampleTo != null) {
-                ExpressionNode lesserThanNode = expressionNodePool.next().of(OPERATION, opLt.operator.token, opLt.precedence, 0);
-                lesserThanNode.lhs = timestamp;
-                lesserThanNode.rhs = sampleTo;
-                lesserThanNode.paramCount = 2;
-                intervalClause = lesserThanNode;
+                ExpressionNode ltNode = expressionNodePool.next().of(OPERATION, opLt.operator.token, opLt.precedence, 0);
+                ltNode.lhs = timestamp;
+                ltNode.rhs = sampleTo;
+                ltNode.paramCount = 2;
+                intervalClause = ltNode;
             } else {
                 // unreachable
                 assert false;

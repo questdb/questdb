@@ -5556,7 +5556,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private void guardAgainstFillWithKeyedGroupBy(QueryModel model, ArrayColumnTypes keyTypes) throws SqlException {
         // locate fill
         QueryModel curr = model;
-
         while (curr != null && curr.getFillStride() == null) {
             curr = curr.getNestedModel();
         }
@@ -5573,8 +5572,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return;
         }
 
-        throw SqlException.$(0, "cannot use a fill with a keyed group by");
-
+        throw SqlException.$(0, "cannot use FILL with a keyed GROUP BY");
     }
 
     private void guardAgainstFromToWithKeyedSampleBy(boolean isFromTo) throws SqlException {

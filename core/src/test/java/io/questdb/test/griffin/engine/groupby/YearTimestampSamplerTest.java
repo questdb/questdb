@@ -35,6 +35,20 @@ import org.junit.Test;
 public class YearTimestampSamplerTest {
 
     @Test
+    public void testBucketIndex() {
+        for (int i = 0; i < 1000; i++) {
+            YearTimestampSampler sampler = new YearTimestampSampler(4);
+            long startTimestamp = 0;
+            long currentTimestamp = startTimestamp;
+            sampler.setStart(startTimestamp);
+            for (int j = 0; j < 100; j++) {
+                currentTimestamp = sampler.nextTimestamp(currentTimestamp);
+                Assert.assertEquals(j + 2, sampler.bucketIndex(currentTimestamp));
+            }
+        }
+    }
+
+    @Test
     public void testSimple() throws NumericException {
         StringSink sink = new StringSink();
         YearTimestampSampler sampler = new YearTimestampSampler(4);
