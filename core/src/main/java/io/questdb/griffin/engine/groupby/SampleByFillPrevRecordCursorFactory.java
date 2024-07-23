@@ -55,7 +55,11 @@ public class SampleByFillPrevRecordCursorFactory extends AbstractSampleByFillRec
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
             Function offsetFunc,
-            int offsetFuncPos
+            int offsetFuncPos,
+            Function sampleFromFunc,
+            int sampleFromFuncPos,
+            Function sampleToFunc,
+            int sampleToFuncPos
     ) {
         super(
                 asm,
@@ -81,13 +85,17 @@ public class SampleByFillPrevRecordCursorFactory extends AbstractSampleByFillRec
                 timezoneNameFunc,
                 timezoneNameFuncPos,
                 offsetFunc,
-                offsetFuncPos
+                offsetFuncPos,
+                sampleFromFunc,
+                sampleFromFuncPos,
+                sampleToFunc,
+                sampleToFuncPos
         );
     }
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("SampleBy");
+        sink.type("Sample By");
         sink.attr("fill").val("prev");
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
         sink.optAttr("values", groupByFunctions, true);

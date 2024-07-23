@@ -99,7 +99,9 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         IS_ACTIVE(9, "active", ColumnType.BOOLEAN),
         IS_ATTACHED(10, "attached", ColumnType.BOOLEAN),
         IS_DETACHED(11, "detached", ColumnType.BOOLEAN),
-        IS_ATTACHABLE(12, "attachable", ColumnType.BOOLEAN);
+        IS_ATTACHABLE(12, "attachable", ColumnType.BOOLEAN),
+        IS_PARQUET(13, "isParquet", ColumnType.BOOLEAN),
+        PARQUET_FILE_SIZE(14, "parquetFileSize", ColumnType.LONG);
 
         private final int idx;
         private final TableColumnMetadata metadata;
@@ -131,6 +133,8 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         private boolean isAttachable;
         private boolean isDetached;
         private boolean isReadOnly;
+        private boolean isParquet;
+        private long parquetFileSize;
         private int limit; // partitionCount + detached + attachable
         private long maxTimestamp = Long.MIN_VALUE;
         private long minTimestamp = Numbers.LONG_NULL; // so that in absence of metadata is NaN
@@ -206,6 +210,8 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             isActive = false;
             isDetached = false;
             isAttachable = false;
+            isParquet = false;
+            parquetFileSize = -1L;
             minTimestamp = Numbers.LONG_NULL; // so that in absence of metadata is NaN
             maxTimestamp = Long.MIN_VALUE;
             numRows = -1L;
@@ -220,6 +226,10 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             if (partitionIndex < partitionCount) {
                 // we are within the partition table
                 isReadOnly = tableTxReader.isPartitionReadOnly(partitionIndex);
+                isParquet = tableTxReader.isPartitionParquet(partitionIndex);
+                if (isParquet) {
+                    parquetFileSize = tableTxReader.getPartitionParquetFileSize(partitionIndex);
+                }
                 long timestamp = tableTxReader.getPartitionTimestampByIndex(partitionIndex);
                 isActive = timestamp == tableTxReader.getLastPartitionTimestamp();
                 PartitionBy.setSinkForPartition(partitionName, partitionBy, timestamp);
@@ -297,20 +307,25 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             partitionSizeSink.clear();
             SizePrettyFunctionFactory.toSizePretty(partitionSizeSink, partitionSize);
             if (PartitionBy.isPartitioned(partitionBy) && numRows > 0L) {
-                TableUtils.dFile(path.slash(), dynamicTsColName, TableUtils.COLUMN_NAME_TXN_NONE);
-                int fd = -1;
-                try {
-                    fd = TableUtils.openRO(ff, path.$(), LOG);
-                    long lastOffset = (numRows - 1) * ColumnType.sizeOf(ColumnType.TIMESTAMP);
-                    minTimestamp = ff.readNonNegativeLong(fd, 0);
-                    maxTimestamp = ff.readNonNegativeLong(fd, lastOffset);
-                } catch (CairoException e) {
-                    dynamicPartitionIndex = Numbers.INT_NULL;
-                    LOG.error().$("no file found for designated timestamp column [path=").$(path).I$();
-                } finally {
-                    if (fd != -1) {
-                        ff.close(fd);
+                if (partitionIndex >= partitionCount || !tableTxReader.isPartitionParquet(partitionIndex)) {
+                    TableUtils.dFile(path.slash(), dynamicTsColName, TableUtils.COLUMN_NAME_TXN_NONE);
+                    int fd = -1;
+                    try {
+                        fd = TableUtils.openRO(ff, path.$(), LOG);
+                        long lastOffset = (numRows - 1) * ColumnType.sizeOf(ColumnType.TIMESTAMP);
+                        minTimestamp = ff.readNonNegativeLong(fd, 0);
+                        maxTimestamp = ff.readNonNegativeLong(fd, lastOffset);
+                    } catch (CairoException e) {
+                        dynamicPartitionIndex = Numbers.INT_NULL;
+                        LOG.error().$("no file found for designated timestamp column [path=").$(path).I$();
+                    } finally {
+                        if (fd != -1) {
+                            ff.close(fd);
+                        }
                     }
+                } else {
+                    minTimestamp = Long.MIN_VALUE;
+                    maxTimestamp = Long.MIN_VALUE;
                 }
             }
         }
@@ -359,6 +374,8 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                         return isDetached;
                     case 12:
                         return isAttachable;
+                    case 13:
+                        return isParquet;
                     default:
                         throw new UnsupportedOperationException();
                 }
@@ -383,6 +400,8 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                         return numRows;
                     case 6:
                         return partitionSize;
+                    case 14:
+                        return parquetFileSize;
                     default:
                         throw new UnsupportedOperationException();
                 }
@@ -442,6 +461,8 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         metadata.add(Column.IS_ATTACHED.metadata());
         metadata.add(Column.IS_DETACHED.metadata());
         metadata.add(Column.IS_ATTACHABLE.metadata());
+        metadata.add(Column.IS_PARQUET.metadata());
+        metadata.add(Column.PARQUET_FILE_SIZE.metadata());
         METADATA = metadata;
     }
 }

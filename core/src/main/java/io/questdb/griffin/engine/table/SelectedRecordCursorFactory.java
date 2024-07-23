@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
@@ -157,6 +158,11 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public int getColumnCount() {
+            return columnCrossIndex.size();
+        }
+
+        @Override
         public byte getFormat() {
             return baseFrame.getFormat();
         }
@@ -190,11 +196,6 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
             this.baseFrame = basePageFrame;
             return this;
         }
-
-        @Override
-        public int getColumnCount() {
-            return columnCrossIndex.size();
-        }
     }
 
     private static class SelectedPageFrameCursor implements PageFrameCursor {
@@ -215,6 +216,11 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public StaticSymbolTable getSymbolTable(int columnIndex) {
             return baseCursor.getSymbolTable(columnCrossIndex.getQuick(columnIndex));
+        }
+
+        @Override
+        public TableReader getTableReader() {
+            return baseCursor.getTableReader();
         }
 
         @Override

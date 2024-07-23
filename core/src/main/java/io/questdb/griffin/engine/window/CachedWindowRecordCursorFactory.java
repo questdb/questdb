@@ -293,6 +293,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             if (!isRecordChainBuilt) {
                 buildRecordChain();
             }
+            isRecordChainBuilt = true;
             recordChain.calculateSize(circuitBreaker, counter);
         }
 

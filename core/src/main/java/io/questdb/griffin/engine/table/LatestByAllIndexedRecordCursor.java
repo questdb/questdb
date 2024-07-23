@@ -25,14 +25,8 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.BitmapIndexReader;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.DataUnavailableException;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
-import io.questdb.cairo.sql.DataFrame;
-import io.questdb.cairo.sql.DataFrameCursor;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.*;
+import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
@@ -61,12 +55,14 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     private int workerCount;
 
     public LatestByAllIndexedRecordCursor(
+            @NotNull CairoConfiguration configuration,
+            @NotNull @Transient RecordMetadata metadata,
             int columnIndex,
             @NotNull DirectLongList rows,
             @NotNull IntList columnIndexes,
             @NotNull DirectLongList prefixes
     ) {
-        super(columnIndexes);
+        super(configuration, metadata, columnIndexes);
         this.rows = rows;
         this.columnIndex = columnIndex;
         this.prefixes = prefixes;
@@ -87,10 +83,10 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     }
 
     @Override
-    public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) {
-        this.dataFrameCursor = dataFrameCursor;
-        recordA.of(dataFrameCursor.getTableReader());
-        recordB.of(dataFrameCursor.getTableReader());
+    public void of(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) {
+        this.frameCursor = pageFrameCursor;
+        recordA.of(pageFrameCursor.getTableReader());
+        recordB.of(pageFrameCursor.getTableReader());
         circuitBreaker = executionContext.getCircuitBreaker();
         bus = executionContext.getMessageBus();
         workerCount = executionContext.getSharedWorkerCount();
@@ -193,18 +189,18 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         final RingQueue<LatestByTask> queue = bus.getLatestByQueue();
         final Sequence pubSeq = bus.getLatestByPubSeq();
         final Sequence subSeq = bus.getLatestBySubSeq();
-        final TableReader reader = dataFrameCursor.getTableReader();
+        final TableReader reader = frameCursor.getTableReader();
 
-        DataFrame frame;
+        PageFrame frame;
         long foundRowCount = 0;
         int queuedCount = 0;
         try {
-            while ((frame = dataFrameCursor.next()) != null && foundRowCount < keyCount) {
+            while ((frame = frameCursor.next()) != null && foundRowCount < keyCount) {
                 doneLatch.reset();
                 final BitmapIndexReader indexReader = frame.getBitmapIndexReader(frameColumnIndex, BitmapIndexReader.DIR_BACKWARD);
 
-                final long rowLo = frame.getRowLo();
-                final long rowHi = frame.getRowHi() - 1;
+                final long rowLo = frame.getPartitionLo();
+                final long rowHi = frame.getPartitionHi() - 1;
 
                 final long keyBaseAddress = indexReader.getKeyBaseAddress();
                 final long keysMemorySize = indexReader.getKeyMemorySize();

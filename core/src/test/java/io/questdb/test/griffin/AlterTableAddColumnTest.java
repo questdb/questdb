@@ -648,7 +648,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
 
     @Test
     public void testExpectActionKeyword() throws Exception {
-        assertFailure("alter table x", 13, "'add', 'alter', 'attach', 'detach', 'drop', 'resume', 'rename', 'set' or 'squash' expected");
+        assertFailure("alter table x", 13, AlterTableUtils.ALTER_TABLE_EXPECTED_TOKEN_DESCR);
     }
 
     @Test
@@ -664,6 +664,17 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
     @Test
     public void testExpectTableName() throws Exception {
         assertFailure("alter table", 11, "table name expected");
+    }
+
+    @Test
+    public void testQueryVarcharAboveColumnTop() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as (select x id, from long_sequence(3))");
+            ddl("alter table x add column a_varchar varchar");
+            insert("insert into x values (4, 'added-1'), (5, 'added-2')");
+            assertQuery("a_varchar\n\n\n\nadded-1\nadded-2\n",
+                    "select a_varchar from x", null, null, true, true);
+        });
     }
 
     @Test

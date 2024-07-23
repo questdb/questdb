@@ -102,7 +102,7 @@ public final class Os {
     public static byte[] generateKerberosToken(CharSequence spn) throws KerberosException {
         // We use Path as a LPSZ sink here.
         try (Path sink = new Path().of(spn)) {
-            final long struct = generateKrbToken(sink.ptr());
+            final long struct = generateKrbToken(sink.$().ptr());
             int status = Unsafe.getUnsafe().getInt(struct);
             int bufLen = Unsafe.getUnsafe().getInt(struct + 4);
             long ptoken = Unsafe.getUnsafe().getLong(struct + 8);
@@ -174,6 +174,34 @@ public final class Os {
         return type == Os.WINDOWS;
     }
 
+    public static void loadLib(String lib, @NotNull InputStream libStream) {
+        try {
+            File tempLib = null;
+            try {
+                int dot = lib.indexOf('.');
+                tempLib = File.createTempFile(lib.substring(0, dot), lib.substring(dot));
+                // copy to tempLib
+                try (FileOutputStream out = new FileOutputStream(tempLib)) {
+                    byte[] buf = new byte[4096];
+                    while (true) {
+                        int read = libStream.read(buf);
+                        if (read == -1) {
+                            break;
+                        }
+                        out.write(buf, 0, read);
+                    }
+                } finally {
+                    tempLib.deleteOnExit();
+                }
+                System.load(tempLib.getAbsolutePath());
+            } catch (IOException e) {
+                throw new FatalError("Internal error: cannot unpack " + tempLib, e);
+            }
+        } finally {
+            Misc.free(libStream);
+        }
+    }
+
     public static native long malloc(long size);
 
     public static void park() {
@@ -227,34 +255,6 @@ public final class Os {
             throw new FatalError("Internal error: cannot find " + lib + ", broken package?");
         }
         loadLib(lib, is);
-    }
-
-    private static void loadLib(String lib, @NotNull InputStream libStream) {
-        try {
-            File tempLib = null;
-            try {
-                int dot = lib.indexOf('.');
-                tempLib = File.createTempFile(lib.substring(0, dot), lib.substring(dot));
-                // copy to tempLib
-                try (FileOutputStream out = new FileOutputStream(tempLib)) {
-                    byte[] buf = new byte[4096];
-                    while (true) {
-                        int read = libStream.read(buf);
-                        if (read == -1) {
-                            break;
-                        }
-                        out.write(buf, 0, read);
-                    }
-                } finally {
-                    tempLib.deleteOnExit();
-                }
-                System.load(tempLib.getAbsolutePath());
-            } catch (IOException e) {
-                throw new FatalError("Internal error: cannot unpack " + tempLib, e);
-            }
-        } finally {
-            Misc.free(libStream);
-        }
     }
 
     private static native int setCurrentThreadAffinity0(int cpu);

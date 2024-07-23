@@ -149,7 +149,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
 
     @Test
     public void testExpectActionKeyword() throws Exception {
-        assertFailure("alter table x", 13, "'add', 'alter', 'attach', 'detach', 'drop', 'resume', 'rename', 'set' or 'squash' expected");
+        assertFailure("alter table x", 13, AlterTableUtils.ALTER_TABLE_EXPECTED_TOKEN_DESCR);
     }
 
     @Test

@@ -1353,6 +1353,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
         CairoEngine.insert(compiler, insertSql, sqlExecutionContext);
     }
 
+    protected static QuestDBTestNode newNode(int nodeId, String root) {
+        return newNode(root, true, nodeId, new Overrides(), getEngineFactory(), getConfigurationFactory());
+    }
+
     protected static QuestDBTestNode newNode(int nodeId) {
         String root = TestUtils.unchecked(() -> temp.newFolder("dbRoot" + nodeId).getAbsolutePath());
         return newNode(root, true, nodeId, new Overrides(), getEngineFactory(), getConfigurationFactory());

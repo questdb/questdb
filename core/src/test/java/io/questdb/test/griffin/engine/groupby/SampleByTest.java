@@ -61,6 +61,26 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class SampleByTest extends AbstractCairoTest {
+    public static final String DDL_FROMTO = "create table fromto as (\n" +
+            "  SELECT timestamp_sequence(\n" +
+            "            to_timestamp('2018-01-01T00:00:00', 'yyyy-MM-ddTHH:mm:ss'),\n" +
+            "            1800000000L) as ts, " +
+            "x, " +
+            "x::varchar as s," +
+            "x::byte as b," +
+            "x::short as e," +
+            "x::int as i," +
+            "x::long as l," +
+            "x::float as f," +
+            "x::double as d," +
+            "x::string as str," +
+            "x::char as a," +
+            "x::symbol as k," +
+            "x::boolean as t," +
+            "x::timestamp as n," +
+            "FROM long_sequence(480)\n" +
+            ") timestamp(ts)";
+
     private static final Log LOG = LogFactory.getLog(SampleByTest.class);
 
     @Test
@@ -3294,7 +3314,7 @@ public class SampleByTest extends AbstractCairoTest {
             }
 
             String plan = "Filter filter: (tstmp>=1669852800000000 and sym='B' and 0<length(sym)*tstmp::long)\n" +
-                    "    SampleBy\n" +
+                    "    Sample By\n" +
                     (isNone(fill) ? "" : "      fill: " + fill + "\n") +
                     "      keys: [tstmp,sym]\n" +
                     "      values: [first(val),avg(val),last(val),max(val)]\n" +
@@ -3311,7 +3331,7 @@ public class SampleByTest extends AbstractCairoTest {
         for (String fill : Arrays.asList("", "none", "null", "linear", "prev")) {
 
             String plan = "Filter filter: (tstmp>=1669852800000000 and sym='B' and 0<length(sym)*tstmp::long)\n" +
-                    "    SampleBy\n" +
+                    "    Sample By\n" +
                     (isNone(fill) ? "" : "      fill: " + fill + "\n") +
                     "      keys: [tstmp,sym]\n" +
                     "      values: [first(val),avg(val),last(val),max(val)]\n" +
@@ -3331,7 +3351,7 @@ public class SampleByTest extends AbstractCairoTest {
             }
 
             String plan = "Filter filter: (tstmp>=1669852800000000 and sym='B' and 0<length(sym)*tstmp::long)\n" +
-                    "    SampleBy\n" +
+                    "    Sample By\n" +
                     (isNone(fill) ? "" : "      fill: " + fill + "\n") +
                     "      keys: [tstmp,sym]\n" +
                     "      values: [first(val),avg(val),last(val),max(val)]\n" +
@@ -3369,7 +3389,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "select * from (select ts, s, first(v) from tab sample by 30m fill(prev) align to first observation) where s = 'B'",
                     "SelectedRecord\n" +
                             "    Filter filter: s='B'\n" +
-                            "        SampleBy\n" +
+                            "        Sample By\n" +
                             "          fill: prev\n" +
                             "          keys: [s,ts]\n" +
                             "          values: [first(v)]\n" +
@@ -3399,7 +3419,8 @@ public class SampleByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select * from (select ts, first(v) from tab sample by 30m fill(prev) align to first observation) where ts > '2022-12-01T01:10:00.000000Z'",
                     "Filter filter: 1669857000000000<ts\n" +
-                            "    SampleByFillPrev\n" +
+                            "    Sample By\n" +
+                            "      fill: prev\n" +
                             "      values: [first(v)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
@@ -3661,7 +3682,11 @@ public class SampleByTest extends AbstractCairoTest {
                     0,
                     0,
                     getSymbolFilter(),
-                    -1
+                    -1,
+                    null,
+                    0,
+                    null,
+                    0
             ).close();
             Assert.fail();
         } catch (SqlException e) {
@@ -3698,7 +3723,11 @@ public class SampleByTest extends AbstractCairoTest {
                     0,
                     0,
                     getSymbolFilter(),
-                    -1
+                    -1,
+                    null,
+                    0,
+                    null,
+                    0
             ).close();
             Assert.fail();
         } catch (SqlException e) {
@@ -3739,6 +3768,230 @@ public class SampleByTest extends AbstractCairoTest {
                 true,
                 false
         );
+    }
+
+    @Test
+    public void testSampleByFromToBindVariables() throws Exception {
+        assertMemoryLeak(() -> {
+
+            ddl(DDL_FROMTO, sqlExecutionContext);
+
+            snapshotMemoryUsage();
+            try (
+                    final RecordCursorFactory factory = select(
+                            "select ts, avg(x) from fromto\n" +
+                                    "sample by 5d from $1 to $2 fill(42)")
+            ) {
+                final String expected = "ts\tavg\n" +
+                        "2017-12-20T00:00:00.000000Z\t42.0\n" +
+                        "2017-12-25T00:00:00.000000Z\t42.0\n" +
+                        "2017-12-30T00:00:00.000000Z\t72.5\n" +
+                        "2018-01-04T00:00:00.000000Z\t264.5\n" +
+                        "2018-01-09T00:00:00.000000Z\t432.5\n" +
+                        "2018-01-14T00:00:00.000000Z\t42.0\n" +
+                        "2018-01-19T00:00:00.000000Z\t42.0\n" +
+                        "2018-01-24T00:00:00.000000Z\t42.0\n" +
+                        "2018-01-29T00:00:00.000000Z\t42.0\n";
+
+                sqlExecutionContext.getBindVariableService().setStr(0, "2017-12-20");
+                sqlExecutionContext.getBindVariableService().setStr(1, "2018-01-31");
+
+                try (final RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursor(expected, cursor, factory.getMetadata(), true);
+                }
+
+                assertFactoryMemoryUsage();
+            }
+        });
+    }
+
+    @Test
+    public void testSampleByFromToFillNull() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(DDL_FROMTO);
+            drainWalQueue();
+            assertSql(
+                    "ts\tavg\n" +
+                            "2017-12-30T00:00:00.000000Z\t72.5\n" +
+                            "2018-01-04T00:00:00.000000Z\t264.5\n" +
+                            "2018-01-09T00:00:00.000000Z\t432.5\n",
+                    "select ts, avg(x) from fromto\n" +
+                            "sample by 5d"
+            );
+            assertSql(
+                    "ts\tavg\n" +
+                            "2017-12-20T00:00:00.000000Z\tnull\n" +
+                            "2017-12-25T00:00:00.000000Z\tnull\n" +
+                            "2017-12-30T00:00:00.000000Z\t72.5\n" +
+                            "2018-01-04T00:00:00.000000Z\t264.5\n" +
+                            "2018-01-09T00:00:00.000000Z\t432.5\n",
+                    "select ts, avg(x) from fromto\n" +
+                            "sample by 5d from '2017-12-20' fill(null)"
+            );
+            assertSql(
+                    "ts\tavg\n" +
+                            "2017-12-20T00:00:00.000000Z\tnull\n" +
+                            "2017-12-25T00:00:00.000000Z\tnull\n" +
+                            "2017-12-30T00:00:00.000000Z\t72.5\n" +
+                            "2018-01-04T00:00:00.000000Z\t264.5\n" +
+                            "2018-01-09T00:00:00.000000Z\t432.5\n" +
+                            "2018-01-14T00:00:00.000000Z\tnull\n" +
+                            "2018-01-19T00:00:00.000000Z\tnull\n" +
+                            "2018-01-24T00:00:00.000000Z\tnull\n" +
+                            "2018-01-29T00:00:00.000000Z\tnull\n",
+                    "select ts, avg(x) from fromto\n" +
+                            "sample by 5d from '2017-12-20' to '2018-01-31' fill(null)"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFromToIsDisallowedForKeyedQueries() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(DDL_FROMTO);
+            assertException("select ts, avg(x), first(x), last(x), x from fromto\n" +
+                            "where s != '5'\n" +
+                            "sample by 5d from '2017-12-20' to '2018-01-31' fill(42)",
+                    0, "supported");
+            assertException("select ts, avg(x), first(x), last(x), x from fromto\n" +
+                    "where s != '5'\n" +
+                    "sample by 5d from '2017-12-20' to '2018-01-31' fill(42)", 0, "supported");
+        });
+    }
+
+    @Test
+    public void testSampleByFromToNoFill() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(DDL_FROMTO);
+            drainWalQueue();
+            assertSql(
+                    "ts\tavg\n" +
+                            "2017-12-30T00:00:00.000000Z\t72.5\n" +
+                            "2018-01-04T00:00:00.000000Z\t264.5\n" +
+                            "2018-01-09T00:00:00.000000Z\t432.5\n",
+                    "select ts, avg(x) from fromto\n" +
+                            "sample by 5d"
+            );
+            assertSql(
+                    "ts\tavg\n" +
+                            "2017-12-30T00:00:00.000000Z\t72.5\n" +
+                            "2018-01-04T00:00:00.000000Z\t264.5\n" +
+                            "2018-01-09T00:00:00.000000Z\t432.5\n",
+                    "select ts, avg(x) from fromto\n" +
+                            "sample by 5d from '2017-12-20'"
+            );
+            assertSql(
+                    "ts\tavg\n" +
+                            "2018-01-01T00:00:00.000000Z\t120.5\n" +
+                            "2018-01-06T00:00:00.000000Z\t360.5\n",
+                    "select ts, avg(x) from fromto\n" +
+                            "sample by 5d from '2018-01-01'"
+            );
+            assertSql(
+                    "ts\tavg\n" +
+                            "2018-01-01T00:00:00.000000Z\t120.5\n" +
+                            "2018-01-06T00:00:00.000000Z\t360.5\n",
+                    "select ts, avg(x) from fromto\n" +
+                            "sample by 5d from '2018-01-01' to '2018-01-31'"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFromToPlans() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tbl (\n" +
+                    "  ts timestamp,\n" +
+                    "  price double\n" +
+                    ") timestamp(ts) partition by day wal;");
+            drainWalQueue();
+            assertPlanNoLeakCheck(
+                    "select ts, avg(price) from tbl sample by 5m from '2018-01-01' to '2019-01-01' align to calendar with offset '10:00'",
+                    "Sample By\n" +
+                            "  fill: none\n" +
+                            "  range: ('2018-01-01','2019-01-01')\n" +
+                            "  values: [avg(price)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Interval forward scan on: tbl\n" +
+                            "          intervals: [(\"2018-01-01T00:00:00.000000Z\",\"2018-12-31T23:59:59.999999Z\")]\n"
+            );
+            assertPlanNoLeakCheck(
+                    "select ts, avg(price) from tbl sample by 5m from '2018-01-01' align to calendar with offset '10:00'",
+                    "Sample By\n" +
+                            "  fill: none\n" +
+                            "  range: ('2018-01-01',null)\n" +
+                            "  values: [avg(price)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Interval forward scan on: tbl\n" +
+                            "          intervals: [(\"2018-01-01T00:00:00.000000Z\",\"MAX\")]\n"
+            );
+            assertPlanNoLeakCheck(
+                    "select ts, avg(price) from tbl sample by 5m to '2019-01-01' align to calendar with offset '10:00'",
+                    "Sample By\n" +
+                            "  fill: none\n" +
+                            "  range: (null,'2019-01-01')\n" +
+                            "  values: [avg(price)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Interval forward scan on: tbl\n" +
+                            "          intervals: [(\"MIN\",\"2018-12-31T23:59:59.999999Z\")]\n"
+            );
+            assertPlanNoLeakCheck(
+                    "select ts, avg(price) from tbl sample by 5m align to calendar with offset '10:00'",
+                    "Sample By\n" +
+                            "  fill: none\n" +
+                            "  values: [avg(price)]\n" +
+                            "    DataFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tbl\n"
+            );
+        });
+
+    }
+
+    @Test
+    public void testSampleByFromToSampleByMonthWithFill() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(DDL_FROMTO);
+            assertSql(
+                    "ts\tavg\n" +
+                            "2017-01-01T00:00:00.000000Z\tnull\n" +
+                            "2017-05-01T00:00:00.000000Z\tnull\n" +
+                            "2017-09-01T00:00:00.000000Z\tnull\n" +
+                            "2018-01-01T00:00:00.000000Z\t240.5\n" +
+                            "2018-05-01T00:00:00.000000Z\tnull\n" +
+                            "2018-09-01T00:00:00.000000Z\tnull\n",
+                    "select ts, avg(x) from fromto\n" +
+                            "sample by 4M from '2017-01-01' to '2019-01-01' fill(null)"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFromToSampleByYearWithFill() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(DDL_FROMTO);
+            assertSql(
+                    "ts\tavg\n" +
+                            "2000-01-01T00:00:00.000000Z\tnull\n" +
+                            "2004-01-01T00:00:00.000000Z\tnull\n" +
+                            "2008-01-01T00:00:00.000000Z\tnull\n" +
+                            "2012-01-01T00:00:00.000000Z\tnull\n" +
+                            "2016-01-01T00:00:00.000000Z\t240.5\n" +
+                            "2020-01-01T00:00:00.000000Z\tnull\n" +
+                            "2024-01-01T00:00:00.000000Z\tnull\n" +
+                            "2028-01-01T00:00:00.000000Z\tnull\n" +
+                            "2032-01-01T00:00:00.000000Z\tnull\n" +
+                            "2036-01-01T00:00:00.000000Z\tnull\n" +
+                            "2040-01-01T00:00:00.000000Z\tnull\n" +
+                            "2044-01-01T00:00:00.000000Z\tnull\n" +
+                            "2048-01-01T00:00:00.000000Z\tnull\n",
+                    "select ts, avg(x) from fromto\n" +
+                            "sample by 4y from '2000-01-01' to '2050-01-01' fill(null)"
+            );
+        });
     }
 
     @Test
@@ -4814,7 +5067,7 @@ public class SampleByTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     query,
-                    "SampleBy\n" +
+                    "Sample By\n" +
                             "  fill: prev\n" +
                             "  keys: [ts,s]\n" +
                             "  values: [first(v)]\n" +
@@ -4967,6 +5220,22 @@ public class SampleByTest extends AbstractCairoTest {
                             "cast(dateadd('h', 2, to_timezone(timestamp,'EST')) as double) + sum(amount) NYTime\n" +
                             "from trades\n" +
                             "sample by 5m"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByWithSubQueryAndFromToNoFill() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(DDL_FROMTO);
+            drainWalQueue();
+            assertSql(
+                    "ts1\tavg\n" +
+                            "2017-12-30T00:00:00.000000Z\t72.5\n" +
+                            "2018-01-04T00:00:00.000000Z\t264.5\n" +
+                            "2018-01-09T00:00:00.000000Z\t432.5\n",
+                    "select ts1, avg(x) from (select ts as ts1, x from fromto where x > 0)\n" +
+                            "sample by 5d from '2017-12-20'"
             );
         });
     }
@@ -5453,7 +5722,6 @@ public class SampleByTest extends AbstractCairoTest {
                         "PFYX\tnull\t1970-01-04T06:00:00.000000Z\n" +
                         "QWPK\tnull\t1970-01-04T06:00:00.000000Z\n", true, true, false);
     }
-
 
     @Test
     public void testSampleCountFillLinearWithOffset() throws Exception {
@@ -7664,6 +7932,24 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleFillNullBadTypeSequential() throws Exception {
+        assertException(
+                "select b, sum_t(b), k from x sample by 3h fill(null)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_str(1,1,2) b," +
+                        " timestamp_sequence(172800000000, 3600000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by NONE",
+                10,
+                "Unsupported type"
+        );
+    }
+
+    @Test
     public void testSampleFillNullDay() throws Exception {
         assertQuery(
                 "b\tsum\tk\n" +
@@ -7769,7 +8055,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(20)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                false
+                true
         );
     }
 
@@ -7967,9 +8253,9 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSampleFillNullNotKeyedInvalid() throws Exception {
+    public void testSampleFillNullNotKeyedInvalidSequential() throws Exception {
         assertException(
-                "select last(z) s from x sample by 30m fill(null)",
+                "select last(z) s from x sample by 30m fill(null) align to calendar with offset '10:00'",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -7996,6 +8282,52 @@ public class SampleByTest extends AbstractCairoTest {
                 7,
                 "Unsupported type: CHAR"
         );
+    }
+
+    @Test
+    public void testSampleFillNullNotKeyedValid() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as " +
+                    "(" +
+                    "select" +
+                    " rnd_int() a," +
+                    " rnd_boolean() b," +
+                    " rnd_str(1,1,2) c," +
+                    " rnd_double(2) d," +
+                    " rnd_float(2) e," +
+                    " rnd_short(10,1024) f," +
+                    " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                    " rnd_symbol(4,4,4,2) i," +
+                    " rnd_long() j," +
+                    " rnd_byte(2,50) l," +
+                    " rnd_bin(10, 20, 2) m," +
+                    " rnd_str(5,16,2) n," +
+                    " rnd_double(2) o," +
+                    " rnd_char() z," +
+                    " rnd_varchar(5, 16, 2) vch," +
+                    " timestamp_sequence(cast('2020-03-28T03:20:00.000000Z' as timestamp), 3600000000) p," +
+                    " timestamp_sequence(cast('2021-10-31T00:00:00.000000Z' as timestamp), 3400000000) k" +
+                    " from" +
+                    " long_sequence(30)" +
+                    ") timestamp(k) partition by NONE");
+
+            assertPlanNoLeakCheck(
+                    "select last(z) s from x sample by 30m fill(null)",
+                    "SelectedRecord\n" +
+                            "    Sort\n" +
+                            "      keys: [k]\n" +
+                            "        Fill Range\n" +
+                            "          stride: '30m'\n" +
+                            "          values: [null]\n" +
+                            "            Async Group By workers: 1\n" +
+                            "              keys: [k]\n" +
+                            "              values: [last(z)]\n" +
+                            "              filter: null\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: x\n"
+            );
+        });
     }
 
     @Test
@@ -11226,7 +11558,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(10)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                false
+                true
         );
     }
 
@@ -11308,7 +11640,7 @@ public class SampleByTest extends AbstractCairoTest {
                         "66.97969295620055\t1970-01-04T11:30:00.000000Z\n" +
                         "20.56\t1970-01-04T12:00:00.000000Z\n" +
                         "58.93398488053903\t1970-01-04T12:30:00.000000Z\n",
-                "select sum(a), k from x sample by 30m fill(20.56) align to calendar",
+                "select sum(a), k from x sample by 30m fill(20.56)",
                 "create table x as " +
                         "(" +
                         "select" +
@@ -11319,7 +11651,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " long_sequence(40)" +
                         ") timestamp(k) partition by NONE",
                 "k",
-                false
+                true
         );
     }
 
@@ -11751,6 +12083,24 @@ public class SampleByTest extends AbstractCairoTest {
     public void testSampleFillValueNotKeyedInvalid() throws Exception {
         assertException(
                 "select sum(a), k from x sample by 30m fill(zz)",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(cast('2021-03-28T00:00:00.000000Z' as timestamp), 3400000000) k" +
+                        " from" +
+                        " long_sequence(40)" +
+                        ") timestamp(k) partition by NONE",
+                43,
+                "Invalid column: zz"
+        );
+    }
+
+    @Test
+    public void testSampleFillValueNotKeyedInvalidSequential() throws Exception {
+        assertException(
+                "select sum(a), k from x sample by 30m fill(zz) align to calendar with offset '10:00'",
                 "create table x as " +
                         "(" +
                         "select" +
