@@ -53,11 +53,11 @@ public class TimestampSamplerFactoryTest {
             sink.put(unit);
             final TimestampSampler sampler = TimestampSamplerFactory.getInstance(sink, 0);
             long startTimestamp = 0;
-            long currentTimestamp = startTimestamp + (amount * micros[unitIndex]);
+            long currentTimestamp = startTimestamp;
             sampler.setStart(startTimestamp);
             for (int j = 0; j < 100; j++) {
                 currentTimestamp = sampler.nextTimestamp(currentTimestamp);
-                Assert.assertEquals(j + 2, sampler.bucketIndex(currentTimestamp));
+                Assert.assertEquals(j + 1, sampler.bucketIndex(currentTimestamp));
             }
         }
     }

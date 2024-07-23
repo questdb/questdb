@@ -2648,8 +2648,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "2018-01-11T00:00:00.000000Z\tnull\t\tnull\tnull\tnull\tnull\tnull\t\tnull\tnull\tnull\tnull\n" +
                     "2018-01-16T00:00:00.000000Z\tnull\t\tnull\tnull\tnull\tnull\tnull\t\tnull\tnull\tnull\tnull\n" +
                     "2018-01-21T00:00:00.000000Z\tnull\t\tnull\tnull\tnull\tnull\tnull\t\tnull\tnull\tnull\tnull\n" +
-                    "2018-01-26T00:00:00.000000Z\tnull\t\tnull\tnull\tnull\tnull\tnull\t\tnull\tnull\tnull\tnull\n" +
-                    "2018-01-31T00:00:00.000000Z\tnull\t\tnull\tnull\tnull\tnull\tnull\t\tnull\tnull\tnull\tnull\n", query);
+                    "2018-01-26T00:00:00.000000Z\tnull\t\tnull\tnull\tnull\tnull\tnull\t\tnull\tnull\tnull\tnull\n", query);
         });
     }
 

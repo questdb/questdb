@@ -315,10 +315,10 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         private boolean notAtEndOfBitset() {
-            if (rangeBound == RANGE_LOWER_BOUND || rangeBound == RANGE_UNBOUNDED) {
+            if (rangeBound == RANGE_LOWER_BOUND || rangeBound == RANGE_UNBOUNDED || nextBucketTimestamp == maxTimestamp) {
                 return bucketIndex < timestampSampler.bucketIndex(maxTimestamp);
             } else {
-                return bucketIndex < timestampSampler.bucketIndex(maxTimestamp);
+                return bucketIndex <= timestampSampler.bucketIndex(maxTimestamp);
             }
         }
 
