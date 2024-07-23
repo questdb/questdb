@@ -3950,6 +3950,49 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByFromToSampleByMonthWithFill() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(DDL_FROMTO);
+            assertSql(
+                    "ts\tavg\n" +
+                            "2017-01-01T00:00:00.000000Z\tnull\n" +
+                            "2017-05-01T00:00:00.000000Z\tnull\n" +
+                            "2017-09-01T00:00:00.000000Z\tnull\n" +
+                            "2018-01-01T00:00:00.000000Z\t240.5\n" +
+                            "2018-05-01T00:00:00.000000Z\tnull\n" +
+                            "2018-09-01T00:00:00.000000Z\tnull\n",
+                    "select ts, avg(x) from fromto\n" +
+                            "sample by 4M from '2017-01-01' to '2019-01-01' fill(null)"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFromToSampleByYearWithFill() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(DDL_FROMTO);
+            assertSql(
+                    "ts\tavg\n" +
+                            "2000-01-01T00:00:00.000000Z\tnull\n" +
+                            "2004-01-01T00:00:00.000000Z\tnull\n" +
+                            "2008-01-01T00:00:00.000000Z\tnull\n" +
+                            "2012-01-01T00:00:00.000000Z\tnull\n" +
+                            "2016-01-01T00:00:00.000000Z\t240.5\n" +
+                            "2020-01-01T00:00:00.000000Z\tnull\n" +
+                            "2024-01-01T00:00:00.000000Z\tnull\n" +
+                            "2028-01-01T00:00:00.000000Z\tnull\n" +
+                            "2032-01-01T00:00:00.000000Z\tnull\n" +
+                            "2036-01-01T00:00:00.000000Z\tnull\n" +
+                            "2040-01-01T00:00:00.000000Z\tnull\n" +
+                            "2044-01-01T00:00:00.000000Z\tnull\n" +
+                            "2048-01-01T00:00:00.000000Z\tnull\n",
+                    "select ts, avg(x) from fromto\n" +
+                            "sample by 4y from '2000-01-01' to '2050-01-01' fill(null)"
+            );
+        });
+    }
+
+    @Test
     public void testSampleByLastIndexFilterByNullConcurrent() throws Exception {
         testSampleByFirstLastIndexedConcurrent(
                 "SELECT last(kms) as k, last(d1) as d1, last(d2) as d2\n" +

@@ -318,7 +318,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             if (rangeBound == RANGE_LOWER_BOUND || rangeBound == RANGE_UNBOUNDED) {
                 return bucketIndex < timestampSampler.bucketIndex(maxTimestamp);
             } else {
-                return bucketIndex <= timestampSampler.bucketIndex(maxTimestamp);
+                return bucketIndex < timestampSampler.bucketIndex(maxTimestamp);
             }
         }
 

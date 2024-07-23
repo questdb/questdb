@@ -43,7 +43,7 @@ public class YearTimestampSamplerTest {
             long currentTimestamp = startTimestamp;
             for (int j = 0; j < 100; j++) {
                 currentTimestamp = sampler.nextTimestamp(currentTimestamp);
-                Assert.assertEquals(j + 2, sampler.bucketIndex(currentTimestamp));
+                Assert.assertEquals(j + 1, sampler.bucketIndex(currentTimestamp));
             }
         }
     }

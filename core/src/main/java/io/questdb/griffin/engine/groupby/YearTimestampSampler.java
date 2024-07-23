@@ -46,7 +46,7 @@ public class YearTimestampSampler implements TimestampSampler {
 
     @Override
     public int bucketIndex(long timestamp) {
-        return (int) ((round(timestamp) - start) / bucket);
+        return (int) (Timestamps.getYearsBetween(round(timestamp), round(start)) / bucket);
     }
 
     @Override
