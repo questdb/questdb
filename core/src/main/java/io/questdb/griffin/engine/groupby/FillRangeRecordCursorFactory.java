@@ -334,7 +334,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             this.baseCursor = baseCursor;
             this.timestampIndex = timestampIndex;
             this.valueFuncs = valueFuncs;
-            Function.init(valueFuncs, baseCursor, executionContext);
+            Function.initNcFunctions(valueFuncs, baseCursor, executionContext);
             fromFunc.init(baseCursor, executionContext);
             toFunc.init(baseCursor, executionContext);
             initTimestamps(fromFunc, toFunc, stride);
