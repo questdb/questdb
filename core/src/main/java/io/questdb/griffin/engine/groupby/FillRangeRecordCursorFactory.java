@@ -59,7 +59,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
     private final CharSequence stride;
     private final int timestampIndex;
     private final Function toFunc;
-    private final ObjList<Function> values;
+    private final ObjList<Function> valueFuncs;
 
     public FillRangeRecordCursorFactory(
             RecordMetadata metadata,
@@ -76,7 +76,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         this.toFunc = toFunc;
         this.stride = stride;
         this.timestampIndex = timestampIndex;
-        this.values = fillValues;
+        this.valueFuncs = fillValues;
         this.metadata = metadata;
     }
 
@@ -87,12 +87,12 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        if (metadata.getColumnCount() > values.size() + 1) {
-            if (values.size() == 1 && values.getQuick(0).isNullConstant()) {
+        if (metadata.getColumnCount() > valueFuncs.size() + 1) {
+            if (valueFuncs.size() == 1 && valueFuncs.getQuick(0).isNullConstant()) {
                 final int diff = (metadata.getColumnCount() - 1);
                 // skip one entry as it should be the designated timestamp
                 for (int i = 1; i < diff; i++) {
-                    values.add(NullConstant.NULL);
+                    valueFuncs.add(NullConstant.NULL);
                 }
             } else {
                 throw SqlException.$(-1, "not enough fill values");
@@ -101,7 +101,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
 
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
-            cursor.of(baseCursor, fromFunc, toFunc, stride, values, timestampIndex, executionContext);
+            cursor.of(baseCursor, fromFunc, toFunc, stride, valueFuncs, timestampIndex, executionContext);
             return cursor;
         } catch (Throwable th) {
             baseCursor.close();
@@ -130,14 +130,14 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         // print values omitting the timestamp column
         // since we added an extra artificial null
         sink.attr("values").val('[');
-        for (int i = 0; i < values.size(); i++) {
+        for (int i = 0; i < valueFuncs.size(); i++) {
             if (i == timestampIndex) {
                 continue;
             }
 
-            sink.val(values.getQuick(i));
+            sink.val(valueFuncs.getQuick(i));
 
-            if (i != 0 && i != values.size() - 1) {
+            if (i != 0 && i != valueFuncs.size() - 1) {
                 sink.val(',');
             }
         }
@@ -159,6 +159,9 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     protected void _close() {
         base.close();
+        Misc.free(fromFunc);
+        Misc.free(toFunc);
+        Misc.freeObjList(valueFuncs);
     }
 
     private static class FillRangeRecordCursor implements NoRandomAccessRecordCursor {
