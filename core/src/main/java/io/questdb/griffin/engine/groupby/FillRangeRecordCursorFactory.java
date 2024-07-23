@@ -309,6 +309,13 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             maxTimestamp = toFunc == TimestampConstant.NULL ? Long.MIN_VALUE : toTimestamp;
         }
 
+        private void initValueFuncs(ObjList<Function> valueFuncs) {
+            final Function func = valueFuncs.getQuiet(timestampIndex);
+            if (func != null || valueFuncs.size() < timestampIndex) {
+                valueFuncs.insert(timestampIndex, 1, null);
+            }
+        }
+
         private void moveToNextBucket() {
             bucketIndex++;
             nextBucketTimestamp = timestampSampler.nextTimestamp(nextBucketTimestamp);
@@ -341,7 +348,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             if (presentRecords == null) {
                 presentRecords = new BitSet(toFunc != TimestampConstant.NULL ? timestampSampler.bucketIndex(toTimestamp) : DEFAULT_BITSET_SIZE);
             }
-            valueFuncs.insert(timestampIndex, 1, null);
+            initValueFuncs(valueFuncs);
             initBounds(fromFunc, toFunc);
             toTop();
         }
