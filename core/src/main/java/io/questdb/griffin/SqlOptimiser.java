@@ -3181,7 +3181,7 @@ public class SqlOptimiser implements Mutable {
             model.setTableNameFunction(tableFactory);
             tableFactoriesInFlight.add(tableFactory);
         }
-        copyColumnsFromMetadata(model, tableFactory.getMetadata(), true);
+        copyColumnsFromMetadata(model, tableFactory.getMetadata(), false);
     }
 
     private void processEmittedJoinClauses(QueryModel model) {

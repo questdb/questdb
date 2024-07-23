@@ -286,15 +286,15 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         buffer[index] = value;
     }
 
-    public void setAll(int capacity, T value) {
-        checkCapacity(capacity);
-        pos = capacity;
+    public void setAll(int count, T value) {
+        checkCapacity(count);
+        pos = count;
         Arrays.fill(buffer, value);
     }
 
-    public void setPos(int capacity) {
-        checkCapacity(capacity);
-        pos = capacity;
+    public void setPos(int newPos) {
+        checkCapacity(newPos);
+        pos = newPos;
     }
 
     public void setQuick(int index, T value) {

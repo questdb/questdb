@@ -1,0 +1,16 @@
+# name: test/sql/copy/parquet/test_aws_files.test
+# description: Test Parquet files created by some internal AWS process
+# group: [parquet]
+
+require parquet
+
+statement ok
+PRAGMA enable_verification
+
+query III
+SELECT * FROM parquet_scan('data/parquet-testing/aws1.snappy.parquet') limit -1
+----
+64cut7us6zsluivzsgikrkdtnpeu6626cc42mie4zz7luazg2z5q 2020-08-22T14:00:00Z/2020-08-22T15:00:00Z 552549005 AWS Anniversary 346505043635 1596240000000 1598918400000 346505043635 Usage 1598104800000 1598108400000 AmazonEC2 USE2-EBS:VolumeUsage.gp2 CreateVolume-Gp2 (empty) 0.010753 0.000000 0.000000 USD 0.1000000000 0.001075 0.1000000000 0.001075 $0.10 per GB-month of General Purpose SSD (gp2) provisioned storage - US East (Ohio) (empty) AWS EMEA SARL Amazon Elastic Compute Cloud (empty) (empty) (empty) (empty) (empty) (empty) (empty) (empty) (empty) (empty) (empty) (empty) (empty) (empty) (empty) (empty) (empty) (empty) (empty) US East (Ohio) AWS Region 3000 for volumes <= 1 TiB 16000 250 MiB/s 16 TiB (empty) (empty) (empty) (empty) (empty) (empty) (empty) (empty) (empty) Storage us-east-2 AmazonEC2 Amazon Elastic Compute Cloud SCM63QZA8NKUYACF (empty) (empty) SSD-backed (empty) (empty) (empty) (empty) USE2-EBS:VolumeUsage.gp2 (empty) (empty) gp2 General Purpose 2181734279 USD 0.001075 0.1000000000 OnDemand GB-Mo 0.000000 0.000000 0.000000 (empty) (empty) (empty) (empty) 0.000000 (empty) 179145665 (empty) (empty) (empty) 0.000000 0.000000 0.000000 0.000000 0.000000 0.000000 (empty) 0.000000 0.000000 0.000000 0.000000 0.000000
+
+
+#11000 values hashing to 5a3700bd7f58ae786d89a06bfb6fb4f6
