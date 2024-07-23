@@ -256,17 +256,16 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public void toTop() {
             baseCursor.toTop();
+            presentRecords.clear();
             gapFilling = false;
             baseRecord = null;
             bucketIndex = 0;
         }
 
-
         private Function getFillFunction(int col) {
             if (col == timestampIndex) {
                 return fillingTimestampFunc;
             }
-
             return values.getQuick(col);
         }
 
