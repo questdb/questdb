@@ -39,19 +39,21 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
     protected final PageFrameMemoryPool frameMemoryPool;
     protected final PageFrameMemorySelectedRecord recordA;
     protected final PageFrameMemorySelectedRecord recordB;
+    protected int frameCount = 0;
     protected PageFrameCursor frameCursor;
+    protected PageFrameMemory frameMemory;
 
     public AbstractPageFrameRecordCursor(
-            CairoConfiguration configuration,
-            @Transient RecordMetadata metadata,
+            @NotNull CairoConfiguration configuration,
+            @NotNull @Transient RecordMetadata metadata,
             @NotNull IntList columnIndexes
     ) {
         this.columnIndexes = columnIndexes;
-        this.recordA = new PageFrameMemorySelectedRecord(columnIndexes);
-        this.recordB = new PageFrameMemorySelectedRecord(columnIndexes);
-        this.frameAddressCache = new PageFrameAddressCache(configuration);
+        recordA = new PageFrameMemorySelectedRecord(columnIndexes);
+        recordB = new PageFrameMemorySelectedRecord(columnIndexes);
+        frameAddressCache = new PageFrameAddressCache(configuration);
         frameAddressCache.of(metadata);
-        this.frameMemoryPool = new PageFrameMemoryPool();
+        frameMemoryPool = new PageFrameMemoryPool();
         frameMemoryPool.of(frameAddressCache);
     }
 
@@ -59,6 +61,7 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
     public void close() {
         Misc.free(frameMemoryPool);
         frameCursor = Misc.free(frameCursor);
+        frameMemory = null;
     }
 
     @Override
@@ -96,5 +99,13 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
         final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(Rows.toPartitionIndex(atRowId));
         ((PageFrameMemorySelectedRecord) record).init(frameMemory);
         ((PageFrameMemorySelectedRecord) record).setRowIndex(Rows.toLocalRowID(atRowId));
+    }
+
+    @Override
+    public void toTop() {
+        frameCount = 0;
+        frameCursor.toTop();
+        frameAddressCache.clear();
+        frameMemory = null;
     }
 }

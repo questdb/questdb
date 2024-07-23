@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.SymbolMapReaderImpl;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.*;
@@ -39,7 +40,6 @@ import org.jetbrains.annotations.Nullable;
 import java.util.Comparator;
 
 public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
-
     private final int columnIndex;
     private final IntList columnIndexes;
     private final Comparator<SymbolFunctionRowCursorFactory> comparator;
@@ -61,6 +61,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
     private SymbolMapReaderImpl symbolMapReader;
 
     public FilterOnExcludedValuesRecordCursorFactory(
+            @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             @NotNull @Transient ObjList<Function> keyValues,
@@ -72,9 +73,10 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
             int orderDirection,
             int indexDirection,
             @NotNull IntList columnIndexes,
+            @NotNull IntList columnSizeShifts,
             int maxSymbolNotEqualsCount
     ) {
-        super(metadata, dataFrameCursorFactory);
+        super(configuration, metadata, dataFrameCursorFactory, columnIndexes, columnSizeShifts);
         this.orderDirection = orderDirection;
         this.indexDirection = indexDirection;
         this.maxSymbolNotEqualsCount = maxSymbolNotEqualsCount;
@@ -94,10 +96,24 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
         cursorFactories = new ObjList<>(nKeyValues);
         if (orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT && !orderByTimestamp) {
             heapCursorUsed = false;
-            cursor = new PageFrameRecordCursorImpl(new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx), false, filter, columnIndexes);
+            cursor = new PageFrameRecordCursorImpl(
+                    configuration,
+                    metadata,
+                    new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx),
+                    false,
+                    filter,
+                    columnIndexes
+            );
         } else {
             heapCursorUsed = true;
-            cursor = new PageFrameRecordCursorImpl(new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx), false, filter, columnIndexes);
+            cursor = new PageFrameRecordCursorImpl(
+                    configuration,
+                    metadata,
+                    new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx),
+                    false,
+                    filter,
+                    columnIndexes
+            );
         }
         this.followedOrderByAdvice = orderByKeyColumn || orderByTimestamp;
         this.columnIndexes = columnIndexes;
@@ -238,18 +254,18 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
     }
 
     @Override
-    protected RecordCursor getCursorInstance(
-            DataFrameCursor dataFrameCursor,
+    protected RecordCursor initRecordCursor(
+            PageFrameCursor pageFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        TableReader reader = dataFrameCursor.getTableReader();
+        TableReader reader = pageFrameCursor.getTableReader();
         if (reader.getSymbolMapReader(columnIndex).getSymbolCount() > maxSymbolNotEqualsCount) {
             throw TableReferenceOutOfDateException.of(reader.getTableToken().getTableName());
         }
 
         Function.init(keyExcludedValueFunctions, reader, executionContext);
         recalculateIncludedValues(reader);
-        cursor.of(dataFrameCursor, executionContext);
+        cursor.of(pageFrameCursor, executionContext);
         if (filter != null) {
             filter.init(cursor, executionContext);
         }

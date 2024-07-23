@@ -24,10 +24,12 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.sql.DataFrame;
-import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -36,7 +38,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 class LatestByValuesFilteredRecordCursor extends AbstractDescendingRecordListCursor {
-
     private final int columnIndex;
     private final IntHashSet deferredSymbolKeys;
     private final Function filter;
@@ -45,14 +46,16 @@ class LatestByValuesFilteredRecordCursor extends AbstractDescendingRecordListCur
     private boolean isMapPrepared;
 
     public LatestByValuesFilteredRecordCursor(
+            @NotNull CairoConfiguration configuration,
+            @NotNull RecordMetadata metadata,
             int columnIndex,
-            @NotNull DirectLongList rows,
+            @Nullable DirectLongList rows,
             @NotNull IntHashSet symbolKeys,
             @Nullable IntHashSet deferredSymbolKeys,
             @NotNull Function filter,
             @NotNull IntList columnIndexes
     ) {
-        super(rows, columnIndexes);
+        super(configuration, metadata, rows, columnIndexes);
         this.columnIndex = columnIndex;
         this.symbolKeys = symbolKeys;
         this.deferredSymbolKeys = deferredSymbolKeys;
@@ -61,9 +64,9 @@ class LatestByValuesFilteredRecordCursor extends AbstractDescendingRecordListCur
     }
 
     @Override
-    public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
+    public void of(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) throws SqlException {
         isMapPrepared = false;
-        super.of(dataFrameCursor, executionContext);
+        super.of(pageFrameCursor, executionContext);
         filter.init(this, executionContext);
     }
 
@@ -101,11 +104,11 @@ class LatestByValuesFilteredRecordCursor extends AbstractDescendingRecordListCur
             isMapPrepared = true;
         }
 
-        DataFrame frame;
-        while ((frame = dataFrameCursor.next()) != null) {
+        PageFrame frame;
+        while ((frame = frameCursor.next()) != null) {
             final int partitionIndex = frame.getPartitionIndex();
-            final long rowLo = frame.getRowLo();
-            final long rowHi = frame.getRowHi() - 1;
+            final long rowLo = frame.getPartitionLo();
+            final long rowHi = frame.getPartitionHi() - 1;
 
             recordA.jumpTo(frame.getPartitionIndex(), rowHi);
             for (long row = rowHi; row >= rowLo; row--) {

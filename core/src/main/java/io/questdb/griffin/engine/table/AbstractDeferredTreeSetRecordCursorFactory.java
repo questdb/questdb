@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
@@ -50,9 +51,11 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
             @Transient ObjList<Function> keyValueFuncs,
-            @Transient SymbolMapReader symbolMapReader
+            @Transient SymbolMapReader symbolMapReader,
+            @NotNull IntList columnIndexes,
+            @NotNull IntList columnSizeShifts
     ) {
-        super(metadata, dataFrameCursorFactory, configuration);
+        super(configuration, metadata, dataFrameCursorFactory, columnIndexes, columnSizeShifts);
 
         // we need two data structures, int hash set for symbol keys we can resolve here
         // and CharSequence hash set for symbols we cannot resolve
@@ -92,13 +95,13 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
     }
 
     @Override
-    protected RecordCursor getCursorInstance(
-            DataFrameCursor dataFrameCursor,
+    protected RecordCursor initRecordCursor(
+            PageFrameCursor pageFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
         if (deferredSymbolFuncs != null) {
             deferredSymbolKeys.clear();
-            StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(cursor.getColumnIndexes().getQuick(columnIndex));
+            StaticSymbolTable symbolTable = pageFrameCursor.getSymbolTable(cursor.getColumnIndexes().getQuick(columnIndex));
             for (int i = 0, n = deferredSymbolFuncs.size(); i < n; i++) {
                 Function symbolFunc = deferredSymbolFuncs.get(i);
                 final CharSequence symbol = symbolFunc.getStrA(null);
@@ -108,6 +111,6 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
                 }
             }
         }
-        return super.getCursorInstance(dataFrameCursor, executionContext);
+        return super.initRecordCursor(pageFrameCursor, executionContext);
     }
 }

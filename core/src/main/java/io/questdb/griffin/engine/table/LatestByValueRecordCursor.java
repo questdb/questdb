@@ -24,8 +24,10 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.sql.DataFrame;
-import io.questdb.cairo.sql.DataFrameCursor;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
@@ -33,8 +35,14 @@ import org.jetbrains.annotations.NotNull;
 
 class LatestByValueRecordCursor extends AbstractLatestByValueRecordCursor {
 
-    public LatestByValueRecordCursor(int columnIndex, int symbolKey, @NotNull IntList columnIndexes) {
-        super(columnIndexes, columnIndex, symbolKey);
+    public LatestByValueRecordCursor(
+            @NotNull CairoConfiguration configuration,
+            @NotNull RecordMetadata metadata,
+            int columnIndex,
+            int symbolKey,
+            @NotNull IntList columnIndexes
+    ) {
+        super(configuration, metadata, columnIndexes, columnIndex, symbolKey);
     }
 
     @Override
@@ -52,10 +60,10 @@ class LatestByValueRecordCursor extends AbstractLatestByValueRecordCursor {
     }
 
     @Override
-    public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) {
-        this.dataFrameCursor = dataFrameCursor;
-        recordA.of(dataFrameCursor.getTableReader());
-        recordB.of(dataFrameCursor.getTableReader());
+    public void of(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) {
+        this.frameCursor = pageFrameCursor;
+        recordA.of(pageFrameCursor.getTableReader());
+        recordB.of(pageFrameCursor.getTableReader());
         circuitBreaker = executionContext.getCircuitBreaker();
         isRecordFound = false;
         isFindPending = false;
@@ -78,11 +86,11 @@ class LatestByValueRecordCursor extends AbstractLatestByValueRecordCursor {
     }
 
     private void findRecord() {
-        DataFrame frame;
+        PageFrame frame;
         OUT:
-        while ((frame = this.dataFrameCursor.next()) != null) {
-            final long rowLo = frame.getRowLo();
-            final long rowHi = frame.getRowHi() - 1;
+        while ((frame = frameCursor.next()) != null) {
+            final long rowLo = frame.getPartitionLo();
+            final long rowHi = frame.getPartitionHi() - 1;
 
             recordA.jumpTo(frame.getPartitionIndex(), rowHi);
             for (long row = rowHi; row >= rowLo; row--) {

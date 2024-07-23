@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -49,6 +50,8 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
     private DirectLongList rowIds;
 
     public LatestByValueListRecordCursor(
+            @NotNull CairoConfiguration configuration,
+            @NotNull RecordMetadata metadata,
             int columnIndex,
             @Nullable Function filter,
             @NotNull IntList columnIndexes,
@@ -56,7 +59,7 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
             boolean restrictedByIncludedValues,
             boolean restrictedByExcludedValues
     ) {
-        super(columnIndexes);
+        super(configuration, metadata, columnIndexes);
         this.shrinkToCapacity = shrinkToCapacity;
         this.columnIndex = columnIndex;
         this.filter = filter;
@@ -105,12 +108,12 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
     }
 
     @Override
-    public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
-        this.dataFrameCursor = dataFrameCursor;
-        recordA.of(dataFrameCursor.getTableReader());
-        recordB.of(dataFrameCursor.getTableReader());
+    public void of(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) throws SqlException {
+        this.frameCursor = pageFrameCursor;
+        recordA.of(pageFrameCursor.getTableReader());
+        recordB.of(pageFrameCursor.getTableReader());
         circuitBreaker = executionContext.getCircuitBreaker();
-        dataFrameCursor.toTop();
+        pageFrameCursor.toTop();
         foundSize = 0;
         foundKeys.clear();
         rowIds.clear();
@@ -125,7 +128,7 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
             }
         } else if (restrictedByExcludedValues) {
             // Find all, but excluded set of symbol keys
-            StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
+            StaticSymbolTable symbolTable = pageFrameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
             int distinctSymbols = symbolTable.getSymbolCount();
             if (symbolTable.containsNullValue()) {
                 distinctSymbols++;
@@ -140,7 +143,7 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
             }
         } else {
             // Find latest by all distinct symbol values
-            StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
+            StaticSymbolTable symbolTable = pageFrameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
             int distinctSymbols = symbolTable.getSymbolCount();
             if (symbolTable.containsNullValue()) {
                 distinctSymbols++;
@@ -169,10 +172,10 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
 
     private void findAllNoFilter(int distinctCount) {
         assert filter == null;
-        DataFrame frame;
-        while ((frame = dataFrameCursor.next()) != null) {
-            long rowLo = frame.getRowLo();
-            long row = frame.getRowHi();
+        PageFrame frame;
+        while ((frame = frameCursor.next()) != null) {
+            long rowLo = frame.getPartitionLo();
+            long row = frame.getPartitionHi();
             recordA.jumpTo(frame.getPartitionIndex(), 0);
 
             while (row-- > rowLo) {
@@ -191,10 +194,10 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
 
     private void findAllWithFilter(int distinctCount) {
         assert filter != null;
-        DataFrame frame;
-        while ((frame = dataFrameCursor.next()) != null) {
-            long rowLo = frame.getRowLo();
-            long row = frame.getRowHi();
+        PageFrame frame;
+        while ((frame = frameCursor.next()) != null) {
+            long rowLo = frame.getPartitionLo();
+            long row = frame.getPartitionHi();
             recordA.jumpTo(frame.getPartitionIndex(), 0);
 
             while (row-- > rowLo) {
@@ -248,10 +251,10 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
 
     private void findRestrictedExcludedOnlyNoFilter(int distinctCount) {
         assert filter == null;
-        DataFrame frame;
-        while ((frame = dataFrameCursor.next()) != null) {
-            long rowLo = frame.getRowLo();
-            long row = frame.getRowHi();
+        PageFrame frame;
+        while ((frame = frameCursor.next()) != null) {
+            long rowLo = frame.getPartitionLo();
+            long row = frame.getPartitionHi();
             recordA.jumpTo(frame.getPartitionIndex(), 0);
 
             while (row-- > rowLo) {
@@ -270,10 +273,10 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
 
     private void findRestrictedExcludedOnlyWithFilter(int distinctCount) {
         assert filter != null;
-        DataFrame frame;
-        while ((frame = dataFrameCursor.next()) != null) {
-            long rowLo = frame.getRowLo();
-            long row = frame.getRowHi();
+        PageFrame frame;
+        while ((frame = frameCursor.next()) != null) {
+            long rowLo = frame.getPartitionLo();
+            long row = frame.getPartitionHi();
             recordA.jumpTo(frame.getPartitionIndex(), 0);
 
             while (row-- > rowLo) {
@@ -293,10 +296,10 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
     private void findRestrictedNoFilter() {
         assert filter == null;
         int searchSize = includedSymbolKeys.size();
-        DataFrame frame;
-        while ((frame = dataFrameCursor.next()) != null) {
-            long rowLo = frame.getRowLo();
-            long row = frame.getRowHi();
+        PageFrame frame;
+        while ((frame = frameCursor.next()) != null) {
+            long rowLo = frame.getPartitionLo();
+            long row = frame.getPartitionHi();
             recordA.jumpTo(frame.getPartitionIndex(), 0);
 
             while (row-- > rowLo) {

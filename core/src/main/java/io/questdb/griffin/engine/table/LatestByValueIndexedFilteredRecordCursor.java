@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
@@ -38,12 +39,14 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractLatestByValueReco
     private SqlExecutionCircuitBreaker circuitBreaker;
 
     public LatestByValueIndexedFilteredRecordCursor(
+            @NotNull CairoConfiguration configuration,
+            @NotNull RecordMetadata metadata,
             int columnIndex,
             int symbolKey,
             @NotNull Function filter,
             @NotNull IntList columnIndexes
     ) {
-        super(columnIndexes, columnIndex, symbolKey);
+        super(configuration, metadata, columnIndexes, columnIndex, symbolKey);
         this.filter = filter;
     }
 
@@ -62,10 +65,10 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractLatestByValueReco
     }
 
     @Override
-    public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
-        this.dataFrameCursor = dataFrameCursor;
-        recordA.of(dataFrameCursor.getTableReader());
-        recordB.of(dataFrameCursor.getTableReader());
+    public void of(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) throws SqlException {
+        this.frameCursor = pageFrameCursor;
+        recordA.of(pageFrameCursor.getTableReader());
+        recordB.of(pageFrameCursor.getTableReader());
         circuitBreaker = executionContext.getCircuitBreaker();
         filter.init(this, executionContext);
         isRecordFound = false;
@@ -95,16 +98,16 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractLatestByValueReco
     }
 
     private void findRecord() {
-        DataFrame frame;
+        PageFrame frame;
         // frame metadata is based on TableReader, which is "full" metadata
         // this cursor works with subset of columns, which warrants column index remap
         int frameColumnIndex = columnIndexes.getQuick(columnIndex);
-        while ((frame = dataFrameCursor.next()) != null) {
+        while ((frame = frameCursor.next()) != null) {
             circuitBreaker.statefulThrowExceptionIfTripped();
             final int partitionIndex = frame.getPartitionIndex();
             final BitmapIndexReader indexReader = frame.getBitmapIndexReader(frameColumnIndex, BitmapIndexReader.DIR_BACKWARD);
-            final long rowLo = frame.getRowLo();
-            final long rowHi = frame.getRowHi() - 1;
+            final long rowLo = frame.getPartitionLo();
+            final long rowHi = frame.getPartitionHi() - 1;
             recordA.jumpTo(partitionIndex, 0);
 
             RowCursor cursor = indexReader.getCursor(false, symbolKey, rowLo, rowHi);

@@ -27,8 +27,8 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderSelectedColumnRecord;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.IntList;
 
@@ -90,11 +90,11 @@ class SymbolIndexFilteredRowCursor implements RowCursor {
         this.symbolKey = TableUtils.toIndexKey(symbolKey);
     }
 
-    public SymbolIndexFilteredRowCursor of(DataFrame dataFrame) {
-        this.rowCursor = dataFrame
+    public SymbolIndexFilteredRowCursor of(PageFrame pageFrame) {
+        this.rowCursor = pageFrame
                 .getBitmapIndexReader(columnIndex, indexDirection)
-                .getCursor(cachedIndexReaderCursor, symbolKey, dataFrame.getRowLo(), dataFrame.getRowHi() - 1);
-        record.jumpTo(dataFrame.getPartitionIndex(), 0);
+                .getCursor(cachedIndexReaderCursor, symbolKey, pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1);
+        record.jumpTo(pageFrame.getPartitionIndex(), 0);
         return this;
     }
 

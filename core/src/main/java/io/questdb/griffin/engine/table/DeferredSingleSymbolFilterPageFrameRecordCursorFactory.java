@@ -95,7 +95,7 @@ public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends Page
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
         assert convertedToFrame;
         DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext, order);
-        initFwdPageFrameCursor(executionContext, dataFrameCursor);
+        initFwdPageFrameCursor(dataFrameCursor, executionContext);
         if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
             final CharSequence symbol = symbolFunc.getStrA(null);
             final StaticSymbolTable symbolMapReader = fwdPageFrameCursor.getSymbolTable(symbolColumnIndex);
@@ -124,11 +124,11 @@ public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends Page
     }
 
     @Override
-    protected RecordCursor getCursorInstance(
-            DataFrameCursor dataFrameCursor,
+    protected RecordCursor initRecordCursor(
+            PageFrameCursor pageFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
         assert !convertedToFrame;
-        return super.initRecordCursor(dataFrameCursor, executionContext);
+        return super.initRecordCursor(pageFrameCursor, executionContext);
     }
 }

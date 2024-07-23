@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -33,16 +34,20 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class LatestByValueDeferredFilteredRecordCursorFactory extends AbstractDeferredValueRecordCursorFactory {
+    private final CairoConfiguration configuration;
 
     public LatestByValueDeferredFilteredRecordCursorFactory(
+            @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
             Function symbolFunc,
             @Nullable Function filter,
-            @NotNull IntList columnIndexes
+            @NotNull IntList columnIndexes,
+            @NotNull IntList columnSizeShifts
     ) {
-        super(metadata, dataFrameCursorFactory, columnIndex, symbolFunc, filter, columnIndexes);
+        super(configuration, metadata, dataFrameCursorFactory, columnIndex, symbolFunc, filter, columnIndexes, columnSizeShifts);
+        this.configuration = configuration;
     }
 
     @Override
@@ -57,10 +62,10 @@ public class LatestByValueDeferredFilteredRecordCursorFactory extends AbstractDe
     }
 
     @Override
-    protected AbstractLatestByValueRecordCursor createDataFrameCursorFor(int symbolKey) {
+    protected AbstractLatestByValueRecordCursor createCursorFor(int symbolKey) {
         if (filter == null) {
-            return new LatestByValueRecordCursor(columnIndex, symbolKey, columnIndexes);
+            return new LatestByValueRecordCursor(configuration, getMetadata(), columnIndex, symbolKey, columnIndexes);
         }
-        return new LatestByValueFilteredRecordCursor(columnIndex, symbolKey, filter, columnIndexes);
+        return new LatestByValueFilteredRecordCursor(configuration, getMetadata(), columnIndex, symbolKey, filter, columnIndexes);
     }
 }

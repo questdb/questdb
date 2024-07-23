@@ -35,14 +35,16 @@ public class LatestByAllIndexedRecordCursorFactory extends AbstractTreeSetRecord
     protected final DirectLongList prefixes;
 
     public LatestByAllIndexedRecordCursorFactory(
-            @NotNull RecordMetadata metadata,
             @NotNull CairoConfiguration configuration,
+            @NotNull RecordMetadata metadata,
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
             @NotNull IntList columnIndexes,
+            @NotNull IntList columnSizeShifts,
             @NotNull LongList prefixes
     ) {
-        super(metadata, dataFrameCursorFactory, configuration);
+        super(configuration, metadata, dataFrameCursorFactory, columnIndexes, columnSizeShifts);
+
         try {
             this.prefixes = new DirectLongList(Math.max(2, prefixes.size()), MemoryTag.NATIVE_LATEST_BY_LONG_LIST);
             // copy into owned direct memory

@@ -30,6 +30,14 @@ import org.jetbrains.annotations.Nullable;
 
 public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
 
+    default void calculateSize(RecordCursor.Counter counter) {
+        PageFrame frame;
+        while ((frame = next()) != null) {
+            counter.add(frame.getPartitionHi() - frame.getPartitionLo());
+        }
+        toTop();
+    }
+
     @Override
     StaticSymbolTable getSymbolTable(int columnIndex);
 

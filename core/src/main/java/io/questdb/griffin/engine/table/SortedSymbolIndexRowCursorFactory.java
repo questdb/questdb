@@ -59,8 +59,8 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
     }
 
     @Override
-    public RowCursor getCursor(DataFrame dataFrame) {
-        cursor.of(dataFrame);
+    public RowCursor getCursor(PageFrame pageFrame) {
+        cursor.of(pageFrame);
         return cursor;
     }
 
@@ -155,8 +155,8 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
 
     private class ListBasedSymbolIndexRowCursor implements RowCursor {
         private RowCursor current;
-        private DataFrame dataFrame;
         private int index;
+        private PageFrame pageFrame;
 
         @Override
         public boolean hasNext() {
@@ -170,13 +170,13 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
 
         private boolean fetchNext() {
             while (index < symbolKeyLimit) {
-                current = dataFrame
+                current = pageFrame
                         .getBitmapIndexReader(columnIndexes.get(columnIndex), indexDirection)
                         .getCursor(
                                 true,
                                 symbolKeys.getQuick(index++),
-                                dataFrame.getRowLo(),
-                                dataFrame.getRowHi() - 1
+                                pageFrame.getPartitionLo(),
+                                pageFrame.getPartitionHi() - 1
                         );
 
                 if (current.hasNext()) {
@@ -186,8 +186,8 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
             return false;
         }
 
-        private void of(DataFrame dataFrame) {
-            this.dataFrame = dataFrame;
+        private void of(PageFrame pageFrame) {
+            this.pageFrame = pageFrame;
             this.index = 0;
             this.current = EmptyRowCursor.INSTANCE;
         }

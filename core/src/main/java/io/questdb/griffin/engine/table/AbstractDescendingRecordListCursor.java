@@ -24,8 +24,10 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DataUnavailableException;
-import io.questdb.cairo.sql.DataFrameCursor;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -33,17 +35,22 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 abstract class AbstractDescendingRecordListCursor extends AbstractPageFrameRecordCursor {
-
     protected final DirectLongList rows;
     protected SqlExecutionCircuitBreaker circuitBreaker;
     protected boolean isOpen;
     private long index;
     private boolean isTreeMapBuilt;
 
-    public AbstractDescendingRecordListCursor(DirectLongList rows, @NotNull IntList columnIndexes) {
-        super(columnIndexes);
+    public AbstractDescendingRecordListCursor(
+            @NotNull CairoConfiguration configuration,
+            @NotNull RecordMetadata metadata,
+            @Nullable DirectLongList rows,
+            @NotNull IntList columnIndexes
+    ) {
+        super(configuration, metadata, columnIndexes);
         this.rows = rows;
         this.isOpen = true;
     }
@@ -88,10 +95,10 @@ abstract class AbstractDescendingRecordListCursor extends AbstractPageFrameRecor
     }
 
     @Override
-    public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
-        this.dataFrameCursor = dataFrameCursor;
-        recordA.of(dataFrameCursor.getTableReader());
-        recordB.of(dataFrameCursor.getTableReader());
+    public void of(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) throws SqlException {
+        this.frameCursor = pageFrameCursor;
+        recordA.of(pageFrameCursor.getTableReader());
+        recordB.of(pageFrameCursor.getTableReader());
         circuitBreaker = executionContext.getCircuitBreaker();
         rows.clear();
         isTreeMapBuilt = false;

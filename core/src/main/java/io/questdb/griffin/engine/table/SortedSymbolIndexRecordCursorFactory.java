@@ -24,8 +24,9 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.sql.DataFrameCursor;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.DataFrameCursorFactory;
+import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
@@ -38,15 +39,20 @@ public class SortedSymbolIndexRecordCursorFactory extends AbstractPageFrameRecor
     private final PageFrameRecordCursorImpl cursor;
 
     public SortedSymbolIndexRecordCursorFactory(
+            @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
             boolean columnOrderAsc,
             int indexDirection,
-            @NotNull IntList columnIndexes
+            @NotNull IntList columnIndexes,
+            @NotNull IntList columnSizeShifts
     ) {
-        super(metadata, dataFrameCursorFactory);
+        super(configuration, metadata, dataFrameCursorFactory, columnIndexes, columnSizeShifts);
+
         cursor = new PageFrameRecordCursorImpl(
+                configuration,
+                metadata,
                 new SortedSymbolIndexRowCursorFactory(
                         columnIndex,
                         columnOrderAsc,
@@ -82,11 +88,11 @@ public class SortedSymbolIndexRecordCursorFactory extends AbstractPageFrameRecor
     }
 
     @Override
-    protected RecordCursor getCursorInstance(
-            DataFrameCursor dataFrameCursor,
+    protected RecordCursor initRecordCursor(
+            PageFrameCursor pageFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        cursor.of(dataFrameCursor, executionContext);
+        cursor.of(pageFrameCursor, executionContext);
         return cursor;
     }
 }

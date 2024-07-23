@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.*;
@@ -53,6 +54,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
     private final RowCursorFactory rowCursorFactory;
 
     public FilterOnValuesRecordCursorFactory(
+            @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             @NotNull @Transient ObjList<Function> keyValues,
@@ -64,9 +66,11 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
             boolean orderByTimestamp,
             int orderDirection,
             int indexDirection,
-            @NotNull IntList columnIndexes
+            @NotNull IntList columnIndexes,
+            @NotNull IntList columnSizeShifts
     ) {
-        super(metadata, dataFrameCursorFactory);
+        super(configuration, metadata, dataFrameCursorFactory, columnIndexes, columnSizeShifts);
+
         final int nKeyValues = keyValues.size();
         this.columnIndex = columnIndex;
         this.filter = filter;
@@ -90,7 +94,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
             heapCursorUsed = true;
             rowCursorFactory = new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx);
         }
-        cursor = new PageFrameRecordCursorImpl(rowCursorFactory, false, filter, columnIndexes);
+        cursor = new PageFrameRecordCursorImpl(configuration, metadata, rowCursorFactory, false, filter, columnIndexes);
         this.followedOrderByAdvice = orderByKeyColumn || orderByTimestamp;
     }
 
@@ -213,15 +217,15 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
     }
 
     @Override
-    protected RecordCursor getCursorInstance(
-            DataFrameCursor dataFrameCursor,
+    protected RecordCursor initRecordCursor(
+            PageFrameCursor pageFrameCursor,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         for (int i = 0, n = cursorFactories.size(); i < n; i++) {
-            cursorFactories.getQuick(i).getFunction().init(dataFrameCursor, sqlExecutionContext);
+            cursorFactories.getQuick(i).getFunction().init(pageFrameCursor, sqlExecutionContext);
         }
 
-        // sort values to facilitate duplicate removal (even for heap row cursor)  
+        // sort values to facilitate duplicate removal (even for heap row cursor)
         // sorting here can produce order of cursorFactories different from one shown by explain command       
         if (followedOrderByAdvice && orderDirection == QueryModel.ORDER_DIRECTION_ASCENDING) {
             cursorFactories.sort(COMPARATOR);
@@ -231,7 +235,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
 
         findDuplicates();
 
-        cursor.of(dataFrameCursor, sqlExecutionContext);
+        cursor.of(pageFrameCursor, sqlExecutionContext);
         if (filter != null) {
             filter.init(cursor, sqlExecutionContext);
         }

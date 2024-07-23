@@ -38,7 +38,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractDeferredTreeSetRecordCursorFactory {
-
     private final Function filter;
 
     public LatestByValuesIndexedFilteredRecordCursorFactory(
@@ -49,14 +48,16 @@ public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractDe
             @Transient ObjList<Function> keyValueFuncs,
             @Transient SymbolMapReader symbolMapReader,
             @Nullable Function filter,
-            @NotNull IntList columnIndexes
+            @NotNull IntList columnIndexes,
+            @NotNull IntList columnSizeShifts
     ) {
-        super(configuration, metadata, dataFrameCursorFactory, columnIndex, keyValueFuncs, symbolMapReader);
+        super(configuration, metadata, dataFrameCursorFactory, columnIndex, keyValueFuncs, symbolMapReader, columnIndexes, columnSizeShifts);
+
         try {
             if (filter != null) {
-                cursor = new LatestByValuesIndexedFilteredRecordCursor(columnIndex, rows, symbolKeys, deferredSymbolKeys, filter, columnIndexes);
+                cursor = new LatestByValuesIndexedFilteredRecordCursor(configuration, metadata, columnIndex, rows, symbolKeys, deferredSymbolKeys, filter, columnIndexes);
             } else {
-                cursor = new LatestByValuesIndexedRecordCursor(columnIndex, symbolKeys, deferredSymbolKeys, rows, columnIndexes);
+                cursor = new LatestByValuesIndexedRecordCursor(configuration, metadata, columnIndex, symbolKeys, deferredSymbolKeys, rows, columnIndexes);
             }
             this.filter = filter;
         } catch (Throwable th) {

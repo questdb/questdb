@@ -2362,25 +2362,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         partitionByColumnIndexes
                 );
                 return new LatestByAllSymbolsFilteredRecordCursorFactory(
-                        metadata,
                         configuration,
+                        metadata,
                         dataFrameCursorFactory,
                         RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA),
                         keyTypes,
                         partitionByColumnIndexes,
                         partitionBySymbolCounts,
                         filter,
-                        columnIndexes
+                        columnIndexes,
+                        columnSizeShifts
                 );
             }
             return new LatestByAllFilteredRecordCursorFactory(
-                    metadata,
                     configuration,
+                    metadata,
                     dataFrameCursorFactory,
                     RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA),
                     keyTypes,
                     filter,
-                    columnIndexes
+                    columnIndexes,
+                    columnSizeShifts
             );
         }
 
@@ -2408,7 +2410,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         filter,
                         indexed,
                         func,
-                        columnIndexes
+                        columnIndexes,
+                        columnSizeShifts
                 );
             }
 
@@ -2458,21 +2461,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                     if (symbol == SymbolTable.VALUE_NOT_FOUND) {
                         return new LatestByValueDeferredIndexedFilteredRecordCursorFactory(
+                                configuration,
                                 metadata,
                                 dataFrameCursorFactory,
                                 latestByIndex,
                                 symbolValueFunc,
                                 filter,
-                                columnIndexes
+                                columnIndexes,
+                                columnSizeShifts
                         );
                     }
                     return new LatestByValueIndexedFilteredRecordCursorFactory(
+                            configuration,
                             metadata,
                             dataFrameCursorFactory,
                             latestByIndex,
                             symbol,
                             filter,
-                            columnIndexes
+                            columnIndexes,
+                            columnSizeShifts
                     );
                 }
 
@@ -2484,7 +2491,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         intrinsicModel.keyValueFuncs,
                         symbolMapReader,
                         filter,
-                        columnIndexes
+                        columnIndexes,
+                        columnSizeShifts
                 );
             }
 
@@ -2501,7 +2509,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         intrinsicModel.keyValueFuncs,
                         intrinsicModel.keyExcludedValueFuncs,
                         filter,
-                        columnIndexes
+                        columnIndexes,
+                        columnSizeShifts
                 );
             }
 
@@ -2515,22 +2524,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     : symbolMapReader.keyOf(symbolKeyFunc.getStrA(null));
             if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
                 return new LatestByValueDeferredFilteredRecordCursorFactory(
+                        configuration,
                         metadata,
                         dataFrameCursorFactory,
                         latestByIndex,
                         symbolKeyFunc,
                         filter,
-                        columnIndexes
+                        columnIndexes,
+                        columnSizeShifts
                 );
             }
 
             return new LatestByValueFilteredRecordCursorFactory(
+                    configuration,
                     metadata,
                     dataFrameCursorFactory,
                     latestByIndex,
                     symbolKey,
                     filter,
-                    columnIndexes
+                    columnIndexes,
+                    columnSizeShifts
             );
         }
         // we select all values of "latest by" column
@@ -2540,11 +2553,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         if (indexed && filter == null) {
             return new LatestByAllIndexedRecordCursorFactory(
-                    metadata,
                     configuration,
+                    metadata,
                     dataFrameCursorFactory,
                     latestByIndex,
                     columnIndexes,
+                    columnSizeShifts,
                     prefixes
             );
         } else {
@@ -2554,7 +2568,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     dataFrameCursorFactory,
                     latestByIndex,
                     filter,
-                    columnIndexes
+                    columnIndexes,
+                    columnSizeShifts
             );
         }
     }
@@ -4868,13 +4883,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         return new EmptyTableRecordCursorFactory(myMeta);
                     }
                     return new FilterOnSubQueryRecordCursorFactory(
+                            configuration,
                             myMeta,
                             dfcFactory,
                             rcf,
                             keyColumnIndex,
                             filter,
                             func,
-                            columnIndexes
+                            columnIndexes,
+                            columnSizeShifts
                     );
                 }
                 assert nKeyValues > 0 || nKeyExcludedValues > 0;
@@ -5001,6 +5018,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
 
                     return new FilterOnValuesRecordCursorFactory(
+                            configuration,
                             myMeta,
                             dfcFactory,
                             intrinsicModel.keyValueFuncs,
@@ -5012,7 +5030,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             orderByTimestamp,
                             getOrderByDirectionOrDefault(model, 0),
                             indexDirection,
-                            columnIndexes
+                            columnIndexes,
+                            columnSizeShifts
                     );
                 } else if (nKeyExcludedValues > 0) {
                     if (reader.getSymbolMapReader(keyColumnIndex).getSymbolCount() < configuration.getMaxSymbolNotEqualsCount()) {
@@ -5029,6 +5048,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
 
                         return new FilterOnExcludedValuesRecordCursorFactory(
+                                configuration,
                                 myMeta,
                                 dfcFactory,
                                 intrinsicModel.keyExcludedValueFuncs,
@@ -5040,6 +5060,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 getOrderByDirectionOrDefault(model, 0),
                                 indexDirection,
                                 columnIndexes,
+                                columnSizeShifts,
                                 configuration.getMaxSymbolNotEqualsCount()
                         );
                     } else if (intrinsicModel.keyExcludedNodes.size() > 0) {
@@ -5101,12 +5122,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             // check that intrinsicModel.intervals hit only one partition
                             myMeta.setTimestampIndex(-1);
                             return new SortedSymbolIndexRecordCursorFactory(
+                                    configuration,
                                     myMeta,
                                     dfcFactory,
                                     columnIndex,
                                     getOrderByDirectionOrDefault(model, 0) == QueryModel.ORDER_DIRECTION_ASCENDING,
                                     indexDirection,
-                                    columnIndexes
+                                    columnIndexes,
+                                    columnSizeShifts
                             );
                         }
                     }
@@ -5173,11 +5196,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             int latestByColumnIndex = listColumnFilterA.getColumnIndexFactored(0);
             if (myMeta.isColumnIndexed(latestByColumnIndex)) {
                 return new LatestByAllIndexedRecordCursorFactory(
-                        myMeta,
                         configuration,
+                        myMeta,
                         new FullBwdDataFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta),
                         listColumnFilterA.getColumnIndexFactored(0),
                         columnIndexes,
+                        columnSizeShifts,
                         prefixes
                 );
             }
@@ -5191,7 +5215,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         new FullBwdDataFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta),
                         latestByColumnIndex,
                         null,
-                        columnIndexes
+                        columnIndexes,
+                        columnSizeShifts
                 );
             }
         }
@@ -5206,26 +5231,28 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 partitionByColumnIndexes.add(listColumnFilterA.getColumnIndexFactored(i));
             }
             return new LatestByAllSymbolsFilteredRecordCursorFactory(
-                    myMeta,
                     configuration,
+                    myMeta,
                     new FullBwdDataFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta),
                     RecordSinkFactory.getInstance(asm, myMeta, listColumnFilterA),
                     keyTypes,
                     partitionByColumnIndexes,
                     null,
                     null,
-                    columnIndexes
+                    columnIndexes,
+                    columnSizeShifts
             );
         }
 
         return new LatestByAllFilteredRecordCursorFactory(
-                myMeta,
                 configuration,
+                myMeta,
                 new FullBwdDataFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta),
                 RecordSinkFactory.getInstance(asm, myMeta, listColumnFilterA),
                 keyTypes,
                 null,
-                columnIndexes
+                columnIndexes,
+                columnSizeShifts
         );
     }
 

@@ -40,11 +40,7 @@ import static io.questdb.cairo.sql.DataFrameCursorFactory.*;
 
 public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
     protected final PageFrameRecordCursor cursor;
-    protected final int pageFrameMaxRows;
-    protected final int pageFrameMinRows;
     protected final RowCursorFactory rowCursorFactory;
-    private final IntList columnIndexes;
-    private final IntList columnSizeShifts;
     private final Function filter;
     private final boolean followsOrderByAdvice;
     private final boolean framingSupported;
@@ -66,7 +62,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
             @NotNull IntList columnSizeShifts,
             boolean supportsRandomAccess
     ) {
-        super(metadata, dataFrameCursorFactory);
+        super(configuration, metadata, dataFrameCursorFactory, columnIndexes, columnSizeShifts);
 
         this.rowCursorFactory = rowCursorFactory;
         cursor = new PageFrameRecordCursorImpl(
@@ -80,10 +76,6 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
         this.followsOrderByAdvice = followsOrderByAdvice;
         this.filter = filter;
         this.framingSupported = framingSupported;
-        this.columnIndexes = columnIndexes;
-        this.columnSizeShifts = columnSizeShifts;
-        pageFrameMinRows = configuration.getSqlPageFrameMinRows();
-        pageFrameMaxRows = configuration.getSqlPageFrameMaxRows();
         this.supportsRandomAccess = supportsRandomAccess;
     }
 
@@ -213,13 +205,6 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
             );
         }
         return fwdPageFrameCursor.of(dataFrameCursor);
-    }
-
-    @Override
-    protected PageFrameCursor initPageFrameCursor(SqlExecutionContext executionContext) throws SqlException {
-        DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext, ORDER_ANY);
-        // TODO(puzpuzpuz): should we consider the dataFrameCursorFactory's order?
-        return initFwdPageFrameCursor(dataFrameCursor, executionContext);
     }
 
     @Override

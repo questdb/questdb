@@ -27,6 +27,7 @@ package io.questdb.cairo.sql;
 import io.questdb.cairo.TableReader;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * A cursor for navigating through data frames.
@@ -42,6 +43,15 @@ public interface DataFrameCursor extends QuietCloseable, SymbolTableSource {
      */
     @Nullable
     DataFrame next();
+
+    /**
+     * Reload the data frame and return the cursor to the beginning of
+     * the data frame
+     *
+     * @return true when reload data has changed, false otherwise
+     */
+    @TestOnly
+    boolean reload();
 
     /**
      * Return the cursor to the first data frame.

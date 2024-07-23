@@ -24,13 +24,11 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.sql.DataFrame;
-import io.questdb.cairo.sql.DataFrameCursor;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -53,6 +51,8 @@ class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordLis
     private long possibleCombinations;
 
     public LatestByAllSymbolsFilteredRecordCursor(
+            @NotNull CairoConfiguration configuration,
+            @NotNull RecordMetadata metadata,
             @NotNull Map map,
             @NotNull DirectLongList rows,
             @NotNull RecordSink recordSink,
@@ -61,7 +61,7 @@ class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordLis
             @NotNull IntList partitionByColumnIndexes,
             @Nullable IntList partitionBySymbolCounts
     ) {
-        super(rows, columnIndexes);
+        super(configuration, metadata, rows, columnIndexes);
         this.map = map;
         this.recordSink = recordSink;
         this.filter = filter != null ? filter : NO_OP_FILTER;
@@ -83,12 +83,12 @@ class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordLis
     }
 
     @Override
-    public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
+    public void of(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) throws SqlException {
         if (!isOpen) {
             isOpen = true;
             map.reopen();
         }
-        super.of(dataFrameCursor, executionContext);
+        super.of(pageFrameCursor, executionContext);
         filter.init(this, executionContext);
         possibleCombinations = -1;
     }
@@ -105,7 +105,7 @@ class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordLis
             int symbolCount = partitionBySymbolCounts != null ? partitionBySymbolCounts.getQuick(i) : Integer.MAX_VALUE;
             assert symbolCount > 0;
             int columnIndex = partitionByColumnIndexes.getQuick(i);
-            StaticSymbolTable symbolMapReader = dataFrameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
+            StaticSymbolTable symbolMapReader = frameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
             int distinctSymbols = symbolMapReader.getSymbolCount();
             if (symbolMapReader.containsNullValue()) {
                 distinctSymbols++;
@@ -137,12 +137,13 @@ class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordLis
         if (possibleCombinations < 0) {
             possibleCombinations = countSymbolCombinations();
         }
-        DataFrame frame;
+
+        PageFrame frame;
         OUTER:
-        while ((frame = dataFrameCursor.next()) != null) {
+        while ((frame = frameCursor.next()) != null) {
             final int partitionIndex = frame.getPartitionIndex();
-            final long rowLo = frame.getRowLo();
-            final long rowHi = frame.getRowHi() - 1;
+            final long rowLo = frame.getPartitionLo();
+            final long rowHi = frame.getPartitionHi() - 1;
 
             recordA.jumpTo(frame.getPartitionIndex(), rowHi);
             for (long row = rowHi; row >= rowLo; row--) {

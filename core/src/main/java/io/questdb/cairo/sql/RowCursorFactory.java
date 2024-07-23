@@ -48,7 +48,7 @@ public interface RowCursorFactory extends Plannable {
         }
     }
 
-    RowCursor getCursor(DataFrame dataFrame);
+    RowCursor getCursor(PageFrame pageFrame);
 
     default void init(TableReader tableReader, SqlExecutionContext sqlExecutionContext) throws SqlException {
         // no-op

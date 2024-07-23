@@ -25,7 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.TableReader;
-import io.questdb.cairo.sql.DataFrame;
+import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.RowCursorFactory;
 import io.questdb.griffin.PlanSink;
@@ -53,9 +53,9 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
     }
 
     @Override
-    public RowCursor getCursor(DataFrame dataFrame) {
+    public RowCursor getCursor(PageFrame pageFrame) {
         for (int i = 0, n = cursorFactoriesIdx[0]; i < n; i++) {
-            cursors.extendAndSet(i, cursorFactories.getQuick(i).getCursor(dataFrame));
+            cursors.extendAndSet(i, cursorFactories.getQuick(i).getCursor(pageFrame));
         }
         cursor.init();
         return cursor;

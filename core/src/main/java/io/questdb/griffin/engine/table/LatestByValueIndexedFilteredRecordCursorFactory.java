@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
@@ -37,15 +38,24 @@ public class LatestByValueIndexedFilteredRecordCursorFactory extends AbstractPag
     private final Function filter;
 
     public LatestByValueIndexedFilteredRecordCursorFactory(
+            @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
             int symbolKey,
             @NotNull Function filter,
-            @NotNull IntList columnIndexes
+            @NotNull IntList columnIndexes,
+            @NotNull IntList columnSizeShifts
     ) {
-        super(metadata, dataFrameCursorFactory);
-        cursor = new LatestByValueIndexedFilteredRecordCursor(columnIndex, TableUtils.toIndexKey(symbolKey), filter, columnIndexes);
+        super(configuration, metadata, dataFrameCursorFactory, columnIndexes, columnSizeShifts);
+        cursor = new LatestByValueIndexedFilteredRecordCursor(
+                configuration,
+                metadata,
+                columnIndex,
+                TableUtils.toIndexKey(symbolKey),
+                filter,
+                columnIndexes
+        );
         this.filter = filter;
     }
 
@@ -74,11 +84,11 @@ public class LatestByValueIndexedFilteredRecordCursorFactory extends AbstractPag
     }
 
     @Override
-    protected RecordCursor getCursorInstance(
-            DataFrameCursor dataFrameCursor,
+    protected RecordCursor initRecordCursor(
+            PageFrameCursor pageFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        cursor.of(dataFrameCursor, executionContext);
+        cursor.of(pageFrameCursor, executionContext);
         return cursor;
     }
 }

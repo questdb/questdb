@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -37,7 +38,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordCursor {
-
     private final int columnIndex;
     private final IntHashSet deferredSymbolKeys;
     private final Function filter;
@@ -51,6 +51,8 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
     private long lim;
 
     public LatestByValuesIndexedFilteredRecordCursor(
+            @NotNull CairoConfiguration configuration,
+            @NotNull RecordMetadata metadata,
             int columnIndex,
             DirectLongList rows,
             @NotNull IntHashSet symbolKeys,
@@ -58,7 +60,7 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
             Function filter,
             @NotNull IntList columnIndexes
     ) {
-        super(columnIndexes);
+        super(configuration, metadata, columnIndexes);
         this.rows = rows;
         this.columnIndex = columnIndex;
         this.symbolKeys = symbolKeys;
@@ -81,10 +83,10 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
     }
 
     @Override
-    public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
-        this.dataFrameCursor = dataFrameCursor;
-        recordA.of(dataFrameCursor.getTableReader());
-        recordB.of(dataFrameCursor.getTableReader());
+    public void of(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) throws SqlException {
+        this.frameCursor = pageFrameCursor;
+        recordA.of(pageFrameCursor.getTableReader());
+        recordB.of(pageFrameCursor.getTableReader());
         filter.init(this, executionContext);
         circuitBreaker = executionContext.getCircuitBreaker();
         rows.clear();
@@ -134,16 +136,16 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
             }
         }
 
-        DataFrame frame;
+        PageFrame frame;
         // frame metadata is based on TableReader, which is "full" metadata
         // this cursor works with subset of columns, which warrants column index remap
         int frameColumnIndex = columnIndexes.getQuick(columnIndex);
-        while ((frame = dataFrameCursor.next()) != null && found.size() < keyCount) {
+        while ((frame = frameCursor.next()) != null && found.size() < keyCount) {
             circuitBreaker.statefulThrowExceptionIfTripped();
             final int partitionIndex = frame.getPartitionIndex();
             final BitmapIndexReader indexReader = frame.getBitmapIndexReader(frameColumnIndex, BitmapIndexReader.DIR_BACKWARD);
-            final long rowLo = frame.getRowLo();
-            final long rowHi = frame.getRowHi() - 1;
+            final long rowLo = frame.getPartitionLo();
+            final long rowHi = frame.getPartitionHi() - 1;
             this.recordA.jumpTo(partitionIndex, 0);
 
             for (int i = 0, n = symbolKeys.size(); i < n; i++) {

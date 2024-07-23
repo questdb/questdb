@@ -40,26 +40,27 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
-
     private Function filter;
 
     public LatestByAllFilteredRecordCursorFactory(
-            @NotNull RecordMetadata metadata,
             @NotNull CairoConfiguration configuration,
+            @NotNull RecordMetadata metadata,
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             @NotNull RecordSink recordSink,
             @Transient @NotNull ColumnTypes columnTypes,
             @Nullable Function filter,
-            @NotNull IntList columnIndexes
+            @NotNull IntList columnIndexes,
+            @NotNull IntList columnSizeShifts
     ) {
-        super(metadata, dataFrameCursorFactory, configuration);
+        super(configuration, metadata, dataFrameCursorFactory, columnIndexes, columnSizeShifts);
+
         try {
             this.filter = filter;
             Map map = MapFactory.createOrderedMap(configuration, columnTypes);
             if (filter == null) {
-                cursor = new LatestByAllRecordCursor(map, rows, recordSink, columnIndexes);
+                cursor = new LatestByAllRecordCursor(configuration, metadata, map, rows, recordSink, columnIndexes);
             } else {
-                cursor = new LatestByAllFilteredRecordCursor(map, rows, recordSink, filter, columnIndexes);
+                cursor = new LatestByAllFilteredRecordCursor(configuration, metadata, map, rows, recordSink, filter, columnIndexes);
             }
         } catch (Throwable th) {
             close();

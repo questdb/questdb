@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -36,22 +37,23 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 abstract class AbstractDeferredValueRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
-
     protected final int columnIndex;
     protected final IntList columnIndexes;
-    protected Function filter;
     private final Function symbolFunc;
+    protected Function filter;
     private AbstractLatestByValueRecordCursor cursor;
 
     public AbstractDeferredValueRecordCursorFactory(
+            @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
             @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
             Function symbolFunc,
             @Nullable Function filter,
-            IntList columnIndexes
+            @NotNull IntList columnIndexes,
+            @NotNull IntList columnSizeShifts
     ) {
-        super(metadata, dataFrameCursorFactory);
+        super(configuration, metadata, dataFrameCursorFactory, columnIndexes, columnSizeShifts);
         this.columnIndex = columnIndex;
         this.symbolFunc = symbolFunc;
         this.filter = filter;
@@ -65,18 +67,18 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractPageFram
         sink.child(dataFrameCursorFactory);
     }
 
-    private boolean lookupDeferredSymbol(DataFrameCursor dataFrameCursor) {
+    private boolean lookupDeferredSymbol(PageFrameCursor pageFrameCursor) {
         final CharSequence symbol = symbolFunc.getStrA(null);
-        int newSymbolKey = dataFrameCursor.getSymbolTable(columnIndexes.get(columnIndex)).keyOf(symbol);
+        int newSymbolKey = pageFrameCursor.getSymbolTable(columnIndexes.get(columnIndex)).keyOf(symbol);
         if (newSymbolKey == SymbolTable.VALUE_NOT_FOUND) {
-            dataFrameCursor.close();
+            pageFrameCursor.close();
             return true;
         }
 
         if (cursor != null) {
             cursor.setSymbolKey(newSymbolKey);
         } else {
-            cursor = createDataFrameCursorFor(newSymbolKey);
+            cursor = createCursorFor(newSymbolKey);
         }
 
         return false;
@@ -88,20 +90,20 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractPageFram
         filter = Misc.free(filter);
     }
 
-    protected abstract AbstractLatestByValueRecordCursor createDataFrameCursorFor(int symbolKey);
+    protected abstract AbstractLatestByValueRecordCursor createCursorFor(int symbolKey);
 
     @Override
-    protected RecordCursor getCursorInstance(
-            DataFrameCursor dataFrameCursor,
+    protected RecordCursor initRecordCursor(
+            PageFrameCursor pageFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        if (lookupDeferredSymbol(dataFrameCursor)) {
+        if (lookupDeferredSymbol(pageFrameCursor)) {
             if (recordCursorSupportsRandomAccess()) {
                 return EmptyTableRandomRecordCursor.INSTANCE;
             }
             return EmptyTableRecordCursor.INSTANCE;
         }
-        cursor.of(dataFrameCursor, executionContext);
+        cursor.of(pageFrameCursor, executionContext);
         return cursor;
     }
 }

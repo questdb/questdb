@@ -35,11 +35,11 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
-
     private final boolean entityCursor;
     private final Function filter;
     private final RowCursorFactory rowCursorFactory;
     private boolean areCursorsPrepared;
+    private int frameCount = 0;
     private boolean isSkipped;
     private RowCursor rowCursor;
 
@@ -65,7 +65,7 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             areCursorsPrepared = true;
         }
 
-        if (!frameCursor.supportsRandomAccess() || filter != null || rowCursorFactory.isUsingIndex()) {
+        if (filter != null || rowCursorFactory.isUsingIndex()) {
             while (hasNext()) {
                 counter.inc();
             }
@@ -96,16 +96,22 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
 
         try {
             if (rowCursor != null && rowCursor.hasNext()) {
-                // TODO(puzpuzpuz): this is broken
-                recordA.setRowIndex(rowCursor.next());
+                final long rowIndex = rowCursor.next();
+                recordA.init(frameMemory);
+                recordA.setRowIndex(rowIndex);
                 return true;
             }
 
-            DataFrame dataFrame;
-            while ((dataFrame = frameCursor.next()) != null) {
-                rowCursor = rowCursorFactory.getCursor(dataFrame);
+            PageFrame pageFrame;
+            while ((pageFrame = frameCursor.next()) != null) {
+                rowCursor = rowCursorFactory.getCursor(pageFrame);
                 if (rowCursor.hasNext()) {
-                    recordA.jumpTo(dataFrame.getPartitionIndex(), rowCursor.next());
+                    frameAddressCache.add(frameCount, pageFrame);
+                    frameMemory = frameMemoryPool.navigateTo(frameCount++);
+
+                    final long rowIndex = rowCursor.next();
+                    recordA.init(frameMemory);
+                    recordA.setRowIndex(rowIndex);
                     return true;
                 }
             }
@@ -132,11 +138,20 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         rowCursorFactory.init(frameCursor.getTableReader(), sqlExecutionContext);
         rowCursor = null;
         areCursorsPrepared = false;
+        frameCount = 0;
     }
 
     @Override
     public long size() {
-        return entityCursor ? frameCursor.size() : -1;
+        if (entityCursor) {
+            long size = 0;
+            PageFrame pageFrame;
+            while ((pageFrame = frameCursor.next()) != null) {
+                size += pageFrame.getPartitionHi() - pageFrame.getPartitionLo();
+            }
+            return size;
+        }
+        return -1;
     }
 
     @Override
@@ -150,7 +165,7 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             areCursorsPrepared = true;
         }
 
-        if (!frameCursor.supportsRandomAccess() || filter != null || rowCursorFactory.isUsingIndex()) {
+        if (filter != null || rowCursorFactory.isUsingIndex()) {
             while (rowCount.get() > 0 && hasNext()) {
                 rowCount.dec();
             }
@@ -158,12 +173,29 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             return;
         }
 
-        DataFrame dataFrame = frameCursor.skipTo(rowCount);
+        long skipToPosition = rowCount.get();
+        PageFrame pageFrame;
+        while ((pageFrame = frameCursor.next()) != null) {
+            frameAddressCache.add(frameCount, pageFrame);
+            frameMemory = frameMemoryPool.navigateTo(frameCount++);
+
+            long frameSize = pageFrame.getPartitionHi() - pageFrame.getPartitionLo();
+            if (frameSize > skipToPosition) {
+                rowCount.dec(skipToPosition);
+                break;
+            }
+            rowCount.dec(frameSize);
+            skipToPosition -= frameSize;
+        }
+
         isSkipped = true;
-        // data frame is null when table has no partitions so there's nothing to skip
-        if (dataFrame != null) {
-            rowCursor = rowCursorFactory.getCursor(dataFrame);
-            recordA.jumpTo(dataFrame.getPartitionIndex(), dataFrame.getRowLo()); // move to partition, rowlo doesn't matter
+        // page frame is null when table has no partitions so there's nothing to skip
+        if (pageFrame != null) {
+            rowCursor = rowCursorFactory.getCursor(pageFrame);
+
+            recordA.init(frameMemory);
+            // move to frame, rowlo doesn't matter
+            recordA.setRowIndex(0);
         }
     }
 
@@ -178,6 +210,7 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             filter.toTop();
         }
         frameCursor.toTop();
+        frameCount = 0;
         rowCursor = null;
         isSkipped = false;
     }

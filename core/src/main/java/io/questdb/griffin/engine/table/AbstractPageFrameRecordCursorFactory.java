@@ -25,21 +25,38 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.sql.DataFrameCursorFactory;
-import io.questdb.cairo.sql.PageFrameCursor;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
+import org.jetbrains.annotations.NotNull;
+
+import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ANY;
 
 abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursorFactory {
+    protected final IntList columnIndexes;
+    protected final IntList columnSizeShifts;
     protected final DataFrameCursorFactory dataFrameCursorFactory;
+    protected final int pageFrameMaxRows;
+    protected final int pageFrameMinRows;
+    protected FwdTableReaderPageFrameCursor pageFrameCursor;
 
-    public AbstractPageFrameRecordCursorFactory(RecordMetadata metadata, DataFrameCursorFactory dataFrameCursorFactory) {
+    public AbstractPageFrameRecordCursorFactory(
+            @NotNull CairoConfiguration configuration,
+            @NotNull RecordMetadata metadata,
+            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
+            @NotNull IntList columnIndexes,
+            @NotNull IntList columnSizeShifts
+    ) {
         super(metadata);
         this.dataFrameCursorFactory = dataFrameCursorFactory;
+        this.columnIndexes = columnIndexes;
+        this.columnSizeShifts = columnSizeShifts;
+        pageFrameMinRows = configuration.getSqlPageFrameMinRows();
+        pageFrameMaxRows = configuration.getSqlPageFrameMaxRows();
     }
 
     @Override
@@ -73,7 +90,27 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
         Misc.free(dataFrameCursorFactory);
     }
 
-    protected abstract PageFrameCursor initPageFrameCursor(SqlExecutionContext executionContext) throws SqlException;
+    protected PageFrameCursor initFwdPageFrameCursor(
+            DataFrameCursor dataFrameCursor,
+            SqlExecutionContext executionContext
+    ) {
+        if (pageFrameCursor == null) {
+            pageFrameCursor = new FwdTableReaderPageFrameCursor(
+                    columnIndexes,
+                    columnSizeShifts,
+                    1, // used for single-threaded exec plans
+                    pageFrameMinRows,
+                    pageFrameMaxRows
+            );
+        }
+        return pageFrameCursor.of(dataFrameCursor);
+    }
+
+    protected PageFrameCursor initPageFrameCursor(SqlExecutionContext executionContext) throws SqlException {
+        DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext, ORDER_ANY);
+        // TODO(puzpuzpuz): should we consider the dataFrameCursorFactory's order?
+        return initFwdPageFrameCursor(dataFrameCursor, executionContext);
+    }
 
     protected abstract RecordCursor initRecordCursor(
             PageFrameCursor frameCursor,

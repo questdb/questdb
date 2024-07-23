@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -34,23 +35,24 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class LatestByValueFilteredRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
-
     private final PageFrameRecordCursor cursor;
     private final Function filter;
 
     public LatestByValueFilteredRecordCursorFactory(
-            RecordMetadata metadata,
-            DataFrameCursorFactory dataFrameCursorFactory,
+            @NotNull CairoConfiguration configuration,
+            @NotNull RecordMetadata metadata,
+            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
             int columnIndex,
             int symbolKey,
             @Nullable Function filter,
-            @NotNull IntList columnIndexes
+            @NotNull IntList columnIndexes,
+            @NotNull IntList columnSizeShifts
     ) {
-        super(metadata, dataFrameCursorFactory);
+        super(configuration, metadata, dataFrameCursorFactory, columnIndexes, columnSizeShifts);
         if (filter == null) {
-            this.cursor = new LatestByValueRecordCursor(columnIndex, symbolKey, columnIndexes);
+            this.cursor = new LatestByValueRecordCursor(configuration, metadata, columnIndex, symbolKey, columnIndexes);
         } else {
-            this.cursor = new LatestByValueFilteredRecordCursor(columnIndex, symbolKey, filter, columnIndexes);
+            this.cursor = new LatestByValueFilteredRecordCursor(configuration, metadata, columnIndex, symbolKey, filter, columnIndexes);
         }
         this.filter = filter;
     }
@@ -74,11 +76,11 @@ public class LatestByValueFilteredRecordCursorFactory extends AbstractPageFrameR
     }
 
     @Override
-    protected RecordCursor getCursorInstance(
-            DataFrameCursor dataFrameCursor,
+    protected RecordCursor initRecordCursor(
+            PageFrameCursor pageFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        cursor.of(dataFrameCursor, executionContext);
+        cursor.of(pageFrameCursor, executionContext);
         return cursor;
     }
 }
