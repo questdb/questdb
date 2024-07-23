@@ -3763,7 +3763,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     sql,
                     "Limit lo: 10\n" +
                             "    LatestBy\n" +
-                            "        SampleBy\n" +
+                            "        Sample By\n" +
+                            "          fill: none\n" +
                             "          values: [max(s)]\n" +
                             "            DataFrame\n" +
                             "                Row forward scan\n" +
@@ -6538,7 +6539,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "create table a ( i int, ts timestamp) timestamp(ts);",
                     "select first(i) from a sample by 1h align to first observation",
-                    "SampleBy\n" +
+                    "Sample By\n" +
+                            "  fill: none\n" +
                             "  values: [first(i)]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
@@ -6567,7 +6569,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "create table a ( i int, ts timestamp) timestamp(ts);",
                     "select first(i) from a sample by 1h fill(linear) align to first observation",
-                    "SampleBy\n" +
+                    "Sample By\n" +
                             "  fill: linear\n" +
                             "  values: [first(i)]\n" +
                             "    DataFrame\n" +
@@ -6577,7 +6579,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select first(i) from a sample by 1h fill(linear) align to calendar",
-                    "SampleBy\n" +
+                    "Sample By\n" +
                             "  fill: linear\n" +
                             "  values: [first(i)]\n" +
                             "    DataFrame\n" +
@@ -6593,7 +6595,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "create table a ( i int, ts timestamp) timestamp(ts);",
                     "select first(i) from a sample by 1h fill(null) align to first observation",
-                    "SampleBy\n" +
+                    "Sample By\n" +
                             "  fill: null\n" +
                             "  values: [first(i)]\n" +
                             "    DataFrame\n" +
@@ -6601,15 +6603,35 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        Frame forward scan on: a\n"
             );
 
+            // without rewrite
             assertPlanNoLeakCheck(
-                    "select first(i) from a sample by 1h fill(null) align to calendar",
-                    "SampleBy\n" +
+                    "select first(i) from a sample by 1h fill(null) align to calendar with offset '10:00'",
+                    "Sample By\n" +
                             "  fill: null\n" +
                             "  values: [first(i)]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: a\n"
             );
+
+            // with rewrite
+            assertPlanNoLeakCheck(
+                    "select first(i) from a sample by 1h fill(null) align to calendar",
+                    "SelectedRecord\n" +
+                            "    Sort\n" +
+                            "      keys: [ts]\n" +
+                            "        Fill Range\n" +
+                            "          stride: '1h'\n" +
+                            "          values: [null]\n" +
+                            "            Async Group By workers: 1\n" +
+                            "              keys: [ts]\n" +
+                            "              values: [first(i)]\n" +
+                            "              filter: null\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: a\n"
+            );
+
         });
     }
 
@@ -6619,7 +6641,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "create table a ( i int, s symbol, ts timestamp) timestamp(ts);",
                     "select s, first(i) from a sample by 1h fill(prev) align to first observation",
-                    "SampleBy\n" +
+                    "Sample By\n" +
                             "  fill: prev\n" +
                             "  keys: [s]\n" +
                             "  values: [first(i)]\n" +
@@ -6630,7 +6652,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select s, first(i) from a sample by 1h fill(prev) align to calendar",
-                    "SampleBy\n" +
+                    "Sample By\n" +
                             "  fill: prev\n" +
                             "  keys: [s]\n" +
                             "  values: [first(i)]\n" +
@@ -6647,7 +6669,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "create table a ( i int, ts timestamp) timestamp(ts);",
                     "select first(i) from a sample by 1h fill(prev) align to first observation",
-                    "SampleByFillPrev\n" +
+                    "Sample By\n" +
+                            "  fill: prev\n" +
                             "  values: [first(i)]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
@@ -6656,7 +6679,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select first(i) from a sample by 1h fill(prev) align to calendar",
-                    "SampleByFillPrev\n" +
+                    "Sample By\n" +
+                            "  fill: prev\n" +
                             "  values: [first(i)]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
@@ -6671,7 +6695,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "create table a ( i int, s symbol, ts timestamp) timestamp(ts);",
                     "select s, first(i) from a sample by 1h fill(1) align to first observation",
-                    "SampleBy\n" +
+                    "Sample By\n" +
                             "  fill: value\n" +
                             "  keys: [s]\n" +
                             "  values: [first(i)]\n" +
@@ -6682,7 +6706,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select s, first(i) from a sample by 1h fill(1) align to calendar",
-                    "SampleBy\n" +
+                    "Sample By\n" +
                             "  fill: value\n" +
                             "  keys: [s]\n" +
                             "  values: [first(i)]\n" +
@@ -6699,7 +6723,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "create table a ( i int, ts timestamp) timestamp(ts);",
                     "select first(i) from a sample by 1h fill(1) align to first observation",
-                    "SampleBy\n" +
+                    "Sample By\n" +
                             "  fill: value\n" +
                             "  values: [first(i)]\n" +
                             "    DataFrame\n" +
@@ -6707,14 +6731,33 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        Frame forward scan on: a\n"
             );
 
+            // without rewrite
             assertPlanNoLeakCheck(
-                    "select first(i) from a sample by 1h fill(1) align to calendar",
-                    "SampleBy\n" +
+                    "select first(i) from a sample by 1h fill(1) align to calendar with offset '10:00'",
+                    "Sample By\n" +
                             "  fill: value\n" +
                             "  values: [first(i)]\n" +
                             "    DataFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: a\n"
+            );
+
+            // with rewrite
+            assertPlanNoLeakCheck(
+                    "select first(i) from a sample by 1h fill(1) align to calendar",
+                    "SelectedRecord\n" +
+                            "    Sort\n" +
+                            "      keys: [ts]\n" +
+                            "        Fill Range\n" +
+                            "          stride: '1h'\n" +
+                            "          values: [1]\n" +
+                            "            Async Group By workers: 1\n" +
+                            "              keys: [ts]\n" +
+                            "              values: [first(i)]\n" +
+                            "              filter: null\n" +
+                            "                DataFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: a\n"
             );
         });
     }
@@ -6766,7 +6809,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "create table a ( i int, l long, ts timestamp) timestamp(ts);",
                     "select l, i, first(i) from a sample by 1h align to first observation",
-                    "SampleBy\n" +
+                    "Sample By\n" +
                             "  keys: [l,i]\n" +
                             "  values: [first(i)]\n" +
                             "    DataFrame\n" +
@@ -6796,7 +6839,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "create table a ( i int, l long, ts timestamp) timestamp(ts);",
                     "select l, i, first(i) from a sample by 1h align to first observation",
-                    "SampleBy\n" +
+                    "Sample By\n" +
                             "  keys: [l,i]\n" +
                             "  values: [first(i)]\n" +
                             "    DataFrame\n" +
@@ -6826,7 +6869,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "create table a ( i int, l long, ts timestamp) timestamp(ts);",
                     "select l, first(i) from a sample by 1h fill(null) align to first observation",
-                    "SampleBy\n" +
+                    "Sample By\n" +
                             "  fill: null\n" +
                             "  keys: [l]\n" +
                             "  values: [first(i)]\n" +
@@ -6837,7 +6880,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select l, first(i) from a sample by 1h fill(null) align to calendar",
-                    "SampleBy\n" +
+                    "Sample By\n" +
                             "  fill: null\n" +
                             "  keys: [l]\n" +
                             "  values: [first(i)]\n" +
@@ -6854,7 +6897,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "create table a (i int, l long, ts timestamp) timestamp(ts);",
                     "select l, first(i) from a sample by 1d fill(linear) align to first observation",
-                    "SampleBy\n" +
+                    "Sample By\n" +
                             "  fill: linear\n" +
                             "  keys: [l]\n" +
                             "  values: [first(i)]\n" +
@@ -6865,7 +6908,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select l, first(i) from a sample by 1d fill(linear) align to calendar",
-                    "SampleBy\n" +
+                    "Sample By\n" +
                             "  fill: linear\n" +
                             "  keys: [l]\n" +
                             "  values: [first(i)]\n" +
@@ -6882,7 +6925,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "create table a ( i int, l long, ts timestamp) timestamp(ts);",
                     "select l, first(i), last(i) from a sample by 1d fill(1,2) align to first observation",
-                    "SampleBy\n" +
+                    "Sample By\n" +
                             "  fill: value\n" +
                             "  keys: [l]\n" +
                             "  values: [first(i),last(i)]\n" +
@@ -6893,7 +6936,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select l, first(i), last(i) from a sample by 1d fill(1,2) align to calendar",
-                    "SampleBy\n" +
+                    "Sample By\n" +
                             "  fill: value\n" +
                             "  keys: [l]\n" +
                             "  values: [first(i),last(i)]\n" +
@@ -6910,7 +6953,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "create table a ( i int, l long, ts timestamp) timestamp(ts);",
                     "select l, first(i), last(i) from a sample by 1d fill(prev,prev) align to first observation",
-                    "SampleBy\n" +
+                    "Sample By\n" +
                             "  fill: value\n" +
                             "  keys: [l]\n" +
                             "  values: [first(i),last(i)]\n" +
@@ -6921,7 +6964,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select l, first(i), last(i) from a sample by 1d fill(prev,prev) align to calendar",
-                    "SampleBy\n" +
+                    "Sample By\n" +
                             "  fill: value\n" +
                             "  keys: [l]\n" +
                             "  values: [first(i),last(i)]\n" +
@@ -8281,7 +8324,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select ts, count(*)  from a sample by 1s ALIGN TO FIRST OBSERVATION limit -5",
                     "Limit lo: -5\n" +
-                            "    SampleBy\n" +
+                            "    Sample By\n" +
+                            "      fill: none\n" +
                             "      values: [count(*)]\n" +
                             "        DataFrame\n" +
                             "            Row forward scan\n" +
