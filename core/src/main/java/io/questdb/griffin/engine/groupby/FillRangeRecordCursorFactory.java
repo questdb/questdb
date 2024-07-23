@@ -78,6 +78,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         this.timestampIndex = timestampIndex;
         this.valueFuncs = fillValues;
         this.metadata = metadata;
+        valueFuncs.insert(timestampIndex, 1, null);
     }
 
     @Override
@@ -309,24 +310,6 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             maxTimestamp = toFunc == TimestampConstant.NULL ? Long.MIN_VALUE : toTimestamp;
         }
 
-        private void initValueFuncs(ObjList<Function> valueFuncs) {
-            // can't just check null, as we use this as the placeholder value
-            if (valueFuncs.size() < timestampIndex) {
-                // timestamp is the last column, so we add it
-                valueFuncs.insert(timestampIndex, 1, null);
-                return;
-            }
-
-            // else we grab the value in the corresponding slot
-            final Function func = valueFuncs.getQuick(timestampIndex);
-
-            // if it is a real function, i.e we've not added our placeholder null
-            if (func != null) {
-                // then we insert at this position
-                valueFuncs.insert(timestampIndex, 1, null);
-            }
-        }
-
         private void moveToNextBucket() {
             bucketIndex++;
             nextBucketTimestamp = timestampSampler.nextTimestamp(nextBucketTimestamp);
@@ -359,7 +342,6 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             if (presentRecords == null) {
                 presentRecords = new BitSet(toFunc != TimestampConstant.NULL ? timestampSampler.bucketIndex(toTimestamp) : DEFAULT_BITSET_SIZE);
             }
-            initValueFuncs(valueFuncs);
             initBounds(fromFunc, toFunc);
             toTop();
         }
