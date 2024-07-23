@@ -28,6 +28,8 @@ import io.questdb.std.str.Sinkable;
 
 public interface TimestampSampler extends Sinkable {
 
+    int bucketIndex(long timestamp);
+
     default long getBucketSize() {
         throw new UnsupportedOperationException();
     }

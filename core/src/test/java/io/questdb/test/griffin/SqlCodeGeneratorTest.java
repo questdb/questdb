@@ -6768,7 +6768,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     "select min(x), sym timestamp from test1 sample by 15s align to first observation order by min",
                     "Sort\n" +
                             "  keys: [min]\n" +
-                            "    SampleBy\n" +
+                            "    Sample By\n" +
                             "      keys: [timestamp]\n" +
                             "      values: [min(x)]\n" +
                             "        SelectedRecord\n" +
