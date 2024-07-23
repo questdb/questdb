@@ -184,7 +184,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         private int timestampIndex;
         private TimestampSampler timestampSampler;
         private long toTimestamp;
-        private ObjList<Function> values;
+        private ObjList<Function> valueFuncs;
 
         @Override
         public void close() {
@@ -266,7 +266,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             if (col == timestampIndex) {
                 return fillingTimestampFunc;
             }
-            return values.getQuick(col);
+            return valueFuncs.getQuick(col);
         }
 
         private void initBounds(Function fromFunc, Function toFunc) {
@@ -324,20 +324,21 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 @NotNull Function fromFunc,
                 @NotNull Function toFunc,
                 CharSequence stride,
-                ObjList<Function> values,
+                ObjList<Function> valueFuncs,
                 int timestampIndex,
                 SqlExecutionContext executionContext
         ) throws SqlException {
             this.baseCursor = baseCursor;
             this.timestampIndex = timestampIndex;
-            this.values = values;
+            this.valueFuncs = valueFuncs;
+            Function.init(valueFuncs, baseCursor, executionContext);
             fromFunc.init(baseCursor, executionContext);
             toFunc.init(baseCursor, executionContext);
             initTimestamps(fromFunc, toFunc, stride);
             if (presentRecords == null) {
                 presentRecords = new BitSet(toFunc != TimestampConstant.NULL ? timestampSampler.bucketIndex(toTimestamp) : DEFAULT_BITSET_SIZE);
             }
-            values.insert(timestampIndex, 1, null);
+            valueFuncs.insert(timestampIndex, 1, null);
             initBounds(fromFunc, toFunc);
             toTop();
         }
