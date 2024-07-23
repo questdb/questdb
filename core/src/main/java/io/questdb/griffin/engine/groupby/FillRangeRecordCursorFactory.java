@@ -310,8 +310,19 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         private void initValueFuncs(ObjList<Function> valueFuncs) {
-            final Function func = valueFuncs.getQuiet(timestampIndex);
-            if (func != null || valueFuncs.size() < timestampIndex) {
+            // can't just check null, as we use this as the placeholder value
+            if (valueFuncs.size() < timestampIndex) {
+                // timestamp is the last column, so we add it
+                valueFuncs.insert(timestampIndex, 1, null);
+                return;
+            }
+
+            // else we grab the value in the corresponding slot
+            final Function func = valueFuncs.getQuick(timestampIndex);
+
+            // if it is a real function, i.e we've not added our placeholder null
+            if (func != null) {
+                // then we insert at this position
                 valueFuncs.insert(timestampIndex, 1, null);
             }
         }

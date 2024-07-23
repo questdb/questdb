@@ -4918,7 +4918,7 @@ public class SqlOptimiser implements Mutable {
         }
 
         // union
-        rewriteSampleByFromTo(model.getUnionModel()); // todo: [NW] test for this
+        rewriteSampleByFromTo(model.getUnionModel());
     }
 
     // flatParent = true means that parent model does not have selected columns
