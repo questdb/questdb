@@ -343,16 +343,6 @@ public interface CairoConfiguration {
 
     long getSequencerCheckInterval();
 
-    /**
-     * Returns database instance id. The instance id is used by the snapshot recovery mechanism:
-     * on database start the id is compared with the id stored in a snapshot, if any. If the ids
-     * are different, snapshot recovery is being triggered.
-     *
-     * @return instance id.
-     */
-    @NotNull
-    CharSequence getSnapshotInstanceId();
-
     @NotNull
     CharSequence getSnapshotRoot(); // same as root/../snapshot
 
@@ -514,6 +504,8 @@ public interface CairoConfiguration {
 
     long getWalEventAppendPageSize();
 
+    double getWalLagRowsMultiplier();
+
     long getWalMaxLagSize();
 
     int getWalMaxLagTxnCount();
@@ -543,8 +535,6 @@ public interface CairoConfiguration {
      * @see #getWalSegmentRolloverRowCount()
      */
     long getWalSegmentRolloverSize();
-
-    double getWalLagRowsMultiplier();
 
     int getWalTxnNotificationQueueCapacity();
 

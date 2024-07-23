@@ -264,7 +264,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long sharedWorkerSleepThreshold;
     private final long sharedWorkerSleepTimeout;
     private final long sharedWorkerYieldThreshold;
-    private final String snapshotInstanceId;
     private final boolean snapshotRecoveryEnabled;
     private final String snapshotRoot;
     private final long spinLockTimeout;
@@ -652,7 +651,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.cairoAttachPartitionSuffix = getString(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX, TableUtils.ATTACHABLE_DIR_MARKER);
         this.cairoAttachPartitionCopy = getBoolean(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_COPY, false);
 
-        this.snapshotInstanceId = getString(properties, env, PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, "");
         this.snapshotRecoveryEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SNAPSHOT_RECOVERY_ENABLED, true);
         this.devModeEnabled = getBoolean(properties, env, PropertyKey.DEV_MODE_ENABLED, false);
 
@@ -1705,26 +1703,30 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     public static class PropertyValidator {
         protected final Map<ConfigPropertyKey, String> deprecatedSettings = new HashMap<>();
-        protected final Map<String, String> obsoleteSettings = new HashMap<>();
+        protected final Map<String, String> hardObsoleteSettings = new HashMap<>(); // fail when used
+        protected final Map<String, String> softObsoleteSettings = new HashMap<>(); // only warn when used
 
         public PropertyValidator() {
-            registerObsolete(
+            registerHardObsolete(
                     "line.tcp.commit.timeout",
                     PropertyKey.LINE_TCP_COMMIT_INTERVAL_DEFAULT,
                     PropertyKey.LINE_TCP_COMMIT_INTERVAL_FRACTION
             );
-            registerObsolete(
+            registerHardObsolete(
                     "cairo.timestamp.locale",
                     PropertyKey.CAIRO_DATE_LOCALE
             );
-            registerObsolete(
+            registerHardObsolete(
                     "pg.timestamp.locale",
                     PropertyKey.PG_DATE_LOCALE
             );
-            registerObsolete(
+            registerHardObsolete(
                     "cairo.sql.append.page.size",
                     PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE
             );
+            registerSoftObsolete("cairo.snapshot.instance.id", "Snapshot recovery is now triggered by the presence of a trigger file," +
+                    " not by a Cairo snapshot ID. Please review the latest documentation for the" +
+                    " current snapshot recovery mechanism.");
 
             registerDeprecated(
                     PropertyKey.HTTP_MIN_BIND_TO,
@@ -1852,7 +1854,10 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         public ValidationResult validate(Properties properties) {
             // Settings that used to be valid but no longer are.
-            Map<String, String> obsolete = new HashMap<>();
+            Map<String, String> hardObsolete = new HashMap<>();
+
+            // Soft obsolete settings that are no longer valid, but when used they result in a warning rather than error
+            Map<String, String> softObsolete = new HashMap<>();
 
             // Settings that are still valid but are now superseded by newer ones.
             Map<String, String> deprecated = new HashMap<>();
@@ -1868,16 +1873,21 @@ public class PropServerConfiguration implements ServerConfiguration {
                         deprecated.put(propName, deprecationMsg);
                     }
                 } else {
-                    String obsoleteMsg = obsoleteSettings.get(propName);
+                    String obsoleteMsg = hardObsoleteSettings.get(propName);
                     if (obsoleteMsg != null) {
-                        obsolete.put(propName, obsoleteMsg);
+                        hardObsolete.put(propName, obsoleteMsg);
                     } else {
-                        incorrect.add(propName);
+                        obsoleteMsg = softObsoleteSettings.get(propName);
+                        if (obsoleteMsg != null) {
+                            softObsolete.put(propName, obsoleteMsg);
+                        } else {
+                            incorrect.add(propName);
+                        }
                     }
                 }
             }
 
-            if (obsolete.isEmpty() && deprecated.isEmpty() && incorrect.isEmpty()) {
+            if (hardObsolete.isEmpty() && softObsolete.isEmpty() && deprecated.isEmpty() && incorrect.isEmpty()) {
                 return null;
             }
 
@@ -1895,10 +1905,17 @@ public class PropServerConfiguration implements ServerConfiguration {
                 }
             }
 
-            if (!obsolete.isEmpty()) {
-                isError = true;
+            if (!hardObsolete.isEmpty() || !softObsolete.isEmpty()) {
                 sb.append("    Obsolete settings (no longer recognized):\n");
-                for (Map.Entry<String, String> entry : obsolete.entrySet()) {
+                for (Map.Entry<String, String> entry : hardObsolete.entrySet()) {
+                    isError = true;
+                    sb.append("        * ");
+                    sb.append(entry.getKey());
+                    sb.append(": ");
+                    sb.append(entry.getValue());
+                    sb.append('\n');
+                }
+                for (Map.Entry<String, String> entry : softObsolete.entrySet()) {
                     sb.append("        * ");
                     sb.append(entry.getKey());
                     sb.append(": ");
@@ -1951,8 +1968,12 @@ public class PropServerConfiguration implements ServerConfiguration {
             registerReplacements(deprecatedSettings, old, replacements);
         }
 
-        protected void registerObsolete(String old, ConfigPropertyKey... replacements) {
-            registerReplacements(obsoleteSettings, old, replacements);
+        protected void registerHardObsolete(String old, ConfigPropertyKey... replacements) {
+            registerReplacements(hardObsoleteSettings, old, replacements);
+        }
+
+        protected void registerSoftObsolete(String old, String hint) {
+            softObsoleteSettings.put(old, hint);
         }
     }
 
@@ -2496,11 +2517,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public @NotNull CharSequence getSnapshotInstanceId() {
-            return snapshotInstanceId;
-        }
-
-        @Override
         public @NotNull CharSequence getSnapshotRoot() {
             return snapshotRoot;
         }
@@ -2875,6 +2891,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public double getWalLagRowsMultiplier() {
+            return walSquashUncommittedRowsMultiplier;
+        }
+
+        @Override
         public long getWalMaxLagSize() {
             return walMaxLagSize;
         }
@@ -2912,11 +2933,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getWalSegmentRolloverSize() {
             return walSegmentRolloverSize;
-        }
-
-        @Override
-        public double getWalLagRowsMultiplier() {
-            return walSquashUncommittedRowsMultiplier;
         }
 
         @Override

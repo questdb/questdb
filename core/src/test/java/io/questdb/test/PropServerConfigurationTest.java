@@ -289,7 +289,6 @@ public class PropServerConfigurationTest {
         TestUtils.assertEquals(new File(root, "conf").getAbsolutePath(), configuration.getCairoConfiguration().getConfRoot());
         TestUtils.assertEquals(new File(root, "snapshot").getAbsolutePath(), configuration.getCairoConfiguration().getSnapshotRoot());
 
-        Assert.assertEquals("", configuration.getCairoConfiguration().getSnapshotInstanceId());
         Assert.assertTrue(configuration.getCairoConfiguration().isSnapshotRecoveryEnabled());
 
         // assert mime types
@@ -1306,7 +1305,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(64, configuration.getCopyPoolCapacity());
         Assert.assertEquals(8, configuration.getDoubleToStrCastScale());
         Assert.assertEquals(3, configuration.getFloatToStrCastScale());
-        Assert.assertEquals("test-id-42", configuration.getSnapshotInstanceId());
         Assert.assertFalse(configuration.isSnapshotRecoveryEnabled());
 
         Assert.assertEquals(CommitMode.ASYNC, configuration.getCommitMode());

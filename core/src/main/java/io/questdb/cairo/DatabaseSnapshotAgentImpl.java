@@ -39,7 +39,10 @@ import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
-import io.questdb.std.str.*;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -410,7 +413,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
 
                         path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).concat(TableUtils.SNAPSHOT_META_FILE_NAME);
                         mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
-                        mem.putStr(configuration.getSnapshotInstanceId());
+                        mem.putStr(""); // snapshot id is no longer used, but we need to keep the file
                         mem.close();
 
                         // Flush dirty pages and filesystem metadata to disk
@@ -459,43 +462,36 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
             dstPath.of(root);
             final int rootLen = dstPath.size();
 
+            dstPath.parent().concat(TableUtils.RESTORE_SNAPSHOT_TRIGGER_FILE_NAME);
+            boolean triggerExists = ff.exists(dstPath.$());
+
             // Check if the snapshot dir exists.
             if (!ff.exists(srcPath.slash$())) {
+                if (triggerExists) {
+                    throw CairoException.nonCritical().put("snapshot trigger file found, but snapshot dir does not exist [dir=").put(srcPath).put(", trigger=").put(dstPath).put(']');
+                }
                 return;
             }
 
             // Check if the snapshot metadata file exists.
             srcPath.trimTo(snapshotRootLen).concat(TableUtils.SNAPSHOT_META_FILE_NAME);
             if (!ff.exists(srcPath.$())) {
-                return;
-            }
-
-            // Check if the snapshot instance id is different from what's in the snapshot.
-            memFile.smallFile(ff, srcPath.$(), MemoryTag.MMAP_DEFAULT);
-
-            final CharSequence currentInstanceId = configuration.getSnapshotInstanceId();
-            CharSequence snapshotInstanceId = memFile.getStrA(0);
-            if (Chars.empty(snapshotInstanceId)) {
-                // Check _snapshot.txt file too reading it as a text file.
-                srcPath.trimTo(snapshotRootLen).concat(TableUtils.SNAPSHOT_META_FILE_NAME_TXT);
-                String snapshotIdTxt = TableUtils.readText(ff, srcPath.$());
-                if (snapshotIdTxt != null) {
-                    snapshotInstanceId = snapshotIdTxt.trim();
+                if (triggerExists) {
+                    throw CairoException.nonCritical().put("snapshot trigger file found, but snapshot metadata file does not exist [file=").put(srcPath).put(", trigger=").put(dstPath).put(']');
                 }
-            }
-
-            if (Chars.empty(currentInstanceId) || Chars.empty(snapshotInstanceId) || Chars.equals(currentInstanceId, snapshotInstanceId)) {
-                LOG.info()
-                        .$("skipping snapshot recovery [currentId=").$(currentInstanceId)
-                        .$(", previousId=").$(snapshotInstanceId)
-                        .I$();
                 return;
             }
 
-            LOG.info()
-                    .$("starting snapshot recovery [currentId=").$(currentInstanceId)
-                    .$(", previousId=").$(snapshotInstanceId)
-                    .I$();
+            if (!triggerExists) {
+                LOG.info().$("skipping detected snapshot. create a trigger file to install the snapshot [snapshot=").$(srcPath).$(", trigger=").$(dstPath).I$();
+                return;
+            }
+            if (!ff.removeQuiet(dstPath.$())) {
+                throw CairoException.critical(ff.errno())
+                        .put("could not remove restore trigger file. file permission issues? [file=").put(dstPath).put(']');
+            }
+            dstPath.of(root);
+
 
             // OK, we need to recover from the snapshot.
 

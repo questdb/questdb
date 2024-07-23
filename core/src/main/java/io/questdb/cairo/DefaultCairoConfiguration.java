@@ -570,11 +570,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public @NotNull CharSequence getSnapshotInstanceId() {
-        return "";
-    }
-
-    @Override
     public @NotNull CharSequence getSnapshotRoot() {
         return snapshotRoot;
     }
@@ -952,6 +947,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public double getWalLagRowsMultiplier() {
+        return 20;
+    }
+
+    @Override
     public long getWalMaxLagSize() {
         return 75 * Numbers.SIZE_1MB;
     }
@@ -984,11 +984,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getWalSegmentRolloverSize() {
         return 0;  // watermark level disabled.
-    }
-
-    @Override
-    public double getWalLagRowsMultiplier() {
-        return 20;
     }
 
     @Override
