@@ -5228,7 +5228,7 @@ public class SampleByTest extends AbstractCairoTest {
             ddl(DDL_FROMTO);
             drainWalQueue();
             assertSql(
-                    "ts\tavg\n" +
+                    "ts1\tavg\n" +
                             "2017-12-30T00:00:00.000000Z\t72.5\n" +
                             "2018-01-04T00:00:00.000000Z\t264.5\n" +
                             "2018-01-09T00:00:00.000000Z\t432.5\n",

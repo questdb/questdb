@@ -4842,10 +4842,23 @@ public class SqlOptimiser implements Mutable {
             ExpressionNode intervalClause = null;
 
             ExpressionNode timestamp = fromToModel.getTimestamp();
+
+            QueryModel toAddWhereClause = fromToModel;
+
+            if (timestamp == null) {
+                // we probably need to check for a where clause
+                if (whereClause != null) {
+                    toAddWhereClause = whereModel;
+                    timestamp = whereModel.getTimestamp();
+                }
+            }
+
+            assert timestamp != null;
+
             if (Chars.indexOf(timestamp.token, '.') < 0) {
                 // prefix the timestamp column name
                 CharacterStoreEntry e = characterStore.newEntry();
-                e.put(fromToModel.getTableName()).putAscii('.').put(timestamp.token);
+                e.put(toAddWhereClause.getTableName()).putAscii('.').put(timestamp.token);
                 CharSequence prefixedTimestamp = e.toImmutable();
                 timestamp = expressionNodePool.next().of(LITERAL, prefixedTimestamp, timestamp.precedence, timestamp.position);
             }
@@ -4889,9 +4902,9 @@ public class SqlOptimiser implements Mutable {
                 andNode.lhs = intervalClause;
                 andNode.rhs = whereClause;
                 andNode.paramCount = 2;
-                fromToModel.setWhereClause(andNode);
+                toAddWhereClause.setWhereClause(andNode);
             } else {
-                fromToModel.setWhereClause(intervalClause);
+                toAddWhereClause.setWhereClause(intervalClause);
             }
         }
 
