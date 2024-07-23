@@ -69,9 +69,12 @@ public class TestOs {
 
         URL resource = TestOs.class.getResource("/io/questdb/bin/" + Os.name + '-' + Os.archName + '/' + rustLibName);
         if (resource != null) {
-            String absolutePathPreCompiled = resource.getFile();
-            char separator = io.questdb.std.Files.SEPARATOR;
-            String sourcesPath = absolutePathPreCompiled.substring(0, absolutePathPreCompiled.indexOf(separator + "target" + separator));
+            String absolutePathPreCompiled = resource.getPath();
+            if (Os.isWindows() && absolutePathPreCompiled.charAt(0) == '/') {
+                // Remove forward /
+                absolutePathPreCompiled = absolutePathPreCompiled.substring(1);
+            }
+            String sourcesPath = absolutePathPreCompiled.substring(0, absolutePathPreCompiled.indexOf("/target/"));
             Path absoluteDevReleasePath = Paths.get(sourcesPath + "/rust/qdb-sqllogictest/target/release/" + rustLibName).toAbsolutePath();
             Path absoluteDevDebugPath = Paths.get(sourcesPath + "/rust/qdb-sqllogictest/target/debug/" + rustLibName).toAbsolutePath();
             Path absolutePrdPath = Paths.get(absolutePathPreCompiled);
