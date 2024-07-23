@@ -53,10 +53,10 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
         this.initialCapacity = this.capacity;
     }
 
-    public void add(long x) {
+    public void add(long value) {
         checkCapacity();
         assert pos < limit;
-        Unsafe.getUnsafe().putLong(pos, x);
+        Unsafe.getUnsafe().putLong(pos, value);
         pos += Long.BYTES;
     }
 
@@ -82,8 +82,8 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
         pos = address;
     }
 
-    public void clear(long b) {
-        zero(b);
+    public void clear(long zeroValue) {
+        zero(zeroValue);
         pos = address;
     }
 

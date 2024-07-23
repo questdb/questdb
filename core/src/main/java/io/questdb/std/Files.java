@@ -124,6 +124,15 @@ public final class Files {
         return -1;
     }
 
+    public static int detach(int fd) {
+        // do not close `stdin` and `stdout`
+        if (fd > 1) {
+            assert auditClose(fd);
+            OPEN_FILE_COUNT.decrementAndGet();
+        }
+        return fd;
+    }
+
     public static native int copy(long from, long to);
 
     public static int copy(LPSZ from, LPSZ to) {

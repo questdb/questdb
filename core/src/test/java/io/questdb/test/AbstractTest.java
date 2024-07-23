@@ -44,6 +44,7 @@ public class AbstractTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
+        TestOs.init();
         // it is necessary to initialise logger before tests start
         // logger doesn't relinquish memory until JVM stops
         // which causes memory leak detector to fail should logger be
