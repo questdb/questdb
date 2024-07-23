@@ -60,6 +60,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short SET_DEDUP_ENABLE = RENAME_TABLE + 1; // 15
     public final static short SET_DEDUP_DISABLE = SET_DEDUP_ENABLE + 1; // 16
     public final static short CHANGE_COLUMN_TYPE = SET_DEDUP_DISABLE + 1; // 17
+    public final static short CONVERT_PARTITION = CHANGE_COLUMN_TYPE + 1; // 18
     private static final long BIT_INDEXED = 0x1L;
     private static final long BIT_DEDUP_KEY = BIT_INDEXED << 1;
     private final static Log LOG = LogFactory.getLog(AlterOperation.class);
@@ -121,6 +122,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     break;
                 case DROP_PARTITION:
                     applyDropPartition(svc);
+                    break;
+                case CONVERT_PARTITION:
+                    applyConvertPartition(svc);
                     break;
                 case DETACH_PARTITION:
                     applyDetachPartition(svc);
@@ -404,6 +408,21 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                         svc.getPartitionBy(),
                         partitionTimestamp
                 );
+            }
+        }
+    }
+
+    private void applyConvertPartition(MetadataService svc) {
+        // long list is a set of two longs per partition - (timestamp, partitionNamePosition)
+        for (int i = 0, n = extraInfo.size() / 2; i < n; i++) {
+            long partitionTimestamp = extraInfo.getQuick(i * 2);
+            if (!svc.convertPartition(partitionTimestamp)) {
+                throw CairoException.partitionManipulationRecoverable()
+                        .put("could not convert partition to parquet [table=").put(tableToken != null ? tableToken.getTableName() : "<null>")
+                        .put(", partitionTimestamp=").ts(partitionTimestamp)
+                        .put(", partitionBy=").put(PartitionBy.toString(svc.getPartitionBy()))
+                        .put(']')
+                        .position((int) extraInfo.getQuick(i * 2 + 1));
             }
         }
     }

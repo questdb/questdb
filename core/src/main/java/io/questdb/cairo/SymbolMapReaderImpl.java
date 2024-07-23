@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -95,6 +96,16 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     @Override
     public int getSymbolCount() {
         return symbolCount;
+    }
+
+    @Override
+    public MemoryR getSymbolOffsetsColumn() {
+        return offsetMem;
+    }
+
+    @Override
+    public MemoryR getSymbolValuesColumn() {
+        return charMem;
     }
 
     @Override

@@ -607,9 +607,9 @@ public class Bootstrap {
         path.seekZ();
         LogRecord rec = log.advisoryW().$(" - ").$(kind).$(" root: [path=").$(rootDir).$(", magic=0x");
         if (fsStatus < 0 || (fsStatus == 0 && Os.type == Os.DARWIN && Os.arch == Os.ARCH_AARCH64)) {
-            rec.$hex(-fsStatus).$("] -> SUPPORTED").$();
+            rec.$hex(-fsStatus).$(", fs=").$(path).$("] -> SUPPORTED").$();
         } else {
-            rec.$hex(fsStatus).$("] -> UNSUPPORTED (SYSTEM COULD BE UNSTABLE)").$();
+            rec.$hex(fsStatus).$(", fs=").$(path).$("] -> UNSUPPORTED (SYSTEM COULD BE UNSTABLE)").$();
         }
         if (failOnNfs && fsStatus == Files.NFS_MAGIC) {
             throw new BootstrapException("Error: Unsupported Filesystem Detected. " + Misc.EOL

@@ -1,0 +1,107 @@
+# postgres_extended engine support following type: 
+# NOTE: array only support one dimension
+# int2
+# int2 array
+# int4 
+# int4 array
+# int8
+# int8 array 
+# float4 
+# float4 array
+# float8
+# float8 array
+# numeric (not include: NaN,+Inf,-Inf)
+# numeric array
+# varchar 
+# varchar array
+# date 
+# date array
+# time 
+# time array
+# timestamp
+# timestamp array
+# timestamptz
+# timestamptz array
+# interval
+# interval array
+# bool
+# bool array
+
+# int2 && int2 array 
+query I 
+select 1::int2, '{1,2,3}'::int2[]
+----
+1 {1,2,3}
+
+# int4 && int4 array
+query I
+select 1::int4, '{1,2,3}'::int4[]
+----
+1 {1,2,3}
+
+# int8 && int8 array
+query I
+select 1::int8, '{1,2,3}'::int8[]
+----
+1 {1,2,3}
+
+# float4 && float4 array
+query I
+select 1.0::float4, '{NaN,+Inf,-Inf}'::float4[]
+----
+1 {NaN,Infinity,-Infinity}
+
+# float8 && float8 array
+query I
+select 1.0::float8, '{NaN,+Inf,-Inf}'::float8[]
+----
+1 {NaN,Infinity,-Infinity}
+
+# numeric && numeric array
+query I
+select 1.0::numeric, '{2.0,3.0123,4.0123}'::numeric[]
+----
+1.0 {2.0,3.0123,4.0123}
+
+# varchar && varchar array
+query I
+select 'a'::varchar, '{a,b,""}'::varchar[]
+----
+a {a,b,""}
+
+# date && date array
+query I
+select '2018-01-01'::date, '{2018-01-01,2018-01-02,2018-01-03}'::date[]
+----
+2018-01-01 {2018-01-01,2018-01-02,2018-01-03}
+
+# time && time array
+query I
+select '12:00:00'::time, '{12:00:00,12:00:01,12:00:02}'::time[]
+----
+12:00:00 {12:00:00,12:00:01,12:00:02}
+
+# timestamp && timestamp array
+query I
+select '2018-01-01 12:00:00'::timestamp, '{2018-01-01 12:00:00,2018-01-01 12:00:01,2018-01-01 12:00:02}'::timestamp[]
+----
+2018-01-01 12:00:00 {"2018-01-01 12:00:00","2018-01-01 12:00:01","2018-01-01 12:00:02"}
+
+# timestamptz && timestamptz array
+query I
+select '2018-01-01 12:00:00+08'::timestamptz, '{2018-01-01 12:00:00+08,2018-01-01 12:00:01+08,2018-01-01 12:00:02+08}'::timestamptz[]
+----
+2017-12-31 23:00:00-05 {"2017-12-31 23:00:00-05","2017-12-31 23:00:01-05","2017-12-31 23:00:02-05"}
+
+# interval && interval array
+query I
+select '1 day'::interval, '{1 day,2 mon,30 day}'::interval[]
+----
+1 day {"1 day","2 mons","30 days"}
+
+# bool && bool array
+query I
+select true::bool, '{true,false}'::bool[]
+----
+t {t,f}
+
