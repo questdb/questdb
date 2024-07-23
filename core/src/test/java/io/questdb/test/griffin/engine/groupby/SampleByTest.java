@@ -3896,22 +3896,6 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSampleByFromToNoFill1() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl(DDL_FROMTO);
-            drainWalQueue();
-            assertSql(
-                    "ts\tavg\n" +
-                            "2017-12-30T00:00:00.000000Z\t72.5\n" +
-                            "2018-01-04T00:00:00.000000Z\t264.5\n" +
-                            "2018-01-09T00:00:00.000000Z\t432.5\n",
-                    "select ts1, avg(x) from (select ts as ts1, x from fromto where x > 0)\n" +
-                            "sample by 5d from '2017-12-20'"
-            );
-        });
-    }
-
-    @Test
     public void testSampleByFromToPlans() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tbl (\n" +
@@ -5191,6 +5175,22 @@ public class SampleByTest extends AbstractCairoTest {
                             "cast(dateadd('h', 2, to_timezone(timestamp,'EST')) as double) + sum(amount) NYTime\n" +
                             "from trades\n" +
                             "sample by 5m"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByWithSubQueryAndFromToNoFill() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(DDL_FROMTO);
+            drainWalQueue();
+            assertSql(
+                    "ts\tavg\n" +
+                            "2017-12-30T00:00:00.000000Z\t72.5\n" +
+                            "2018-01-04T00:00:00.000000Z\t264.5\n" +
+                            "2018-01-09T00:00:00.000000Z\t432.5\n",
+                    "select ts1, avg(x) from (select ts as ts1, x from fromto where x > 0)\n" +
+                            "sample by 5d from '2017-12-20'"
             );
         });
     }
