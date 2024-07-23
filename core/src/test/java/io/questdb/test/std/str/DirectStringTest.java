@@ -32,7 +32,7 @@ import org.junit.Test;
 public class DirectStringTest {
 
     @Test
-    public void SubSequenceTest() {
+    public void testSubSequence() {
         final String string = "foobar";
         final int stringLen = string.length();
         try (DirectUtf16Sink utf16Sink = new DirectUtf16Sink(stringLen << 2)) {
