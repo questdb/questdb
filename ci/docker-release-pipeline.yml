@@ -52,7 +52,7 @@ jobs:
         displayName: Release Commit from Branch
         inputs:
           script: |
-            docker buildx build --build-arg tag_name=$(Build.SourceVersion) --platform linux/amd64,linux/arm64 --push -t questdb/questdb:$(Build.SourceVersion) .
-            docker buildx build --build-arg tag_name=$(Build.SourceVersion) --build-arg base_image=registry.access.redhat.com/ubi9/ubi --platform linux/amd64,linux/arm64 --push -t questdb/questdb:$(Build.SourceVersion)-rhel .
+            docker buildx build --build-arg tag_name=$(Build.SourceBranchName) --platform linux/amd64,linux/arm64 --push -t questdb/questdb:$(Build.SourceVersion) .
+            docker buildx build --build-arg tag_name=$(Build.SourceBranchName) --build-arg base_image=registry.access.redhat.com/ubi9/ubi --platform linux/amd64,linux/arm64 --push -t questdb/questdb:$(Build.SourceVersion)-rhel .
           workingDirectory: core
         condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/'), ne(variables['Build.SourceBranch'], 'refs/heads/master'))
