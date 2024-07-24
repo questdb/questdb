@@ -94,6 +94,8 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         keyCount = -1;
         argumentsAddress = 0;
         isTreeMapBuilt = false;
+        // prepare for page frame iteration
+        super.toTop();
     }
 
     @Override
@@ -199,8 +201,8 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                 doneLatch.reset();
                 final BitmapIndexReader indexReader = frame.getBitmapIndexReader(frameColumnIndex, BitmapIndexReader.DIR_BACKWARD);
 
-                final long rowLo = frame.getPartitionLo();
-                final long rowHi = frame.getPartitionHi() - 1;
+                final long partitionLo = frame.getPartitionLo();
+                final long partitionHi = frame.getPartitionHi() - 1;
 
                 final long keyBaseAddress = indexReader.getKeyBaseAddress();
                 final long keysMemorySize = indexReader.getKeyMemorySize();
@@ -247,8 +249,8 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                                 valuesMemorySize,
                                 argsAddress,
                                 unIndexedNullCount,
-                                rowHi,
-                                rowLo,
+                                partitionHi,
+                                partitionLo,
                                 partitionIndex,
                                 valueBlockCapacity,
                                 hashColumnAddress,
@@ -264,8 +266,8 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                                 valuesMemorySize,
                                 argsAddress,
                                 unIndexedNullCount,
-                                rowHi,
-                                rowLo,
+                                partitionHi,
+                                partitionLo,
                                 partitionIndex,
                                 valueBlockCapacity,
                                 hashColumnAddress,

@@ -106,19 +106,22 @@ class LatestByValuesFilteredRecordCursor extends AbstractDescendingRecordListCur
 
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
-            final int partitionIndex = frame.getPartitionIndex();
-            final long rowLo = frame.getPartitionLo();
-            final long rowHi = frame.getPartitionHi() - 1;
+            final int frameIndex = frameCount;
+            final long partitionLo = frame.getPartitionLo();
+            final long partitionHi = frame.getPartitionHi() - 1;
 
-            recordA.jumpTo(frame.getPartitionIndex(), rowHi);
-            for (long row = rowHi; row >= rowLo; row--) {
+            frameAddressCache.add(frameCount, frame);
+            frameMemory = frameMemoryPool.navigateTo(frameCount++);
+            recordA.init(frameMemory);
+
+            for (long row = partitionHi; row >= partitionLo; row--) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
-                recordA.setRecordIndex(row);
+                recordA.setRowIndex(row - partitionLo);
                 if (filter.getBool(recordA)) {
                     int key = TableUtils.toIndexKey(recordA.getInt(columnIndex));
                     int index = map.keyIndex(key);
                     if (index < 0 && map.valueAt(index) == 0) {
-                        rows.add(Rows.toRowID(partitionIndex, row));
+                        rows.add(Rows.toRowID(frameIndex, row - partitionLo));
                         map.putAt(index, key, 1);
                     }
                 }

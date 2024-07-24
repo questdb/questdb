@@ -41,7 +41,6 @@ import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 
 class LatestByAllFilteredRecordCursor extends AbstractDescendingRecordListCursor {
-
     protected final Function filter;
     private final Map map;
     private final RecordSink recordSink;
@@ -89,19 +88,22 @@ class LatestByAllFilteredRecordCursor extends AbstractDescendingRecordListCursor
     protected void buildTreeMap() {
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
-            final int partitionIndex = frame.getPartitionIndex();
-            final long rowLo = frame.getPartitionLo();
-            final long rowHi = frame.getPartitionHi() - 1;
+            final int frameIndex = frameCount;
+            final long partitionLo = frame.getPartitionLo();
+            final long partitionHi = frame.getPartitionHi() - 1;
 
-            recordA.jumpTo(frame.getPartitionIndex(), rowHi);
-            for (long row = rowHi; row >= rowLo; row--) {
+            frameAddressCache.add(frameCount, frame);
+            frameMemory = frameMemoryPool.navigateTo(frameCount++);
+            recordA.init(frameMemory);
+
+            for (long row = partitionHi; row >= partitionLo; row--) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
-                recordA.setRecordIndex(row);
+                recordA.setRowIndex(row - partitionLo);
                 if (filter.getBool(recordA)) {
                     MapKey key = map.withKey();
                     key.put(recordA, recordSink);
                     if (key.create()) {
-                        rows.add(Rows.toRowID(partitionIndex, row));
+                        rows.add(Rows.toRowID(frameIndex, row - partitionLo));
                     }
                 }
             }

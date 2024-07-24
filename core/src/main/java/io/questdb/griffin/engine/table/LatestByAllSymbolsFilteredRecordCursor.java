@@ -41,7 +41,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordListCursor {
-
     private static final Function NO_OP_FILTER = BooleanConstant.TRUE;
     private final Function filter;
     private final Map map;
@@ -141,19 +140,22 @@ class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordLis
         PageFrame frame;
         OUTER:
         while ((frame = frameCursor.next()) != null) {
-            final int partitionIndex = frame.getPartitionIndex();
-            final long rowLo = frame.getPartitionLo();
-            final long rowHi = frame.getPartitionHi() - 1;
+            final int frameIndex = frameCount;
+            final long partitionLo = frame.getPartitionLo();
+            final long partitionHi = frame.getPartitionHi() - 1;
 
-            recordA.jumpTo(frame.getPartitionIndex(), rowHi);
-            for (long row = rowHi; row >= rowLo; row--) {
+            frameAddressCache.add(frameCount, frame);
+            frameMemory = frameMemoryPool.navigateTo(frameCount++);
+            recordA.init(frameMemory);
+
+            for (long row = partitionHi; row >= partitionLo; row--) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
-                recordA.setRecordIndex(row);
+                recordA.setRowIndex(row - partitionLo);
                 if (filter.getBool(recordA)) {
                     MapKey key = map.withKey();
                     key.put(recordA, recordSink);
                     if (key.create()) {
-                        rows.add(Rows.toRowID(partitionIndex, row));
+                        rows.add(Rows.toRowID(frameIndex, row - partitionLo));
                         if (rows.size() == possibleCombinations) {
                             break OUTER;
                         }

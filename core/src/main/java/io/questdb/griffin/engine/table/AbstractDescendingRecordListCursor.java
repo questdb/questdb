@@ -83,8 +83,10 @@ abstract class AbstractDescendingRecordListCursor extends AbstractPageFrameRecor
             isTreeMapBuilt = true;
         }
         if (index > -1) {
-            long row = rows.get(index--);
-            recordA.jumpTo(Rows.toPartitionIndex(row), Rows.toLocalRowID(row));
+            long rowId = rows.get(index--);
+            frameMemory = frameMemoryPool.navigateTo(Rows.toPartitionIndex(rowId));
+            recordA.init(frameMemory);
+            recordA.setRowIndex(Rows.toLocalRowID(rowId));
             return true;
         }
         return false;
@@ -103,6 +105,8 @@ abstract class AbstractDescendingRecordListCursor extends AbstractPageFrameRecor
         rows.clear();
         isTreeMapBuilt = false;
         isOpen = true;
+        // prepare for page frame iteration
+        super.toTop();
     }
 
     @Override

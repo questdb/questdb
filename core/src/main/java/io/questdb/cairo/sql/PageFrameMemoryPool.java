@@ -86,6 +86,8 @@ public class PageFrameMemoryPool implements QuietCloseable {
         auxPageSizes = null;
     }
 
+    // TODO(puzpuzpuz): what do we do about recordA and recordB? we may need to cache at least two entries;
+    //                  current API will work with native partitions, but not with Parquet ones
     public PageFrameMemory navigateTo(int frameIndex) {
         if (this.frameIndex == frameIndex) {
             return frameMemory;

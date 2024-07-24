@@ -75,8 +75,10 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
             isTreeMapBuilt = true;
         }
         if (index < lim) {
-            long row = rows.get(index++);
-            recordA.jumpTo(Rows.toPartitionIndex(row), Rows.toLocalRowID(row));
+            long rowId = rows.get(index++);
+            frameMemory = frameMemoryPool.navigateTo(Rows.toPartitionIndex(rowId));
+            recordA.init(frameMemory);
+            recordA.setRowIndex(Rows.toLocalRowID(rowId));
             return true;
         }
         return false;
@@ -93,6 +95,8 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
         found.clear();
         keyCount = -1;
         isTreeMapBuilt = false;
+        // prepare for page frame iteration
+        super.toTop();
     }
 
     @Override
@@ -109,18 +113,17 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
     @Override
     public void toTop() {
         index = 0;
-        filter.toTop();
     }
 
-    private void addFoundKey(int symbolKey, BitmapIndexReader indexReader, int partitionIndex, long rowLo, long rowHi) {
+    private void addFoundKey(int symbolKey, BitmapIndexReader indexReader, int frameIndex, long partitionLo, long partitionHi) {
         int index = found.keyIndex(symbolKey);
         if (index > -1) {
-            RowCursor cursor = indexReader.getCursor(false, symbolKey, rowLo, rowHi);
+            RowCursor cursor = indexReader.getCursor(false, symbolKey, partitionLo, partitionHi);
             while (cursor.hasNext()) {
                 final long row = cursor.next();
-                recordA.setRecordIndex(row);
+                recordA.setRowIndex(row - partitionLo);
                 if (filter.getBool(recordA)) {
-                    rows.add(Rows.toRowID(partitionIndex, row));
+                    rows.add(Rows.toRowID(frameIndex, row - partitionLo));
                     found.addAt(index, symbolKey);
                     break;
                 }
@@ -142,21 +145,24 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
         int frameColumnIndex = columnIndexes.getQuick(columnIndex);
         while ((frame = frameCursor.next()) != null && found.size() < keyCount) {
             circuitBreaker.statefulThrowExceptionIfTripped();
-            final int partitionIndex = frame.getPartitionIndex();
+            final int frameIndex = frameCount;
             final BitmapIndexReader indexReader = frame.getBitmapIndexReader(frameColumnIndex, BitmapIndexReader.DIR_BACKWARD);
-            final long rowLo = frame.getPartitionLo();
-            final long rowHi = frame.getPartitionHi() - 1;
-            this.recordA.jumpTo(partitionIndex, 0);
+            final long partitionLo = frame.getPartitionLo();
+            final long partitionHi = frame.getPartitionHi() - 1;
+
+            frameAddressCache.add(frameCount, frame);
+            frameMemory = frameMemoryPool.navigateTo(frameCount++);
+            recordA.init(frameMemory);
 
             for (int i = 0, n = symbolKeys.size(); i < n; i++) {
                 int symbolKey = symbolKeys.get(i);
-                addFoundKey(symbolKey, indexReader, partitionIndex, rowLo, rowHi);
+                addFoundKey(symbolKey, indexReader, frameIndex, partitionLo, partitionHi);
             }
             if (deferredSymbolKeys != null) {
                 for (int i = 0, n = deferredSymbolKeys.size(); i < n; i++) {
                     int symbolKey = deferredSymbolKeys.get(i);
                     if (!symbolKeys.contains(symbolKey)) {
-                        addFoundKey(symbolKey, indexReader, partitionIndex, rowLo, rowHi);
+                        addFoundKey(symbolKey, indexReader, frameIndex, partitionLo, partitionHi);
                     }
                 }
             }

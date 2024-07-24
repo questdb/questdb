@@ -41,6 +41,7 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
     protected final PageFrameMemorySelectedRecord recordB;
     protected int frameCount = 0;
     protected PageFrameCursor frameCursor;
+    // TODO(puzpuzpuz): could be a local field?
     protected PageFrameMemory frameMemory;
 
     public AbstractPageFrameRecordCursor(
