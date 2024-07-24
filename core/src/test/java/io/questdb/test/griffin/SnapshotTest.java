@@ -131,7 +131,7 @@ public class SnapshotTest extends AbstractCairoTest {
                 engine.recoverSnapshot();
                 Assert.fail("Exception expected");
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getMessage(), "Error could not copy registry file");
+                TestUtils.assertContains(e.getMessage(), "Could not copy registry file");
             } finally {
                 testFilesFacade.errorOnRegistryFileCopy = false;
             }

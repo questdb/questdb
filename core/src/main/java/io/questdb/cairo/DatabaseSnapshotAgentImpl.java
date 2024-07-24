@@ -462,11 +462,12 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
         ) {
             srcPath.of(snapshotRoot).concat(configuration.getDbDirectory());
             final int snapshotRootLen = srcPath.size();
+
+            dstPath.of(root).parent().concat(TableUtils.RESTORE_SNAPSHOT_TRIGGER_FILE_NAME);
+            boolean triggerExists = ff.exists(dstPath.$());
+
             dstPath.of(root);
             final int rootLen = dstPath.size();
-
-            dstPath.parent().concat(TableUtils.RESTORE_SNAPSHOT_TRIGGER_FILE_NAME);
-            boolean triggerExists = ff.exists(dstPath.$());
 
             // Check if the snapshot dir exists.
             if (!ff.exists(srcPath.slash$())) {
@@ -484,12 +485,6 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
                 }
                 return;
             }
-
-            if (!ff.removeQuiet(dstPath.$())) {
-                throw CairoException.critical(ff.errno())
-                        .put("could not remove restore trigger file. file permission issues? [file=").put(dstPath).put(']');
-            }
-            dstPath.of(root);
 
             // Check if the snapshot instance id is different from what's in the snapshot.
             memFile.smallFile(ff, srcPath.$(), MemoryTag.MMAP_DEFAULT);
@@ -627,6 +622,11 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
                         .put("could not remove snapshot dir [dir=").put(srcPath)
                         .put(", errno=").put(ff.errno())
                         .put(']');
+            }
+            dstPath.of(root).parent().concat(TableUtils.RESTORE_SNAPSHOT_TRIGGER_FILE_NAME);
+            if (triggerExists && !ff.removeQuiet(dstPath.$())) {
+                throw CairoException.critical(ff.errno())
+                        .put("could not remove restore trigger file. file permission issues? [file=").put(dstPath).put(']');
             }
         } finally {
             tableMetadata = Misc.free(tableMetadata);
