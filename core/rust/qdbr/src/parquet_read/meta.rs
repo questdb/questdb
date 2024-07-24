@@ -1,30 +1,39 @@
 use crate::parquet_read::{ColumnChunkBuffers, ColumnMeta, ParquetDecoder};
+use crate::parquet_write::schema::ColumnType;
+use crate::parquet_write::QDB_TYPE_META_PREFIX;
 use parquet2::metadata::Descriptor;
 use parquet2::read::read_metadata;
 use parquet2::schema::types::PrimitiveLogicalType::{Timestamp, Uuid};
 use parquet2::schema::types::{
     IntegerType, PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType, TimeUnit,
 };
+use std::collections::HashMap;
 use std::fs::File;
-
-use crate::parquet_write::schema::ColumnType;
 
 impl ParquetDecoder {
     pub fn read(mut reader: File) -> anyhow::Result<Self> {
         let metadata = read_metadata(&mut reader)?;
-
         let col_len = metadata.schema_descr.columns().len();
+        let additional_meta: Option<HashMap<String, Option<String>>> =
+            metadata.key_value_metadata.as_ref().map(|vec| {
+                vec.iter()
+                    .map(|kv| (kv.key.to_string(), kv.value.to_owned()))
+                    .collect()
+            });
         let mut columns = Vec::with_capacity(col_len);
         let mut column_buffers = Vec::with_capacity(col_len);
 
         for (column_id, f) in metadata.schema_descr.columns().iter().enumerate() {
             // Some types are not supported, this will skip them.
-            if let Some(typ) = Self::descriptor_to_column_type(&f.descriptor) {
+            if let Some((data_type, column_type)) =
+                Self::descriptor_to_column_type(&f.descriptor, &additional_meta)
+            {
                 let name_str = &f.descriptor.primitive_type.field_info.name;
                 let name: Vec<u16> = name_str.encode_utf16().collect();
 
                 columns.push(ColumnMeta {
-                    typ,
+                    typ: data_type,
+                    column_type,
                     id: column_id as i32,
                     name_size: name.len() as u32,
                     name_ptr: name.as_ptr(),
@@ -51,8 +60,27 @@ impl ParquetDecoder {
         Ok(decoder)
     }
 
-    fn descriptor_to_column_type(des: &Descriptor) -> Option<ColumnType> {
-        match (
+    fn descriptor_to_column_type(
+        des: &Descriptor,
+        additional_meta: &Option<HashMap<String, Option<String>>>,
+    ) -> Option<(ColumnType, i32)> {
+        let result = additional_meta.as_ref().and_then(|hashmap| {
+            hashmap.get(&(QDB_TYPE_META_PREFIX.to_string() + &des.primitive_type.field_info.name))
+        });
+        if let Some(Some(val)) = result {
+            let col_type = match val.parse::<i32>() {
+                Ok(col_type_int) => match ColumnType::try_from(col_type_int) {
+                    Ok(col_type) => return Some((col_type, col_type_int)),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if col_type.is_some() {
+                return col_type;
+            }
+        }
+
+        let column_type = match (
             des.primitive_type.physical_type,
             des.primitive_type.logical_type,
             des.primitive_type.converted_type,
@@ -89,7 +117,7 @@ impl ParquetDecoder {
                 Some(ColumnType::Short)
             }
             (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::UInt16)), _) => {
-                Some(ColumnType::Char)
+                Some(ColumnType::Int)
             }
             (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Int16)) => {
                 Some(ColumnType::Short)
@@ -121,7 +149,9 @@ impl ParquetDecoder {
             (PhysicalType::ByteArray, None, _) => Some(ColumnType::Binary),
             (PhysicalType::Int96, None, None) => Some(ColumnType::Timestamp),
             (_, _, _) => None,
-        }
+        };
+
+        column_type.map(|ct| (ct, ct as i32))
     }
 }
 
@@ -199,7 +229,7 @@ mod tests {
 
         for (i, col) in meta.columns.iter().enumerate() {
             let (col_type, _, name) = cols[i];
-            assert_eq!(col.typ, to_storage_type(col_type));
+            assert_eq!(col.typ, col_type);
             let actual_name: String = String::from_utf16(&col.name_vec).unwrap();
             assert_eq!(actual_name, name);
         }
@@ -208,16 +238,6 @@ mod tests {
 
         // make sure buffer live until the end of the test
         assert_eq!(buffers_columns.len(), column_count);
-    }
-
-    fn to_storage_type(column_type: ColumnType) -> ColumnType {
-        match column_type {
-            ColumnType::GeoInt | ColumnType::IPv4 => ColumnType::Int,
-            ColumnType::GeoShort => ColumnType::Short,
-            ColumnType::GeoByte => ColumnType::Byte,
-            ColumnType::GeoLong => ColumnType::Long,
-            other => other,
-        }
     }
 
     fn create_fix_column(

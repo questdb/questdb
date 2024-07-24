@@ -201,7 +201,12 @@ pub fn decoder_page(
                     )?;
                     Ok(row_count)
                 }
-                (Encoding::Plain, _, _, ColumnType::Int | ColumnType::GeoInt) => {
+                (
+                    Encoding::Plain,
+                    _,
+                    _,
+                    ColumnType::Int | ColumnType::GeoInt | ColumnType::IPv4,
+                ) => {
                     decode_page(
                         version,
                         page,
@@ -236,7 +241,12 @@ pub fn decoder_page(
                     )?;
                     Ok(row_count)
                 }
-                (Encoding::DeltaBinaryPacked, _, _, ColumnType::Int | ColumnType::GeoInt) => {
+                (
+                    Encoding::DeltaBinaryPacked,
+                    _,
+                    _,
+                    ColumnType::Int | ColumnType::GeoInt | ColumnType::IPv4,
+                ) => {
                     decode_page(
                         version,
                         page,
@@ -252,8 +262,8 @@ pub fn decoder_page(
                 (
                     Encoding::RleDictionary | Encoding::PlainDictionary,
                     Some(dict_page),
-                    None,
-                    ColumnType::Int | ColumnType::GeoInt,
+                    _,
+                    ColumnType::Int | ColumnType::GeoInt | ColumnType::IPv4,
                 ) => {
                     let dict_decoder = FixedDictDecoder::<4>::try_new(dict_page)?;
                     let mut slicer = RleDictionarySlicer::try_new(

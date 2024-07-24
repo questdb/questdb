@@ -31,6 +31,7 @@ import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.vm.Vm;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.std.*;
@@ -197,6 +198,31 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         }
 
         @Override
+        public byte getGeoByte(int col) {
+            return getByte(col);
+        }
+
+        @Override
+        public int getGeoInt(int col) {
+            return getInt(col);
+        }
+
+        @Override
+        public long getGeoLong(int col) {
+            return getLong(col);
+        }
+
+        @Override
+        public short getGeoShort(int col) {
+            return getShort(col);
+        }
+
+        @Override
+        public int getIPv4(int col) {
+            return getInt(col);
+        }
+
+        @Override
         public int getInt(int col) {
             long dataPtr = dataPtrs.get(col);
             return Unsafe.getUnsafe().getInt(dataPtr + currentRowInRowGroup * 4L);
@@ -261,6 +287,30 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             return Unsafe.getUnsafe().getShort(dataPtr + currentRowInRowGroup * 2L);
         }
 
+        @Override
+        public CharSequence getStrA(int col) {
+            long auxPtr = auxPtrs.get(col);
+            long dataPtr = dataPtrs.get(col);
+            long data_offset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
+            return getStr(dataPtr + data_offset, directCharSequenceA);
+        }
+
+        @Override
+        public CharSequence getStrB(int col) {
+            long auxPtr = auxPtrs.get(col);
+            long dataPtr = dataPtrs.get(col);
+            long data_offset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
+            return getStr(dataPtr + data_offset, directCharSequenceB);
+        }
+
+        @Override
+        public int getStrLen(int col) {
+            long auxPtr = auxPtrs.get(col);
+            long dataPtr = dataPtrs.get(col);
+            long data_offset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
+            return Unsafe.getUnsafe().getInt(dataPtr + data_offset);
+        }
+
         @Nullable
         @Override
         public Utf8Sequence getVarcharA(int col) {
@@ -283,39 +333,13 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             return VarcharTypeDriver.getValueSize(auxPtr, currentRowInRowGroup);
         }
 
-        // Parquet does not store STRING type, only VARCHAR
-        // The read function will never return STRING type
-//        @Override
-//        public CharSequence getStrA(int col) {
-//            long auxPtr = auxPtrs.get(col);
-//            long dataPtr = dataPtrs.get(col);
-//            long data_offset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
-//            return getStr(dataPtr + data_offset, directCharSequenceA);
-//        }
-//
-//        @Override
-//        public CharSequence getStrB(int col) {
-//            long auxPtr = auxPtrs.get(col);
-//            long dataPtr = dataPtrs.get(col);
-//            long data_offset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
-//            return getStr(dataPtr + data_offset, directCharSequenceB);
-//        }
-//
-//        @Override
-//        public int getStrLen(int col) {
-//            long auxPtr = auxPtrs.get(col);
-//            long dataPtr = dataPtrs.get(col);
-//            long data_offset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
-//            return Unsafe.getUnsafe().getInt(dataPtr + data_offset);
-//        }
-//
-//        private DirectString getStr(long addr, DirectString view) {
-//            assert addr > 0;
-//            final int len = Unsafe.getUnsafe().getInt(addr);
-//            if (len != TableUtils.NULL_LEN) {
-//                return view.of(addr + Vm.STRING_LENGTH_BYTES, len);
-//            }
-//            return null;
-//        }
+        private DirectString getStr(long addr, DirectString view) {
+            assert addr > 0;
+            final int len = Unsafe.getUnsafe().getInt(addr);
+            if (len != TableUtils.NULL_LEN) {
+                return view.of(addr + Vm.STRING_LENGTH_BYTES, len);
+            }
+            return null;
+        }
     }
 }

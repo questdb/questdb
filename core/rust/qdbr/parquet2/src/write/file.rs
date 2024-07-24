@@ -56,6 +56,7 @@ pub struct FileWriter<W: Write> {
     state: State,
     // when the file is written, metadata becomes available
     metadata: Option<ThriftFileMetaData>,
+    additional_meta: Option<Vec<KeyValue>>,
 }
 
 /// Writes a parquet file containing only the header and footer
@@ -93,6 +94,10 @@ impl<W: Write> FileWriter<W> {
     pub fn metadata(&self) -> Option<&ThriftFileMetaData> {
         self.metadata.as_ref()
     }
+
+    pub fn additional_meta(&self) -> Option<Vec<KeyValue>> {
+        self.additional_meta.as_ref().map(|v| v.clone())
+    }
 }
 
 impl<W: Write> FileWriter<W> {
@@ -102,6 +107,7 @@ impl<W: Write> FileWriter<W> {
         schema: SchemaDescriptor,
         options: WriteOptions,
         created_by: Option<String>,
+        additional_meta: Option<Vec<KeyValue>>
     ) -> Self {
         Self {
             writer,
@@ -114,6 +120,7 @@ impl<W: Write> FileWriter<W> {
             page_specs: vec![],
             state: State::Initialised,
             metadata: None,
+            additional_meta,
         }
     }
 
@@ -123,6 +130,7 @@ impl<W: Write> FileWriter<W> {
         options: WriteOptions,
         created_by: Option<String>,
         sorting_columns: Option<Vec<SortingColumn>>,
+        additional_meta: Option<Vec<KeyValue>>
     ) -> Self {
         Self {
             writer,
@@ -135,6 +143,7 @@ impl<W: Write> FileWriter<W> {
             page_specs: vec![],
             state: State::Initialised,
             metadata: None,
+            additional_meta,
         }
     }
     /// Writes the header of the file.
