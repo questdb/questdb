@@ -1,7 +1,7 @@
 trigger:
   branches:
     include:
-      - 'patch/*'
+      - 'master'
 
 pool:
   vmImage: 'ubuntu-20.04'
@@ -52,7 +52,11 @@ jobs:
         displayName: Release Commit from Branch
         inputs:
           script: |
-            docker buildx build --build-arg tag_name=$(Build.SourceBranchName) --platform linux/amd64,linux/arm64 --push -t questdb/questdb:$(Build.SourceVersion) .
-            docker buildx build --build-arg tag_name=$(Build.SourceBranchName) --build-arg base_image=registry.access.redhat.com/ubi9/ubi --platform linux/amd64,linux/arm64 --push -t questdb/questdb:$(Build.SourceVersion)-rhel .
+            # Cannot use Build.SourceBranchName if a branch name contains a "/", since the var only returns the final path component
+            # We use cut instead to trim the first 2 components off the Build.SourceBranch ("refs/heads")
+            tag_name=$(echo "$(Build.SourceBranch) | cut -d'/' -f '3-'")
+            echo $tag_name
+            docker buildx build --build-arg tag_name=$tag_name --platform linux/amd64,linux/arm64 --push -t questdb/questdb:$(Build.SourceVersion) .
+            docker buildx build --build-arg tag_name=$tag_name --build-arg base_image=registry.access.redhat.com/ubi9/ubi --platform linux/amd64,linux/arm64 --push -t questdb/questdb:$(Build.SourceVersion)-rhel .
           workingDirectory: core
         condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/'), ne(variables['Build.SourceBranch'], 'refs/heads/master'))
