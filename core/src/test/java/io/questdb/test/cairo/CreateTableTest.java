@@ -49,6 +49,24 @@ import static org.junit.Assert.*;
 public class CreateTableTest extends AbstractCairoTest {
 
     @Test
+    public void testCreateNaNColumn() throws Exception {
+        assertException(
+                "create table a as (select NaN x)",
+                0,
+                "cannot create NULL-type column, please use type cast, e.g. x::type"
+        );
+    }
+
+    @Test
+    public void testCreateNullColumn() throws Exception {
+        assertException(
+                "create table a as (select null x)",
+                0,
+                "cannot create NULL-type column, please use type cast, e.g. x::type"
+        );
+    }
+
+    @Test
     public void testCreateTableAsSelectIndexSupportedColumnTypeAfterCast() throws Exception {
         assertQuery(
                 "x\n" +

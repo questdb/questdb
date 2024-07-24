@@ -39,14 +39,13 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
-import io.questdb.std.datetime.millitime.DateFormatCompiler;
-import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.datetime.millitime.DateFormatFactory;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.Nullable;
 
 public class ToStrDateFunctionFactory implements FunctionFactory {
 
-    private static final ThreadLocal<DateFormatCompiler> tlCompiler = ThreadLocal.withInitial(DateFormatCompiler::new);
     private static final ThreadLocal<StringSink> tlSink = ThreadLocal.withInitial(StringSink::new);
 
     @Override
@@ -68,7 +67,7 @@ public class ToStrDateFunctionFactory implements FunctionFactory {
             throw SqlException.$(argPositions.getQuick(1), "format must not be null");
         }
 
-        DateFormat dateFormat = tlCompiler.get().compile(format);
+        DateFormat dateFormat = DateFormatFactory.INSTANCE.get(format);
         Function var = args.getQuick(0);
         if (var.isConstant()) {
             long value = var.getDate(null);
@@ -82,7 +81,7 @@ public class ToStrDateFunctionFactory implements FunctionFactory {
             return new StrConstant(sink);
         }
 
-        return new ToCharDateVCFFunc(args.getQuick(0), tlCompiler.get().compile(format), configuration.getDefaultDateLocale(), format);
+        return new ToCharDateVCFFunc(args.getQuick(0), DateFormatFactory.INSTANCE.get(format), configuration.getDefaultDateLocale(), format);
     }
 
     private static class ToCharDateVCFFunc extends StrFunction implements UnaryFunction {
@@ -90,15 +89,15 @@ public class ToStrDateFunctionFactory implements FunctionFactory {
         final DateFormat format;
         final CharSequence formatStr;
         final DateLocale locale;
-        final StringSink sink1;
-        final StringSink sink2;
+        final StringSink sinkA;
+        final StringSink sinkB;
 
         public ToCharDateVCFFunc(Function arg, DateFormat format, DateLocale locale, CharSequence formatStr) {
             this.arg = arg;
             this.format = format;
             this.locale = locale;
-            this.sink1 = new StringSink();
-            this.sink2 = new StringSink();
+            this.sinkA = new StringSink();
+            this.sinkB = new StringSink();
             this.formatStr = formatStr;
         }
 
@@ -109,32 +108,28 @@ public class ToStrDateFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStrA(Record rec) {
-            return toSink(rec, sink1);
-        }
-
-        @Override
-        public void getStr(Record rec, Utf16Sink utf16Sink) {
-            long value = arg.getDate(rec);
-            if (value == Numbers.LONG_NULL) {
-                return;
-            }
-            toSink(value, utf16Sink);
+            return toSink(rec, sinkA);
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
-            return toSink(rec, sink2);
+            return toSink(rec, sinkB);
         }
 
         @Override
         public int getStrLen(Record rec) {
             long value = arg.getDate(rec);
-            if (value == Numbers.LONG_NULL) {
-                return -1;
+            if (value != Numbers.LONG_NULL) {
+                sinkA.clear();
+                toSink(value, sinkA);
+                return sinkA.length();
             }
-            sink1.clear();
-            toSink(value, sink1);
-            return sink1.length();
+            return -1;
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
         }
 
         @Override
@@ -145,12 +140,12 @@ public class ToStrDateFunctionFactory implements FunctionFactory {
         @Nullable
         private CharSequence toSink(Record rec, StringSink sink) {
             final long value = arg.getDate(rec);
-            if (value == Numbers.LONG_NULL) {
-                return null;
+            if (value != Numbers.LONG_NULL) {
+                sink.clear();
+                toSink(value, sink);
+                return sink;
             }
-            sink.clear();
-            toSink(value, sink);
-            return sink;
+            return null;
         }
 
         private void toSink(long value, Utf16Sink sink) {

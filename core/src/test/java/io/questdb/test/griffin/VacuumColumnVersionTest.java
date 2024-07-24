@@ -100,17 +100,19 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
                 purgeJobInstance.set(purgeJob);
                 update("UPDATE testPurge SET sym1='123'");
 
-                assertSql("ts\tstr\tsym1\tsym2\n" +
-                        "1970-01-01T00:00:00.000000Z\ta\t123\t2\n" +
-                        "1970-01-02T00:00:00.000000Z\td\t123\t4\n" +
-                        "1970-01-03T00:00:00.000000Z\tc\t123\t3\n" +
-                        "1970-01-04T00:00:00.000000Z\ta\t123\t1\n" +
-                        "1970-01-05T00:00:00.000000Z\tc\t123\t2\n", "testPurge");
+                assertSql(
+                        "ts\tstr\tsym1\tsym2\n" +
+                                "1970-01-01T00:00:00.000000Z\ta\t123\t2\n" +
+                                "1970-01-02T00:00:00.000000Z\td\t123\t4\n" +
+                                "1970-01-03T00:00:00.000000Z\tc\t123\t3\n" +
+                                "1970-01-04T00:00:00.000000Z\ta\t123\t1\n" +
+                                "1970-01-05T00:00:00.000000Z\tc\t123\t2\n",
+                        "testPurge"
+                );
 
                 String[] partitions = new String[]{"1970-01-01", "1970-01-02", "1970-01-03", "1970-01-04", "1970-01-05"};
                 String[] files = {"sym1.d"};
                 assertFilesExist(partitions, "testPurge", files, "", false);
-
             }
         });
     }
@@ -401,10 +403,10 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
                 TableToken tableToken = engine.verifyTableName(tableName);
                 path.concat(tableToken).concat("abcd").put(Files.SEPARATOR);
                 FilesFacade ff = configuration.getFilesFacade();
-                ff.mkdirs(path.$(), configuration.getMkDirMode());
+                ff.mkdirs(path, configuration.getMkDirMode());
 
                 path.of(configuration.getRoot()).concat(tableToken).concat("2020-01-04.abcd").put(Files.SEPARATOR);
-                ff.mkdirs(path.$(), configuration.getMkDirMode());
+                ff.mkdirs(path, configuration.getMkDirMode());
 
                 String[] files = {"x.d"};
                 assertFilesExist(partitions, tableName, files, ".2", true);
@@ -437,7 +439,7 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
         for (int i = files.length - 1; i > -1; i--) {
             String file = files[i];
             path.of(configuration.getRoot()).concat(tableToken).concat(partition).concat(file).put(colSuffix).$();
-            Assert.assertEquals(Utf8s.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path));
+            Assert.assertEquals(Utf8s.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path.$()));
         }
     }
 

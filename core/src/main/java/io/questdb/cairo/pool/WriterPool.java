@@ -69,7 +69,7 @@ public class WriterPool extends AbstractPool {
     public static final String OWNERSHIP_REASON_RELEASED = "released";
     public static final String OWNERSHIP_REASON_UNKNOWN = "unknown";
     static final String OWNERSHIP_REASON_WRITER_ERROR = "writer error";
-    private final static long ENTRY_OWNER = Unsafe.getFieldOffset(Entry.class, "owner");
+    private static final long ENTRY_OWNER = Unsafe.getFieldOffset(Entry.class, "owner");
     private static final Log LOG = LogFactory.getLog(WriterPool.class);
     private static final long QUEUE_PROCESSING_OWNER = -2L;
     private final MicrosecondClock clock;
@@ -286,8 +286,7 @@ public class WriterPool extends AbstractPool {
                 // unlock must remove entry because pool does not deal with null writer
                 if (e.lockFd != -1) {
                     Path path = Path.getThreadLocal(root).concat(tableToken.getDirName());
-                    TableUtils.lockName(path);
-                    if (!ff.closeRemove(e.lockFd, path)) {
+                    if (!ff.closeRemove(e.lockFd, TableUtils.lockName(path))) {
                         LOG.error().$("could not remove [file=").$(path).$(']').$();
                     }
                 }
@@ -503,8 +502,7 @@ public class WriterPool extends AbstractPool {
     private boolean lockAndNotify(long thread, Entry e, TableToken tableToken, String lockReason) {
         assertLockReasonIsNone(lockReason);
         Path path = Path.getThreadLocal(root).concat(tableToken.getDirName());
-        TableUtils.lockName(path);
-        e.lockFd = TableUtils.lock(ff, path);
+        e.lockFd = TableUtils.lock(ff, TableUtils.lockName(path));
         if (e.lockFd == -1) {
             LOG.error().$("could not lock [table=`").utf8(tableToken.getDirName()).$("`, thread=").$(thread).$(']').$();
             e.ownershipReason = OWNERSHIP_REASON_MISSING;

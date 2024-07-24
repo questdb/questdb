@@ -1,0 +1,30 @@
+[package]
+name = "sqllogictest"
+version = "0.21.0"
+description = "Sqllogictest parser and runner."
+edition = "2021"
+
+[lib]
+name = "sqllogictest"
+bench = false
+
+[dependencies]
+async-trait = "0.1"
+educe = "0.6"
+fs-err = "2.9.0"
+futures = "0.3"
+glob = "0.3"
+humantime = "2"
+itertools = "0.13"
+libtest-mimic = "0.7"
+md-5 = "0.10"
+owo-colors = "4"
+regex = "1.9.1"
+similar = "2.2.1"
+subst = "0.3"
+tempfile = "3"
+thiserror = "1"
+tracing = "0.1"
+
+[dev-dependencies]
+pretty_assertions = "1"

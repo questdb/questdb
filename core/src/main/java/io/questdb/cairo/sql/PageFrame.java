@@ -31,6 +31,14 @@ public interface PageFrame {
     BitmapIndexReader getBitmapIndexReader(int columnIndex, int dirForward);
 
     /**
+     * The count of columns in the page frame. In some cases it is possible to have
+     * page frame with no columns.
+     *
+     * @return column count
+     */
+    int getColumnCount();
+
+    /**
      * Return the size the column as power 2 of the bytes e.g. long == 3, int == 2 etc.
      *
      * @param columnIndex index of column

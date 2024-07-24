@@ -71,14 +71,14 @@ public class TableTransactionLogFuzzTest extends AbstractCairoTest {
             try (Path path = new Path()) {
                 path.of(root);
 
-                path.of(root).concat("v1").$();
-                ff.mkdir(path, configuration.getMkDirMode());
+                path.of(root).concat("v1");
+                ff.mkdir(path.$(), configuration.getMkDirMode());
                 TableTransactionLogV1 v1 = new TableTransactionLogV1(ff);
                 v1.create(path.of(root).concat("v1"), 65897);
                 v1.open(path);
 
-                path.of(root).concat("v2").$();
-                ff.mkdir(path, configuration.getMkDirMode());
+                path.of(root).concat("v2");
+                ff.mkdir(path.$(), configuration.getMkDirMode());
                 TableTransactionLogV2 v2 = new TableTransactionLogV2(ff, chunkTransactionCount, configuration.getMkDirMode());
                 v2.create(path, 65897);
                 v2.open(path);
@@ -117,8 +117,8 @@ public class TableTransactionLogFuzzTest extends AbstractCairoTest {
                 int iterations = rnd.nextInt(50) + 1;
                 for (int i = 0; i < iterations; i++) {
                     int txnLo = rnd.nextInt(txnCount - 1) + 1;
-                    assertTxns(transactionIds, txnLo, path.of(root).concat("v1").$(), v1);
-                    assertTxns(transactionIds, txnLo, path.of(root).concat("v2").$(), v2);
+                    assertTxns(transactionIds, txnLo, path.of(root).concat("v1"), v1);
+                    assertTxns(transactionIds, txnLo, path.of(root).concat("v2"), v2);
                 }
 
                 v1.close();

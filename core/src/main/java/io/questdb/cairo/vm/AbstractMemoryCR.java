@@ -39,8 +39,8 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     private final Long256Impl long256B = new Long256Impl();
     private final Utf8SplitString utf8SplitViewA;
     private final Utf8SplitString utf8SplitViewB;
-    private final DirectUtf8String utf8viewA;
-    private final DirectUtf8String utf8viewB;
+    private final DirectUtf8String utf8ViewA;
+    private final DirectUtf8String utf8ViewB;
     protected FilesFacade ff;
     protected long lim;
     protected long pageAddress = 0;
@@ -57,13 +57,13 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
         }
         utf8SplitViewA = new Utf8SplitString(stableStrings);
         utf8SplitViewB = new Utf8SplitString(stableStrings);
-        utf8viewA = new DirectUtf8String(stableStrings);
-        utf8viewB = new DirectUtf8String(stableStrings);
+        utf8ViewA = new DirectUtf8String(stableStrings);
+        utf8ViewB = new DirectUtf8String(stableStrings);
     }
 
     public long addressOf(long offset) {
         offset -= shiftAddressRight;
-        assert offset <= size : "offset=" + offset + ", size=" + size;
+        assert checkOffsetMapped(offset);
         return pageAddress + offset;
     }
 
@@ -76,6 +76,16 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
 
     public final BinarySequence getBin(long offset) {
         return getBin(offset, bsview);
+    }
+
+    @Override
+    public DirectUtf8Sequence getDirectVarcharA(long offset, int size, boolean ascii) {
+        return getDirectVarchar(offset, size, utf8ViewA, ascii);
+    }
+
+    @Override
+    public DirectUtf8Sequence getDirectVarcharB(long offset, int size, boolean ascii) {
+        return getDirectVarchar(offset, size, utf8ViewB, ascii);
     }
 
     public FilesFacade getFilesFacade() {
@@ -103,13 +113,13 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
     }
 
     @Override
-    public Utf8SplitString getSplitVarcharA(long auxLo, long dataLo, int size, boolean ascii) {
-        return utf8SplitViewA.of(auxLo, dataLo, size, ascii);
+    public Utf8SplitString getSplitVarcharA(long auxLo, long dataLo, long dataLim, int size, boolean ascii) {
+        return utf8SplitViewA.of(auxLo, dataLo, dataLim, size, ascii);
     }
 
     @Override
-    public Utf8SplitString getSplitVarcharB(long auxLo, long dataLo, int size, boolean ascii) {
-        return utf8SplitViewB.of(auxLo, dataLo, size, ascii);
+    public Utf8SplitString getSplitVarcharB(long auxLo, long dataLo, long dataLim, int size, boolean ascii) {
+        return utf8SplitViewB.of(auxLo, dataLo, dataLim, size, ascii);
     }
 
     public final CharSequence getStrA(long offset) {
@@ -118,16 +128,6 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
 
     public final CharSequence getStrB(long offset) {
         return getStr(offset, csviewB);
-    }
-
-    @Override
-    public DirectUtf8Sequence getVarcharA(long offset, int size, boolean ascii) {
-        return getVarchar(offset, size, utf8viewA, ascii);
-    }
-
-    @Override
-    public DirectUtf8Sequence getVarcharB(long offset, int size, boolean ascii) {
-        return getVarchar(offset, size, utf8viewB, ascii);
     }
 
     @Override
@@ -155,10 +155,10 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
         return size;
     }
 
-    private DirectUtf8String getVarchar(long offset, int size, DirectUtf8String u8view, boolean ascii) {
+    private DirectUtf8String getDirectVarchar(long offset, int size, DirectUtf8String u8view, boolean ascii) {
         long addr = addressOf(offset);
         assert addr > 0;
-        if (size + offset <= size()) {
+        if (checkOffsetMapped(size + offset)) {
             return u8view.of(addr, addr + size, ascii);
         }
         throw CairoException.critical(0)

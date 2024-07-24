@@ -55,6 +55,11 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     }
 
     @Override
+    public long addressHi() {
+        return pageAddress + size;
+    }
+
+    @Override
     public void close() {
         clear();
         if (pageAddress != 0) {
@@ -70,6 +75,14 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
             LOG.debug().$("closed [fd=").$(fd).I$();
             fd = -1;
         }
+    }
+
+    @Override
+    public int detachFdClose() {
+        int fd = this.fd;
+        this.fd = -1;
+        close();
+        return fd;
     }
 
     @Override
@@ -93,16 +106,21 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
         this.memoryTag = memoryTag;
         this.madviseOpts = madviseOpts;
-        openFile(ff, name);
-        if (size < 0) {
-            size = ff.length(fd);
+        try {
+            openFile(ff, name);
             if (size < 0) {
-                close();
-                throw CairoException.critical(ff.errno()).put("could not get length: ").put(name);
+                size = ff.length(fd);
+                if (size < 0) {
+                    close();
+                    throw CairoException.critical(ff.errno()).put("could not get length: ").put(name);
+                }
             }
+            assert !PARANOIA_MODE || size <= ff.length(fd) || size <= ff.length(fd); // Some tests simulate ff.length() to be 0 once.
+            map(ff, name, size);
+        } catch (Throwable e) {
+            close();
+            throw e;
         }
-        assert !PARANOIA_MODE || size <= ff.length(fd) || size <= ff.length(fd); // Some tests simulate ff.length() to be 0 once.
-        map(ff, name, size);
     }
 
     @Override

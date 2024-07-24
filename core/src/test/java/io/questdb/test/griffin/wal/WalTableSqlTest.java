@@ -262,23 +262,25 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
     @Test
     public void testAddWalTxnsExceedingSequencerChunks() throws Exception {
-        int txnChunk = 64;
-        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, txnChunk);
-        String tableName = testName.getMethodName() + "Â";
-        ddl("create table " + tableName + " as (" +
-                "select x, " +
-                " timestamp_sequence('2022-02-24', 1000000L) ts " +
-                " from long_sequence(1)" +
-                ") timestamp(ts) partition by DAY WAL"
-        );
+        assertMemoryLeak(() -> {
+            int txnChunk = 64;
+            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, txnChunk);
+            String tableName = testName.getMethodName() + "Â";
+            ddl("create table " + tableName + " as (" +
+                    "select x, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(1)" +
+                    ") timestamp(ts) partition by DAY WAL"
+            );
 
-        int n = (int) (2.5 * txnChunk);
-        for (int i = 0; i < n; i++) {
-            insert("insert into " + tableName + " values (" + i + ", '2022-02-24T01')");
-        }
-        drainWalQueue();
-        assertSql("count\n" +
-                (n + 1) + "\n", "select count(*) from " + tableName);
+            int n = (int) (2.5 * txnChunk);
+            for (int i = 0; i < n; i++) {
+                insert("insert into " + tableName + " values (" + i + ", '2022-02-24T01')");
+            }
+            drainWalQueue();
+            assertSql("count\n" +
+                    (n + 1) + "\n", "select count(*) from " + tableName);
+        });
     }
 
     @Test
@@ -359,7 +361,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                         .concat(WalUtils.WAL_NAME_BASE).put("1").concat("0")
                         .concat(WalUtils.EVENT_FILE_NAME).$();
                 FilesFacade ff = engine.getConfiguration().getFilesFacade();
-                int fd = TableUtils.openRW(ff, path, LOG, configuration.getWriterFileOpenOpts());
+                int fd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
                 long intAddr = Unsafe.malloc(4, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.getUnsafe().putInt(intAddr, 10);
                 ff.write(fd, intAddr, 4, 0);
@@ -403,7 +405,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
         ddl("alter table " + tableName + " set type bypass wal", sqlExecutionContext);
         engine.releaseInactive();
-        ObjList<TableToken> convertedTables = TableConverter.convertTables(configuration, engine.getTableSequencerAPI(), engine.getProtectedTableResolver());
+        ObjList<TableToken> convertedTables = TableConverter.convertTables(configuration, engine.getTableSequencerAPI(), engine.getTableFlagResolver());
         engine.reloadTableNames(convertedTables);
 
         try (TxWriter tw = new TxWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration())) {
@@ -424,7 +426,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
         ddl("alter table " + tableName + " set type wal", sqlExecutionContext);
         engine.releaseInactive();
-        ObjList<TableToken> convertedTables2 = TableConverter.convertTables(configuration, engine.getTableSequencerAPI(), engine.getProtectedTableResolver());
+        ObjList<TableToken> convertedTables2 = TableConverter.convertTables(configuration, engine.getTableSequencerAPI(), engine.getTableFlagResolver());
         engine.reloadTableNames(convertedTables2);
 
         try (TxWriter tw = new TxWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration())) {
@@ -452,7 +454,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             ddl("alter table " + tableName + " add col1 int");
             ddl("alter table " + tableName + " set type wal", sqlExecutionContext);
             engine.releaseInactive();
-            ObjList<TableToken> convertedTables = TableConverter.convertTables(configuration, engine.getTableSequencerAPI(), engine.getProtectedTableResolver());
+            ObjList<TableToken> convertedTables = TableConverter.convertTables(configuration, engine.getTableSequencerAPI(), engine.getTableFlagResolver());
             engine.reloadTableNames(convertedTables);
 
             ddl("alter table " + tableName + " add col2 int");
@@ -468,7 +470,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             ddl("alter table " + tableName + " set type bypass wal");
             engine.releaseInactive();
-            convertedTables = TableConverter.convertTables(configuration, engine.getTableSequencerAPI(), engine.getProtectedTableResolver());
+            convertedTables = TableConverter.convertTables(configuration, engine.getTableSequencerAPI(), engine.getTableFlagResolver());
             engine.reloadTableNames(convertedTables);
 
             ddl("alter table " + tableName + " drop column col2");
@@ -601,7 +603,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
                 drop("drop table " + tableName);
                 try {
-                    assertException("insert into " + tableName + " values(1, 'A', 'B', '2022-02-24T01')");
+                    assertExceptionNoLeakCheck("insert into " + tableName + " values(1, 'A', 'B', '2022-02-24T01')");
                 } catch (SqlException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "able does not exist");
                 }
@@ -1044,7 +1046,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             @Override
             public boolean rmdir(Path path, boolean lazy) {
                 if (Utf8s.equalsAscii(pretendNotExist.get(), path) && count++ == 0) {
-                    super.rmdir(Path.getThreadLocal(pretendNotExist.get()).concat(SEQ_DIR).$());
+                    super.rmdir(Path.getThreadLocal(pretendNotExist.get()).concat(SEQ_DIR));
                     return false;
                 }
                 return super.rmdir(path, lazy);
@@ -1216,8 +1218,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\n" +
-                    "testEmptyTruncate\tfalse\t1\t0\t1\n", "wal_tables()");
+            assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
+                    "testEmptyTruncate\tfalse\t1\t0\t1\t\t\t0\n", "wal_tables()");
         });
     }
 
@@ -1274,6 +1276,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             insert("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T01', 'a2a2')");
             insert("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T02', 'a2a2')");
             insert("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T03', 'a2a2')");
+            // Out of order
             insert("insert into " + tableName + " values (101, 'a1a1', 'str-1', '2022-02-24T02', 'a2a2')");
 
 
@@ -1666,7 +1669,15 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 Assert.assertEquals("2022-02-24T01:00:00.000Z", Timestamps.toString(txReader.getLagMaxTimestamp()));
 
                 runApplyOnce();
+                txReader.unsafeLoadAll();
 
+                Assert.assertEquals(2, txReader.getLagTxnCount());
+                Assert.assertEquals(2, txReader.getLagRowCount());
+                Assert.assertFalse(txReader.isLagOrdered());
+                Assert.assertEquals(IntervalUtils.parseFloorPartialTimestamp("2022-02-24T00"), txReader.getLagMinTimestamp());
+                Assert.assertEquals(IntervalUtils.parseFloorPartialTimestamp("2022-02-24T01"), txReader.getLagMaxTimestamp());
+
+                runApplyOnce();
                 txReader.unsafeLoadAll();
 
                 Assert.assertEquals(0, txReader.getLagTxnCount());
@@ -1675,6 +1686,46 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 Assert.assertEquals(Long.MAX_VALUE, txReader.getLagMinTimestamp());
                 Assert.assertEquals(Long.MIN_VALUE, txReader.getLagMaxTimestamp());
             }
+        });
+    }
+
+    @Test
+    public void testSuspendedTablesTriedOnceOnStart() throws Exception {
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            public int openRW(LPSZ name, long opts) {
+                if (Utf8s.containsAscii(name, "fail.d")) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            String tableName = testName.getMethodName();
+            ddl("create table " + tableName + " as (" +
+                    "select x, " +
+                    " rnd_symbol('AB', 'BC', 'CD') sym, " +
+                    " timestamp_sequence('2022-02-24', 1000000L) ts " +
+                    " from long_sequence(1)" +
+                    ") timestamp(ts) partition by DAY WAL"
+            );
+            ddl("alter table " + tableName + " add column fail int");
+            long walNotification = engine.getMessageBus().getWalTxnNotificationPubSequence().current();
+
+            drainWalQueue();
+            TableToken tableToken = engine.verifyTableName(tableName);
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+            long notifications = engine.getMessageBus().getWalTxnNotificationPubSequence().current();
+            Assert.assertEquals(walNotification, notifications);
+
+            engine.getTableSequencerAPI().releaseAll();
+            drainWalQueue();
+            notifications = engine.getMessageBus().getWalTxnNotificationPubSequence().current();
+            Assert.assertTrue(walNotification < notifications);
+
+            // No notification second time
+            drainWalQueue();
+            Assert.assertEquals(notifications, engine.getMessageBus().getWalTxnNotificationPubSequence().current());
         });
     }
 

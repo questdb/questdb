@@ -56,7 +56,8 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
                 rnd.nextDouble(),
                 0.1 * rnd.nextDouble(),
                 0.01,
-                0.0
+                0.0,
+                rnd.nextDouble()
         );
 
         partitionCount = 5 + rnd.nextInt(10);
@@ -90,9 +91,9 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
                 1,
                 0.1 * rnd.nextDouble(),
                 0.01,
+                0.0,
                 0.0
         );
-
 
         partitionCount = 5 + rnd.nextInt(10);
         setFuzzCounts(
@@ -112,8 +113,8 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
     private void copyTableDir(TableToken src, TableToken merged) {
         FilesFacade ff = configuration.getFilesFacade();
 
-        Path pathDest = Path.getThreadLocal(configuration.getRoot()).concat(merged).$();
-        Path pathSrc = Path.getThreadLocal2(configuration.getRoot()).concat(src).$();
+        Path pathDest = Path.getThreadLocal(configuration.getRoot()).concat(merged);
+        Path pathSrc = Path.getThreadLocal2(configuration.getRoot()).concat(src);
 
         ff.rmdir(pathDest);
         ff.copyRecursive(pathSrc, pathDest, configuration.getMkDirMode());
@@ -128,8 +129,8 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
         engine.releaseInactive();
 
         // Force overwrite partitioning to by YEAR
-        Path path = Path.getThreadLocal(configuration.getRoot()).concat(merged).concat(TableUtils.META_FILE_NAME).$();
-        int metaFd = TableUtils.openRW(ff, path, LOG, configuration.getWriterFileOpenOpts());
+        Path path = Path.getThreadLocal(configuration.getRoot()).concat(merged).concat(TableUtils.META_FILE_NAME);
+        int metaFd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
 
         long addr = Unsafe.malloc(4, MemoryTag.NATIVE_DEFAULT);
         Unsafe.getUnsafe().putInt(addr, PartitionBy.YEAR);
@@ -160,17 +161,16 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
 
             copyTableDir(src, merged);
             mergeAllPartitions(merged);
+
+            String limit = "";
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    tableName + limit,
+                    tableNameMerged + limit,
+                    LOG
+            );
+            fuzzer.assertRandomIndexes(tableName, tableNameMerged, rnd);
         });
-
-        String limit = "";
-        TestUtils.assertSqlCursors(
-                engine,
-                sqlExecutionContext,
-                tableName + limit,
-                tableNameMerged + limit,
-                LOG
-        );
-        fuzzer.assertRandomIndexes(tableName, tableNameMerged, rnd);
     }
-
 }

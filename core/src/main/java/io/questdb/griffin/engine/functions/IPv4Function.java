@@ -31,7 +31,10 @@ import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Numbers;
-import io.questdb.std.str.*;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.std.Numbers.IPv4_NULL;
@@ -148,14 +151,6 @@ public abstract class IPv4Function implements ScalarFunction {
     }
 
     @Override
-    public final void getStr(Record rec, Utf16Sink utf16Sink) {
-        final int value = getIPv4(rec);
-        if (value != IPv4_NULL) {
-            Numbers.intToIPv4Sink(utf16Sink, value);
-        }
-    }
-
-    @Override
     public final CharSequence getStrA(Record rec) {
         return getStringSink(rec, sinkA);
     }
@@ -188,14 +183,6 @@ public abstract class IPv4Function implements ScalarFunction {
     @Override
     public final int getType() {
         return ColumnType.IPv4;
-    }
-
-    @Override
-    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-        final int value = getIPv4(rec);
-        if (value != Numbers.IPv4_NULL) {
-            Numbers.intToIPv4Sink(utf8Sink, value);
-        }
     }
 
     @Override

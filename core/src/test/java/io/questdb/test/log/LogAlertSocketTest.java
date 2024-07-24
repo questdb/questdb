@@ -562,12 +562,23 @@ public class LogAlertSocketTest {
         }
 
         @Override
+        public LogRecord $uuid(long lo, long hi) {
+            Numbers.appendUuid(lo, hi, sink);
+            return this;
+        }
+
+        @Override
         public LogRecord $(@Nullable Utf8Sequence sequence) {
             throw new UnsupportedOperationException();
         }
 
         @Override
         public LogRecord $(@Nullable DirectUtf8Sequence sequence) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord $substr(int from, @Nullable DirectUtf8Sequence sequence) {
             throw new UnsupportedOperationException();
         }
 

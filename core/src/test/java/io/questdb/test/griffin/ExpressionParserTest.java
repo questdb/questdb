@@ -125,6 +125,11 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBooleanLogicPrecedence() throws Exception {
+        x("x y not =", "x = NOT y");
+    }
+
+    @Test
     public void testBug1() throws SqlException {
         x("2022.yyyy", "'2022'.'yyyy'");
     }
@@ -546,6 +551,19 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCorrectPrecedenceOfBasicOps() throws Exception {
+        x("a ~ b ^ c d & |", "~a^b|c&d");
+        x("1 2 4 & |", "1|2&4");
+        x("1 - 1 in not", "-1 not in (1)");
+        x("'1' '2' || '12' in not", "'1' || '2' not in ('12')");
+        x("'1' '2' || '12' in not", "not '1' || '2' in ('12')");
+        x("true true false and or", "true or true and false");
+        x("1 2 | 3 in", "1 | 2 IN 3");
+        x("1 1 in not true =", "1 not in (1) = true");
+        x("a b ^ c ^", "a^b^c");
+    }
+
+    @Test
     public void testCountStar() throws SqlException {
         x("* count", "count(*)");
     }
@@ -679,11 +697,6 @@ public class ExpressionParserTest extends AbstractCairoTest {
                 4,
                 "not a method call"
         );
-    }
-
-    @Test
-    public void testEqualPrecedence() throws Exception {
-        x("a b c ^ ^", "a^b^c");
     }
 
     @Test
@@ -1072,6 +1085,16 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNotInTimestamp() throws Exception {
+        x("x '2022-01-01' in not", "x not in '2022-01-01'");
+    }
+
+    @Test
+    public void testNotOperator() throws SqlException {
+        x("aboolean true = aboolean false not = not or", "aboolean = true or not aboolean = not false");
+    }
+
+    @Test
     public void testOverlappedBraceBracket() {
         assertFail(
                 "a([i)]",
@@ -1140,6 +1163,12 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testUnary() throws Exception {
         x("4 c - *", "4 * -c");
+    }
+
+    @Test
+    public void testUnaryComplement() throws Exception {
+        x("1 ~ 1 >", "~1 > 1");
+        x("1 ~ - ~ - 1 - ~ >", "-~-~1 > ~-1");
     }
 
     @Test

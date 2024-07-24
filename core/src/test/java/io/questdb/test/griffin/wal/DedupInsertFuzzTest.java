@@ -41,7 +41,6 @@ import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.fuzz.FuzzTransactionOperation;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.Arrays;
@@ -50,7 +49,6 @@ import java.util.stream.Collectors;
 
 import static io.questdb.test.tools.TestUtils.assertEquals;
 
-@Ignore
 public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     @Test
@@ -379,6 +377,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 rnd.nextDouble(),
                 0.1 * rnd.nextDouble(),
                 0.5,
+                0.0,
                 0.0
         );
 
@@ -410,6 +409,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 rnd.nextDouble(),
                 0.1 * rnd.nextDouble(),
                 0.5,
+                0.0,
                 0.0
         );
 
@@ -441,7 +441,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 rnd.nextDouble(),
                 0.1 * rnd.nextDouble(),
                 0.0,
-                0.0
+                0.0,
+                rnd.nextDouble()
         );
 
         setFuzzCounts(

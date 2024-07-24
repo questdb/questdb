@@ -32,9 +32,9 @@ import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 
 public class FilesFacadeImpl implements FilesFacade {
-
     public static final FilesFacade INSTANCE = new FilesFacadeImpl();
     public static final int _16M = 16 * 1024 * 1024;
+    private static final long ZFS_MAGIC_NUMBER = 0x2fc12fc1;
     private final FsOperation copyFsOperation = this::copy;
     private final FsOperation hardLinkFsOperation = this::hardLink;
     private long mapPageSize = 0;
@@ -44,9 +44,24 @@ public class FilesFacadeImpl implements FilesFacade {
         return Files.allocate(fd, size);
     }
 
+    /**
+     * Returns a flag whether it's ok to mix concurrent mmap-based writes with pwrite().
+     * <p>
+     * In particular, returns false for ZFS as there is a <a href="https://github.com/openzfs/zfs/issues/14548">known issue</a>.
+     */
     @Override
     public boolean allowMixedIO(CharSequence root) {
-        return !Os.isWindows();
+        if (root == null || Os.isWindows()) {
+            return false;
+        }
+        try (Path path = new Path()) {
+            path.of(root);
+            // path will contain file system name
+            long fsStatus = Files.getFileSystemStatus(path.$());
+            path.seekZ(); // useful for debugging
+            // allow mixed I/O for all supported FSes except ZFS
+            return fsStatus < 0 && Math.abs(fsStatus) != ZFS_MAGIC_NUMBER;
+        }
     }
 
     @Override
@@ -184,8 +199,23 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public long getFileLimit() {
+        return Files.getFileLimit();
+    }
+
+    @Override
+    public int getFileSystemStatus(LPSZ lpszName) {
+        return Files.getFileSystemStatus(lpszName);
+    }
+
+    @Override
     public long getLastModified(LPSZ path) {
         return Files.getLastModified(path);
+    }
+
+    @Override
+    public long getMapCountLimit() {
+        return Files.getMapCountLimit();
     }
 
     @Override
@@ -287,7 +317,7 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public int mkdir(Path path, int mode) {
+    public int mkdir(LPSZ path, int mode) {
         return Files.mkdir(path, mode);
     }
 
@@ -443,7 +473,7 @@ public class FilesFacadeImpl implements FilesFacade {
 
     @Override
     public boolean unlinkOrRemove(Path path, Log LOG) {
-        int checkedType = isSoftLink(path) ? Files.DT_LNK : Files.DT_UNKNOWN;
+        int checkedType = isSoftLink(path.$()) ? Files.DT_LNK : Files.DT_UNKNOWN;
         return unlinkOrRemove(path, checkedType, LOG);
     }
 
@@ -454,7 +484,7 @@ public class FilesFacadeImpl implements FilesFacade {
             // is to delete the link, not the contents of the target. in *nix
             // systems we can simply unlink, which deletes the link and leaves
             // the contents of the target intact
-            if (unlink(path) == 0) {
+            if (unlink(path.$()) == 0) {
                 LOG.debug().$("removed by unlink [path=").$(path).I$();
                 return true;
             } else {
@@ -498,7 +528,8 @@ public class FilesFacadeImpl implements FilesFacade {
         int len = src.size();
         long p = findFirst(src.$());
 
-        if (!exists(dst.$()) && -1 == mkdir(dst, dirMode)) {
+        LPSZ lpsz = dst.$();
+        if (!exists(lpsz) && -1 == mkdir(lpsz, dirMode)) {
             return -1;
         }
 

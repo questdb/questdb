@@ -34,10 +34,10 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.std.str.Utf8s.trim;
@@ -50,8 +50,11 @@ public class TrimVarcharFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(
-            int position, ObjList<Function> args, IntList argPositions,
-            CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
     ) {
         final Function arg = args.get(0);
         if (!arg.isConstant()) {
@@ -68,30 +71,24 @@ public class TrimVarcharFunctionFactory implements FunctionFactory {
     }
 
     private static class ConstFunc extends VarcharFunction implements UnaryFunction {
-
         private final Function arg;
-        private final DirectUtf8Sink sink1;
-        private final DirectUtf8Sink sink2;
+        private final DirectUtf8Sink sink;
 
-        ConstFunc(Function arg, TrimType type) {
+        public ConstFunc(Function arg, TrimType type) {
             this.arg = arg;
             Utf8Sequence value = getArg().getVarcharA(null);
             if (value == null) {
-                this.sink1 = new DirectUtf8Sink(0);
-                this.sink2 = new DirectUtf8Sink(0);
+                this.sink = null;
             } else {
-                this.sink1 = new DirectUtf8Sink(value.size());
-                trim(type, value, sink1);
-                this.sink2 = new DirectUtf8Sink(sink1.size());
-                sink2.put(sink1);
+                this.sink = new DirectUtf8Sink(value.size());
+                trim(type, value, sink);
             }
         }
 
         @Override
         public void close() {
             UnaryFunction.super.close();
-            sink1.close();
-            sink2.close();
+            Misc.free(sink);
         }
 
         @Override
@@ -100,18 +97,13 @@ public class TrimVarcharFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-            utf8Sink.put(sink1);
-        }
-
-        @Override
         public @Nullable Utf8Sequence getVarcharA(Record rec) {
-            return sink1;
+            return sink;
         }
 
         @Override
         public @Nullable Utf8Sequence getVarcharB(Record rec) {
-            return sink2;
+            return sink;
         }
 
         @Override
@@ -121,17 +113,17 @@ public class TrimVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val('\'').val(sink1).val('\'');
+            sink.val('\'').val(this.sink).val('\'');
         }
     }
 
     private static class Func extends VarcharFunction implements UnaryFunction {
         private final Function arg;
-        private final DirectUtf8Sink sink1 = new DirectUtf8Sink(4);
-        private final DirectUtf8Sink sink2 = new DirectUtf8Sink(4);
+        private final DirectUtf8Sink sinkA = new DirectUtf8Sink(4);
+        private final DirectUtf8Sink sinkB = new DirectUtf8Sink(4);
         private final TrimType type;
 
-        Func(Function arg, TrimType type) {
+        public Func(Function arg, TrimType type) {
             this.arg = arg;
             this.type = type;
         }
@@ -139,8 +131,8 @@ public class TrimVarcharFunctionFactory implements FunctionFactory {
         @Override
         public void close() {
             UnaryFunction.super.close();
-            sink1.close();
-            sink2.close();
+            sinkA.close();
+            sinkB.close();
         }
 
         @Override
@@ -161,19 +153,14 @@ public class TrimVarcharFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-            trim(type, getArg().getVarcharA(rec), utf8Sink);
-        }
-
-        @Override
         public Utf8Sequence getVarcharA(final Record rec) {
             final Utf8Sequence utf8Sequence = getArg().getVarcharA(rec);
             if (utf8Sequence == null) {
                 return null;
             }
-            sink1.clear();
-            trim(type, utf8Sequence, sink1);
-            return sink1;
+            sinkA.clear();
+            trim(type, utf8Sequence, sinkA);
+            return sinkA;
         }
 
         @Override
@@ -182,9 +169,9 @@ public class TrimVarcharFunctionFactory implements FunctionFactory {
             if (charSequence == null) {
                 return null;
             }
-            sink2.clear();
-            trim(type, charSequence, sink2);
-            return sink2;
+            sinkB.clear();
+            trim(type, charSequence, sinkB);
+            return sinkB;
         }
 
         @Override

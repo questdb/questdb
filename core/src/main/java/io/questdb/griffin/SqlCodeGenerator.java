@@ -171,6 +171,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // a bitset of string/symbol columns forced to be serialised as varchar
     private final BitSet writeStringAsVarcharA = new BitSet();
     private final BitSet writeStringAsVarcharB = new BitSet();
+    private final BitSet writeSymbolAsString = new BitSet();
     private boolean enableJitNullChecks = true;
     private boolean fullFatJoins = false;
 
@@ -180,21 +181,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             FunctionParser functionParser,
             ObjectPool<ExpressionNode> expressionNodePool
     ) {
-        this.engine = engine;
-        this.configuration = configuration;
-        this.functionParser = functionParser;
-        this.recordComparatorCompiler = new RecordComparatorCompiler(asm);
-        this.enableJitDebug = configuration.isSqlJitDebugEnabled();
-        this.jitIRMem = Vm.getCARWInstance(
-                configuration.getSqlJitIRMemoryPageSize(),
-                configuration.getSqlJitIRMemoryMaxPages(),
-                MemoryTag.NATIVE_SQL_COMPILER
-        );
-        // Pre-touch JIT IR memory to avoid false positive memory leak detections.
-        jitIRMem.putByte((byte) 0);
-        jitIRMem.truncate();
-        this.expressionNodePool = expressionNodePool;
-        this.reduceTaskFactory = () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_SQL_COMPILER);
+        try {
+            this.engine = engine;
+            this.configuration = configuration;
+            this.functionParser = functionParser;
+            this.recordComparatorCompiler = new RecordComparatorCompiler(asm);
+            this.enableJitDebug = configuration.isSqlJitDebugEnabled();
+            this.jitIRMem = Vm.getCARWInstance(
+                    configuration.getSqlJitIRMemoryPageSize(),
+                    configuration.getSqlJitIRMemoryMaxPages(),
+                    MemoryTag.NATIVE_SQL_COMPILER
+            );
+            // Pre-touch JIT IR memory to avoid false positive memory leak detections.
+            jitIRMem.putByte((byte) 0);
+            jitIRMem.truncate();
+            this.expressionNodePool = expressionNodePool;
+            this.reduceTaskFactory = () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_SQL_COMPILER);
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     public static int getUnionCastType(int typeA, int typeB) {
@@ -264,11 +270,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return generateQuery(model, executionContext, true);
     }
 
-    public RecordCursorFactory generateExplain(QueryModel model, RecordCursorFactory factory, int format) {
-        RecordCursorFactory recordCursorFactory = new RecordCursorFactoryStub(model, factory);
-        return new ExplainPlanFactory(recordCursorFactory, format);
-    }
-
     public RecordCursorFactory generateExplain(@Transient ExplainModel model, @Transient SqlExecutionContext executionContext) throws SqlException {
         ExecutionModel innerModel = model.getInnerExecutionModel();
         QueryModel queryModel = innerModel.getQueryModel();
@@ -283,6 +284,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         return new ExplainPlanFactory(factory, model.getFormat());
+    }
+
+    public RecordCursorFactory generateExplain(QueryModel model, RecordCursorFactory factory, int format) {
+        RecordCursorFactory recordCursorFactory = new RecordCursorFactoryStub(model, factory);
+        return new ExplainPlanFactory(recordCursorFactory, format);
     }
 
     private static boolean allGroupsFirstLastWithSingleSymbolFilter(QueryModel model, RecordMetadata metadata) {
@@ -326,6 +332,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return true;
     }
 
+    private static void coerceRuntimeConstantType(Function func, short type, SqlExecutionContext context, CharSequence message, int pos) throws SqlException {
+        if (ColumnType.isUndefined(func.getType())) {
+            func.assignType(type, context.getBindVariableService());
+        } else if ((!func.isConstant() && !func.isRuntimeConstant()) || !ColumnType.isAssignableFrom(func.getType(), type)) {
+            throw SqlException.$(pos, message);
+        }
+    }
+
     private static RecordCursorFactory createFullFatAsOfJoin(
             CairoConfiguration configuration,
             RecordMetadata metadata,
@@ -342,9 +356,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             JoinContext joinContext,
             ColumnFilter masterTableKeyColumns
     ) {
-        return new AsOfJoinRecordCursorFactory(configuration, metadata, masterFactory, slaveFactory, mapKeyTypes,
-                mapValueTypes, slaveColumnTypes, masterKeySink, slaveKeySink, columnSplit, slaveValueSink, columnIndex,
-                joinContext, masterTableKeyColumns
+        return new AsOfJoinRecordCursorFactory(
+                configuration,
+                metadata,
+                masterFactory,
+                slaveFactory,
+                mapKeyTypes,
+                mapValueTypes,
+                slaveColumnTypes,
+                masterKeySink,
+                slaveKeySink,
+                columnSplit,
+                slaveValueSink,
+                columnIndex,
+                joinContext,
+                masterTableKeyColumns
         );
     }
 
@@ -364,9 +390,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             JoinContext joinContext,
             ColumnFilter masterTableKeyColumns
     ) {
-        return new LtJoinRecordCursorFactory(configuration, metadata, masterFactory, slaveFactory, mapKeyTypes,
-                mapValueTypes, slaveColumnTypes, masterKeySink, slaveKeySink, columnSplit, slaveValueSink,
-                columnIndex, joinContext, masterTableKeyColumns
+        return new LtJoinRecordCursorFactory(
+                configuration,
+                metadata,
+                masterFactory,
+                slaveFactory,
+                mapKeyTypes,
+                mapValueTypes,
+                slaveColumnTypes,
+                masterKeySink,
+                slaveKeySink,
+                columnSplit,
+                slaveValueSink,
+                columnIndex,
+                joinContext,
+                masterTableKeyColumns
         );
     }
 
@@ -442,7 +480,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private boolean assembleKeysAndFunctionReferences(
             ObjList<QueryColumn> columns,
             RecordMetadata metadata,
-            boolean checkLiterals
+            int hourFunctionIndex
     ) {
         tempVaf.clear();
         tempMetadata.clear();
@@ -455,7 +493,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final QueryColumn qc = columns.getQuick(i);
             final ExpressionNode ast = qc.getAst();
             if (ast.type == LITERAL) {
-                if (checkLiterals) {
+                // when "hour" index is not set (-1) we assume we should be looking for
+                // intrinsic cases, such as "columnRef, sum(col)"
+                if (hourFunctionIndex == -1) {
                     final int columnIndex = metadata.getColumnIndex(ast.token);
                     final int type = metadata.getColumnType(columnIndex);
                     if (ColumnType.isInt(type)) {
@@ -473,7 +513,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         return false;
                     }
                 }
-            } else {
+            } else if (i != hourFunctionIndex) { // we exclude "hour" call from aggregate lookups
                 final VectorAggregateFunctionConstructor constructor = assembleFunctionReference(metadata, ast);
                 if (constructor != null) {
                     tempVecConstructors.add(constructor);
@@ -664,7 +704,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             FullFatJoinGenerator generator,
             JoinContext joinContext
     ) throws SqlException {
-
         // create hash set of key columns to easily find them
         intHashSet.clear();
         for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
@@ -696,7 +735,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 asm,
                 masterMetadata,
                 listColumnFilterB,
-                true,
+                writeSymbolAsString,
                 writeStringAsVarcharB
         );
 
@@ -709,7 +748,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
 
         try {
-
             // metadata will have master record verbatim
             metadata.copyColumnMetadataFrom(masterAlias, masterMetadata);
 
@@ -767,7 +805,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             asm,
                             slaveMetadata,
                             listColumnFilterA,
-                            true,
+                            writeSymbolAsString,
                             writeStringAsVarcharA
                     ),
                     masterMetadata.getColumnCount(),
@@ -808,7 +846,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 asm,
                 masterMetadata,
                 listColumnFilterB,
-                true,
+                writeSymbolAsString,
                 writeStringAsVarcharB
         );
 
@@ -816,7 +854,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 asm,
                 slaveMetadata,
                 listColumnFilterA,
-                true,
+                writeSymbolAsString,
                 writeStringAsVarcharA
         );
 
@@ -872,12 +910,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         entityColumnFilter.of(slaveMetadata.getColumnCount());
-        RecordSink slaveSink = RecordSinkFactory.getInstance(
-                asm,
-                slaveMetadata,
-                entityColumnFilter,
-                false
-        );
+        RecordSink slaveSink = RecordSinkFactory.getInstance(asm, slaveMetadata, entityColumnFilter);
 
         if (joinType == JOIN_INNER) {
             return new HashJoinRecordCursorFactory(
@@ -957,8 +990,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 masterMetadata.getColumnCount() + slaveMetadata.getColumnCount()
         );
 
-        metadata.copyColumnMetadataFrom(masterAlias, masterMetadata);
-        metadata.copyColumnMetadataFrom(slaveAlias, slaveMetadata);
+        try {
+            metadata.copyColumnMetadataFrom(masterAlias, masterMetadata);
+            metadata.copyColumnMetadataFrom(slaveAlias, slaveMetadata);
+        } catch (Throwable th) {
+            Misc.free(metadata);
+            throw th;
+        }
 
         if (timestampIndex != -1) {
             metadata.setTimestampIndex(timestampIndex);
@@ -1650,6 +1688,108 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return castFunctions;
     }
 
+    private RecordCursorFactory generateFill(QueryModel model, RecordCursorFactory groupByFactory, SqlExecutionContext executionContext) throws SqlException {
+        // locate fill
+        QueryModel curr = model;
+
+        while (curr != null && curr.getFillStride() == null) {
+            curr = curr.getNestedModel();
+        }
+
+        if (curr == null || curr.getFillStride() == null) {
+            return groupByFactory;
+        }
+
+        ObjList<Function> fillValues = null;
+        Function fillFromFunc = TimestampConstant.NULL;
+        Function fillToFunc = TimestampConstant.NULL;
+
+        final ExpressionNode fillFrom = curr.getFillFrom();
+        final ExpressionNode fillTo = curr.getFillTo();
+        final ExpressionNode fillStride = curr.getFillStride();
+        ObjList<ExpressionNode> fillValuesExprs = curr.getFillValues();
+
+        try {
+            if (fillValuesExprs == null) {
+                throw SqlException.$(-1, "fill values were null");
+            }
+
+            fillValues = new ObjList<>(fillValuesExprs.size());
+
+            ExpressionNode expr;
+            for (int i = 0, n = fillValuesExprs.size(); i < n; i++) {
+                expr = fillValuesExprs.getQuick(0);
+                if (isNoneKeyword(expr.token)) {
+                    Misc.freeObjList(fillValues);
+                    return groupByFactory;
+                }
+                final Function fillValueFunc = functionParser.parseFunction(expr, EmptyRecordMetadata.INSTANCE, executionContext);
+                fillValues.add(fillValueFunc);
+            }
+
+            if (fillValues.size() == 0 || (fillValues.size() == 1 && isNoneKeyword(fillValues.getQuick(0).getName()))) {
+                Misc.freeObjList(fillValues);
+                return groupByFactory;
+            }
+
+            if (fillFrom != null) {
+                fillFromFunc = functionParser.parseFunction(fillFrom, EmptyRecordMetadata.INSTANCE, executionContext);
+                coerceRuntimeConstantType(fillFromFunc, ColumnType.TIMESTAMP, executionContext, "from lower bound must be a constant expression convertible to a TIMESTAMP", fillFrom.position);
+            }
+
+            if (fillTo != null) {
+                fillToFunc = functionParser.parseFunction(fillTo, EmptyRecordMetadata.INSTANCE, executionContext);
+                coerceRuntimeConstantType(fillToFunc, ColumnType.TIMESTAMP, executionContext, "to upper bound must be a constant expression convertible to a TIMESTAMP", fillTo.position);
+            }
+
+
+            QueryModel temp = model;
+            ExpressionNode timestamp = model.getTimestamp();
+
+            while (timestamp == null && temp != null) {
+                temp = temp.getNestedModel();
+
+                if (temp != null) {
+                    timestamp = temp.getTimestamp();
+                }
+            }
+
+            assert timestamp != null;
+
+            // look for timestamp_floor to check for an alias
+            CharSequence alias = timestamp.token;
+            final CharSequence currTimestamp = curr.getTimestamp().token;
+            for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
+                final QueryColumn col = model.getColumns().getQuick(i);
+                final ExpressionNode ast = col.getAst();
+                if (Chars.equals(ast.token, "timestamp_floor")) {
+                    final CharSequence ts = ast.paramCount == 3 ? ast.args.getQuick(1).token : ast.rhs.token;
+                    if (Chars.equals(ts, currTimestamp)) {
+                        alias = col.getAlias();
+                    }
+                }
+            }
+
+            int timestampIndex = groupByFactory.getMetadata().getColumnIndexQuiet(alias);
+
+            return new FillRangeRecordCursorFactory(
+                    groupByFactory.getMetadata(),
+                    groupByFactory,
+                    fillFromFunc,
+                    fillToFunc,
+                    fillStride.token,
+                    fillValues,
+                    timestampIndex
+            );
+        } catch (Throwable e) {
+            Misc.freeObjList(fillValues);
+            Misc.free(fillFromFunc);
+            Misc.free(fillToFunc);
+            Misc.free(groupByFactory);
+            throw e;
+        }
+    }
+
     private RecordCursorFactory generateFilter(RecordCursorFactory factory, QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         return model.getWhereClause() == null ? factory : generateFilter0(factory, model, executionContext);
     }
@@ -1753,30 +1893,30 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final Function limitLoFunction;
             try {
                 limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
+                final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
+                return new AsyncFilteredRecordCursorFactory(
+                        configuration,
+                        executionContext.getMessageBus(),
+                        factory,
+                        filter,
+                        reduceTaskFactory,
+                        compileWorkerFilterConditionally(
+                                executionContext,
+                                filter,
+                                executionContext.getSharedWorkerCount(),
+                                filterExpr,
+                                factory.getMetadata()
+                        ),
+                        limitLoFunction,
+                        limitLoPos,
+                        preTouchColumns,
+                        executionContext.getSharedWorkerCount()
+                );
             } catch (Throwable e) {
                 Misc.free(filter);
                 Misc.free(factory);
                 throw e;
             }
-            final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
-            return new AsyncFilteredRecordCursorFactory(
-                    configuration,
-                    executionContext.getMessageBus(),
-                    factory,
-                    filter,
-                    reduceTaskFactory,
-                    compileWorkerFilterConditionally(
-                            executionContext,
-                            filter,
-                            executionContext.getSharedWorkerCount(),
-                            filterExpr,
-                            factory.getMetadata()
-                    ),
-                    limitLoFunction,
-                    limitLoPos,
-                    preTouchColumns,
-                    executionContext.getSharedWorkerCount()
-            );
         }
         return new FilteredRecordCursorFactory(factory, filter);
     }
@@ -1787,7 +1927,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // We're transferring ownership of the tableFactory's factory to another factory
             // setting tableFactory to NULL will prevent double-ownership.
             // We should not release tableFactory itself, they typically just a lightweight factory wrapper.
-            model.setTableFactory(null);
+            model.setTableNameFunction(null);
             return tableFactory;
         } else {
             // when tableFactory is null we have to recompile it from scratch, including creating new factory
@@ -1805,13 +1945,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordMetadata unionMetadata,
             SetRecordCursorFactoryConstructor constructor
     ) throws SqlException {
-        entityColumnFilter.of(factoryA.getMetadata().getColumnCount());
-        final RecordSink recordSink = RecordSinkFactory.getInstance(
-                asm,
-                unionMetadata,
-                entityColumnFilter,
-                true
-        );
+        writeSymbolAsString.clear();
         valueTypes.clear();
         // Remap symbol columns to string type since that's how recordSink copies them.
         keyTypes.clear();
@@ -1819,10 +1953,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final int columnType = unionMetadata.getColumnType(i);
             if (ColumnType.isSymbol(columnType)) {
                 keyTypes.add(ColumnType.STRING);
+                writeSymbolAsString.set(i);
             } else {
                 keyTypes.add(columnType);
             }
         }
+
+        entityColumnFilter.of(factoryA.getMetadata().getColumnCount());
+        final RecordSink recordSink = RecordSinkFactory.getInstance(
+                asm,
+                unionMetadata,
+                entityColumnFilter,
+                writeSymbolAsString
+        );
+
         RecordCursorFactory unionAllFactory = constructor.create(
                 configuration,
                 unionMetadata,
@@ -1844,6 +1988,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private RecordCursorFactory generateJoins(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         final ObjList<QueryModel> joinModels = model.getJoinModels();
         IntList ordered = model.getOrderedJoinModels();
+        JoinRecordMetadata joinMetadata = null;
         RecordCursorFactory master = null;
         CharSequence masterAlias = null;
 
@@ -1886,7 +2031,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         final RecordMetadata masterMetadata = master.getMetadata();
                         final RecordMetadata slaveMetadata = slave.getMetadata();
                         Function filter = null;
-                        JoinRecordMetadata joinMetadata;
 
                         switch (joinType) {
                             case JOIN_CROSS_LEFT:
@@ -1917,7 +2061,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case JOIN_ASOF:
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 validateOuterJoinExpressions(slaveModel, "ASOF");
-                                processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
+                                processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getContext(), masterMetadata, slaveMetadata);
                                 if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
                                         master = createAsOfJoin(
@@ -1927,7 +2071,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         asm,
                                                         masterMetadata,
                                                         listColumnFilterB,
-                                                        true,
+                                                        writeSymbolAsString,
                                                         writeStringAsVarcharB
                                                 ),
                                                 slave,
@@ -1935,7 +2079,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         asm,
                                                         slaveMetadata,
                                                         listColumnFilterA,
-                                                        true,
+                                                        writeSymbolAsString,
                                                         writeStringAsVarcharA
                                                 ),
                                                 masterMetadata.getColumnCount(),
@@ -1980,7 +2124,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case JOIN_LT:
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 validateOuterJoinExpressions(slaveModel, "LT");
-                                processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
+                                processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getContext(), masterMetadata, slaveMetadata);
                                 if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
                                         master = createLtJoin(
@@ -1990,7 +2134,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         asm,
                                                         masterMetadata,
                                                         listColumnFilterB,
-                                                        true,
+                                                        writeSymbolAsString,
                                                         writeStringAsVarcharB
                                                 ),
                                                 slave,
@@ -1998,7 +2142,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         asm,
                                                         slaveMetadata,
                                                         listColumnFilterA,
-                                                        true,
+                                                        writeSymbolAsString,
                                                         writeStringAsVarcharA
                                                 ),
                                                 masterMetadata.getColumnCount(),
@@ -2043,7 +2187,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             case JOIN_SPLICE:
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 validateOuterJoinExpressions(slaveModel, "SPLICE");
-                                processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
+                                processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getContext(), masterMetadata, slaveMetadata);
                                 if (slave.recordCursorSupportsRandomAccess() && master.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     master = createSpliceJoin(
                                             // splice join result does not have timestamp
@@ -2053,7 +2197,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                     asm,
                                                     masterMetadata,
                                                     listColumnFilterB,
-                                                    true,
+                                                    writeSymbolAsString,
                                                     writeStringAsVarcharB
                                             ),
                                             slave,
@@ -2061,7 +2205,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                     asm,
                                                     slaveMetadata,
                                                     listColumnFilterA,
-                                                    true,
+                                                    writeSymbolAsString,
                                                     writeStringAsVarcharA
                                             ),
                                             masterMetadata.getColumnCount(),
@@ -2081,15 +2225,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 }
                                 break;
                             default:
-                                processJoinContext(index == 1, slaveModel.getContext(), masterMetadata, slaveMetadata);
+                                processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getContext(), masterMetadata, slaveMetadata);
 
                                 joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata);
                                 if (slaveModel.getOuterJoinExpressionClause() != null) {
                                     filter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
                                 }
 
-                                if (joinType == JOIN_OUTER &&
-                                        filter != null && filter.isConstant() && !filter.getBool(null)) {
+                                if (joinType == JOIN_OUTER
+                                        && filter != null && filter.isConstant() && !filter.getBool(null)) {
                                     Misc.free(slave);
                                     slave = new EmptyTableRecordCursorFactory(slaveMetadata);
                                 }
@@ -2110,12 +2254,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 break;
                         }
                     }
-                } catch (Throwable e) {
+                } catch (Throwable th) {
+                    Misc.free(joinMetadata);
                     master = Misc.free(master);
                     if (releaseSlave) {
                         Misc.free(slave);
                     }
-                    throw e;
+                    throw th;
                 } finally {
                     executionContext.popTimestampRequiredFlag();
                 }
@@ -2237,7 +2382,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return new LatestByRecordCursorFactory(
                     configuration,
                     factory,
-                    RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA, false),
+                    RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA),
                     keyTypes,
                     timestampIndex
             );
@@ -2259,7 +2404,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return new LatestByLightRecordCursorFactory(
                 configuration,
                 factory,
-                RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA, false),
+                RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA),
                 keyTypes,
                 timestampIndex,
                 orderedByTimestampAsc
@@ -2330,7 +2475,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         metadata,
                         configuration,
                         dataFrameCursorFactory,
-                        RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA, false),
+                        RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA),
                         keyTypes,
                         partitionByColumnIndexes,
                         partitionBySymbolCounts,
@@ -2342,7 +2487,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     metadata,
                     configuration,
                     dataFrameCursorFactory,
-                    RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA, false),
+                    RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA),
                     keyTypes,
                     filter,
                     columnIndexes
@@ -2691,12 +2836,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         configuration,
                         orderedMetadata,
                         recordCursorFactory,
-                        RecordSinkFactory.getInstance(
-                                asm,
-                                orderedMetadata,
-                                entityColumnFilter,
-                                false
-                        ),
+                        RecordSinkFactory.getInstance(asm, orderedMetadata, entityColumnFilter),
                         recordComparatorCompiler.compile(metadata, listColumnFilterA),
                         listColumnFilterA.copy()
                 );
@@ -2753,6 +2893,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final ExpressionNode offset = model.getSampleByOffset();
         final Function offsetFunc;
         final int offsetFuncPos;
+        final Function sampleFromFunc;
+        final int sampleFromFuncPos;
+        final Function sampleToFunc;
+        final int sampleToFuncPos;
 
         if (timezoneName != null) {
             timezoneNameFunc = functionParser.parseFunction(
@@ -2761,16 +2905,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     executionContext
             );
             timezoneNameFuncPos = timezoneName.position;
+            coerceRuntimeConstantType(timezoneNameFunc, ColumnType.STRING, executionContext, "timezone must be a constant expression of STRING or CHAR type", timezoneNameFuncPos);
         } else {
             timezoneNameFunc = StrConstant.NULL;
             timezoneNameFuncPos = 0;
-        }
-
-        if (ColumnType.isUndefined(timezoneNameFunc.getType())) {
-            timezoneNameFunc.assignType(ColumnType.STRING, executionContext.getBindVariableService());
-        } else if ((!timezoneNameFunc.isConstant() && !timezoneNameFunc.isRuntimeConstant())
-                || !ColumnType.isAssignableFrom(timezoneNameFunc.getType(), ColumnType.STRING)) {
-            throw SqlException.$(timezoneNameFuncPos, "timezone must be a constant expression of STRING or CHAR type");
         }
 
         if (offset != null) {
@@ -2780,17 +2918,31 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     executionContext
             );
             offsetFuncPos = offset.position;
+            coerceRuntimeConstantType(offsetFunc, ColumnType.STRING, executionContext, "offset must be a constant expression of STRING or CHAR type", offsetFuncPos);
         } else {
             offsetFunc = StrConstant.NULL;
             offsetFuncPos = 0;
         }
 
-        if (ColumnType.isUndefined(offsetFunc.getType())) {
-            offsetFunc.assignType(ColumnType.STRING, executionContext.getBindVariableService());
-        } else if ((!offsetFunc.isConstant() && !offsetFunc.isRuntimeConstant())
-                || !ColumnType.isAssignableFrom(offsetFunc.getType(), ColumnType.STRING)) {
-            throw SqlException.$(offsetFuncPos, "offset must be a constant expression of STRING or CHAR type");
+        if (model.getSampleByFrom() != null) {
+            sampleFromFunc = functionParser.parseFunction(model.getSampleByFrom(), EmptyRecordMetadata.INSTANCE, executionContext);
+            sampleFromFuncPos = model.getSampleByFrom().position;
+            coerceRuntimeConstantType(sampleFromFunc, ColumnType.TIMESTAMP, executionContext, "from lower bound must be a constant expression convertible to a TIMESTAMP", sampleFromFuncPos);
+        } else {
+            sampleFromFunc = TimestampConstant.NULL;
+            sampleFromFuncPos = 0;
         }
+
+        if (model.getSampleByTo() != null) {
+            sampleToFunc = functionParser.parseFunction(model.getSampleByTo(), EmptyRecordMetadata.INSTANCE, executionContext);
+            sampleToFuncPos = model.getSampleByTo().position;
+            coerceRuntimeConstantType(sampleToFunc, ColumnType.TIMESTAMP, executionContext, "to upper bound must be a constant expression convertible to a TIMESTAMP", sampleToFuncPos);
+        } else {
+            sampleToFunc = TimestampConstant.NULL;
+            sampleToFuncPos = 0;
+        }
+
+        final boolean isFromTo = sampleFromFunc != TimestampConstant.NULL || sampleToFunc != TimestampConstant.NULL;
 
         RecordCursorFactory factory = null;
         // We require timestamp with asc order.
@@ -2968,7 +3120,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 offsetFuncPos,
                                 timestampIndex,
                                 symbolFilter,
-                                configuration.getSampleByIndexSearchPageSize()
+                                configuration.getSampleByIndexSearchPageSize(),
+                                sampleFromFunc,
+                                sampleFromFuncPos,
+                                sampleToFunc,
+                                sampleToFuncPos
                         );
                     }
                     factory.revertFromSampleByIndexDataFrameCursorFactory();
@@ -2990,9 +3146,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             timezoneNameFunc,
                             timezoneNameFuncPos,
                             offsetFunc,
-                            offsetFuncPos
+                            offsetFuncPos,
+                            sampleFromFunc,
+                            sampleFromFuncPos,
+                            sampleToFunc,
+                            sampleToFuncPos
                     );
                 }
+
+                guardAgainstFromToWithKeyedSampleBy(isFromTo);
 
                 return new SampleByFillPrevRecordCursorFactory(
                         asm,
@@ -3009,7 +3171,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         timezoneNameFunc,
                         timezoneNameFuncPos,
                         offsetFunc,
-                        offsetFuncPos
+                        offsetFuncPos,
+                        sampleFromFunc,
+                        sampleFromFuncPos,
+                        sampleToFunc,
+                        sampleToFuncPos
                 );
             }
 
@@ -3029,9 +3195,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             timezoneNameFunc,
                             timezoneNameFuncPos,
                             offsetFunc,
-                            offsetFuncPos
+                            offsetFuncPos,
+                            sampleFromFunc,
+                            sampleFromFuncPos,
+                            sampleToFunc,
+                            sampleToFuncPos
                     );
                 }
+
+                guardAgainstFromToWithKeyedSampleBy(isFromTo);
 
                 return new SampleByFillNoneRecordCursorFactory(
                         asm,
@@ -3048,7 +3220,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         timezoneNameFunc,
                         timezoneNameFuncPos,
                         offsetFunc,
-                        offsetFuncPos
+                        offsetFuncPos,
+                        sampleFromFunc,
+                        sampleFromFuncPos,
+                        sampleToFunc,
+                        sampleToFuncPos
                 );
             }
 
@@ -3068,9 +3244,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             timezoneNameFunc,
                             timezoneNameFuncPos,
                             offsetFunc,
-                            offsetFuncPos
+                            offsetFuncPos,
+                            sampleFromFunc,
+                            sampleFromFuncPos,
+                            sampleToFunc,
+                            sampleToFuncPos
                     );
                 }
+
+                guardAgainstFromToWithKeyedSampleBy(isFromTo);
 
                 return new SampleByFillNullRecordCursorFactory(
                         asm,
@@ -3088,7 +3270,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         timezoneNameFunc,
                         timezoneNameFuncPos,
                         offsetFunc,
-                        offsetFuncPos
+                        offsetFuncPos,
+                        sampleFromFunc,
+                        sampleFromFuncPos,
+                        sampleToFunc,
+                        sampleToFuncPos
                 );
             }
 
@@ -3110,9 +3296,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         timezoneNameFunc,
                         timezoneNameFuncPos,
                         offsetFunc,
-                        offsetFuncPos
+                        offsetFuncPos,
+                        sampleFromFunc,
+                        sampleFromFuncPos,
+                        sampleToFunc,
+                        sampleToFuncPos
                 );
             }
+
+            guardAgainstFromToWithKeyedSampleBy(isFromTo);
 
             return new SampleByFillValueRecordCursorFactory(
                     asm,
@@ -3131,7 +3323,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     timezoneNameFunc,
                     timezoneNameFuncPos,
                     offsetFunc,
-                    offsetFuncPos
+                    offsetFuncPos,
+                    sampleFromFunc,
+                    sampleFromFuncPos,
+                    sampleToFunc,
+                    sampleToFuncPos
             );
         } catch (Throwable e) {
             Misc.free(factory);
@@ -3452,53 +3648,60 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             tempKeyKinds.clear();
 
             boolean pageFramingSupported = false;
-            boolean specialCaseKeys = false;
 
             QueryModel.backupWhereClause(expressionNodePool, model);
 
-            // check for special case time function aggregations
             final QueryModel nested = model.getNestedModel();
             assert nested != null;
+
+            // check for special case time function aggregations
             // check if underlying model has reference to hour(column) function
-            if (
-                    nested.getSelectModelType() == QueryModel.SELECT_MODEL_VIRTUAL
-                            && (columnExpr = nested.getColumns().getQuick(0).getAst()).type == FUNCTION
-                            && isHourKeyword(columnExpr.token)
-                            && columnExpr.paramCount == 1
-                            && columnExpr.rhs.type == LITERAL
-            ) {
-                specialCaseKeys = true;
-                factory = generateSubQuery(nested, executionContext);
+            // condition - direct aggregation against table, e.g.
+            // 1. there is "hour(timestamp)" function somewhere
+            // 2. all other columns are functions that can be potentially resolved into known vector aggregate functions
+            // we also need to collect the index of the "hour(timestamp)" call so that we do not try to make it
+            // vector aggregate function and fail (or fallback to default impl)
+
+            int hourIndex = -1; // assume "hour(timestamp) does not exist
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                QueryColumn qc = columns.getQuick(i);
+                if (qc.getAst() == null || qc.getAst().type != FUNCTION) {
+                    // tough luck, no special case
+                    // reset hourIndex in case we found it before
+                    hourIndex = -1;
+                    break;
+
+                }
+                columnExpr = qc.getAst();
+
+                if (isHourKeyword(columnExpr.token) && columnExpr.paramCount == 1 && columnExpr.rhs.type == LITERAL) {
+                    // check the column type via aliasToColumnMap
+                    QueryColumn tableColumn = nested.getAliasToColumnMap().get(columnExpr.rhs.token);
+                    if (tableColumn != null && tableColumn.getColumnType() == ColumnType.TIMESTAMP) {
+                        hourIndex = i;
+                    }
+                }
+            }
+
+            if (hourIndex != -1) {
+                factory = generateSubQuery(model, executionContext);
                 pageFramingSupported = factory.supportsPageFrameCursor();
                 if (pageFramingSupported) {
+                    columnExpr = columns.getQuick(hourIndex).getAst();
                     // find position of the hour() argument in the factory meta
                     tempKeyIndexesInBase.add(factory.getMetadata().getColumnIndex(columnExpr.rhs.token));
-
-                    // find position of hour() alias in selected columns
-                    // also make sure there are no other literal column than our function reference
-                    final CharSequence functionColumnName = columns.getQuick(0).getName();
-                    for (int i = 0, n = columns.size(); i < n; i++) {
-                        columnExpr = columns.getQuick(i).getAst();
-                        if (columnExpr.type == LITERAL) {
-                            if (Chars.equals(columnExpr.token, functionColumnName)) {
-                                tempKeyIndex.add(i);
-                                // storage dimension for Rosti is INT when we use hour(). This function produces INT.
-                                tempKeyKinds.add(GKK_HOUR_INT);
-                                arrayColumnTypes.add(ColumnType.INT);
-                            } else {
-                                // there is something else here, fallback to default implementation
-                                pageFramingSupported = false;
-                                break;
-                            }
-                        }
-                    }
+                    tempKeyIndex.add(hourIndex);
+                    // storage dimension for Rosti is INT when we use hour(). This function produces INT.
+                    tempKeyKinds.add(GKK_HOUR_INT);
+                    arrayColumnTypes.add(ColumnType.INT);
                 } else {
                     factory = Misc.free(factory);
                 }
             }
 
             if (factory == null) {
-                if (specialCaseKeys) {
+                // we generated subquery for "hour" intrinsic, but that did not work out
+                if (hourIndex != -1) {
                     QueryModel.restoreWhereClause(expressionNodePool, model);
                 }
                 factory = generateSubQuery(model, executionContext);
@@ -3509,7 +3712,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             final boolean enableParallelGroupBy = configuration.isSqlParallelGroupByEnabled();
             // Inspect model for possibility of vector aggregate intrinsics.
-            if (enableParallelGroupBy && pageFramingSupported && assembleKeysAndFunctionReferences(columns, metadata, !specialCaseKeys)) {
+            if (enableParallelGroupBy && pageFramingSupported && assembleKeysAndFunctionReferences(columns, metadata, hourIndex)) {
                 // Create metadata from everything we've gathered.
                 GenericRecordMetadata meta = new GenericRecordMetadata();
 
@@ -3580,7 +3783,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
 
                     if (tempVaf.size() == 0) { // similar to DistinctKeyRecordCursorFactory, handles e.g. select id from tab group by id
-                        int keyKind = specialCaseKeys ? SqlCodeGenerator.GKK_HOUR_INT : SqlCodeGenerator.GKK_VANILLA_INT;
+                        int keyKind = hourIndex != -1 ? SqlCodeGenerator.GKK_HOUR_INT : SqlCodeGenerator.GKK_VANILLA_INT;
                         CountVectorAggregateFunction countFunction = new CountVectorAggregateFunction(keyKind);
                         countFunction.pushValueTypes(arrayColumnTypes);
                         tempVaf.add(countFunction);
@@ -3596,16 +3799,22 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         throw e;
                     }
 
-                    return new GroupByRecordCursorFactory(
-                            configuration,
-                            factory,
-                            meta,
-                            arrayColumnTypes,
-                            executionContext.getSharedWorkerCount(),
-                            tempVaf,
-                            tempKeyIndexesInBase.getQuick(0),
-                            tempKeyIndex.getQuick(0),
-                            tempSymbolSkewIndexes
+                    guardAgainstFillWithKeyedGroupBy(model, keyTypes);
+
+                    return generateFill(
+                            model,
+                            new GroupByRecordCursorFactory(
+                                    configuration,
+                                    factory,
+                                    meta,
+                                    arrayColumnTypes,
+                                    executionContext.getSharedWorkerCount(),
+                                    tempVaf,
+                                    tempKeyIndexesInBase.getQuick(0),
+                                    tempKeyIndex.getQuick(0),
+                                    tempSymbolSkewIndexes
+                            ),
+                            executionContext
                     );
                 }
 
@@ -3613,7 +3822,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 Misc.freeObjList(tempVaf);
             }
 
-            if (specialCaseKeys) {
+            if (hourIndex != -1) {
                 // uh-oh, we had special case keys, but could not find implementation for the functions
                 // release factory we created unnecessarily
                 factory = Misc.free(factory);
@@ -3677,9 +3886,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 throw e;
             }
 
-            if (enableParallelGroupBy
-                    && SqlUtil.isParallelismSupported(keyFunctions)
-                    && GroupByUtils.isParallelismSupported(groupByFunctions)) {
+            if (
+                    enableParallelGroupBy
+                            && SqlUtil.isParallelismSupported(keyFunctions)
+                            && GroupByUtils.isParallelismSupported(groupByFunctions)
+            ) {
                 boolean supportsParallelism = factory.supportsPageFrameCursor();
                 CompiledFilter compiledFilter = null;
                 MemoryCARW bindVarMemory = null;
@@ -3712,6 +3923,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (keyTypesCopy.getColumnCount() == 0) {
                         assert keyFunctions.size() == 0;
                         assert recordFunctions.size() == groupByFunctions.size();
+
                         return new AsyncGroupByNotKeyedRecordCursorFactory(
                                 asm,
                                 configuration,
@@ -3743,45 +3955,51 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         );
                     }
 
-                    return new AsyncGroupByRecordCursorFactory(
-                            asm,
-                            configuration,
-                            executionContext.getMessageBus(),
-                            factory,
-                            groupByMetadata,
-                            listColumnFilterCopy,
-                            keyTypesCopy,
-                            valueTypesCopy,
-                            groupByFunctions,
-                            compileWorkerGroupByFunctionsConditionally(
-                                    executionContext,
-                                    model,
+                    guardAgainstFillWithKeyedGroupBy(model, keyTypes);
+
+                    return generateFill(
+                            model,
+                            new AsyncGroupByRecordCursorFactory(
+                                    asm,
+                                    configuration,
+                                    executionContext.getMessageBus(),
+                                    factory,
+                                    groupByMetadata,
+                                    listColumnFilterCopy,
+                                    keyTypesCopy,
+                                    valueTypesCopy,
                                     groupByFunctions,
-                                    executionContext.getSharedWorkerCount(),
-                                    factory.getMetadata()
-                            ),
-                            keyFunctions,
-                            compileWorkerKeyFunctionsConditionally(
-                                    executionContext,
+                                    compileWorkerGroupByFunctionsConditionally(
+                                            executionContext,
+                                            model,
+                                            groupByFunctions,
+                                            executionContext.getSharedWorkerCount(),
+                                            factory.getMetadata()
+                                    ),
                                     keyFunctions,
-                                    executionContext.getSharedWorkerCount(),
-                                    keyFunctionNodes,
-                                    factory.getMetadata()
-                            ),
-                            recordFunctions,
-                            compiledFilter,
-                            bindVarMemory,
-                            bindVarFunctions,
-                            filter,
-                            reduceTaskFactory,
-                            compileWorkerFilterConditionally(
-                                    executionContext,
+                                    compileWorkerKeyFunctionsConditionally(
+                                            executionContext,
+                                            keyFunctions,
+                                            executionContext.getSharedWorkerCount(),
+                                            keyFunctionNodes,
+                                            factory.getMetadata()
+                                    ),
+                                    recordFunctions,
+                                    compiledFilter,
+                                    bindVarMemory,
+                                    bindVarFunctions,
                                     filter,
-                                    executionContext.getSharedWorkerCount(),
-                                    nested.getWhereClause(),
-                                    factory.getMetadata()
+                                    reduceTaskFactory,
+                                    compileWorkerFilterConditionally(
+                                            executionContext,
+                                            filter,
+                                            executionContext.getSharedWorkerCount(),
+                                            nested.getWhereClause(),
+                                            factory.getMetadata()
+                                    ),
+                                    executionContext.getSharedWorkerCount()
                             ),
-                            executionContext.getSharedWorkerCount()
+                            executionContext
                     );
                 }
             }
@@ -3798,17 +4016,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
             }
 
-            return new io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory(
-                    asm,
-                    configuration,
-                    factory,
-                    listColumnFilterA,
-                    keyTypes,
-                    valueTypes,
-                    groupByMetadata,
-                    groupByFunctions,
-                    keyFunctions,
-                    recordFunctions
+
+            guardAgainstFillWithKeyedGroupBy(model, keyTypes);
+
+            return generateFill(
+                    model,
+                    new io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory(
+                            asm,
+                            configuration,
+                            factory,
+                            listColumnFilterA,
+                            keyTypes,
+                            valueTypes,
+                            groupByMetadata,
+                            groupByFunctions,
+                            keyFunctions,
+                            recordFunctions
+                    ),
+                    executionContext
             );
         } catch (Throwable e) {
             Misc.free(factory);
@@ -3823,13 +4048,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     @NotNull
     private VirtualRecordCursorFactory generateSelectVirtualWithSubQuery(QueryModel model, SqlExecutionContext executionContext, RecordCursorFactory factory) throws SqlException {
+        final ObjList<QueryColumn> columns = model.getColumns();
+        final int columnCount = columns.size();
+        final ObjList<Function> functions = new ObjList<>(columnCount);
+        final RecordMetadata metadata = factory.getMetadata();
+        final GenericRecordMetadata virtualMetadata = new GenericRecordMetadata();
         try {
-            final ObjList<QueryColumn> columns = model.getColumns();
-            final int columnCount = columns.size();
-            final RecordMetadata metadata = factory.getMetadata();
-            final ObjList<Function> functions = new ObjList<>(columnCount);
-            final GenericRecordMetadata virtualMetadata = new GenericRecordMetadata();
-
             // attempt to preserve timestamp on new data set
             CharSequence timestampColumn;
             final int timestampIndex = metadata.getTimestampIndex();
@@ -3958,6 +4182,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             return new VirtualRecordCursorFactory(virtualMetadata, functions, factory);
         } catch (SqlException | CairoException e) {
+            Misc.freeObjList(functions);
             factory.close();
             throw e;
         }
@@ -3972,7 +4197,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final ObjList<QueryColumn> columns = model.getColumns();
         final int columnCount = columns.size();
         groupedWindow.clear();
-        ObjList<WindowFunction> naturalOrderFunctions = null;
 
         valueTypes.clear();
         ArrayColumnTypes chainTypes = valueTypes;
@@ -3980,426 +4204,422 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         GenericRecordMetadata factoryMetadata = new GenericRecordMetadata();
 
         ObjList<Function> functions = new ObjList<>();
+        ObjList<WindowFunction> naturalOrderFunctions = null;
+        ObjList<Function> partitionByFunctions = null;
+        try {
+            // if all window function don't require sorting or more than one pass then use streaming factory
+            boolean isFastPath = true;
 
-        // if all window function don't require sorting or more than one pass then use streaming factory
-        boolean isFastPath = true;
+            for (int i = 0; i < columnCount; i++) {
+                final QueryColumn qc = columns.getQuick(i);
+                if (qc.isWindowColumn()) {
+                    final WindowColumn ac = (WindowColumn) qc;
+                    final ExpressionNode ast = qc.getAst();
+                    if (ast.paramCount > 1) {
+                        throw SqlException.$(ast.position, "too many arguments");
+                    }
 
-        for (int i = 0; i < columnCount; i++) {
-            final QueryColumn qc = columns.getQuick(i);
-            if (qc.isWindowColumn()) {
-                final WindowColumn ac = (WindowColumn) qc;
-                final ExpressionNode ast = qc.getAst();
-                if (ast.paramCount > 1) {
-                    Misc.free(base);
-                    throw SqlException.$(ast.position, "too many arguments");
-                }
+                    partitionByFunctions = null;
+                    int psz = ac.getPartitionBy().size();
+                    if (psz > 0) {
+                        partitionByFunctions = new ObjList<>(psz);
+                        for (int j = 0; j < psz; j++) {
+                            final Function function = functionParser.parseFunction(ac.getPartitionBy().getQuick(j), baseMetadata, executionContext);
+                            partitionByFunctions.add(function);
+                            if (function instanceof GroupByFunction) {
+                                throw SqlException.$(ast.position, "aggregate functions in partition by are not supported");
+                            }
+                        }
+                    }
 
-                ObjList<Function> partitionBy = null;
-                int psz = ac.getPartitionBy().size();
-                if (psz > 0) {
-                    partitionBy = new ObjList<>(psz);
-                    for (int j = 0; j < psz; j++) {
-                        partitionBy.add(
-                                functionParser.parseFunction(ac.getPartitionBy().getQuick(j), baseMetadata, executionContext)
+                    final VirtualRecord partitionByRecord;
+                    final RecordSink partitionBySink;
+
+                    if (partitionByFunctions != null) {
+                        partitionByRecord = new VirtualRecord(partitionByFunctions);
+                        keyTypes.clear();
+                        final int partitionByCount = partitionByFunctions.size();
+
+                        for (int j = 0; j < partitionByCount; j++) {
+                            keyTypes.add(partitionByFunctions.getQuick(j).getType());
+                        }
+                        entityColumnFilter.of(partitionByCount);
+                        partitionBySink = RecordSinkFactory.getInstance(asm, keyTypes, entityColumnFilter);
+                    } else {
+                        partitionByRecord = null;
+                        partitionBySink = null;
+                    }
+
+                    final int osz = ac.getOrderBy().size();
+
+                    // analyze order by clause on the current model and optimise out
+                    // order by on window function if it matches the one on the model
+                    final LowerCaseCharSequenceIntHashMap orderHash = model.getOrderHash();
+                    boolean dismissOrder = false;
+                    int timestampIdx = base.getMetadata().getTimestampIndex();
+                    int orderByPos = osz > 0 ? ac.getOrderBy().getQuick(0).position : -1;
+
+                    if (base.followedOrderByAdvice() && osz > 0 && orderHash.size() > 0) {
+                        dismissOrder = true;
+                        for (int j = 0; j < osz; j++) {
+                            ExpressionNode node = ac.getOrderBy().getQuick(j);
+                            int direction = ac.getOrderByDirection().getQuick(j);
+                            if (!Chars.equalsIgnoreCase(node.token, orderHash.keys().get(j)) ||
+                                    orderHash.get(node.token) != direction) {
+                                dismissOrder = false;
+                                break;
+                            }
+                        }
+                    }
+                    if (!dismissOrder && osz == 1 && timestampIdx != -1 && orderHash.size() < 2) {
+                        ExpressionNode orderByNode = ac.getOrderBy().getQuick(0);
+                        int orderByDirection = ac.getOrderByDirection().getQuick(0);
+
+                        if (baseMetadata.getColumnIndexQuiet(orderByNode.token) == timestampIdx &&
+                                ((orderByDirection == ORDER_ASC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD) ||
+                                        (orderByDirection == ORDER_DESC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD))) {
+                            dismissOrder = true;
+                        }
+                    }
+
+                    executionContext.configureWindowContext(
+                            partitionByRecord,
+                            partitionBySink,
+                            keyTypes,
+                            osz > 0,
+                            dismissOrder ? base.getScanDirection() : RecordCursorFactory.SCAN_DIRECTION_OTHER,
+                            orderByPos,
+                            base.recordCursorSupportsRandomAccess(),
+                            ac.getFramingMode(),
+                            ac.getRowsLo(),
+                            ac.getRowsLoKindPos(),
+                            ac.getRowsHi(),
+                            ac.getRowsHiKindPos(),
+                            ac.getExclusionKind(),
+                            ac.getExclusionKindPos(),
+                            baseMetadata.getTimestampIndex()
+                    );
+                    final Function f;
+                    try {
+                        f = functionParser.parseFunction(ast, baseMetadata, executionContext);
+                        if (!(f instanceof WindowFunction)) {
+                            Misc.free(f);
+                            throw SqlException.$(ast.position, "non-window function called in window context");
+                        }
+
+                        WindowFunction af = (WindowFunction) f;
+                        functions.extendAndSet(i, f);
+
+                        // sorting and/or multiple passes are required, so fall back to old implementation
+                        if ((osz > 0 && !dismissOrder) || af.getPassCount() != WindowFunction.ZERO_PASS) {
+                            isFastPath = false;
+                            break;
+                        }
+                    } finally {
+                        executionContext.clearWindowContext();
+                    }
+
+                    WindowFunction windowFunction = (WindowFunction) f;
+                    windowFunction.setColumnIndex(i);
+
+                    factoryMetadata.add(new TableColumnMetadata(
+                            Chars.toString(qc.getAlias()),
+                            windowFunction.getType(),
+                            false,
+                            0,
+                            false,
+                            null
+                    ));
+                } else { // column
+                    final int columnIndex = baseMetadata.getColumnIndexQuiet(qc.getAst().token);
+                    final TableColumnMetadata m = baseMetadata.getColumnMetadata(columnIndex);
+
+                    Function function = functionParser.parseFunction(
+                            qc.getAst(),
+                            baseMetadata,
+                            executionContext
+                    );
+                    functions.extendAndSet(i, function);
+
+                    if (baseMetadata.getTimestampIndex() != -1 && baseMetadata.getTimestampIndex() == columnIndex) {
+                        factoryMetadata.setTimestampIndex(i);
+                    }
+
+                    if (Chars.equalsIgnoreCase(qc.getAst().token, qc.getAlias())) {
+                        factoryMetadata.add(i, m);
+                    } else { // keep alias
+                        factoryMetadata.add(i, new TableColumnMetadata(
+                                        Chars.toString(qc.getAlias()),
+                                        m.getType(),
+                                        m.isIndexed(),
+                                        m.getIndexValueBlockCapacity(),
+                                        m.isSymbolTableStatic(),
+                                        baseMetadata
+                                )
                         );
                     }
                 }
+            }
 
-                final VirtualRecord partitionByRecord;
-                final RecordSink partitionBySink;
+            if (isFastPath) {
+                return new WindowRecordCursorFactory(base, factoryMetadata, functions);
+            } else {
+                factoryMetadata.clear();
+                Misc.freeObjListAndClear(functions);
+            }
 
-                if (partitionBy != null) {
-                    partitionByRecord = new VirtualRecord(partitionBy);
-                    keyTypes.clear();
-                    final int partitionByCount = partitionBy.size();
+            listColumnFilterA.clear();
+            listColumnFilterB.clear();
 
-                    for (int j = 0; j < partitionByCount; j++) {
-                        keyTypes.add(partitionBy.getQuick(j).getType());
+            // we need two passes over columns because partitionBy and orderBy clauses of
+            // the window function must reference the metadata of "this" factory.
+
+            // pass #1 assembles metadata of non-window columns
+
+            // set of column indexes in the base metadata that has already been added to the main
+            // metadata instance
+            intHashSet.clear();
+            final IntList columnIndexes = new IntList();
+            for (int i = 0; i < columnCount; i++) {
+                final QueryColumn qc = columns.getQuick(i);
+                if (!qc.isWindowColumn()) {
+                    final int columnIndex = baseMetadata.getColumnIndexQuiet(qc.getAst().token);
+                    final TableColumnMetadata m = baseMetadata.getColumnMetadata(columnIndex);
+                    chainMetadata.add(i, m);
+                    if (Chars.equalsIgnoreCase(qc.getAst().token, qc.getAlias())) {
+                        factoryMetadata.add(i, m);
+                    } else { // keep alias
+                        factoryMetadata.add(i, new TableColumnMetadata(
+                                        Chars.toString(qc.getAlias()),
+                                        m.getType(),
+                                        m.isIndexed(),
+                                        m.getIndexValueBlockCapacity(),
+                                        m.isSymbolTableStatic(),
+                                        baseMetadata
+                                )
+                        );
                     }
-                    entityColumnFilter.of(partitionByCount);
-                    partitionBySink = RecordSinkFactory.getInstance(
-                            asm,
-                            keyTypes,
-                            entityColumnFilter,
-                            false
-                    );
-                } else {
-                    partitionByRecord = null;
-                    partitionBySink = null;
+                    chainTypes.add(i, m.getType());
+                    listColumnFilterA.extendAndSet(i, i + 1);
+                    listColumnFilterB.extendAndSet(i, columnIndex);
+                    intHashSet.add(columnIndex);
+                    columnIndexes.extendAndSet(i, columnIndex);
+
+                    if (baseMetadata.getTimestampIndex() != -1 && baseMetadata.getTimestampIndex() == columnIndex) {
+                        factoryMetadata.setTimestampIndex(i);
+                    }
                 }
+            }
 
-                final int osz = ac.getOrderBy().size();
+            // pass #2 - add remaining base metadata column that are not in intHashSet already
+            // we need to pay attention to stepping over window column slots
+            // Chain metadata is assembled in such way that all columns the factory
+            // needs to provide are at the beginning of the metadata so the record the factory cursor
+            // returns can be chain record, because the chain record is always longer than record needed out of the
+            // cursor and relevant columns are 0..n limited by factory metadata
 
-                // analyze order by clause on the current model and optimise out
-                // order by on window function if it matches the one on the model
-                final LowerCaseCharSequenceIntHashMap orderHash = model.getOrderHash();
-                boolean dismissOrder = false;
-                int timestampIdx = base.getMetadata().getTimestampIndex();
-                int orderByPos = osz > 0 ? ac.getOrderBy().getQuick(0).position : -1;
+            int addAt = columnCount;
+            for (int i = 0, n = baseMetadata.getColumnCount(); i < n; i++) {
+                if (intHashSet.excludes(i)) {
+                    final TableColumnMetadata m = baseMetadata.getColumnMetadata(i);
+                    chainMetadata.add(addAt, m);
+                    chainTypes.add(addAt, m.getType());
+                    listColumnFilterA.extendAndSet(addAt, addAt + 1);
+                    listColumnFilterB.extendAndSet(addAt, i);
+                    columnIndexes.extendAndSet(addAt, i);
+                    addAt++;
+                }
+            }
 
-                if (base.followedOrderByAdvice() && osz > 0 && orderHash.size() > 0) {
-                    dismissOrder = true;
-                    for (int j = 0; j < osz; j++) {
-                        ExpressionNode node = ac.getOrderBy().getQuick(j);
-                        int direction = ac.getOrderByDirection().getQuick(j);
-                        if (!Chars.equalsIgnoreCase(node.token, orderHash.keys().get(j)) ||
-                                orderHash.get(node.token) != direction) {
-                            dismissOrder = false;
-                            break;
+            // pass #3 assembles window column metadata into a list
+            // not main metadata to avoid partitionBy functions accidentally looking up
+            // window columns recursively
+
+            deferredWindowMetadata.clear();
+            for (int i = 0; i < columnCount; i++) {
+                final QueryColumn qc = columns.getQuick(i);
+                if (qc.isWindowColumn()) {
+                    final WindowColumn ac = (WindowColumn) qc;
+                    final ExpressionNode ast = qc.getAst();
+                    if (ast.paramCount > 1) {
+                        throw SqlException.$(ast.position, "too many arguments");
+                    }
+
+                    partitionByFunctions = null;
+                    int psz = ac.getPartitionBy().size();
+                    if (psz > 0) {
+                        partitionByFunctions = new ObjList<>(psz);
+                        for (int j = 0; j < psz; j++) {
+                            final Function function = functionParser.parseFunction(ac.getPartitionBy().getQuick(j), chainMetadata, executionContext);
+                            partitionByFunctions.add(function);
+                            if (function instanceof GroupByFunction) {
+                                throw SqlException.$(ast.position, "aggregate functions in partition by are not supported");
+                            }
                         }
                     }
-                }
-                if (!dismissOrder
-                        && osz == 1
-                        && timestampIdx != -1
-                        && orderHash.size() < 2) {
-                    ExpressionNode orderByNode = ac.getOrderBy().getQuick(0);
-                    int orderByDirection = ac.getOrderByDirection().getQuick(0);
 
-                    if (baseMetadata.getColumnIndexQuiet(orderByNode.token) == timestampIdx &&
-                            ((orderByDirection == ORDER_ASC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD) ||
-                                    (orderByDirection == ORDER_DESC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD))) {
+                    final VirtualRecord partitionByRecord;
+                    final RecordSink partitionBySink;
+
+                    if (partitionByFunctions != null) {
+                        partitionByRecord = new VirtualRecord(partitionByFunctions);
+                        keyTypes.clear();
+                        final int partitionByCount = partitionByFunctions.size();
+
+                        for (int j = 0; j < partitionByCount; j++) {
+                            keyTypes.add(partitionByFunctions.getQuick(j).getType());
+                        }
+                        entityColumnFilter.of(partitionByCount);
+                        // create sink
+                        partitionBySink = RecordSinkFactory.getInstance(asm, keyTypes, entityColumnFilter);
+                    } else {
+                        partitionByRecord = null;
+                        partitionBySink = null;
+                    }
+
+                    final int osz = ac.getOrderBy().size();
+
+                    // analyze order by clause on the current model and optimise out
+                    // order by on window function if it matches the one on the model
+                    final LowerCaseCharSequenceIntHashMap orderHash = model.getOrderHash();
+                    boolean dismissOrder = false;
+                    int timestampIdx = base.getMetadata().getTimestampIndex();
+                    int orderByPos = osz > 0 ? ac.getOrderBy().getQuick(0).position : -1;
+
+                    if (base.followedOrderByAdvice() && osz > 0 && orderHash.size() > 0) {
                         dismissOrder = true;
+                        for (int j = 0; j < osz; j++) {
+                            ExpressionNode node = ac.getOrderBy().getQuick(j);
+                            int direction = ac.getOrderByDirection().getQuick(j);
+                            if (!Chars.equalsIgnoreCase(node.token, orderHash.keys().get(j))
+                                    || orderHash.get(node.token) != direction) {
+                                dismissOrder = false;
+                                break;
+                            }
+                        }
                     }
-                }
+                    if (osz == 1 && timestampIdx != -1 && orderHash.size() < 2) {
+                        ExpressionNode orderByNode = ac.getOrderBy().getQuick(0);
+                        int orderByDirection = ac.getOrderByDirection().getQuick(0);
 
-                executionContext.configureWindowContext(
-                        partitionByRecord,
-                        partitionBySink,
-                        keyTypes,
-                        osz > 0,
-                        dismissOrder ? base.getScanDirection() : RecordCursorFactory.SCAN_DIRECTION_OTHER,
-                        orderByPos,
-                        base.recordCursorSupportsRandomAccess(),
-                        ac.getFramingMode(),
-                        ac.getRowsLo(),
-                        ac.getRowsLoKindPos(),
-                        ac.getRowsHi(),
-                        ac.getRowsHiKindPos(),
-                        ac.getExclusionKind(),
-                        ac.getExclusionKindPos(),
-                        baseMetadata.getTimestampIndex()
-                );
-                final Function f;
-                try {
-                    f = functionParser.parseFunction(ast, baseMetadata, executionContext);
-                    if (!(f instanceof WindowFunction)) {
-                        Misc.free(base);
-                        Misc.free(f);
-                        throw SqlException.$(ast.position, "non-window function called in window context");
+                        if (baseMetadata.getColumnIndexQuiet(orderByNode.token) == timestampIdx
+                                && ((orderByDirection == ORDER_ASC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD)
+                                || (orderByDirection == ORDER_DESC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD))) {
+                            dismissOrder = true;
+                        }
                     }
 
-                    WindowFunction af = (WindowFunction) f;
-                    functions.extendAndSet(i, f);
-
-                    // sorting and/or  multiple passes are required, so fall back to old implementation
-                    if ((osz > 0 && !dismissOrder) || af.getPassCount() != WindowFunction.ZERO_PASS) {
-                        isFastPath = false;
-                        break;
-                    }
-                } finally {
-                    executionContext.clearWindowContext();
-                }
-
-                WindowFunction windowFunction = (WindowFunction) f;
-                windowFunction.setColumnIndex(i);
-
-                factoryMetadata.add(new TableColumnMetadata(
-                        Chars.toString(qc.getAlias()),
-                        windowFunction.getType(),
-                        false,
-                        0,
-                        false,
-                        null
-                ));
-            } else { // column
-                final int columnIndex = baseMetadata.getColumnIndexQuiet(qc.getAst().token);
-                final TableColumnMetadata m = baseMetadata.getColumnMetadata(columnIndex);
-
-                Function function = functionParser.parseFunction(
-                        qc.getAst(),
-                        baseMetadata,
-                        executionContext
-                );
-                functions.extendAndSet(i, function);
-
-                if (baseMetadata.getTimestampIndex() != -1 &&
-                        baseMetadata.getTimestampIndex() == columnIndex) {
-                    factoryMetadata.setTimestampIndex(i);
-                }
-
-                if (Chars.equalsIgnoreCase(qc.getAst().token, qc.getAlias())) {
-                    factoryMetadata.add(i, m);
-                } else { // keep alias
-                    factoryMetadata.add(i, new TableColumnMetadata(
-                                    Chars.toString(qc.getAlias()),
-                                    m.getType(),
-                                    m.isIndexed(),
-                                    m.getIndexValueBlockCapacity(),
-                                    m.isSymbolTableStatic(),
-                                    baseMetadata
-                            )
+                    executionContext.configureWindowContext(
+                            partitionByRecord,
+                            partitionBySink,
+                            keyTypes,
+                            osz > 0,
+                            dismissOrder ? base.getScanDirection() : RecordCursorFactory.SCAN_DIRECTION_OTHER,
+                            orderByPos,
+                            base.recordCursorSupportsRandomAccess(),
+                            ac.getFramingMode(),
+                            ac.getRowsLo(),
+                            ac.getRowsLoKindPos(),
+                            ac.getRowsHi(),
+                            ac.getRowsHiKindPos(),
+                            ac.getExclusionKind(),
+                            ac.getExclusionKindPos(),
+                            chainMetadata.getTimestampIndex()
                     );
+                    final Function f;
+                    try {
+                        // function needs to resolve args against chain metadata
+                        f = functionParser.parseFunction(ast, chainMetadata, executionContext);
+                        if (!(f instanceof WindowFunction)) {
+                            Misc.free(f);
+                            throw SqlException.$(ast.position, "non-window function called in window context");
+                        }
+                    } finally {
+                        executionContext.clearWindowContext();
+                    }
+
+                    WindowFunction windowFunction = (WindowFunction) f;
+
+                    if (osz > 0 && !dismissOrder) {
+                        IntList order = toOrderIndices(chainMetadata, ac.getOrderBy(), ac.getOrderByDirection());
+                        // init comparator if we need
+                        windowFunction.initRecordComparator(recordComparatorCompiler, chainTypes, order);
+                        ObjList<WindowFunction> funcs = groupedWindow.get(order);
+                        if (funcs == null) {
+                            groupedWindow.put(order, funcs = new ObjList<>());
+                        }
+                        funcs.add(windowFunction);
+                    } else {
+                        if (naturalOrderFunctions == null) {
+                            naturalOrderFunctions = new ObjList<>();
+                        }
+                        naturalOrderFunctions.add(windowFunction);
+                    }
+
+                    windowFunction.setColumnIndex(i);
+
+                    deferredWindowMetadata.extendAndSet(i, new TableColumnMetadata(
+                            Chars.toString(qc.getAlias()),
+                            windowFunction.getType(),
+                            false,
+                            0,
+                            false,
+                            null
+                    ));
+
+                    listColumnFilterA.extendAndSet(i, -i - 1);
                 }
-
             }
-        }
 
-        if (isFastPath) {
-            return new WindowRecordCursorFactory(base, factoryMetadata, functions);
-        } else {
-            factoryMetadata.clear();
+            // after all columns are processed we can re-insert deferred metadata
+            for (int i = 0, n = deferredWindowMetadata.size(); i < n; i++) {
+                TableColumnMetadata m = deferredWindowMetadata.getQuick(i);
+                if (m != null) {
+                    chainTypes.add(i, m.getType());
+                    factoryMetadata.add(i, m);
+                }
+            }
+
+            final ObjList<RecordComparator> windowComparators = new ObjList<>(groupedWindow.size());
+            final ObjList<ObjList<WindowFunction>> functionGroups = new ObjList<>(groupedWindow.size());
+            final ObjList<IntList> keys = new ObjList<>();
+            for (ObjObjHashMap.Entry<IntList, ObjList<WindowFunction>> e : groupedWindow) {
+                windowComparators.add(recordComparatorCompiler.compile(chainTypes, e.key));
+                functionGroups.add(e.value);
+                keys.add(e.key);
+            }
+
+            final RecordSink recordSink = RecordSinkFactory.getInstance(
+                    asm,
+                    chainTypes,
+                    listColumnFilterA,
+                    listColumnFilterB,
+                    null
+            );
+
+            return new CachedWindowRecordCursorFactory(
+                    configuration,
+                    base,
+                    recordSink,
+                    factoryMetadata,
+                    chainTypes,
+                    windowComparators,
+                    functionGroups,
+                    naturalOrderFunctions,
+                    columnIndexes,
+                    keys,
+                    chainMetadata
+            );
+        } catch (Throwable th) {
+            for (ObjObjHashMap.Entry<IntList, ObjList<WindowFunction>> e : groupedWindow) {
+                Misc.freeObjList(e.value);
+            }
+            Misc.free(base);
             Misc.freeObjList(functions);
-            functions.clear();
+            Misc.freeObjList(naturalOrderFunctions);
+            Misc.freeObjList(partitionByFunctions);
+            throw th;
         }
-
-        listColumnFilterA.clear();
-        listColumnFilterB.clear();
-
-        // we need two passes over columns because partitionBy and orderBy clauses of
-        // the window function must reference the metadata of "this" factory.
-
-        // pass #1 assembles metadata of non-window columns
-
-        // set of column indexes in the base metadata that has already been added to the main
-        // metadata instance
-        intHashSet.clear();
-        final IntList columnIndexes = new IntList();
-        for (int i = 0; i < columnCount; i++) {
-            final QueryColumn qc = columns.getQuick(i);
-            if (!qc.isWindowColumn()) {
-                final int columnIndex = baseMetadata.getColumnIndexQuiet(qc.getAst().token);
-                final TableColumnMetadata m = baseMetadata.getColumnMetadata(columnIndex);
-                chainMetadata.add(i, m);
-                if (Chars.equalsIgnoreCase(qc.getAst().token, qc.getAlias())) {
-                    factoryMetadata.add(i, m);
-                } else { // keep alias
-                    factoryMetadata.add(i, new TableColumnMetadata(
-                                    Chars.toString(qc.getAlias()),
-                                    m.getType(),
-                                    m.isIndexed(),
-                                    m.getIndexValueBlockCapacity(),
-                                    m.isSymbolTableStatic(),
-                                    baseMetadata
-                            )
-                    );
-                }
-                chainTypes.add(i, m.getType());
-                listColumnFilterA.extendAndSet(i, i + 1);
-                listColumnFilterB.extendAndSet(i, columnIndex);
-                intHashSet.add(columnIndex);
-                columnIndexes.extendAndSet(i, columnIndex);
-
-                if (baseMetadata.getTimestampIndex() != -1 &&
-                        baseMetadata.getTimestampIndex() == columnIndex) {
-                    factoryMetadata.setTimestampIndex(i);
-                }
-            }
-        }
-
-        // pass #2 - add remaining base metadata column that are not in intHashSet already
-        // we need to pay attention to stepping over window column slots
-        // Chain metadata is assembled in such way that all columns the factory
-        // needs to provide are at the beginning of the metadata so the record the factory cursor
-        // returns can be chain record, because the chain record is always longer than record needed out of the
-        // cursor and relevant columns are 0..n limited by factory metadata
-
-        int addAt = columnCount;
-        for (int i = 0, n = baseMetadata.getColumnCount(); i < n; i++) {
-            if (intHashSet.excludes(i)) {
-                final TableColumnMetadata m = baseMetadata.getColumnMetadata(i);
-                chainMetadata.add(addAt, m);
-                chainTypes.add(addAt, m.getType());
-                listColumnFilterA.extendAndSet(addAt, addAt + 1);
-                listColumnFilterB.extendAndSet(addAt, i);
-                columnIndexes.extendAndSet(addAt, i);
-                addAt++;
-            }
-        }
-
-        // pass #3 assembles window column metadata into a list
-        // not main metadata to avoid partitionBy functions accidentally looking up
-        // window columns recursively
-
-        deferredWindowMetadata.clear();
-        for (int i = 0; i < columnCount; i++) {
-            final QueryColumn qc = columns.getQuick(i);
-            if (qc.isWindowColumn()) {
-                final WindowColumn ac = (WindowColumn) qc;
-                final ExpressionNode ast = qc.getAst();
-                if (ast.paramCount > 1) {
-                    Misc.free(base);
-                    throw SqlException.$(ast.position, "too many arguments");
-                }
-
-                ObjList<Function> partitionBy = null;
-                int psz = ac.getPartitionBy().size();
-                if (psz > 0) {
-                    partitionBy = new ObjList<>(psz);
-                    for (int j = 0; j < psz; j++) {
-                        partitionBy.add(
-                                functionParser.parseFunction(ac.getPartitionBy().getQuick(j), chainMetadata, executionContext)
-                        );
-                    }
-                }
-
-                final VirtualRecord partitionByRecord;
-                final RecordSink partitionBySink;
-
-                if (partitionBy != null) {
-                    partitionByRecord = new VirtualRecord(partitionBy);
-                    keyTypes.clear();
-                    final int partitionByCount = partitionBy.size();
-
-                    for (int j = 0; j < partitionByCount; j++) {
-                        keyTypes.add(partitionBy.getQuick(j).getType());
-                    }
-                    entityColumnFilter.of(partitionByCount);
-                    // create sink
-                    partitionBySink = RecordSinkFactory.getInstance(
-                            asm,
-                            keyTypes,
-                            entityColumnFilter,
-                            false
-                    );
-                } else {
-                    partitionByRecord = null;
-                    partitionBySink = null;
-                }
-
-                final int osz = ac.getOrderBy().size();
-
-                // analyze order by clause on the current model and optimise out
-                // order by on window function if it matches the one on the model
-                final LowerCaseCharSequenceIntHashMap orderHash = model.getOrderHash();
-                boolean dismissOrder = false;
-                int timestampIdx = base.getMetadata().getTimestampIndex();
-                int orderByPos = osz > 0 ? ac.getOrderBy().getQuick(0).position : -1;
-
-                if (base.followedOrderByAdvice() && osz > 0 && orderHash.size() > 0) {
-                    dismissOrder = true;
-                    for (int j = 0; j < osz; j++) {
-                        ExpressionNode node = ac.getOrderBy().getQuick(j);
-                        int direction = ac.getOrderByDirection().getQuick(j);
-                        if (!Chars.equalsIgnoreCase(node.token, orderHash.keys().get(j)) ||
-                                orderHash.get(node.token) != direction) {
-                            dismissOrder = false;
-                            break;
-                        }
-                    }
-                }
-                if (osz == 1 && timestampIdx != -1 && orderHash.size() < 2) {
-                    ExpressionNode orderByNode = ac.getOrderBy().getQuick(0);
-                    int orderByDirection = ac.getOrderByDirection().getQuick(0);
-
-                    if (baseMetadata.getColumnIndexQuiet(orderByNode.token) == timestampIdx &&
-                            ((orderByDirection == ORDER_ASC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD) ||
-                                    (orderByDirection == ORDER_DESC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD))) {
-                        dismissOrder = true;
-                    }
-                }
-
-                executionContext.configureWindowContext(
-                        partitionByRecord,
-                        partitionBySink,
-                        keyTypes,
-                        osz > 0,
-                        dismissOrder ? base.getScanDirection() : RecordCursorFactory.SCAN_DIRECTION_OTHER,
-                        orderByPos,
-                        base.recordCursorSupportsRandomAccess(),
-                        ac.getFramingMode(),
-                        ac.getRowsLo(),
-                        ac.getRowsLoKindPos(),
-                        ac.getRowsHi(),
-                        ac.getRowsHiKindPos(),
-                        ac.getExclusionKind(),
-                        ac.getExclusionKindPos(),
-                        chainMetadata.getTimestampIndex()
-                );
-                final Function f;
-                try {
-                    // function needs to resolve args against chain metadata
-                    f = functionParser.parseFunction(ast, chainMetadata, executionContext);
-                    if (!(f instanceof WindowFunction)) {
-                        Misc.free(base);
-                        throw SqlException.$(ast.position, "non-window function called in window context");
-                    }
-                } finally {
-                    executionContext.clearWindowContext();
-                }
-
-                WindowFunction windowFunction = (WindowFunction) f;
-
-                if (osz > 0 && !dismissOrder) {
-                    IntList order = toOrderIndices(chainMetadata, ac.getOrderBy(), ac.getOrderByDirection());
-                    // init comparator if we need
-                    windowFunction.initRecordComparator(recordComparatorCompiler, chainTypes, order);
-                    ObjList<WindowFunction> funcs = groupedWindow.get(order);
-                    if (funcs == null) {
-                        groupedWindow.put(order, funcs = new ObjList<>());
-                    }
-                    funcs.add(windowFunction);
-                } else {
-                    if (naturalOrderFunctions == null) {
-                        naturalOrderFunctions = new ObjList<>();
-                    }
-                    naturalOrderFunctions.add(windowFunction);
-                }
-
-                windowFunction.setColumnIndex(i);
-
-                deferredWindowMetadata.extendAndSet(i, new TableColumnMetadata(
-                        Chars.toString(qc.getAlias()),
-                        windowFunction.getType(),
-                        false,
-                        0,
-                        false,
-                        null
-                ));
-
-                listColumnFilterA.extendAndSet(i, -i - 1);
-            }
-        }
-
-        // after all columns are processed we can re-insert deferred metadata
-        for (int i = 0, n = deferredWindowMetadata.size(); i < n; i++) {
-            TableColumnMetadata m = deferredWindowMetadata.getQuick(i);
-            if (m != null) {
-                chainTypes.add(i, m.getType());
-                factoryMetadata.add(i, m);
-            }
-        }
-
-        final ObjList<RecordComparator> windowComparators = new ObjList<>(groupedWindow.size());
-        final ObjList<ObjList<WindowFunction>> functionGroups = new ObjList<>(groupedWindow.size());
-        final ObjList<IntList> keys = new ObjList<>();
-        for (ObjObjHashMap.Entry<IntList, ObjList<WindowFunction>> e : groupedWindow) {
-            windowComparators.add(recordComparatorCompiler.compile(chainTypes, e.key));
-            functionGroups.add(e.value);
-            keys.add(e.key);
-        }
-
-        final RecordSink recordSink = RecordSinkFactory.getInstance(
-                asm,
-                chainTypes,
-                listColumnFilterA,
-                false,
-                listColumnFilterB
-        );
-
-        return new CachedWindowRecordCursorFactory(
-                configuration,
-                base,
-                recordSink,
-                factoryMetadata,
-                chainTypes,
-                windowComparators,
-                functionGroups,
-                naturalOrderFunctions,
-                columnIndexes,
-                keys,
-                chainMetadata
-        );
     }
 
     /**
@@ -4418,10 +4638,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordCursorFactory factoryA,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        final RecordCursorFactory factoryB = generateQuery0(model.getUnionModel(), executionContext, true);
+        RecordCursorFactory factoryB = null;
         ObjList<Function> castFunctionsA = null;
         ObjList<Function> castFunctionsB = null;
         try {
+            factoryB = generateQuery0(model.getUnionModel(), executionContext, true);
+
             final RecordMetadata metadataA = factoryA.getMetadata();
             final RecordMetadata metadataB = factoryB.getMetadata();
             final int positionA = model.getModelPosition();
@@ -4619,7 +4841,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         boolean requiresTimestamp = joinsRequiringTimestamp[model.getJoinType()];
         final GenericRecordMetadata myMeta = new GenericRecordMetadata();
-        boolean framingSupported;
         try {
             if (requiresTimestamp) {
                 executionContext.pushTimestampRequiredFlag(true);
@@ -4629,7 +4850,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // some "sample by" queries don't select any cols but needs timestamp col selected
             // for example "select count() from x sample by 1h" implicitly needs timestamp column selected
             if (topDownColumnCount > 0 || contextTimestampRequired || model.isUpdate()) {
-                framingSupported = true;
                 for (int i = 0; i < topDownColumnCount; i++) {
                     int columnIndex = metadata.getColumnIndexQuiet(topDownColumns.getQuick(i).getName());
                     int type = metadata.getColumnType(columnIndex);
@@ -4664,8 +4884,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     columnIndexes.add(readerTimestampIndex);
                     columnSizes.add((Numbers.msb(ColumnType.TIMESTAMP)));
                 }
-            } else {
-                framingSupported = false;
             }
         } finally {
             if (requiresTimestamp) {
@@ -5016,10 +5234,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         for (int i = 1, n = intrinsicModel.keyExcludedNodes.size(); i < n; i++) {
                             ExpressionNode expression = intrinsicModel.keyExcludedNodes.getQuick(i);
 
-                            ExpressionNode newRoot = expressionNodePool.next();
-                            newRoot.token = "and";
-                            newRoot.type = OPERATION;
-                            newRoot.precedence = 0;
+                            OperatorExpression andOp = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence()).getOperatorDefinition("and");
+                            ExpressionNode newRoot = expressionNodePool.next().of(OPERATION, andOp.operator.token, andOp.precedence, 0);
                             newRoot.paramCount = 2;
                             newRoot.lhs = expression;
                             newRoot.rhs = root;
@@ -5030,10 +5246,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         if (intrinsicModel.filter == null) {
                             intrinsicModel.filter = root;
                         } else {
-                            ExpressionNode filter = expressionNodePool.next();
-                            filter.token = "and";
-                            filter.type = OPERATION;
-                            filter.precedence = 0;
+                            OperatorExpression andOp = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence()).getOperatorDefinition("and");
+                            ExpressionNode filter = expressionNodePool.next().of(OPERATION, andOp.operator.token, andOp.precedence, 0);
                             filter.paramCount = 2;
                             filter.lhs = intrinsicModel.filter;
                             filter.rhs = root;
@@ -5099,7 +5313,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     rowFactory,
                     false,
                     null,
-                    framingSupported,
+                    true,
                     columnIndexes,
                     columnSizes,
                     supportsRandomAccess
@@ -5129,7 +5343,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     rowCursorFactory,
                     orderDescendingByDesignatedTimestampOnly || isOrderByDesignatedTimestampOnly(model),
                     null,
-                    framingSupported,
+                    true,
                     columnIndexes,
                     columnSizes,
                     supportsRandomAccess
@@ -5180,7 +5394,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     myMeta,
                     configuration,
                     new FullBwdDataFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta),
-                    RecordSinkFactory.getInstance(asm, myMeta, listColumnFilterA, false),
+                    RecordSinkFactory.getInstance(asm, myMeta, listColumnFilterA),
                     keyTypes,
                     partitionByColumnIndexes,
                     null,
@@ -5193,7 +5407,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 myMeta,
                 configuration,
                 new FullBwdDataFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta),
-                RecordSinkFactory.getInstance(asm, myMeta, listColumnFilterA, false),
+                RecordSinkFactory.getInstance(asm, myMeta, listColumnFilterA),
                 keyTypes,
                 null,
                 columnIndexes
@@ -5233,13 +5447,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordMetadata unionMetadata,
             SetRecordCursorFactoryConstructor constructor
     ) throws SqlException {
-        entityColumnFilter.of(factoryA.getMetadata().getColumnCount());
-        final RecordSink recordSink = RecordSinkFactory.getInstance(
-                asm,
-                unionMetadata,
-                entityColumnFilter,
-                true
-        );
+        writeSymbolAsString.clear();
         valueTypes.clear();
         // Remap symbol columns to string type since that's how recordSink copies them.
         keyTypes.clear();
@@ -5247,10 +5455,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final int columnType = unionMetadata.getColumnType(i);
             if (ColumnType.isSymbol(columnType)) {
                 keyTypes.add(ColumnType.STRING);
+                writeSymbolAsString.set(i);
             } else {
                 keyTypes.add(columnType);
             }
         }
+
+        entityColumnFilter.of(factoryA.getMetadata().getColumnCount());
+        final RecordSink recordSink = RecordSinkFactory.getInstance(
+                asm,
+                unionMetadata,
+                entityColumnFilter,
+                writeSymbolAsString
+        );
 
         RecordCursorFactory unionFactory = constructor.create(
                 configuration,
@@ -5336,6 +5553,34 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    private void guardAgainstFillWithKeyedGroupBy(QueryModel model, ArrayColumnTypes keyTypes) throws SqlException {
+        // locate fill
+        QueryModel curr = model;
+        while (curr != null && curr.getFillStride() == null) {
+            curr = curr.getNestedModel();
+        }
+
+        if (curr == null || curr.getFillStride() == null || curr.getFillValues() == null || curr.getFillValues().size() == 0) {
+            return;
+        }
+
+        if (curr.getFillValues().size() == 1 && Chars.equals(curr.getFillValues().getQuick(0).token, "none")) {
+            return;
+        }
+
+        if (keyTypes.getColumnCount() == 1) {
+            return;
+        }
+
+        throw SqlException.$(0, "cannot use FILL with a keyed GROUP BY");
+    }
+
+    private void guardAgainstFromToWithKeyedSampleBy(boolean isFromTo) throws SqlException {
+        if (isFromTo) {
+            throw SqlException.$(0, "FROM-TO intervals are not supported for keyed SAMPLE BY queries");
+        }
+    }
+
     private boolean isKeyedTemporalJoin(RecordMetadata masterMetadata, RecordMetadata slaveMetadata) {
         // Check if we can simplify ASOF JOIN ON (ts) to ASOF JOIN.
         if (listColumnFilterA.size() == 1 && listColumnFilterB.size() == 1) {
@@ -5354,6 +5599,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private boolean isOrderDescendingByDesignatedTimestampOnly(QueryModel model) {
         return isOrderByDesignatedTimestampOnly(model) &&
                 getOrderByDirectionOrDefault(model, 0) == ORDER_DIRECTION_DESCENDING;
+    }
+
+    private boolean isSameTable(RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory) {
+        return masterFactory.getTableToken() != null && masterFactory.getTableToken().equals(slaveFactory.getTableToken());
     }
 
     private void lookupColumnIndexes(
@@ -5453,6 +5702,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private void processJoinContext(
             boolean vanillaMaster,
+            boolean selfJoin,
             JoinContext jc,
             RecordMetadata masterMetadata,
             RecordMetadata slaveMetadata
@@ -5466,6 +5716,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         // compare types and populate keyTypes
         keyTypes.clear();
+        writeSymbolAsString.clear();
         writeStringAsVarcharA.clear();
         writeStringAsVarcharB.clear();
         for (int k = 0, m = listColumnFilterA.getColumnCount(); k < m; k++) {
@@ -5473,8 +5724,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // Key types have too much exactly except SYMBOL and STRING special case
             final int columnIndexA = listColumnFilterA.getColumnIndexFactored(k);
             final int columnIndexB = listColumnFilterB.getColumnIndexFactored(k);
-            int columnTypeA = slaveMetadata.getColumnType(columnIndexA);
-            int columnTypeB = masterMetadata.getColumnType(columnIndexB);
+            final int columnTypeA = slaveMetadata.getColumnType(columnIndexA);
+            final String columnNameA = slaveMetadata.getColumnName(columnIndexA);
+            final int columnTypeB = masterMetadata.getColumnType(columnIndexB);
+            final String columnNameB = masterMetadata.getColumnName(columnIndexB);
             if (columnTypeB != columnTypeA && !(ColumnType.isSymbolOrString(columnTypeB) && ColumnType.isSymbolOrString(columnTypeA))) {
                 // index in column filter and join context is the same
                 throw SqlException.$(jc.aNodes.getQuick(k).position, "join column type mismatch");
@@ -5486,8 +5739,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 } else {
                     writeStringAsVarcharA.set(columnIndexA);
                 }
+                writeSymbolAsString.set(columnIndexA);
+                writeSymbolAsString.set(columnIndexB);
             } else if (columnTypeB == ColumnType.SYMBOL) {
-                keyTypes.add(ColumnType.STRING);
+                if (selfJoin && Chars.equalsIgnoreCase(columnNameA, columnNameB)) {
+                    keyTypes.add(ColumnType.SYMBOL);
+                } else {
+                    keyTypes.add(ColumnType.STRING);
+                    writeSymbolAsString.set(columnIndexA);
+                    writeSymbolAsString.set(columnIndexB);
+                }
+            } else if (ColumnType.isString(columnTypeA) || ColumnType.isString(columnTypeB)) {
+                keyTypes.add(columnTypeB);
+                writeSymbolAsString.set(columnIndexA);
+                writeSymbolAsString.set(columnIndexB);
             } else {
                 keyTypes.add(columnTypeB);
             }
@@ -5549,28 +5814,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return func;
     }
 
-    private IntList toOrderIndices(RecordMetadata m, ObjList<ExpressionNode> orderBy, IntList orderByDirection) throws SqlException {
-        final IntList indices = intListPool.next();
-        for (int i = 0, n = orderBy.size(); i < n; i++) {
-            ExpressionNode tok = orderBy.getQuick(i);
-            int index = m.getColumnIndexQuiet(tok.token);
-            if (index == -1) {
-                throw SqlException.invalidColumn(tok.position, tok.token);
-            }
-
-            // shift index by 1 to use sign as sort direction
-            index++;
-
-            // negative column index means descending order of sort
-            if (orderByDirection.getQuick(i) == QueryModel.ORDER_DIRECTION_DESCENDING) {
-                index = -index;
-            }
-
-            indices.add(index);
-        }
-        return indices;
-    }
-
     // UNION_CAST_MATRIX captures all the combinations of "left" and "right" column types
     // in a set operation (UNION etc.), providing the desired output type. Since there are many
     // special cases in the conversion logic, we decided to use a matrix of literals instead.
@@ -5604,11 +5847,32 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 //        return colType >= ColumnType.GEOBYTE && colType <= ColumnType.GEOLONG;
 //    }
 
+    private IntList toOrderIndices(RecordMetadata m, ObjList<ExpressionNode> orderBy, IntList orderByDirection) throws SqlException {
+        final IntList indices = intListPool.next();
+        for (int i = 0, n = orderBy.size(); i < n; i++) {
+            ExpressionNode tok = orderBy.getQuick(i);
+            int index = m.getColumnIndexQuiet(tok.token);
+            if (index == -1) {
+                throw SqlException.invalidColumn(tok.position, tok.token);
+            }
+
+            // shift index by 1 to use sign as sort direction
+            index++;
+
+            // negative column index means descending order of sort
+            if (orderByDirection.getQuick(i) == QueryModel.ORDER_DIRECTION_DESCENDING) {
+                index = -index;
+            }
+
+            indices.add(index);
+        }
+        return indices;
+    }
+
     private void validateBothTimestampOrders(RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory, int position) throws SqlException {
         if (masterFactory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
             throw SqlException.$(position, "left side of time series join doesn't have ASC timestamp order");
         }
-
         if (slaveFactory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
             throw SqlException.$(position, "right side of time series join doesn't have ASC timestamp order");
         }
@@ -5618,7 +5882,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (masterMetadata.getTimestampIndex() == -1) {
             throw SqlException.$(slaveModel.getJoinKeywordPosition(), "left side of time series join has no timestamp");
         }
-
         if (slaveMetadata.getTimestampIndex() == -1) {
             throw SqlException.$(slaveModel.getJoinKeywordPosition(), "right side of time series join has no timestamp");
         }
@@ -5633,19 +5896,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private Record.CharSequenceFunction validateSubQueryColumnAndGetGetter(IntrinsicModel intrinsicModel, RecordMetadata metadata) throws SqlException {
         int columnType = metadata.getColumnType(0);
-        if (!ColumnType.isSymbolOrString(columnType)) {
-            assert intrinsicModel.keySubQuery.getColumns() != null;
-            assert intrinsicModel.keySubQuery.getColumns().size() > 0;
-
-            throw SqlException
-                    .position(intrinsicModel.keySubQuery.getColumns().getQuick(0).getAst().position)
-                    .put("unsupported column type: ")
-                    .put(metadata.getColumnName(0))
-                    .put(": ")
-                    .put(ColumnType.nameOf(columnType));
+        switch (columnType) {
+            case ColumnType.STRING:
+                return Record.GET_STR;
+            case ColumnType.SYMBOL:
+                return Record.GET_SYM;
+            case ColumnType.VARCHAR:
+                return Record.GET_VARCHAR;
+            default:
+                assert intrinsicModel.keySubQuery.getColumns() != null;
+                assert intrinsicModel.keySubQuery.getColumns().size() > 0;
+                throw SqlException
+                        .position(intrinsicModel.keySubQuery.getColumns().getQuick(0).getAst().position)
+                        .put("unsupported column type: ")
+                        .put(metadata.getColumnName(0))
+                        .put(": ")
+                        .put(ColumnType.nameOf(columnType));
         }
-
-        return ColumnType.isString(columnType) ? Record.GET_STR : Record.GET_SYM;
     }
 
     // used in tests

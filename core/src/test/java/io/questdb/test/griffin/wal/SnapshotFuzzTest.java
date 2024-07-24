@@ -27,18 +27,37 @@ package io.questdb.test.griffin.wal;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
-import org.junit.Assume;
-import org.junit.Test;
+import org.junit.*;
 
 import java.util.concurrent.atomic.AtomicReference;
 
 public class SnapshotFuzzTest extends AbstractFuzzTest {
+    private static Path triggerFilePath;
+
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        AbstractFuzzTest.setUpStatic();
+        triggerFilePath = new Path();
+    }
+
+    @AfterClass
+    public static void tearDownStatic() {
+        triggerFilePath = Misc.free(triggerFilePath);
+        AbstractFuzzTest.tearDownStatic();
+    }
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        triggerFilePath.of(engine.getConfiguration().getRoot()).parent().concat(TableUtils.RESTORE_SNAPSHOT_TRIGGER_FILE_NAME);
+    }
+
     @Test
     public void testSnapshotEjectedWalApply() throws Exception {
         Rnd rnd = generateRandom(LOG);
@@ -53,6 +72,7 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
                 1,
                 0,
                 0.5,
+                0,
                 0
         );
 
@@ -85,7 +105,8 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
                 0.1,
                 0,
                 0.5,
-                1
+                1,
+                0
         );
 
         fuzzer.setFuzzCounts(
@@ -103,7 +124,6 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
         runFuzzWithSnapshot(rnd);
     }
 
-
     @Test
     public void testSnapshotFullFuzz() throws Exception {
         Rnd rnd = generateRandom(LOG);
@@ -112,13 +132,17 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
         runFuzzWithSnapshot(rnd);
     }
 
+    private static void createTriggerFile() {
+        Files.touch(triggerFilePath.$());
+    }
+
     private void copyRecursiveIgnoreErrors(FilesFacade ff, Path src, Path dst, int dirMode) {
         int dstLen = dst.size();
         int srcLen = src.size();
         int len = src.size();
         long p = ff.findFirst(src.$());
 
-        if (!ff.exists(dst.$()) && -1 == ff.mkdir(dst, dirMode)) {
+        if (!ff.exists(dst.$()) && -1 == ff.mkdir(dst.$(), dirMode)) {
             LOG.info().$("failed to copy, cannot create dst dir ").$(src).$(" to ").$(dst)
                     .$(", errno: ").$(ff.errno()).$();
         }
@@ -156,15 +180,14 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
     }
 
     private void createSnapshot() throws SqlException {
-        setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, "id_1");
         LOG.info().$("starting snapshot").$();
 
         ddl("snapshot prepare");
         CairoConfiguration conf = engine.getConfiguration();
 
         FilesFacade ff = conf.getFilesFacade();
-        Path snapshotPath = Path.getThreadLocal(conf.getRoot()).put("_snapshot").$();
-        Path rootPath = Path.getThreadLocal2(conf.getRoot()).$();
+        Path snapshotPath = Path.getThreadLocal(conf.getRoot()).put("_snapshot");
+        Path rootPath = Path.getThreadLocal2(conf.getRoot());
 
         ff.mkdirs(snapshotPath, conf.getMkDirMode());
 
@@ -184,7 +207,9 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
                 rnd.nextDouble(),
                 rnd.nextDouble(),
                 rnd.nextDouble(),
-                0.1 * rnd.nextDouble(), 0.01,
+                0.1 * rnd.nextDouble(),
+                0.01,
+                rnd.nextDouble(),
                 rnd.nextDouble()
         );
 
@@ -206,15 +231,14 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
 
         CairoConfiguration conf = engine.getConfiguration();
         FilesFacade ff = conf.getFilesFacade();
-        Path snapshotPath = Path.getThreadLocal(conf.getRoot()).put("_snapshot").slash$();
-        Path rootPath = Path.getThreadLocal2(conf.getRoot()).slash$();
+        Path snapshotPath = Path.getThreadLocal(conf.getRoot()).put("_snapshot").slash();
+        Path rootPath = Path.getThreadLocal2(conf.getRoot()).slash();
 
         ff.rmdir(rootPath);
-        ff.rename(snapshotPath, rootPath);
-
-        setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, "id_2");
+        ff.rename(snapshotPath.$(), rootPath.$());
 
         LOG.info().$("recovering from snapshot").$();
+        createTriggerFile();
         engine.recoverSnapshot();
         engine.getTableSequencerAPI().releaseAll();
         engine.reloadTableNames();
@@ -224,15 +248,14 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
         // Snapshot is not supported on Windows.
         Assume.assumeFalse(Os.isWindows());
 
-        int size = rnd.nextInt(16 * 1024 * 1024);
-        node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, size);
-
-        String tableNameNonWal = testName.getMethodName() + "_non_wal";
-        fuzzer.createInitialTable(tableNameNonWal, false, fuzzer.initialRowCount);
-        String tableNameWal = testName.getMethodName();
-        TableToken walTable = fuzzer.createInitialTable(tableNameWal, true, fuzzer.initialRowCount);
-
         assertMemoryLeak(() -> {
+            int size = rnd.nextInt(16 * 1024 * 1024);
+            node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, size);
+
+            String tableNameNonWal = testName.getMethodName() + "_non_wal";
+            fuzzer.createInitialTable(tableNameNonWal, false, fuzzer.initialRowCount);
+            String tableNameWal = testName.getMethodName();
+            TableToken walTable = fuzzer.createInitialTable(tableNameWal, true, fuzzer.initialRowCount);
             if (rnd.nextBoolean()) {
                 drainWalQueue();
             }

@@ -4,9 +4,6 @@
 <p>&nbsp;</p>
 
 <p align="center">
-  <a href="https://slack.questdb.io">
-    <img src="https://slack.questdb.io/badge.svg" alt="QuestDB community Slack channel"/>
-  </a>
   <a href="#contribute">
     <img src="https://img.shields.io/github/contributors/questdb/questdb" alt="QuestDB open source contributors"/>
   </a>
@@ -22,7 +19,7 @@ English | [简体中文](./i18n/README.zh-cn.md) | [繁體中文](./i18n/README.
 QuestDB is an open-source time-series database for high throughput
 ingestion and fast SQL queries with operational simplicity.
 
-QuestDB is well-suited for financial market data, IoT sensor data, ad-tech and real-time dashboards. It shines for datasets with [high cardinality](https://questdb.io/glossary/high-cardinality/)
+QuestDB is well-suited for financial market data, IoT sensor data and real-time dashboards. It shines for datasets with [high cardinality](https://questdb.io/glossary/high-cardinality/)
 and is a drop-in replacement for InfluxDB via support for the InfluxDB Line Protocol.
 
 QuestDB implements ANSI SQL with native time-series SQL extensions. These SQL extensions make it simple to filter and downsample data,
@@ -46,16 +43,14 @@ Popular tools that integrate with QuestDB include [Apache Kafka](https://questdb
 
 ## Try QuestDB
 
-We provide a [live demo](https://demo.questdb.io/) provisioned with the latest QuestDB release and sample datasets:
+Our [live demo](https://demo.questdb.io/) is provisioned with the latest QuestDB release and sample datasets:
 
 - Trips: 10 years of NYC taxi trips with 1.6 billion rows
 - Trades: live crypto market data with 30M+ rows per month
 - Pos: geolocations of 250k unique ships over time
 
-> Checkout our [interactive real-time market data dashboards](https://questdb.io/dashboards/crypto/) and [NYC Taxi Data Analytics Dashboards](https://questdb.io/dashboards/taxi/) powered by QuestDB and Grafana.
-
 | Query                                                                         | Execution time                                                                                                                                                                                      |
-|-------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `SELECT sum(double) FROM trips`                                               | [0.15 secs](<https://demo.questdb.io/?query=SELECT%20sum(trip_distance)%20FROM%20trips;&executeQuery=true>)                                                                                         |
 | `SELECT sum(double), avg(double) FROM trips`                                  | [0.5 secs](<https://demo.questdb.io/?query=SELECT%20sum(fare_amount),%20avg(fare_amount)%20FROM%20trips;&executeQuery=true>)                                                                        |
 | `SELECT avg(double) FROM trips WHERE time in '2019'`                          | [0.02 secs](<https://demo.questdb.io/?query=SELECT%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019%27;&executeQuery=true>)                                             |
@@ -87,11 +82,11 @@ questdb stop  // To stop questdb
 The [QuestDB downloads page](https://questdb.io/get-questdb/) provides direct downloads for binaries and has details for
 other installation and deployment methods.
 
-### QuestDB Cloud
+### QuestDB Enterprise
 
-QuestDB Cloud is the fully managed version of QuestDB, with additional features such as Role-based access control,
-Cloud-native Replication, Compression, monitoring and cloud-native snapshots.
-[Get started with $200 credits](https://cloud.questdb.com).
+[QuestDB Enterprise](https://questdb.io/enterprise/) (self-hosted or BYOC) allows your organization to run the database at scale, securely.
+Additional features include multi-primary ingestion, read replica(s), cold storage integration, Role-based access control,
+monitoring, TLS, and more.
 
 ### Connect to QuestDB
 
@@ -114,12 +109,16 @@ Below are the official QuestDB clients for ingesting data via the InfluxDB Line 
 - [Python](https://py-questdb-client.readthedocs.io/en/latest/)
 - [Rust](https://docs.rs/crate/questdb-rs/latest)
 
+### Configure QuestDB for production workloads
+
+Find our [capacity planning](https://questdb.io/docs/deployment/capacity-planning/) to fine-tune QuestDB for production workloads.
+
 ### End-to-end quickstart
 
 Want to walk through everything, from streaming ingestion to visualization with Grafana? Check out
 our multi-path [quickstart repository](https://github.com/questdb/questdb-quickstart).
 
-## How QuestDB compares to other open source TSDBs
+### How QuestDB compares to other open-source TSDBs
 
 Checkout [our benchmark blog post](https://questdb.io/blog/2024/02/26/questdb-versus-influxdb/)
 which compares QuestDB and InfluxDB across functionality, maturity and performance.
@@ -137,9 +136,15 @@ which compares QuestDB and InfluxDB across functionality, maturity and performan
 - [Tutorials:](https://questdb.io/tutorial/) learn what's possible with QuestDB step by step.
 - [Product roadmap:](https://github.com/orgs/questdb/projects/1/views/5) check out our plan for upcoming releases.
 
+### 📈 Demo dashboards
+
+- [Live demo:](https://demo.questdb.io/) explore a live instance of QuestDB with preloaded datasets.
+- [Real-time crypto dashboard:](https://questdb.io/dashboards/crypto/) Monitor executed trades on Coinbase from more than 20 assets in real time.
+- [NYC taxi:](https://questdb.io/dashboards/taxi/) A real-time replay of 146,393,317 taxi rides, carrying 238,016,495 passengers across New York City in 2016.
+
 ### ❓ Get support
 
-- [Community Slack:](https://slack.questdb.io) join technical discussions, ask questions, and meet other users!
+- [Community Forum:](https://community.questdb.io/) join technical discussions, ask questions, and meet other users!
 - [GitHub issues:](https://github.com/questdb/questdb/issues) report bugs or issues with QuestDB.
 - [Stack Overflow:](https://stackoverflow.com/questions/tagged/questdb) look for common troubleshooting solutions.
 

@@ -887,6 +887,22 @@ public final class Numbers {
         return val;
     }
 
+    public static long parseHexLong(Utf8Sequence sequence, int lo, int hi) throws NumericException {
+        if (hi == 0) {
+            throw NumericException.INSTANCE;
+        }
+
+        long val = 0;
+        long r;
+        for (int i = lo; i < hi; i++) {
+            int c = sequence.byteAt(i);
+            long n = val << 4;
+            r = n + hexToDecimal(c);
+            val = r;
+        }
+        return val;
+    }
+
     public static int parseIPv4(CharSequence sequence) throws NumericException {
         if (sequence == null || Chars.equalsIgnoreCase("null", sequence)) {
             return IPv4_NULL;

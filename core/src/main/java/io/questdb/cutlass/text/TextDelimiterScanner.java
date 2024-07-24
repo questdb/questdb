@@ -48,12 +48,17 @@ public class TextDelimiterScanner implements Closeable {
     private CharSequence tableName;
 
     public TextDelimiterScanner(TextConfiguration configuration) {
-        this.lineCountLimit = configuration.getTextAnalysisMaxLines();
-        this.matrixRowSize = 256 * Integer.BYTES;
-        this.matrixSize = matrixRowSize * lineCountLimit;
-        this.matrix = Unsafe.malloc(this.matrixSize, MemoryTag.NATIVE_TEXT_PARSER_RSS);
-        this.maxRequiredDelimiterStdDev = configuration.getMaxRequiredDelimiterStdDev();
-        this.maxRequiredLineLengthStdDev = configuration.getMaxRequiredLineLengthStdDev();
+        try {
+            this.lineCountLimit = configuration.getTextAnalysisMaxLines();
+            this.matrixRowSize = 256 * Integer.BYTES;
+            this.matrixSize = matrixRowSize * lineCountLimit;
+            this.matrix = Unsafe.malloc(this.matrixSize, MemoryTag.NATIVE_TEXT_PARSER_RSS);
+            this.maxRequiredDelimiterStdDev = configuration.getMaxRequiredDelimiterStdDev();
+            this.maxRequiredLineLengthStdDev = configuration.getMaxRequiredLineLengthStdDev();
+        } catch (Throwable t) {
+            close();
+            throw t;
+        }
     }
 
     @Override

@@ -34,7 +34,6 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 
 // Contiguous mapped with offset readable memory
-// todo: investigate if we can map file from 0 offset and have the logc in this class done by the OS
 public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
     private static final Log LOG = LogFactory.getLog(MemoryCMORImpl.class);
     private long mapFileOffset;
@@ -43,10 +42,23 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
     public MemoryCMORImpl() {
     }
 
+    /**
+     * Get the address of a file-based offset. This ignores the `lo` and `hi` range specifies during construction.
+     * The offset is relative to the start of the file, not the virtual area of interest.
+     */
     @Override
-    public long addressOf(long offset) {
-        assert offset - mapFileOffset <= size : "offset=" + offset + ", size=" + size + ", fd=" + fd;
-        return pageAddress + offset - mapFileOffset;
+    public long addressOf(long fileOffset) {
+        assert checkOffsetMapped(fileOffset) : "offset=" + offset + ", size=" + size + ", fd=" + fd;
+        if (pageAddress == 0) {
+            // Lazy mapping
+            map(ff, size, mapFileOffset);
+        }
+        return pageAddress + fileOffset - mapFileOffset;
+    }
+
+    @Override
+    public boolean checkOffsetMapped(long fileOffset) {
+        return fileOffset - mapFileOffset <= size;
     }
 
     @Override
@@ -87,6 +99,13 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
     }
 
     @Override
+    public void map() {
+        if (pageAddress == 0) {
+            map(ff, size, mapFileOffset);
+        }
+    }
+
+    @Override
     public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
         ofOffset(ff, name, 0L, size, memoryTag, opts);
     }
@@ -101,7 +120,7 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
         } else {
             openFile(ff, name);
         }
-        map0(ff, name, lo, hi);
+        mapLazy(lo, hi);
     }
 
     @Override
@@ -109,18 +128,21 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
         ofOffset(ff, -1, name, lo, hi, memoryTag, opts);
     }
 
+    /**
+     * Size of the "virtual" mapped area, accounting for the offset (hi - lo) during the construction.
+     * Careful not to use this in conjunction with `addressOf` which uses a file-based offset.
+     */
     @Override
     public long size() {
         return size + mapFileOffset - offset;
     }
 
-    private void map0(FilesFacade ff, LPSZ name, long lo, long hi) {
+    private void mapLazy(long lo, long hi) {
         assert hi >= 0 && hi >= lo : "hi : " + hi + " lo : " + lo;
         if (hi > lo) {
             this.offset = lo;
             this.mapFileOffset = Files.PAGE_SIZE * (lo / Files.PAGE_SIZE);
             this.size = hi - mapFileOffset;
-            map(ff, name, this.size, this.mapFileOffset);
         } else {
             this.size = 0;
         }
@@ -134,10 +156,9 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
 
     private void setSize0(long newSize) {
         try {
-            if (size > 0) {
+            if (size > 0 && pageAddress != 0) {
                 pageAddress = TableUtils.mremap(ff, fd, pageAddress, size, newSize, mapFileOffset, Files.MAP_RO, memoryTag);
             } else {
-                assert pageAddress == 0;
                 pageAddress = TableUtils.mapRO(ff, fd, newSize, mapFileOffset, memoryTag);
             }
             size = newSize;
@@ -147,7 +168,7 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
         }
     }
 
-    protected void map(FilesFacade ff, LPSZ name, final long size, final long mapOffset) {
+    protected void map(FilesFacade ff, final long size, final long mapOffset) {
         this.size = size;
         if (size > 0) {
             try {
@@ -159,6 +180,6 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
         }
 
         // ---------------V leave a space here for alignment with open log message
-        LOG.debug().$("map  [file=").$(name).$(", fd=").$(fd).$(", pageSize=").$(size).$(", size=").$(this.size).$(']').$();
+        LOG.debug().$("map  [fd=").$(fd).$(", size=").$(this.size).$(']').$();
     }
 }

@@ -33,6 +33,12 @@ import io.questdb.std.str.DirectString;
 
 //contiguous readable 
 public interface MemoryCR extends MemoryC, MemoryR {
+    long addressHi();
+
+    default boolean checkOffsetMapped(long offset) {
+        return offset <= size();
+    }
+
     default BinarySequence getBin(long offset, ByteSequenceView view) {
         final long addr = addressOf(offset);
         final long len = Unsafe.getUnsafe().getLong(addr);
@@ -107,7 +113,7 @@ public interface MemoryCR extends MemoryC, MemoryR {
     default DirectString getStr(long offset, DirectString view) {
         long addr = addressOf(offset);
         assert addr > 0;
-        if (Vm.PARANOIA_MODE && offset + 4 > size()) {
+        if (Vm.PARANOIA_MODE && !checkOffsetMapped(offset + 4)) {
             throw CairoException.critical(0)
                     .put("String is outside of file boundary [offset=")
                     .put(offset)
@@ -118,7 +124,7 @@ public interface MemoryCR extends MemoryC, MemoryR {
 
         final int len = Unsafe.getUnsafe().getInt(addr);
         if (len != TableUtils.NULL_LEN) {
-            if (Vm.getStorageLength(len) + offset <= size()) {
+            if (checkOffsetMapped(Vm.getStorageLength(len) + offset)) {
                 return view.of(addr + Vm.STRING_LENGTH_BYTES, len);
             }
             throw CairoException.critical(0)
@@ -139,6 +145,9 @@ public interface MemoryCR extends MemoryC, MemoryR {
 
     default boolean isFileBased() {
         return false;
+    }
+
+    default void map() {
     }
 
     class ByteSequenceView implements BinarySequence, Mutable {

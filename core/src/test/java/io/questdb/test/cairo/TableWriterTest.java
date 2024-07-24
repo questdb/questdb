@@ -48,11 +48,7 @@ import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.Sinkable;
-import io.questdb.std.str.Utf8String;
-import io.questdb.std.str.Utf8s;
+import io.questdb.std.str.*;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -1831,9 +1827,9 @@ public class TableWriterTest extends AbstractCairoTest {
             TableToken tableToken = engine.verifyTableName(all);
             try (
                     MemoryCMARW mem = Vm.getCMARWInstance();
-                    Path path = new Path().of(root).concat(tableToken).concat(TableUtils.TODO_FILE_NAME).$()
+                    Path path = new Path().of(root).concat(tableToken).concat(TableUtils.TODO_FILE_NAME)
             ) {
-                mem.smallFile(TestFilesFacadeImpl.INSTANCE, path, MemoryTag.MMAP_DEFAULT);
+                mem.smallFile(TestFilesFacadeImpl.INSTANCE, path.$(), MemoryTag.MMAP_DEFAULT);
                 mem.putLong(32, 1);
                 mem.putLong(40, 9990001L);
                 mem.jumpTo(48);
@@ -2860,19 +2856,19 @@ public class TableWriterTest extends AbstractCairoTest {
                 newOffPoolWriter(configuration, PRODUCT, metrics).close();
 
                 path.of(configuration.getRoot()).concat(PRODUCT_FS).concat("default").slash$();
-                Assert.assertTrue(ff.exists(path));
+                Assert.assertTrue(ff.exists(path.$()));
 
                 path.of(configuration.getRoot()).concat(PRODUCT_FS).concat("somethingortheother").slash$();
-                Assert.assertTrue(ff.exists(path));
+                Assert.assertTrue(ff.exists(path.$()));
 
                 path.of(configuration.getRoot()).concat(PRODUCT_FS).concat("0001-01-01.123").slash$();
-                Assert.assertFalse(ff.exists(path));
+                Assert.assertFalse(ff.exists(path.$()));
 
                 path.of(configuration.getRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR).slash$();
-                Assert.assertTrue(ff.exists(path));
+                Assert.assertTrue(ff.exists(path.$()));
 
                 path.of(configuration.getRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR_DEPRECATED).slash$();
-                Assert.assertTrue(ff.exists(path));
+                Assert.assertTrue(ff.exists(path.$()));
             }
         });
     }
@@ -2904,19 +2900,19 @@ public class TableWriterTest extends AbstractCairoTest {
                 newOffPoolWriter(configuration, PRODUCT, metrics).close();
 
                 path.of(configuration.getRoot()).concat(PRODUCT).concat("default").slash$();
-                Assert.assertTrue(ff.exists(path));
+                Assert.assertTrue(ff.exists(path.$()));
 
                 path.of(configuration.getRoot()).concat(PRODUCT).concat("somethingortheother").slash$();
-                Assert.assertTrue(ff.exists(path));
+                Assert.assertTrue(ff.exists(path.$()));
 
                 path.of(configuration.getRoot()).concat(PRODUCT).concat("0001-01-01.123").slash$();
-                Assert.assertTrue(ff.exists(path));
+                Assert.assertTrue(ff.exists(path.$()));
 
                 path.of(configuration.getRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR).slash$();
-                Assert.assertTrue(ff.exists(path));
+                Assert.assertTrue(ff.exists(path.$()));
 
                 path.of(configuration.getRoot()).concat(PRODUCT).concat(WalUtils.SEQ_DIR_DEPRECATED).slash$();
-                Assert.assertTrue(ff.exists(path));
+                Assert.assertTrue(ff.exists(path.$()));
             }
         });
     }
@@ -3164,41 +3160,6 @@ public class TableWriterTest extends AbstractCairoTest {
                 TestUtils.assertEquals(boring, r.getSymA(1));
             }
         }
-    }
-
-    @Test
-    public void testWriterMemoryLimit() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            int N = 100000;
-            try {
-                Unsafe.setWriterMemLimit(configuration.getO3ColumnMemorySize());
-                create(FF, PartitionBy.DAY, N);
-                try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT, metrics)) {
-                    try {
-                        // Write O3
-                        Rnd rnd = new Rnd();
-                        long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
-                        populateRow(writer, rnd, ts, 60L * 60000L * 1000L);
-                        populateRow(writer, rnd, ts - 1000, 60L * 60000L * 1000L);
-
-                        Assert.fail("writer creation should fail");
-                    } catch (CairoException e) {
-                        TestUtils.assertContains(e.getMessage(), "table writing memory limit reached");
-                    }
-
-                    writer.rollback();
-                    Unsafe.setWriterMemLimit(2L * (writer.getColumnCount() + 1) * configuration.getO3ColumnMemorySize());
-                    Rnd rnd = new Rnd();
-                    long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
-                    populateRow(writer, rnd, ts, 60L * 60000L * 1000L);
-                    populateRow(writer, rnd, ts - 1000, 60L * 60000L * 1000L);
-
-                    writer.commit();
-                }
-            } finally {
-                Unsafe.setWriterMemLimit(0);
-            }
-        });
     }
 
     private static void danglingO3TransactionModifier(TableWriter w, Rnd rnd, long timestamp, long increment) {

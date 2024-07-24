@@ -26,7 +26,10 @@ package io.questdb.test;
 
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
+import io.questdb.mp.SOCountDownLatch;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -34,6 +37,8 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.test.cutlass.pgwire.BasePGTest.assertResultSet;
 import static io.questdb.test.tools.TestUtils.unchecked;
@@ -47,13 +52,114 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
         unchecked(() -> createDummyConfiguration(
                 // Force enable parallel GROUP BY and filter for smoke tests.
                 PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED + "=true",
-                PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED.getPropertyPath() + "=true"
+                PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED + "=true",
+                PropertyKey.SHARED_WORKER_COUNT + "=4",
+                PropertyKey.PG_WORKER_COUNT + "=4",
+                PropertyKey.PG_SELECT_CACHE_ENABLED + "=true",
+                PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD + "=1",
+                PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD + "=100",
+                PropertyKey.QUERY_TIMEOUT_SEC + "=120",
+                // JIT doesn't support ARM, and we want exec plans to be the same.
+                PropertyKey.CAIRO_SQL_JIT_MODE + "=off",
+                PropertyKey.DEBUG_ENABLE_TEST_FACTORIES + "=true"
         ));
         dbPath.parent().$();
     }
 
     @Test
-    public void testServerMainAsyncFilterSmokeTest() throws Exception {
+    public void testServerMainGlobalQueryCacheSmokeTest() {
+        // Verify that global cache is correctly synchronized, so that
+        // no record cursor factory is used by multiple threads concurrently.
+        class TestCase {
+            final String expectedResult;
+            final String query;
+
+            TestCase(String query, String expectedResult) {
+                this.query = query;
+                this.expectedResult = expectedResult;
+            }
+        }
+        final int nQueries = 10;
+        final TestCase[] testCases = new TestCase[nQueries];
+        for (int i = 0; i < nQueries; i++) {
+            testCases[i] = new TestCase(
+                    "select owners owners_" + i + " from test_owner_counter();",
+                    "owners_" + i + "[INTEGER]\n" +
+                            "1\n"
+            );
+        }
+
+        try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
+            serverMain.start();
+
+            final int nThreads = 4;
+            final int nIterations = 1000;
+
+            final CyclicBarrier startBarrier = new CyclicBarrier(nThreads);
+            final SOCountDownLatch doneLatch = new SOCountDownLatch(nThreads);
+            final AtomicInteger errors = new AtomicInteger();
+            for (int t = 0; t < nThreads; t++) {
+                final int threadId = t;
+                new Thread(() -> {
+                    final Rnd rnd = new Rnd(threadId, threadId);
+                    final StringSink sink = new StringSink();
+                    try {
+                        startBarrier.await();
+
+                        try (Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES)) {
+                            for (int i = 0; i < nIterations; i++) {
+                                final TestCase testCase = testCases[rnd.nextInt(nQueries)];
+                                try (ResultSet rs = conn.prepareStatement(testCase.query).executeQuery()) {
+                                    sink.clear();
+                                    assertResultSet(testCase.expectedResult, sink, rs);
+                                }
+                            }
+                        }
+                    } catch (Throwable th) {
+                        errors.incrementAndGet();
+                        th.printStackTrace();
+                    } finally {
+                        doneLatch.countDown();
+                    }
+                }).start();
+            }
+
+            doneLatch.await();
+
+            Assert.assertEquals(0, errors.get());
+        }
+    }
+
+    @Test
+    public void testServerMainParallelFilterLoadTest() throws Exception {
+        testServerMainParallelQueryLoadTest(
+                "CREATE TABLE tab as (" +
+                        "  select (x * 864000000)::timestamp ts, ('k' || (x % 5))::symbol key, x:: double price, x::long quantity from long_sequence(10000)" +
+                        ") timestamp (ts) PARTITION BY DAY",
+                "SELECT * FROM tab WHERE key = 'k3' LIMIT 10",
+                "QUERY PLAN[VARCHAR]\n" +
+                        "Async Filter workers: 4\n" +
+                        "  limit: 10\n" +
+                        "  filter: key='k3'\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: tab\n",
+                "ts[TIMESTAMP],key[VARCHAR],price[DOUBLE],quantity[BIGINT]\n" +
+                        "1970-01-01 00:43:12.0,k3,3.0,3\n" +
+                        "1970-01-01 01:55:12.0,k3,8.0,8\n" +
+                        "1970-01-01 03:07:12.0,k3,13.0,13\n" +
+                        "1970-01-01 04:19:12.0,k3,18.0,18\n" +
+                        "1970-01-01 05:31:12.0,k3,23.0,23\n" +
+                        "1970-01-01 06:43:12.0,k3,28.0,28\n" +
+                        "1970-01-01 07:55:12.0,k3,33.0,33\n" +
+                        "1970-01-01 09:07:12.0,k3,38.0,38\n" +
+                        "1970-01-01 10:19:12.0,k3,43.0,43\n" +
+                        "1970-01-01 11:31:12.0,k3,48.0,48\n"
+        );
+    }
+
+    @Test
+    public void testServerMainParallelFilterSmokeTest() throws Exception {
         // Verify that circuit breaker checks don't have weird bugs unseen in fast tests.
         try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
             serverMain.start();
@@ -74,7 +180,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testServerMainAsyncGroupBySmokeTest1() throws Exception {
+    public void testServerMainParallelGroupBySmokeTest1() throws Exception {
         // Verify that circuit breaker checks don't have weird bugs unseen in fast tests.
         try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
             serverMain.start();
@@ -95,7 +201,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testServerMainAsyncGroupBySmokeTest2() throws Exception {
+    public void testServerMainParallelGroupBySmokeTest2() throws Exception {
         // Verify that circuit breaker checks don't have weird bugs unseen in fast tests.
         try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
             serverMain.start();
@@ -114,6 +220,133 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                     assertResultSet(expected, sink, rs);
                 }
             }
+        }
+    }
+
+    @Test
+    public void testServerMainParallelKeyedRostiGroupByLoadTest() throws Exception {
+        testServerMainParallelQueryLoadTest(
+                "CREATE TABLE tab as (" +
+                        "  select (x * 864000000)::timestamp ts, ('k' || (x % 5))::symbol key, x:: double price, x::long quantity from long_sequence(10000)" +
+                        ") timestamp (ts) PARTITION BY DAY",
+                "SELECT key, min(quantity), max(quantity) FROM tab ORDER BY key DESC",
+                "QUERY PLAN[VARCHAR]\n" +
+                        "Sort light\n" +
+                        "  keys: [key desc]\n" +
+                        "    GroupBy vectorized: true workers: 4\n" +
+                        "      keys: [key]\n" +
+                        "      values: [min(quantity),max(quantity)]\n" +
+                        "        DataFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: tab\n",
+                "key[VARCHAR],min[BIGINT],max[BIGINT]\n" +
+                        "k4,4,9999\n" +
+                        "k3,3,9998\n" +
+                        "k2,2,9997\n" +
+                        "k1,1,9996\n" +
+                        "k0,5,10000\n"
+        );
+    }
+
+    @Test
+    public void testServerMainParallelNonKeyedRostiGroupByLoadTest() throws Exception {
+        testServerMainParallelQueryLoadTest(
+                "CREATE TABLE tab as (" +
+                        "  select (x * 864000000)::timestamp ts, ('k' || (x % 5))::symbol key, x:: double price, x::long quantity from long_sequence(10000)" +
+                        ") timestamp (ts) PARTITION BY DAY",
+                "SELECT min(quantity), max(quantity) FROM tab",
+                "QUERY PLAN[VARCHAR]\n" +
+                        "GroupBy vectorized: true workers: 4\n" +
+                        "  values: [min(quantity),max(quantity)]\n" +
+                        "    DataFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: tab\n",
+                "min[BIGINT],max[BIGINT]\n" +
+                        "1,10000\n"
+        );
+    }
+
+    @Test
+    public void testServerMainParallelShardedGroupByLoadTest() throws Exception {
+        testServerMainParallelQueryLoadTest(
+                "CREATE TABLE tab as (" +
+                        "  select (x * 864000000)::timestamp ts, ('k' || (x % 101))::symbol key, x:: double price, x::long quantity from long_sequence(10000)" +
+                        ") timestamp (ts) PARTITION BY DAY",
+                "SELECT day_of_week(ts) day, key, vwap(price, quantity) FROM tab GROUP BY day, key ORDER BY day, key LIMIT 10",
+                "QUERY PLAN[VARCHAR]\n" +
+                        "Sort light lo: 10\n" +
+                        "  keys: [day, key]\n" +
+                        "    VirtualRecord\n" +
+                        "      functions: [day,key,vwap]\n" +
+                        "        Async Group By workers: 4\n" +
+                        "          keys: [day,key]\n" +
+                        "          values: [vwap(price,quantity)]\n" +
+                        "          filter: null\n" +
+                        "            DataFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: tab\n",
+                "day[INTEGER],key[VARCHAR],vwap[DOUBLE]\n" +
+                        "1,k0,6624.171717171717\n" +
+                        "1,k1,6624.8468153184685\n" +
+                        "1,k10,6612.932687914096\n" +
+                        "1,k100,6623.496749024707\n" +
+                        "1,k11,6613.610770065386\n" +
+                        "1,k12,6281.67243296272\n" +
+                        "1,k13,6598.965586726309\n" +
+                        "1,k14,6599.64534842185\n" +
+                        "1,k15,6600.325238210883\n" +
+                        "1,k16,6601.005256016568\n"
+        );
+    }
+
+    private void testServerMainParallelQueryLoadTest(String ddl, String query, String expectedPlan, String expectedResult) throws Exception {
+        // Here we're verifying that adaptive work stealing doesn't lead to deadlocks.
+        try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
+            serverMain.start();
+
+            try (Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES)) {
+                try (Statement statement = conn.createStatement()) {
+                    statement.execute(ddl);
+                }
+
+                try (ResultSet rs = conn.prepareStatement("EXPLAIN " + query).executeQuery()) {
+                    sink.clear();
+                    assertResultSet(expectedPlan, sink, rs);
+                }
+            }
+
+            final int nThreads = 8;
+            final int nIterations = 100;
+
+            final CyclicBarrier startBarrier = new CyclicBarrier(nThreads);
+            final SOCountDownLatch doneLatch = new SOCountDownLatch(nThreads);
+            final AtomicInteger errors = new AtomicInteger();
+            for (int t = 0; t < nThreads; t++) {
+                new Thread(() -> {
+                    final StringSink sink = new StringSink();
+                    try {
+                        startBarrier.await();
+
+                        try (Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES)) {
+                            for (int i = 0; i < nIterations; i++) {
+                                try (ResultSet rs = conn.prepareStatement(query).executeQuery()) {
+                                    sink.clear();
+                                    assertResultSet(expectedResult, sink, rs);
+                                }
+                            }
+                        }
+                    } catch (Throwable th) {
+                        errors.incrementAndGet();
+                        th.printStackTrace();
+                    } finally {
+                        doneLatch.countDown();
+                    }
+                }).start();
+            }
+
+            doneLatch.await();
+
+            Assert.assertEquals(0, errors.get());
         }
     }
 }

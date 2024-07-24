@@ -165,7 +165,7 @@ public class TruncateTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 createX();
-                assertException("truncate table x keep symbol maps bla-bla-bla");
+                assertExceptionNoLeakCheck("truncate table x keep symbol maps bla-bla-bla");
             } catch (SqlException e) {
                 Assert.assertEquals(34, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "unexpected token [bla]");
@@ -179,7 +179,7 @@ public class TruncateTest extends AbstractCairoTest {
     public void testExpectTableKeyword() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
-                assertException("truncate x", sqlExecutionContext);
+                assertExceptionNoLeakCheck("truncate x", sqlExecutionContext);
             } catch (SqlException e) {
                 Assert.assertEquals(9, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "TABLE expected");
@@ -191,7 +191,7 @@ public class TruncateTest extends AbstractCairoTest {
     public void testExpectTableKeyword2() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
-                assertException("truncate");
+                assertExceptionNoLeakCheck("truncate");
             } catch (SqlException e) {
                 Assert.assertEquals(8, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "TABLE expected");
@@ -203,7 +203,7 @@ public class TruncateTest extends AbstractCairoTest {
     public void testExpectTableName() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
-                assertException("truncate table", sqlExecutionContext);
+                assertExceptionNoLeakCheck("truncate table", sqlExecutionContext);
             } catch (SqlException e) {
                 Assert.assertEquals(14, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "table name expected");
@@ -216,7 +216,7 @@ public class TruncateTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 createX();
-                assertException("truncate table x,", sqlExecutionContext);
+                assertExceptionNoLeakCheck("truncate table x,", sqlExecutionContext);
             } catch (SqlException e) {
                 Assert.assertEquals(17, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "table name expected");
@@ -230,7 +230,7 @@ public class TruncateTest extends AbstractCairoTest {
     public void testExpectTableName3() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try {
-                assertException("truncate table with");
+                assertExceptionNoLeakCheck("truncate table with");
             } catch (SqlException e) {
                 Assert.assertEquals(15, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "table name expected");
@@ -243,7 +243,7 @@ public class TruncateTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 createX();
-                assertException("truncate table x, keep");
+                assertExceptionNoLeakCheck("truncate table x, keep");
             } catch (SqlException e) {
                 Assert.assertEquals(22, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "table name expected");
@@ -258,7 +258,7 @@ public class TruncateTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 createX();
-                assertException("truncate table x y z");
+                assertExceptionNoLeakCheck("truncate table x y z");
             } catch (SqlException e) {
                 Assert.assertEquals(19, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "',' or 'keep' expected");
@@ -424,7 +424,7 @@ public class TruncateTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 createX();
-                assertException("truncate table x keep bla-bla-bla");
+                assertExceptionNoLeakCheck("truncate table x keep bla-bla-bla");
             } catch (SqlException e) {
                 Assert.assertEquals(22, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "SYMBOL expected");
@@ -439,7 +439,7 @@ public class TruncateTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             try {
                 createX();
-                assertException("truncate table x keep symbol bla-bla-bla");
+                assertExceptionNoLeakCheck("truncate table x keep symbol bla-bla-bla");
             } catch (SqlException e) {
                 Assert.assertEquals(29, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "MAPS expected");
@@ -455,7 +455,7 @@ public class TruncateTest extends AbstractCairoTest {
             createX();
             createY();
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "count\n" +
                             "10\n",
                     "select count() from x",
@@ -464,7 +464,7 @@ public class TruncateTest extends AbstractCairoTest {
                     true
             );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "count\n" +
                             "20\n",
                     "select count() from y",
@@ -491,7 +491,7 @@ public class TruncateTest extends AbstractCairoTest {
 
             useBarrier.await();
             try {
-                assertException("truncate table x,y");
+                assertExceptionNoLeakCheck("truncate table x,y");
             } catch (SqlException e) {
                 Assert.assertEquals(17, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "table 'y' could not be truncated: [-1]: table busy");
@@ -499,7 +499,7 @@ public class TruncateTest extends AbstractCairoTest {
 
             releaseBarrier.await();
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "count\n" +
                             "10\n",
                     "select count() from x",
@@ -508,7 +508,7 @@ public class TruncateTest extends AbstractCairoTest {
                     true
             );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "count\n" +
                             "20\n",
                     "select count() from y",
@@ -546,7 +546,7 @@ public class TruncateTest extends AbstractCairoTest {
             );
 
             try {
-                assertException("truncate table x, y,z");
+                assertExceptionNoLeakCheck("truncate table x, y,z");
             } catch (SqlException e) {
                 Assert.assertEquals(20, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist [table=z]");

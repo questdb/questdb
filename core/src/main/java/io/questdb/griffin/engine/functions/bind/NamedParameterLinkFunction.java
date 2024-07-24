@@ -35,9 +35,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 
 public class NamedParameterLinkFunction implements ScalarFunction {
     private final int type;
@@ -165,11 +163,6 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
-    public void getStr(Record rec, Utf16Sink utf16Sink) {
-        getBase().getStr(rec, utf16Sink);
-    }
-
-    @Override
     public CharSequence getStrA(Record rec) {
         return getBase().getStrA(rec);
     }
@@ -202,11 +195,6 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     @Override
     public int getType() {
         return type;
-    }
-
-    @Override
-    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-        getBase().getVarchar(rec, utf8Sink);
     }
 
     @Override

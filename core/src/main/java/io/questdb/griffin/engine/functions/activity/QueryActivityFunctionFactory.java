@@ -34,11 +34,8 @@ import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 
 public class QueryActivityFunctionFactory implements FunctionFactory {
-
     private static final RecordMetadata METADATA;
-
-    private static final String NAME = "query_activity";
-    private static final String SIGNATURE = NAME + "()";
+    private static final String SIGNATURE = "query_activity()";
 
     @Override
     public String getSignature() {

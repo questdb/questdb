@@ -52,12 +52,17 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
             @Transient @NotNull BytecodeAssembler asm
     ) {
         super(base.getMetadata());
-        final RecordMetadata metadata = base.getMetadata();
-        // sink will be storing record columns to map key
-        columnFilter.of(metadata.getColumnCount());
-        mapSink = RecordSinkFactory.getInstance(asm, metadata, columnFilter, false);
         this.base = base;
-        cursor = new DistinctRecordCursor(configuration, metadata);
+        try {
+            final RecordMetadata metadata = base.getMetadata();
+            // sink will be storing record columns to map key
+            columnFilter.of(metadata.getColumnCount());
+            mapSink = RecordSinkFactory.getInstance(asm, metadata, columnFilter);
+            cursor = new DistinctRecordCursor(configuration, metadata);
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override
@@ -101,8 +106,8 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        base.close();
-        cursor.close();
+        Misc.free(base);
+        Misc.free(cursor);
     }
 
     private static class DistinctRecordCursor implements RecordCursor {
@@ -114,8 +119,8 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
         private RecordSink recordSink;
 
         public DistinctRecordCursor(CairoConfiguration configuration, RecordMetadata metadata) {
-            this.dataMap = MapFactory.createOrderedMap(configuration, metadata);
             this.isOpen = true;
+            this.dataMap = MapFactory.createOrderedMap(configuration, metadata);
         }
 
         @Override

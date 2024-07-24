@@ -29,6 +29,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.ColumnPurgeTask;
 
@@ -41,7 +42,7 @@ public class ColumnPurgeOperator implements Closeable {
     private final LongList completedRowIds = new LongList();
     private final FilesFacade ff;
     private final MicrosecondClock microClock;
-    private final Path path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
+    private final Path path;
     private final int pathRootLen;
     private final TableWriter purgeLogWriter;
     private final String updateCompleteColumnName;
@@ -54,29 +55,41 @@ public class ColumnPurgeOperator implements Closeable {
     private TxnScoreboard txnScoreboard;
 
     public ColumnPurgeOperator(CairoConfiguration configuration, TableWriter purgeLogWriter, String updateCompleteColumnName) {
-        this.ff = configuration.getFilesFacade();
-        this.purgeLogWriter = purgeLogWriter;
-        this.updateCompleteColumnName = updateCompleteColumnName;
-        this.updateCompleteColumnWriterIndex = purgeLogWriter.getMetadata().getColumnIndex(updateCompleteColumnName);
-        path.of(configuration.getRoot());
-        pathRootLen = path.size();
-        txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount());
-        txReader = new TxReader(ff);
-        microClock = configuration.getMicrosecondClock();
-        longBytes = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_SQL_COMPILER);
+        try {
+            this.ff = configuration.getFilesFacade();
+            this.path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
+            path.of(configuration.getRoot());
+            pathRootLen = path.size();
+            this.purgeLogWriter = purgeLogWriter;
+            this.updateCompleteColumnName = updateCompleteColumnName;
+            this.updateCompleteColumnWriterIndex = purgeLogWriter.getMetadata().getColumnIndex(updateCompleteColumnName);
+            txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount());
+            txReader = new TxReader(ff);
+            microClock = configuration.getMicrosecondClock();
+            longBytes = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_SQL_COMPILER);
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     public ColumnPurgeOperator(CairoConfiguration configuration) {
-        this.ff = configuration.getFilesFacade();
-        this.purgeLogWriter = null;
-        this.updateCompleteColumnName = null;
-        this.updateCompleteColumnWriterIndex = -1;
-        path.of(configuration.getRoot());
-        pathRootLen = path.size();
-        txnScoreboard = null;
-        txReader = null;
-        microClock = configuration.getMicrosecondClock();
-        longBytes = 0;
+        try {
+            this.ff = configuration.getFilesFacade();
+            this.path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
+            path.of(configuration.getRoot());
+            pathRootLen = path.size();
+            this.purgeLogWriter = null;
+            this.updateCompleteColumnName = null;
+            this.updateCompleteColumnWriterIndex = -1;
+            txnScoreboard = null;
+            txReader = null;
+            microClock = configuration.getMicrosecondClock();
+            longBytes = 0;
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override
@@ -126,7 +139,7 @@ public class ColumnPurgeOperator implements Closeable {
         }
     }
 
-    private static boolean couldNotRemove(FilesFacade ff, Path path) {
+    private static boolean couldNotRemove(FilesFacade ff, LPSZ path) {
         if (ff.removeQuiet(path)) {
             return false;
         }
@@ -190,11 +203,6 @@ public class ColumnPurgeOperator implements Closeable {
     }
 
     private boolean purge0(ColumnPurgeTask task, final ScoreboardUseMode scoreboardMode) {
-        LOG.info().$("purging [table=").utf8(task.getTableName().getTableName())
-                .$(", column=").utf8(task.getColumnName())
-                .$(", tableId=").$(task.getTableId())
-                .I$();
-
         setTablePath(task.getTableName());
 
         final LongList updatedColumnInfo = task.getUpdatedColumnInfo();
@@ -227,21 +235,17 @@ public class ColumnPurgeOperator implements Closeable {
                 }
 
                 // perform existence check ahead of trying to remove files
-                if (!ff.exists(path)) {
+                if (!ff.exists(path.$())) {
                     if (ColumnType.isVarSize(columnType)) {
                         path.trimTo(pathTrimToPartition);
-                        TableUtils.iFile(path, columnName, columnVersion);
-                        if (!ff.exists(path)) {
+                        if (!ff.exists(TableUtils.iFile(path, columnName, columnVersion))) {
                             completedRowIds.add(updateRowId);
                             continue;
                         }
                     } else if (isSymbolRootFiles) {
-                        TableUtils.offsetFileName(path.trimTo(pathTrimToPartition), columnName, columnVersion);
-                        if (!ff.exists(path)) {
-                            BitmapIndexUtils.keyFileName(path.trimTo(pathTrimToPartition), columnName, columnVersion);
-                            if (!ff.exists(path)) {
-                                BitmapIndexUtils.valueFileName(path.trimTo(pathTrimToPartition), columnName, columnVersion);
-                                if (!ff.exists(path)) {
+                        if (!ff.exists(TableUtils.offsetFileName(path.trimTo(pathTrimToPartition), columnName, columnVersion))) {
+                            if (!ff.exists(BitmapIndexUtils.keyFileName(path.trimTo(pathTrimToPartition), columnName, columnVersion))) {
+                                if (!ff.exists(BitmapIndexUtils.valueFileName(path.trimTo(pathTrimToPartition), columnName, columnVersion))) {
                                     completedRowIds.add(updateRowId);
                                     continue;
                                 }
@@ -267,7 +271,13 @@ public class ColumnPurgeOperator implements Closeable {
                     }
                     // we would have mutated the path by checking state of the table
                     // we will have to re-setup that
-                    setUpPartitionPath(task.getPartitionBy(), partitionTimestamp, partitionTxnName);
+                    if (!isSymbolRootFiles) {
+                        setUpPartitionPath(task.getPartitionBy(), partitionTimestamp, partitionTxnName);
+                        pathTrimToPartition = path.size();
+                    } else {
+                        path.trimTo(pathTableLen);
+                        pathTrimToPartition = path.size();
+                    }
                     TableUtils.dFile(path, columnName, columnVersion);
                     setupScoreboard = false;
                 }
@@ -296,7 +306,7 @@ public class ColumnPurgeOperator implements Closeable {
                 LOG.info().$("purging [path=").$(path).I$();
 
                 // No readers looking at the column version, files can be deleted
-                if (couldNotRemove(ff, path)) {
+                if (couldNotRemove(ff, path.$())) {
                     allDone = false;
                     continue;
                 }
@@ -305,7 +315,7 @@ public class ColumnPurgeOperator implements Closeable {
                     path.trimTo(pathTrimToPartition);
                     TableUtils.iFile(path, columnName, columnVersion);
 
-                    if (couldNotRemove(ff, path)) {
+                    if (couldNotRemove(ff, path.$())) {
                         allDone = false;
                         continue;
                     }
@@ -315,30 +325,26 @@ public class ColumnPurgeOperator implements Closeable {
                 if (ColumnType.isSymbol(columnType)) {
                     if (isSymbolRootFiles) {
                         path.trimTo(pathTrimToPartition);
-                        TableUtils.charFileName(path, columnName, columnVersion);
-                        if (couldNotRemove(ff, path)) {
+                        if (couldNotRemove(ff, TableUtils.charFileName(path, columnName, columnVersion))) {
                             allDone = false;
                             continue;
                         }
 
                         path.trimTo(pathTrimToPartition);
-                        TableUtils.offsetFileName(path, columnName, columnVersion);
-                        if (couldNotRemove(ff, path)) {
+                        if (couldNotRemove(ff, TableUtils.offsetFileName(path, columnName, columnVersion))) {
                             allDone = false;
                             continue;
                         }
                     }
 
                     path.trimTo(pathTrimToPartition);
-                    BitmapIndexUtils.keyFileName(path, columnName, columnVersion);
-                    if (couldNotRemove(ff, path)) {
+                    if (couldNotRemove(ff, BitmapIndexUtils.keyFileName(path, columnName, columnVersion))) {
                         allDone = false;
                         continue;
                     }
 
                     path.trimTo(pathTrimToPartition);
-                    BitmapIndexUtils.valueFileName(path, columnName, columnVersion);
-                    if (couldNotRemove(ff, path)) {
+                    if (couldNotRemove(ff, BitmapIndexUtils.valueFileName(path, columnName, columnVersion))) {
                         allDone = false;
                         continue;
                     }

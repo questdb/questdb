@@ -37,7 +37,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class VectorAggregateEntry implements Mutable {
     private ExecutionCircuitBreaker circuitBreaker;
-    private int columnSizeShr;
     private CountDownLatchSPI doneLatch;
     private VectorAggregateFunction func;
     private long keyAddress;
@@ -45,47 +44,71 @@ public class VectorAggregateEntry implements Mutable {
     private long[] pRosti;
     private PerWorkerLocks perWorkerLocks;
     private RostiAllocFacade raf;
+    private AtomicInteger startedCounter;
     private long valueAddress;
-    private long valueCount;
+    private long frameRowCount;
 
     @Override
     public void clear() {
+        this.keyAddress = 0;
         this.valueAddress = 0;
-        this.valueCount = 0;
         this.func = null;
+        this.pRosti = null;
+        this.startedCounter = null;
+        this.doneLatch = null;
+        this.oomCounter = null;
+        this.raf = null;
+        this.perWorkerLocks = null;
+        this.circuitBreaker = null;
+        this.frameRowCount = 0;
     }
 
     public void run(int workerId, Sequence seq, long cursor) {
         long keyAddress = this.keyAddress;
         long valueAddress = this.valueAddress;
-        long valueCount = this.valueCount;
-        int columnSizeShr = this.columnSizeShr;
         AtomicInteger oomCounter = this.oomCounter;
         long[] pRosti = this.pRosti;
         RostiAllocFacade raf = this.raf;
         VectorAggregateFunction func = this.func;
         ExecutionCircuitBreaker circuitBreaker = this.circuitBreaker;
+        AtomicInteger startedCounter = this.startedCounter;
         CountDownLatchSPI doneLatch = this.doneLatch;
         PerWorkerLocks perWorkerLocks = this.perWorkerLocks;
+        long frameRowCount = this.frameRowCount;
 
         seq.done(cursor);
-        run(workerId, keyAddress, valueAddress, valueCount, columnSizeShr, oomCounter, pRosti, raf, func, perWorkerLocks, circuitBreaker, doneLatch);
+        run(
+                workerId,
+                keyAddress,
+                valueAddress,
+                oomCounter,
+                pRosti,
+                raf,
+                func,
+                perWorkerLocks,
+                circuitBreaker,
+                startedCounter,
+                doneLatch,
+                frameRowCount
+        );
     }
 
     private static void run(
             int workerId,
             long keyAddress,
             long valueAddress,
-            long valueCount,
-            int columnSizeShr,
             AtomicInteger oomCounter,
             long[] pRosti,
             RostiAllocFacade raf,
             VectorAggregateFunction func,
             PerWorkerLocks perWorkerLocks,
             ExecutionCircuitBreaker circuitBreaker,
-            CountDownLatchSPI doneLatch
+            AtomicInteger startedCounter,
+            CountDownLatchSPI doneLatch,
+            long frameRowCount
     ) {
+        startedCounter.incrementAndGet();
+
         if (circuitBreaker.checkIfTripped() || (oomCounter != null && oomCounter.get() > 0)) {
             doneLatch.countDown();
             return;
@@ -96,14 +119,14 @@ public class VectorAggregateEntry implements Mutable {
             slot = perWorkerLocks.acquireSlot(workerId, circuitBreaker);
             if (pRosti != null) {
                 long oldSize = Rosti.getAllocMemory(pRosti[slot]);
-                if (!func.aggregate(pRosti[slot], keyAddress, valueAddress, valueCount, columnSizeShr, slot)) {
+                if (!func.aggregate(pRosti[slot], keyAddress, valueAddress, frameRowCount)) {
                     if (oomCounter != null) {
                         oomCounter.incrementAndGet();
                     }
                 }
                 raf.updateMemoryUsage(pRosti[slot], oldSize);
             } else {
-                func.aggregate(valueAddress, valueCount, columnSizeShr, slot);
+                func.aggregate(valueAddress, frameRowCount, slot);
             }
         } finally {
             perWorkerLocks.releaseSlot(slot);
@@ -116,25 +139,25 @@ public class VectorAggregateEntry implements Mutable {
             long[] pRosti,
             long keyPageAddress,
             long valuePageAddress,
-            long valuePageCount,
-            int columnSizeShr,
+            AtomicInteger startedCounter,
             CountDownLatchSPI doneLatch,
             // oom is not possible when aggregation is not keyed
             @Nullable AtomicInteger oomCounter,
             RostiAllocFacade raf,
             PerWorkerLocks perWorkerLocks,
-            ExecutionCircuitBreaker circuitBreaker
+            ExecutionCircuitBreaker circuitBreaker,
+            long frameRowCount
     ) {
         this.pRosti = pRosti;
         this.keyAddress = keyPageAddress;
         this.valueAddress = valuePageAddress;
-        this.valueCount = valuePageCount;
         this.func = vaf;
-        this.columnSizeShr = columnSizeShr;
+        this.startedCounter = startedCounter;
         this.doneLatch = doneLatch;
         this.oomCounter = oomCounter;
         this.raf = raf;
         this.perWorkerLocks = perWorkerLocks;
         this.circuitBreaker = circuitBreaker;
+        this.frameRowCount = frameRowCount;
     }
 }

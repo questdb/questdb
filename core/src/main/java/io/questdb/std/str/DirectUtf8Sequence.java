@@ -25,11 +25,12 @@
 package io.questdb.std.str;
 
 import io.questdb.std.Unsafe;
+import io.questdb.std.bytes.DirectByteSequence;
 
 /**
  * A sequence of UTF-8 bytes stored in native memory.
  */
-public interface DirectUtf8Sequence extends Utf8Sequence, DirectSequence {
+public interface DirectUtf8Sequence extends Utf8Sequence, DirectByteSequence {
 
     @Override
     default byte byteAt(int index) {

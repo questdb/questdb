@@ -110,7 +110,6 @@ public class LineWalAppender {
         final TableWriterAPI writer = tud.getWriter();
         assert writer.supportsMultipleWriters();
         TableRecordMetadata metadata = writer.getMetadata();
-        long initialMetadataVersion = ld.getMetadataVersion();
 
         long timestamp = parser.getTimestamp();
         if (timestamp != LineTcpParser.NULL_TIMESTAMP) {
@@ -147,8 +146,11 @@ public class LineWalAppender {
                         if (columnWriterIndex < 0) {
                             securityContext.authorizeAlterTableAddColumn(writer.getTableToken());
                             try {
-                                writer.addColumn(columnNameUtf16, ld.getColumnType(ld.getColNameUtf8(), ent.getType()), securityContext);
-                                columnWriterIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
+                                int newColumnType = ld.getColumnType(ld.getColNameUtf8(), ent.getType());
+                                writer.addColumn(columnNameUtf16, newColumnType, securityContext);
+                                columnWriterIndex = metadata.getWriterIndex(metadata.getColumnIndexQuiet(columnNameUtf16));
+                                // Add the column to metadata cache too
+                                ld.addColumn(columnNameUtf16, columnWriterIndex, newColumnType);
                             } catch (CairoException e) {
                                 columnWriterIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
                                 if (columnWriterIndex < 0) {
@@ -158,9 +160,7 @@ public class LineWalAppender {
                                 // all good, someone added the column concurrently
                             }
                         }
-                        if (ld.getMetadataVersion() != initialMetadataVersion) {
-                            // Restart the whole line,
-                            // some columns can be deleted or renamed in tud.commit and ww.addColumn calls
+                        if (ld.getMetadataVersion() != writer.getMetadataVersion()) {
                             throw MetadataChangedException.INSTANCE;
                         }
                         ld.addColumnType(columnWriterIndex, metadata.getColumnType(columnWriterIndex));
@@ -192,16 +192,23 @@ public class LineWalAppender {
                 switch (ent.getType()) {
                     case LineTcpParser.ENTITY_TYPE_TAG:
                     case LineTcpParser.ENTITY_TYPE_SYMBOL: {
-                        // parser would reject this condition based on config
-                        if (ColumnType.tagOf(colType) == ColumnType.SYMBOL) {
-                            r.putSymUtf8(columnIndex, ent.getValue());
-                        } else {
-                            throw castError(tud.getTableNameUtf16(), "TAG", colType, ent.getName());
+                        switch (colType) {
+                            case ColumnType.STRING:
+                                r.putStrUtf8(columnIndex, ent.getValue());
+                                break;
+                            case ColumnType.SYMBOL:
+                                r.putSymUtf8(columnIndex, ent.getValue());
+                                break;
+                            case ColumnType.VARCHAR:
+                                r.putVarchar(columnIndex, ent.getValue());
+                                break;
+                            default:
+                                throw castError(tud.getTableNameUtf16(), "TAG", colType, ent.getName());
                         }
                         break;
                     }
                     case LineTcpParser.ENTITY_TYPE_INTEGER: {
-                        switch (ColumnType.tagOf(colType)) {
+                        switch (colType) {
                             case ColumnType.LONG:
                                 r.putLong(columnIndex, ent.getLongValue());
                                 break;
@@ -259,7 +266,7 @@ public class LineWalAppender {
                         break;
                     }
                     case LineTcpParser.ENTITY_TYPE_FLOAT: {
-                        switch (ColumnType.tagOf(colType)) {
+                        switch (colType) {
                             case ColumnType.DOUBLE:
                                 r.putDouble(columnIndex, ent.getFloatValue());
                                 break;
@@ -278,7 +285,7 @@ public class LineWalAppender {
                         final int geoHashBits = ColumnType.getGeoHashBits(colType);
                         final DirectUtf8Sequence entityValue = ent.getValue();
                         if (geoHashBits == 0) { // not geohash
-                            switch (ColumnType.tagOf(colType)) {
+                            switch (colType) {
                                 case ColumnType.IPv4:
                                     try {
                                         int value = Numbers.parseIPv4Nl(entityValue);
@@ -329,7 +336,7 @@ public class LineWalAppender {
                         break;
                     }
                     case LineTcpParser.ENTITY_TYPE_LONG256: {
-                        switch (ColumnType.tagOf(colType)) {
+                        switch (colType) {
                             case ColumnType.LONG256:
                                 r.putLong256Utf8(columnIndex, ent.getValue());
                                 break;
@@ -342,7 +349,7 @@ public class LineWalAppender {
                         break;
                     }
                     case LineTcpParser.ENTITY_TYPE_BOOLEAN: {
-                        switch (ColumnType.tagOf(colType)) {
+                        switch (colType) {
                             case ColumnType.BOOLEAN:
                                 r.putBool(columnIndex, ent.getBooleanValue());
                                 break;
@@ -373,7 +380,7 @@ public class LineWalAppender {
                         break;
                     }
                     case LineTcpParser.ENTITY_TYPE_TIMESTAMP: {
-                        switch (ColumnType.tagOf(colType)) {
+                        switch (colType) {
                             case ColumnType.TIMESTAMP:
                                 long timestampValue = LineTcpTimestampAdapter.TS_COLUMN_INSTANCE.getMicros(ent.getLongValue(), ent.getUnit());
                                 r.putTimestamp(columnIndex, timestampValue);

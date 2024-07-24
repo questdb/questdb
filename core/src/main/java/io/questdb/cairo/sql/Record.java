@@ -28,9 +28,9 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.MutableUtf16Sink;
 import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -42,9 +42,23 @@ import org.jetbrains.annotations.Nullable;
  */
 public interface Record {
 
-    CharSequenceFunction GET_STR = Record::getStrA;
+    CharSequenceFunction GET_STR = (record, col, sink) -> record.getStrA(col);
 
-    CharSequenceFunction GET_SYM = Record::getSymA;
+    CharSequenceFunction GET_SYM = (record, col, sink) -> record.getSymA(col);
+
+    CharSequenceFunction GET_VARCHAR = (record, col, sink) -> {
+        Utf8Sequence vch = record.getVarcharA(col);
+        if (vch == null) {
+            return null;
+        }
+        if (vch.isAscii()) {
+            return vch.asAsciiCharSequence();
+        }
+        sink.clear();
+        sink.put(vch);
+        return sink;
+    };
+
 
     /**
      * Gets the value of a binary column by index
@@ -281,28 +295,6 @@ public interface Record {
     }
 
     /**
-     * Reads bytes from string-specific storage and prints them into UTF16 encoded
-     * sink.
-     *
-     * @param col       numeric index of the column, 0-based
-     * @param utf16Sink the destination sink
-     */
-    default void getStr(int col, Utf16Sink utf16Sink) {
-        utf16Sink.put(getStrA(col));
-    }
-
-    /**
-     * Reads bytes from string-specific storage and prints them into UTF8 encoded
-     * sink.
-     *
-     * @param col      numeric index of the column, 0-based
-     * @param utf8Sink the destination sink
-     */
-    default void getStr(int col, Utf8Sink utf8Sink) {
-        utf8Sink.put(getStrA(col));
-    }
-
-    /**
      * Reads string-specific storage and presents the value as
      * UTF16-encoded sequence of bytes. It is a part of value comparison
      * system, which utilizes A and B objects to represent values of
@@ -386,17 +378,6 @@ public interface Record {
     }
 
     /**
-     * Reads bytes from varchar-specific storage and prints them into UTF8 encoded
-     * sink.
-     *
-     * @param col      numeric index of the column, 0-based
-     * @param utf8Sink the destination sink
-     */
-    default void getVarchar(int col, Utf8Sink utf8Sink) {
-        utf8Sink.put(getVarcharA(col));
-    }
-
-    /**
      * Reads bytes from varchar-specific storage and prints them into UTF16 encoded
      * sink.
      *
@@ -460,8 +441,9 @@ public interface Record {
         /**
          * @param record to retrieve CharSequence from
          * @param col    numeric index of the column
+         * @param sink   sink the function can use if a conversion is required
          * @return record as a char sequence
          */
-        CharSequence get(Record record, int col);
+        CharSequence get(Record record, int col, MutableUtf16Sink sink);
     }
 }

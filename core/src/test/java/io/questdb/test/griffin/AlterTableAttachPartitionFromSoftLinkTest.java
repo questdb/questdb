@@ -112,7 +112,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                             );
 
                             // verify cold storage folder exists
-                            Assert.assertTrue(Files.exists(other));
+                            Assert.assertTrue(Files.exists(other.$()));
                             AtomicInteger fileCount = new AtomicInteger();
                             ff.walk(other, (file, type) -> fileCount.incrementAndGet());
                             Assert.assertTrue(fileCount.get() > 0);
@@ -123,7 +123,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                                     .concat(readOnlyPartitionName)
                                     .put(configuration.getAttachPartitionSuffix())
                                     .$();
-                            Assert.assertFalse(ff.exists(other));
+                            Assert.assertFalse(ff.exists(other.$()));
 
                             // insert a row at the end of the partition, the only row, which will create the partition
                             // at this point there is no longer information as to weather it was read-only in the past
@@ -192,7 +192,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                             );
 
                             // verify cold storage folder exists
-                            Assert.assertTrue(Files.exists(other));
+                            Assert.assertTrue(Files.exists(other.$()));
                             AtomicInteger fileCount = new AtomicInteger();
                             ff.walk(other, (file, type) -> fileCount.incrementAndGet());
                             Assert.assertTrue(fileCount.get() > 0);
@@ -201,7 +201,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                                     .concat(readOnlyPartitionName)
                                     .put(".2")
                                     .$();
-                            Assert.assertFalse(ff.exists(path));
+                            Assert.assertFalse(ff.exists(path.$()));
                         } catch (SqlException ex) {
                             Assert.fail(ex.getMessage());
                         }
@@ -227,7 +227,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                                         .concat(readOnlyPartitionName)
                                         .put(".2")
                                         .$();
-                                Assert.assertTrue(Files.exists(path));
+                                Assert.assertTrue(Files.exists(path.$()));
                             }
                             engine.releaseAllReaders();
                             assertSql("min\tmax\tcount\n" +
@@ -237,11 +237,11 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                             runO3PartitionPurgeJob();
 
                             // verify cold storage folder still exists
-                            Assert.assertTrue(Files.exists(other));
+                            Assert.assertTrue(Files.exists(other.$()));
                             AtomicInteger fileCount = new AtomicInteger();
                             ff.walk(other, (file, type) -> fileCount.incrementAndGet());
                             Assert.assertTrue(fileCount.get() > 0);
-                            Assert.assertFalse(Files.exists(path));
+                            Assert.assertFalse(Files.exists(path.$()));
                         } catch (SqlException ex) {
                             Assert.fail(ex.getMessage());
                         }
@@ -783,7 +783,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             AtomicInteger fileCount = new AtomicInteger();
             for (int i = 0; i < partitionCount - 2; i++) {
                 other.trimTo(otherLen).concat(partitionName[i]).put(TableUtils.DETACHED_DIR_MARKER).$();
-                Assert.assertTrue(Files.exists(other));
+                Assert.assertTrue(Files.exists(other.$()));
                 fileCount.set(0);
                 ff.walk(other, (file, type) -> fileCount.incrementAndGet());
                 Assert.assertTrue(fileCount.get() > 0);
@@ -792,7 +792,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             // verify all partitions but last one are gone
             for (int i = 0; i < partitionCount - 1; i++) {
                 path.trimTo(pathLen).concat(partitionName[i]).$();
-                Assert.assertFalse(Files.exists(path));
+                Assert.assertFalse(Files.exists(path.$()));
             }
         });
     }
@@ -932,7 +932,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                             );
 
                             // verify cold storage folder exists
-                            Assert.assertTrue(Files.exists(other));
+                            Assert.assertTrue(Files.exists(other.$()));
                             AtomicInteger fileCount = new AtomicInteger();
                             ff.walk(other, (file, type) -> fileCount.incrementAndGet());
                             Assert.assertTrue(fileCount.get() > 0);
@@ -941,7 +941,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                                     .concat(readOnlyPartitionName)
                                     .put(".2")
                                     .$();
-                            Assert.assertFalse(ff.exists(path));
+                            Assert.assertFalse(ff.exists(path.$()));
                         } catch (SqlException ex) {
                             Assert.fail(ex.getMessage());
                         }
@@ -1067,7 +1067,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     private static void runO3PartitionPurgeJob() {
         engine.releaseAllReaders();
         engine.releaseAllWriters();
-        try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), engine.getSnapshotAgent(), 1)) {
+        try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, engine.getSnapshotAgent(), 1)) {
             while (purgeJob.run(0)) {
                 Os.pause();
             }
@@ -1076,7 +1076,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     private void assertUpdateFailsBecausePartitionIsReadOnly(String updateSql, String tableName, String partitionName) {
         try {
-            assertException(updateSql);
+            assertExceptionNoLeakCheck(updateSql);
         } catch (CairoException e) {
             TestUtils.assertContains(
                     "cannot update read-only partition [table=" + tableName + ", partitionTimestamp=" + partitionName + "T00:00:00.000Z]",
@@ -1156,7 +1156,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                 .concat(partitionName)
                 .put(configuration.getAttachPartitionSuffix())
                 .$();
-        Assert.assertEquals(0, ff.softLink(other, path));
+        Assert.assertEquals(0, ff.softLink(other.$(), path.$()));
     }
 
     private TableToken createPopulateTable(String tableName, int partitionCount) throws Exception {

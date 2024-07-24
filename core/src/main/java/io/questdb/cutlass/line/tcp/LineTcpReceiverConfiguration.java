@@ -97,11 +97,7 @@ public interface LineTcpReceiverConfiguration {
 
     boolean isEnabled();
 
-    boolean isStringAsTagSupported();
-
     boolean isStringToCharCastAllowed();
-
-    boolean isSymbolAsFieldSupported();
 
     boolean isUseLegacyStringDefault();
 }

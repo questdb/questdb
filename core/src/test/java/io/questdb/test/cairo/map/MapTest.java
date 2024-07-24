@@ -69,7 +69,6 @@ public class MapTest extends AbstractCairoTest {
                 {MapType.ORDERED_MAP},
                 {MapType.UNORDERED_4_MAP},
                 {MapType.UNORDERED_8_MAP},
-                {MapType.UNORDERED_16_MAP},
                 {MapType.UNORDERED_VARCHAR_MAP},
         });
     }
@@ -614,6 +613,8 @@ public class MapTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             int N = 10;
             try (Map map = createMap(keyColumnType(ColumnType.INT), new SingleColumnType(ColumnType.INT), N / 2, 0.5f, 100)) {
+                Assert.assertTrue(map.isOpen());
+
                 for (int i = 0; i < N; i++) {
                     MapKey key = map.withKey();
                     populateKey(key, i, ColumnType.INT);
@@ -635,8 +636,10 @@ public class MapTest extends AbstractCairoTest {
                 Assert.assertEquals(N, map.size());
 
                 map.close();
+                Assert.assertFalse(map.isOpen());
                 map.close(); // Close must be idempotent
                 map.reopen();
+                Assert.assertTrue(map.isOpen());
 
                 Assert.assertEquals(0, map.size());
 
@@ -866,8 +869,6 @@ public class MapTest extends AbstractCairoTest {
                 return new Unordered4Map(keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes);
             case UNORDERED_8_MAP:
                 return new Unordered8Map(keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes);
-            case UNORDERED_16_MAP:
-                return new Unordered16Map(keyTypes, valueTypes, keyCapacity, loadFactor, maxResizes);
             case UNORDERED_VARCHAR_MAP:
                 Assert.assertEquals(1, keyTypes.getColumnCount());
                 Assert.assertEquals(ColumnType.VARCHAR, keyTypes.getColumnType(0));
@@ -929,7 +930,7 @@ public class MapTest extends AbstractCairoTest {
     }
 
     public enum MapType {
-        ORDERED_MAP, UNORDERED_4_MAP, UNORDERED_8_MAP, UNORDERED_16_MAP, UNORDERED_VARCHAR_MAP
+        ORDERED_MAP, UNORDERED_4_MAP, UNORDERED_8_MAP, UNORDERED_VARCHAR_MAP
     }
 
     private static class TestMapValueMergeFunction implements MapValueMergeFunction {

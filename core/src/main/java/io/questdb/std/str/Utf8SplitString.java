@@ -29,18 +29,22 @@ import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
-import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_BYTES;
 import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_MASK;
 
 /**
- * An immutable flyweight for a UTF-8 string stored in native memory.
+ * An immutable flyweight for a UTF-8 string stored in a VARCHAR column. It may be
+ * stored in two formats:
+ * <br>
+ * - fully inlined into the auxiliary vector (if up to 9 bytes). In this case, dataLo == prefixLo.
+ * - fully stored in the data vector, plus the first 6 bytes in the auxiliary vector
  */
 public class Utf8SplitString implements DirectUtf8Sequence, Mutable {
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
     private final boolean stable;
-    protected long dataLo;
     private boolean ascii;
-    private long auxLo;
+    private long dataLo;
+    private long dataLim;
+    private long prefixLo;
     private int size;
 
     public Utf8SplitString(boolean stable) {
@@ -54,18 +58,13 @@ public class Utf8SplitString implements DirectUtf8Sequence, Mutable {
 
     @Override
     public byte byteAt(int index) {
-        return Unsafe.getUnsafe().getByte((index < VARCHAR_INLINED_PREFIX_BYTES ? auxLo : dataLo) + index);
+        return Unsafe.getUnsafe().getByte(dataLo + index);
     }
 
     @Override
     public void clear() {
-        this.auxLo = this.dataLo = 0;
+        this.prefixLo = this.dataLo = 0;
         this.ascii = false;
-    }
-
-    @Override
-    public boolean equalsAssumingSameSize(Utf8Sequence other, int size) {
-        return zeroPaddedSixPrefix() == other.zeroPaddedSixPrefix() && dataEquals(other);
     }
 
     @Override
@@ -83,9 +82,24 @@ public class Utf8SplitString implements DirectUtf8Sequence, Mutable {
         return Unsafe.getUnsafe().getLong(dataLo + offset);
     }
 
-    public Utf8SplitString of(long auxLo, long dataLo, int size, boolean ascii) {
-        this.auxLo = auxLo;
+    /**
+     * @param prefixLo address of the first UTF-8 byte of the prefix inlined into the auxiliary vector
+     * @param dataLo   address of the first UTF-8 byte of the full string value.
+     *                 When the full value is inlined into the auxiliary vector, this must be equal to prefixLo.
+     * @param dataLim  end ptr of the contiguously addressable buffer containing the full value.
+     *                 this is usually past the end of the full value, used to compute the `tailPadding` value.
+     * @param size     size in bytes of the UTF-8 value
+     * @param ascii    whether the value is all-ASCII
+     * @return this
+     */
+    public Utf8SplitString of(long prefixLo, long dataLo, long dataLim, int size, boolean ascii) {
+        if (dataLim < (dataLo + size)) {
+            throw new IllegalArgumentException("dataLim < dataLo + size");
+        }
+        assert dataLim >= (dataLo + size);
+        this.prefixLo = prefixLo;
         this.dataLo = dataLo;
+        this.dataLim = dataLim;
         this.size = size;
         this.ascii = ascii;
         return this;
@@ -93,7 +107,6 @@ public class Utf8SplitString implements DirectUtf8Sequence, Mutable {
 
     @Override
     public long ptr() {
-        // Always return pointer to the data vector since it contains the full string.
         return dataLo;
     }
 
@@ -102,9 +115,13 @@ public class Utf8SplitString implements DirectUtf8Sequence, Mutable {
         return size;
     }
 
-    @NotNull
     @Override
-    public String toString() {
+    public long tailPadding() {
+        return dataLim - dataLo - size;
+    }
+
+    @Override
+    public @NotNull String toString() {
         Utf16Sink utf16Sink = Misc.getThreadLocalSink();
         Utf8s.utf8ToUtf16(this, utf16Sink);
         return utf16Sink.toString();
@@ -112,21 +129,6 @@ public class Utf8SplitString implements DirectUtf8Sequence, Mutable {
 
     @Override
     public long zeroPaddedSixPrefix() {
-        return Unsafe.getUnsafe().getLong(auxLo) & VARCHAR_INLINED_PREFIX_MASK;
-    }
-
-    private boolean dataEquals(Utf8Sequence other) {
-        int i = VARCHAR_INLINED_PREFIX_BYTES;
-        for (int n = size() - Long.BYTES + 1; i < n; i += Long.BYTES) {
-            if (longAt(i) != other.longAt(i)) {
-                return false;
-            }
-        }
-        for (int n = size(); i < n; i++) {
-            if (byteAt(i) != other.byteAt(i)) {
-                return false;
-            }
-        }
-        return true;
+        return Unsafe.getUnsafe().getLong(prefixLo) & VARCHAR_INLINED_PREFIX_MASK;
     }
 }

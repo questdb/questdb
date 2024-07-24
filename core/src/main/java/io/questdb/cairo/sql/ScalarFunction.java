@@ -24,8 +24,6 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.std.str.Utf16Sink;
-
 public interface ScalarFunction extends Function {
     @Override
     default int getArrayLength() {
@@ -34,11 +32,6 @@ public interface ScalarFunction extends Function {
 
     @Override
     default Record getRecord(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    default void getStr(Record rec, Utf16Sink sink, int arrayIndex) {
         throw new UnsupportedOperationException();
     }
 

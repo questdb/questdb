@@ -29,7 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.vm.NullMemoryMR;
+import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -156,7 +156,7 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
             final int readerColIndex = TableReader.getPrimaryColumnIndex(base, columnIndex);
             final MemoryR colMem = reader.getColumn(readerColIndex);
             // when the entire column is NULL we make it skip the whole of the data frame
-            final long top = colMem instanceof NullMemoryMR ? adjustedHi : reader.getColumnTop(base, columnIndex);
+            final long top = colMem instanceof NullMemoryCMR ? adjustedHi : reader.getColumnTop(base, columnIndex);
             final long partitionLoAdjusted = partitionLo - top;
             final long partitionHiAdjusted = adjustedHi - top;
             final int sh = columnSizes.getQuick(i);
@@ -219,6 +219,11 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
         @Override
         public BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {
             return reader.getBitmapIndexReader(partitionIndex, columnIndexes.getQuick(columnIndex), direction);
+        }
+
+        @Override
+        public int getColumnCount() {
+            return columnCount;
         }
 
         @Override

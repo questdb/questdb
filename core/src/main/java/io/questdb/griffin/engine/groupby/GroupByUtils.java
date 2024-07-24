@@ -369,12 +369,7 @@ public class GroupByUtils {
                     throw SqlException.$(key.position, "bind variable is not allowed here");
                 case ExpressionNode.FUNCTION:
                 case ExpressionNode.OPERATION:
-                    ObjList<QueryColumn> availableColumns = nested.getTopDownColumns();
-                    if (availableColumns.size() == 0) {
-                        // Looks like we have merged inner virtual model in to the group-by one,
-                        // so we should look up in the group-by model.
-                        availableColumns = model.getTopDownColumns();
-                    }
+                    ObjList<QueryColumn> availableColumns = model.getBottomUpColumns();
                     boolean invalid = true;
                     for (int j = 0, n = availableColumns.size(); j < n; j++) {
                         final QueryColumn qc = availableColumns.getQuick(j);

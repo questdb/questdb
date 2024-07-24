@@ -194,7 +194,7 @@ public class NetTest {
     public void testSeek() {
         String msg = "Test ABC";
         StringSink sink = new StringSink();
-        try (Path msgSink = new Path().of(msg).$()) {
+        try (Path msgSink = new Path().of(msg)) {
             int msgLen = msgSink.size() + 1;
 
             int acceptFd = Net.socketTcp(true);
@@ -205,7 +205,7 @@ public class NetTest {
             int clientFd = Net.socketTcp(true);
             long sockAddr = Net.sockaddr("127.0.0.1", port);
             TestUtils.assertConnect(clientFd, sockAddr);
-            Assert.assertEquals(msgLen, Net.send(clientFd, msgSink.ptr(), msgLen));
+            Assert.assertEquals(msgLen, Net.send(clientFd, msgSink.$().ptr(), msgLen));
             Net.close(clientFd);
             Net.freeSockAddr(sockAddr);
 
@@ -278,7 +278,7 @@ public class NetTest {
             Assert.assertEquals(2304, Net.getRcvBuf(clientFd));
         } else {
             int rcvBuf = Net.getRcvBuf(clientFd);
-            if (Os.type == Os.OSX_AMD64 || Os.type == Os.OSX_ARM64) {
+            if (Os.type == Os.DARWIN) {
                 // OSX can ignore setsockopt SO_RCVBUF sometimes
                 Assert.assertTrue(rcvBuf == 512 || rcvBuf == 261824);
             } else {

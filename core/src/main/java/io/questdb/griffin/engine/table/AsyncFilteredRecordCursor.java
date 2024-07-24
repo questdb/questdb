@@ -317,8 +317,11 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                             .I$();
 
                     if (task.hasError()) {
-                        throw CairoException.nonCritical().put(task.getErrorMsg())
-                                .setCancellation(task.isCancelled()).setInterruption(task.isCancelled());
+                        throw CairoException.nonCritical()
+                                .position(task.getErrorMessagePosition())
+                                .put(task.getErrorMsg())
+                                .setCancellation(task.isCancelled())
+                                .setInterruption(task.isCancelled());
                     }
 
                     allFramesActive &= frameSequence.isActive();

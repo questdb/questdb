@@ -34,6 +34,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
@@ -69,9 +70,13 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
             Function offsetFunc,
-            int offsetFuncPos
+            int offsetFuncPos,
+            Function sampleFromFunc,
+            int sampleFromFuncPos,
+            Function sampleToFunc,
+            int sampleToFuncPos
     ) {
-        super(timestampSampler, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos);
+        super(timestampSampler, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos, sampleFromFunc, sampleFromFuncPos, sampleToFunc, sampleToFuncPos);
         this.timestampIndex = timestampIndex;
         this.recordFunctions = recordFunctions;
         this.groupByFunctions = groupByFunctions;
@@ -108,6 +113,8 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         rowId = 0;
         isNotKeyedLoopInitialized = false;
         areTimestampsInitialized = false;
+        sampleFromFunc.init(baseCursor, executionContext);
+        sampleToFunc.init(baseCursor, executionContext);
     }
 
     @Override
@@ -188,6 +195,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         }
 
         final long timestamp = baseRecord.getTimestamp(timestampIndex);
+
         if (rules != null) {
             tzOffset = rules.getOffset(timestamp);
             nextDstUtc = rules.getNextDST(timestamp);
@@ -197,12 +205,25 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
             // this is the default path, we align time intervals to the first observation
             timestampSampler.setStart(timestamp);
         } else {
-            timestampSampler.setStart(fixedOffset != Long.MIN_VALUE ? fixedOffset : 0L);
+            // FROM-TO may apply to align to calendar queries, fixing the lower bound.
+            if (sampleFromFunc != TimestampConstant.NULL) {
+                timestampSampler.setStart(fixedOffset != Long.MIN_VALUE ? sampleFromFunc.getTimestamp(null) : 0L);
+            } else {
+                timestampSampler.setStart(fixedOffset != Long.MIN_VALUE ? fixedOffset : 0L);
+            }
         }
+
         topTzOffset = tzOffset;
         topNextDst = nextDstUtc;
-        topLocalEpoch = localEpoch = timestampSampler.round(timestamp + tzOffset);
-        sampleLocalEpoch = nextSampleLocalEpoch = localEpoch;
+        if (sampleFromFunc != TimestampConstant.NULL) {
+            // set the top epoch to be the lower limit
+            topLocalEpoch = timestampSampler.round(sampleFromFunc.getTimestamp(null) + tzOffset);
+            // set current epoch to be the floor of the starting timestamp
+            localEpoch = timestampSampler.round(timestamp + tzOffset);
+        } else {
+            topLocalEpoch = localEpoch = timestampSampler.round(timestamp + tzOffset);
+        }
+        sampleLocalEpoch = nextSampleLocalEpoch = topLocalEpoch;
         areTimestampsInitialized = true;
     }
 
@@ -229,11 +250,11 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         }
 
         long next = timestampSampler.nextTimestamp(localEpoch);
+        long timestamp;
         while (baseCursor.hasNext()) {
-            long timestamp = getBaseRecordTimestamp();
+            timestamp = getBaseRecordTimestamp();
             if (timestamp < next) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
-
                 adjustDstInFlight(timestamp - tzOffset);
                 groupByFunctionsUpdater.updateExisting(mapValue, baseRecord, rowId++);
             } else {

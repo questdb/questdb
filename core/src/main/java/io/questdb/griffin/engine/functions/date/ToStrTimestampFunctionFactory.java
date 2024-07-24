@@ -40,8 +40,8 @@ import io.questdb.std.ObjList;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.Nullable;
 
 public class ToStrTimestampFunctionFactory implements FunctionFactory {
@@ -89,15 +89,15 @@ public class ToStrTimestampFunctionFactory implements FunctionFactory {
         final Function arg;
         final DateFormat format;
         final DateLocale locale;
-        final StringSink sink1;
-        final StringSink sink2;
+        final StringSink sinkA;
+        final StringSink sinkB;
 
         public ToCharDateFFunc(Function arg, DateFormat format, DateLocale timestampLocale) {
             this.arg = arg;
             this.format = format;
             locale = timestampLocale;
-            sink1 = new StringSink();
-            sink2 = new StringSink();
+            sinkA = new StringSink();
+            sinkB = new StringSink();
         }
 
         @Override
@@ -107,32 +107,28 @@ public class ToStrTimestampFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStrA(Record rec) {
-            return toSink(rec, sink1);
-        }
-
-        @Override
-        public void getStr(Record rec, Utf16Sink utf16Sink) {
-            long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NULL) {
-                return;
-            }
-            toSink(value, utf16Sink);
+            return toSink(rec, sinkA);
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
-            return toSink(rec, sink2);
+            return toSink(rec, sinkB);
         }
 
         @Override
         public int getStrLen(Record rec) {
             long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NULL) {
-                return -1;
+            if (value != Numbers.LONG_NULL) {
+                sinkA.clear();
+                toSink(value, sinkA);
+                return sinkA.length();
             }
-            sink1.clear();
-            toSink(value, sink1);
-            return sink1.length();
+            return -1;
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
         }
 
         @Override
@@ -143,12 +139,12 @@ public class ToStrTimestampFunctionFactory implements FunctionFactory {
         @Nullable
         private CharSequence toSink(Record rec, StringSink sink) {
             final long value = arg.getTimestamp(rec);
-            if (value == Numbers.LONG_NULL) {
-                return null;
+            if (value != Numbers.LONG_NULL) {
+                sink.clear();
+                toSink(value, sink);
+                return sink;
             }
-            sink.clear();
-            toSink(value, sink);
-            return sink;
+            return null;
         }
 
         private void toSink(long value, Utf16Sink sink) {

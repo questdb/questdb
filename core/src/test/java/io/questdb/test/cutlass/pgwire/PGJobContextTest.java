@@ -92,33 +92,46 @@ import static io.questdb.test.tools.TestUtils.*;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.*;
 
+/*
+    This class contains tests which replay PGWIRE traffic.
+    It is possible to simulate any PG client in our tests, such as different kind of Python, Rust or Go postgres libraries.
+
+    How to create these tests:
+    1. Enable dumping of PG messages
+        Change PGWireConfiguration.getDumpNetworkTraffic() to return 'true'.
+    2. Start ServerMain
+    3. Run the PG client
+        This could be any PG client or library. The client connects to QuestDB, and runs SQL commands.
+        Since dumping of messages are enabled, PG traffic should be written to the log.
+    4. Collect PG messages from the log
+        In the log you should see incoming and outgoing messages, such as ">0000006e00030" and "<520000000800000003".
+        Collect all sent and received messages.
+    5. Replace the 4th message with "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549"
+        The only caveat with dumping PG messages is that the end of the 4th message contains a secret, which is randomly generated (see CleartextPasswordPgWireAuthenticator.prepareBackendKeyData()).
+        The above means that the dumped message will not work in our test, we need to replace it with the one used in this class.
+    6. Create a test to replay the messages
+        Now we can create a test to simulate the client running the SQL commands.
+        Example:
+            @Test
+            public void testExample() throws Exception {
+                String script =
+                        ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
+                        "<520000000800000003\n" +
+                        ">70000000076f6800\n" +
+                        "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549\n" +
+                        ">50000000300073656c65637420782c202024312c2024322066726f6d206c6f6e675f73657175656e63652832293b000000\n" +
+                        ">4200000021000000010000000200000001330000000a35303030303030303030000044000000065000450000000900000000004800000004\n" +
+                        "<31000000043200000004540000004400037800000000000001000000140008ffffffff000024310000000000000200000413ffffffffffff000024320000000000000300000413ffffffffffff0000440000001e0003000000013100000001330000000a35303030303030303030440000001e0003000000013200000001330000000a35303030303030303030430000000d53454c454354203200\n";
+                assertHexScript(NetworkFacadeImpl.INSTANCE, script, getHexPgWireConfig());
+            }
+    7. Disable dumping of PG messages
+        Change PGWireConfiguration.getDumpNetworkTraffic() to return 'false' again.
+    8. Run the test
+ */
 @RunWith(Parameterized.class)
 @SuppressWarnings("SqlNoDataSourceInspection")
 public class PGJobContextTest extends BasePGTest {
 
-    public static final int CONN_AWARE_EXTENDED_BINARY = 4;
-    public static final int CONN_AWARE_EXTENDED_CACHED_BINARY = 64;
-    public static final int CONN_AWARE_EXTENDED_CACHED_TEXT = 128;
-    public static final int CONN_AWARE_EXTENDED_PREPARED_BINARY = 16;
-    public static final int CONN_AWARE_EXTENDED_PREPARED_TEXT = 32;
-    public static final int CONN_AWARE_EXTENDED_TEXT = 8;
-    public static final int CONN_AWARE_EXTENDED_ALL = CONN_AWARE_EXTENDED_BINARY
-            | CONN_AWARE_EXTENDED_TEXT
-            | CONN_AWARE_EXTENDED_PREPARED_BINARY
-            | CONN_AWARE_EXTENDED_PREPARED_TEXT
-            | CONN_AWARE_EXTENDED_CACHED_BINARY
-            | CONN_AWARE_EXTENDED_CACHED_TEXT;
-    public static final int CONN_AWARE_SIMPLE_BINARY = 1;
-    public static final int CONN_AWARE_SIMPLE_TEXT = 2;
-    public static final int CONN_AWARE_ALL =
-            CONN_AWARE_SIMPLE_BINARY
-                    | CONN_AWARE_SIMPLE_TEXT
-                    | CONN_AWARE_EXTENDED_BINARY
-                    | CONN_AWARE_EXTENDED_TEXT
-                    | CONN_AWARE_EXTENDED_PREPARED_BINARY
-                    | CONN_AWARE_EXTENDED_PREPARED_TEXT
-                    | CONN_AWARE_EXTENDED_CACHED_BINARY
-                    | CONN_AWARE_EXTENDED_CACHED_TEXT;
     /**
      * When set to true, tests or sections of tests that are don't work with the WAL are skipped.
      */
@@ -126,8 +139,8 @@ public class PGJobContextTest extends BasePGTest {
     private static final Log LOG = LogFactory.getLog(PGJobContextTest.class);
     private static final int count = 200;
     private static final String createDatesTblStmt = "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + ")) timestamp(ts) partition by DAY";
-    private static String stringTypeName;
     private static List<Object[]> datesArr;
+    private static String stringTypeName;
     private final Rnd bufferSizeRnd = TestUtils.generateRandom(LOG);
     private final boolean walEnabled;
 
@@ -170,6 +183,7 @@ public class PGJobContextTest extends BasePGTest {
                 .$(", forceRecvFragmentationChunkSize=").$(forceRecvFragmentationChunkSize)
                 .I$();
         node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, walEnabled);
+        node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
     }
 
     @After
@@ -2342,13 +2356,11 @@ if __name__ == "__main__":
 
     @Test
     public void testCancelRunningQuery() throws Exception {
-        String[] queries = {"create table new_tab as (select count(*) from tab t1 join tab t2 on t1.x = t2.x where sleep(120000))",
+        String[] queries = {
+                "create table new_tab as (select count(*) from tab t1 join tab t2 on t1.x = t2.x where sleep(120000))",
                 "select count(*) from tab t1 join tab t2 on t1.x = t2.x where sleep(120000)",
                 "insert into dest select count(*)::timestamp, 0, 0.0 from tab t1 join tab t2 on t1.x = t2.x where sleep(120000)",
-                "update dest \n" +
-                        "set l = t1.x \n" +
-                        "from (tab where d > 0  limit 1, -1 ) t1 \n" +
-                        "where sleep(120000)"
+                "update dest set l = t1.x from (tab where d > 0 limit 1, -1 ) t1 where sleep(120000)"
         };
 
         assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary, mode, port) -> {
@@ -2685,20 +2697,6 @@ if __name__ == "__main__":
                             "10\t1970-01-01T00:00:00.000009Z\n" +
                             "11\t1970-01-01T00:00:00.000010Z\n", "t"
             );
-        });
-    }
-
-    @Ignore//create table as select doesn't time out anymore but can be cancelled manually
-    @Test
-    public void testCreateTableAsSelectTimeout() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, TIMEOUT_FAIL_ON_FIRST_CHECK, (connection, binary, mode, port) -> {
-            try (final PreparedStatement statement = connection.prepareStatement(
-                    "create table tab as (select rnd_double() from long_sequence(1000));")) {
-                statement.execute();
-                Assert.fail();
-            } catch (SQLException e) {
-                TestUtils.assertContains(e.getMessage(), "timeout, query aborted");
-            }
         });
     }
 
@@ -4881,6 +4879,255 @@ nodejs code:
     }
 
     @Test
+    public void testJsonExtractBindVariable() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            connection.setAutoCommit(false);
+            connection.prepareStatement("create table json_example as  (\n" +
+                    "  select '{\n" +
+                    "    \"hello\": \"world\",\n" +
+                    "    \"list\": [\n" +
+                    "        1,\n" +
+                    "        2,\n" +
+                    "        3\n" +
+                    "     ],\n" +
+                    "     \"list.of.dicts\": [\n" +
+                    "         {\"hello\": \"world\"},\n" +
+                    "         {\"hello\": \"bob\"}\n" +
+                    "     ]\n" +
+                    "}'::varchar text, timestamp_sequence(0, 100000) ts from long_sequence(10)\n" +
+                    ") timestamp(ts) \n" +
+                    "partition by day\n" +
+                    ";\n").execute();
+            mayDrainWalQueue();
+            sink.clear();
+
+            try (PreparedStatement ps = connection.prepareStatement("select sum(json_extract(text, '.list[1]', 5)) from json_example;")) {
+                try (ResultSet rs = ps.executeQuery()) {
+                    // all rows, null = null is always true
+                    assertResultSet(
+                            "sum[BIGINT]\n" +
+                                    "20\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            try (PreparedStatement ps = connection.prepareStatement("select sum(json_extract(text, '.list[1]')::varchar::int) from json_example;")) {
+                try (ResultSet rs = ps.executeQuery()) {
+                    // all rows, null = null is always true
+                    assertResultSet(
+                            "sum[BIGINT]\n" +
+                                    "20\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            sink.clear();
+            try (PreparedStatement ps = connection.prepareStatement("select sum(json_extract(text, '.list[1]')::int) from json_example;")) {
+                try (ResultSet rs = ps.executeQuery()) {
+                    // all rows, null = null is always true
+                    assertResultSet(
+                            "sum[BIGINT]\n" +
+                                    "20\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            sink.clear();
+            try (PreparedStatement ps = connection.prepareStatement("select sum(json_extract(text, ?, 5)) from json_example;")) {
+                ps.setString(1, ".list[1]");
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "sum[BIGINT]\n" +
+                                    "20\n",
+                            sink,
+                            rs
+                    );
+                }
+                ps.setString(1, ".list[2]");
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "sum[BIGINT]\n" +
+                                    "30\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            sink.clear();
+            try (PreparedStatement ps = connection.prepareStatement("select sum(json_extract(text, ?)::varchar::int) from json_example;")) {
+                ps.setString(1, ".list[1]");
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "sum[BIGINT]\n" +
+                                    "20\n",
+                            sink,
+                            rs
+                    );
+                }
+
+                ps.setString(1, ".list[2]");
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "sum[BIGINT]\n" +
+                                    "30\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            sink.clear();
+            try (PreparedStatement ps = connection.prepareStatement("select sum(json_extract(text, ?)::int) from json_example;")) {
+                ps.setString(1, ".list[1]");
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "sum[BIGINT]\n" +
+                                    "20\n",
+                            sink,
+                            rs
+                    );
+                }
+
+                ps.setString(1, ".list[2]");
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "sum[BIGINT]\n" +
+                                    "30\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            sink.clear();
+            try (PreparedStatement ps = connection.prepareStatement("select json_extract(?, ?, 5) p")) {
+                ps.setString(1, "{\n" +
+                        "    \"hello\": \"world\",\n" +
+                        "    \"list\": [\n" +
+                        "        1,\n" +
+                        "        2,\n" +
+                        "        3\n" +
+                        "     ],\n" +
+                        "     \"list.of.dicts\": [\n" +
+                        "         {\"hello\": \"world\"},\n" +
+                        "         {\"hello\": \"bob\"}\n" +
+                        "     ]\n" +
+                        "}");
+                ps.setString(2, ".list[1]");
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "p[INTEGER]\n" +
+                                    "2\n",
+                            sink,
+                            rs
+                    );
+                }
+
+                // set json to null
+                ps.setString(1, null);
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "p[INTEGER]\n" +
+                                    "null\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            sink.clear();
+            try (PreparedStatement ps = connection.prepareStatement("select json_extract(?, ?)::int p")) {
+                ps.setString(1, "{\n" +
+                        "    \"hello\": \"world\",\n" +
+                        "    \"list\": [\n" +
+                        "        1,\n" +
+                        "        2,\n" +
+                        "        3\n" +
+                        "     ],\n" +
+                        "     \"list.of.dicts\": [\n" +
+                        "         {\"hello\": \"world\"},\n" +
+                        "         {\"hello\": \"bob\"}\n" +
+                        "     ]\n" +
+                        "}");
+                ps.setString(2, ".list[1]");
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "p[INTEGER]\n" +
+                                    "2\n",
+                            sink,
+                            rs
+                    );
+                }
+
+                // set json to null
+                ps.setString(1, null);
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "p[INTEGER]\n" +
+                                    "null\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMatchSymbolBindVariable() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            connection.setAutoCommit(false);
+            connection.prepareStatement("create table x as (select rnd_symbol('jjke', 'jio2', 'ope', 'nbbe', null) name from long_sequence(50))").execute();
+            mayDrainWalQueue();
+
+            sink.clear();
+            try (PreparedStatement ps = connection.prepareStatement("select * from x where name ~ ?")) {
+                ps.setString(1, "^jjk.*");
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "name[VARCHAR]\n" +
+                                    "jjke\n" +
+                                    "jjke\n" +
+                                    "jjke\n" +
+                                    "jjke\n" +
+                                    "jjke\n" +
+                                    "jjke\n" +
+                                    "jjke\n" +
+                                    "jjke\n" +
+                                    "jjke\n",
+                            sink,
+                            rs
+                    );
+                }
+                ps.setString(1, "^op.*");
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "name[VARCHAR]\n" +
+                                    "ope\n" +
+                                    "ope\n" +
+                                    "ope\n" +
+                                    "ope\n" +
+                                    "ope\n" +
+                                    "ope\n" +
+                                    "ope\n" +
+                                    "ope\n" +
+                                    "ope\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testLargeBatchCairoExceptionResume() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
@@ -5927,7 +6174,7 @@ nodejs code:
                         ps1.executeQuery();
                         Assert.fail("PSQLException should be thrown");
                     } catch (PSQLException e) {
-                        assertContains(e.getMessage(), "ERROR: unexpected argument for function: between");
+                        assertContains(e.getMessage(), "there is no matching operator`!=` with the argument types: BOOLEAN != STRING");
                     }
 
                     try (PreparedStatement s = connection.prepareStatement("select 2 a,2 b from long_sequence(1) where x > 0 and x < 10")) {
@@ -5962,7 +6209,7 @@ nodejs code:
                         ps1.executeQuery();
                         Assert.fail("PSQLException should be thrown");
                     } catch (PSQLException e) {
-                        assertContains(e.getMessage(), "ERROR: unexpected argument for function: between");
+                        assertContains(e.getMessage(), "there is no matching operator`!=` with the argument types: BOOLEAN != STRING");
                     }
 
                     try (PreparedStatement s = connection.prepareStatement("select 2 a,2 b from long_sequence(1) where x > 0 and x < 10")) {
@@ -6177,7 +6424,7 @@ nodejs code:
                     insert.setNull(2, Types.NULL);
                     try {
                         insert.executeUpdate();
-                        assertException("cannot insert null when the column is designated");
+                        assertExceptionNoLeakCheck("cannot insert null when the column is designated");
                     } catch (PSQLException expected) {
                         Assert.assertEquals("ERROR: timestamp before 1970-01-01 is not allowed\n" +
                                 "  Position: 1", expected.getMessage());
@@ -6355,6 +6602,7 @@ nodejs code:
                     statement.setNull(12, Types.BIGINT);
                     statement.setNull(13, Types.REAL);
                     statement.setNull(14, Types.DOUBLE);
+                    // SMALL_INT is not nullable and will become 0
                     statement.setNull(15, Types.SMALLINT);
                     statement.setNull(16, Types.BOOLEAN);
                     statement.setNull(17, Types.VARCHAR);
@@ -6367,12 +6615,13 @@ nodejs code:
                     statement.setTimestamp(21, new PGTimestamp(500023, new GregorianCalendar()));
                     statement.setTimestamp(22, null);
 
+                    // record cursor metadata is decided before the variable types are known
                     final String expected = "x[BIGINT],$1[VARCHAR],$2[VARCHAR],$3[VARCHAR],$4[VARCHAR],$5[VARCHAR],$6[VARCHAR],$7[VARCHAR],$8[VARCHAR],$9[VARCHAR],$10[VARCHAR],$11[VARCHAR],$12[VARCHAR],$13[VARCHAR],$14[VARCHAR],$15[VARCHAR],$16[VARCHAR],$17[VARCHAR],$18[VARCHAR],$19[VARCHAR],$20[VARCHAR],$21[VARCHAR],$22[VARCHAR]\n" +
-                            "1,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
-                            "2,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
-                            "3,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
-                            "4,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
-                            "5,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n";
+                            "1,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
+                            "2,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
+                            "3,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
+                            "4,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n" +
+                            "5,4,123,5.4300,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n";
 
                     StringSink sink = new StringSink();
                     for (int i = 0; i < 10000; i++) {
@@ -7999,7 +8248,6 @@ create table tab as (
             connection.prepareStatement("INSERT INTO tab VALUES (null, 4)").execute();
             connection.commit();
             mayDrainWalQueue();
-            final String stringType = ColumnType.nameOf(ColumnType.STRING).toLowerCase();
             String query = "SELECT * FROM tab WHERE to_str(ts,'EE') in (?,'Wednesday',?)";
             try (PreparedStatement stmt = connection.prepareStatement("explain " + query)) {
                 stmt.setString(1, "Tuesday");
@@ -8009,7 +8257,7 @@ create table tab as (
                     assertResultSet(
                             "QUERY PLAN[VARCHAR]\n" +
                                     "Async Filter workers: 2\n" +
-                                    "  filter: (to_str(ts) in [Wednesday] or to_str(ts) in [$0::" + stringType + ",$1::" + stringType + "])\n" +
+                                    "  filter: to_str(ts) in [$0::string,'Wednesday',$1::string]\n" +
                                     "    DataFrame\n" +
                                     "        Row forward scan\n" +
                                     "        Frame forward scan on: tab\n",
@@ -8134,95 +8382,6 @@ create table tab as (
     @Test
     public void testSimple() throws Exception {
         testQuery("rnd_double(4) d, ", "s[VARCHAR],i[INTEGER],d[DOUBLE],t[TIMESTAMP],f[REAL],_short[SMALLINT],l[BIGINT],ts2[TIMESTAMP],bb[SMALLINT],b[BIT],rnd_symbol[VARCHAR],rnd_date[TIMESTAMP],rnd_bin[BINARY],rnd_char[CHAR],rnd_long256[VARCHAR]\n");
-    }
-
-    @Test
-    public void testSimpleVarcharInsert() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            PreparedStatement tbl = connection.prepareStatement("create table x as (" +
-                    "select " +
-                    "rnd_varchar('A','B','C') v, " +
-                    "rnd_str('A','B','C') s, " +
-                    "from long_sequence(5)" +
-                    ")");
-            tbl.execute();
-
-            PreparedStatement insert2 = connection.prepareStatement("insert into x(v,s) values ('F','F'),('G','G'),('H','H')");
-            insert2.execute();
-
-            PreparedStatement stmnt = connection.prepareStatement("select * from x");
-            ResultSet rs = stmnt.executeQuery();
-
-            final String expected = "v[VARCHAR],s[VARCHAR]\n" +
-                    "A,A\n" +
-                    "B,C\n" +
-                    "C,C\n" +
-                    "C,B\n" +
-                    "A,B\n" +
-                    "F,F\n" +
-                    "G,G\n" +
-                    "H,H\n";
-            assertResultSet(expected, sink, rs);
-        });
-    }
-
-    @Test
-    public void testStringyColEqVarcharBindvar() throws Exception {
-        testVarcharBindVars(
-                "select v,s from x where v != ?::varchar and s != ?::varchar");
-    }
-
-    @Test
-    public void testVarcharBindvarEqStringyCol() throws Exception {
-        testVarcharBindVars(
-                "select v,s from x where ?::varchar != v and ?::varchar != s");
-    }
-
-    @Test
-    public void testStringyColEqStringBindvar() throws Exception {
-        testVarcharBindVars("select v,s from x where v != ? and s != ?");
-    }
-
-    @Test
-    public void testStringBindvarEqStringyCol() throws Exception {
-        testVarcharBindVars("select v,s from x where ? != v and ? != s");
-    }
-
-    private void testVarcharBindVars(String query) throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            PreparedStatement tbl = connection.prepareStatement("create table x as (" +
-                    "select " +
-                    "rnd_varchar('A','ABCDEFGHI','abcdefghijk') v, " +
-                    "rnd_str('A','ABCDEFGHI','abcdefghijk') s, " +
-                    "from long_sequence(5)" +
-                    ")");
-            tbl.execute();
-
-            PreparedStatement insert = connection.prepareStatement("insert into x(v,s) values (?,?)");
-            for (int i = 0; i < 5; i++) {
-                insert.setString(1, String.valueOf((char) ('D' + i)));
-                insert.setString(2, String.valueOf((char) ('D' + i)));
-                insert.execute();
-            }
-
-            PreparedStatement stmnt = connection.prepareStatement(query);
-            stmnt.setString(1, "D");
-            stmnt.setString(2, "D");
-
-            ResultSet rs = stmnt.executeQuery();
-
-            final String expected = "v[VARCHAR],s[VARCHAR]\n" +
-                    "A,A\n" +
-                    "ABCDEFGHI,abcdefghijk\n" +
-                    "abcdefghijk,abcdefghijk\n" +
-                    "abcdefghijk,ABCDEFGHI\n" +
-                    "A,ABCDEFGHI\n" +
-                    "E,E\n" +
-                    "F,F\n" +
-                    "G,G\n" +
-                    "H,H\n";
-            assertResultSet(expected, sink, rs);
-        });
     }
 
     @Test
@@ -8410,6 +8569,36 @@ create table tab as (
     }
 
     @Test
+    public void testSimpleVarcharInsert() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            PreparedStatement tbl = connection.prepareStatement("create table x as (" +
+                    "select " +
+                    "rnd_varchar('A','B','C') v, " +
+                    "rnd_str('A','B','C') s, " +
+                    "from long_sequence(5)" +
+                    ")");
+            tbl.execute();
+
+            PreparedStatement insert2 = connection.prepareStatement("insert into x(v,s) values ('F','F'),('G','G'),('H','H')");
+            insert2.execute();
+
+            PreparedStatement stmnt = connection.prepareStatement("select * from x");
+            ResultSet rs = stmnt.executeQuery();
+
+            final String expected = "v[VARCHAR],s[VARCHAR]\n" +
+                    "A,A\n" +
+                    "B,C\n" +
+                    "C,C\n" +
+                    "C,B\n" +
+                    "A,B\n" +
+                    "F,F\n" +
+                    "G,G\n" +
+                    "H,H\n";
+            assertResultSet(expected, sink, rs);
+        });
+    }
+
+    @Test
     public void testSingleInClause() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
@@ -8499,7 +8688,7 @@ create table tab as (
     @Test
     public void testSingleInClauseNonDedicatedTimestamp() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary, mode, port) -> {
             try (PreparedStatement statement = connection.prepareStatement(
                     "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + "))")) {
                 statement.execute();
@@ -8873,6 +9062,22 @@ create table tab as (
                 rs1.close();
             }
         });
+    }
+
+    @Test
+    public void testStringBindvarEqStringyCol() throws Exception {
+        testVarcharBindVars("select v,s from x where ? != v and ? != s");
+    }
+
+    @Test
+    public void testStringyColEqStringBindvar() throws Exception {
+        testVarcharBindVars("select v,s from x where v != ? and s != ?");
+    }
+
+    @Test
+    public void testStringyColEqVarcharBindvar() throws Exception {
+        testVarcharBindVars(
+                "select v,s from x where v != ?::varchar and s != ?::varchar");
     }
 
     @Test
@@ -9260,6 +9465,38 @@ create table tab as (
     }
 
     @Test
+    public void testUndefinedBindVariableInSymbol() throws Exception {
+        final String[] values = {"'5'", "null", "'5' || ''", "replace(null, 'A', 'A')", "?5", "?null"};
+        final CharSequenceObjHashMap<String> valMap = new CharSequenceObjHashMap<>();
+        valMap.put("5", "5");
+        valMap.put("'5'", "5");
+        valMap.put("null", "null");
+        valMap.put("'5' || ''", "5");
+        valMap.put("replace(null, 'A', 'A')", "null");
+
+        final String[] tsOptions = {"", "timestamp(ts)", "timestamp(ts) partition by HOUR"};
+        final String strType = ColumnType.nameOf(ColumnType.STRING).toLowerCase();
+        for (String tsOption : tsOptions) {
+            assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary, mode, port) -> {
+                drop("drop table if exists tab");
+                ddl("create table tab (s symbol index, ts timestamp) " + tsOption);
+                insert("insert into tab select case when x = 10 then null::" + strType + " else x::" + strType + " end, x::timestamp from long_sequence(10) ");
+                drainWalQueue();
+
+                ResultProducer sameValIfParamsTheSame = (paramVals, isBindVals, bindVals, output) -> {
+                    String left = isBindVals[0] ? bindVals[0] : paramVals[0];
+                    String right = isBindVals[1] ? bindVals[1] : paramVals[1];
+                    boolean isSame = valMap.get(left).equals(valMap.get(right));
+                    if (isSame) {
+                        output.put(valMap.get(left)).put('\n');
+                    }
+                };
+                assertQueryAgainstIndexedSymbol(values, "s in (#X1) and s in (#X2)", new String[]{"#X1", "#X2"}, connection, tsOption, sameValIfParamsTheSame);
+            });
+        }
+    }
+
+    @Test
     public void testUnsupportedParameterType() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
@@ -9449,7 +9686,7 @@ create table tab as (
                     try (PreparedStatement stmt = connection.prepareStatement("update update_after_drop set id = ?")) {
                         stmt.setLong(1, 42);
                         stmt.executeUpdate();
-                        assertException("id column was dropped, the UPDATE should have failed");
+                        assertExceptionNoLeakCheck("id column was dropped, the UPDATE should have failed");
                     } catch (PSQLException e) {
                         TestUtils.assertContains(e.getMessage(), "Invalid column: id");
                     }
@@ -9457,10 +9694,6 @@ create table tab as (
             }
         });
     }
-
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
 
     @Test
     public void testUpdateAsync() throws Exception {
@@ -9498,10 +9731,6 @@ create table tab as (
                         "9,3.0,2020-06-01 00:00:12.0,null\n"
         );
     }
-
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
 
     @Test
     public void testUpdateBatch() throws Exception {
@@ -9558,10 +9787,6 @@ create table tab as (
             }
         });
     }
-
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
 
     @Test
     public void testUpdateNoAutoCommit() throws Exception {
@@ -9721,6 +9946,10 @@ create table tab as (
         });
     }
 
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
+
     @Test
     public void testUpdatePreparedRenameUpdate() throws Exception {
         assertMemoryLeak(() -> {
@@ -9772,6 +10001,10 @@ create table tab as (
             }
         });
     }
+
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
 
     @Test
     public void testUpdateWithNowAndSystimestamp() throws Exception {
@@ -9901,6 +10134,124 @@ create table tab as (
         });
     }
 
+    /*
+        package main
+        
+        import (
+            "database/sql"
+            "fmt"
+            "math"
+            "time"
+        
+            _ "github.com/lib/pq"
+        )
+        
+        const (
+            host     = "localhost"
+            port     = 8812
+            user     = "admin"
+            password = "quest"
+            dbname   = "qdb"
+        )
+        
+        func main() {
+            connStr := fmt.Sprintf(
+                "host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
+                host, port, user, password, dbname)
+            db, err := sql.Open("postgres", connStr)
+            checkErr(err)
+            defer db.Close()
+        
+            date, err := time.ParseInLocation("2006-01-02T15:04:05.999", "2022-01-12T12:01:01.120", time.UTC)
+            checkErr(err)
+            timestamp, err := time.ParseInLocation("2006-01-02T15:04:05.999999", "2020-02-13T10:11:12.123450", time.UTC)
+            checkErr(err)
+        
+            stmt, err := db.Prepare("INSERT INTO all_types values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, " +
+                "cast($13 as geohash(1c)), cast($14 as geohash(2c)) , cast($15  as geohash(4c)), cast($16 as geohash(8c)), $17, $18, cast('' || $19 as long256), $20)")
+            checkErr(err)
+            defer stmt.Close()
+        
+            var data = [][]interface{}{
+                {bool(false), int16(0), int16(0), nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, timestamp},
+                {bool(true), int16(1), int16(1), mkstring("a"), mkint32(4), mkint64(5), &date, &timestamp, mkfloat32(12.345), mkfloat64(1.0234567890123),
+                    mkstring("string"), mkstring("symbol"), mkstring("r"), mkstring("rj"), mkstring("rjtw"), mkstring("rjtwedd0"), mkstring("1.2.3.4"),
+                    mkstring("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"), mkstring("0x5dd94b8492b4be20632d0236ddb8f47c91efc2568b4d452847b4a645dbe4871a"), &timestamp},
+                {bool(true), int16(math.MaxInt8), int16(math.MaxInt16), mkstring("z"), mkint32(math.MaxInt32), mkint64(math.MaxInt64), &date, mktimestamp("1970-01-01T00:00:00.000000"),
+                    mkfloat32(math.MaxFloat32), mkfloat64(math.MaxFloat64), mkstring("XXX"), mkstring(" "), mkstring("e"), mkstring("ee"), mkstring("eeee"), mkstring("eeeeeeee"),
+                    mkstring("255.255.255.255"), mkstring("a0eebc99-ffff-ffff-ffff-ffffffffffff"), mkstring("0x5dd94b8492b4be20632d0236ddb8f47c91efc2568b4d452847b4a645dbefffff"), mktimestamp("2020-03-31T00:00:00.987654")}}
+        
+            for i := 0; i < len(data); i++ {
+                _, err = stmt.Exec(data[i]...)
+                checkErr(err)
+            }
+        }
+        
+        func checkErr(err error) {
+            if err != nil {
+                panic(err)
+            }
+        }
+        
+        func mktimestamp(s string) *time.Time {
+            timestamp, err := time.ParseInLocation("2006-01-02T15:04:05.999999", s, time.UTC)
+            checkErr(err)
+            return &timestamp
+        }
+        
+        func mkstring(s string) *string {
+            return &s
+        }
+        func mkfloat32(f float32) *float32 {
+            return &f
+        }
+        func mkfloat64(f float64) *float64 {
+            return &f
+        }
+        func mkint32(i int32) *int32 {
+            return &i
+        }
+        func mkint64(i int64) *int64 {
+            return &i
+        }
+        
+        ----------------------------
+        require (
+            github.com/lib/pq v1.10.9 // indirect
+        )
+     */
+    @Test
+    public void testVarargBindVariables() throws Exception {
+        skipOnWalRun();
+        engine.ddl("CREATE TABLE all_types (" +
+                "bool boolean,  byte_ byte,  short_ short,  char_ char,  int_ int,  long_ long,  date_ date, " +
+                "tstmp timestamp,   float_ float,  double_ double,  str string,  sym symbol, " +
+                "ge1 geohash(1c),  ge2 geohash(2c),  ge4 geohash(4c),  ge8 geohash(8c)," +
+                " ip ipv4,   uuid_ uuid,  l256 long256," +
+                " ts timestamp) TIMESTAMP(ts) PARTITION BY YEAR BYPASS WAL", sqlExecutionContext);
+
+        final String script =
+                ">0000005e00030000757365720061646d696e00636c69656e745f656e636f64696e6700555446380064617461626173650071646200646174657374796c650049534f2c204d44590065787472615f666c6f61745f64696769747300320000\n" +
+                        "<520000000800000003\n" +
+                        ">700000000a717565737400\n" +
+                        "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549\n" +
+                        ">50000000ee3100494e5345525420494e544f20616c6c5f74797065732076616c756573202824312c2024322c2024332c2024342c2024352c2024362c2024372c2024382c2024392c202431302c202431312c202431322c2063617374282431332061732067656f6861736828316329292c2063617374282431342061732067656f686173682832632929202c206361737428243135202061732067656f6861736828346329292c2063617374282431362061732067656f6861736828386329292c202431372c202431382c2063617374282727207c7c20243139206173206c6f6e67323536292c202432302900000044000000075331005300000004\n" +
+                        "<3100000004740000005600140000001000000015000000150000001200000017000000140000045a0000045a000002bc000002bd0000041300000413000004130000041300000413000004130000041300000b86000000000000045a6e000000045a0000000549\n" +
+                        ">420000007e003100000000140000000566616c736500000001300000000130ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000001a323032302d30322d31332031303a31313a31322e31323334355a0000450000000900000000005300000004\n" +
+                        "<3200000004430000000f494e5345525420302031005a0000000549\n" +
+                        ">420000015a0031000000001400000004747275650000000131000000013100000001610000000134000000013500000017323032322d30312d31322031323a30313a30312e31325a0000001a323032302d30322d31332031303a31313a31322e31323334355a0000001231322e3334353030303236373032383830390000000f312e3032333435363738393031323300000006737472696e670000000673796d626f6c000000017200000002726a00000004726a747700000008726a74776564643000000007312e322e332e340000002461306565626339392d396330622d346566382d626236642d366262396264333830613131000000423078356464393462383439326234626532303633326430323336646462386634376339316566633235363862346434353238343762346136343564626534383731610000001a323032302d30322d31332031303a31313a31322e31323334355a0000450000000900000000005300000004\n" +
+                        "<3200000004430000000f494e5345525420302031005a0000000549\n" +
+                        ">42000002b100310000000014000000047472756500000003313237000000053332373637000000017a0000000a32313437343833363437000000133932323333373230333638353437373538303700000017323032322d30312d31322031323a30313a30312e31325a00000014313937302d30312d30312030303a30303a30305a0000002733343032383233343636333835323838363030303030303030303030303030303030303030303000000135313739373639333133343836323331353730303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030000000035858580000000120000000016500000002656500000004656565650000000865656565656565650000000f3235352e3235352e3235352e3235350000002461306565626339392d666666662d666666662d666666662d666666666666666666666666000000423078356464393462383439326234626532303633326430323336646462386634376339316566633235363862346434353238343762346136343564626566666666660000001b323032302d30332d33312030303a30303a30302e3938373635345a0000450000000900000000005300000004\n" +
+                        "<3200000004430000000f494e5345525420302031005a0000000549\n" +
+                        ">43000000075331005300000004\n" +
+                        "<33000000045a0000000549\n" +
+                        ">5800000004\n";
+
+        assertHexScript(
+                NetworkFacadeImpl.INSTANCE, script, new Port0PGWireConfiguration()
+        );
+    }
+
     @Test
     public void testVarchar() throws Exception {
         skipOnWalRun();
@@ -9916,6 +10267,113 @@ create table tab as (
                 }
             }
         });
+    }
+
+    /*
+        use sqlx::postgres::PgPoolOptions;
+        
+        #[async_std::main]
+        async fn main() -> Result<(), sqlx::Error> {
+            let pool = PgPoolOptions::new()
+                .max_connections(5)
+                .connect("postgresql://admin:quest@localhost:8812/qdb")
+                .await?;
+        
+            let row: (String,) = sqlx::query_as("SELECT id from x").fetch_one(&pool).await?;
+            assert_eq!(row.0, "D");
+            Ok(())
+        }
+
+        --------------------------------------
+        [dependencies]
+        async-std = { version = "1.12.0", features = [ "attributes" ] }
+        sqlx = { version = "0.7", features = [ "runtime-async-std", "postgres" ] }
+    */
+    @Test
+    public void testVarcharBinaryType() throws Exception {
+        skipOnWalRun();
+        engine.ddl("create table x (id varchar)", sqlExecutionContext);
+        engine.insert("insert into x values ('entry')", sqlExecutionContext);
+
+        final String script =
+                ">0000006b00030000757365720061646d696e0064617461626173650071646200446174655374796c650049534f2c204d445900636c69656e745f656e636f64696e6700555446380054696d655a6f6e65005554430065787472615f666c6f61745f64696769747300320000\n" +
+                        "<520000000800000003\n" +
+                        ">700000000a717565737400\n" +
+                        "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549\n" +
+                        ">5300000004\n" +
+                        "<5a0000000549\n" +
+                        ">500000002073716c785f735f310053454c4543542069642066726f6d2078000000440000000e5373716c785f735f31005300000004\n" +
+                        "<310000000474000000060000540000001b000169640000000000000100000413ffffffffffff00005a0000000549\n" +
+                        ">42000000180073716c785f735f31000001000100000001000145000000090000000001430000000650005300000004\n" +
+                        "<3200000004440000000f000100000005656e747279730000000433000000045a0000000549\n" +
+                        ">5300000004\n" +
+                        "<5a0000000549\n";
+
+        assertHexScript(
+                NetworkFacadeImpl.INSTANCE, script, new Port0PGWireConfiguration()
+        );
+    }
+
+    @Test
+    public void testVarcharBindVarMixedAscii() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("create table x (a varchar, ts timestamp) timestamp(ts) partition by day");
+            }
+
+            try (PreparedStatement ps = connection.prepareStatement("insert into x values (?, ?)")) {
+                Timestamp bTs = new Timestamp(0);
+                ps.setString(1, "a");
+                ps.setTimestamp(2, bTs);
+                ps.execute();
+
+                ps.setString(1, "Ɨ\uDA83\uDD95\uD9ED\uDF4C눻D\uDBA8\uDFB6qٽUY⚂խ:");
+                ps.setTimestamp(2, bTs);
+                ps.execute();
+
+                ps.setString(1, "d9INVpegZ\"N");
+                ps.setTimestamp(2, bTs);
+                ps.execute();
+
+                ps.setString(1, "葈ﾫ!\uD8F3\uDD99Ҧ\uDB8D\uDFC8R\uD988\uDCEEOa*");
+                ps.setTimestamp(2, bTs);
+                ps.execute();
+            }
+            drainWalQueue();
+
+            try (Statement statement = connection.createStatement()) {
+                ResultSet rs = statement.executeQuery("select * from x");
+                assertResultSet(
+                        "a[VARCHAR],ts[TIMESTAMP]\n" +
+                                "a,1970-01-01 00:00:00.0\n" +
+                                "Ɨ\uDA83\uDD95\uD9ED\uDF4C눻D\uDBA8\uDFB6qٽUY⚂խ:,1970-01-01 00:00:00.0\n" +
+                                "d9INVpegZ\"N,1970-01-01 00:00:00.0\n" +
+                                "葈ﾫ!\uD8F3\uDD99Ҧ\uDB8D\uDFC8R\uD988\uDCEEOa*,1970-01-01 00:00:00.0\n",
+                        sink,
+                        rs
+                );
+            }
+
+            sink.clear();
+
+            TestUtils.assertSql(
+                    engine,
+                    sqlExecutionContext,
+                    "x",
+                    sink,
+                    "a\tts\n" +
+                            "a\t1970-01-01T00:00:00.000000Z\n" +
+                            "Ɨ\uDA83\uDD95\uD9ED\uDF4C눻D\uDBA8\uDFB6qٽUY⚂խ:\t1970-01-01T00:00:00.000000Z\n" +
+                            "d9INVpegZ\"N\t1970-01-01T00:00:00.000000Z\n" +
+                            "葈ﾫ!\uD8F3\uDD99Ҧ\uDB8D\uDFC8R\uD988\uDCEEOa*\t1970-01-01T00:00:00.000000Z\n"
+            );
+        });
+    }
+
+    @Test
+    public void testVarcharBindvarEqStringyCol() throws Exception {
+        testVarcharBindVars(
+                "select v,s from x where ?::varchar != v and ?::varchar != s");
     }
 
     private static int executeAndCancelQuery(PgConnection connection) throws SQLException, InterruptedException {
@@ -10068,6 +10526,7 @@ create table tab as (
             }
 
             String query = "select s from tab where " + where;
+            LOG.info().$("iteration [iter=").$(iter).$(". sql=").$(query).I$();
 
             sink.clear();
             expSink.clear();
@@ -10106,111 +10565,6 @@ create table tab as (
         }
     }
 
-    private void assertWithPgServer(long bits, ConnectionAwareRunnable runnable) throws Exception {
-        assertWithPgServer(bits, Long.MAX_VALUE, runnable);
-    }
-
-    private void assertWithPgServer(long bits, long queryTimeout, ConnectionAwareRunnable runnable) throws Exception {
-        if ((bits & CONN_AWARE_SIMPLE_BINARY) == CONN_AWARE_SIMPLE_BINARY) {
-            assertWithPgServer(Mode.SIMPLE, true, runnable, -2, queryTimeout);
-            assertWithPgServer(Mode.SIMPLE, true, runnable, -1, queryTimeout);
-        }
-
-        if ((bits & CONN_AWARE_SIMPLE_TEXT) == CONN_AWARE_SIMPLE_TEXT) {
-            assertWithPgServer(Mode.SIMPLE, false, runnable, -2, queryTimeout);
-            assertWithPgServer(Mode.SIMPLE, false, runnable, -1, queryTimeout);
-        }
-
-        if ((bits & CONN_AWARE_EXTENDED_BINARY) == CONN_AWARE_EXTENDED_BINARY) {
-            assertWithPgServer(Mode.EXTENDED, true, runnable, -2, queryTimeout);
-            assertWithPgServer(Mode.EXTENDED, true, runnable, -1, queryTimeout);
-        }
-
-        if ((bits & CONN_AWARE_EXTENDED_TEXT) == CONN_AWARE_EXTENDED_TEXT) {
-            assertWithPgServer(Mode.EXTENDED, false, runnable, -2, queryTimeout);
-            assertWithPgServer(Mode.EXTENDED, false, runnable, -1, queryTimeout);
-        }
-
-        if ((bits & CONN_AWARE_EXTENDED_PREPARED_BINARY) == CONN_AWARE_EXTENDED_PREPARED_BINARY) {
-            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, true, runnable, -2, queryTimeout);
-            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, true, runnable, -1, queryTimeout);
-        }
-
-        if ((bits & CONN_AWARE_EXTENDED_PREPARED_TEXT) == CONN_AWARE_EXTENDED_PREPARED_TEXT) {
-            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, false, runnable, -2, queryTimeout);
-            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, false, runnable, -1, queryTimeout);
-        }
-
-        if ((bits & CONN_AWARE_EXTENDED_CACHED_BINARY) == CONN_AWARE_EXTENDED_CACHED_BINARY) {
-            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, true, runnable, -2, queryTimeout);
-            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, true, runnable, -1, queryTimeout);
-        }
-
-        if ((bits & CONN_AWARE_EXTENDED_CACHED_TEXT) == CONN_AWARE_EXTENDED_CACHED_TEXT) {
-            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, false, runnable, -2, queryTimeout);
-            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, false, runnable, -1, queryTimeout);
-        }
-    }
-
-    private void assertWithPgServer(Mode mode, boolean binary, ConnectionAwareRunnable runnable, int prepareThreshold, long queryTimeout) throws Exception {
-        LOG.info().$("asserting PG Wire server [mode=").$(mode)
-                .$(", binary=").$(binary)
-                .$(", prepareThreshold=").$(prepareThreshold)
-                .I$();
-        super.setUp();
-        try {
-            assertMemoryLeak(() -> {
-                try (
-                        final PGWireServer server = createPGServer(2, queryTimeout);
-                        WorkerPool workerPool = server.getWorkerPool()
-                ) {
-                    workerPool.start(LOG);
-                    try (final Connection connection = getConnection(mode, server.getPort(), binary, prepareThreshold)) {
-                        runnable.run(connection, binary, mode, server.getPort());
-                    }
-                }
-            });
-        } finally {
-            super.tearDown();
-        }
-    }
-
-    private PGWireServer.PGConnectionContextFactory createPGConnectionContextFactory(
-            PGWireConfiguration conf,
-            int workerCount,
-            int sharedWorkerCount,
-            SOCountDownLatch queryStartedCount,
-            SOCountDownLatch queryScheduledCount,
-            CircuitBreakerRegistry registry
-    ) {
-        return new PGWireServer.PGConnectionContextFactory(
-                engine,
-                conf,
-                registry,
-                () -> new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount) {
-                    @Override
-                    public QueryFutureUpdateListener getQueryFutureUpdateListener() {
-                        return new QueryFutureUpdateListener() {
-                            @Override
-                            public void reportProgress(long commandId, int status) {
-                                if (status == OperationFuture.QUERY_STARTED && queryStartedCount != null) {
-                                    queryStartedCount.countDown();
-                                }
-                            }
-
-                            @Override
-                            public void reportStart(TableToken tableToken, long commandId) {
-                                if (queryScheduledCount != null) {
-                                    queryScheduledCount.countDown();
-                                }
-                            }
-                        };
-                    }
-                }
-        ) {
-        };
-    }
-
     private PGWireServer createPGServer(SOCountDownLatch queryScheduledCount) {
         int workerCount = 2;
 
@@ -10222,16 +10576,49 @@ create table tab as (
             }
         };
 
-        final WorkerPool workerPool = new TestWorkerPool(2, metrics);
+        WorkerPool workerPool = new TestWorkerPool(2, metrics);
         CircuitBreakerRegistry registry = new CircuitBreakerRegistry(conf, engine.getConfiguration());
+        try {
+            return createPGWireServer(
+                    conf,
+                    engine,
+                    workerPool,
+                    registry,
+                    createPGSqlExecutionContextFactory(workerCount, workerCount, null, queryScheduledCount)
+            );
+        } catch (Throwable t) {
+            Misc.free(registry);
+            Misc.free(workerPool);
+            throw t;
+        }
+    }
 
-        return createPGWireServer(
-                conf,
-                engine,
-                workerPool,
-                createPGConnectionContextFactory(conf, workerCount, workerCount, null, queryScheduledCount, registry),
-                registry
-        );
+    private ObjectFactory<SqlExecutionContextImpl> createPGSqlExecutionContextFactory(
+            int workerCount,
+            int sharedWorkerCount,
+            SOCountDownLatch queryStartedCount,
+            SOCountDownLatch queryScheduledCount
+    ) {
+        return () -> new SqlExecutionContextImpl(engine, workerCount, sharedWorkerCount) {
+            @Override
+            public QueryFutureUpdateListener getQueryFutureUpdateListener() {
+                return new QueryFutureUpdateListener() {
+                    @Override
+                    public void reportProgress(long commandId, int status) {
+                        if (status == OperationFuture.QUERY_STARTED && queryStartedCount != null) {
+                            queryStartedCount.countDown();
+                        }
+                    }
+
+                    @Override
+                    public void reportStart(TableToken tableToken, long commandId) {
+                        if (queryScheduledCount != null) {
+                            queryScheduledCount.countDown();
+                        }
+                    }
+                };
+            }
+        };
     }
 
     @SuppressWarnings("unchecked")
@@ -10364,80 +10751,84 @@ create table tab as (
             }
         };
 
-        WorkerPool pool = new WorkerPool(conf, metrics);
-        pool.assign(engine.getEngineMaintenanceJob());
-        try (CircuitBreakerRegistry registry = new CircuitBreakerRegistry(conf, engine.getConfiguration());
-             final PGWireServer server = createPGWireServer(
-                     conf,
-                     engine,
-                     pool,
-                     createPGConnectionContextFactory(conf, workerCount, workerCount, queryStartedCountDownLatch, null, registry),
-                     registry
-             )
+        try (
+                CircuitBreakerRegistry registry = new CircuitBreakerRegistry(conf, engine.getConfiguration());
+                WorkerPool pool = new WorkerPool(conf, metrics)
         ) {
-            Assert.assertNotNull(server);
-            int iteration = 0;
+            pool.assign(engine.getEngineMaintenanceJob());
+            try (
+                    PGWireServer server = createPGWireServer(
+                            conf,
+                            engine,
+                            pool,
+                            registry,
+                            createPGSqlExecutionContextFactory(workerCount, workerCount, queryStartedCountDownLatch, null)
+                    )
+            ) {
+                Assert.assertNotNull(server);
+                int iteration = 0;
 
-            do {
-                pool.start(LOG);
-                final String tableName = "xyz" + iteration++;
-                ddl("create table " + tableName + " (a int)");
+                do {
+                    pool.start(LOG);
+                    final String tableName = "xyz" + iteration++;
+                    ddl("create table " + tableName + " (a int)");
 
-                try (
-                        final Connection connection1 = getConnection(server.getPort(), false, true);
-                        final Connection connection2 = getConnection(server.getPort(), false, true);
-                        final PreparedStatement insert = connection1.prepareStatement(
-                                "insert into " + tableName + " values (?)"
-                        )
-                ) {
-                    connection1.setAutoCommit(false);
-                    int totalCount = 10;
-                    for (int i = 0; i < totalCount; i++) {
-                        insert.setInt(1, i);
-                        insert.execute();
-                    }
-                    CyclicBarrier start = new CyclicBarrier(2);
-                    CountDownLatch finished = new CountDownLatch(1);
-                    errors.set(0);
+                    try (
+                            final Connection connection1 = getConnection(server.getPort(), false, true);
+                            final Connection connection2 = getConnection(server.getPort(), false, true);
+                            final PreparedStatement insert = connection1.prepareStatement(
+                                    "insert into " + tableName + " values (?)"
+                            )
+                    ) {
+                        connection1.setAutoCommit(false);
+                        int totalCount = 10;
+                        for (int i = 0; i < totalCount; i++) {
+                            insert.setInt(1, i);
+                            insert.execute();
+                        }
+                        CyclicBarrier start = new CyclicBarrier(2);
+                        CountDownLatch finished = new CountDownLatch(1);
+                        errors.set(0);
 
-                    new Thread(() -> {
-                        try {
-                            start.await();
-                            try (
-                                    final PreparedStatement alter = connection2.prepareStatement(
-                                            "alter table " + tableName + " add column b long"
-                                    )
-                            ) {
-                                alter.execute();
+                        new Thread(() -> {
+                            try {
+                                start.await();
+                                try (
+                                        final PreparedStatement alter = connection2.prepareStatement(
+                                                "alter table " + tableName + " add column b long"
+                                        )
+                                ) {
+                                    alter.execute();
+                                }
+                            } catch (Throwable e) {
+                                e.printStackTrace();
+                                errors.incrementAndGet();
+                            } finally {
+                                finished.countDown();
                             }
-                        } catch (Throwable e) {
-                            e.printStackTrace();
-                            errors.incrementAndGet();
-                        } finally {
-                            finished.countDown();
-                        }
-                    }).start();
+                        }).start();
 
-                    start.await();
-                    Os.sleep(100);
-                    connection1.commit();
-                    finished.await();
+                        start.await();
+                        Os.sleep(100);
+                        connection1.commit();
+                        finished.await();
 
-                    if (alterRequestReturnSuccess) {
-                        Assert.assertEquals(0, errors.get());
-                        try (TableReader rdr = getReader(tableName)) {
-                            int bIndex = rdr.getMetadata().getColumnIndex("b");
-                            Assert.assertEquals(1, bIndex);
-                            Assert.assertEquals(totalCount, rdr.size());
+                        if (alterRequestReturnSuccess) {
+                            Assert.assertEquals(0, errors.get());
+                            try (TableReader rdr = getReader(tableName)) {
+                                int bIndex = rdr.getMetadata().getColumnIndex("b");
+                                Assert.assertEquals(1, bIndex);
+                                Assert.assertEquals(totalCount, rdr.size());
+                            }
                         }
+                    } finally {
+                        pool.halt();
+                        engine.releaseAllWriters();
                     }
-                } finally {
-                    pool.halt();
-                    engine.releaseAllWriters();
-                }
-                // Failure may not happen if we're lucky, even when they are expected
-                // When alterRequestReturnSuccess if false and errors are 0, repeat
-            } while (!alterRequestReturnSuccess && errors.get() == 0);
+                    // Failure may not happen if we're lucky, even when they are expected
+                    // When alterRequestReturnSuccess if false and errors are 0, repeat
+                } while (!alterRequestReturnSuccess && errors.get() == 0);
+            }
         }
     }
 
@@ -10680,10 +11071,9 @@ create table tab as (
                     }
 
                     sink.clear();
-                    try (PreparedStatement ps = connection.prepareStatement("tab1 where coalesce(?, 12.37) is not null")) {
+                    try (PreparedStatement ps = connection.prepareStatement("tab1 where coalesce(3.14, 12.37) is not null")) {
                         // 'is not' is an alias for '!=', the matching type for this operator
                         // (with null on the right) is DOUBLE
-                        ps.setDouble(1, 3.14);
                         try (ResultSet rs = ps.executeQuery()) {
                             assertResultSet(
                                     "value[INTEGER],ts[TIMESTAMP]\n" +
@@ -11051,7 +11441,7 @@ create table tab as (
                 workerPool.start(LOG);
                 for (int i = 0; i < 10; i++) {
                     try (Connection ignored1 = getConnectionWitSslInitRequest(Mode.EXTENDED, server.getPort(), false, -2)) {
-                        assertException("Connection should not be established when server disconnects during authentication");
+                        assertExceptionNoLeakCheck("Connection should not be established when server disconnects during authentication");
                     } catch (PSQLException ignored) {
 
                     }
@@ -11683,62 +12073,6 @@ create table tab as (
         }
     }
 
-    @Test
-    public void testVarcharBindVarMixedAscii() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            try (Statement statement = connection.createStatement()) {
-                statement.execute("create table x (a varchar, ts timestamp) timestamp(ts) partition by day");
-            }
-
-            try (PreparedStatement ps = connection.prepareStatement("insert into x values (?, ?)")) {
-                Timestamp bTs = new Timestamp(0);
-                ps.setString(1, "a");
-                ps.setTimestamp(2, bTs);
-                ps.execute();
-
-                ps.setString(1, "Ɨ\uDA83\uDD95\uD9ED\uDF4C눻D\uDBA8\uDFB6qٽUY⚂խ:");
-                ps.setTimestamp(2, bTs);
-                ps.execute();
-
-                ps.setString(1, "d9INVpegZ\"N");
-                ps.setTimestamp(2, bTs);
-                ps.execute();
-
-                ps.setString(1, "葈ﾫ!\uD8F3\uDD99Ҧ\uDB8D\uDFC8R\uD988\uDCEEOa*");
-                ps.setTimestamp(2, bTs);
-                ps.execute();
-            }
-            drainWalQueue();
-
-            try (Statement statement = connection.createStatement()) {
-                ResultSet rs = statement.executeQuery("select * from x");
-                assertResultSet(
-                        "a[VARCHAR],ts[TIMESTAMP]\n" +
-                                "a,1970-01-01 00:00:00.0\n" +
-                                "Ɨ\uDA83\uDD95\uD9ED\uDF4C눻D\uDBA8\uDFB6qٽUY⚂խ:,1970-01-01 00:00:00.0\n" +
-                                "d9INVpegZ\"N,1970-01-01 00:00:00.0\n" +
-                                "葈ﾫ!\uD8F3\uDD99Ҧ\uDB8D\uDFC8R\uD988\uDCEEOa*,1970-01-01 00:00:00.0\n",
-                        sink,
-                        rs
-                );
-            }
-
-            sink.clear();
-
-            TestUtils.assertSql(
-                    engine,
-                    sqlExecutionContext,
-                    "x",
-                    sink,
-                    "a\tts\n" +
-                            "a\t1970-01-01T00:00:00.000000Z\n" +
-                            "Ɨ\uDA83\uDD95\uD9ED\uDF4C눻D\uDBA8\uDFB6qٽUY⚂խ:\t1970-01-01T00:00:00.000000Z\n" +
-                            "d9INVpegZ\"N\t1970-01-01T00:00:00.000000Z\n" +
-                            "葈ﾫ!\uD8F3\uDD99Ҧ\uDB8D\uDFC8R\uD988\uDCEEOa*\t1970-01-01T00:00:00.000000Z\n"
-            );
-        });
-    }
-
     private void testQuery(String s, String s2) throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
@@ -11859,27 +12193,31 @@ create table tab as (
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
-                try (final Connection connection = getConnection(server.getPort(), true, false)) {
-                    final PreparedStatement statement = connection.prepareStatement("create table x (a long, b double, ts timestamp) timestamp(ts) partition by YEAR");
+                try (final Connection connection = getConnection(server.getPort(), true, false);
+                     final PreparedStatement statement = connection.prepareStatement(
+                             "create table x (a long, b double, ts timestamp) timestamp(ts) partition by YEAR")
+                ) {
                     statement.execute();
-
-                    final PreparedStatement insert1 = connection.prepareStatement("insert into x values " +
+                    try (final PreparedStatement insert1 = connection.prepareStatement("insert into x values " +
                             "(1, 2.0, '2020-06-01T00:00:02'::timestamp)," +
                             "(2, 2.6, '2020-06-01T00:00:06'::timestamp)," +
-                            "(5, 3.0, '2020-06-01T00:00:12'::timestamp)");
-                    insert1.execute();
+                            "(5, 3.0, '2020-06-01T00:00:12'::timestamp)")) {
+                        insert1.execute();
+                    }
                     mayDrainWalQueue();
 
                     try (TableWriter writer = getWriter("x")) {
                         SOCountDownLatch finished = new SOCountDownLatch(1);
                         new Thread(() -> {
-                            try {
-                                final PreparedStatement update1 = connection.prepareStatement("update x set a=9 where b>2.5");
+                            try (
+                                    final PreparedStatement update1 = connection.prepareStatement(
+                                            "update x set a=9 where b>2.5"
+                                    )
+                            ) {
                                 int numOfRowsUpdated1 = update1.executeUpdate();
                                 assertEquals(2, numOfRowsUpdated1);
                             } catch (Throwable e) {
                                 Assert.fail(e.getMessage());
-                                e.printStackTrace();
                             } finally {
                                 finished.countDown();
                             }
@@ -11901,6 +12239,59 @@ create table tab as (
                         sink.clear();
                         assertResultSet(expected, sink, resultSet);
                     }
+                }
+            }
+        });
+    }
+
+    private void testVarcharBindVars(String query) throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            PreparedStatement tbl = connection.prepareStatement("create table x as (" +
+                    "select " +
+                    "rnd_varchar(null, 'A','ABCDEFGHI','abcdefghijk') v, " +
+                    "rnd_str(null, 'A','ABCDEFGHI','abcdefghijk') s, " +
+                    "from long_sequence(5)" +
+                    ")");
+            tbl.execute();
+
+            PreparedStatement insert = connection.prepareStatement("insert into x(v,s) values (?,?)");
+            for (int i = 0; i < 5; i++) {
+                insert.setString(1, String.valueOf((char) ('D' + i)));
+                insert.setString(2, String.valueOf((char) ('D' + i)));
+                insert.execute();
+            }
+
+            try (PreparedStatement stmnt = connection.prepareStatement(query)) {
+                stmnt.setString(1, "D");
+                stmnt.setString(2, "D");
+                try (ResultSet rs = stmnt.executeQuery()) {
+                    final String expected = "v[VARCHAR],s[VARCHAR]\n" +
+                            "null,ABCDEFGHI\n" +
+                            "A,abcdefghijk\n" +
+                            "A,abcdefghijk\n" +
+                            "ABCDEFGHI,abcdefghijk\n" +
+                            "ABCDEFGHI,null\n" +
+                            "E,E\n" +
+                            "F,F\n" +
+                            "G,G\n" +
+                            "H,H\n";
+                    assertResultSet(expected, sink, rs);
+                }
+            }
+            try (PreparedStatement stmnt = connection.prepareStatement(query)) {
+                stmnt.setString(1, null);
+                stmnt.setString(2, null);
+                try (ResultSet rs = stmnt.executeQuery()) {
+                    final String expected = "v[VARCHAR],s[VARCHAR]\n" +
+                            "A,abcdefghijk\n" +
+                            "A,abcdefghijk\n" +
+                            "ABCDEFGHI,abcdefghijk\n" +
+                            "D,D\n" +
+                            "E,E\n" +
+                            "F,F\n" +
+                            "G,G\n" +
+                            "H,H\n";
+                    assertResultSet(expected, sink, rs);
                 }
             }
         });

@@ -25,27 +25,33 @@
 package io.questdb.test.cutlass.http.line;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableReaderMetadata;
-import io.questdb.cairo.TableReaderRecordCursor;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.line.http.LineHttpSender;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.std.Chars;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.cutlass.line.tcp.load.LineData;
 import io.questdb.test.cutlass.line.tcp.load.TableData;
+import io.questdb.test.fuzz.FuzzChangeColumnTypeOperation;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.BeforeClass;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -61,7 +67,9 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
     private static final int MAX_NUM_OF_SKIPPED_COLS = 2;
     private static final int NEW_COLUMN_RANDOMIZE_FACTOR = 2;
     private static final int SEND_SYMBOLS_WITH_SPACE_RANDOMIZE_FACTOR = 2;
+    private static final short[] integerColumnTypes = new short[]{ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG};
     private static final StringSink sink = new StringSink();
+    private static int defaultFloatScale;
     protected final short[] colTypes = new short[]{STRING, DOUBLE, DOUBLE, DOUBLE, STRING, DOUBLE};
     private final int batchSize = 10;
     private final String[][] colNameBases = new String[][]{
@@ -88,6 +96,7 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
     protected Rnd random;
     protected LowerCaseCharSequenceObjHashMap<TableData> tables;
     protected long waitBetweenIterationsMillis;
+    private double columnConvertProb;
     private int columnReorderingFactor = -1;
     private int columnSkipFactor = -1;
     private boolean diffCasesInColNames = false;
@@ -96,25 +105,80 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
     private boolean exerciseTags = true;
     private int newColumnFactor = -1;
     private int nonAsciiValueFactor = -1;
-    private boolean sendStringsAsSymbols = false;
     private boolean sendSymbolsWithSpace = false;
-    private boolean symbolAsFieldSupported;
     private SOCountDownLatch threadPushFinished;
 
-    public void ingest(int port) {
-        threadPushFinished.setCount(numOfThreads);
+    public static int changeColumnTypeTo(Rnd rnd, int columnType) {
+        int nextColType = columnType;
+        switch (columnType) {
+            case ColumnType.STRING:
+                return rnd.nextBoolean() ? ColumnType.SYMBOL : ColumnType.VARCHAR;
+            case ColumnType.SYMBOL:
+                return rnd.nextBoolean() ? ColumnType.STRING : ColumnType.VARCHAR;
+            case ColumnType.VARCHAR:
+                return rnd.nextBoolean() ? ColumnType.STRING : ColumnType.SYMBOL;
+            case ColumnType.BYTE:
+            case ColumnType.SHORT:
+            case ColumnType.INT:
+            case ColumnType.LONG:
+                while (nextColType == columnType) { // disallow noop conversion
+                    nextColType = integerColumnTypes[rnd.nextInt(integerColumnTypes.length)];
+                }
+                return nextColType;
+            case ColumnType.FLOAT:
+                return ColumnType.DOUBLE;
+            case ColumnType.DOUBLE:
+                return ColumnType.FLOAT;
+            case TIMESTAMP:
+                return ColumnType.LONG;
+
+        }
+        return columnType;
+    }
+
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        defaultFloatScale = CursorPrinter.FLOAT_SCALE;
+        AbstractBootstrapTest.setUpStatic();
+        // Max out printer float scale so that float printed same as doubles, e.g.
+        // Without that float 54.0 is printed as 54.0000 and double 54.0 is printed as 54.0
+        // This is needed to allow random column conversions that can change a double column to float
+        // in the table and still match the expected sent row values.
+        CursorPrinter.FLOAT_SCALE = 10;
+    }
+
+    @AfterClass
+    public static void tearDownStatic() {
+        CursorPrinter.FLOAT_SCALE = defaultFloatScale;
+        AbstractBootstrapTest.tearDownStatic();
+    }
+
+    public void ingest(CairoEngine engine, int port) {
+        int waitCount = numOfThreads;
+        threadPushFinished.setCount(waitCount);
         AtomicInteger failureCounter = new AtomicInteger();
         for (int i = 0; i < numOfThreads; i++) {
             startThread(i, port, threadPushFinished, failureCounter);
         }
+        Thread alterTableThread = null;
+        if (columnConvertProb > 0) {
+            alterTableThread = startAlterTableThread(engine, threadPushFinished, failureCounter);
+        }
         threadPushFinished.await();
+        try {
+            if (alterTableThread != null) {
+                alterTableThread.join();
+            }
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }
         Assert.assertEquals(0, failureCounter.get());
     }
 
     public void initFuzzParameters(
             int duplicatesFactor, int columnReorderingFactor, int columnSkipFactor, int newColumnFactor, int nonAsciiValueFactor,
-            boolean diffCasesInColNames, boolean exerciseTags, boolean sendStringsAsSymbols, boolean sendSymbolsWithSpace
-    ) {
+            boolean diffCasesInColNames, boolean exerciseTags, boolean sendSymbolsWithSpace,
+            double columnConvertProb) {
         this.duplicatesFactor = duplicatesFactor;
         this.columnReorderingFactor = columnReorderingFactor;
         this.columnSkipFactor = columnSkipFactor;
@@ -122,9 +186,8 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
         this.newColumnFactor = newColumnFactor;
         this.diffCasesInColNames = diffCasesInColNames;
         this.exerciseTags = exerciseTags;
-        this.sendStringsAsSymbols = sendStringsAsSymbols;
         this.sendSymbolsWithSpace = sendSymbolsWithSpace;
-        symbolAsFieldSupported = sendStringsAsSymbols;
+        this.columnConvertProb = columnConvertProb;
     }
 
     public void initLoadParameters(int numOfLines, int numOfIterations, int numOfThreads, int numOfTables, long waitBetweenIterationsMillis) {
@@ -150,8 +213,7 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
             int httpPortRandom = 7000 + random.nextInt(1000);
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048",
-                    PropertyKey.HTTP_BIND_TO.getEnvVarName(), "127.0.0.1:" + httpPortRandom,
-                    PropertyKey.LINE_TCP_UNDOCUMENTED_SYMBOL_AS_FIELD_SUPPORTED.getEnvVarName(), Boolean.toString(symbolAsFieldSupported)
+                    PropertyKey.HTTP_BIND_TO.getEnvVarName(), "127.0.0.1:" + httpPortRandom
             )) {
                 Assert.assertEquals(0, tables.size());
                 for (int i = 0; i < numOfTables; i++) {
@@ -160,7 +222,7 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
                 }
 
                 try {
-                    ingest(serverMain.getHttpServerPort());
+                    ingest(serverMain.getEngine(), serverMain.getHttpServerPort());
 
                     for (int i = 0; i < numOfTables; i++) {
                         final String tableName = getTableName(i);
@@ -171,7 +233,7 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
                         }
                     }
                 } catch (Exception e) {
-                    getLog().error().$(e).$();
+                    getLog().errorW().$(e).$();
                     setError(e.getMessage());
                 }
             }
@@ -328,7 +390,7 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
                 return valueBase + postfix;
             case STRING:
                 postfix = Character.toString(shouldFuzz(nonAsciiValueFactor) ? nonAsciiChars[random.nextInt(nonAsciiChars.length)] : random.nextChar());
-                return sendStringsAsSymbols ? valueBase + postfix : "\"" + valueBase + postfix + "\"";
+                return "\"" + valueBase + postfix + "\"";
             default:
                 return valueBase;
         }
@@ -369,6 +431,49 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
             return columnIndexes;
         }
         return originalColumnIndexes;
+    }
+
+    private Thread startAlterTableThread(CairoEngine engine, SOCountDownLatch threadPushFinished, AtomicInteger failureCounter) {
+        Thread thread = new Thread(() -> {
+            int totalTestConversions = random.nextInt((int) (numOfLines * numOfTables * columnConvertProb));
+            try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine, 1)) {
+                while (totalTestConversions > 0 && threadPushFinished.getCount() > 0 && failureCounter.get() == 0) {
+                    final CharSequence tableName = getTableName(random.nextInt(numOfTables));
+                    TableToken tableToken = engine.getTableTokenIfExists(tableName);
+                    if (tableToken != null) {
+                        try (TableMetadata meta = engine.getTableMetadata(tableToken)) {
+                            int startColIndex = random.nextInt(meta.getColumnCount());
+                            for (int i = 0; i < meta.getColumnCount(); i++) {
+                                int colIndex = (startColIndex + i) % meta.getColumnCount();
+                                int type = meta.getColumnType(colIndex);
+                                if (type > 0 && FuzzChangeColumnTypeOperation.canGenerateColumnTypeChange(meta, colIndex)) {
+                                    int newType = changeColumnTypeTo(random, type);
+                                    try {
+                                        engine.ddl("ALTER TABLE " + tableName + " ALTER COLUMN "
+                                                + meta.getColumnName(colIndex) + " TYPE " + nameOf(newType), executionContext);
+                                        totalTestConversions--;
+                                    } catch (SqlException ex) {
+                                        // Can be a race and the type is already converted.
+                                        if (!Chars.contains(ex.getFlyweightMessage(), "type is already")) {
+                                            throw ex;
+                                        }
+                                    }
+                                    break;
+                                }
+                            }
+                        } catch (SqlException e) {
+                            LOG.error().$("Failed to alter table [e=").$((Throwable) e).I$();
+                            failureCounter.incrementAndGet();
+                        }
+                    }
+                    Os.sleep(10 + random.nextInt(100));
+                }
+            } finally {
+                Path.clearThreadLocals();
+            }
+        });
+        thread.start();
+        return thread;
     }
 
     protected static void assertCursorTwoPass(CharSequence expected, RecordCursor cursor, RecordMetadata metadata) {
@@ -459,6 +564,7 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
                 Assert.fail("Data sending failed [e=" + e + "]");
             } finally {
                 threadPushFinished.countDown();
+                Path.clearThreadLocals();
             }
         }).start();
     }

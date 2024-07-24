@@ -32,7 +32,9 @@ import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.str.*;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8StringSink;
 
 public class StrBindVariable extends StrFunction implements ScalarFunction, Mutable {
     private final int floatScale;
@@ -52,15 +54,6 @@ public class StrBindVariable extends StrFunction implements ScalarFunction, Muta
     }
 
     @Override
-    public void getStr(Record rec, Utf16Sink utf16Sink) {
-        if (isNull) {
-            utf16Sink.put((CharSequence) null);
-        } else {
-            utf16Sink.put(this.utf16Sink);
-        }
-    }
-
-    @Override
     public CharSequence getStrA(Record rec) {
         return isNull ? null : utf16Sink;
     }
@@ -76,15 +69,6 @@ public class StrBindVariable extends StrFunction implements ScalarFunction, Muta
             return -1;
         }
         return utf16Sink.length();
-    }
-
-    @Override
-    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-        if (isNull) {
-            utf8Sink.put((CharSequence) null);
-        } else {
-            utf8Sink.put(this.utf8Sink);
-        }
     }
 
     @Override

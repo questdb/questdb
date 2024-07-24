@@ -59,6 +59,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short RENAME_TABLE = SQUASH_PARTITIONS + 1; // 14
     public final static short SET_DEDUP_ENABLE = RENAME_TABLE + 1; // 15
     public final static short SET_DEDUP_DISABLE = SET_DEDUP_ENABLE + 1; // 16
+    public final static short CHANGE_COLUMN_TYPE = SET_DEDUP_DISABLE + 1; // 17
+    public final static short CONVERT_PARTITION = CHANGE_COLUMN_TYPE + 1; // 18
     private static final long BIT_INDEXED = 0x1L;
     private static final long BIT_DEDUP_KEY = BIT_INDEXED << 1;
     private final static Log LOG = LogFactory.getLog(AlterOperation.class);
@@ -121,6 +123,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 case DROP_PARTITION:
                     applyDropPartition(svc);
                     break;
+                case CONVERT_PARTITION:
+                    applyConvertPartition(svc);
+                    break;
                 case DETACH_PARTITION:
                     applyDetachPartition(svc);
                     break;
@@ -156,6 +161,12 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     break;
                 case SET_DEDUP_DISABLE:
                     svc.disableDeduplication();
+                    break;
+                case CHANGE_COLUMN_TYPE:
+                    if (!contextAllowsAnyStructureChanges) {
+                        throw AlterTableContextException.INSTANCE;
+                    }
+                    changeColumnType(svc);
                     break;
                 default:
                     LOG.error()
@@ -259,6 +270,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             case RENAME_TABLE:
             case SET_DEDUP_DISABLE:
             case SET_DEDUP_ENABLE:
+            case CHANGE_COLUMN_TYPE:
                 return true;
             default:
                 return false;
@@ -400,6 +412,21 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
+    private void applyConvertPartition(MetadataService svc) {
+        // long list is a set of two longs per partition - (timestamp, partitionNamePosition)
+        for (int i = 0, n = extraInfo.size() / 2; i < n; i++) {
+            long partitionTimestamp = extraInfo.getQuick(i * 2);
+            if (!svc.convertPartition(partitionTimestamp)) {
+                throw CairoException.partitionManipulationRecoverable()
+                        .put("could not convert partition to parquet [table=").put(tableToken != null ? tableToken.getTableName() : "<null>")
+                        .put(", partitionTimestamp=").ts(partitionTimestamp)
+                        .put(", partitionBy=").put(PartitionBy.toString(svc.getPartitionBy()))
+                        .put(']')
+                        .position((int) extraInfo.getQuick(i * 2 + 1));
+            }
+        }
+    }
+
     private void applyDetachPartition(MetadataService svc) {
         for (int i = 0, n = extraInfo.size() / 2; i < n; i++) {
             final long partitionTimestamp = extraInfo.getQuick(i * 2);
@@ -492,6 +519,39 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 svc.getMetadata().getColumnIndex(columnName),
                 isCacheOn
         );
+    }
+
+    private void changeColumnType(MetadataService svc) {
+        if (activeExtraStrInfo.size() != 1) {
+            throw CairoException.nonCritical().put("invalid change column type alter statement");
+        }
+        CharSequence columnName = activeExtraStrInfo.getStrA(0);
+        int lParam = 0;
+        int newType = (int) extraInfo.get(lParam++);
+        int symbolCapacity = (int) extraInfo.get(lParam++);
+        boolean symbolCacheFlag = extraInfo.get(lParam++) > 0;
+        long flags = extraInfo.get(lParam++);
+        boolean isIndexed = (flags & BIT_INDEXED) == BIT_INDEXED;
+        boolean isDedupKey = (flags & BIT_DEDUP_KEY) == BIT_DEDUP_KEY;
+        assert !isDedupKey; // adding column as dedup key is not supported in SQL yet.
+        int indexValueBlockCapacity = (int) extraInfo.get(lParam++);
+        int columnNamePosition = (int) extraInfo.get(lParam);
+
+        try {
+            svc.changeColumnType(
+                    columnName,
+                    newType,
+                    symbolCapacity,
+                    symbolCacheFlag,
+                    isIndexed,
+                    indexValueBlockCapacity,
+                    false,
+                    securityContext
+            );
+        } catch (CairoException e) {
+            e.position(columnNamePosition);
+            throw e;
+        }
     }
 
     private void enableDeduplication(MetadataService svc) {

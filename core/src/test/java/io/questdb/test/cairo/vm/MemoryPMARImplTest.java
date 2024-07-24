@@ -58,10 +58,10 @@ public class MemoryPMARImplTest {
             for (int thread = 0; thread < 10; thread++) {
                 Thread th = new Thread(() -> {
 
-                    try (Path path = new Path().of(temp.newFile().getAbsolutePath()).$()) {
+                    try (Path path = new Path().of(temp.newFile().getAbsolutePath())) {
 
                         LOG.info().$(path).$();
-                        try (MemoryPARWImpl mem = new MemoryPMARImpl(ff, path, pageSize, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE)) {
+                        try (MemoryPARWImpl mem = new MemoryPMARImpl(ff, path.$(), pageSize, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE)) {
                             long pos;
 
                             mem.jumpTo(0);

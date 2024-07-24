@@ -24,7 +24,6 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.SqlJitMode;
-import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -202,6 +201,28 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderByDescWithFilterOnSubQueryRecordCursorFactoryVarchar() throws Exception {
+        runQueries(
+                "CREATE TABLE trips(l long,s symbol index capacity 10, ts TIMESTAMP) timestamp(ts) partition by month;",
+                "insert into trips " +
+                        "  select x, case when x<=3 then 'ABC' when x>6 and x <= 9 then 'DEF' else 'GHI' end," +
+                        "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
+                        "  from long_sequence(10);"
+        );
+
+        assertQuery("l\ts\tts\n" +
+                        "9\tDEF\t2022-01-12T06:13:20.000000Z\n" +
+                        "8\tDEF\t2022-01-11T02:26:40.000000Z\n" +
+                        "7\tDEF\t2022-01-09T22:40:00.000000Z\n" +
+                        "3\tABC\t2022-01-05T07:33:20.000000Z\n" +
+                        "2\tABC\t2022-01-04T03:46:40.000000Z\n" +
+                        "1\tABC\t2022-01-03T00:00:00.000000Z\n",
+                "select l, s, ts from trips where s in (select 'DEF'::varchar union all select 'ABC'::varchar ) and length(s) = 3 order by ts desc",
+                null, "ts###DESC", true, false
+        );
+    }
+
+    @Test
     public void testOrderByDescWithFilterOnValuesRecordCursorFactory() throws Exception {
         runQueries(
                 "CREATE TABLE trips(l long,s symbol index capacity 5, ts TIMESTAMP) timestamp(ts) partition by month;",
@@ -298,7 +319,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     "    where workspace = 'a' and method_id = 'd'\n" +
                     "    order by address";
 
-            assertPlan(query, "SelectedRecord\n" +
+            assertPlanNoLeakCheck(query, "SelectedRecord\n" +
                     "    Sort light\n" +
                     "      keys: [address]\n" +
                     "        VirtualRecord\n" +
@@ -339,7 +360,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     "    where workspace = 'a' and method_id = 'd'\n" +
                     "    order by ts, month, method_id";
 
-            assertPlan(query, "SelectedRecord\n" +
+            assertPlanNoLeakCheck(query, "SelectedRecord\n" +
                     "    Sort light\n" +
                     "      keys: [ts, month, method_id]\n" +
                     "        VirtualRecord\n" +
@@ -380,7 +401,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     "    where t1.workspace = 'a' and t1.method_id = 'd'\n" +
                     "    order by t2.ts desc";
 
-            assertPlan(query, "SelectedRecord\n" +
+            assertPlanNoLeakCheck(query, "SelectedRecord\n" +
                     "    Sort\n" +
                     "      keys: [ts desc]\n" +
                     "        VirtualRecord\n" +
@@ -438,11 +459,11 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     "and vendor_id in ('A1', 'A2') " +
                     "order by a.mta_tax;";
 
-            assertPlan(query, "SelectedRecord\n" +
+            assertPlanNoLeakCheck(query, "SelectedRecord\n" +
                     "    Sort light\n" +
                     "      keys: [mta_tax]\n" +
                     "        SelectedRecord\n" +
-                    "            Async Filter workers: 1\n" +
+                    "            Async JIT Filter workers: 1\n" +
                     "              filter: vendor_id in [A1,A2]\n" +
                     "                DataFrame\n" +
                     "                    Row forward scan\n" +
@@ -482,7 +503,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     "and b.vendor_id in ('A1', 'A2') " +
                     "order by b.mta_tax;";
 
-            assertPlan(query, "SelectedRecord\n" +
+            assertPlanNoLeakCheck(query, "SelectedRecord\n" +
                     "    Sort\n" +
                     "      keys: [mta_tax]\n" +
                     "        SelectedRecord\n" +
@@ -493,7 +514,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     "                    Interval forward scan on: t1\n" +
                     "                      intervals: [(\"2019-06-30T00:00:00.000000Z\",\"MAX\")]\n" +
                     "                Hash\n" +
-                    "                    Async Filter workers: 1\n" +
+                    "                    Async JIT Filter workers: 1\n" +
                     "                      filter: vendor_id in [A1,A2]\n" +
                     "                        DataFrame\n" +
                     "                            Row forward scan\n" +
@@ -521,7 +542,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     ") timestamp (ts) PARTITION BY DAY");
             insert("insert into tab values (0, 'c', 1), (0, 'b', 2), (0, 'a', 3), (1, 'd', 4), (2, 'e', 5)");
 
-            assertPlan("SELECT key " +
+            assertPlanNoLeakCheck("SELECT key " +
                             "FROM tab " +
                             "WHERE key IS NOT NULL " +
                             "ORDER BY ts, key " +
@@ -789,7 +810,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
         }
     }
 
-    private void assertLimitQueries(String result, String query, String expectedTimestamp) throws SqlException {
+    private void assertLimitQueries(String result, String query, String expectedTimestamp) throws Exception {
         int firstLineStart = result.indexOf('\n') + 1;
         String header = result.substring(0, firstLineStart);
 
@@ -811,9 +832,13 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
 
                 String expected = header + result.substring(loIdx, hiIdx);
 
-                assertQuery(expected,
+                assertQuery(
+                        expected,
                         query + " " + lo + ", " + hi,
-                        expectedTimestamp, true, true);
+                        expectedTimestamp,
+                        true,
+                        true
+                );
             }
         }
     }

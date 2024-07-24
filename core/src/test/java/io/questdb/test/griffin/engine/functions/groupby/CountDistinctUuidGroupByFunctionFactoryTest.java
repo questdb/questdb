@@ -59,21 +59,23 @@ public class CountDistinctUuidGroupByFunctionFactoryTest extends AbstractCairoTe
 
     @Test
     public void testExpression() throws Exception {
-        final String expected = "a\tcount_distinct\n" +
-                "a\t4\n" +
-                "b\t4\n" +
-                "c\t4\n";
-        assertQuery(
-                expected,
-                "select a, count_distinct(to_uuid(s * 42, s * 42)) from x order by a",
-                "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_long(1, 8, 0) s from long_sequence(20)))",
-                null,
-                true,
-                true
-        );
-        // multiplication shouldn't affect the number of distinct values,
-        // so the result should stay the same
-        assertSql(expected, "select a, count_distinct(s) from x order by a");
+        assertMemoryLeak(() -> {
+            final String expected = "a\tcount_distinct\n" +
+                    "a\t4\n" +
+                    "b\t4\n" +
+                    "c\t4\n";
+            assertQueryNoLeakCheck(
+                    expected,
+                    "select a, count_distinct(to_uuid(s * 42, s * 42)) from x order by a",
+                    "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_long(1, 8, 0) s from long_sequence(20)))",
+                    null,
+                    true,
+                    true
+            );
+            // multiplication shouldn't affect the number of distinct values,
+            // so the result should stay the same
+            assertSql(expected, "select a, count_distinct(s) from x order by a");
+        });
     }
 
     @Test
@@ -109,20 +111,41 @@ public class CountDistinctUuidGroupByFunctionFactoryTest extends AbstractCairoTe
 
     @Test
     public void testGroupNotKeyedWithNulls() throws Exception {
-        String expected = "count_distinct\n" +
-                "6\n";
-        assertQuery(
-                expected,
-                "select count_distinct(s) from x",
-                "create table x as (select * from (select to_uuid(rnd_long(1, 6, 0), 0) s, timestamp_sequence(10, 100000) ts from long_sequence(1000)) timestamp(ts)) timestamp(ts) PARTITION BY YEAR",
-                null,
-                false,
-                true
-        );
+        assertMemoryLeak(() -> {
+            String expected = "count_distinct\n" +
+                    "6\n";
+            assertQueryNoLeakCheck(
+                    expected,
+                    "select count_distinct(s) from x",
+                    "create table x as (select * from (select to_uuid(rnd_long(1, 6, 0), 0) s, timestamp_sequence(10, 100000) ts from long_sequence(1000)) timestamp(ts)) timestamp(ts) PARTITION BY YEAR",
+                    null,
+                    false,
+                    true
+            );
 
-        insert("insert into x values(cast(null as UUID), '2021-05-21')");
-        insert("insert into x values(cast(null as UUID), '1970-01-01')");
-        assertSql(expected, "select count_distinct(s) from x");
+            insert("insert into x values(cast(null as UUID), '2021-05-21')");
+            insert("insert into x values(cast(null as UUID), '1970-01-01')");
+            assertSql(expected, "select count_distinct(s) from x");
+        });
+    }
+
+    @Test
+    public void testMappingZeroToNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            // this is to ensure that uuids wth nulls and zeros don't map to the same values
+            assertQuery(
+                    "a\ts\tts\n",
+                    "select * from x",
+                    "create table x ( a SYMBOL, s UUID, ts TIMESTAMP ) timestamp(ts)",
+                    "ts",
+                    true
+            );
+
+            insert("insert into x values ('a', to_uuid(5, 0), '2021-05-21'), ('a', to_uuid(5, 0), '2021-05-21'), ('a', to_uuid(5, null), '2021-05-21'), ('a', to_uuid(10, 0), '2021-05-21'), ('a', to_uuid(10, null), '2021-05-21')" +
+                    ", ('a', to_uuid(0, 5), '2021-05-21'), ('a', to_uuid(0, 5), '2021-05-21'), ('a', to_uuid(null, 5), '2021-05-21'), ('a', to_uuid(0, 10), '2021-05-21'), ('a', to_uuid(null, 10), '2021-05-21'), ('a', to_uuid(0, 0), '2021-05-21'), ('a', to_uuid(null, null), '2021-05-21')");
+            assertSql("a\ts\n" +
+                    "a\t9\n", "select a, count_distinct(s) as s from x order by a");
+        });
     }
 
     @Test
@@ -161,7 +184,8 @@ public class CountDistinctUuidGroupByFunctionFactoryTest extends AbstractCairoTe
                 true
         );
     }
-//
+
+    //
     @Test
     public void testSampleFillNone() throws Exception {
         assertMemoryLeak(() -> assertSql(
@@ -189,7 +213,7 @@ public class CountDistinctUuidGroupByFunctionFactoryTest extends AbstractCairoTe
                 "select ts, count_distinct(s) from x sample by 1s fill(99)",
                 "create table x as (select * from (select to_uuid(rnd_long(0, 8, 0), 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
-                false
+                true
         );
     }
 
@@ -214,22 +238,5 @@ public class CountDistinctUuidGroupByFunctionFactoryTest extends AbstractCairoTe
                 "ts",
                 false
         );
-    }
-
-    @Test
-    public void testMappingZeroToNulls() throws Exception {
-        // this is to ensure that uuids wth nulls and zeros don't map to the same values
-        assertQuery(
-                "a\ts\tts\n",
-                "select * from x",
-                "create table x ( a SYMBOL, s UUID, ts TIMESTAMP ) timestamp(ts)",
-                "ts",
-                true
-        );
-
-        insert("insert into x values ('a', to_uuid(5, 0), '2021-05-21'), ('a', to_uuid(5, 0), '2021-05-21'), ('a', to_uuid(5, null), '2021-05-21'), ('a', to_uuid(10, 0), '2021-05-21'), ('a', to_uuid(10, null), '2021-05-21')" +
-                ", ('a', to_uuid(0, 5), '2021-05-21'), ('a', to_uuid(0, 5), '2021-05-21'), ('a', to_uuid(null, 5), '2021-05-21'), ('a', to_uuid(0, 10), '2021-05-21'), ('a', to_uuid(null, 10), '2021-05-21'), ('a', to_uuid(0, 0), '2021-05-21'), ('a', to_uuid(null, null), '2021-05-21')" );
-        assertSql("a\ts\n" +
-                "a\t9\n", "select a, count_distinct(s) as s from x order by a");
     }
 }

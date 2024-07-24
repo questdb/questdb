@@ -56,6 +56,11 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCur
     }
 
     @Override
+    public boolean followedOrderByAdvice() {
+        return masterFactory.followedOrderByAdvice();
+    }
+
+    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor masterCursor = masterFactory.getCursor(executionContext);
         RecordCursor slaveCursor = null;
@@ -68,11 +73,6 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCur
             Misc.free(slaveCursor);
             throw ex;
         }
-    }
-
-    @Override
-    public boolean followedOrderByAdvice() {
-        return masterFactory.followedOrderByAdvice();
     }
 
     @Override
@@ -100,10 +100,10 @@ public class NestedLoopLeftJoinRecordCursorFactory extends AbstractJoinRecordCur
 
     @Override
     protected void _close() {
-        ((JoinRecordMetadata) getMetadata()).close();
-        masterFactory.close();
-        slaveFactory.close();
-        filter.close();
+        Misc.freeIfCloseable(getMetadata());
+        Misc.free(masterFactory);
+        Misc.free(slaveFactory);
+        Misc.free(filter);
     }
 
     private static class NestedLoopLeftRecordCursor extends AbstractJoinCursor {

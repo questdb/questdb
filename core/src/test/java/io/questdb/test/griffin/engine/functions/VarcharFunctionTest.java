@@ -32,7 +32,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -59,10 +58,6 @@ public class VarcharFunctionTest {
     };
 
     private static final VarcharFunction function = new VarcharFunction() {
-        @Override
-        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-        }
-
         @Override
         public Utf8Sequence getVarcharA(Record rec) {
             return utf8Seq;

@@ -1,0 +1,29 @@
+[package]
+name = "sqllogictest-engines"
+version = "0.21.0"
+edition = "2021"
+description = "Sqllogictest built-in engines."
+
+[dependencies]
+async-trait = "0.1"
+bytes = "1"
+chrono = { version = "0.4" }
+futures = { version = "0.3", default-features = false }
+log = "0.4"
+pg_interval = "0.4"
+postgres-types = { version = "0.2.5", features = ["derive", "with-chrono-0_4"] }
+rust_decimal = { version = "1.30.0", features = ["tokio-pg"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sqllogictest = { path = "../sqllogictest", version = "0.21" }
+thiserror = "1"
+tokio = { version = "1", features = [
+    "rt",
+    "rt-multi-thread",
+    "sync",
+    "macros",
+    "fs",
+    "process",
+] }
+tokio-postgres = { version = "0.7" }
+tokio-util = { version = "0.7", features = ["codec"] }

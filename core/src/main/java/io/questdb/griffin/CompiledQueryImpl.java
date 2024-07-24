@@ -278,6 +278,10 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         type = TABLE_SET_TYPE;
     }
 
+    public void ofTableSuspend() {
+        type = TABLE_SUSPEND;
+    }
+
     public void ofTruncate() {
         of(TRUNCATE);
     }

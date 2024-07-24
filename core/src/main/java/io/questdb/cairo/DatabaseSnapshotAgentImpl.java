@@ -37,8 +37,12 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.std.*;
+import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -64,9 +68,14 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
     private final Path path = new Path(); // protected with #lock
     private final SymbolMapUtil symbolMapUtil = new SymbolMapUtil();
     private final GrowOnlyTableNameRegistryStore tableNameRegistryStore; // protected with #lock
+    private final Utf8StringSink utf8Sink = new Utf8StringSink();
     private ColumnVersionReader columnVersionReader = null;
+    private Path partitionCleanPath;
+    private DateFormat partitionDirFmt;
+    private int pathTableLen;
     private TableReaderMetadata tableMetadata = null;
     private TxWriter txWriter = null;
+    private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private SimpleWaitingLock walPurgeJobRunLock = null; // used as a suspend/resume handler for the WalPurgeJob
 
     DatabaseSnapshotAgentImpl(CairoEngine engine) {
@@ -109,14 +118,17 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
     }
 
     private static void copyOrError(Path srcPath, Path dstPath, FilesFacade ff, AtomicInteger counter, String fileName) {
-        srcPath.concat(fileName).$();
-        dstPath.concat(fileName).$();
-        if (ff.copy(srcPath, dstPath) < 0) {
-            LOG.error()
-                    .$("could not copy ").$(fileName).$(" file [src=").$(srcPath)
-                    .$(", dst=").$(dstPath)
-                    .$(", errno=").$(ff.errno())
-                    .I$();
+        srcPath.concat(fileName);
+        dstPath.concat(fileName);
+        if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
+            throw CairoException.critical(ff.errno())
+                    .put("Snapshot recovery failed. Aborting QuestDB startup. Cause: Error could not copy ")
+                    .put(fileName)
+                    .put(" file [src=")
+                    .put(srcPath)
+                    .put(", dst=")
+                    .put(dstPath)
+                    .put(']');
         } else {
             counter.incrementAndGet();
             LOG.info()
@@ -127,13 +139,12 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
     }
 
     private void rebuildSymbolFiles(Path tablePath, AtomicInteger recoveredSymbolFiles, int pathTableLen) {
-        int denseSymbolIndex = 0;
         tablePath.trimTo(pathTableLen);
         for (int i = 0; i < tableMetadata.getColumnCount(); i++) {
 
             int columnType = tableMetadata.getColumnType(i);
             if (ColumnType.isSymbol(columnType)) {
-                int cleanSymbolCount = txWriter.getSymbolValueCount(denseSymbolIndex++);
+                int cleanSymbolCount = txWriter.getSymbolValueCount(tableMetadata.getDenseSymbolIndex(i));
                 String columnName = tableMetadata.getColumnName(i);
                 LOG.info().$("rebuilding symbol files [table=").$(tablePath)
                         .$(", column=").$(columnName)
@@ -155,7 +166,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
     }
 
     private void rebuildTableFiles(Path tablePath, AtomicInteger recoveredSymbolFiles) {
-        int pathTableLen = tablePath.size();
+        pathTableLen = tablePath.size();
         try {
             if (tableMetadata == null) {
                 tableMetadata = new TableReaderMetadata(configuration);
@@ -171,8 +182,8 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
             if (columnVersionReader == null) {
                 columnVersionReader = new ColumnVersionReader();
             }
-            tablePath.trimTo(pathTableLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
-            columnVersionReader.ofRO(configuration.getFilesFacade(), tablePath);
+            tablePath.trimTo(pathTableLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME);
+            columnVersionReader.ofRO(configuration.getFilesFacade(), tablePath.$());
             columnVersionReader.readUnsafe();
 
             // Symbols are not append only data structures, they can be corrupt
@@ -188,8 +199,59 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
                 txWriter.resetLagAppliedRows();
             }
 
+            if (PartitionBy.isPartitioned(tableMetadata.getPartitionBy())) {
+                // Remove non-attached partitions
+                LOG.debug().$("purging non attached partitions [path=").$(tablePath.$()).I$();
+                partitionCleanPath = tablePath;
+                this.partitionDirFmt = PartitionBy.getPartitionDirFormatMethod(tableMetadata.getPartitionBy());
+                ff.iterateDir(tablePath.$(), removePartitionDirsNotAttached);
+            }
         } finally {
             tablePath.trimTo(pathTableLen);
+        }
+    }
+
+    private void removePartitionDirsNotAttached(long pUtf8NameZ, int type) {
+        // Do not remove detached partitions, they are probably about to be attached
+        // Do not remove wal and sequencer directories either
+        int checkedType = ff.typeDirOrSoftLinkDirNoDots(partitionCleanPath, pathTableLen, pUtf8NameZ, type, utf8Sink);
+        if (checkedType != Files.DT_UNKNOWN &&
+                !CairoKeywords.isDetachedDirMarker(pUtf8NameZ) &&
+                !CairoKeywords.isWal(pUtf8NameZ) &&
+                !CairoKeywords.isTxnSeq(pUtf8NameZ) &&
+                !CairoKeywords.isSeq(pUtf8NameZ) &&
+                !Utf8s.endsWithAscii(utf8Sink, configuration.getAttachPartitionSuffix())
+        ) {
+            try {
+                long txn;
+                int txnSep = Utf8s.indexOfAscii(utf8Sink, '.');
+                if (txnSep < 0) {
+                    txnSep = utf8Sink.size();
+                    txn = -1;
+                } else {
+                    txn = Numbers.parseLong(utf8Sink, txnSep + 1, utf8Sink.size());
+                }
+                long dirTimestamp = partitionDirFmt.parse(utf8Sink.asAsciiCharSequence(), 0, txnSep, DateFormatUtils.EN_LOCALE);
+                if (txWriter.getPartitionNameTxnByPartitionTimestamp(dirTimestamp) == txn) {
+                    return;
+                }
+                if (!ff.unlinkOrRemove(partitionCleanPath, LOG)) {
+                    LOG.info()
+                            .$("failed to purge unused partition version [path=").$(partitionCleanPath)
+                            .$(", errno=").$(ff.errno()).I$();
+                } else {
+                    LOG.info().$("purged unused partition version [path=").$(partitionCleanPath).I$();
+                }
+                partitionCleanPath.trimTo(pathTableLen).$();
+            } catch (NumericException ignore) {
+                // not a date?
+                // ignore exception and leave the directory
+                partitionCleanPath.trimTo(pathTableLen);
+                partitionCleanPath.concat(pUtf8NameZ).$();
+                LOG.error().$("invalid partition directory inside table folder: ").$(path).$();
+            } finally {
+                partitionCleanPath.trimTo(pathTableLen);
+            }
         }
     }
 
@@ -284,7 +346,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
                             if (isWalTable) {
                                 path.concat(WalUtils.SEQ_DIR);
                             }
-                            if (ff.mkdirs(path.slash$(), configuration.getMkDirMode()) != 0) {
+                            if (ff.mkdirs(path.slash(), configuration.getMkDirMode()) != 0) {
                                 throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path).put(']');
                             }
 
@@ -315,18 +377,18 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
                                     }
 
                                     // Copy _meta file.
-                                    path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$();
-                                    mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+                                    path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME);
+                                    mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
                                     reader.getMetadata().dumpTo(mem);
                                     mem.close(false);
                                     // Copy _txn file.
-                                    path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$();
-                                    mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+                                    path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME);
+                                    mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
                                     reader.getTxFile().dumpTo(mem);
                                     mem.close(false);
                                     // Copy _cv file.
-                                    path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
-                                    mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+                                    path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME);
+                                    mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
                                     reader.getColumnVersionReader().dumpTo(mem);
                                     mem.close(false);
 
@@ -352,8 +414,8 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
                             }
                         }
 
-                        path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).concat(TableUtils.SNAPSHOT_META_FILE_NAME).$();
-                        mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+                        path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).concat(TableUtils.SNAPSHOT_META_FILE_NAME);
+                        mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
                         mem.putStr(configuration.getSnapshotInstanceId());
                         mem.close();
 
@@ -400,35 +462,44 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
         ) {
             srcPath.of(snapshotRoot).concat(configuration.getDbDirectory());
             final int snapshotRootLen = srcPath.size();
-            dstPath.of(root);
-            final int rootLen = dstPath.size();
+
+            dstPath.of(root).parent().concat(TableUtils.RESTORE_SNAPSHOT_TRIGGER_FILE_NAME);
+            boolean triggerExists = ff.exists(dstPath.$());
 
             // Check if the snapshot dir exists.
             if (!ff.exists(srcPath.slash$())) {
+                if (triggerExists) {
+                    throw CairoException.nonCritical().put("snapshot trigger file found, but snapshot directory does not exist [dir=").put(srcPath).put(", trigger=").put(dstPath).put(']');
+                }
                 return;
             }
 
             // Check if the snapshot metadata file exists.
-            srcPath.trimTo(snapshotRootLen).concat(TableUtils.SNAPSHOT_META_FILE_NAME).$();
-            if (!ff.exists(srcPath)) {
+            srcPath.trimTo(snapshotRootLen).concat(TableUtils.SNAPSHOT_META_FILE_NAME);
+            if (!ff.exists(srcPath.$())) {
+                if (triggerExists) {
+                    throw CairoException.nonCritical().put("snapshot trigger file found, but snapshot metadata file does not exist [file=").put(srcPath).put(", trigger=").put(dstPath).put(']');
+                }
                 return;
             }
 
             // Check if the snapshot instance id is different from what's in the snapshot.
-            memFile.smallFile(ff, srcPath, MemoryTag.MMAP_DEFAULT);
+            memFile.smallFile(ff, srcPath.$(), MemoryTag.MMAP_DEFAULT);
 
             final CharSequence currentInstanceId = configuration.getSnapshotInstanceId();
             CharSequence snapshotInstanceId = memFile.getStrA(0);
             if (Chars.empty(snapshotInstanceId)) {
                 // Check _snapshot.txt file too reading it as a text file.
-                srcPath.trimTo(snapshotRootLen).concat(TableUtils.SNAPSHOT_META_FILE_NAME_TXT).$();
-                String snapshotIdTxt = TableUtils.readText(ff, srcPath);
+                srcPath.trimTo(snapshotRootLen).concat(TableUtils.SNAPSHOT_META_FILE_NAME_TXT);
+                String snapshotIdTxt = TableUtils.readText(ff, srcPath.$());
                 if (snapshotIdTxt != null) {
                     snapshotInstanceId = snapshotIdTxt.trim();
                 }
             }
 
-            if (Chars.empty(currentInstanceId) || Chars.empty(snapshotInstanceId) || Chars.equals(currentInstanceId, snapshotInstanceId)) {
+            if (!triggerExists &&
+                    (Chars.empty(currentInstanceId) || Chars.empty(snapshotInstanceId) || Chars.equals(currentInstanceId, snapshotInstanceId))
+            ) {
                 LOG.info()
                         .$("skipping snapshot recovery [currentId=").$(currentInstanceId)
                         .$(", previousId=").$(snapshotInstanceId)
@@ -436,12 +507,19 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
                 return;
             }
 
-            LOG.info()
-                    .$("starting snapshot recovery [currentId=").$(currentInstanceId)
-                    .$(", previousId=").$(snapshotInstanceId)
-                    .I$();
-
             // OK, we need to recover from the snapshot.
+            if (triggerExists) {
+                LOG.info().$("starting snapshot recovery [trigger=file]").$();
+            } else {
+                LOG.info()
+                        .$("starting snapshot recovery [trigger=snapshot id")
+                        .$(", currentId=").$(currentInstanceId)
+                        .$(", previousId=").$(snapshotInstanceId)
+                        .I$();
+            }
+
+            dstPath.of(root);
+            final int rootLen = dstPath.size();
 
             // First delete all table name registry files in dst.
             srcPath.trimTo(snapshotRootLen).$();
@@ -449,27 +527,22 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
             for (; ; ) {
                 dstPath.trimTo(rootLen).$();
                 int version = TableNameRegistryStore.findLastTablesFileVersion(ff, dstPath, nameSink);
-                dstPath.trimTo(rootLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).putAscii('.').put(version).$();
+                dstPath.trimTo(rootLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).putAscii('.').put(version);
                 LOG.info().$("backup removing table name registry file [dst=").$(dstPath).I$();
-                if (!ff.removeQuiet(dstPath)) {
-                    LOG.error()
-                            .$("could not remove tables.d file [dst=").$(dstPath)
-                            .$(", errno=").$(ff.errno())
-                            .I$();
+                if (!ff.removeQuiet(dstPath.$())) {
+                    throw CairoException.critical(ff.errno())
+                            .put("Snapshot recovery failed. Aborting QuestDB startup. Cause: Error could not remove registry file [file=").put(dstPath).put(']');
                 }
                 if (version == 0) {
                     break;
                 }
             }
             // Now copy the file name registry.
-            srcPath.trimTo(snapshotDbLen).concat(TABLE_REGISTRY_NAME_FILE).putAscii(".0").$();
-            dstPath.trimTo(rootLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).putAscii(".0").$();
-            if (ff.copy(srcPath, dstPath) < 0) {
-                LOG.error()
-                        .$("could not copy tables.d file [src=").$(srcPath)
-                        .$(", dst=").$(dstPath)
-                        .$(", errno=").$(ff.errno())
-                        .I$();
+            srcPath.trimTo(snapshotDbLen).concat(TABLE_REGISTRY_NAME_FILE).putAscii(".0");
+            dstPath.trimTo(rootLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).putAscii(".0");
+            if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
+                throw CairoException.critical(ff.errno())
+                        .put("Snapshot recovery failed. Aborting QuestDB startup. Cause: Could not copy registry file [src=").put(srcPath).put(", dst=").put(dstPath).put(']');
             }
 
             AtomicInteger recoveredMetaFiles = new AtomicInteger();
@@ -477,8 +550,8 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
             AtomicInteger recoveredCVFiles = new AtomicInteger();
             AtomicInteger recoveredWalFiles = new AtomicInteger();
             AtomicInteger symbolFilesCount = new AtomicInteger();
-            srcPath.trimTo(snapshotRootLen).$();
-            ff.iterateDir(srcPath, (pUtf8NameZ, type) -> {
+            srcPath.trimTo(snapshotRootLen);
+            ff.iterateDir(srcPath.$(), (pUtf8NameZ, type) -> {
                 if (ff.isDirOrSoftLinkDirNoDots(srcPath, snapshotDbLen, pUtf8NameZ, type)) {
                     dstPath.trimTo(rootLen).concat(pUtf8NameZ);
                     int srcPathLen = srcPath.size();
@@ -494,50 +567,39 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
                     // Go inside SEQ_DIR
                     srcPath.trimTo(srcPathLen).concat(WalUtils.SEQ_DIR);
                     srcPathLen = srcPath.size();
-                    srcPath.concat(TableUtils.META_FILE_NAME).$();
+                    srcPath.concat(TableUtils.META_FILE_NAME);
 
                     dstPath.trimTo(dstPathLen).concat(WalUtils.SEQ_DIR);
                     dstPathLen = dstPath.size();
-                    dstPath.concat(TableUtils.META_FILE_NAME).$();
+                    dstPath.concat(TableUtils.META_FILE_NAME);
 
-                    if (ff.exists(srcPath)) {
-                        if (ff.copy(srcPath, dstPath) < 0) {
-                            LOG.critical()
-                                    .$("could not copy ").$(TableUtils.META_FILE_NAME).$(" file [src=").$(srcPath)
-                                    .utf8(", dst=").$(dstPath)
-                                    .$(", errno=").$(ff.errno())
-                                    .I$();
+                    if (ff.exists(srcPath.$())) {
+                        if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
+                            throw CairoException.critical(ff.errno())
+                                    .put("Snapshot recovery failed. Aborting QuestDB startup. Cause: Error could not copy meta file [src=").put(srcPath).put(", dst=").put(dstPath).put(']');
                         } else {
-                            try {
-                                srcPath.trimTo(srcPathLen);
-                                openSmallFile(ff, srcPath, srcPathLen, memFile, TableUtils.TXN_FILE_NAME, MemoryTag.MMAP_TX_LOG);
-                                long newMaxTxn = memFile.getLong(0L); // snapshot/db/tableName/txn_seq/_txn
+                            srcPath.trimTo(srcPathLen);
+                            openSmallFile(ff, srcPath, srcPathLen, memFile, TableUtils.TXN_FILE_NAME, MemoryTag.MMAP_TX_LOG);
+                            long newMaxTxn = memFile.getLong(0L); // snapshot/db/tableName/txn_seq/_txn
 
-                                memFile.smallFile(ff, dstPath, MemoryTag.MMAP_SEQUENCER_METADATA);
+                            memFile.smallFile(ff, dstPath.$(), MemoryTag.MMAP_SEQUENCER_METADATA);
+                            dstPath.trimTo(dstPathLen);
+                            openSmallFile(ff, dstPath, dstPathLen, memFile, TXNLOG_FILE_NAME_META_INX, MemoryTag.MMAP_TX_LOG);
+
+                            if (newMaxTxn >= 0) {
                                 dstPath.trimTo(dstPathLen);
-                                openSmallFile(ff, dstPath, dstPathLen, memFile, TXNLOG_FILE_NAME_META_INX, MemoryTag.MMAP_TX_LOG);
-
-                                if (newMaxTxn >= 0) {
-                                    dstPath.trimTo(dstPathLen);
-                                    openSmallFile(ff, dstPath, dstPathLen, memFile, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
-                                    // get oldMaxTxn from dbRoot/tableName/txn_seq/_txnlog
-                                    long oldMaxTxn = memFile.getLong(TableTransactionLogFile.MAX_TXN_OFFSET_64);
-                                    if (newMaxTxn < oldMaxTxn) {
-                                        // update header of dbRoot/tableName/txn_seq/_txnlog with new values
-                                        memFile.putLong(TableTransactionLogFile.MAX_TXN_OFFSET_64, newMaxTxn);
-                                        LOG.info()
-                                                .$("updated ").$(TXNLOG_FILE_NAME).$(" file [path=").$(dstPath)
-                                                .$(", oldMaxTxn=").$(oldMaxTxn)
-                                                .$(", newMaxTxn=").$(newMaxTxn)
-                                                .I$();
-                                    }
+                                openSmallFile(ff, dstPath, dstPathLen, memFile, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
+                                // get oldMaxTxn from dbRoot/tableName/txn_seq/_txnlog
+                                long oldMaxTxn = memFile.getLong(TableTransactionLogFile.MAX_TXN_OFFSET_64);
+                                if (newMaxTxn < oldMaxTxn) {
+                                    // update header of dbRoot/tableName/txn_seq/_txnlog with new values
+                                    memFile.putLong(TableTransactionLogFile.MAX_TXN_OFFSET_64, newMaxTxn);
+                                    LOG.info()
+                                            .$("updated ").$(TXNLOG_FILE_NAME).$(" file [path=").$(dstPath)
+                                            .$(", oldMaxTxn=").$(oldMaxTxn)
+                                            .$(", newMaxTxn=").$(newMaxTxn)
+                                            .I$();
                                 }
-                            } catch (CairoException ex) {
-                                LOG.critical()
-                                        .$("could not update file [src=").$(dstPath)
-                                        .$("`, ex=").$(ex.getFlyweightMessage())
-                                        .$(", errno=").$(ff.errno())
-                                        .I$();
                             }
 
                             recoveredWalFiles.incrementAndGet();
@@ -565,6 +627,11 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
                         .put("could not remove snapshot dir [dir=").put(srcPath)
                         .put(", errno=").put(ff.errno())
                         .put(']');
+            }
+            dstPath.of(root).parent().concat(TableUtils.RESTORE_SNAPSHOT_TRIGGER_FILE_NAME);
+            if (triggerExists && !ff.removeQuiet(dstPath.$())) {
+                throw CairoException.critical(ff.errno())
+                        .put("could not remove restore trigger file. file permission issues? [file=").put(dstPath).put(']');
             }
         } finally {
             tableMetadata = Misc.free(tableMetadata);

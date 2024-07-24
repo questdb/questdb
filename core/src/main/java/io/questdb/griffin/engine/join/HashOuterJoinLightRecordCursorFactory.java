@@ -60,14 +60,20 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
             JoinContext context
     ) {
         super(metadata, context, masterFactory, slaveFactory);
-        this.masterKeySink = masterKeySink;
-        this.slaveKeySink = slaveKeySink;
-        this.cursor = new HashOuterJoinLightRecordCursor(
-                columnSplit,
-                NullRecordFactory.getInstance(slaveFactory.getMetadata()),
-                joinColumnTypes,
-                valueTypes, configuration
-        );
+        try {
+            this.masterKeySink = masterKeySink;
+            this.slaveKeySink = slaveKeySink;
+            this.cursor = new HashOuterJoinLightRecordCursor(
+                    columnSplit,
+                    NullRecordFactory.getInstance(slaveFactory.getMetadata()),
+                    joinColumnTypes,
+                    valueTypes,
+                    configuration
+            );
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override
@@ -105,10 +111,10 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
 
     @Override
     protected void _close() {
-        ((JoinRecordMetadata) getMetadata()).close();
-        masterFactory.close();
-        slaveFactory.close();
-        cursor.close();
+        Misc.freeIfCloseable(getMetadata());
+        Misc.free(masterFactory);
+        Misc.free(slaveFactory);
+        Misc.free(cursor);
     }
 
     private class HashOuterJoinLightRecordCursor extends AbstractJoinCursor {
@@ -130,10 +136,15 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
                 CairoConfiguration configuration
         ) {
             super(columnSplit);
-            joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes);
-            slaveChain = new LongChain(configuration.getSqlHashJoinLightValuePageSize(), configuration.getSqlHashJoinLightValueMaxPages());
-            record = new OuterJoinRecord(columnSplit, nullRecord);
-            isOpen = true;
+            try {
+                isOpen = true;
+                joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes);
+                slaveChain = new LongChain(configuration.getSqlHashJoinLightValuePageSize(), configuration.getSqlHashJoinLightValueMaxPages());
+                record = new OuterJoinRecord(columnSplit, nullRecord);
+            } catch (Throwable th) {
+                close();
+                throw th;
+            }
         }
 
         @Override

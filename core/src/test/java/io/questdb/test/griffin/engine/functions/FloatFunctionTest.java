@@ -26,7 +26,6 @@ package io.questdb.test.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.FloatFunction;
-import io.questdb.std.str.Utf16Sink;
 import org.junit.Test;
 
 public class FloatFunctionTest {
@@ -100,7 +99,9 @@ public class FloatFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetIPv4() { function.getIPv4(null); }
+    public void testGetIPv4() {
+        function.getIPv4(null);
+    }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetLong() {
@@ -120,11 +121,6 @@ public class FloatFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetStr() {
         function.getStrA(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetStr2() {
-        function.getStr(null, null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -175,11 +171,6 @@ public class FloatFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetLong256B() {
         function.getLong256B(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetVarcharUtf8Sink() {
-        function.getVarchar(null, null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

@@ -38,17 +38,16 @@ import org.jetbrains.annotations.Nullable;
 
 public class CairoException extends RuntimeException implements Sinkable, FlyweightMessageContainer {
 
+    public static final int ERRNO_ACCESS_DENIED_WIN = 5;
     public static final int ERRNO_FILE_DOES_NOT_EXIST = 2;
     public static final int ERRNO_FILE_DOES_NOT_EXIST_WIN = 3;
-
     public static final int METADATA_VALIDATION = -100;
     public static final int ILLEGAL_OPERATION = METADATA_VALIDATION - 1;
     private static final int TABLE_DROPPED = ILLEGAL_OPERATION - 1;
-    public static final int METADATA_VALIDATION_RECOVERABLE = METADATA_VALIDATION - 1;
+    public static final int METADATA_VALIDATION_RECOVERABLE = TABLE_DROPPED - 1;
     public static final int PARTITION_MANIPULATION_RECOVERABLE = METADATA_VALIDATION_RECOVERABLE - 1;
     public static final int NON_CRITICAL = -1;
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
-    public static final int ERRNO_ACCESS_DENIED_WIN = 5;
     private static final ThreadLocal<CairoException> tlException = new ThreadLocal<>(CairoException::new);
     protected final StringSink message = new StringSink();
     protected int errno;
@@ -58,6 +57,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     private boolean entityDisabled; // used when account is disabled and connection should be dropped
     private boolean interruption; // used when a query times out
     private int messagePosition;
+    private boolean outOfMemory;
 
     public static CairoException authorization() {
         CairoException e = nonCritical();
@@ -114,6 +114,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public static CairoException invalidMetadataRecoverable(@NotNull CharSequence msg, @NotNull CharSequence columnName) {
         return critical(METADATA_VALIDATION_RECOVERABLE).put(msg).put(" [column=").put(columnName).put(']');
+    }
+
+    public static boolean isCairoOomError(Throwable t) {
+        return t instanceof CairoException && ((CairoException) t).isOutOfMemory();
     }
 
     public static CairoException nonCritical() {
@@ -220,6 +224,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return interruption;
     }
 
+    public boolean isOutOfMemory() {
+        return outOfMemory;
+    }
+
     public boolean isTableDropped() {
         return errno == TABLE_DROPPED;
     }
@@ -294,6 +302,11 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return this;
     }
 
+    public CairoException setOutOfMemory(boolean outOfMemory) {
+        this.outOfMemory = outOfMemory;
+        return this;
+    }
+
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         sink.putAscii('[').put(errno).putAscii("]: ").put(message);
@@ -320,5 +333,6 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         authorizationError = false;
         entityDisabled = false;
         messagePosition = 0;
+        outOfMemory = false;
     }
 }

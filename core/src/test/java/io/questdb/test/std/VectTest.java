@@ -28,7 +28,10 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.*;
-import io.questdb.std.str.*;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -41,10 +44,9 @@ import static io.questdb.cairo.BinarySearch.SCAN_DOWN;
 
 public class VectTest {
 
-    private Rnd rnd = new Rnd();
-
     @ClassRule
     public static final TemporaryFolder temp = new TemporaryFolder();
+    private Rnd rnd = new Rnd();
 
     @Before
     public void setUp() {
@@ -402,241 +404,6 @@ public class VectTest {
             Unsafe.free(from, buffSize, MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(to, maxSize, MemoryTag.NATIVE_DEFAULT);
         }
-    }
-
-    @Test
-    public void testOooMergeCopyVarcharColumn() throws Exception {
-        // todo: shuffle vectors
-        int rowCount = 10_000;
-        FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
-        long pageSize = Files.PAGE_SIZE;
-        try (Path dataPathA = new Path().of(temp.newFile().getAbsolutePath()).$();
-             Path auxPathA = new Path().of(temp.newFile().getAbsolutePath()).$();
-             Path dataPathB = new Path().of(temp.newFile().getAbsolutePath()).$();
-             Path auxPathB = new Path().of(temp.newFile().getAbsolutePath()).$();
-             DirectLongList index = new DirectLongList(rowCount * 4, MemoryTag.NATIVE_DEFAULT);
-             MemoryCMARW dataMemA = new MemoryCMARWImpl(ff, dataPathA, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
-             MemoryCMARW auxMemA = new MemoryCMARWImpl(ff, auxPathA, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
-             MemoryCMARW dataMemB = new MemoryCMARWImpl(ff, dataPathB, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
-             MemoryCMARW auxMemB = new MemoryCMARWImpl(ff, auxPathB, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE)) {
-
-            StringSink sink = new StringSink();
-            Utf8StringSink utf8Sink = new Utf8StringSink();
-            int maxLen = 50; // exclusive
-            int nullModA = 17;
-            int nullModB = 23;
-            for (int i = 0; i < rowCount; i++) {
-                int len = i % maxLen;
-
-                if (i % nullModA == 0) {
-                    VarcharTypeDriver.appendValue(dataMemA, auxMemA, null);
-                } else {
-                    utf8Sink.clear();
-                    utf8Sink.repeat('a', len);
-                    VarcharTypeDriver.appendValue(dataMemA, auxMemA, utf8Sink);
-                }
-
-                if (i % nullModB == 0) {
-                    VarcharTypeDriver.appendValue(dataMemB, auxMemB, null);
-                } else {
-                    utf8Sink.clear();
-                    utf8Sink.repeat('b', len);
-                    VarcharTypeDriver.appendValue(dataMemB, auxMemB, utf8Sink);
-                }
-                index.add(i * 2); // rowA synthetic timestamp
-                index.add(i); // rowA index
-
-                index.add(i * 2 + 1); // rowB synthetic timestamp
-                index.add(i | 1L << 63); // rowB index
-            }
-
-            String[] strings = varcharColAsStringArray(dataMemA, auxMemA, rowCount);
-            for (int i = 0; i < rowCount; i++) {
-                if (i % nullModA == 0) {
-                    Assert.assertNull(strings[i]);
-                } else {
-                    sink.clear();
-                    sink.repeat("a", i % maxLen);
-                    TestUtils.assertEquals(sink, strings[i]);
-                }
-            }
-
-            strings = varcharColAsStringArray(dataMemB, auxMemB, rowCount);
-            for (int i = 0; i < rowCount; i++) {
-                if (i % nullModB == 0) {
-                    Assert.assertNull(strings[i]);
-                } else {
-                    sink.clear();
-                    sink.repeat("b", i % maxLen);
-                    TestUtils.assertEquals(sink, strings[i]);
-                }
-            }
-
-            try (Path dataPathDest = new Path().of(temp.newFile().getAbsolutePath()).$();
-                 Path auxPathDest = new Path().of(temp.newFile().getAbsolutePath()).$();
-                 MemoryCMARW dataMemDest = new MemoryCMARWImpl(ff, dataPathDest, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
-                 MemoryCMARW auxMemDest = new MemoryCMARWImpl(ff, auxPathDest, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE)) {
-
-                auxMemDest.extend(2 * rowCount * 16L);
-                dataMemDest.extend(dataMemA.getAppendOffset() + dataMemB.getAppendOffset());
-
-                Vect.oooMergeCopyVarcharColumn(index.getAddress(), 2 * rowCount,
-                        auxMemA.addressOf(0), dataMemA.addressOf(0),
-                        auxMemB.addressOf(0), dataMemB.addressOf(0),
-                        auxMemDest.addressOf(0), dataMemDest.addressOf(0),
-                        0);
-
-                strings = varcharColAsStringArray(dataMemDest, auxMemDest, rowCount * 2);
-                for (int i = 0; i < rowCount; i++) {
-                    if (i % nullModB == 0) {
-                        Assert.assertNull(strings[i * 2]);
-                    } else {
-                        sink.clear();
-                        sink.repeat("b", i % maxLen);
-                        TestUtils.assertEquals(sink, strings[i * 2]);
-                    }
-
-                    if (i % nullModA == 0) {
-                        Assert.assertNull(strings[i * 2 + 1]);
-                    } else {
-                        sink.clear();
-                        sink.repeat("a", i % maxLen);
-                        TestUtils.assertEquals(sink, strings[i * 2 + 1]);
-                    }
-                }
-            }
-        }
-    }
-
-
-    @Test
-    public void testOooMergeCopyStrColumn() throws Exception {
-        int rowCount = 10_000;
-        FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
-        long pageSize = Files.PAGE_SIZE;
-        try (Path dataPathA = new Path().of(temp.newFile().getAbsolutePath()).$();
-             Path auxPathA = new Path().of(temp.newFile().getAbsolutePath()).$();
-             Path dataPathB = new Path().of(temp.newFile().getAbsolutePath()).$();
-             Path auxPathB = new Path().of(temp.newFile().getAbsolutePath()).$();
-             DirectLongList index = new DirectLongList(rowCount * 4, MemoryTag.NATIVE_DEFAULT);
-             MemoryCMARW dataMemA = new MemoryCMARWImpl(ff, dataPathA, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
-             MemoryCMARW auxMemA = new MemoryCMARWImpl(ff, auxPathA, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
-             MemoryCMARW dataMemB = new MemoryCMARWImpl(ff, dataPathB, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
-             MemoryCMARW auxMemB = new MemoryCMARWImpl(ff, auxPathB, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE)) {
-            auxMemA.putLong(0);
-            auxMemB.putLong(0);
-
-            StringSink sink = new StringSink();
-            int maxLen = 50; // exclusive
-            int nullModA = 17;
-            int nullModB = 23;
-            for (int i = 0; i < rowCount; i++) {
-                int len = i % maxLen;
-
-                if (i % nullModA == 0) {
-                    auxMemA.putLong(dataMemA.putStr(null));
-                } else {
-                    sink.clear();
-                    sink.repeat("a", len);
-                    auxMemA.putLong(dataMemA.putStr(sink));
-                }
-
-                if (i % nullModB == 0) {
-                    auxMemB.putLong(dataMemB.putStr(null));
-                } else {
-                    sink.clear();
-                    sink.repeat("b", len);
-                    auxMemB.putLong(dataMemB.putStr(sink));
-                }
-                index.add(i * 2); // rowA synthetic timestamp
-                index.add(i); // rowA index
-
-                index.add(i * 2 + 1); // rowB synthetic timestamp
-                index.add(i | 1L << 63); // rowB index
-            }
-
-            String[] strings = strColAsStringArray(dataMemA, auxMemA, rowCount);
-            for (int i = 0; i < rowCount; i++) {
-                if (i % nullModA == 0) {
-                    Assert.assertNull(strings[i]);
-                } else {
-                    sink.clear();
-                    sink.repeat("a", i % maxLen);
-                    TestUtils.assertEquals(sink, strings[i]);
-                }
-            }
-
-            strings = strColAsStringArray(dataMemB, auxMemB, rowCount);
-            for (int i = 0; i < rowCount; i++) {
-                if (i % nullModB == 0) {
-                    Assert.assertNull(strings[i]);
-                } else {
-                    sink.clear();
-                    sink.repeat("b", i % maxLen);
-                    TestUtils.assertEquals(sink, strings[i]);
-                }
-            }
-
-            try (Path dataPathDest = new Path().of(temp.newFile().getAbsolutePath()).$();
-                 Path auxPathDest = new Path().of(temp.newFile().getAbsolutePath()).$();
-                 MemoryCMARW dataMemDest = new MemoryCMARWImpl(ff, dataPathDest, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
-                 MemoryCMARW auxMemDest = new MemoryCMARWImpl(ff, auxPathDest, pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE)) {
-
-                auxMemDest.extend(2 * rowCount * 8L + 8L);
-                dataMemDest.extend(dataMemA.getAppendOffset() + dataMemB.getAppendOffset());
-
-                Vect.oooMergeCopyStrColumn(index.getAddress(), 2 * rowCount,
-                        auxMemA.addressOf(0), dataMemA.addressOf(0),
-                        auxMemB.addressOf(0), dataMemB.addressOf(0),
-                        auxMemDest.addressOf(0), dataMemDest.addressOf(0),
-                        0);
-
-
-                strings = strColAsStringArray(dataMemDest, auxMemDest, rowCount * 2);
-                for (int i = 0; i < rowCount; i++) {
-                    if (i % nullModB == 0) {
-                        Assert.assertNull(strings[i * 2]);
-                    } else {
-                        sink.clear();
-                        sink.repeat("b", i % maxLen);
-                        TestUtils.assertEquals(sink, strings[i * 2]);
-                    }
-
-                    if (i % nullModA == 0) {
-                        Assert.assertNull(strings[i * 2 + 1]);
-                    } else {
-                        sink.clear();
-                        sink.repeat("a", i % maxLen);
-                        TestUtils.assertEquals(sink, strings[i * 2 + 1]);
-                    }
-                }
-            }
-        }
-    }
-
-    private String[] strColAsStringArray(MemoryCMARW dataMemA, MemoryCMARW auxMemA, int rowCount) {
-        String[] strings = new String[rowCount];
-        for (int i = 0; i < rowCount; i++) {
-            CharSequence cs = dataMemA.getStrA(auxMemA.getLong(i * 8L));
-            strings[i] = Chars.toString(cs);
-        }
-        return strings;
-    }
-
-    private String[] varcharColAsStringArray(MemoryCMARW dataMemA, MemoryCMARW auxMemA, int rowCount) {
-        String[] strings = new String[rowCount];
-        StringSink sink = new StringSink();
-        for (int i = 0; i < rowCount; i++) {
-            Utf8Sequence utf8Sequence = VarcharTypeDriver.getValue(i, dataMemA, auxMemA, 1);
-            if (utf8Sequence == null) {
-                strings[i] = null;
-            } else {
-                sink.clear();
-                sink.put(utf8Sequence);
-                strings[i] = Chars.toString(sink);
-            }
-        }
-        return strings;
     }
 
     @Test
@@ -1047,6 +814,215 @@ public class VectTest {
     }
 
     @Test
+    public void testOooMergeCopyStrColumn() throws Exception {
+        int rowCount = 10_000;
+        FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+        long pageSize = Files.PAGE_SIZE;
+        try (Path dataPathA = new Path().of(temp.newFile().getAbsolutePath());
+             Path auxPathA = new Path().of(temp.newFile().getAbsolutePath());
+             Path dataPathB = new Path().of(temp.newFile().getAbsolutePath());
+             Path auxPathB = new Path().of(temp.newFile().getAbsolutePath());
+             DirectLongList index = new DirectLongList(rowCount * 4, MemoryTag.NATIVE_DEFAULT);
+             MemoryCMARW dataMemA = new MemoryCMARWImpl(ff, dataPathA.$(), pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
+             MemoryCMARW auxMemA = new MemoryCMARWImpl(ff, auxPathA.$(), pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
+             MemoryCMARW dataMemB = new MemoryCMARWImpl(ff, dataPathB.$(), pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
+             MemoryCMARW auxMemB = new MemoryCMARWImpl(ff, auxPathB.$(), pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE)) {
+            auxMemA.putLong(0);
+            auxMemB.putLong(0);
+
+            StringSink sink = new StringSink();
+            int maxLen = 50; // exclusive
+            int nullModA = 17;
+            int nullModB = 23;
+            for (int i = 0; i < rowCount; i++) {
+                int len = i % maxLen;
+
+                if (i % nullModA == 0) {
+                    auxMemA.putLong(dataMemA.putStr(null));
+                } else {
+                    sink.clear();
+                    sink.repeat("a", len);
+                    auxMemA.putLong(dataMemA.putStr(sink));
+                }
+
+                if (i % nullModB == 0) {
+                    auxMemB.putLong(dataMemB.putStr(null));
+                } else {
+                    sink.clear();
+                    sink.repeat("b", len);
+                    auxMemB.putLong(dataMemB.putStr(sink));
+                }
+                index.add(i * 2); // rowA synthetic timestamp
+                index.add(i); // rowA index
+
+                index.add(i * 2 + 1); // rowB synthetic timestamp
+                index.add(i | 1L << 63); // rowB index
+            }
+
+            String[] strings = strColAsStringArray(dataMemA, auxMemA, rowCount);
+            for (int i = 0; i < rowCount; i++) {
+                if (i % nullModA == 0) {
+                    Assert.assertNull(strings[i]);
+                } else {
+                    sink.clear();
+                    sink.repeat("a", i % maxLen);
+                    TestUtils.assertEquals(sink, strings[i]);
+                }
+            }
+
+            strings = strColAsStringArray(dataMemB, auxMemB, rowCount);
+            for (int i = 0; i < rowCount; i++) {
+                if (i % nullModB == 0) {
+                    Assert.assertNull(strings[i]);
+                } else {
+                    sink.clear();
+                    sink.repeat("b", i % maxLen);
+                    TestUtils.assertEquals(sink, strings[i]);
+                }
+            }
+
+            try (Path dataPathDest = new Path().of(temp.newFile().getAbsolutePath());
+                 Path auxPathDest = new Path().of(temp.newFile().getAbsolutePath());
+                 MemoryCMARW dataMemDest = new MemoryCMARWImpl(ff, dataPathDest.$(), pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
+                 MemoryCMARW auxMemDest = new MemoryCMARWImpl(ff, auxPathDest.$(), pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE)) {
+
+                auxMemDest.extend(2 * rowCount * 8L + 8L);
+                dataMemDest.extend(dataMemA.getAppendOffset() + dataMemB.getAppendOffset());
+
+                Vect.oooMergeCopyStrColumn(index.getAddress(), 2 * rowCount,
+                        auxMemA.addressOf(0), dataMemA.addressOf(0),
+                        auxMemB.addressOf(0), dataMemB.addressOf(0),
+                        auxMemDest.addressOf(0), dataMemDest.addressOf(0),
+                        0);
+
+
+                strings = strColAsStringArray(dataMemDest, auxMemDest, rowCount * 2);
+                for (int i = 0; i < rowCount; i++) {
+                    if (i % nullModB == 0) {
+                        Assert.assertNull(strings[i * 2]);
+                    } else {
+                        sink.clear();
+                        sink.repeat("b", i % maxLen);
+                        TestUtils.assertEquals(sink, strings[i * 2]);
+                    }
+
+                    if (i % nullModA == 0) {
+                        Assert.assertNull(strings[i * 2 + 1]);
+                    } else {
+                        sink.clear();
+                        sink.repeat("a", i % maxLen);
+                        TestUtils.assertEquals(sink, strings[i * 2 + 1]);
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testOooMergeCopyVarcharColumn() throws Exception {
+        // todo: shuffle vectors
+        int rowCount = 10_000;
+        FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+        long pageSize = Files.PAGE_SIZE;
+        try (Path dataPathA = new Path().of(temp.newFile().getAbsolutePath());
+             Path auxPathA = new Path().of(temp.newFile().getAbsolutePath());
+             Path dataPathB = new Path().of(temp.newFile().getAbsolutePath());
+             Path auxPathB = new Path().of(temp.newFile().getAbsolutePath());
+             DirectLongList index = new DirectLongList(rowCount * 4, MemoryTag.NATIVE_DEFAULT);
+             MemoryCMARW dataMemA = new MemoryCMARWImpl(ff, dataPathA.$(), pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
+             MemoryCMARW auxMemA = new MemoryCMARWImpl(ff, auxPathA.$(), pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
+             MemoryCMARW dataMemB = new MemoryCMARWImpl(ff, dataPathB.$(), pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
+             MemoryCMARW auxMemB = new MemoryCMARWImpl(ff, auxPathB.$(), pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE)) {
+
+            StringSink sink = new StringSink();
+            Utf8StringSink utf8Sink = new Utf8StringSink();
+            int maxLen = 50; // exclusive
+            int nullModA = 17;
+            int nullModB = 23;
+            for (int i = 0; i < rowCount; i++) {
+                int len = i % maxLen;
+
+                if (i % nullModA == 0) {
+                    VarcharTypeDriver.appendValue(auxMemA, dataMemA, null);
+                } else {
+                    utf8Sink.clear();
+                    utf8Sink.repeat('a', len);
+                    VarcharTypeDriver.appendValue(auxMemA, dataMemA, utf8Sink);
+                }
+
+                if (i % nullModB == 0) {
+                    VarcharTypeDriver.appendValue(auxMemB, dataMemB, null);
+                } else {
+                    utf8Sink.clear();
+                    utf8Sink.repeat('b', len);
+                    VarcharTypeDriver.appendValue(auxMemB, dataMemB, utf8Sink);
+                }
+                index.add(i * 2); // rowA synthetic timestamp
+                index.add(i); // rowA index
+
+                index.add(i * 2 + 1); // rowB synthetic timestamp
+                index.add(i | 1L << 63); // rowB index
+            }
+
+            String[] strings = varcharColAsStringArray(dataMemA, auxMemA, rowCount);
+            for (int i = 0; i < rowCount; i++) {
+                if (i % nullModA == 0) {
+                    Assert.assertNull(strings[i]);
+                } else {
+                    sink.clear();
+                    sink.repeat("a", i % maxLen);
+                    TestUtils.assertEquals(sink, strings[i]);
+                }
+            }
+
+            strings = varcharColAsStringArray(dataMemB, auxMemB, rowCount);
+            for (int i = 0; i < rowCount; i++) {
+                if (i % nullModB == 0) {
+                    Assert.assertNull(strings[i]);
+                } else {
+                    sink.clear();
+                    sink.repeat("b", i % maxLen);
+                    TestUtils.assertEquals(sink, strings[i]);
+                }
+            }
+
+            try (Path dataPathDest = new Path().of(temp.newFile().getAbsolutePath());
+                 Path auxPathDest = new Path().of(temp.newFile().getAbsolutePath());
+                 MemoryCMARW dataMemDest = new MemoryCMARWImpl(ff, dataPathDest.$(), pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE);
+                 MemoryCMARW auxMemDest = new MemoryCMARWImpl(ff, auxPathDest.$(), pageSize, -1, MemoryTag.NATIVE_DEFAULT, CairoConfiguration.O_NONE)) {
+
+                auxMemDest.extend(2 * rowCount * 16L);
+                dataMemDest.extend(dataMemA.getAppendOffset() + dataMemB.getAppendOffset());
+
+                Vect.oooMergeCopyVarcharColumn(index.getAddress(), 2 * rowCount,
+                        auxMemA.addressOf(0), dataMemA.addressOf(0),
+                        auxMemB.addressOf(0), dataMemB.addressOf(0),
+                        auxMemDest.addressOf(0), dataMemDest.addressOf(0),
+                        0);
+
+                strings = varcharColAsStringArray(dataMemDest, auxMemDest, rowCount * 2);
+                for (int i = 0; i < rowCount; i++) {
+                    if (i % nullModB == 0) {
+                        Assert.assertNull(strings[i * 2]);
+                    } else {
+                        sink.clear();
+                        sink.repeat("b", i % maxLen);
+                        TestUtils.assertEquals(sink, strings[i * 2]);
+                    }
+
+                    if (i % nullModA == 0) {
+                        Assert.assertNull(strings[i * 2 + 1]);
+                    } else {
+                        sink.clear();
+                        sink.repeat("a", i % maxLen);
+                        TestUtils.assertEquals(sink, strings[i * 2 + 1]);
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
     public void testQuickSort1M() {
         rnd = TestUtils.generateRandom(null);
         testQuickSort(1_000_000);
@@ -1379,6 +1355,15 @@ public class VectTest {
         }
     }
 
+    private String[] strColAsStringArray(MemoryCMARW dataMemA, MemoryCMARW auxMemA, int rowCount) {
+        String[] strings = new String[rowCount];
+        for (int i = 0; i < rowCount; i++) {
+            CharSequence cs = dataMemA.getStrA(auxMemA.getLong(i * 8L));
+            strings[i] = Chars.toString(cs);
+        }
+        return strings;
+    }
+
     private void testQuickSort(int count) {
         final int size = count * 2 * Long.BYTES;
         final long indexAddr = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
@@ -1430,6 +1415,21 @@ public class VectTest {
         }
     }
 
+    private String[] varcharColAsStringArray(MemoryCMARW dataMemA, MemoryCMARW auxMemA, int rowCount) {
+        String[] strings = new String[rowCount];
+        StringSink sink = new StringSink();
+        for (int i = 0; i < rowCount; i++) {
+            Utf8Sequence utf8Sequence = VarcharTypeDriver.getSplitValue(auxMemA, dataMemA, i, 1);
+            if (utf8Sequence == null) {
+                strings[i] = null;
+            } else {
+                sink.clear();
+                sink.put(utf8Sequence);
+                strings[i] = Chars.toString(sink);
+            }
+        }
+        return strings;
+    }
 
     static {
         Os.init();

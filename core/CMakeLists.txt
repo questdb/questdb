@@ -78,6 +78,9 @@ set(
         src/main/c/share/dedup.cpp
         src/main/c/share/byte_sink.cpp
         src/main/c/share/byte_sink.h
+        src/main/c/share/converters.cpp
+        src/main/c/share/converters.h
+        src/main/c/share/json.cpp
 )
 
 # JNI includes
@@ -85,11 +88,6 @@ include_directories($ENV{JAVA_HOME}/include/)
 
 if (OS_DARWIN)
     include_directories($ENV{JAVA_HOME}/include/darwin/)
-    if (ARCH_AARCH64)
-        set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/armosx)
-    else ()
-        set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/osx)
-    endif ()
     set(
             SOURCE_FILES ${SOURCE_FILES}
             src/main/c/osx/kqueue.c
@@ -101,11 +99,6 @@ if (OS_DARWIN)
 elseif (OS_FREEBSD)
     MESSAGE("Building for FreeBSD")
     include_directories($ENV{JAVA_HOME}/include/freebsd/)
-    if (ARCH_AARCH64)
-        set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/armfreebsd)
-    else ()
-        set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/freebsd)
-    endif ()
     set(
             SOURCE_FILES ${SOURCE_FILES}
             src/main/c/freebsd/kqueue.c
@@ -117,11 +110,6 @@ elseif (OS_FREEBSD)
 elseif (OS_LINUX)
     MESSAGE("Building for GNU/Linux")
     include_directories($ENV{JAVA_HOME}/include/linux/)
-    if (ARCH_AARCH64)
-        set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/armlinux)
-    else ()
-        set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/linux)
-    endif ()
     set(
             SOURCE_FILES ${SOURCE_FILES}
             src/main/c/share/net.c
@@ -131,12 +119,12 @@ elseif (OS_LINUX)
             src/main/c/linux/accept.c
             src/main/c/linux/files.c
             src/main/c/linux/io_uring.c
+            src/main/c/linux/inotify.c
     )
 endif ()
 
 if (OS_WINDOWS)
     include_directories($ENV{JAVA_HOME}/include/win32/)
-    set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/windows)
     set(
             SOURCE_FILES ${SOURCE_FILES}
             src/main/c/windows/files.c
@@ -149,6 +137,7 @@ if (OS_WINDOWS)
             src/main/c/windows/timer.c
             src/main/c/windows/timer.h
             src/main/c/windows/accept.c
+            src/main/c/windows/filewatch.c
             src/main/c/share/fs.h
     )
 else ()
@@ -158,6 +147,8 @@ else ()
             src/main/c/share/os.c
     )
 endif ()
+
+set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/target/classes/io/questdb/bin-local/)
 
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${OUTPUT})
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${OUTPUT})
@@ -339,16 +330,19 @@ else ()
     )
 endif (ARCH_AARCH64)
 
-#jemalloc
-
-include(${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/jemalloc-cmake/CMakeLists.txt)
+#simdjson
+set(SIMDJSON_ENABLE_THREADS OFF CACHE BOOL "Link with thread support" FORCE)
+include(${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/simdjson-cmake/CMakeLists.txt)
 
 if (OS_WINDOWS)
-    target_link_libraries(questdb wsock32 ws2_32 secur32 shlwapi psapi -s -static-libgcc)
+    target_link_libraries(questdb wsock32 ws2_32 secur32 shlwapi psapi -s -static-libgcc -static-libstdc++ _simdjson)
     target_compile_options(questdb PRIVATE -fno-threadsafe-statics)
 elseif (OS_DARWIN)
-    target_link_libraries(questdb -nostdlib++ -dead_strip -lc++ _jemalloc)
+    target_link_libraries(questdb -nostdlib++ -dead_strip -lc++ _simdjson)
 else ()
     target_compile_options(questdb PRIVATE -fno-threadsafe-statics -ffunction-sections -fdata-sections)
-    target_link_libraries(questdb rt -Wl,--gc-sections -Wl,--exclude-libs=ALL -static-libgcc _jemalloc)
+    target_link_libraries(questdb rt -Wl,--gc-sections -Wl,--exclude-libs=ALL -static-libgcc _simdjson)
 endif ()
+
+#jemalloc
+include(${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/jemalloc-cmake/CMakeLists.txt)

@@ -35,7 +35,6 @@ import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
@@ -44,6 +43,30 @@ import org.jetbrains.annotations.Nullable;
 public class LPadVarcharVarcharFunctionFactory implements FunctionFactory {
 
     private static final String SIGNATURE = "lpad(ØIØ)";
+
+    @Override
+    public String getSignature() {
+        return SIGNATURE;
+    }
+
+    @Override
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions,
+                                CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        final Function strFunc = args.getQuick(0);
+        final Function lenFunc = args.getQuick(1);
+        final Function fillTextFunc = args.getQuick(2);
+        final int maxLength = configuration.getStrFunctionMaxBufferLength();
+
+        if (strFunc.isConstant() && !fillTextFunc.isConstant()) {
+            return new LPadVarcharFuncStrConst(strFunc, lenFunc, fillTextFunc, maxLength);
+        }
+
+        if (!strFunc.isConstant() && fillTextFunc.isConstant()) {
+            return new LPadVarcharFuncFillTextConst(strFunc, lenFunc, fillTextFunc, maxLength);
+        }
+
+        return new LPadVarcharFunc(strFunc, lenFunc, fillTextFunc, maxLength);
+    }
 
     private static Utf8StringSink lPadVarchar0(
             Utf8Sequence str,
@@ -74,32 +97,7 @@ public class LPadVarcharVarcharFunctionFactory implements FunctionFactory {
         return sink;
     }
 
-    @Override
-    public String getSignature() {
-        return SIGNATURE;
-    }
-
-    @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions,
-                                CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        final Function strFunc = args.getQuick(0);
-        final Function lenFunc = args.getQuick(1);
-        final Function fillTextFunc = args.getQuick(2);
-        final int maxLength = configuration.getStrFunctionMaxBufferLength();
-
-        if (strFunc.isConstant() && !fillTextFunc.isConstant()) {
-            return new LPadVarcharFuncStrConst(strFunc, lenFunc, fillTextFunc, maxLength);
-        }
-
-        if (!strFunc.isConstant() && fillTextFunc.isConstant()) {
-            return new LPadVarcharFuncFillTextConst(strFunc, lenFunc, fillTextFunc, maxLength);
-        }
-
-        return new LPadVarcharFunc(strFunc, lenFunc, fillTextFunc, maxLength);
-    }
-
     public static class LPadVarcharFunc extends VarcharFunction implements TernaryFunction {
-
         protected final Function fillTextFunc;
         protected final Function lenFunc;
         protected final int maxLength;
@@ -140,13 +138,13 @@ public class LPadVarcharVarcharFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-            utf8Sink.put(lPadVarchar(strFunc.getVarcharA(rec), lenFunc.getInt(rec), fillTextFunc.getVarcharA(rec), sinkA));
+        public Utf8Sequence getVarcharB(final Record rec) {
+            return lPadVarchar(strFunc.getVarcharB(rec), lenFunc.getInt(rec), fillTextFunc.getVarcharB(rec), sinkB);
         }
 
         @Override
-        public Utf8Sequence getVarcharB(final Record rec) {
-            return lPadVarchar(strFunc.getVarcharB(rec), lenFunc.getInt(rec), fillTextFunc.getVarcharB(rec), sinkB);
+        public boolean isReadThreadSafe() {
+            return false;
         }
 
         @Nullable
@@ -176,11 +174,6 @@ public class LPadVarcharVarcharFunctionFactory implements FunctionFactory {
         @Override
         public Utf8Sequence getVarcharA(final Record rec) {
             return lPadVarchar(strFunc.getVarcharA(rec), lenFunc.getInt(rec), sinkA);
-        }
-
-        @Override
-        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-            utf8Sink.put(lPadVarchar(strFunc.getVarcharA(rec), lenFunc.getInt(rec), sinkA));
         }
 
         @Override
@@ -215,11 +208,6 @@ public class LPadVarcharVarcharFunctionFactory implements FunctionFactory {
         @Override
         public Utf8Sequence getVarcharA(final Record rec) {
             return lPadVarchar(fillTextFunc.getVarcharA(rec), lenFunc.getInt(rec), sinkA);
-        }
-
-        @Override
-        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-            utf8Sink.put(lPadVarchar(fillTextFunc.getVarcharA(rec), lenFunc.getInt(rec), sinkA));
         }
 
         @Override

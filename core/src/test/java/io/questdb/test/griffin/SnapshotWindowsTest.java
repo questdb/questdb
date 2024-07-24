@@ -65,7 +65,7 @@ public class SnapshotWindowsTest extends AbstractCairoTest {
     public void tearDown() throws Exception {
         super.tearDown();
         path.trimTo(rootLen);
-        configuration.getFilesFacade().rmdir(path.slash$());
+        configuration.getFilesFacade().rmdir(path.slash());
     }
 
     @Test
@@ -73,7 +73,7 @@ public class SnapshotWindowsTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table test (ts timestamp, name symbol, val int)");
             try {
-                assertException("snapshot prepare");
+                assertExceptionNoLeakCheck("snapshot prepare");
             } catch (SqlException ex) {
                 Assert.assertTrue(ex.getMessage().startsWith("[0] Snapshots are not supported on Windows"));
             }

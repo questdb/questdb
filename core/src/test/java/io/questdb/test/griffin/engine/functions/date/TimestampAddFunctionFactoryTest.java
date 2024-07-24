@@ -25,42 +25,41 @@
 package io.questdb.test.griffin.engine.functions.date;
 
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.date.TimestampAddFunctionFactory;
 import io.questdb.std.Numbers;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
 public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
 
     @Test
-    public void testCenterEmptyChar() throws SqlException {
-        call(Character.MIN_VALUE, 5, 1587275359886758L).andAssert(Double.NaN, 0.0001);
+    public void testCenterEmptyChar() throws Exception {
+        assertMemoryLeak(() -> call(Character.MIN_VALUE, 5, 1587275359886758L).andAssert(Double.NaN, 0.0001));
     }
 
     @Test
-    public void testDaySimple() throws SqlException {
-        call('d', 5, 1587275359886758L).andAssert(1587707359886758L, 0.0001);
+    public void testDaySimple() throws Exception {
+        assertMemoryLeak(() -> call('d', 5, 1587275359886758L).andAssert(1587707359886758L, 0.0001));
     }
 
     @Test
-    public void testDaySimpleNeg() throws SqlException {
-        call('d', -5, 1587275359886758L).andAssert(1586843359886758L, 0.0001);
+    public void testDaySimpleNeg() throws Exception {
+        assertMemoryLeak(() -> call('d', -5, 1587275359886758L).andAssert(1586843359886758L, 0.0001));
     }
 
     @Test
-    public void testHourSimple() throws SqlException {
-        call('h', 5, 1587275359886758L).andAssert(1587293359886758L, 0.0001);
+    public void testHourSimple() throws Exception {
+        assertMemoryLeak(() -> call('h', 5, 1587275359886758L).andAssert(1587293359886758L, 0.0001));
     }
 
     @Test
-    public void testHourSimpleNeg() throws SqlException {
-        call('h', -5, 1587275359886758L).andAssert(1587257359886758L, 0.0001);
+    public void testHourSimpleNeg() throws Exception {
+        assertMemoryLeak(() -> call('h', -5, 1587275359886758L).andAssert(1587257359886758L, 0.0001));
     }
 
     @Test
-    public void testIntervalConstantPeriodVariableDayLeftNaN() throws SqlException {
+    public void testIntervalConstantPeriodVariableDayLeftNaN() throws Exception {
         assertQuery(
                 "dateadd\n" +
                         "\n" +
@@ -73,7 +72,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
     }
 
     @Test
-    public void testIntervalConstantPeriodVariableDayRightNaN() throws SqlException {
+    public void testIntervalConstantPeriodVariableDayRightNaN() throws Exception {
         assertQuery(
                 "dateadd\n" +
                         "2020-04-20T05:49:19.886758Z\n" +
@@ -86,7 +85,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
     }
 
     @Test
-    public void testIntervalConstantPeriodVariableHourLeftNaN() throws SqlException {
+    public void testIntervalConstantPeriodVariableHourLeftNaN() throws Exception {
         assertQuery(
                 "dateadd\n" +
                         "\n" +
@@ -99,7 +98,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
     }
 
     @Test
-    public void testIntervalConstantPeriodVariableHourRightNaN() throws SqlException {
+    public void testIntervalConstantPeriodVariableHourRightNaN() throws Exception {
         assertQuery(
                 "dateadd\n" +
                         "2020-04-19T06:49:19.886758Z\n" +
@@ -112,7 +111,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
     }
 
     @Test
-    public void testIntervalConstantPeriodVariableMinuteLeftNaN() throws SqlException {
+    public void testIntervalConstantPeriodVariableMinuteLeftNaN() throws Exception {
         assertQuery(
                 "dateadd\n" +
                         "\n" +
@@ -125,7 +124,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
     }
 
     @Test
-    public void testIntervalConstantPeriodVariableMinuteRightNaN() throws SqlException {
+    public void testIntervalConstantPeriodVariableMinuteRightNaN() throws Exception {
         assertQuery(
                 "dateadd\n" +
                         "2020-04-19T05:50:19.886758Z\n" +
@@ -138,7 +137,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
     }
 
     @Test
-    public void testIntervalConstantPeriodVariableMonthLeftNaN() throws SqlException {
+    public void testIntervalConstantPeriodVariableMonthLeftNaN() throws Exception {
         assertQuery(
                 "dateadd\n" +
                         "\n" +
@@ -151,7 +150,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
     }
 
     @Test
-    public void testIntervalConstantPeriodVariableMonthRightNaN() throws SqlException {
+    public void testIntervalConstantPeriodVariableMonthRightNaN() throws Exception {
         assertQuery(
                 "dateadd\n" +
                         "2020-05-19T05:49:19.886758Z\n" +
@@ -164,7 +163,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
     }
 
     @Test
-    public void testIntervalConstantPeriodVariableSecondLeftNaN() throws SqlException {
+    public void testIntervalConstantPeriodVariableSecondLeftNaN() throws Exception {
         assertQuery(
                 "dateadd\n" +
                         "\n" +
@@ -177,7 +176,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
     }
 
     @Test
-    public void testIntervalConstantPeriodVariableSecondRightNaN() throws SqlException {
+    public void testIntervalConstantPeriodVariableSecondRightNaN() throws Exception {
         assertQuery(
                 "dateadd\n" +
                         "2020-04-19T05:49:20.886758Z\n" +
@@ -190,7 +189,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
     }
 
     @Test
-    public void testIntervalConstantPeriodVariableWeekLeftNaN() throws SqlException {
+    public void testIntervalConstantPeriodVariableWeekLeftNaN() throws Exception {
         assertQuery(
                 "dateadd\n" +
                         "\n" +
@@ -203,7 +202,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
     }
 
     @Test
-    public void testIntervalConstantPeriodVariableWeekRightNaN() throws SqlException {
+    public void testIntervalConstantPeriodVariableWeekRightNaN() throws Exception {
         assertQuery(
                 "dateadd\n" +
                         "2020-04-26T05:49:19.886758Z\n" +
@@ -216,7 +215,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
     }
 
     @Test
-    public void testIntervalConstantPeriodVariableYearLeftNaN() throws SqlException {
+    public void testIntervalConstantPeriodVariableYearLeftNaN() throws Exception {
         assertQuery(
                 "dateadd\n" +
                         "\n" +
@@ -229,7 +228,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
     }
 
     @Test
-    public void testIntervalConstantPeriodVariableYearRightNaN() throws SqlException {
+    public void testIntervalConstantPeriodVariableYearRightNaN() throws Exception {
         assertQuery(
                 "dateadd\n" +
                         "2021-04-19T05:49:19.886758Z\n" +
@@ -242,178 +241,177 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
     }
 
     @Test
-    public void testLeftNaNDay() throws SqlException {
-        call('d', 5, Numbers.LONG_NULL).andAssert(Double.NaN, 0.0001);
+    public void testLeftNaNDay() throws Exception {
+        assertMemoryLeak(() -> call('d', 5, Numbers.LONG_NULL).andAssert(Double.NaN, 0.0001));
     }
 
     @Test
-    public void testLeftNaNHour() throws SqlException {
-        call('h', 5, Numbers.LONG_NULL).andAssert(Double.NaN, 0.0001);
+    public void testLeftNaNHour() throws Exception {
+        assertMemoryLeak(() -> call('h', 5, Numbers.LONG_NULL).andAssert(Double.NaN, 0.0001));
     }
 
     @Test
-    public void testLeftNaNMinute() throws SqlException {
-        call('m', 5, Numbers.LONG_NULL).andAssert(Double.NaN, 0.0001);
+    public void testLeftNaNMicro() throws Exception {
+        assertMemoryLeak(() -> call('u', 5, Numbers.LONG_NULL).andAssert(Double.NaN, 0.0001));
     }
 
     @Test
-    public void testLeftNaNMonth() throws SqlException {
-        call('M', 5, Numbers.LONG_NULL).andAssert(Double.NaN, 0.0001);
+    public void testLeftNaNMilli() throws Exception {
+        assertMemoryLeak(() -> call('T', 5, Numbers.LONG_NULL).andAssert(Double.NaN, 0.0001));
     }
 
     @Test
-    public void testLeftNaNSecond() throws SqlException {
-        call('s', 5, Numbers.LONG_NULL).andAssert(Double.NaN, 0.0001);
+    public void testLeftNaNMinute() throws Exception {
+        assertMemoryLeak(() -> call('m', 5, Numbers.LONG_NULL).andAssert(Double.NaN, 0.0001));
     }
 
     @Test
-    public void testLeftNaNMilli() throws SqlException {
-        call('T', 5, Numbers.LONG_NULL).andAssert(Double.NaN, 0.0001);
+    public void testLeftNaNMonth() throws Exception {
+        assertMemoryLeak(() -> call('M', 5, Numbers.LONG_NULL).andAssert(Double.NaN, 0.0001));
     }
 
     @Test
-    public void testLeftNaNMicro() throws SqlException {
-        call('u', 5, Numbers.LONG_NULL).andAssert(Double.NaN, 0.0001);
+    public void testLeftNaNSecond() throws Exception {
+        assertMemoryLeak(() -> call('s', 5, Numbers.LONG_NULL).andAssert(Double.NaN, 0.0001));
     }
 
     @Test
-    public void testLeftNaNWeek() throws SqlException {
-        call('w', 5, Numbers.LONG_NULL).andAssert(Double.NaN, 0.0001);
+    public void testLeftNaNWeek() throws Exception {
+        assertMemoryLeak(() -> call('w', 5, Numbers.LONG_NULL).andAssert(Double.NaN, 0.0001));
     }
 
     @Test
-    public void testLeftNaNYear() throws SqlException {
-        call('y', 5, Numbers.LONG_NULL).andAssert(Double.NaN, 0.0001);
+    public void testLeftNaNYear() throws Exception {
+        assertMemoryLeak(() -> call('y', 5, Numbers.LONG_NULL).andAssert(Double.NaN, 0.0001));
     }
 
     @Test
-    public void testLeftNan() throws SqlException {
-        call('d', 5, Numbers.LONG_NULL).andAssert(Double.NaN, 0.0001);
+    public void testLeftNan() throws Exception {
+        assertMemoryLeak(() -> call('d', 5, Numbers.LONG_NULL).andAssert(Double.NaN, 0.0001));
     }
 
     @Test
-    public void testMinuteSimple() throws SqlException {
-        call('m', 5, 1587275359886758L).andAssert(1587275659886758L, 0.0001);
+    public void testMicroSimple() throws Exception {
+        assertMemoryLeak(() -> call('u', 5, 1587275359886758L).andAssert(1587275359886763L, 0.0001));
     }
 
     @Test
-    public void testMinuteSimpleNeg() throws SqlException {
-        call('m', -5, 1587275359886758L).andAssert(1587275059886758L, 0.0001);
+    public void testMicroSimpleNeg() throws Exception {
+        assertMemoryLeak(() -> call('u', -5, 1587275359886758L).andAssert(1587275359886753L, 0.0001));
     }
 
     @Test
-    public void testMonthSimple() throws SqlException {
-        call('M', 5, 1587275359886758L).andAssert(1600494559886758L, 0.0001);
+    public void testMilliSimple() throws Exception {
+        assertMemoryLeak(() -> call('T', 5, 1587275359886758L).andAssert(1587275359891758L, 0.0001));
     }
 
     @Test
-    public void testMonthSimpleNeg() throws SqlException {
-        call('M', -5, 1587275359886758L).andAssert(1574142559886758L, 0.0001);
+    public void testMilliSimpleNeg() throws Exception {
+        assertMemoryLeak(() -> call('T', -5, 1587275359886758L).andAssert(1587275359881758L, 0.0001));
     }
 
     @Test
-    public void testRightNaNDay() throws SqlException {
-        call('d', Numbers.INT_NULL, 1587275359886758L).andAssert(Double.NaN, 0.0001);
+    public void testMinuteSimple() throws Exception {
+        assertMemoryLeak(() -> call('m', 5, 1587275359886758L).andAssert(1587275659886758L, 0.0001));
     }
 
     @Test
-    public void testRightNaNHour() throws SqlException {
-        call('h', Numbers.INT_NULL, 1587275359886758L).andAssert(Double.NaN, 0.0001);
+    public void testMinuteSimpleNeg() throws Exception {
+        assertMemoryLeak(() -> call('m', -5, 1587275359886758L).andAssert(1587275059886758L, 0.0001));
     }
 
     @Test
-    public void testRightNaNMinute() throws SqlException {
-        call('m', Numbers.INT_NULL, 1587275359886758L).andAssert(Double.NaN, 0.0001);
+    public void testMonthSimple() throws Exception {
+        assertMemoryLeak(() -> call('M', 5, 1587275359886758L).andAssert(1600494559886758L, 0.0001));
     }
 
     @Test
-    public void testRightNaNMonth() throws SqlException {
-        call('M', Numbers.INT_NULL, 1587275359886758L).andAssert(Double.NaN, 0.0001);
+    public void testMonthSimpleNeg() throws Exception {
+        assertMemoryLeak(() -> call('M', -5, 1587275359886758L).andAssert(1574142559886758L, 0.0001));
     }
 
     @Test
-    public void testRightNaNSecond() throws SqlException {
-        call('s', Numbers.INT_NULL, 1587275359886758L).andAssert(Double.NaN, 0.0001);
+    public void testRightNaNDay() throws Exception {
+        assertMemoryLeak(() -> call('d', Numbers.INT_NULL, 1587275359886758L).andAssert(Double.NaN, 0.0001));
     }
 
     @Test
-    public void testRightNaNMilli() throws SqlException {
-        call('T', Numbers.INT_NULL, 1587275359886758L).andAssert(Double.NaN, 0.0001);
+    public void testRightNaNHour() throws Exception {
+        assertMemoryLeak(() -> call('h', Numbers.INT_NULL, 1587275359886758L).andAssert(Double.NaN, 0.0001));
     }
 
     @Test
-    public void testRightNaNMicro() throws SqlException {
-        call('u', Numbers.INT_NULL, 1587275359886758L).andAssert(Double.NaN, 0.0001);
+    public void testRightNaNMicro() throws Exception {
+        assertMemoryLeak(() -> call('u', Numbers.INT_NULL, 1587275359886758L).andAssert(Double.NaN, 0.0001));
     }
 
     @Test
-    public void testRightNaNWeek() throws SqlException {
-        call('w', Numbers.INT_NULL, 1587275359886758L).andAssert(Double.NaN, 0.0001);
+    public void testRightNaNMilli() throws Exception {
+        assertMemoryLeak(() -> call('T', Numbers.INT_NULL, 1587275359886758L).andAssert(Double.NaN, 0.0001));
     }
 
     @Test
-    public void testRightNaNYear() throws SqlException {
-        call('y', Numbers.INT_NULL, 1587275359886758L).andAssert(Double.NaN, 0.0001);
+    public void testRightNaNMinute() throws Exception {
+        assertMemoryLeak(() -> call('m', Numbers.INT_NULL, 1587275359886758L).andAssert(Double.NaN, 0.0001));
     }
 
     @Test
-    public void testSecondSimple() throws SqlException {
-        call('s', 5, 1587275359886758L).andAssert(1587275364886758L, 0.0001);
+    public void testRightNaNMonth() throws Exception {
+        assertMemoryLeak(() -> call('M', Numbers.INT_NULL, 1587275359886758L).andAssert(Double.NaN, 0.0001));
     }
 
     @Test
-    public void testMilliSimple() throws SqlException {
-        call('T', 5, 1587275359886758L).andAssert(1587275359891758L, 0.0001);
+    public void testRightNaNSecond() throws Exception {
+        assertMemoryLeak(() -> call('s', Numbers.INT_NULL, 1587275359886758L).andAssert(Double.NaN, 0.0001));
     }
 
     @Test
-    public void testMicroSimple() throws SqlException {
-        call('u', 5, 1587275359886758L).andAssert(1587275359886763L, 0.0001);
+    public void testRightNaNWeek() throws Exception {
+        assertMemoryLeak(() -> call('w', Numbers.INT_NULL, 1587275359886758L).andAssert(Double.NaN, 0.0001));
     }
 
     @Test
-    public void testSecondSimpleNeg() throws SqlException {
-        call('s', -5, 1587275359886758L).andAssert(1587275354886758L, 0.0001);
+    public void testRightNaNYear() throws Exception {
+        assertMemoryLeak(() -> call('y', Numbers.INT_NULL, 1587275359886758L).andAssert(Double.NaN, 0.0001));
     }
 
     @Test
-    public void testMilliSimpleNeg() throws SqlException {
-        call('T', -5, 1587275359886758L).andAssert(1587275359881758L, 0.0001);
+    public void testSecondSimple() throws Exception {
+        assertMemoryLeak(() -> call('s', 5, 1587275359886758L).andAssert(1587275364886758L, 0.0001));
     }
 
     @Test
-    public void testMicroSimpleNeg() throws SqlException {
-        call('u', -5, 1587275359886758L).andAssert(1587275359886753L, 0.0001);
+    public void testSecondSimpleNeg() throws Exception {
+        assertMemoryLeak(() -> call('s', -5, 1587275359886758L).andAssert(1587275354886758L, 0.0001));
     }
 
     @Test
-    public void testUnknownPeriod() throws SqlException {
-        call('q', 5, 1587275359886758L).andAssert(Double.NaN, 0.0001);
+    public void testUnknownPeriod() throws Exception {
+        assertMemoryLeak(() -> call('q', 5, 1587275359886758L).andAssert(Double.NaN, 0.0001));
     }
 
     @Test
-    public void testWeekSimple() throws SqlException {
-        call('w', 5, 1587275359886758L).andAssert(1590299359886758L, 0.0001);
+    public void testWeekSimple() throws Exception {
+        assertMemoryLeak(() -> call('w', 5, 1587275359886758L).andAssert(1590299359886758L, 0.0001));
     }
 
     @Test
-    public void testWeekSimpleNeg() throws SqlException {
-        call('w', -5, 1587275359886758L).andAssert(1584251359886758L, 0.0001);
+    public void testWeekSimpleNeg() throws Exception {
+        assertMemoryLeak(() -> call('w', -5, 1587275359886758L).andAssert(1584251359886758L, 0.0001));
     }
 
     @Test
-    public void testYearsSimple() throws SqlException {
-        call('y', 5, 1587275359886758L).andAssert(1745041759886758L, 0.0001);
+    public void testYearsSimple() throws Exception {
+        assertMemoryLeak(() -> call('y', 5, 1587275359886758L).andAssert(1745041759886758L, 0.0001));
     }
 
     @Test
-    public void testYearsSimpleNeg() throws SqlException {
-        call('y', -5, 1587275359886758L).andAssert(1429422559886758L, 0.0001);
+    public void testYearsSimpleNeg() throws Exception {
+        assertMemoryLeak(() -> call('y', -5, 1587275359886758L).andAssert(1429422559886758L, 0.0001));
     }
 
     @Override
     protected FunctionFactory getFunctionFactory() {
         return new TimestampAddFunctionFactory();
     }
-
 }

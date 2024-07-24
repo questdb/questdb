@@ -71,33 +71,46 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             int offsetFuncPos,
             int timestampIndex,
             SingleSymbolFilter symbolFilter,
-            int configPageSize
+            int configPageSize,
+            Function sampleFromFunc,
+            int sampleFromFuncPos,
+            Function sampleToFunc,
+            int sampleToFuncPos
     ) throws SqlException {
         super(groupByMetadata);
-        this.base = base;
-        groupBySymbolColIndex = symbolFilter.getColumnIndex();
-        queryToFrameColumnMapping = new int[columns.size()];
-        firstLastIndexByCol = new int[columns.size()];
-        isKeyColumn = new boolean[columns.size()];
-        crossFrameRow = new LongList(columns.size());
-        crossFrameRow.setPos(columns.size());
-        this.timestampIndex = timestampIndex;
-        buildFirstLastIndex(firstLastIndexByCol, queryToFrameColumnMapping, metadata, columns, timestampIndex, isKeyColumn);
-        int blockSize = metadata.getIndexValueBlockCapacity(groupBySymbolColIndex);
-        pageSize = configPageSize < 16 ? Math.max(blockSize, 16) : configPageSize;
-        maxSamplePeriodSize = pageSize * 4;
-        int outSize = pageSize << ITEMS_PER_OUT_ARRAY_SHIFT;
-        rowIdOutAddress = new DirectLongList(outSize, MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST);
-        rowIdOutAddress.setPos(outSize);
-        samplePeriodAddress = new DirectLongList(pageSize, MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST);
-        this.symbolFilter = symbolFilter;
-        sampleByFirstLastRecordCursor = new SampleByFirstLastRecordCursor(
-                timestampSampler,
-                timezoneNameFunc,
-                timezoneNameFuncPos,
-                offsetFunc,
-                offsetFuncPos
-        );
+        try {
+            this.base = base;
+            groupBySymbolColIndex = symbolFilter.getColumnIndex();
+            queryToFrameColumnMapping = new int[columns.size()];
+            firstLastIndexByCol = new int[columns.size()];
+            isKeyColumn = new boolean[columns.size()];
+            crossFrameRow = new LongList(columns.size());
+            crossFrameRow.setPos(columns.size());
+            this.timestampIndex = timestampIndex;
+            buildFirstLastIndex(firstLastIndexByCol, queryToFrameColumnMapping, metadata, columns, timestampIndex, isKeyColumn);
+            int blockSize = metadata.getIndexValueBlockCapacity(groupBySymbolColIndex);
+            pageSize = configPageSize < 16 ? Math.max(blockSize, 16) : configPageSize;
+            maxSamplePeriodSize = pageSize * 4;
+            int outSize = pageSize << ITEMS_PER_OUT_ARRAY_SHIFT;
+            rowIdOutAddress = new DirectLongList(outSize, MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST);
+            rowIdOutAddress.setPos(outSize);
+            samplePeriodAddress = new DirectLongList(pageSize, MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST);
+            this.symbolFilter = symbolFilter;
+            sampleByFirstLastRecordCursor = new SampleByFirstLastRecordCursor(
+                    timestampSampler,
+                    timezoneNameFunc,
+                    timezoneNameFuncPos,
+                    offsetFunc,
+                    offsetFuncPos,
+                    sampleFromFunc,
+                    sampleFromFuncPos,
+                    sampleToFunc,
+                    sampleToFuncPos
+            );
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override
@@ -236,7 +249,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
 
     @Override
     protected void _close() {
-        base.close();
+        Misc.free(base);
         rowIdOutAddress = Misc.free(rowIdOutAddress);
         samplePeriodAddress = Misc.free(samplePeriodAddress);
     }
@@ -276,9 +289,13 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 Function timezoneNameFunc,
                 int timezoneNameFuncPos,
                 Function offsetFunc,
-                int offsetFuncPos
+                int offsetFuncPos,
+                Function sampleFromFunc,
+                int sampleFromFuncPos,
+                Function sampleToFunc,
+                int sampleToFuncPos
         ) {
-            super(timestampSampler, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos);
+            super(timestampSampler, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos, sampleFromFunc, sampleFromFuncPos, sampleToFunc, sampleToFuncPos);
         }
 
         @Override

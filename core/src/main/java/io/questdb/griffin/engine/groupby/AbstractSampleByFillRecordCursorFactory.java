@@ -58,11 +58,16 @@ public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSa
             ObjList<Function> recordFunctions
     ) {
         super(base, groupByMetadata, recordFunctions);
-        this.groupByFunctions = groupByFunctions;
-        // sink will be storing record columns to map key
-        mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, false);
-        // this is the map itself, which we must not forget to free when factory closes
-        map = MapFactory.createOrderedMap(configuration, keyTypes, valueTypes);
+        try {
+            this.groupByFunctions = groupByFunctions;
+            // sink will be storing record columns to map key
+            mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter);
+            // this is the map itself, which we must not forget to free when factory closes
+            map = MapFactory.createOrderedMap(configuration, keyTypes, valueTypes);
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override
@@ -85,6 +90,6 @@ public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSa
     @Override
     protected void _close() {
         super._close();
-        getRawCursor().close();
+        Misc.free(getRawCursor());
     }
 }
