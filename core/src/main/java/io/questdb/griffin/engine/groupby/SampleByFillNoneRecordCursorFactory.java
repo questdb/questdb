@@ -59,7 +59,11 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
             Function offsetFunc,
-            int offsetFuncPos
+            int offsetFuncPos,
+            Function sampleFromFunc,
+            int sampleFromFuncPos,
+            Function sampleToFunc,
+            int sampleToFuncPos
     ) {
         super(base, groupByMetadata, recordFunctions);
         try {
@@ -80,7 +84,11 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
                     timezoneNameFunc,
                     timezoneNameFuncPos,
                     offsetFunc,
-                    offsetFuncPos
+                    offsetFuncPos,
+                    sampleFromFunc,
+                    sampleFromFuncPos,
+                    sampleToFunc,
+                    sampleToFuncPos
             );
         } catch (Throwable th) {
             close();
@@ -106,7 +114,7 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("SampleBy");
+        sink.type("Sample By");
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
         sink.optAttr("values", cursor.groupByFunctions, true);
         sink.child(base);

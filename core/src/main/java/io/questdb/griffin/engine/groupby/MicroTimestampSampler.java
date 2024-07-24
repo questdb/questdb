@@ -36,6 +36,11 @@ public class MicroTimestampSampler implements TimestampSampler {
     }
 
     @Override
+    public int bucketIndex(long timestamp) {
+        return (int) ((round(timestamp) - start) / bucket);
+    }
+
+    @Override
     public long getBucketSize() {
         return this.bucket;
     }
@@ -64,4 +69,6 @@ public class MicroTimestampSampler implements TimestampSampler {
     public void toSink(@NotNull CharSink<?> sink) {
         sink.putAscii("MicroTsSampler");
     }
+
+
 }

@@ -78,6 +78,11 @@ public class SequencerMetadataService implements MetadataServiceStub {
     }
 
     @Override
+    public boolean convertPartition(long partitionTimestamp) {
+        return false;
+    }
+
+    @Override
     public void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName, SecurityContext securityContext) {
         metadata.renameColumn(columnName, newName);
     }
