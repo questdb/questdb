@@ -103,6 +103,7 @@ public class Bootstrap {
         final byte[] buffer = new byte[1024 * 1024];
         try {
             copyConfResource(rootDirectory, false, buffer, "conf/log.conf", null);
+            copyConfResource(rootDirectory, false, buffer, "conf/standalone_log.conf", null);
         } catch (IOException e) {
             throw new BootstrapException("Could not extract log configuration file");
         }
