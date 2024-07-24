@@ -471,7 +471,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
             // Check if the snapshot dir exists.
             if (!ff.exists(srcPath.slash$())) {
                 if (triggerExists) {
-                    throw CairoException.nonCritical().put("snapshot trigger file found, but snapshot dir does not exist [dir=").put(srcPath).put(", trigger=").put(dstPath).put(']');
+                    throw CairoException.nonCritical().put("snapshot trigger file found, but snapshot directory does not exist [dir=").put(srcPath).put(", trigger=").put(dstPath).put(']');
                 }
                 return;
             }
@@ -531,7 +531,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
                 LOG.info().$("backup removing table name registry file [dst=").$(dstPath).I$();
                 if (!ff.removeQuiet(dstPath.$())) {
                     throw CairoException.critical(ff.errno())
-                            .put("Snapshot recovery failed. Aborting QuestDB startup. Cause: Error could not remove tables.d file [dst=").put(dstPath).put(']');
+                            .put("Snapshot recovery failed. Aborting QuestDB startup. Cause: Error could not remove registry file [file=").put(dstPath).put(']');
                 }
                 if (version == 0) {
                     break;
@@ -542,7 +542,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
             dstPath.trimTo(rootLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).putAscii(".0");
             if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
                 throw CairoException.critical(ff.errno())
-                        .put("Snapshot recovery failed. Aborting QuestDB startup. Cause: Error could not copy tables.d file [src=").put(srcPath).put(", dst=").put(dstPath).put(']');
+                        .put("Snapshot recovery failed. Aborting QuestDB startup. Cause: Error could not copy registry file [src=").put(srcPath).put(", dst=").put(dstPath).put(']');
             }
 
             AtomicInteger recoveredMetaFiles = new AtomicInteger();

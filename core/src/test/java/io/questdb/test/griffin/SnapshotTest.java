@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.wal.WalPurgeJob;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlException;
@@ -38,6 +39,7 @@ import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
@@ -94,10 +96,11 @@ public class SnapshotTest extends AbstractCairoTest {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
 
         super.setUp();
+        ff = testFilesFacade;
         path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).slash();
         triggerFilePath.of(configuration.getRoot()).parent().concat(TableUtils.RESTORE_SNAPSHOT_TRIGGER_FILE_NAME).$();
         rootLen = path.size();
-        testFilesFacade.errorOnSync = false;
+        testFilesFacade.reset();
         circuitBreaker.setTimeout(Long.MAX_VALUE);
     }
 
@@ -108,6 +111,126 @@ public class SnapshotTest extends AbstractCairoTest {
         configuration.getFilesFacade().rmdir(path.slash());
         // reset inProgress for all tests
         ddl("snapshot complete");
+    }
+
+    @Test
+    public void testFailFastWhenCannotCopyRegistryFile() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "t";
+            ddl(
+                    "create table " + tableName + " as " +
+                            "(select rnd_str(2,3,0) a, rnd_symbol('A','B','C') b, x c from long_sequence(3))"
+            );
+
+            ddl("snapshot prepare");
+
+            engine.clear();
+            createTriggerFile();
+            testFilesFacade.errorOnRegistryFileCopy = true;
+            try {
+                engine.recoverSnapshot();
+                Assert.fail("Exception expected");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getMessage(), "Error could not copy registry file");
+            } finally {
+                testFilesFacade.errorOnRegistryFileCopy = false;
+            }
+        });
+    }
+
+    @Test
+    public void testFailFastWhenCannotRemoveRegistryFile() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "t";
+            ddl(
+                    "create table " + tableName + " as " +
+                            "(select rnd_str(2,3,0) a, rnd_symbol('A','B','C') b, x c from long_sequence(3))"
+            );
+
+            ddl("snapshot prepare");
+
+            engine.clear();
+            createTriggerFile();
+            testFilesFacade.errorOnRegistryFileRemoval = true;
+            try {
+                engine.recoverSnapshot();
+                Assert.fail("Exception expected");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getMessage(), "could not remove registry file");
+            } finally {
+                testFilesFacade.errorOnRegistryFileRemoval = false;
+            }
+        });
+    }
+
+    @Test
+    public void testFailFastWhenCannotRemoveTriggerFile() throws Exception {
+        assertMemoryLeak(() -> {
+            testFilesFacade.errorOnTriggerFileRemoval = true;
+
+            final String tableName = "t";
+            ddl(
+                    "create table " + tableName + " as " +
+                            "(select rnd_str(2,3,0) a, rnd_symbol('A','B','C') b, x c from long_sequence(3))"
+            );
+
+            ddl("snapshot prepare");
+
+            engine.clear();
+            createTriggerFile();
+            try {
+                engine.recoverSnapshot();
+                Assert.fail("Exception expected");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getMessage(), "could not remove restore trigger file");
+            }
+        });
+    }
+
+    @Test
+    public void testFailFastWhenTriggerFailExistsButThereIsNoSnapshotDirectory() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "t";
+            ddl(
+                    "create table " + tableName + " as " +
+                            "(select rnd_str(2,3,0) a, rnd_symbol('A','B','C') b, x c from long_sequence(3))"
+            );
+
+            engine.clear();
+            createTriggerFile();
+            try {
+                engine.recoverSnapshot();
+                Assert.fail("Exception expected");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getMessage(), "snapshot directory does not exist");
+            }
+        });
+    }
+
+    @Test
+    public void testFailFastWhenTriggerFailExistsButThereIsNoSnapshotMetadataFile() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "t";
+            ddl(
+                    "create table " + tableName + " as " +
+                            "(select rnd_str(2,3,0) a, rnd_symbol('A','B','C') b, x c from long_sequence(3))"
+            );
+
+            ddl("snapshot prepare");
+
+            path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
+            FilesFacade ff = configuration.getFilesFacade();
+            ff.removeQuiet(path.concat(TableUtils.SNAPSHOT_META_FILE_NAME).$());
+
+            engine.clear();
+            createTriggerFile();
+            try {
+                engine.recoverSnapshot();
+                Assert.fail("Exception expected");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getMessage(), "snapshot metadata file does not exist");
+            }
+        });
     }
 
     @Test
@@ -1297,7 +1420,32 @@ public class SnapshotTest extends AbstractCairoTest {
 
     private static class TestFilesFacade extends TestFilesFacadeImpl {
 
+        boolean errorOnRegistryFileCopy = false;
+        boolean errorOnRegistryFileRemoval = false;
         boolean errorOnSync = false;
+        boolean errorOnTriggerFileRemoval = false;
+
+        @Override
+        public int copy(LPSZ from, LPSZ to) {
+            if (errorOnRegistryFileCopy
+                    && Utf8s.endsWithAscii(from, WalUtils.TABLE_REGISTRY_NAME_FILE + ".0")
+                    && Utf8s.endsWithAscii(to, WalUtils.TABLE_REGISTRY_NAME_FILE + ".0")
+            ) {
+                return -1;
+            }
+            return super.copy(from, to);
+        }
+
+        @Override
+        public boolean removeQuiet(LPSZ name) {
+            if (errorOnTriggerFileRemoval && Utf8s.endsWithAscii(name, TableUtils.RESTORE_SNAPSHOT_TRIGGER_FILE_NAME)) {
+                return false;
+            }
+            if (errorOnRegistryFileRemoval && Utf8s.endsWithAscii(name, WalUtils.TABLE_REGISTRY_NAME_FILE + ".0")) { // version 0
+                return false;
+            }
+            return super.removeQuiet(name);
+        }
 
         @Override
         public int sync() {
@@ -1305,6 +1453,13 @@ public class SnapshotTest extends AbstractCairoTest {
                 return super.sync();
             }
             return -1;
+        }
+
+        void reset() {
+            errorOnSync = false;
+            errorOnTriggerFileRemoval = false;
+            errorOnRegistryFileRemoval = false;
+            errorOnRegistryFileCopy = false;
         }
     }
 }
