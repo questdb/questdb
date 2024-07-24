@@ -121,11 +121,14 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
         srcPath.concat(fileName);
         dstPath.concat(fileName);
         if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
-            LOG.error()
-                    .$("could not copy ").$(fileName).$(" file [src=").$(srcPath)
-                    .$(", dst=").$(dstPath)
-                    .$(", errno=").$(ff.errno())
-                    .I$();
+            throw CairoException.critical(ff.errno())
+                    .put("Snapshot recovery failed. Aborting QuestDB startup. Cause: Error could not copy ")
+                    .put(fileName)
+                    .put(" file [src=")
+                    .put(srcPath)
+                    .put(", dst=")
+                    .put(dstPath)
+                    .put(']');
         } else {
             counter.incrementAndGet();
             LOG.info()
@@ -527,10 +530,8 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
                 dstPath.trimTo(rootLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).putAscii('.').put(version);
                 LOG.info().$("backup removing table name registry file [dst=").$(dstPath).I$();
                 if (!ff.removeQuiet(dstPath.$())) {
-                    LOG.error()
-                            .$("could not remove tables.d file [dst=").$(dstPath)
-                            .$(", errno=").$(ff.errno())
-                            .I$();
+                    throw CairoException.critical(ff.errno())
+                            .put("Snapshot recovery failed. Aborting QuestDB startup. Cause: Error could not remove tables.d file [dst=").put(dstPath).put(']');
                 }
                 if (version == 0) {
                     break;
@@ -540,11 +541,8 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
             srcPath.trimTo(snapshotDbLen).concat(TABLE_REGISTRY_NAME_FILE).putAscii(".0");
             dstPath.trimTo(rootLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).putAscii(".0");
             if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
-                LOG.error()
-                        .$("could not copy tables.d file [src=").$(srcPath)
-                        .$(", dst=").$(dstPath)
-                        .$(", errno=").$(ff.errno())
-                        .I$();
+                throw CairoException.critical(ff.errno())
+                        .put("Snapshot recovery failed. Aborting QuestDB startup. Cause: Error could not copy tables.d file [src=").put(srcPath).put(", dst=").put(dstPath).put(']');
             }
 
             AtomicInteger recoveredMetaFiles = new AtomicInteger();
@@ -577,42 +575,31 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
 
                     if (ff.exists(srcPath.$())) {
                         if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
-                            LOG.critical()
-                                    .$("could not copy ").$(TableUtils.META_FILE_NAME).$(" file [src=").$(srcPath)
-                                    .utf8(", dst=").$(dstPath)
-                                    .$(", errno=").$(ff.errno())
-                                    .I$();
+                            throw CairoException.critical(ff.errno())
+                                    .put("Snapshot recovery failed. Aborting QuestDB startup. Cause: Error could not copy meta file [src=").put(srcPath).put(", dst=").put(dstPath).put(']');
                         } else {
-                            try {
-                                srcPath.trimTo(srcPathLen);
-                                openSmallFile(ff, srcPath, srcPathLen, memFile, TableUtils.TXN_FILE_NAME, MemoryTag.MMAP_TX_LOG);
-                                long newMaxTxn = memFile.getLong(0L); // snapshot/db/tableName/txn_seq/_txn
+                            srcPath.trimTo(srcPathLen);
+                            openSmallFile(ff, srcPath, srcPathLen, memFile, TableUtils.TXN_FILE_NAME, MemoryTag.MMAP_TX_LOG);
+                            long newMaxTxn = memFile.getLong(0L); // snapshot/db/tableName/txn_seq/_txn
 
-                                memFile.smallFile(ff, dstPath.$(), MemoryTag.MMAP_SEQUENCER_METADATA);
+                            memFile.smallFile(ff, dstPath.$(), MemoryTag.MMAP_SEQUENCER_METADATA);
+                            dstPath.trimTo(dstPathLen);
+                            openSmallFile(ff, dstPath, dstPathLen, memFile, TXNLOG_FILE_NAME_META_INX, MemoryTag.MMAP_TX_LOG);
+
+                            if (newMaxTxn >= 0) {
                                 dstPath.trimTo(dstPathLen);
-                                openSmallFile(ff, dstPath, dstPathLen, memFile, TXNLOG_FILE_NAME_META_INX, MemoryTag.MMAP_TX_LOG);
-
-                                if (newMaxTxn >= 0) {
-                                    dstPath.trimTo(dstPathLen);
-                                    openSmallFile(ff, dstPath, dstPathLen, memFile, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
-                                    // get oldMaxTxn from dbRoot/tableName/txn_seq/_txnlog
-                                    long oldMaxTxn = memFile.getLong(TableTransactionLogFile.MAX_TXN_OFFSET_64);
-                                    if (newMaxTxn < oldMaxTxn) {
-                                        // update header of dbRoot/tableName/txn_seq/_txnlog with new values
-                                        memFile.putLong(TableTransactionLogFile.MAX_TXN_OFFSET_64, newMaxTxn);
-                                        LOG.info()
-                                                .$("updated ").$(TXNLOG_FILE_NAME).$(" file [path=").$(dstPath)
-                                                .$(", oldMaxTxn=").$(oldMaxTxn)
-                                                .$(", newMaxTxn=").$(newMaxTxn)
-                                                .I$();
-                                    }
+                                openSmallFile(ff, dstPath, dstPathLen, memFile, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
+                                // get oldMaxTxn from dbRoot/tableName/txn_seq/_txnlog
+                                long oldMaxTxn = memFile.getLong(TableTransactionLogFile.MAX_TXN_OFFSET_64);
+                                if (newMaxTxn < oldMaxTxn) {
+                                    // update header of dbRoot/tableName/txn_seq/_txnlog with new values
+                                    memFile.putLong(TableTransactionLogFile.MAX_TXN_OFFSET_64, newMaxTxn);
+                                    LOG.info()
+                                            .$("updated ").$(TXNLOG_FILE_NAME).$(" file [path=").$(dstPath)
+                                            .$(", oldMaxTxn=").$(oldMaxTxn)
+                                            .$(", newMaxTxn=").$(newMaxTxn)
+                                            .I$();
                                 }
-                            } catch (CairoException ex) {
-                                LOG.critical()
-                                        .$("could not update file [src=").$(dstPath)
-                                        .$("`, ex=").$(ex.getFlyweightMessage())
-                                        .$(", errno=").$(ff.errno())
-                                        .I$();
                             }
 
                             recoveredWalFiles.incrementAndGet();
