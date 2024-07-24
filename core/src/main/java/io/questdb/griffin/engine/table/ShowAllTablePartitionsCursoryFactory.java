@@ -228,14 +228,14 @@ public class ShowAllTablePartitionsCursoryFactory extends AbstractRecordCursorFa
                                 if (detachedMetaReader == null) {
                                     detachedMetaReader = new TableReaderMetadata(cairoConfig);
                                 }
-                                detachedMetaReader.load(path);
+                                detachedMetaReader.load(path.$());
                                 if (tableToken.getTableId() == detachedMetaReader.getTableId() && partitionBy == detachedMetaReader.getPartitionBy()) {
                                     if (ff.exists(path.parent().concat(TableUtils.TXN_FILE_NAME).$())) {
                                         try {
                                             if (detachedTxReader == null) {
                                                 detachedTxReader = new TxReader(FilesFacadeImpl.INSTANCE);
                                             }
-                                            detachedTxReader.ofRO(path, partitionBy);
+                                            detachedTxReader.ofRO(path.$(), partitionBy);
                                             detachedTxReader.unsafeLoadAll();
                                             int length = partitionName.indexOf(".");
                                             if (length < 0) {
@@ -266,14 +266,14 @@ public class ShowAllTablePartitionsCursoryFactory extends AbstractRecordCursorFa
                         }
                         path.parent();
                     }
-                    sizeB += ff.getDirSize(path.$());
+                    sizeB += ff.getDirSize(path);
                     partitionName.clear();
                     partitionIndex++;
                 }
             }
 
             private void scanDetachedAndAttachablePartitions() {
-                long pFind = ff.findFirst(path);
+                long pFind = ff.findFirst(path.$());
                 if (pFind > 0L) {
                     try {
                         attachablePartitions.clear();
