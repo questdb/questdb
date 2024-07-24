@@ -55,6 +55,7 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
     private long headPtr;
     private long tailPtr;
     private final LPSZ lpsz = new PathLPSZ();
+    private static final boolean PARANOIA_MODE = true;
 
     public Path() {
         this(255);
@@ -69,7 +70,16 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
         this.capacity = capacity;
         this.memoryTag = memoryTag;
         headPtr = tailPtr = Unsafe.malloc(capacity + 1, memoryTag);
+        if (PARANOIA_MODE) {
+            randomSeed();
+        }
         ascii = true;
+    }
+
+    private void randomSeed() {
+        for (long p = headPtr, hi = headPtr + capacity + 1; p < hi; p++) {
+            Unsafe.getUnsafe().putByte(p, (byte) (p % 127));
+        }
     }
 
     public static void clearThreadLocals() {

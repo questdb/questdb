@@ -67,6 +67,8 @@ public interface PlanSink {
 
     void of(RecordCursorFactory factory, SqlExecutionContext executionContext);
 
+    PlanSink optAttr(CharSequence name, CharSequence value);
+
     PlanSink optAttr(CharSequence name, Sinkable value);
 
     PlanSink optAttr(CharSequence name, Plannable value);

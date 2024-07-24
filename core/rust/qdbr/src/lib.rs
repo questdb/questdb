@@ -1,4 +1,3 @@
-
 /*******************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
@@ -23,10 +22,31 @@
  *
  ******************************************************************************/
 
+mod parquet_read;
+mod parquet_write;
+
+extern crate core;
 pub extern crate jni;
 
 use jni::sys::jlong;
 use jni::{objects::JClass, JNIEnv};
+use once_cell::sync::Lazy;
+use rayon::{ThreadPool, ThreadPoolBuilder};
+
+pub static POOL: Lazy<ThreadPool> = Lazy::new(|| {
+    let num_threads = std::env::var("QUESTDB_MAX_THREADS") // TODO: Use a proper config system
+        .map(|s| s.parse::<usize>().expect("max_threads"))
+        .unwrap_or_else(|_| {
+            std::thread::available_parallelism()
+                .unwrap_or(std::num::NonZeroUsize::new(1).unwrap())
+                .get()
+        });
+    ThreadPoolBuilder::new()
+        .num_threads(num_threads)
+        .thread_name(move |i| format!("questdb-parquet-{}", i))
+        .build()
+        .expect("could not spawn threads")
+});
 
 // Static size eq assertion: Ensures we can write pointers in place of jlong in our signatures.
 const _: fn() = || {

@@ -395,7 +395,7 @@ public class ApproxCountDistinctLongGroupByFunctionFactoryTest extends AbstractC
                 "select ts, approx_count_distinct(s) from x sample by 1s fill(99)",
                 "create table x as (select * from (select rnd_long(0, 8, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
-                false
+                true
         );
     }
 

@@ -214,7 +214,7 @@ public class CountDistinctLong256GroupByFunctionFactoryTest extends AbstractCair
                 "select ts, count_distinct(s) from x sample by 1s fill(99)",
                 "create table x as (select * from (select to_long256(rnd_long(0, 8, 0), 0, 0, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
-                false
+                true
         );
     }
 

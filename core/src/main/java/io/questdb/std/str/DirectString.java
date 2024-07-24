@@ -101,8 +101,9 @@ public class DirectString extends AbstractCharSequence implements DirectCharSequ
     @Override
     protected CharSequence _subSequence(int start, int end) {
         DirectString seq = new DirectString();
-        seq.lo = this.lo + start;
-        seq.hi = this.lo + end;
+        seq.lo = this.lo + ((long) start << 1);
+        seq.hi = this.lo + ((long) end << 1);
+        seq.len = end - start;
         return seq;
     }
 }
