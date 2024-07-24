@@ -511,8 +511,12 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
             }
 
             // OK, we need to recover from the snapshot.
+            if (triggerExists) {
+                LOG.info().$("starting snapshot recovery [trigger=file]").$();
+            }
             LOG.info()
-                    .$("starting snapshot recovery [currentId=").$(currentInstanceId)
+                    .$("starting snapshot recovery [trigger=snapshot id")
+                    .$(", currentId=").$(currentInstanceId)
                     .$(", previousId=").$(snapshotInstanceId)
                     .I$();
 
