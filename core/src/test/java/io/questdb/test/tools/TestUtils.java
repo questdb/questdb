@@ -96,7 +96,11 @@ public final class TestUtils {
     }
 
     public static void assertAsciiCompliance(@Nullable Utf8Sequence utf8Sequence) {
-        Assert.assertEquals(utf8Sequence == null || utf8Sequence.isAscii(), Utf8s.isAscii(utf8Sequence));
+        if (utf8Sequence == null || utf8Sequence.isAscii() != Utf8s.isAscii(utf8Sequence)) {
+            Utf8StringSink sink = new Utf8StringSink();
+            sink.put("ascii flag set to '").put(utf8Sequence == null || utf8Sequence.isAscii()).put("' for value '").put(utf8Sequence).put("'. ");
+            Assert.assertEquals(sink.toString(), Utf8s.isAscii(utf8Sequence), utf8Sequence == null || utf8Sequence.isAscii());
+        }
     }
 
     public static void assertConnect(int fd, long sockAddr) {
@@ -1332,6 +1336,9 @@ public final class TestUtils {
             FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             path.slash();
             Assert.assertTrue("Test dir cleanup error: " + ff.errno(), !ff.exists(path.$()) || ff.rmdir(path.slash()));
+
+            path.parent().concat(RESTORE_SNAPSHOT_TRIGGER_FILE_NAME);
+            Assert.assertTrue("Snapshot trigger cleanup error: " + ff.errno(), !ff.exists(path.$()) || ff.removeQuiet(path.$()));
         }
     }
 

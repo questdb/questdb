@@ -916,6 +916,19 @@ public final class Chars {
         return _this.length() > 0 && _this.charAt(0) == c;
     }
 
+    public static boolean startsWithIgnoreCase(CharSequence cs, CharSequence startsWith) {
+        if (cs == null || startsWith == null) {
+            return false;
+        }
+
+        int l = startsWith.length();
+        if (l == 0) {
+            return true;
+        }
+
+        return cs.length() >= l && equalsWithIgnoreCase(startsWith, cs, l);
+    }
+
     // Pattern has to be lower-case.
     public static boolean startsWithLowerCase(@Nullable CharSequence cs, @Nullable CharSequence startsLC) {
         if (cs == null || startsLC == null) {
@@ -1258,6 +1271,16 @@ public final class Chars {
         }
         return true;
     }
+
+    private static boolean equalsWithIgnoreCase(@NotNull CharSequence lLC, @NotNull CharSequence r, int len) {
+        for (int i = 0; i < len; i++) {
+            if (Character.toLowerCase(lLC.charAt(i)) != Character.toLowerCase(r.charAt(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
 
     static {
         CHAR_STRINGS = new String[128];
