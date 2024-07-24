@@ -513,12 +513,13 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
             // OK, we need to recover from the snapshot.
             if (triggerExists) {
                 LOG.info().$("starting snapshot recovery [trigger=file]").$();
+            } else {
+                LOG.info()
+                        .$("starting snapshot recovery [trigger=snapshot id")
+                        .$(", currentId=").$(currentInstanceId)
+                        .$(", previousId=").$(snapshotInstanceId)
+                        .I$();
             }
-            LOG.info()
-                    .$("starting snapshot recovery [trigger=snapshot id")
-                    .$(", currentId=").$(currentInstanceId)
-                    .$(", previousId=").$(snapshotInstanceId)
-                    .I$();
 
             // First delete all table name registry files in dst.
             srcPath.trimTo(snapshotRootLen).$();
