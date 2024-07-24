@@ -413,7 +413,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
 
                         path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).concat(TableUtils.SNAPSHOT_META_FILE_NAME);
                         mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
-                        mem.putStr(""); // snapshot id is no longer used, but we need to keep the file
+                        mem.putStr(configuration.getSnapshotInstanceId());
                         mem.close();
 
                         // Flush dirty pages and filesystem metadata to disk
@@ -482,18 +482,41 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
                 return;
             }
 
-            if (!triggerExists) {
-                LOG.info().$("skipping detected snapshot. create a trigger file to install the snapshot [snapshot=").$(srcPath).$(", trigger=").$(dstPath).I$();
-                return;
-            }
             if (!ff.removeQuiet(dstPath.$())) {
                 throw CairoException.critical(ff.errno())
                         .put("could not remove restore trigger file. file permission issues? [file=").put(dstPath).put(']');
             }
             dstPath.of(root);
 
+            // Check if the snapshot instance id is different from what's in the snapshot.
+            memFile.smallFile(ff, srcPath.$(), MemoryTag.MMAP_DEFAULT);
+
+            final CharSequence currentInstanceId = configuration.getSnapshotInstanceId();
+            CharSequence snapshotInstanceId = memFile.getStrA(0);
+            if (Chars.empty(snapshotInstanceId)) {
+                // Check _snapshot.txt file too reading it as a text file.
+                srcPath.trimTo(snapshotRootLen).concat(TableUtils.SNAPSHOT_META_FILE_NAME_TXT);
+                String snapshotIdTxt = TableUtils.readText(ff, srcPath.$());
+                if (snapshotIdTxt != null) {
+                    snapshotInstanceId = snapshotIdTxt.trim();
+                }
+            }
+
+            if (!triggerExists &&
+                    (Chars.empty(currentInstanceId) || Chars.empty(snapshotInstanceId) || Chars.equals(currentInstanceId, snapshotInstanceId))
+            ) {
+                LOG.info()
+                        .$("skipping snapshot recovery [currentId=").$(currentInstanceId)
+                        .$(", previousId=").$(snapshotInstanceId)
+                        .I$();
+                return;
+            }
 
             // OK, we need to recover from the snapshot.
+            LOG.info()
+                    .$("starting snapshot recovery [currentId=").$(currentInstanceId)
+                    .$(", previousId=").$(snapshotInstanceId)
+                    .I$();
 
             // First delete all table name registry files in dst.
             srcPath.trimTo(snapshotRootLen).$();

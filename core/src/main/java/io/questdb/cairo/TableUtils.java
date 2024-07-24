@@ -102,6 +102,7 @@ public final class TableUtils {
     public static final int NULL_LEN = -1;
     public static final String RESTORE_SNAPSHOT_TRIGGER_FILE_NAME = "_restore";
     public static final String SNAPSHOT_META_FILE_NAME = "_snapshot";
+    public static final String SNAPSHOT_META_FILE_NAME_TXT = "_snapshot.txt";
     public static final String SYMBOL_KEY_REMAP_FILE_SUFFIX = ".r";
     public static final char SYSTEM_TABLE_NAME_SUFFIX = '~';
     public static final int TABLE_DOES_NOT_EXIST = 1;

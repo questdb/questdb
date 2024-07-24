@@ -571,6 +571,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public @NotNull CharSequence getSnapshotInstanceId() {
+        return getDelegate().getSnapshotInstanceId();
+    }
+
+    @Override
     public @NotNull CharSequence getSnapshotRoot() {
         return getDelegate().getSnapshotRoot();
     }
@@ -946,11 +951,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public double getWalLagRowsMultiplier() {
-        return getDelegate().getWalLagRowsMultiplier();
-    }
-
-    @Override
     public long getWalMaxLagSize() {
         return getDelegate().getWalMaxLagSize();
     }
@@ -988,6 +988,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public long getWalSegmentRolloverSize() {
         return getDelegate().getWalSegmentRolloverSize();
+    }
+
+    @Override
+    public double getWalLagRowsMultiplier() {
+        return getDelegate().getWalLagRowsMultiplier();
     }
 
     @Override
