@@ -542,7 +542,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
             dstPath.trimTo(rootLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).putAscii(".0");
             if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
                 throw CairoException.critical(ff.errno())
-                        .put("Snapshot recovery failed. Aborting QuestDB startup. Cause: Error could not copy registry file [src=").put(srcPath).put(", dst=").put(dstPath).put(']');
+                        .put("Snapshot recovery failed. Aborting QuestDB startup. Cause: Could not copy registry file [src=").put(srcPath).put(", dst=").put(dstPath).put(']');
             }
 
             AtomicInteger recoveredMetaFiles = new AtomicInteger();
