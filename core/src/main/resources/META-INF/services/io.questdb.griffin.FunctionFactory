@@ -914,6 +914,7 @@ io.questdb.griffin.engine.functions.str.RTrimVarcharFunctionFactory
 io.questdb.griffin.engine.functions.window.RowNumberFunctionFactory
 io.questdb.griffin.engine.functions.window.RankFunctionFactory
 io.questdb.griffin.engine.functions.window.AvgDoubleWindowFunctionFactory
+io.questdb.griffin.engine.functions.window.VolumeWeightedAvgWindowFunctionFactory
 io.questdb.griffin.engine.functions.window.FirstValueDoubleWindowFunctionFactory
 io.questdb.griffin.engine.functions.window.SumDoubleWindowFunctionFactory
 
