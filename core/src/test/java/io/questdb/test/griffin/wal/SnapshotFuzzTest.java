@@ -27,18 +27,36 @@ package io.questdb.test.griffin.wal;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
-import org.junit.Assume;
-import org.junit.Test;
+import org.junit.*;
 
 import java.util.concurrent.atomic.AtomicReference;
 
 public class SnapshotFuzzTest extends AbstractFuzzTest {
+    private static Path triggerFilePath;
+
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        AbstractFuzzTest.setUpStatic();
+        triggerFilePath = new Path();
+    }
+
+    @AfterClass
+    public static void tearDownStatic() {
+        triggerFilePath = Misc.free(triggerFilePath);
+        AbstractFuzzTest.tearDownStatic();
+    }
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        triggerFilePath.of(engine.getConfiguration().getRoot()).parent().concat(TableUtils.RESTORE_SNAPSHOT_TRIGGER_FILE_NAME);
+    }
 
     @Test
     public void testSnapshotEjectedWalApply() throws Exception {
@@ -106,13 +124,16 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
         runFuzzWithSnapshot(rnd);
     }
 
-
     @Test
     public void testSnapshotFullFuzz() throws Exception {
         Rnd rnd = generateRandom(LOG);
         fullFuzz(rnd);
         setFuzzProperties(rnd.nextLong(50), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd), 10 * Numbers.SIZE_1MB, 3);
         runFuzzWithSnapshot(rnd);
+    }
+
+    private static void createTriggerFile() {
+        Files.touch(triggerFilePath.$());
     }
 
     private void copyRecursiveIgnoreErrors(FilesFacade ff, Path src, Path dst, int dirMode) {
@@ -159,7 +180,6 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
     }
 
     private void createSnapshot() throws SqlException {
-        setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, "id_1");
         LOG.info().$("starting snapshot").$();
 
         ddl("snapshot prepare");
@@ -217,9 +237,8 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
         ff.rmdir(rootPath);
         ff.rename(snapshotPath.$(), rootPath.$());
 
-        setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, "id_2");
-
         LOG.info().$("recovering from snapshot").$();
+        createTriggerFile();
         engine.recoverSnapshot();
         engine.getTableSequencerAPI().releaseAll();
         engine.reloadTableNames();

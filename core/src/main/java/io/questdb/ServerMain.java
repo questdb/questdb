@@ -174,11 +174,13 @@ public class ServerMain implements Closeable {
             if (e.isSilentStacktrace()) {
                 System.err.println(e.getMessage());
             } else {
+                //noinspection CallToPrintStackTrace
                 e.printStackTrace();
             }
             LogFactory.closeInstance();
             System.exit(55);
         } catch (Throwable thr) {
+            //noinspection CallToPrintStackTrace
             thr.printStackTrace();
             LogFactory.closeInstance();
             System.exit(55);
