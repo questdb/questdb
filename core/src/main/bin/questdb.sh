@@ -216,13 +216,13 @@ function start {
     HELLO_FILE=${QDB_ROOT}/hello.txt
     rm ${HELLO_FILE} 2> /dev/null
     if [ "${QDB_CONTAINER_MODE}" != "" ]; then
-        ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > ${QDB_LOG}/stdout-${DATE}.txt 2>&1
+        ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > "${QDB_LOG}/stdout-${DATE}.tx" 2>&1
     elif [ "${QDB_DISABLE_HUP_HANDLER}" = "" ]; then
-        ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -Dout=${QDB_ROOT}/conf/standalone_log.conf -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > ${QDB_LOG}/stdout-${DATE}.txt 2>&1 &
+        ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -Dout="${QDB_ROOT}/conf/standalone_log.conf" -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > "${QDB_LOG}/stdout-${DATE}.txt" 2>&1 &
         $BASE/print-hello.sh ${HELLO_FILE}
     else
         $BASE/print-hello.sh ${HELLO_FILE} &
-        ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -Dout=${QDB_ROOT}/conf/standalone_log.conf -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} ${QDB_DISABLE_HUP_HANDLER} > ${QDB_LOG}/stdout-${DATE}.txt 2>&1
+        ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -Dout="${QDB_ROOT}/conf/standalone_log.conf" -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} ${QDB_DISABLE_HUP_HANDLER} > "${QDB_LOG}/stdout-${DATE}.txt" 2>&1
     fi
 }
 
