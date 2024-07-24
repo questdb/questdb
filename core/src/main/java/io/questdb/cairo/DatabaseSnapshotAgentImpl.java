@@ -466,9 +466,6 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
             dstPath.of(root).parent().concat(TableUtils.RESTORE_SNAPSHOT_TRIGGER_FILE_NAME);
             boolean triggerExists = ff.exists(dstPath.$());
 
-            dstPath.of(root);
-            final int rootLen = dstPath.size();
-
             // Check if the snapshot dir exists.
             if (!ff.exists(srcPath.slash$())) {
                 if (triggerExists) {
@@ -520,6 +517,9 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
                         .$(", previousId=").$(snapshotInstanceId)
                         .I$();
             }
+
+            dstPath.of(root);
+            final int rootLen = dstPath.size();
 
             // First delete all table name registry files in dst.
             srcPath.trimTo(snapshotRootLen).$();
