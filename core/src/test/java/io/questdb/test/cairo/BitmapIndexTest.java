@@ -1823,7 +1823,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                             for (int j = keys.size() - 1; j > -1; j--) {
                                 int key = keys.getQuick(j);
                                 LongList values = lists.get(key);
-                                cursor = reader.initCursor(cursor, key, 0, Long.MAX_VALUE);
+                                cursor = reader.initCursor(cursor, key, 0, Long.MAX_VALUE, false);
 
                                 tmp.clear();
                                 while (cursor.hasNext()) {

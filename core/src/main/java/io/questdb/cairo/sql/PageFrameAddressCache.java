@@ -36,7 +36,6 @@ import io.questdb.std.*;
  * Meant to be used along with {@link PageFrameMemoryPool}.
  */
 public class PageFrameAddressCache implements Mutable {
-
     private final ObjList<LongList> auxPageAddresses = new ObjList<>();
     private final ObjList<LongList> auxPageSizes = new ObjList<>();
     private final IntList columnTypes = new IntList();
@@ -172,6 +171,7 @@ public class PageFrameAddressCache implements Mutable {
 
     public void of(@Transient RecordMetadata metadata) {
         columnCount = metadata.getColumnCount();
+        assert columnCount > 0;
         columnTypes.clear();
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             columnTypes.add(metadata.getColumnType(columnIndex));

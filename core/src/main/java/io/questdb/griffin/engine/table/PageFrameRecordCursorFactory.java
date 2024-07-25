@@ -67,7 +67,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
         this.rowCursorFactory = rowCursorFactory;
         cursor = new PageFrameRecordCursorImpl(
                 configuration,
-                dataFrameCursorFactory.getMetadata(),
+                metadata,
                 rowCursorFactory,
                 rowCursorFactory.isEntity(),
                 filter,

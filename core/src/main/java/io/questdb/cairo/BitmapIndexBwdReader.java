@@ -46,23 +46,24 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
     }
 
     @Override
-    public RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue) {
+    public RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue, boolean relativeIndex) {
         assert minValue <= maxValue;
 
         if (key >= keyCount) {
             updateKeyCount();
         }
 
-        if (key == 0 && unIndexedNullCount > 0) {
+        final long indexSkew = relativeIndex ? minValue : 0;
+        if (key == 0 && unindexedNullCount > 0) {
             final NullCursor nullCursor = getNullCursor(cachedInstance);
-            nullCursor.nullCount = unIndexedNullCount;
-            nullCursor.of(key, minValue, maxValue, keyCount);
+            nullCursor.nullCount = unindexedNullCount;
+            nullCursor.of(key, minValue, maxValue, indexSkew, keyCount);
             return nullCursor;
         }
 
         if (key < keyCount) {
             final Cursor cursor = getCursor(cachedInstance);
-            cursor.of(key, minValue, maxValue, keyCount);
+            cursor.of(key, minValue, maxValue, indexSkew, keyCount);
             return cursor;
         }
 
@@ -78,6 +79,7 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
     }
 
     private class Cursor implements RowCursor, IndexFrameCursor {
+        protected long indexSkew;
         protected long minValue;
         protected long next;
         protected long valueCount;
@@ -113,7 +115,7 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
 
         @Override
         public long next() {
-            return next;
+            return next - indexSkew;
         }
 
         private long getPreviousBlock(long currentValueBlockOffset) {
@@ -135,7 +137,8 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
             this.valueBlockOffset = offset;
         }
 
-        void of(int key, long minValue, long maxValue, long keyCount) {
+        void of(int key, long minValue, long maxValue, long indexSkew, long keyCount) {
+            this.indexSkew = indexSkew;
             if (keyCount == 0) {
                 valueCount = 0;
             } else {

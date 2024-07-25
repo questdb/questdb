@@ -180,7 +180,7 @@ public class PageFrameMemorySelectedRecord extends PageFrameMemoryRecord {
 
     @Override
     public long getTimestamp(int col) {
-        return super.getTimestamp(deferenceColumn(col));
+        return super.getLong(deferenceColumn(col));
     }
 
     @Override

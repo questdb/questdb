@@ -114,7 +114,7 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractLatestByValueReco
             frameMemory = frameMemoryPool.navigateTo(frameCount++);
             recordA.init(frameMemory);
 
-            RowCursor cursor = indexReader.getCursor(false, symbolKey, partitionLo, partitionHi);
+            RowCursor cursor = indexReader.getCursor(false, symbolKey, partitionLo, partitionHi, true);
             while (cursor.hasNext()) {
                 recordA.setRowIndex(cursor.next() - partitionLo);
                 if (filter.getBool(recordA)) {

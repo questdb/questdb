@@ -93,7 +93,7 @@ class SymbolIndexFilteredRowCursor implements RowCursor {
     public SymbolIndexFilteredRowCursor of(PageFrame pageFrame) {
         this.rowCursor = pageFrame
                 .getBitmapIndexReader(columnIndex, indexDirection)
-                .getCursor(cachedIndexReaderCursor, symbolKey, pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1);
+                .getCursor(cachedIndexReaderCursor, symbolKey, pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1, true);
         record.jumpTo(pageFrame.getPartitionIndex(), 0);
         return this;
     }

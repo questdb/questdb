@@ -50,23 +50,24 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
     }
 
     @Override
-    public RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue) {
+    public RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue, boolean relativeIndex) {
         if (key >= keyCount) {
             updateKeyCount();
         }
 
-        if (key == 0 && unIndexedNullCount > 0 && minValue < unIndexedNullCount) {
+        final long indexSkew = relativeIndex ? minValue : 0;
+        if (key == 0 && unindexedNullCount > 0 && minValue < unindexedNullCount) {
             // we need to return some nulls and the whole set of actual index values
             final NullCursor nullCursor = getNullCursor(cachedInstance);
             nullCursor.nullPos = minValue;
-            nullCursor.nullCount = unIndexedNullCount;
-            nullCursor.of(key, 0, maxValue, keyCount);
+            nullCursor.nullCount = unindexedNullCount;
+            nullCursor.of(key, 0, maxValue, indexSkew, keyCount);
             return nullCursor;
         }
 
         if (key < keyCount) {
             final Cursor cursor = getCursor(cachedInstance);
-            cursor.of(key, minValue, maxValue, keyCount);
+            cursor.of(key, minValue, maxValue, indexSkew, keyCount);
             return cursor;
         }
 
@@ -81,7 +82,7 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
 
         if (key < keyCount) {
             final Cursor cursor = getCursor(false);
-            cursor.of(key, minRowId, maxRowId, keyCount);
+            cursor.of(key, minRowId, maxRowId, 0, keyCount);
             return cursor;
         }
 
@@ -101,6 +102,7 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
         protected long next;
         protected long position;
         protected long valueCount;
+        private long indexSkew;
         private long maxValue;
         private long valueBlockOffset;
         private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seekValue;
@@ -148,7 +150,7 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
 
         @Override
         public long next() {
-            return next;
+            return next - indexSkew;
         }
 
         private long getNextBlock(long currentValueBlockOffset) {
@@ -170,7 +172,8 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
             this.valueBlockOffset = offset;
         }
 
-        void of(int key, long minValue, long maxValue, long keyCount) {
+        void of(int key, long minValue, long maxValue, long indexSkew, long keyCount) {
+            this.indexSkew = indexSkew;
             if (keyCount == 0) {
                 valueCount = 0;
             } else {

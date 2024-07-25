@@ -24,30 +24,32 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.RowCursorFactory;
+import io.questdb.griffin.PlanSink;
 
-class DataFrameRowCursor implements RowCursor {
-    private long current;
-    private long hi;
+public class PageFrameRowCursorFactory implements RowCursorFactory {
+    private final PageFrameRowCursor cursor = new PageFrameRowCursor();
 
     @Override
-    public boolean hasNext() {
-        return current < hi;
+    public RowCursor getCursor(PageFrame pageFrame) {
+        cursor.of(pageFrame);
+        return cursor;
     }
 
     @Override
-    public void jumpTo(long position) {
-        this.current = position;
+    public boolean isEntity() {
+        return true;
     }
 
     @Override
-    public long next() {
-        return current++;
-    }
-
-    void of(PageFrame frame) {
-        this.current = frame.getPartitionLo();
-        this.hi = frame.getPartitionHi();
+    public void toPlan(PlanSink sink) {
+        if (sink.getOrder() == DataFrameCursorFactory.ORDER_DESC) {
+            sink.type("Row backward scan");
+        } else {
+            sink.type("Row forward scan");
+        }
     }
 }

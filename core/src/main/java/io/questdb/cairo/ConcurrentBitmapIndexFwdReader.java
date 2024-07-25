@@ -57,32 +57,34 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
     }
 
     @Override
-    public RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue) {
-        return initCursor(cachedInstance ? this.cursor : null, key, minValue, maxValue);
+    public RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue, boolean relativeIndex) {
+        return initCursor(cachedInstance ? this.cursor : null, key, minValue, maxValue, relativeIndex);
     }
 
     /**
      * Allows reusing cursor objects, if that's possible.
      *
-     * @param rowCursor cursor to reuse, or null
-     * @param key       key to search for
-     * @param minValue  minimum value to search for
-     * @param maxValue  maximum value to search for
+     * @param rowCursor     cursor to reuse, or null
+     * @param key           key to search for
+     * @param minValue      minimum value to search for
+     * @param maxValue      maximum value to search for
+     * @param relativeIndex relative row indexing flag
      * @return initialised cursor
      */
-    public RowCursor initCursor(RowCursor rowCursor, int key, long minValue, long maxValue) {
+    public RowCursor initCursor(RowCursor rowCursor, int key, long minValue, long maxValue, boolean relativeIndex) {
         Cursor cursor = null;
         if (rowCursor != null && rowCursor != EmptyRowCursor.INSTANCE) {
             cursor = (Cursor) rowCursor;
             assert cursor.owner() == this;
         }
 
-        if (key == 0 && unIndexedNullCount > 0 && minValue < unIndexedNullCount) {
+        final long indexSkew = relativeIndex ? minValue : 0;
+        if (key == 0 && unindexedNullCount > 0 && minValue < unindexedNullCount) {
             // we need to return some nulls and the whole set of actual index values
             if (cursor == null) {
                 cursor = new Cursor();
             }
-            cursor.of(key, 0, maxValue, keyCount, minValue, unIndexedNullCount);
+            cursor.of(key, 0, maxValue, indexSkew, keyCount, minValue, unindexedNullCount);
             return cursor;
         }
 
@@ -90,7 +92,7 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
             if (cursor == null) {
                 cursor = new Cursor();
             }
-            cursor.of(key, minValue, maxValue, keyCount, 0, 0);
+            cursor.of(key, minValue, maxValue, indexSkew, keyCount, 0, 0);
             return cursor;
         }
 
@@ -101,6 +103,7 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
         protected long next;
         protected long position;
         protected long valueCount;
+        private long indexSkew;
         private long maxValue;
         private long nullCount;
         private long nullPos;
@@ -139,7 +142,7 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
 
         @Override
         public long next() {
-            return next;
+            return next - indexSkew;
         }
 
         private long getValueCellIndex(long absoluteValueIndex) {
@@ -164,7 +167,8 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
             this.valueBlockOffset = offset;
         }
 
-        void of(int key, long minValue, long maxValue, long keyCount, long nullPos, long nullCount) {
+        void of(int key, long minValue, long maxValue, long indexSkew, long keyCount, long nullPos, long nullCount) {
+            this.indexSkew = indexSkew;
             this.nullPos = nullPos;
             this.nullCount = nullCount;
             if (keyCount == 0) {

@@ -284,7 +284,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         public int keyOf(CharSequence value) {
             if (value != null) {
                 int hash = Hash.boundedHash(value, maxHash);
-                rowCursor = indexReader.initCursor(rowCursor, hash, 0, maxOffset - Long.BYTES);
+                rowCursor = indexReader.initCursor(rowCursor, hash, 0, maxOffset - Long.BYTES, false);
                 while (rowCursor.hasNext()) {
                     final long offsetOffset = rowCursor.next();
                     if (Chars.equals(value, charMem.getStr(offsetMem.getLong(offsetOffset), csviewInternal))) {

@@ -102,11 +102,11 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
                 return true;
             }
 
-            PageFrame pageFrame;
-            while ((pageFrame = frameCursor.next()) != null) {
-                rowCursor = rowCursorFactory.getCursor(pageFrame);
+            PageFrame frame;
+            while ((frame = frameCursor.next()) != null) {
+                rowCursor = rowCursorFactory.getCursor(frame);
                 if (rowCursor.hasNext()) {
-                    frameAddressCache.add(frameCount, pageFrame);
+                    frameAddressCache.add(frameCount, frame);
                     frameMemory = frameMemoryPool.navigateTo(frameCount++);
 
                     final long rowIndex = rowCursor.next();
@@ -139,6 +139,8 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         rowCursor = null;
         areCursorsPrepared = false;
         frameCount = 0;
+        // prepare for page frame iteration
+        super.toTop();
     }
 
     @Override
@@ -149,6 +151,7 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             while ((pageFrame = frameCursor.next()) != null) {
                 size += pageFrame.getPartitionHi() - pageFrame.getPartitionLo();
             }
+            frameCursor.toTop();
             return size;
         }
         return -1;

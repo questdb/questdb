@@ -1816,7 +1816,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return rowCount;
     }
 
-    //returns number of copied rows
+    // returns number of copied rows
     private long copyOrderedBatched0(
             TableWriterAPI writer,
             RecordCursor cursor,
@@ -1839,7 +1839,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 deadline = rowCount + batchSize;
             }
         }
-
         return rowCount;
     }
 
@@ -1895,9 +1894,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return rowCount;
     }
 
-    /*
-     * Returns number of copied rows.
-     */
+    // returns number of copied rows
     private long copyTableData(
             RecordCursor cursor,
             RecordMetadata metadata,
@@ -3224,9 +3221,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     public final static class PartitionAction {
         public static final int ATTACH = 2;
+        public static final int CONVERT = 4;
         public static final int DETACH = 3;
         public static final int DROP = 1;
-        public static final int CONVERT = 4;
     }
 
     private static class TableStructureAdapter implements TableStructure {

@@ -54,9 +54,26 @@ public interface BitmapIndexReader extends Closeable {
      * @param key            index key
      * @param minValue       inclusive minimum value
      * @param maxValue       inclusive maximum value
+     * @param relativeIndex  when set to true, returned row indexes will use relative positions,
+     *                       i.e. the first row starts with 0, not with minValue
      * @return index value cursor
      */
-    RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue);
+    RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue, boolean relativeIndex);
+
+    /**
+     * Setup value cursor. Values in this cursor will be bounded by provided
+     * minimum and maximum, both of which are inclusive. Order of values is
+     * determined by specific implementations of this method.
+     *
+     * @param cachedInstance when this parameter is true, index reader may return singleton instance of cursor.
+     * @param key            index key
+     * @param minValue       inclusive minimum value
+     * @param maxValue       inclusive maximum value
+     * @return index value cursor
+     */
+    default RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue) {
+        return getCursor(cachedInstance, key, minValue, maxValue, false);
+    }
 
     default IndexFrameCursor getFrameCursor(int key, long minValue, long maxValue) {
         throw new UnsupportedOperationException();

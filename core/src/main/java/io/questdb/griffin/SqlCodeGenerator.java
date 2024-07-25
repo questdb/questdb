@@ -5326,7 +5326,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (orderDescendingByDesignatedTimestampOnly) {
                 rowFactory = new BwdDataFrameRowCursorFactory();
             } else {
-                rowFactory = new DataFrameRowCursorFactory();
+                rowFactory = new PageFrameRowCursorFactory();
             }
 
             model.setWhereClause(intrinsicModel.filter);
@@ -5357,7 +5357,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 rowCursorFactory = new BwdDataFrameRowCursorFactory();
             } else {
                 cursorFactory = new FullFwdDataFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
-                rowCursorFactory = new DataFrameRowCursorFactory();
+                rowCursorFactory = new PageFrameRowCursorFactory();
             }
 
             return new PageFrameRecordCursorFactory(
