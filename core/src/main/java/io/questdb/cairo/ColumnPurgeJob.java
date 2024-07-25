@@ -63,7 +63,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
     private final long retryDelayLimit;
     private final double retryDelayMultiplier;
     private final PriorityQueue<ColumnPurgeRetryTask> retryQueue;
-    private final DatabaseSnapshotAgent snapshotAgent;
+    private final DatabaseCheckpointAgent checkpointAgent;
     private final TableToken tableToken;
     private ColumnPurgeOperator columnPurgeOperator;
     private int inErrorCount;
@@ -114,7 +114,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
 
             this.writer = engine.getWriter(tableToken, "QuestDB system");
             this.columnPurgeOperator = new ColumnPurgeOperator(configuration, this.writer, "completed");
-            this.snapshotAgent = engine.getSnapshotAgent();
+            this.checkpointAgent = engine.getCheckpointAgent();
             processTableRecords(engine);
         } catch (Throwable th) {
             close();
@@ -365,7 +365,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         if (inErrorCount >= MAX_ERRORS) {
             return false;
         }
-        if (snapshotAgent.isInProgress()) {
+        if (checkpointAgent.isInProgress()) {
             // No deletion must happen while a snapshot is in-flight.
             return false;
         }

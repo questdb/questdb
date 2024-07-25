@@ -282,7 +282,7 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
                 boolean isWorkerPoolLocal,
                 int sharedWorkerCount,
                 @Nullable FunctionFactoryCache functionFactoryCache,
-                @Nullable DatabaseSnapshotAgent snapshotAgent,
+                @Nullable DatabaseCheckpointAgent snapshotAgent,
                 Metrics metrics
         );
     }

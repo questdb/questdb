@@ -576,8 +576,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public @NotNull CharSequence getSnapshotRoot() {
-        return getDelegate().getSnapshotRoot();
+    public @NotNull CharSequence getCheckpointRoot() {
+        return getDelegate().getCheckpointRoot();
     }
 
     @Override
@@ -1086,8 +1086,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public boolean isSnapshotRecoveryEnabled() {
-        return getDelegate().isSnapshotRecoveryEnabled();
+    public boolean isCheckpointRecoveryEnabled() {
+        return getDelegate().isCheckpointRecoveryEnabled();
     }
 
     @Override

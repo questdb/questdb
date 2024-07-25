@@ -100,7 +100,7 @@ public final class TableUtils {
     public static final String META_SWAP_FILE_NAME = "_meta.swp";
     public static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
     public static final int NULL_LEN = -1;
-    public static final String RESTORE_SNAPSHOT_TRIGGER_FILE_NAME = "_restore";
+    public static final String RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME = "_restore";
     public static final String SNAPSHOT_META_FILE_NAME = "_snapshot";
     public static final String SNAPSHOT_META_FILE_NAME_TXT = "_snapshot.txt";
     public static final String SYMBOL_KEY_REMAP_FILE_SUFFIX = ".r";
@@ -1856,7 +1856,6 @@ public final class TableUtils {
     }
 
     static {
-        //noinspection ConstantValue
         assert TX_OFFSET_LAG_MAX_TIMESTAMP_64 + 8 <= TX_OFFSET_MAP_WRITER_COUNT_32;
     }
 }

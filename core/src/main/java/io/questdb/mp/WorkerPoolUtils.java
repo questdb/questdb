@@ -75,7 +75,7 @@ public class WorkerPoolUtils {
         final MessageBus messageBus = cairoEngine.getMessageBus();
         final O3PartitionPurgeJob purgeDiscoveryJob = new O3PartitionPurgeJob(
                 cairoEngine,
-                cairoEngine.getSnapshotAgent(),
+                cairoEngine.getCheckpointAgent(),
                 workerPool.getWorkerCount()
         );
         workerPool.freeOnExit(purgeDiscoveryJob);

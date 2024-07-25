@@ -55,7 +55,7 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
     @Before
     public void setUp() {
         super.setUp();
-        triggerFilePath.of(engine.getConfiguration().getRoot()).parent().concat(TableUtils.RESTORE_SNAPSHOT_TRIGGER_FILE_NAME);
+        triggerFilePath.of(engine.getConfiguration().getRoot()).parent().concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME);
     }
 
     @Test
@@ -239,7 +239,7 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
 
         LOG.info().$("recovering from snapshot").$();
         createTriggerFile();
-        engine.recoverSnapshot();
+        engine.recoverFromCheckpoint();
         engine.getTableSequencerAPI().releaseAll();
         engine.reloadTableNames();
     }

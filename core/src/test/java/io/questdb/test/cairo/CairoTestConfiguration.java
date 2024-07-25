@@ -25,6 +25,7 @@
 package io.questdb.test.cairo;
 
 import io.questdb.FactoryProvider;
+import io.questdb.PropServerConfiguration;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.CairoConfiguration;
@@ -46,7 +47,7 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
 
     public CairoTestConfiguration(CharSequence root, TelemetryConfiguration telemetryConfiguration, Overrides overrides) {
         this.root = Chars.toString(root);
-        this.snapshotRoot = Chars.toString(root) + Files.SEPARATOR + "snapshot";
+        this.snapshotRoot = Chars.toString(root) + Files.SEPARATOR + PropServerConfiguration.CHECKPOINT_DIRECTORY;
         this.telemetryConfiguration = telemetryConfiguration;
         this.overrides = overrides;
     }
@@ -114,7 +115,7 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     }
 
     @Override
-    public @NotNull CharSequence getSnapshotRoot() {
+    public @NotNull CharSequence getCheckpointRoot() {
         return snapshotRoot;
     }
 

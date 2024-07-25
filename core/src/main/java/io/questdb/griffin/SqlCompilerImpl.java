@@ -1945,7 +1945,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         DefaultLifecycleManager.INSTANCE,
                         configuration.getRoot(),
                         engine.getDdlListener(tableToken),
-                        getEngine().getSnapshotAgent(),
+                        getEngine().getCheckpointAgent(),
                         engine.getMetrics()
                 );
             } else {
@@ -2797,18 +2797,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofRepair();
     }
 
-    private void snapshotDatabase(SqlExecutionContext executionContext) throws SqlException {
+    private void compileCheckpoint(SqlExecutionContext executionContext) throws SqlException {
         executionContext.getSecurityContext().authorizeDatabaseSnapshot();
-        CharSequence tok = expectToken(lexer, "'prepare' or 'complete'");
+        CharSequence tok = expectToken(lexer, "'create' or 'release'");
 
-        if (Chars.equalsLowerCaseAscii(tok, "prepare")) {
+        if (SqlKeywords.isCreateKeyword(tok)) {
             engine.prepareSnapshot(executionContext);
-            compiledQuery.ofSnapshotPrepare();
-        } else if (Chars.equalsLowerCaseAscii(tok, "complete")) {
-            engine.completeSnapshot();
-            compiledQuery.ofSnapshotComplete();
+            compiledQuery.ofCheckpointCreate();
+        } else if (                Chars.equalsLowerCaseAscii(tok, "release")) {
+            engine.checkpointRelease();
+            compiledQuery.ofCheckpointRelease();
         } else {
-            throw SqlException.position(lexer.lastTokenPosition()).put("'prepare' or 'complete' expected");
+            throw SqlException.position(lexer.lastTokenPosition()).put("'create' or 'release' expected");
         }
     }
 
@@ -3156,7 +3156,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final KeywordBasedExecutor dropStatement = dropStmtCompiler::executorSelector;
         final KeywordBasedExecutor sqlBackup = backupAgent::sqlBackup;
         final KeywordBasedExecutor vacuumTable = this::vacuum;
-        final KeywordBasedExecutor snapshotDatabase = this::snapshotDatabase;
+        final KeywordBasedExecutor compileCheckpoint = this::compileCheckpoint;
         final KeywordBasedExecutor compileDeallocate = this::compileDeallocate;
         final KeywordBasedExecutor cancelQuery = this::cancelQuery;
 
@@ -3174,7 +3174,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         keywordBasedExecutors.put("drop", dropStatement);
         keywordBasedExecutors.put("backup", sqlBackup);
         keywordBasedExecutors.put("vacuum", vacuumTable);
-        keywordBasedExecutors.put("snapshot", snapshotDatabase);
+        keywordBasedExecutors.put("checkpoint", compileCheckpoint);
         keywordBasedExecutors.put("deallocate", compileDeallocate);
         keywordBasedExecutors.put("cancel", cancelQuery);
     }

@@ -164,7 +164,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final Row row = new RowImpl();
     private final LongList rowValueIsNotNull = new LongList();
     private final TxReader slaveTxReader;
-    private final DatabaseSnapshotAgent snapshotAgent;
+    private final DatabaseCheckpointAgent checkpointAgent;
     private final ObjList<MapWriter> symbolMapWriters;
     private final IntList symbolRewriteMap = new IntList();
     private final MemoryMARW todoMem = Vm.getMARWInstance();
@@ -256,13 +256,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             LifecycleManager lifecycleManager,
             CharSequence root,
             DdlListener ddlListener,
-            DatabaseSnapshotAgent snapshotAgent,
+            DatabaseCheckpointAgent checkpointAgent,
             Metrics metrics
     ) {
         LOG.info().$("open '").utf8(tableToken.getTableName()).$('\'').$();
         this.configuration = configuration;
         this.ddlListener = ddlListener;
-        this.snapshotAgent = snapshotAgent;
+        this.checkpointAgent = checkpointAgent;
         this.partitionFrameFactory = new PartitionFrameFactory(configuration);
         this.mixedIOFlag = configuration.isWriterMixedIOEnabled();
         this.metrics = metrics;
@@ -954,7 +954,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public boolean checkScoreboardHasReadersBeforeLastCommittedTxn() {
-        if (snapshotAgent.isInProgress()) {
+        if (checkpointAgent.isInProgress()) {
             // No deletion must happen while a snapshot is in-flight.
             return true;
         }
@@ -7528,7 +7528,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void squashSplitPartitions(final int partitionIndexLo, final int partitionIndexHi, final int optimalPartitionCount, boolean force) {
-        if (snapshotAgent.isInProgress()) {
+        if (checkpointAgent.isInProgress()) {
             LOG.info().$("cannot squash partition [table=").$(tableToken.getTableName()).$("], snapshot in progress").$();
             // No overwrite can happen while a snapshot is in-flight.
             return;

@@ -131,7 +131,9 @@ public class WriterPool extends AbstractPool {
      * @return cached TableWriter instance.
      */
     public TableWriter get(TableToken tableToken, @NotNull String lockReason) {
+        // writer cannot be null because our async command is null
         TableWriter w = getWriterEntry(tableToken, lockReason, null);
+        assert w != null;
         w.goActive();
         return w;
     }
@@ -277,7 +279,7 @@ public class WriterPool extends AbstractPool {
                         e,
                         root,
                         engine.getDdlListener(tableToken),
-                        engine.getSnapshotAgent(),
+                        engine.getCheckpointAgent(),
                         engine.getMetrics()
                 );
             }
@@ -396,7 +398,7 @@ public class WriterPool extends AbstractPool {
                     e,
                     root,
                     engine.getDdlListener(tableToken),
-                    engine.getSnapshotAgent(),
+                    engine.getCheckpointAgent(),
                     engine.getMetrics()
             );
             e.ownershipReason = lockReason;

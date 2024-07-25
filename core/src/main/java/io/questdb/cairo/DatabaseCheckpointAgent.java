@@ -24,7 +24,7 @@
 
 package io.questdb.cairo;
 
-public interface DatabaseSnapshotAgent {
+public interface DatabaseCheckpointAgent {
 
     /**
      * Returns true is a snapshot is taking place, i.e.

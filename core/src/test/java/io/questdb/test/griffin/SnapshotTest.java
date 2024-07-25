@@ -97,8 +97,8 @@ public class SnapshotTest extends AbstractCairoTest {
 
         super.setUp();
         ff = testFilesFacade;
-        path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).slash();
-        triggerFilePath.of(configuration.getRoot()).parent().concat(TableUtils.RESTORE_SNAPSHOT_TRIGGER_FILE_NAME).$();
+        path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory()).slash();
+        triggerFilePath.of(configuration.getRoot()).parent().concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME).$();
         rootLen = path.size();
         testFilesFacade.reset();
         circuitBreaker.setTimeout(Long.MAX_VALUE);
@@ -110,7 +110,7 @@ public class SnapshotTest extends AbstractCairoTest {
         path.trimTo(rootLen);
         configuration.getFilesFacade().rmdir(path.slash());
         // reset inProgress for all tests
-        ddl("snapshot complete");
+        ddl("checkpoint release");
     }
 
     @Test
@@ -122,13 +122,13 @@ public class SnapshotTest extends AbstractCairoTest {
                             "(select rnd_str(2,3,0) a, rnd_symbol('A','B','C') b, x c from long_sequence(3))"
             );
 
-            ddl("snapshot prepare");
+            ddl("checkpoint create");
 
             engine.clear();
             createTriggerFile();
             testFilesFacade.errorOnRegistryFileCopy = true;
             try {
-                engine.recoverSnapshot();
+                engine.recoverFromCheckpoint();
                 Assert.fail("Exception expected");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getMessage(), "Could not copy registry file");
@@ -147,13 +147,13 @@ public class SnapshotTest extends AbstractCairoTest {
                             "(select rnd_str(2,3,0) a, rnd_symbol('A','B','C') b, x c from long_sequence(3))"
             );
 
-            ddl("snapshot prepare");
+            ddl("checkpoint create");
 
             engine.clear();
             createTriggerFile();
             testFilesFacade.errorOnRegistryFileRemoval = true;
             try {
-                engine.recoverSnapshot();
+                engine.recoverFromCheckpoint();
                 Assert.fail("Exception expected");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getMessage(), "could not remove registry file");
@@ -174,12 +174,12 @@ public class SnapshotTest extends AbstractCairoTest {
                             "(select rnd_str(2,3,0) a, rnd_symbol('A','B','C') b, x c from long_sequence(3))"
             );
 
-            ddl("snapshot prepare");
+            ddl("checkpoint create");
 
             engine.clear();
             createTriggerFile();
             try {
-                engine.recoverSnapshot();
+                engine.recoverFromCheckpoint();
                 Assert.fail("Exception expected");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getMessage(), "could not remove restore trigger file");
@@ -199,7 +199,7 @@ public class SnapshotTest extends AbstractCairoTest {
             engine.clear();
             createTriggerFile();
             try {
-                engine.recoverSnapshot();
+                engine.recoverFromCheckpoint();
                 Assert.fail("Exception expected");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getMessage(), "snapshot directory does not exist");
@@ -216,16 +216,16 @@ public class SnapshotTest extends AbstractCairoTest {
                             "(select rnd_str(2,3,0) a, rnd_symbol('A','B','C') b, x c from long_sequence(3))"
             );
 
-            ddl("snapshot prepare");
+            ddl("checkpoint create");
 
-            path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
+            path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory());
             FilesFacade ff = configuration.getFilesFacade();
             ff.removeQuiet(path.concat(TableUtils.SNAPSHOT_META_FILE_NAME).$());
 
             engine.clear();
             createTriggerFile();
             try {
-                engine.recoverSnapshot();
+                engine.recoverFromCheckpoint();
                 Assert.fail("Exception expected");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getMessage(), "snapshot metadata file does not exist");
@@ -308,7 +308,7 @@ public class SnapshotTest extends AbstractCairoTest {
                             "(select x, timestamp_sequence(0, 100000000000) ts from long_sequence(" + partitionCount + ")) timestamp(ts) partition by day"
             );
 
-            ddl("snapshot prepare");
+            ddl("checkpoint create");
 
             insert(
                     "insert into " + tableName +
@@ -318,7 +318,7 @@ public class SnapshotTest extends AbstractCairoTest {
             // Release all readers and writers, but keep the snapshot dir around.
             engine.clear();
             setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
-            engine.recoverSnapshot();
+            engine.recoverFromCheckpoint();
 
             // Data inserted after PREPARE SNAPSHOT should be discarded.
             assertSql(
@@ -342,7 +342,7 @@ public class SnapshotTest extends AbstractCairoTest {
                             "(select rnd_str(2,3,0) a, rnd_symbol('A','B','C') b, x c from long_sequence(3))"
             );
 
-            ddl("snapshot prepare");
+            ddl("checkpoint create");
 
             final String expectedAllColumns = "a\tb\tc\n" +
                     "JW\tC\t1\n" +
@@ -362,7 +362,7 @@ public class SnapshotTest extends AbstractCairoTest {
             // Release all readers and writers, but keep the snapshot dir around.
             engine.clear();
             setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
-            engine.recoverSnapshot();
+            engine.recoverFromCheckpoint();
 
             // Dropped column should be there.
             assertSql(expectedAllColumns, "select * from " + tableName);
@@ -382,7 +382,7 @@ public class SnapshotTest extends AbstractCairoTest {
                             "(select x, timestamp_sequence(0, 100000000000) ts from long_sequence(" + partitionCount + ")) timestamp(ts) partition by day"
             );
 
-            ddl("snapshot prepare");
+            ddl("checkpoint create");
 
             insert(
                     "insert into " + tableName +
@@ -410,7 +410,7 @@ public class SnapshotTest extends AbstractCairoTest {
             Assert.assertEquals(ff.length(path.$()), restartedId.length());
 
             setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
-            engine.recoverSnapshot();
+            engine.recoverFromCheckpoint();
 
             // Data inserted after PREPARE SNAPSHOT should be discarded.
             assertSql(
@@ -446,14 +446,14 @@ public class SnapshotTest extends AbstractCairoTest {
                 t.start();
                 latch2.await();
                 configureCircuitBreakerTimeoutOnFirstCheck();
-                assertExceptionNoLeakCheck("snapshot prepare");
+                assertExceptionNoLeakCheck("checkpoint create");
             } catch (CairoException ex) {
                 latch1.countDown();
                 t.join();
                 Assert.assertFalse(lock.isLocked());
                 Assert.assertTrue(ex.getMessage().startsWith("[-1] timeout, query aborted [fd=-1]"));
             } finally {
-                ddl("snapshot complete");
+                ddl("checkpoint release");
                 Assert.assertFalse(lock.isLocked());
                 circuitBreakerConfiguration = null;
                 engine.setWalPurgeJobRunLock(null);
@@ -465,8 +465,8 @@ public class SnapshotTest extends AbstractCairoTest {
     public void testSnapshotCompleteDeletesSnapshotDir() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table test (ts timestamp, name symbol, val int)");
-            ddl("snapshot prepare");
-            ddl("snapshot complete");
+            ddl("checkpoint create");
+            ddl("checkpoint release");
 
             path.trimTo(rootLen).slash$();
             Assert.assertFalse(configuration.getFilesFacade().exists(path.$()));
@@ -477,8 +477,8 @@ public class SnapshotTest extends AbstractCairoTest {
     public void testSnapshotCompleteWithoutPrepareIsIgnored() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table test (ts timestamp, name symbol, val int)");
-            // Verify that SNAPSHOT COMPLETE doesn't return errors.
-            ddl("snapshot complete");
+            // Verify that checkpoint release doesn't return errors.
+            ddl("checkpoint release");
         });
     }
 
@@ -493,8 +493,8 @@ public class SnapshotTest extends AbstractCairoTest {
                 ddl("create table " + i + " (ts timestamp, name symbol, val int) timestamp(ts) partition by DAY WAL");
             }
 
-            ddl("snapshot prepare");
-            ddl("snapshot complete");
+            ddl("checkpoint create");
+            ddl("checkpoint release");
         });
     }
 
@@ -505,8 +505,8 @@ public class SnapshotTest extends AbstractCairoTest {
                 ddl("create table " + i + " (ts timestamp, name symbol, val int)");
             }
 
-            ddl("snapshot prepare");
-            ddl("snapshot complete");
+            ddl("checkpoint create");
+            ddl("checkpoint release");
         });
     }
 
@@ -625,12 +625,12 @@ public class SnapshotTest extends AbstractCairoTest {
             Assert.assertTrue(Files.touch(path.$()));
 
             ddl("create table test (ts timestamp, name symbol, val int)");
-            ddl("snapshot prepare", sqlExecutionContext);
+            ddl("checkpoint create", sqlExecutionContext);
 
-            // The test file should be deleted by SNAPSHOT PREPARE.
+            // The test file should be deleted by checkpoint create.
             Assert.assertFalse(ff.exists(path.$()));
 
-            ddl("snapshot complete");
+            ddl("checkpoint release");
         });
     }
 
@@ -649,11 +649,11 @@ public class SnapshotTest extends AbstractCairoTest {
 
             // Assert snapshot folder exists
             Assert.assertTrue(TestFilesFacadeImpl.INSTANCE.exists(
-                    path.of(configuration.getSnapshotRoot()).slash$()
+                    path.of(configuration.getCheckpointRoot()).slash$()
             ));
             // But snapshot/db folder does not
             Assert.assertFalse(TestFilesFacadeImpl.INSTANCE.exists(
-                    path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).slash$()
+                    path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory()).slash$()
             ));
         });
     }
@@ -671,7 +671,7 @@ public class SnapshotTest extends AbstractCairoTest {
             engine.releaseInactive();
             Assert.assertTrue(ff.removeQuiet(path.of(root).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$()));
 
-            assertException("snapshot prepare", 0, "Cannot open. File does not exist");
+            assertException("checkpoint create", 0, "Cannot open. File does not exist");
         });
     }
 
@@ -685,7 +685,7 @@ public class SnapshotTest extends AbstractCairoTest {
             engine.lockReadersByTableToken(tableToken);
 
             try {
-                ddl("snapshot prepare");
+                ddl("checkpoint create");
                 Assert.fail();
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "timeout, query aborted");
@@ -701,20 +701,20 @@ public class SnapshotTest extends AbstractCairoTest {
             ddl("create table test (ts timestamp, name symbol, val int)");
 
             testFilesFacade.errorOnSync = true;
-            assertException("snapshot prepare", 0, "Could not sync");
+            assertException("checkpoint create", 0, "Could not sync");
 
             // Once the error is gone, subsequent PREPARE/COMPLETE statements should execute successfully.
             testFilesFacade.errorOnSync = false;
-            ddl("snapshot prepare");
-            ddl("snapshot complete");
+            ddl("checkpoint create");
+            ddl("checkpoint release");
         });
     }
 
     @Test
     public void testSnapshotPrepareOnEmptyDatabase() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("snapshot prepare");
-            ddl("snapshot complete");
+            ddl("checkpoint create");
+            ddl("checkpoint release");
         });
     }
 
@@ -732,23 +732,23 @@ public class SnapshotTest extends AbstractCairoTest {
 
             engine.setWalPurgeJobRunLock(lock);
             Assert.assertFalse(lock.isLocked());
-            ddl("snapshot prepare");
+            ddl("checkpoint create");
             Assert.assertTrue(lock.isLocked());
             try {
-                assertExceptionNoLeakCheck("snapshot prepare");
+                assertExceptionNoLeakCheck("checkpoint create");
             } catch (SqlException ex) {
                 Assert.assertTrue(lock.isLocked());
-                Assert.assertTrue(ex.getMessage().startsWith("[0] Waiting for SNAPSHOT COMPLETE to be called"));
+                Assert.assertTrue(ex.getMessage().startsWith("[0] Waiting for checkpoint release to be called"));
             }
-            ddl("snapshot complete");
+            ddl("checkpoint release");
             Assert.assertFalse(lock.isLocked());
 
 
             //DB is empty
-            ddl("snapshot complete");
+            ddl("checkpoint release");
             Assert.assertFalse(lock.isLocked());
             lock.lock();
-            ddl("snapshot complete");
+            ddl("checkpoint release");
             Assert.assertFalse(lock.isLocked());
 
             circuitBreakerConfiguration = null;
@@ -773,16 +773,16 @@ public class SnapshotTest extends AbstractCairoTest {
             engine.setWalPurgeJobRunLock(lock);
             try {
                 Assert.assertFalse(lock.isLocked());
-                ddl("snapshot prepare");
+                ddl("checkpoint create");
                 Assert.assertTrue(lock.isLocked());
-                ddl("snapshot prepare");
+                ddl("checkpoint create");
                 Assert.assertTrue(lock.isLocked());
                 Assert.fail();
             } catch (SqlException ex) {
-                Assert.assertTrue(ex.getMessage().startsWith("[0] Waiting for SNAPSHOT COMPLETE to be called"));
+                Assert.assertTrue(ex.getMessage().startsWith("[0] Waiting for checkpoint release to be called"));
             } finally {
                 Assert.assertTrue(lock.isLocked());
-                ddl("snapshot complete");
+                ddl("checkpoint release");
                 Assert.assertFalse(lock.isLocked());
 
                 circuitBreakerConfiguration = null;
@@ -795,13 +795,13 @@ public class SnapshotTest extends AbstractCairoTest {
     public void testSnapshotPrepareSubsequentCallFailsWithLock() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table test (ts timestamp, name symbol, val int)");
-            ddl("snapshot prepare");
+            ddl("checkpoint create");
             assertException(
-                    "snapshot prepare",
+                    "checkpoint create",
                     0,
-                    "Waiting for SNAPSHOT COMPLETE to be called"
+                    "Waiting for checkpoint release to be called"
             );
-            ddl("snapshot complete");
+            ddl("checkpoint release");
         });
     }
 
@@ -810,7 +810,7 @@ public class SnapshotTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day bypass wal;");
             insert("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
-            ddl("snapshot prepare;");
+            ddl("checkpoint create;");
 
             try {
                 drop("drop table test;");
@@ -826,7 +826,7 @@ public class SnapshotTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day bypass wal;");
             insert("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
-            ddl("snapshot prepare;");
+            ddl("checkpoint create;");
 
             try {
                 ddl("rename table test to test2;");
@@ -842,7 +842,7 @@ public class SnapshotTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day bypass wal;");
             insert("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
-            ddl("snapshot prepare;");
+            ddl("checkpoint create;");
 
             try {
                 ddl("truncate table test;");
@@ -864,7 +864,7 @@ public class SnapshotTest extends AbstractCairoTest {
             insert("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
             drainWalQueue();
 
-            ddl("snapshot prepare;");
+            ddl("checkpoint create;");
 
             drop("drop table test;");
             drainWalQueue();
@@ -875,7 +875,7 @@ public class SnapshotTest extends AbstractCairoTest {
             engine.clear();
             engine.closeNameRegistry();
             setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
-            engine.recoverSnapshot();
+            engine.recoverFromCheckpoint();
             engine.reloadTableNames();
 
             drainWalQueue();
@@ -901,7 +901,7 @@ public class SnapshotTest extends AbstractCairoTest {
             insert("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
             drainWalQueue();
 
-            ddl("snapshot prepare;");
+            ddl("checkpoint create;");
 
             ddl("rename table test to test2;");
             drainWalQueue();
@@ -913,7 +913,7 @@ public class SnapshotTest extends AbstractCairoTest {
             engine.clear();
             engine.closeNameRegistry();
             setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
-            engine.recoverSnapshot();
+            engine.recoverFromCheckpoint();
             engine.reloadTableNames();
 
             drainWalQueue();
@@ -935,7 +935,7 @@ public class SnapshotTest extends AbstractCairoTest {
             insert("insert into test values (now(), 'foobar', 42);");
             drainWalQueue();
 
-            ddl("snapshot prepare;");
+            ddl("checkpoint create;");
 
             ddl("truncate table test;");
             drainWalQueue();
@@ -945,7 +945,7 @@ public class SnapshotTest extends AbstractCairoTest {
             // Release all readers and writers, but keep the snapshot dir around.
             engine.clear();
             setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
-            engine.recoverSnapshot();
+            engine.recoverFromCheckpoint();
 
             drainWalQueue();
 
@@ -1000,7 +1000,7 @@ public class SnapshotTest extends AbstractCairoTest {
             final WalPurgeJob job = new WalPurgeJob(engine);
             engine.setWalPurgeJobRunLock(job.getRunLock());
 
-            ddl("snapshot prepare");
+            ddl("checkpoint create");
             Thread controlThread1 = new Thread(() -> {
                 currentMicros = interval;
                 job.drain(0);
@@ -1015,7 +1015,7 @@ public class SnapshotTest extends AbstractCairoTest {
 
             engine.releaseInactive();
 
-            ddl("snapshot complete");
+            ddl("checkpoint release");
             Thread controlThread2 = new Thread(() -> {
                 currentMicros = 2 * interval;
                 job.drain(0);
@@ -1077,7 +1077,7 @@ public class SnapshotTest extends AbstractCairoTest {
             insert("insert into " + tableName + " values (103, 'dfd', '2022-02-24T03', 'xyz', 41, 42, 43)");
 
             // updates above should apply to WAL, not table
-            ddl("snapshot prepare");
+            ddl("checkpoint create");
 
             // these updates are lost during the snapshotting
             ddl("alter table " + tableName + " add column lll int");
@@ -1087,7 +1087,7 @@ public class SnapshotTest extends AbstractCairoTest {
             // Release all readers and writers, but keep the snapshot dir around.
             engine.clear();
             setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
-            engine.recoverSnapshot();
+            engine.recoverFromCheckpoint();
 
             // apply updates from WAL
             drainWalQueue();
@@ -1210,7 +1210,7 @@ public class SnapshotTest extends AbstractCairoTest {
                             "(select x, timestamp_sequence(0, 100000000000) ts from long_sequence(20)) timestamp(ts) partition by hour"
             );
 
-            ddl("snapshot prepare");
+            ddl("checkpoint create");
 
             path.trimTo(rootLen).slash$();
             Assert.assertTrue(Utf8s.toString(path), configuration.getFilesFacade().exists(path.$()));
@@ -1232,7 +1232,7 @@ public class SnapshotTest extends AbstractCairoTest {
             if (createTriggerFile) {
                 createTriggerFile();
             }
-            engine.recoverSnapshot();
+            engine.recoverFromCheckpoint();
 
             // In case of recovery, data inserted after PREPARE SNAPSHOT should be discarded.
             int expectedCount = expectRecovery ? 20 : 40;
@@ -1266,9 +1266,9 @@ public class SnapshotTest extends AbstractCairoTest {
 
             try (Path path = new Path()) {
                 ddl("create table x as (select * from (select rnd_str(5,10,2) a, x b from long_sequence(20)))");
-                ddl("snapshot prepare");
+                ddl("checkpoint create");
 
-                path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
+                path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory());
                 FilesFacade ff = configuration.getFilesFacade();
                 try (MemoryCMARW mem = Vm.getCMARWInstance()) {
                     mem.smallFile(ff, path.concat(TableUtils.SNAPSHOT_META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
@@ -1278,7 +1278,7 @@ public class SnapshotTest extends AbstractCairoTest {
                     Assert.assertTrue(Chars.equals(actualId, expectedId));
                 }
 
-                ddl("snapshot complete");
+                ddl("checkpoint release");
             }
         });
     }
@@ -1286,7 +1286,7 @@ public class SnapshotTest extends AbstractCairoTest {
     private void testSnapshotPrepareCheckTableMetadata(boolean generateColTops, boolean dropColumns) throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path()) {
-                path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
+                path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory());
 
                 String tableName = "t";
                 ddl("create table " + tableName + " (a STRING, b LONG)");
@@ -1306,7 +1306,7 @@ public class SnapshotTest extends AbstractCairoTest {
                     ddl("alter table " + tableName + " drop column a");
                 }
 
-                ddl("snapshot prepare");
+                ddl("checkpoint create");
 
                 TableToken tableToken = engine.verifyTableName(tableName);
                 path.concat(tableToken);
@@ -1378,7 +1378,7 @@ public class SnapshotTest extends AbstractCairoTest {
                     }
                 }
 
-                ddl("snapshot complete");
+                ddl("checkpoint release");
             }
         });
     }
@@ -1386,14 +1386,14 @@ public class SnapshotTest extends AbstractCairoTest {
     private void testSnapshotPrepareCheckTableMetadataFiles(String ddl, String ddl2, String tableName) throws Exception {
         try (Path path = new Path(); Path copyPath = new Path()) {
             path.of(configuration.getRoot());
-            copyPath.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
+            copyPath.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory());
 
             compile(ddl);
             if (ddl2 != null) {
                 compile(ddl2);
             }
 
-            ddl("snapshot prepare");
+            ddl("checkpoint create");
 
             TableToken tableToken = engine.verifyTableName(tableName);
             path.concat(tableToken);
@@ -1414,7 +1414,7 @@ public class SnapshotTest extends AbstractCairoTest {
             copyPath.trimTo(copyTableNameLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$();
             TestUtils.assertFileContentsEquals(path, copyPath);
 
-            ddl("snapshot complete");
+            ddl("checkpoint release");
         }
     }
 
@@ -1438,7 +1438,7 @@ public class SnapshotTest extends AbstractCairoTest {
 
         @Override
         public boolean removeQuiet(LPSZ name) {
-            if (errorOnTriggerFileRemoval && Utf8s.endsWithAscii(name, TableUtils.RESTORE_SNAPSHOT_TRIGGER_FILE_NAME)) {
+            if (errorOnTriggerFileRemoval && Utf8s.endsWithAscii(name, TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME)) {
                 return false;
             }
             if (errorOnRegistryFileRemoval && Utf8s.endsWithAscii(name, WalUtils.TABLE_REGISTRY_NAME_FILE + ".0")) { // version 0

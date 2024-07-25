@@ -179,7 +179,7 @@ public class PGSecurityTest extends BasePGTest {
         // snapshot is not supported on Windows at all
         assertMemoryLeak(() -> {
             ddl("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day");
-            assertQueryDisallowed("snapshot prepare");
+            assertQueryDisallowed("checkpoint create");
         });
     }
 

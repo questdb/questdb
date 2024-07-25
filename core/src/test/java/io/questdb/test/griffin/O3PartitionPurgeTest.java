@@ -50,7 +50,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
 
     @BeforeClass
     public static void begin() {
-        purgeJob = new O3PartitionPurgeJob(engine, engine.getSnapshotAgent(), 1);
+        purgeJob = new O3PartitionPurgeJob(engine, engine.getCheckpointAgent(), 1);
     }
 
     @AfterClass
@@ -614,7 +614,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 TableToken tableToken = engine.verifyTableName("tbl");
 
                 // Open a reader to not make partition remove trivial
-                try (TableReader rdr0 = getReader("tbl")) {
+                try (TableReader ignored = getReader("tbl")) {
                     // In order inserts partition 1970-01-09
                     insert("insert into tbl select 4, '1970-01-09T10'");
                     insert("insert into tbl select 4, '1970-01-09T10'");

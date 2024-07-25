@@ -354,7 +354,7 @@ public interface CairoConfiguration {
     CharSequence getSnapshotInstanceId();
 
     @NotNull
-    CharSequence getSnapshotRoot(); // same as root/../snapshot
+    CharSequence getCheckpointRoot(); // same as root/../.checkpoint
 
     long getSpinLockTimeout();
 
@@ -583,11 +583,11 @@ public interface CairoConfiguration {
     boolean isReadOnlyInstance();
 
     /**
-     * A flag to enable/disable snapshot recovery mechanism. Defaults to {@code true}.
+     * A flag to enable/disable checkpoint recovery mechanism. Defaults to {@code true}.
      *
      * @return enable/disable snapshot recovery flag
      */
-    boolean isSnapshotRecoveryEnabled();
+    boolean isCheckpointRecoveryEnabled();
 
     boolean isSqlJitDebugEnabled();
 

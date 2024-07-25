@@ -55,9 +55,9 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 import static io.questdb.cairo.TableUtils.openSmallFile;
 import static io.questdb.cairo.wal.WalUtils.*;
 
-public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCloseable {
+public class DatabaseCheckpointAgentImpl implements DatabaseCheckpointAgent, QuietCloseable {
 
-    private final static Log LOG = LogFactory.getLog(DatabaseSnapshotAgentImpl.class);
+    private final static Log LOG = LogFactory.getLog(DatabaseCheckpointAgentImpl.class);
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
     private final FilesFacade ff;
@@ -78,7 +78,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private SimpleWaitingLock walPurgeJobRunLock = null; // used as a suspend/resume handler for the WalPurgeJob
 
-    DatabaseSnapshotAgentImpl(CairoEngine engine) {
+    DatabaseCheckpointAgentImpl(CairoEngine engine) {
         this.engine = engine;
         this.configuration = engine.getConfiguration();
         this.ff = configuration.getFilesFacade();
@@ -255,13 +255,13 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
         }
     }
 
-    void completeSnapshot() throws SqlException {
+    void checkpointRelease() throws SqlException {
         if (!lock.tryLock()) {
             throw SqlException.position(0).put("Another snapshot command in progress");
         }
         try {
             // Delete snapshot/db directory.
-            path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).$();
+            path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory()).$();
             ff.rmdir(path); // it's fine to ignore errors here
 
             // Resume the WalPurgeJob
@@ -281,7 +281,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
         }
     }
 
-    void prepareSnapshot(SqlExecutionContext executionContext) throws SqlException {
+    void checkpointCreate(SqlExecutionContext executionContext) throws SqlException {
         // Windows doesn't support sync() system call.
         if (Os.isWindows()) {
             throw SqlException.position(0).put("Snapshots are not supported on Windows");
@@ -296,7 +296,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
             }
 
             try {
-                path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
+                path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory());
                 int snapshotDbLen = path.size();
                 // Delete all contents of the snapshot/db dir.
                 if (ff.exists(path.slash$())) {
@@ -338,7 +338,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
                             }
 
                             boolean isWalTable = engine.isWalTable(tableToken);
-                            path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
+                            path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory());
                             LOG.info().$("preparing for snapshot [table=").$(tableToken).I$();
 
                             path.trimTo(snapshotDbLen).concat(tableToken);
@@ -414,7 +414,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
                             }
                         }
 
-                        path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).concat(TableUtils.SNAPSHOT_META_FILE_NAME);
+                        path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory()).concat(TableUtils.SNAPSHOT_META_FILE_NAME);
                         mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
                         mem.putStr(configuration.getSnapshotInstanceId());
                         mem.close();
@@ -446,24 +446,24 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
         }
     }
 
-    void recoverSnapshot() {
-        if (!configuration.isSnapshotRecoveryEnabled()) {
+    void recover() {
+        if (!configuration.isCheckpointRecoveryEnabled()) {
             return;
         }
 
         final FilesFacade ff = configuration.getFilesFacade();
         final CharSequence root = configuration.getRoot();
-        final CharSequence snapshotRoot = configuration.getSnapshotRoot();
+        final CharSequence checkpointRoot = configuration.getCheckpointRoot();
 
         try (
                 Path srcPath = new Path();
                 Path dstPath = new Path();
                 MemoryCMARW memFile = Vm.getCMARWInstance()
         ) {
-            srcPath.of(snapshotRoot).concat(configuration.getDbDirectory());
+            srcPath.of(checkpointRoot).concat(configuration.getDbDirectory());
             final int snapshotRootLen = srcPath.size();
 
-            dstPath.of(root).parent().concat(TableUtils.RESTORE_SNAPSHOT_TRIGGER_FILE_NAME);
+            dstPath.of(root).parent().concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME);
             boolean triggerExists = ff.exists(dstPath.$());
 
             // Check if the snapshot dir exists.
@@ -628,7 +628,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
                         .put(", errno=").put(ff.errno())
                         .put(']');
             }
-            dstPath.of(root).parent().concat(TableUtils.RESTORE_SNAPSHOT_TRIGGER_FILE_NAME);
+            dstPath.of(root).parent().concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME);
             if (triggerExists && !ff.removeQuiet(dstPath.$())) {
                 throw CairoException.critical(ff.errno())
                         .put("could not remove restore trigger file. file permission issues? [file=").put(dstPath).put(']');

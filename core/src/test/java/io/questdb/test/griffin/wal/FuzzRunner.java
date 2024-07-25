@@ -203,7 +203,7 @@ public class FuzzRunner {
         TableReader rdr1 = getReader(tableName);
         TableReader rdr2 = getReader(tableName);
         try (
-                O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, engine.getSnapshotAgent(), 1)
+                O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, engine.getCheckpointAgent(), 1)
         ) {
             int transactionSize = transactions.size();
             Rnd rnd = new Rnd();
@@ -598,7 +598,7 @@ public class FuzzRunner {
 
     private void drainWalQueue(Rnd applyRnd, String tableName) {
         try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1);
-             O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, engine.getSnapshotAgent(), 1);
+             O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, engine.getCheckpointAgent(), 1);
              TableReader rdr1 = getReaderHandleTableDropped(tableName);
              TableReader rdr2 = getReaderHandleTableDropped(tableName)
         ) {
@@ -676,7 +676,7 @@ public class FuzzRunner {
     private void runPurgePartitionJob(AtomicInteger done, AtomicInteger forceReaderReload, ConcurrentLinkedQueue<Throwable> errors, Rnd runRnd, String tableNameBase, int tableCount, boolean multiTable) {
         ObjList<TableReader> readers = new ObjList<>();
         try {
-            try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, engine.getSnapshotAgent(), 1)) {
+            try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, engine.getCheckpointAgent(), 1)) {
                 int forceReloadNum = forceReaderReload.get();
                 for (int i = 0; i < tableCount; i++) {
                     String tableNameWal = multiTable ? getWalParallelApplyTableName(tableNameBase, i) : tableNameBase;

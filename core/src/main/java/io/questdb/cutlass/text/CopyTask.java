@@ -504,7 +504,7 @@ public class CopyTask {
                             DefaultLifecycleManager.INSTANCE,
                             root,
                             cairoEngine.getDdlListener(tableToken),
-                            cairoEngine.getSnapshotAgent(),
+                            cairoEngine.getCheckpointAgent(),
                             cairoEngine.getMetrics()
                     )
             ) {
@@ -889,7 +889,7 @@ public class CopyTask {
                             DefaultLifecycleManager.INSTANCE,
                             importRoot,
                             engine.getDdlListener(tableToken),
-                            engine.getSnapshotAgent(),
+                            engine.getCheckpointAgent(),
                             engine.getMetrics()
                     )
             ) {
