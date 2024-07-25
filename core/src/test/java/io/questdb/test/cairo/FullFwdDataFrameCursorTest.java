@@ -49,7 +49,6 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
-
     private static final Log LOG = LogFactory.getLog(FullFwdDataFrameCursorTest.class);
     private static final int WORK_STEALING_BUSY_QUEUE = 2;
     private static final int WORK_STEALING_CAS_FLAP = 4;
@@ -60,7 +59,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     @Test
     public void testClose() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-
             TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).
                     col("a", ColumnType.INT).
                     col("b", ColumnType.INT).
@@ -868,17 +866,18 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             Rnd rnd = new Rnd();
             SymbolGroup sg = new SymbolGroup(rnd, S, N, PartitionBy.NONE, true);
 
-            try (final MyWorkScheduler workScheduler = new MyWorkScheduler(new MPSequence(1024) {
-                private boolean flap = false;
+            try (
+                    final MyWorkScheduler workScheduler = new MyWorkScheduler(new MPSequence(1024) {
+                        private boolean flap = false;
 
-                @Override
-                public long next() {
-                    boolean flap = this.flap;
-                    this.flap = !this.flap;
-                    return flap ? -1 : -2;
-                }
-            }, null)) {
-
+                        @Override
+                        public long next() {
+                            boolean flap = this.flap;
+                            this.flap = !this.flap;
+                            return flap ? -1 : -2;
+                        }
+                    }, null)
+            ) {
                 long timestamp = 0;
                 try (TableWriter writer = newOffPoolWriter(configuration, "ABC", metrics, workScheduler)) {
                     for (int i = 0; i < N; i++) {
@@ -893,11 +892,10 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 }
 
                 try (TableReader reader = createTableReader(configuration, "ABC")) {
-
                     Assert.assertTrue(reader.getPartitionCount() > 0);
 
                     FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
-                    TableReaderRecord record = new TableReaderRecord();
+                    TestTableReaderRecord record = new TestTableReaderRecord();
 
                     cursor.of(reader);
                     record.of(reader);
@@ -982,10 +980,10 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         testSymbolIndexReadAfterAlter(PartitionBy.YEAR, 1000000 * 60 * 5 * 24L * 10L, 2, 1000);
     }
 
-    private static void assertRowsMatchSymbol0(DataFrameCursor cursor, TableReaderRecord record, int columnIndex, long expectedRowCount, int indexDirection) {
+    private static void assertRowsMatchSymbol0(DataFrameCursor cursor, TestTableReaderRecord record, int columnIndex, long expectedRowCount, int indexDirection) {
         // SymbolTable is table at table scope, so it will be the same for every
         // data frame here. Get its instance outside of data frame loop.
-        StaticSymbolTable symbolTable = cursor.getSymbolTable(columnIndex);
+        StaticSymbolTable symbolTable = cursor.getTableReader().getSymbolTable(columnIndex);
 
         long rowCount = 0;
         DataFrame frame;
@@ -995,7 +993,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
             // BitmapIndex is always at data frame scope, each table can have more than one.
             // we have to get BitmapIndexReader instance once for each frame.
-            BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, indexDirection);
+            BitmapIndexReader indexReader = record.getReader().getBitmapIndexReader(frame.getPartitionIndex(), columnIndex, indexDirection);
 
             // because out Symbol column 0 is indexed, frame has to have index.
             Assert.assertNotNull(indexReader);
@@ -1014,7 +1012,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         Assert.assertEquals(expectedRowCount, rowCount);
     }
 
-    private void assertData(FullFwdDataFrameCursor cursor, TableReaderRecord record, Rnd rnd, SymbolGroup sg, long expectedRowCount) {
+    private void assertData(FullFwdDataFrameCursor cursor, TestTableReaderRecord record, Rnd rnd, SymbolGroup sg, long expectedRowCount) {
         // SymbolTable is table at table scope, so it will be the same for every
         // data frame here. Get its instance outside of data frame loop.
 
@@ -1037,9 +1035,8 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         Assert.assertEquals(expectedRowCount, rowCount);
     }
 
-    private long assertIndex(TableReaderRecord record, int columnIndex, StaticSymbolTable symbolTable, long count, DataFrame frame, int direction) {
-
-        BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, direction);
+    private long assertIndex(TestTableReaderRecord record, int columnIndex, StaticSymbolTable symbolTable, long count, DataFrame frame, int direction) {
+        BitmapIndexReader indexReader = record.getReader().getBitmapIndexReader(frame.getPartitionIndex(), columnIndex, direction);
 
         // because out Symbol column 0 is indexed, frame has to have an index.
         Assert.assertNotNull(indexReader);
@@ -1081,11 +1078,11 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         TestUtils.assertEquals(sinkA, sinkB);
     }
 
-    private void assertNoIndex(FullFwdDataFrameCursor cursor) {
+    private void assertNoIndex(FullFwdDataFrameCursor cursor, TestTableReaderRecord record) {
         DataFrame frame;
         while ((frame = cursor.next()) != null) {
             try {
-                frame.getBitmapIndexReader(4, BitmapIndexReader.DIR_BACKWARD);
+                record.getReader().getBitmapIndexReader(frame.getPartitionIndex(), 4, BitmapIndexReader.DIR_BACKWARD);
                 Assert.fail();
             } catch (CairoException e) {
                 Assert.assertTrue(Chars.contains(e.getMessage(), "Not indexed"));
@@ -1093,7 +1090,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         }
     }
 
-    private void assertSymbolFoundInIndex(FullFwdDataFrameCursor cursor, TableReaderRecord record, int columnIndex, int M) {
+    private void assertSymbolFoundInIndex(FullFwdDataFrameCursor cursor, TestTableReaderRecord record, int columnIndex, int M) {
         // SymbolTable is table at table scope, so it will be the same for every
         // data frame here. Get its instance outside of data frame loop.
         StaticSymbolTable symbolTable = cursor.getSymbolTable(columnIndex);
@@ -1215,7 +1212,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             // lets see what we can read after this catastrophe
             try (TableReader reader = createTableReader(AbstractCairoTest.configuration, "ABC")) {
                 FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
-                TableReaderRecord record = new TableReaderRecord();
+                TestTableReaderRecord record = new TestTableReaderRecord();
 
                 cursor.of(reader);
                 record.of(reader);
@@ -1354,7 +1351,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             // let's see what we can read after this catastrophe
             try (TableReader reader = createTableReader(AbstractCairoTest.configuration, "ABC")) {
                 FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
-                TableReaderRecord record = new TableReaderRecord();
+                TestTableReaderRecord record = new TestTableReaderRecord();
 
                 Assert.assertEquals(expectedPartitionCount, reader.getPartitionCount());
 
@@ -1552,7 +1549,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                         Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
 
                         FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
-                        TableReaderRecord record = new TableReaderRecord();
+                        TestTableReaderRecord record = new TestTableReaderRecord();
 
                         cursor.of(reader);
                         record.of(reader);
@@ -1702,7 +1699,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 // let's see what we can read after this catastrophe
                 try (TableReader reader = createTableReader(AbstractCairoTest.configuration, "ABC")) {
                     FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
-                    TableReaderRecord record = new TableReaderRecord();
+                    TestTableReaderRecord record = new TestTableReaderRecord();
 
                     Assert.assertEquals(expectedPartitionCount, reader.getPartitionCount());
 
@@ -1780,7 +1777,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 writer.commit();
 
                 try (TableReader reader = createTableReader(configuration, "x")) {
-                    TableReaderRecord record = new TableReaderRecord();
+                    TestTableReaderRecord record = new TestTableReaderRecord();
 
                     Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
 
@@ -1855,7 +1852,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
                 try (TableReader reader = createTableReader(configuration, "x")) {
                     FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
-                    TableReaderRecord record = new TableReaderRecord();
+                    TestTableReaderRecord record = new TestTableReaderRecord();
 
                     Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
 
@@ -1924,7 +1921,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
                 try (TableReader reader = createTableReader(configuration, "x")) {
                     FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
-                    TableReaderRecord record = new TableReaderRecord();
+                    TestTableReaderRecord record = new TestTableReaderRecord();
 
                     Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
 
@@ -2000,7 +1997,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 try (TableReader reader = createTableReader(configuration, "x")) {
 
                     final FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
-                    final TableReaderRecord record = new TableReaderRecord();
+                    final TestTableReaderRecord record = new TestTableReaderRecord();
 
                     Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
 
@@ -2096,7 +2093,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     Assert.assertTrue(reader.reload());
 
                     final FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
-                    final TableReaderRecord record = new TableReaderRecord();
+                    final TestTableReaderRecord record = new TestTableReaderRecord();
 
                     Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
 
@@ -2167,7 +2164,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 try (TableReader reader = createTableReader(configuration, "x")) {
 
                     final FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
-                    final TableReaderRecord record = new TableReaderRecord();
+                    final TestTableReaderRecord record = new TestTableReaderRecord();
 
                     Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
 
@@ -2196,7 +2193,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                     cursor.reload();
                     assertSymbolFoundInIndex(cursor, record, 1, M * 2);
                     cursor.toTop();
-                    assertNoIndex(cursor);
+                    assertNoIndex(cursor, record);
                 }
             }
         });
@@ -2237,9 +2234,8 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 writer.commit();
 
                 try (TableReader reader = createTableReader(configuration, "x")) {
-
                     final FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
-                    final TableReaderRecord record = new TableReaderRecord();
+                    final TestTableReaderRecord record = new TestTableReaderRecord();
 
                     Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
 
@@ -2249,7 +2245,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
 
                     assertSymbolFoundInIndex(cursor, record, 1, M);
                     cursor.toTop();
-                    assertNoIndex(cursor);
+                    assertNoIndex(cursor, record);
 
                     writer.removeColumn("c");
                     writer.addColumn("c", ColumnType.SYMBOL, Numbers.ceilPow2(N), true, true, 8, false);
@@ -2308,7 +2304,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
                 // TableRecord will help us read the table. We need to position this record using
                 // "recordIndex" and "columnBase".
-                TableReaderRecord record = new TableReaderRecord();
+                TestTableReaderRecord record = new TestTableReaderRecord();
 
                 Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
 
@@ -2359,7 +2355,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
                 // TableRecord will help us read the table. We need to position this record using
                 // "recordIndex" and "columnBase".
-                TableReaderRecord record = new TableReaderRecord();
+                TestTableReaderRecord record = new TestTableReaderRecord();
 
                 Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
 
@@ -2412,7 +2408,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
                 // TableRecord will help us read the table. We need to position this record using
                 // "recordIndex" and "columnBase".
-                TableReaderRecord record = new TableReaderRecord();
+                TestTableReaderRecord record = new TestTableReaderRecord();
 
                 Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
 
@@ -2444,14 +2440,12 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
             // prepare the data
             long timestamp = 0;
             try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
-
                 for (int i = 0; i < M / 2; i++) {
                     TableWriter.Row row = writer.newRow(timestamp += increment);
                     row.append();
                 }
 
                 writer.addColumn("a", ColumnType.SYMBOL, Numbers.ceilPow2(N / 4), true, false, configuration.getIndexValueBlockSize(), false);
-
 
                 for (int i = 0; i < M / 2; i++) {
                     TableWriter.Row row = writer.newRow(timestamp += increment);
@@ -2462,19 +2456,17 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
                 writer.commit();
 
                 writer.addIndex("a", configuration.getIndexValueBlockSize());
-
             }
 
             // check that each symbol in table exists in index as well
             // and current row is collection of index rows
             try (TableReader reader = createTableReader(configuration, "x")) {
-
                 // Open data frame cursor. This one will frame table as collection of
                 // partitions, each partition is a frame.
                 FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor();
                 // TableRecord will help us read the table. We need to position this record using
                 // "recordIndex" and "columnBase".
-                TableReaderRecord record = new TableReaderRecord();
+                TestTableReaderRecord record = new TestTableReaderRecord();
 
                 Assert.assertTrue(reader.getPartitionCount() > expectedPartitionMin);
 
@@ -2490,7 +2482,7 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
         });
     }
 
-    static void assertIndexRowsMatchSymbol(DataFrameCursor cursor, TableReaderRecord record, int columnIndex, long expectedRowCount) {
+    static void assertIndexRowsMatchSymbol(DataFrameCursor cursor, TestTableReaderRecord record, int columnIndex, long expectedRowCount) {
         assertRowsMatchSymbol0(cursor, record, columnIndex, expectedRowCount, BitmapIndexReader.DIR_FORWARD);
         cursor.toTop();
         assertRowsMatchSymbol0(cursor, record, columnIndex, expectedRowCount, BitmapIndexReader.DIR_BACKWARD);
@@ -2532,7 +2524,6 @@ public class FullFwdDataFrameCursorTest extends AbstractCairoTest {
     }
 
     private static class SymbolGroup {
-
         final int S;
         final String[] symA;
         final String[] symB;

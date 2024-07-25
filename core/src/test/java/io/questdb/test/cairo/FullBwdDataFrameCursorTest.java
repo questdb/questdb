@@ -39,9 +39,9 @@ import org.junit.Test;
 import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_DESC;
 
 public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
+
     @Test
     public void testReload() throws Exception {
-
         final String expected = "-409854405\t339631474\t1970-01-04T00:00:00.000000Z\n" +
                 "1569490116\t1573662097\t1970-01-03T16:00:00.000000Z\n" +
                 "806715481\t1545253512\t1970-01-03T08:00:00.000000Z\n" +
@@ -64,13 +64,11 @@ public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
                 "-1532328444\t-1458132197\t1975-01-01T08:00:00.000000Z\n" +
                 "1530831067\t1904508147\t1975-01-01T00:00:00.000000Z\n";
         assertMemoryLeak(() -> {
-
             TableModel model = new TableModel(configuration, "x", PartitionBy.DAY).
                     col("a", ColumnType.INT).
                     col("b", ColumnType.INT).
                     timestamp();
             AbstractCairoTest.create(model);
-
 
             Rnd rnd = new Rnd();
             long timestamp = 0;
@@ -89,7 +87,7 @@ public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
                 Assert.assertEquals(N, w.size());
 
                 try (FullBwdDataFrameCursorFactory factory = new FullBwdDataFrameCursorFactory(w.getTableToken(), 0, GenericRecordMetadata.deepCopyOf(w.getMetadata()))) {
-                    final TableReaderRecord record = new TableReaderRecord();
+                    final TestTableReaderRecord record = new TestTableReaderRecord();
 
                     try (final DataFrameCursor cursor = factory.getCursor(new SqlExecutionContextStub(engine), ORDER_DESC)) {
                         printCursor(record, cursor);
@@ -125,7 +123,7 @@ public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
         });
     }
 
-    private void printCursor(TableReaderRecord record, DataFrameCursor cursor) {
+    private void printCursor(TestTableReaderRecord record, DataFrameCursor cursor) {
         sink.clear();
         record.of(cursor.getTableReader());
         DataFrame frame;

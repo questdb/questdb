@@ -398,7 +398,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
                 timestampIndex = reader.getMetadata().getTimestampIndex();
                 metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
             }
-            final TableReaderRecord record = new TableReaderRecord();
+            final TestTableReaderRecord record = new TestTableReaderRecord();
             try (
                     final IntervalFwdDataFrameCursorFactory factory = new IntervalFwdDataFrameCursorFactory(x, 0, new RuntimeIntervalModel(intervals), timestampIndex, metadata);
                     final DataFrameCursor cursor = factory.getCursor(executionContext, ORDER_ASC)
@@ -545,10 +545,10 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
         testIntervals(PartitionBy.DAY, increment, N, expected, 72);
     }
 
-    private static void assertIndexRowsMatchSymbol(DataFrameCursor cursor, TableReaderRecord record, int columnIndex, long expectedCount) {
+    private static void assertIndexRowsMatchSymbol(DataFrameCursor cursor, TestTableReaderRecord record, int columnIndex, long expectedCount) {
         // SymbolTable is table at table scope, so it will be the same for every
         // data frame here. Get its instance outside of data frame loop.
-        StaticSymbolTable symbolTable = cursor.getSymbolTable(columnIndex);
+        StaticSymbolTable symbolTable = record.getReader().getSymbolTable(columnIndex);
 
         long rowCount = 0;
         DataFrame frame;
@@ -559,7 +559,7 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
 
             // BitmapIndex is always at data frame scope, each table can have more than one.
             // we have to get BitmapIndexReader instance once for each frame.
-            BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
+            BitmapIndexReader indexReader = record.getReader().getBitmapIndexReader(frame.getPartitionIndex(), columnIndex, BitmapIndexReader.DIR_BACKWARD);
 
             // because out Symbol column 0 is indexed, frame has to have index.
             Assert.assertNotNull(indexReader);
@@ -579,13 +579,13 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
         Assert.assertEquals(expectedCount, rowCount);
     }
 
-    private void assertEquals(CharSequence expected, TableReaderRecord record, DataFrameCursor cursor) {
+    private void assertEquals(CharSequence expected, TestTableReaderRecord record, DataFrameCursor cursor) {
         sink.clear();
         collectTimestamps(cursor, record);
         TestUtils.assertEquals(expected, sink);
     }
 
-    private void collectTimestamps(DataFrameCursor cursor, TableReaderRecord record) {
+    private void collectTimestamps(DataFrameCursor cursor, TestTableReaderRecord record) {
         int timestampIndex = cursor.getTableReader().getMetadata().getTimestampIndex();
         DataFrame frame;
         while ((frame = cursor.next()) != null) {
@@ -601,7 +601,6 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
 
     private void testIntervals(int partitionBy, long increment, int rowCount, CharSequence expected, long expectedCount) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-
             TableModel model = new TableModel(configuration, "x", partitionBy).
                     col("a", ColumnType.SYMBOL).indexed(true, 4).
                     col("b", ColumnType.SYMBOL).indexed(true, 4).
@@ -630,11 +629,10 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
                     timestamp += increment;
                 }
                 writer.commit();
-
             }
 
             try (TableReader reader = newOffPoolReader(configuration, "x")) {
-                final TableReaderRecord record = new TableReaderRecord();
+                final TestTableReaderRecord record = new TestTableReaderRecord();
                 IntervalFwdDataFrameCursor cursor = new IntervalFwdDataFrameCursor(
                         new RuntimeIntervalModel(IntervalFwdDataFrameCursorTest.intervals),
                         reader.getMetadata().getTimestampIndex());
@@ -655,5 +653,4 @@ public class IntervalFwdDataFrameCursorTest extends AbstractCairoTest {
             }
         });
     }
-
 }

@@ -51,7 +51,7 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
         // 3 days
         int N = 36;
 
-        // single interval spanning all of the table
+        // single interval spanning all the table
         intervals.clear();
         intervals.add(TimestampFormatUtils.parseTimestamp("1979-01-01T00:00:00.000Z"));
         intervals.add(TimestampFormatUtils.parseTimestamp("1979-01-06T00:00:00.000Z"));
@@ -367,7 +367,7 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
                 timestampIndex = reader.getMetadata().getTimestampIndex();
                 metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
             }
-            final TableReaderRecord record = new TableReaderRecord();
+            final TestTableReaderRecord record = new TestTableReaderRecord();
             try (
                     final IntervalBwdDataFrameCursorFactory factory = new IntervalBwdDataFrameCursorFactory(
                             tableToken,
@@ -378,7 +378,6 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
                     );
                     final DataFrameCursor cursor = factory.getCursor(executionContext, ORDER_DESC)
             ) {
-
                 // assert that there is nothing to start with
                 record.of(cursor.getTableReader());
 
@@ -439,7 +438,7 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
         // 3 days
         int N = 36;
 
-        // single interval spanning all of the table
+        // single interval spanning all the table
         intervals.clear();
         intervals.add(TimestampFormatUtils.parseTimestamp("1980-01-01T00:00:00.000Z"));
         intervals.add(TimestampFormatUtils.parseTimestamp("1984-01-06T00:00:00.000Z"));
@@ -520,10 +519,10 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
         testIntervals(PartitionBy.DAY, increment, N, expected, 72);
     }
 
-    private static void assertIndexRowsMatchSymbol(DataFrameCursor cursor, TableReaderRecord record, int columnIndex, long expectedCount) {
+    private static void assertIndexRowsMatchSymbol(DataFrameCursor cursor, TestTableReaderRecord record, int columnIndex, long expectedCount) {
         // SymbolTable is table at table scope, so it will be the same for every
         // data frame here. Get its instance outside of data frame loop.
-        StaticSymbolTable symbolTable = cursor.getSymbolTable(columnIndex);
+        StaticSymbolTable symbolTable = record.getReader().getSymbolTable(columnIndex);
 
         long rowCount = 0;
         DataFrame frame;
@@ -534,7 +533,7 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
 
             // BitmapIndex is always at data frame scope, each table can have more than one.
             // we have to get BitmapIndexReader instance once for each frame.
-            BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
+            BitmapIndexReader indexReader = record.getReader().getBitmapIndexReader(frame.getPartitionIndex(), columnIndex, BitmapIndexReader.DIR_BACKWARD);
 
             // because out Symbol column 0 is indexed, frame has to have index.
             Assert.assertNotNull(indexReader);
@@ -554,13 +553,13 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
         Assert.assertEquals(expectedCount, rowCount);
     }
 
-    private void assertEquals(CharSequence expected, TableReaderRecord record, DataFrameCursor cursor) {
+    private void assertEquals(CharSequence expected, TestTableReaderRecord record, DataFrameCursor cursor) {
         sink.clear();
         collectTimestamps(cursor, record);
         TestUtils.assertEquals(expected, sink);
     }
 
-    private void collectTimestamps(DataFrameCursor cursor, TableReaderRecord record) {
+    private void collectTimestamps(DataFrameCursor cursor, TestTableReaderRecord record) {
         int timestampIndex = cursor.getTableReader().getMetadata().getTimestampIndex();
         DataFrame frame;
         while ((frame = cursor.next()) != null) {
@@ -605,11 +604,10 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
                     timestamp += increment;
                 }
                 writer.commit();
-
             }
 
             try (TableReader reader = newOffPoolReader(configuration, "x")) {
-                final TableReaderRecord record = new TableReaderRecord();
+                final TestTableReaderRecord record = new TestTableReaderRecord();
                 IntervalBwdDataFrameCursor cursor = new IntervalBwdDataFrameCursor(
                         new RuntimeIntervalModel(IntervalBwdDataFrameCursorTest.intervals),
                         reader.getMetadata().getTimestampIndex());
@@ -630,5 +628,4 @@ public class IntervalBwdDataFrameCursorTest extends AbstractCairoTest {
             }
         });
     }
-
 }

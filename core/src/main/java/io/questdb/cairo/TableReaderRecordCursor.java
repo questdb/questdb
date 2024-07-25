@@ -29,6 +29,8 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.Rows;
 
+// TODO(puzpuzpuz): delete me
+@Deprecated
 public class TableReaderRecordCursor implements RecordCursor {
 
     protected final TableReaderRecord recordA = new TableReaderRecord();
