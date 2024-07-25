@@ -67,6 +67,21 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
         }
     }
 
+    static void initNcFunctions(
+            ObjList<? extends Function> args,
+            SymbolTableSource symbolTableSource,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (args != null) {
+            for (int i = 0, n = args.size(); i < n; i++) {
+                final Function arg = args.getQuiet(i);
+                if (arg != null) {
+                    arg.init(symbolTableSource, executionContext);
+                }
+            }
+        }
+    }
+
     default void assignType(int type, BindVariableService bindVariableService) throws SqlException {
         throw new UnsupportedOperationException();
     }

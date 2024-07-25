@@ -2048,6 +2048,30 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNegativeLimitWindowOrderedByNotTimestamp() throws Exception {
+        // https://github.com/questdb/questdb/issues/4748
+        assertMemoryLeak(() -> {
+            assertQuery("x\trow_number\n" +
+                            "1\t1\n" +
+                            "2\t2\n" +
+                            "3\t3\n" +
+                            "4\t4\n" +
+                            "5\t5\n" +
+                            "6\t6\n" +
+                            "7\t7\n" +
+                            "8\t8\n" +
+                            "9\t9\n" +
+                            "10\t10\n",
+                    "SELECT x, row_number() OVER (\n" +
+                            "    ORDER BY x asc\n" +
+                            "    RANGE UNBOUNDED PRECEDING\n" +
+                            ")\n" +
+                            "FROM long_sequence(10)\n" +
+                            "limit -10", false);
+        });
+    }
+
+    @Test
     public void testPartitionByAndOrderByColumnPushdown() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");

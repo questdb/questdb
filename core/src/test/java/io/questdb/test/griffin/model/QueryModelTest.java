@@ -82,6 +82,10 @@ public class QueryModelTest {
         IntList orderByDirectionAdvice = new IntList();
         orderByDirectionAdvice.add(42);
         model.copyOrderByDirectionAdvice(orderByDirectionAdvice);
+        model.setFillValues(new ObjList<>(newExpressionNode()));
+        model.setFillTo(newExpressionNode());
+        model.setFillFrom(newExpressionNode());
+        model.setFillStride(newExpressionNode());
 
         Assert.assertNotEquals(QueryModel.FACTORY.newInstance(), model);
 

@@ -120,6 +120,7 @@ open module io.questdb {
     exports io.questdb.std.json;
     exports io.questdb.griffin.engine.functions.json;
     exports io.questdb.std.filewatch;
+    exports io.questdb.griffin.engine.table.parquet;
 
     provides FunctionFactory with
 
@@ -904,6 +905,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.table.WriterPoolFunctionFactory,
             io.questdb.griffin.engine.functions.table.TableWriterMetricsFunctionFactory,
             io.questdb.griffin.engine.functions.table.MemoryMetricsFunctionFactory,
+            io.questdb.griffin.engine.functions.table.ReadParquetFunctionFactory,
+            io.questdb.griffin.engine.functions.table.ParquetScanFunctionFactory,
 
             // strpos
             io.questdb.griffin.engine.functions.str.StrPosFunctionFactory,

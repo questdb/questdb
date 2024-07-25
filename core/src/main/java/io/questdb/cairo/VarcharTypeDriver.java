@@ -307,6 +307,9 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
      * @return value size or {@link TableUtils#NULL_LEN} in case of NULL
      */
     public static int getValueSize(long auxAddr, long rowNum) {
+        if (rowNum < 0) {
+            return TableUtils.NULL_LEN;
+        }
         long auxEntry = auxAddr + VARCHAR_AUX_WIDTH_BYTES * rowNum;
         int raw = Unsafe.getUnsafe().getInt(auxEntry);
         if (hasNullFlag(raw)) {
@@ -327,6 +330,9 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
      * @return value size or {@link TableUtils#NULL_LEN} in case of NULL
      */
     public static int getValueSize(MemoryR auxMem, long rowNum) {
+        if (rowNum < 0) {
+            return TableUtils.NULL_LEN;
+        }
         final long auxOffset = VARCHAR_AUX_WIDTH_BYTES * rowNum;
         int raw = auxMem.getInt(auxOffset);
         if (hasNullFlag(raw)) {
