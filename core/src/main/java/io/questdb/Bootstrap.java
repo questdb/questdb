@@ -102,7 +102,7 @@ public class Bootstrap {
         // before we set up the logger, we need to copy the conf file
         final byte[] buffer = new byte[1024 * 1024];
         try {
-            copyConfResource(rootDirectory, false, buffer, "conf/log.conf", null);
+            copyResource(rootDirectory, false, buffer, "conf/log.conf", null);
         } catch (IOException e) {
             throw new BootstrapException("Could not extract log configuration file");
         }
@@ -113,6 +113,12 @@ public class Bootstrap {
             LogFactory.configureRootDir(rootDirectory);
         }
         log = LogFactory.getLog(LOG_NAME);
+
+        try {
+            copyResource(rootDirectory, false, buffer, "import/readme.txt", null);
+        } catch (IOException e) {
+            throw new BootstrapException("Could not create the default import directory");
+        }
 
         // report copyright and architecture
         log.advisoryW()
@@ -366,15 +372,6 @@ public class Bootstrap {
         return new CairoEngine(getConfiguration().getCairoConfiguration(), getMetrics());
     }
 
-    private static void copyConfResource(String dir, boolean force, byte[] buffer, String res, Log log) throws IOException {
-        File out = new File(dir, res);
-        try (InputStream is = ServerMain.class.getResourceAsStream("/io/questdb/site/" + res)) {
-            if (is != null) {
-                copyInputStream(force, buffer, out, is, log);
-            }
-        }
-    }
-
     private static void copyInputStream(boolean force, byte[] buffer, File out, InputStream is, Log log) throws IOException {
         final boolean exists = out.exists();
         if (force || !exists) {
@@ -398,6 +395,15 @@ public class Bootstrap {
         }
         if (log != null) {
             log.debugW().$("skipped [path=").$(out).I$();
+        }
+    }
+
+    private static void copyResource(String dir, boolean force, byte[] buffer, String res, Log log) throws IOException {
+        File out = new File(dir, res);
+        try (InputStream is = ServerMain.class.getResourceAsStream("/io/questdb/site/" + res)) {
+            if (is != null) {
+                copyInputStream(force, buffer, out, is, log);
+            }
         }
     }
 
@@ -470,17 +476,17 @@ public class Bootstrap {
     }
 
     private void extractConfDir(byte[] buffer) throws IOException {
-        copyConfResource(rootDirectory, false, buffer, "conf/date.formats", log);
+        copyResource(rootDirectory, false, buffer, "conf/date.formats", log);
         try {
-            copyConfResource(rootDirectory, true, buffer, "conf/mime.types", log);
+            copyResource(rootDirectory, true, buffer, "conf/mime.types", log);
         } catch (IOException exception) {
             // conf can be read-only, this is not critical
             if (exception.getMessage() == null || (!exception.getMessage().contains("Read-only file system") && !exception.getMessage().contains("Permission denied"))) {
                 throw exception;
             }
         }
-        copyConfResource(rootDirectory, false, buffer, "conf/server.conf", log);
-        copyConfResource(rootDirectory, false, buffer, "conf/log.conf", log);
+        copyResource(rootDirectory, false, buffer, "conf/server.conf", log);
+        copyResource(rootDirectory, false, buffer, "conf/log.conf", log);
     }
 
     private void extractSite0(String publicDir, byte[] buffer, String thisVersion) throws IOException {

@@ -637,7 +637,8 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         this.dbDirectory = getString(properties, env, PropertyKey.CAIRO_ROOT, DB_DIRECTORY);
         String tmpRoot;
-        if (new File(this.dbDirectory).isAbsolute()) {
+        boolean absDbDir = new File(this.dbDirectory).isAbsolute();
+        if (absDbDir) {
             this.root = this.dbDirectory;
             this.confRoot = rootSubdir(this.root, CONFIG_DIRECTORY); // ../conf
             this.snapshotRoot = rootSubdir(this.root, SNAPSHOT_DIRECTORY); // ../snapshot
@@ -647,6 +648,30 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.confRoot = new File(root, CONFIG_DIRECTORY).getAbsolutePath();
             this.snapshotRoot = new File(root, SNAPSHOT_DIRECTORY).getAbsolutePath();
             tmpRoot = new File(root, TMP_DIRECTORY).getAbsolutePath();
+        }
+
+        String configuredCairoSqlCopyRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_ROOT, "import");
+        if (!Chars.empty(configuredCairoSqlCopyRoot)) {
+            if (new File(configuredCairoSqlCopyRoot).isAbsolute()) {
+                this.cairoSqlCopyRoot = configuredCairoSqlCopyRoot;
+            } else {
+                if (absDbDir) {
+                    this.cairoSqlCopyRoot = rootSubdir(this.root, configuredCairoSqlCopyRoot); // ../import
+                } else {
+                    this.cairoSqlCopyRoot = new File(root, configuredCairoSqlCopyRoot).getAbsolutePath();
+                }
+            }
+            String cairoSqlCopyWorkRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_WORK_ROOT, tmpRoot);
+            this.cairoSqlCopyWorkRoot = getCanonicalPath(cairoSqlCopyWorkRoot);
+            if (pathEquals(root, this.cairoSqlCopyWorkRoot)
+                    || pathEquals(this.root, this.cairoSqlCopyWorkRoot)
+                    || pathEquals(this.confRoot, this.cairoSqlCopyWorkRoot)
+                    || pathEquals(this.snapshotRoot, this.cairoSqlCopyWorkRoot)) {
+                throw new ServerConfigurationException("Configuration value for " + PropertyKey.CAIRO_SQL_COPY_WORK_ROOT.getPropertyPath() + " can't point to root, data, conf or snapshot dirs. ");
+            }
+        } else {
+            this.cairoSqlCopyRoot = null;
+            this.cairoSqlCopyWorkRoot = null;
         }
 
         this.cairoAttachPartitionSuffix = getString(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX, TableUtils.ATTACHABLE_DIR_MARKER);
@@ -1064,21 +1089,6 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             try (JsonLexer lexer = new JsonLexer(1024, 1024)) {
                 inputFormatConfiguration.parseConfiguration(PropServerConfiguration.class, lexer, confRoot, sqlCopyFormatsFile);
-            }
-
-            this.cairoSqlCopyRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_ROOT, null);
-            String cairoSqlCopyWorkRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_WORK_ROOT, tmpRoot);
-            if (cairoSqlCopyRoot != null) {
-                this.cairoSqlCopyWorkRoot = getCanonicalPath(cairoSqlCopyWorkRoot);
-            } else {
-                this.cairoSqlCopyWorkRoot = null;
-            }
-
-            if (pathEquals(root, this.cairoSqlCopyWorkRoot)
-                    || pathEquals(this.root, this.cairoSqlCopyWorkRoot)
-                    || pathEquals(this.confRoot, this.cairoSqlCopyWorkRoot)
-                    || pathEquals(this.snapshotRoot, this.cairoSqlCopyWorkRoot)) {
-                throw new ServerConfigurationException("Configuration value for " + PropertyKey.CAIRO_SQL_COPY_WORK_ROOT.getPropertyPath() + " can't point to root, data, conf or snapshot dirs. ");
             }
 
             String cairoSQLCopyIdSupplier = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_ID_SUPPLIER, "random");
@@ -2875,6 +2885,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public double getWalLagRowsMultiplier() {
+            return walSquashUncommittedRowsMultiplier;
+        }
+
+        @Override
         public long getWalMaxLagSize() {
             return walMaxLagSize;
         }
@@ -2912,11 +2927,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getWalSegmentRolloverSize() {
             return walSegmentRolloverSize;
-        }
-
-        @Override
-        public double getWalLagRowsMultiplier() {
-            return walSquashUncommittedRowsMultiplier;
         }
 
         @Override
