@@ -97,7 +97,7 @@ void buildJavaArgs(CONFIG *config) {
 
     // put together command line, dir is x2 because we're including the path to `hs_err_pid`
     // 512 is extra for the constant strings
-    char *args = malloc((strlen(javaOpts) + strlen(classpath) + strlen(mainClass) + strlen(config->dir)*3 + 512 + 35) *
+    char *args = malloc((strlen(javaOpts) + strlen(classpath) + strlen(mainClass) + strlen(config->dir)*3 + 512 + 6) *
                         sizeof(char));
     strcpy(args, javaOpts);
     // quote the directory in case it contains spaces
@@ -110,9 +110,7 @@ void buildJavaArgs(CONFIG *config) {
         strcat(args, classpath);
         strcat(args, "\"");
     }
-    strcat(args, " -Dout=\"");
-    strcat(args, config->dir);
-    strcat(args, "\\conf\\standalone_log.conf\"");
+    strcat(args, " -Dbin");
     strcat(args, " -m ");
     strcat(args, mainClass);
     strcat(args, " -d \"");
