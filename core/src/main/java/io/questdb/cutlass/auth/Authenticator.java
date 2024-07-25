@@ -27,8 +27,10 @@ package io.questdb.cutlass.auth;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.network.Socket;
 import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public interface Authenticator extends QuietCloseable, Mutable {
 
@@ -38,6 +40,7 @@ public interface Authenticator extends QuietCloseable, Mutable {
     int OK = -1;
     int QUEUE_FULL = 2;
 
+    @Override
     default void clear() {
     }
 
@@ -51,6 +54,15 @@ public interface Authenticator extends QuietCloseable, Mutable {
 
     default byte getAuthType() {
         return SecurityContext.AUTH_TYPE_NONE;
+    }
+
+    /**
+     * Returns list of groups provided by external identity provider, such as OpenID Connect provider.
+     * For other authentication types returns null.
+     */
+    @Nullable
+    default ObjList<CharSequence> getGroups() {
+        return null;
     }
 
     CharSequence getPrincipal();

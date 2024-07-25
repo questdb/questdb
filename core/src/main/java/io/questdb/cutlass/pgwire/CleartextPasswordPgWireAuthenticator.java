@@ -25,10 +25,10 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.auth.Authenticator;
 import io.questdb.cutlass.auth.AuthenticatorException;
+import io.questdb.cutlass.auth.UsernamePasswordMatcher;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.log.Log;
@@ -42,6 +42,7 @@ import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.cairo.SecurityContext.AUTH_TYPE_NONE;
 import static io.questdb.cutlass.pgwire.PGConnectionContext.dumpBuffer;
 
 public class CleartextPasswordPgWireAuthenticator implements Authenticator {
@@ -66,6 +67,7 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
     private final CircuitBreakerRegistry registry;
     private final String serverVersion;
     private final ResponseSink sink;
+    private byte authType = AUTH_TYPE_NONE;
     private UsernamePasswordMatcher matcher;
     private long recvBufEnd;
     private long recvBufReadPos;
@@ -104,6 +106,8 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
 
     @Override
     public void clear() {
+        authType = AUTH_TYPE_NONE;
+
         circuitBreaker.setSecret(-1);
         circuitBreaker.resetMaxTimeToDefault();
         circuitBreaker.unsetTimer();
@@ -127,7 +131,7 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
 
     @Override
     public byte getAuthType() {
-        return SecurityContext.AUTH_TYPE_CREDENTIALS;
+        return authType;
     }
 
     public CharSequence getPrincipal() {
@@ -409,9 +413,10 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
         recvBufReadPos += 1 + Integer.BYTES; // first move beyond the msgType and msgLen
 
         long hi = PGConnectionContext.getStringLength(recvBufReadPos, msgLimit, "bad password length");
-        if (matcher.verifyPassword(username, recvBufReadPos, (int) (hi - recvBufReadPos))) {
+        if (verifyPassword(username, recvBufReadPos, (int) (hi - recvBufReadPos))) {
             recvBufReadPos = msgLimit;
             state = State.AUTH_SUCCESS;
+            authType = matcher.getAuthType();
         } else {
             LOG.info().$("bad password for user [user=").$(username).$(']').$();
             prepareErrorResponse("invalid username/password");
@@ -494,6 +499,9 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
         return Authenticator.NEEDS_WRITE;
     }
 
+    protected boolean verifyPassword(CharSequence username, long passwordPtr, int passwordLen) {
+        return matcher.verifyPassword(username, passwordPtr, passwordLen);
+    }
 
     private enum State {
         EXPECT_INIT_MESSAGE,

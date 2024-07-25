@@ -28,6 +28,7 @@ import io.questdb.DynamicUsernamePasswordMatcher;
 import io.questdb.ServerConfiguration;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.auth.Authenticator;
+import io.questdb.cutlass.auth.UsernamePasswordMatcher;
 import org.jetbrains.annotations.Nullable;
 
 public final class DefaultPgWireAuthenticatorFactory implements PgWireAuthenticatorFactory {

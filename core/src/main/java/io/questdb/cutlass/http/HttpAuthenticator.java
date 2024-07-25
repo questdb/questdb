@@ -25,11 +25,12 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.cairo.SecurityContext;
+import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
 
-public interface HttpAuthenticator extends QuietCloseable {
+public interface HttpAuthenticator extends QuietCloseable, Mutable {
 
     /**
      * Authenticates incoming HTTP request.
@@ -39,6 +40,7 @@ public interface HttpAuthenticator extends QuietCloseable {
      */
     boolean authenticate(HttpRequestHeader headers);
 
+    @Override
     default void clear() {
     }
 
@@ -55,7 +57,9 @@ public interface HttpAuthenticator extends QuietCloseable {
      * For other authentication types returns null.
      */
     @Nullable
-    ObjList<CharSequence> getGroups();
+    default ObjList<CharSequence> getGroups() {
+        return null;
+    }
 
     CharSequence getPrincipal();
 }

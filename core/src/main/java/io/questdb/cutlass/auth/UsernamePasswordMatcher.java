@@ -22,26 +22,25 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire;
+package io.questdb.cutlass.auth;
 
-import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
-import io.questdb.cutlass.auth.Authenticator;
+import io.questdb.cairo.SecurityContext;
 
-public class UsernamePasswordPgWireAuthenticatorFactory implements PgWireAuthenticatorFactory {
-
-    private final UsernamePasswordMatcher matcher;
-
-    public UsernamePasswordPgWireAuthenticatorFactory(UsernamePasswordMatcher matcher) {
-        this.matcher = matcher;
+public interface UsernamePasswordMatcher {
+    default byte getAuthType() {
+        return SecurityContext.AUTH_TYPE_CREDENTIALS;
     }
 
-    @Override
-    public Authenticator getPgWireAuthenticator(
-            PGWireConfiguration configuration,
-            NetworkSqlExecutionCircuitBreaker circuitBreaker,
-            CircuitBreakerRegistry registry,
-            OptionsListener optionsListener
-    ) {
-        return new CleartextPasswordPgWireAuthenticator(configuration, circuitBreaker, registry, optionsListener, matcher, false);
-    }
+    /**
+     * Verify password for a user.
+     * <p>
+     * When the user has no active password then this method returns false.
+     * This also return false when username is empty or null.
+     *
+     * @param username    user name, cannot be null or empty
+     * @param passwordPtr pointer to password
+     * @param passwordLen length of password
+     * @return true if password matches
+     */
+    boolean verifyPassword(CharSequence username, long passwordPtr, int passwordLen);
 }
