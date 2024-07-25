@@ -182,7 +182,7 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
     private void createSnapshot() throws SqlException {
         LOG.info().$("starting snapshot").$();
 
-        ddl("snapshot prepare");
+        ddl("checkpoint create");
         CairoConfiguration conf = engine.getConfiguration();
 
         FilesFacade ff = conf.getFilesFacade();
@@ -194,7 +194,7 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
         LOG.info().$("copying data to snapshot [from=").$(rootPath).$(", to=").$(snapshotPath).$();
         copyRecursiveIgnoreErrors(ff, rootPath, snapshotPath, conf.getMkDirMode());
 
-        ddl("snapshot complete");
+        ddl("checkpoint release");
     }
 
     private void fullFuzz(Rnd rnd) {

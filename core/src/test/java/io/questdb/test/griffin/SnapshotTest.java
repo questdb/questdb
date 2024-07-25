@@ -738,7 +738,7 @@ public class SnapshotTest extends AbstractCairoTest {
                 assertExceptionNoLeakCheck("checkpoint create");
             } catch (SqlException ex) {
                 Assert.assertTrue(lock.isLocked());
-                Assert.assertTrue(ex.getMessage().startsWith("[0] Waiting for checkpoint release to be called"));
+                Assert.assertTrue(ex.getMessage().startsWith("[0] Waiting for CHECKPOINT RELEASE to be called"));
             }
             ddl("checkpoint release");
             Assert.assertFalse(lock.isLocked());
@@ -779,7 +779,7 @@ public class SnapshotTest extends AbstractCairoTest {
                 Assert.assertTrue(lock.isLocked());
                 Assert.fail();
             } catch (SqlException ex) {
-                Assert.assertTrue(ex.getMessage().startsWith("[0] Waiting for checkpoint release to be called"));
+                Assert.assertTrue(ex.getMessage().startsWith("[0] Waiting for CHECKPOINT RELEASE to be called"));
             } finally {
                 Assert.assertTrue(lock.isLocked());
                 ddl("checkpoint release");
@@ -799,7 +799,7 @@ public class SnapshotTest extends AbstractCairoTest {
             assertException(
                     "checkpoint create",
                     0,
-                    "Waiting for checkpoint release to be called"
+                    "Waiting for CHECKPOINT RELEASE to be called"
             );
             ddl("checkpoint release");
         });
@@ -959,9 +959,9 @@ public class SnapshotTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table test (ts timestamp, name symbol, val int)");
             assertException(
-                    "snapshot commit",
-                    9,
-                    "'prepare' or 'complete' expected"
+                    "checkpoint commit",
+                    11,
+                    "'create' or 'release' expected"
             );
         });
     }

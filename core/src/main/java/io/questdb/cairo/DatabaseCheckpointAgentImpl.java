@@ -292,7 +292,7 @@ public class DatabaseCheckpointAgentImpl implements DatabaseCheckpointAgent, Qui
         }
         try {
             if (!inProgress.compareAndSet(false, true)) {
-                throw SqlException.position(0).put("Waiting for SNAPSHOT COMPLETE to be called");
+                throw SqlException.position(0).put("Waiting for CHECKPOINT RELEASE to be called");
             }
 
             try {
