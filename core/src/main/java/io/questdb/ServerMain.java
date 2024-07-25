@@ -333,7 +333,7 @@ public class ServerMain implements Closeable {
 
                         // text import
                         CopyJob.assignToPool(engine.getMessageBus(), sharedPool);
-                        if (cairoConfig.getSqlCopyInputRoot() != null) {
+                        if (!Chars.empty(cairoConfig.getSqlCopyInputRoot())) {
                             final CopyRequestJob copyRequestJob = new CopyRequestJob(
                                     engine,
                                     // save CPU resources for collecting and processing jobs

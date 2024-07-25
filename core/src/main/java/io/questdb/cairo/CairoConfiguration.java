@@ -370,7 +370,7 @@ public interface CairoConfiguration {
 
     int getSqlCopyBufferSize();
 
-    // null input root disables "copy" sql
+    // null or empty input root disables "copy" sql
     CharSequence getSqlCopyInputRoot();
 
     CharSequence getSqlCopyInputWorkRoot();
@@ -514,6 +514,8 @@ public interface CairoConfiguration {
 
     long getWalEventAppendPageSize();
 
+    double getWalLagRowsMultiplier();
+
     long getWalMaxLagSize();
 
     int getWalMaxLagTxnCount();
@@ -543,8 +545,6 @@ public interface CairoConfiguration {
      * @see #getWalSegmentRolloverRowCount()
      */
     long getWalSegmentRolloverSize();
-
-    double getWalLagRowsMultiplier();
 
     int getWalTxnNotificationQueueCapacity();
 
