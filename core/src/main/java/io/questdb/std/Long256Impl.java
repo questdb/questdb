@@ -30,7 +30,6 @@ import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
 public class Long256Impl implements Long256, Sinkable {
-
     public static final Long256Impl NULL_LONG256 = new Long256Impl();
     public static final Long256Impl ZERO_LONG256 = new Long256Impl();
 
@@ -83,15 +82,6 @@ public class Long256Impl implements Long256, Sinkable {
                 rnd.nextLong(),
                 rnd.nextLong(),
                 rnd.nextLong()
-        );
-    }
-
-    public void fromRnd(Rnd rnd, long N) {
-        setAll(
-                rnd.nextLong(N),
-                rnd.nextLong(N),
-                rnd.nextLong(N),
-                rnd.nextLong(N)
         );
     }
 

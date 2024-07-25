@@ -479,11 +479,15 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             String tableNameWal
     ) throws SqlException {
         Log log = LOG;
-        try (RecordCursorFactory factory = select(tableNameNoWal);
-             RecordCursorFactory factoryPreview = select(tableNameNoWal)) {
+        try (
+                RecordCursorFactory factory = select(tableNameNoWal);
+                RecordCursorFactory factoryPreview = select(tableNameNoWal)
+        ) {
             try (RecordCursorFactory factory2 = select(tableNameWal)) {
-                try (RecordCursor cursor1 = factory.getCursor(sqlExecutionContext);
-                     RecordCursor previewCursor = factoryPreview.getCursor(sqlExecutionContext)) {
+                try (
+                        RecordCursor cursor1 = factory.getCursor(sqlExecutionContext);
+                        RecordCursor previewCursor = factoryPreview.getCursor(sqlExecutionContext)
+                ) {
                     try (
                             RecordCursor dedupWrapper = new DedupCursor(factory.getMetadata(), cursor1, previewCursor, upsertKeyNames);
                             RecordCursor actualCursor = factory2.getCursor(sqlExecutionContext)
