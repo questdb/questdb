@@ -97,7 +97,7 @@ void buildJavaArgs(CONFIG *config) {
 
     // put together command line, dir is x2 because we're including the path to `hs_err_pid`
     // 512 is extra for the constant strings
-    char *args = malloc((strlen(javaOpts) + strlen(classpath) + strlen(mainClass) + strlen(config->dir)*3 + 512 + 6) *
+    char *args = malloc((strlen(javaOpts) + strlen(classpath) + strlen(mainClass) + strlen(config->dir)*2 + 512 + 6) *
                         sizeof(char));
     strcpy(args, javaOpts);
     // quote the directory in case it contains spaces
