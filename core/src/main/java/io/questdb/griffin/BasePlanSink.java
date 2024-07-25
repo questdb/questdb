@@ -90,6 +90,13 @@ public abstract class BasePlanSink implements PlanSink {
         return useBaseMetadata;
     }
 
+    public PlanSink optAttr(CharSequence name, CharSequence value) {
+        if (value != null) {
+            attr(name).val(value);
+        }
+        return this;
+    }
+
     public PlanSink optAttr(CharSequence name, Sinkable value) {
         if (value != null) {
             attr(name).val(value);

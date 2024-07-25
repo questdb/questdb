@@ -45,7 +45,11 @@ public abstract class AbstractVirtualRecordSampleByCursor extends AbstractNoReco
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
             Function offsetFunc,
-            int offsetFuncPos
+            int offsetFuncPos,
+            Function sampleFromFunc,
+            int sampleFromFuncPos,
+            Function sampleToFunc,
+            int sampleToFuncPos
     ) {
         super(
                 configuration,
@@ -57,7 +61,11 @@ public abstract class AbstractVirtualRecordSampleByCursor extends AbstractNoReco
                 timezoneNameFunc,
                 timezoneNameFuncPos,
                 offsetFunc,
-                offsetFuncPos
+                offsetFuncPos,
+                sampleFromFunc,
+                sampleFromFuncPos,
+                sampleToFunc,
+                sampleToFuncPos
         );
         this.record = new VirtualRecordNoRowid(recordFunctions);
         for (int i = 0, n = recordFunctions.size(); i < n; i++) {

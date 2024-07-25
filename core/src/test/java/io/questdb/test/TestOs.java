@@ -28,6 +28,7 @@ import io.questdb.std.Os;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -66,27 +67,36 @@ public class TestOs {
             rustLibName = "libqdbsqllogictest" + outputLibExt;
         }
 
-        Path absoluteDevReleasePath = Paths.get("rust/qdb-sqllogictest/target/release/" + rustLibName).toAbsolutePath();
-        Path absoluteDevDebugPath = Paths.get("rust/qdb-sqllogictest/target/debug/" + rustLibName).toAbsolutePath();
-        Path absolutePrdPath = Paths.get("src/test/resources/io/questdb/bin/" + Os.name + '-' + Os.archName + '/' + rustLibName).toAbsolutePath();
+        URL resource = TestOs.class.getResource("/io/questdb/bin/" + Os.name + '-' + Os.archName + '/' + rustLibName);
+        if (resource != null) {
+            String absolutePathPreCompiled = resource.getPath();
+            if (Os.isWindows() && absolutePathPreCompiled.charAt(0) == '/') {
+                // Remove forward /
+                absolutePathPreCompiled = absolutePathPreCompiled.substring(1);
+            }
+            String sourcesPath = absolutePathPreCompiled.substring(0, absolutePathPreCompiled.indexOf("/target/"));
+            Path absoluteDevReleasePath = Paths.get(sourcesPath + "/rust/qdb-sqllogictest/target/release/" + rustLibName).toAbsolutePath();
+            Path absoluteDevDebugPath = Paths.get(sourcesPath + "/rust/qdb-sqllogictest/target/debug/" + rustLibName).toAbsolutePath();
+            Path absolutePrdPath = Paths.get(absolutePathPreCompiled);
 
-        FileTime tsDevRel = getLastModifiedTime(absoluteDevReleasePath);
-        FileTime tsDevDeb = getLastModifiedTime(absoluteDevDebugPath);
-        FileTime tsPrd = getLastModifiedTime(absolutePrdPath);
+            FileTime tsDevRel = getLastModifiedTime(absoluteDevReleasePath);
+            FileTime tsDevDeb = getLastModifiedTime(absoluteDevDebugPath);
+            FileTime tsPrd = getLastModifiedTime(absolutePrdPath);
 
-        Path devRustLibRoot;
-        if (tsDevRel.compareTo(tsPrd) > 0 && tsDevRel.compareTo(tsDevDeb) > 0) {
-            devRustLibRoot = absoluteDevReleasePath;
-        } else if (tsDevDeb.compareTo(tsPrd) > 0) {
-            devRustLibRoot = absoluteDevDebugPath;
-        } else {
-            devRustLibRoot = absolutePrdPath;
-        }
+            Path rustLibPath;
+            if (tsDevRel.compareTo(tsPrd) > 0 && tsDevRel.compareTo(tsDevDeb) > 0) {
+                rustLibPath = absoluteDevReleasePath;
+            } else if (tsDevDeb.compareTo(tsPrd) > 0) {
+                rustLibPath = absoluteDevDebugPath;
+            } else {
+                rustLibPath = absolutePrdPath;
+            }
 
-        try (InputStream is = Files.newInputStream(devRustLibRoot)) {
-            Os.loadLib(devRustLibRoot.toString(), is);
-        } catch (IOException e) {
-            throw new RuntimeException(e);
+            try (InputStream is = Files.newInputStream(rustLibPath)) {
+                Os.loadLib(rustLibPath.toString(), is);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
         }
     }
 }

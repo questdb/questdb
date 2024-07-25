@@ -179,6 +179,9 @@ public class TestCases {
         addTestCase("select max(i), min(i) from x sample by 1s fill(linear) limit -10");
 
         // SampleByFillNullNotKeyedRecordCursorFactory
+        addTestCase("select sum(i) s, ts from x sample by 30m fill(null) align to calendar with offset '10:00'");
+
+        // FillRangeRecordCursorFactory
         addTestCase("select sum(i) s, ts from x sample by 30m fill(null)");
 
         // SampleByFirstLastRecordCursorFactory
