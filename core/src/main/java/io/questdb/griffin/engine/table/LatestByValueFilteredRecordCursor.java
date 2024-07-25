@@ -73,6 +73,8 @@ class LatestByValueFilteredRecordCursor extends AbstractLatestByValueRecordCurso
         filter.init(this, executionContext);
         isRecordFound = false;
         isFindPending = false;
+        // prepare for page frame iteration
+        super.toTop();
     }
 
     @Override
@@ -97,13 +99,16 @@ class LatestByValueFilteredRecordCursor extends AbstractLatestByValueRecordCurso
         PageFrame frame;
         OUT:
         while ((frame = frameCursor.next()) != null) {
-            final long rowLo = frame.getPartitionLo();
-            final long rowHi = frame.getPartitionHi() - 1;
+            circuitBreaker.statefulThrowExceptionIfTripped();
+            final long partitionLo = frame.getPartitionLo();
+            final long partitionHi = frame.getPartitionHi() - 1;
 
-            recordA.jumpTo(frame.getPartitionIndex(), rowHi);
-            for (long row = rowHi; row >= rowLo; row--) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-                recordA.setRecordIndex(row);
+            frameAddressCache.add(frameCount, frame);
+            frameMemory = frameMemoryPool.navigateTo(frameCount++);
+            recordA.init(frameMemory);
+
+            for (long row = partitionHi - partitionLo; row >= 0; row--) {
+                recordA.setRowIndex(row);
                 if (filter.getBool(recordA)) {
                     int key = recordA.getInt(columnIndex);
                     if (key == symbolKey) {

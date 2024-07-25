@@ -34,7 +34,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
-
     private final int columnIndex;
     private final Function filter;
     private final boolean restrictedByExcludedValues;
@@ -101,7 +100,9 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
         }
         if (currentRow-- > 0) {
             long rowId = rowIds.get(currentRow);
-            recordAt(recordA, rowId);
+            frameMemory = frameMemoryPool.navigateTo(Rows.toPartitionIndex(rowId));
+            recordA.init(frameMemory);
+            recordA.setRowIndex(Rows.toLocalRowID(rowId));
             return true;
         }
         return false;
@@ -153,6 +154,8 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
             }
         }
         areRecordsFound = false;
+        // prepare for page frame iteration
+        super.toTop();
     }
 
     @Override
@@ -174,16 +177,20 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
         assert filter == null;
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
-            long rowLo = frame.getPartitionLo();
-            long row = frame.getPartitionHi();
-            recordA.jumpTo(frame.getPartitionIndex(), 0);
+            circuitBreaker.statefulThrowExceptionIfTripped();
+            final int frameIndex = frameCount;
+            final long partitionLo = frame.getPartitionLo();
+            final long partitionHi = frame.getPartitionHi() - 1;
 
-            while (row-- > rowLo) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-                recordA.setRecordIndex(row);
+            frameAddressCache.add(frameCount, frame);
+            frameMemory = frameMemoryPool.navigateTo(frameCount++);
+            recordA.init(frameMemory);
+
+            for (long row = partitionHi - partitionLo; row >= 0; row--) {
+                recordA.setRowIndex(row);
                 int key = recordA.getInt(columnIndex);
                 if (foundKeys.add(key)) {
-                    rowIds.add(Rows.toRowID(frame.getPartitionIndex(), row));
+                    rowIds.add(Rows.toRowID(frameIndex, row));
                     if (++foundSize == distinctCount) {
                         return;
                     }
@@ -196,16 +203,20 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
         assert filter != null;
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
-            long rowLo = frame.getPartitionLo();
-            long row = frame.getPartitionHi();
-            recordA.jumpTo(frame.getPartitionIndex(), 0);
+            circuitBreaker.statefulThrowExceptionIfTripped();
+            final int frameIndex = frameCount;
+            final long partitionLo = frame.getPartitionLo();
+            final long partitionHi = frame.getPartitionHi() - 1;
 
-            while (row-- > rowLo) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-                recordA.setRecordIndex(row);
+            frameAddressCache.add(frameCount, frame);
+            frameMemory = frameMemoryPool.navigateTo(frameCount++);
+            recordA.init(frameMemory);
+
+            for (long row = partitionHi - partitionLo; row >= 0; row--) {
+                recordA.setRowIndex(row);
                 int key = recordA.getInt(columnIndex);
                 if (filter.getBool(recordA) && foundKeys.add(key)) {
-                    rowIds.add(Rows.toRowID(frame.getPartitionIndex(), row));
+                    rowIds.add(Rows.toRowID(frameIndex, row));
                     if (++foundSize == distinctCount) {
                         return;
                     }
@@ -253,16 +264,20 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
         assert filter == null;
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
-            long rowLo = frame.getPartitionLo();
-            long row = frame.getPartitionHi();
-            recordA.jumpTo(frame.getPartitionIndex(), 0);
+            circuitBreaker.statefulThrowExceptionIfTripped();
+            final int frameIndex = frameCount;
+            final long partitionLo = frame.getPartitionLo();
+            final long partitionHi = frame.getPartitionHi() - 1;
 
-            while (row-- > rowLo) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-                recordA.setRecordIndex(row);
+            frameAddressCache.add(frameCount, frame);
+            frameMemory = frameMemoryPool.navigateTo(frameCount++);
+            recordA.init(frameMemory);
+
+            for (long row = partitionHi - partitionLo; row >= 0; row--) {
+                recordA.setRowIndex(row);
                 int key = recordA.getInt(columnIndex);
                 if (excludedSymbolKeys.excludes(key) && foundKeys.add(key)) {
-                    rowIds.add(Rows.toRowID(frame.getPartitionIndex(), row));
+                    rowIds.add(Rows.toRowID(frameIndex, row));
                     if (++foundSize == distinctCount) {
                         return;
                     }
@@ -275,16 +290,20 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
         assert filter != null;
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
-            long rowLo = frame.getPartitionLo();
-            long row = frame.getPartitionHi();
-            recordA.jumpTo(frame.getPartitionIndex(), 0);
+            circuitBreaker.statefulThrowExceptionIfTripped();
+            final int frameIndex = frameCount;
+            final long partitionLo = frame.getPartitionLo();
+            final long partitionHi = frame.getPartitionHi() - 1;
 
-            while (row-- > rowLo) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-                recordA.setRecordIndex(row);
+            frameAddressCache.add(frameCount, frame);
+            frameMemory = frameMemoryPool.navigateTo(frameCount++);
+            recordA.init(frameMemory);
+
+            for (long row = partitionHi - partitionLo; row >= 0; row--) {
+                recordA.setRowIndex(row);
                 int key = recordA.getInt(columnIndex);
                 if (filter.getBool(recordA) && excludedSymbolKeys.excludes(key) && foundKeys.add(key)) {
-                    rowIds.add(Rows.toRowID(frame.getPartitionIndex(), row));
+                    rowIds.add(Rows.toRowID(frameIndex, row));
                     if (++foundSize == distinctCount) {
                         return;
                     }
@@ -295,19 +314,23 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
 
     private void findRestrictedNoFilter() {
         assert filter == null;
-        int searchSize = includedSymbolKeys.size();
+        final int searchSize = includedSymbolKeys.size();
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
-            long rowLo = frame.getPartitionLo();
-            long row = frame.getPartitionHi();
-            recordA.jumpTo(frame.getPartitionIndex(), 0);
+            circuitBreaker.statefulThrowExceptionIfTripped();
+            final int frameIndex = frameCount;
+            final long partitionLo = frame.getPartitionLo();
+            final long partitionHi = frame.getPartitionHi() - 1;
 
-            while (row-- > rowLo) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-                recordA.setRecordIndex(row);
+            frameAddressCache.add(frameCount, frame);
+            frameMemory = frameMemoryPool.navigateTo(frameCount++);
+            recordA.init(frameMemory);
+
+            for (long row = partitionHi - partitionLo; row >= 0; row--) {
+                recordA.setRowIndex(row);
                 int key = recordA.getInt(columnIndex);
                 if (includedSymbolKeys.contains(key) && excludedSymbolKeys.excludes(key) && foundKeys.add(key)) {
-                    rowIds.add(Rows.toRowID(frame.getPartitionIndex(), row));
+                    rowIds.add(Rows.toRowID(frameIndex, row));
                     if (++foundSize == searchSize) {
                         return;
                     }
@@ -319,18 +342,22 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
     private void findRestrictedWithFilter() {
         assert filter != null;
         int searchSize = includedSymbolKeys.size();
-        DataFrame frame;
-        while ((frame = dataFrameCursor.next()) != null) {
-            long rowLo = frame.getRowLo();
-            long row = frame.getRowHi();
-            recordA.jumpTo(frame.getPartitionIndex(), 0);
+        PageFrame frame;
+        while ((frame = frameCursor.next()) != null) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
+            final int frameIndex = frameCount;
+            final long partitionLo = frame.getPartitionLo();
+            final long partitionHi = frame.getPartitionHi() - 1;
 
-            while (row-- > rowLo) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-                recordA.setRecordIndex(row);
+            frameAddressCache.add(frameCount, frame);
+            frameMemory = frameMemoryPool.navigateTo(frameCount++);
+            recordA.init(frameMemory);
+
+            for (long row = partitionHi - partitionLo; row >= 0; row--) {
+                recordA.setRowIndex(row);
                 int key = recordA.getInt(columnIndex);
                 if (filter.getBool(recordA) && includedSymbolKeys.contains(key) && excludedSymbolKeys.excludes(key) && foundKeys.add(key)) {
-                    rowIds.add(Rows.toRowID(frame.getPartitionIndex(), row));
+                    rowIds.add(Rows.toRowID(frameIndex, row));
                     if (++foundSize == searchSize) {
                         return;
                     }

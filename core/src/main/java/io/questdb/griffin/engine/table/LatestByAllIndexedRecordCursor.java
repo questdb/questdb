@@ -75,8 +75,10 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             isTreeMapBuilt = true;
         }
         if (aIndex < aLimit) {
-            long row = rows.get(aIndex++) - 1; // we added 1 on cpp side
-            recordA.jumpTo(Rows.toPartitionIndex(row), Rows.toLocalRowID(row));
+            long rowId = rows.get(aIndex++) - 1; // we added 1 on cpp side
+            frameMemory = frameMemoryPool.navigateTo(Rows.toPartitionIndex(rowId));
+            recordA.init(frameMemory);
+            recordA.setRowIndex(Rows.toLocalRowID(rowId));
             return true;
         }
         return false;

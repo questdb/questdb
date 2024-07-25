@@ -94,6 +94,7 @@ class LatestByValuesRecordCursor extends AbstractDescendingRecordListCursor {
 
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             final int frameIndex = frameCount;
             final long partitionLo = frame.getPartitionLo();
             final long partitionHi = frame.getPartitionHi() - 1;
@@ -102,13 +103,12 @@ class LatestByValuesRecordCursor extends AbstractDescendingRecordListCursor {
             frameMemory = frameMemoryPool.navigateTo(frameCount++);
             recordA.init(frameMemory);
 
-            for (long row = partitionHi; row >= partitionLo; row--) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-                recordA.setRowIndex(row - partitionLo);
+            for (long row = partitionHi - partitionLo; row >= 0; row--) {
+                recordA.setRowIndex(row);
                 int key = TableUtils.toIndexKey(recordA.getInt(columnIndex));
                 int index = map.keyIndex(key);
                 if (index < 0 && map.valueAt(index) == 0) {
-                    rows.add(Rows.toRowID(frameIndex, row - partitionLo));
+                    rows.add(Rows.toRowID(frameIndex, row));
                     map.putAt(index, key, 1);
                 }
             }

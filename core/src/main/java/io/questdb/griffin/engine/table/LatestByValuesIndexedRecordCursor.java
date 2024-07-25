@@ -71,7 +71,9 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         }
         if (index > -1) {
             final long rowId = rows.get(index);
-            recordA.jumpTo(Rows.toPartitionIndex(rowId), Rows.toLocalRowID(rowId));
+            frameMemory = frameMemoryPool.navigateTo(Rows.toPartitionIndex(rowId));
+            recordA.init(frameMemory);
+            recordA.setRowIndex(Rows.toLocalRowID(rowId));
             index--;
             return true;
         }
@@ -88,6 +90,8 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         rows.clear();
         found.clear();
         isTreeMapBuilt = false;
+        // prepare for page frame iteration
+        super.toTop();
     }
 
     @Override
@@ -105,13 +109,13 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         index = rows.size() - 1;
     }
 
-    private void addFoundKey(int symbolKey, BitmapIndexReader indexReader, PageFrame frame, long rowLo, long rowHi) {
+    private void addFoundKey(int symbolKey, BitmapIndexReader indexReader, int frameIndex, long partitionLo, long partitionHi) {
         int index = found.keyIndex(symbolKey);
         if (index > -1) {
-            RowCursor cursor = indexReader.getCursor(false, symbolKey, rowLo, rowHi);
+            RowCursor cursor = indexReader.getCursor(false, symbolKey, partitionLo, partitionHi);
             if (cursor.hasNext()) {
-                final long row = Rows.toRowID(frame.getPartitionIndex(), cursor.next());
-                rows.add(row);
+                final long rowId = Rows.toRowID(frameIndex, cursor.next());
+                rows.add(rowId);
                 found.addAt(index, symbolKey);
             }
         }
@@ -131,23 +135,29 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         int frameColumnIndex = columnIndexes.getQuick(columnIndex);
         while ((frame = frameCursor.next()) != null && found.size() < keyCount) {
             circuitBreaker.statefulThrowExceptionIfTripped();
+            final int frameIndex = frameCount;
             final BitmapIndexReader indexReader = frame.getBitmapIndexReader(frameColumnIndex, BitmapIndexReader.DIR_BACKWARD);
-            final long rowLo = frame.getPartitionLo();
-            final long rowHi = frame.getPartitionHi() - 1;
+            final long partitionLo = frame.getPartitionLo();
+            final long partitionHi = frame.getPartitionHi() - 1;
+
+            frameAddressCache.add(frameCount, frame);
+            frameMemory = frameMemoryPool.navigateTo(frameCount++);
+            recordA.init(frameMemory);
 
             for (int i = 0, n = symbolKeys.size(); i < n; i++) {
                 int symbolKey = symbolKeys.get(i);
-                addFoundKey(symbolKey, indexReader, frame, rowLo, rowHi);
+                addFoundKey(symbolKey, indexReader, frameIndex, partitionLo, partitionHi);
             }
             if (deferredSymbolKeys != null) {
                 for (int i = 0, n = deferredSymbolKeys.size(); i < n; i++) {
                     int symbolKey = deferredSymbolKeys.get(i);
                     if (!symbolKeys.contains(symbolKey)) {
-                        addFoundKey(symbolKey, indexReader, frame, rowLo, rowHi);
+                        addFoundKey(symbolKey, indexReader, frameIndex, partitionLo, partitionHi);
                     }
                 }
             }
         }
+
         index = rows.size() - 1;
     }
 }

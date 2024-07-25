@@ -73,6 +73,8 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractLatestByValueReco
         filter.init(this, executionContext);
         isRecordFound = false;
         isFindPending = false;
+        // prepare for page frame iteration
+        super.toTop();
     }
 
     @Override
@@ -104,16 +106,17 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractLatestByValueReco
         int frameColumnIndex = columnIndexes.getQuick(columnIndex);
         while ((frame = frameCursor.next()) != null) {
             circuitBreaker.statefulThrowExceptionIfTripped();
-            final int partitionIndex = frame.getPartitionIndex();
             final BitmapIndexReader indexReader = frame.getBitmapIndexReader(frameColumnIndex, BitmapIndexReader.DIR_BACKWARD);
-            final long rowLo = frame.getPartitionLo();
-            final long rowHi = frame.getPartitionHi() - 1;
-            recordA.jumpTo(partitionIndex, 0);
+            final long partitionLo = frame.getPartitionLo();
+            final long partitionHi = frame.getPartitionHi() - 1;
 
-            RowCursor cursor = indexReader.getCursor(false, symbolKey, rowLo, rowHi);
+            frameAddressCache.add(frameCount, frame);
+            frameMemory = frameMemoryPool.navigateTo(frameCount++);
+            recordA.init(frameMemory);
+
+            RowCursor cursor = indexReader.getCursor(false, symbolKey, partitionLo, partitionHi);
             while (cursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-                recordA.setRecordIndex(cursor.next());
+                recordA.setRowIndex(cursor.next() - partitionLo);
                 if (filter.getBool(recordA)) {
                     isRecordFound = true;
                     return;

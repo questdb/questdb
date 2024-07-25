@@ -82,6 +82,7 @@ class LatestByAllRecordCursor extends AbstractDescendingRecordListCursor {
     protected void buildTreeMap() {
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
             final int frameIndex = frameCount;
             final long partitionLo = frame.getPartitionLo();
             final long partitionHi = frame.getPartitionHi() - 1;
@@ -91,13 +92,12 @@ class LatestByAllRecordCursor extends AbstractDescendingRecordListCursor {
             recordA.init(frameMemory);
             recordA.setRowIndex(partitionHi);
 
-            for (long row = partitionHi; row >= partitionLo; row--) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-                recordA.setRowIndex(row - partitionLo);
+            for (long row = partitionHi - partitionLo; row >= 0; row--) {
+                recordA.setRowIndex(row);
                 MapKey key = map.withKey();
                 key.put(recordA, recordSink);
                 if (key.create()) {
-                    rows.add(Rows.toRowID(frameIndex, row - partitionLo));
+                    rows.add(Rows.toRowID(frameIndex, row));
                 }
             }
         }
