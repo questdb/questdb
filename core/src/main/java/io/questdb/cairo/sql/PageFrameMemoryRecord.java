@@ -25,6 +25,7 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.vm.NullMemoryCMR;
@@ -41,7 +42,6 @@ import java.io.Closeable;
  * for a given page frame before any use.
  */
 public class PageFrameMemoryRecord implements Record, Closeable {
-
     private final MemoryCR.ByteSequenceView bsview = new MemoryCR.ByteSequenceView();
     private final StableDirectString csviewA = new StableDirectString();
     private final StableDirectString csviewB = new StableDirectString();
@@ -152,7 +152,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
         if (address != 0) {
             return Unsafe.getUnsafe().getByte(address + rowIndex);
         }
-        return NullMemoryCMR.INSTANCE.getByte(0);
+        return GeoHashes.BYTE_NULL;
     }
 
     @Override
@@ -161,7 +161,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
         if (address != 0) {
             return Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
         }
-        return NullMemoryCMR.INSTANCE.getInt(0);
+        return GeoHashes.INT_NULL;
     }
 
     @Override
@@ -170,7 +170,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
         if (address != 0) {
             return Unsafe.getUnsafe().getLong(address + (rowIndex << 3));
         }
-        return NullMemoryCMR.INSTANCE.getLong(0);
+        return GeoHashes.NULL;
     }
 
     @Override
@@ -179,7 +179,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
         if (address != 0) {
             return Unsafe.getUnsafe().getShort(address + (rowIndex << 1));
         }
-        return NullMemoryCMR.INSTANCE.getShort(0);
+        return GeoHashes.SHORT_NULL;
     }
 
     @Override
@@ -419,7 +419,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
                     .put(size)
                     .put(']');
         }
-        return null;
+        return null; // Column top.
     }
 
     private SymbolTable getSymbolTable(int columnIndex) {
