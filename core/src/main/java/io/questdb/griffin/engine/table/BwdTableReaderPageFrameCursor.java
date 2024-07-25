@@ -117,7 +117,8 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
         return null;
     }
 
-    public BwdTableReaderPageFrameCursor of(DataFrameCursor dataFrameCursor) {
+    @Override
+    public PageFrameCursor of(DataFrameCursor dataFrameCursor) {
         this.dataFrameCursor = dataFrameCursor;
         reader = dataFrameCursor.getTableReader();
         toTop();

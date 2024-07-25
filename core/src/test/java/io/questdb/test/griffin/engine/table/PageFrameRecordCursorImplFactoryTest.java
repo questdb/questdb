@@ -29,8 +29,8 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.PageFrameFwdRowCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
-import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexRowCursorFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
@@ -240,7 +240,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 populateColumnTypes(metadata, columnIndexes, columnSizes);
 
                 try (FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, metadata)) {
-                    PageFrameRowCursorFactory rowCursorFactory = new PageFrameRowCursorFactory(); // stub RowCursorFactory
+                    PageFrameFwdRowCursorFactory rowCursorFactory = new PageFrameFwdRowCursorFactory(); // stub RowCursorFactory
                     PageFrameRecordCursorFactory factory = new PageFrameRecordCursorFactory(
                             configuration,
                             metadata,
@@ -348,7 +348,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 populateColumnTypes(metadata, columnIndexes, columnSizes);
 
                 try (FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory(tt, TableUtils.ANY_TABLE_VERSION, metadata)) {
-                    PageFrameRowCursorFactory rowCursorFactory = new PageFrameRowCursorFactory(); // stub RowCursorFactory
+                    PageFrameFwdRowCursorFactory rowCursorFactory = new PageFrameFwdRowCursorFactory(); // stub RowCursorFactory
                     PageFrameRecordCursorFactory factory = new PageFrameRecordCursorFactory(
                             configuration,
                             metadata,

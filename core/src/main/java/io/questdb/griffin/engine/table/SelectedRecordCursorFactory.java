@@ -85,7 +85,7 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
         if (pageFrameCursor == null) {
             pageFrameCursor = new SelectedPageFrameCursor(columnCrossIndex);
         }
-        return pageFrameCursor.of(baseCursor);
+        return pageFrameCursor.wrap(baseCursor);
     }
 
     @Override
@@ -239,14 +239,19 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
             return baseFrame != null ? pageFrame.of(baseFrame) : null;
         }
 
-        public SelectedPageFrameCursor of(PageFrameCursor baseCursor) {
-            this.baseCursor = baseCursor;
-            return this;
+        @Override
+        public PageFrameCursor of(DataFrameCursor dataFrameCursor) {
+            return baseCursor.of(dataFrameCursor);
         }
 
         @Override
         public void toTop() {
             baseCursor.toTop();
+        }
+
+        public SelectedPageFrameCursor wrap(PageFrameCursor baseCursor) {
+            this.baseCursor = baseCursor;
+            return this;
         }
     }
 }

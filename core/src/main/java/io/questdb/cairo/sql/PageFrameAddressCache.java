@@ -171,7 +171,6 @@ public class PageFrameAddressCache implements Mutable {
 
     public void of(@Transient RecordMetadata metadata) {
         columnCount = metadata.getColumnCount();
-        assert columnCount > 0;
         columnTypes.clear();
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             columnTypes.add(metadata.getColumnType(columnIndex));

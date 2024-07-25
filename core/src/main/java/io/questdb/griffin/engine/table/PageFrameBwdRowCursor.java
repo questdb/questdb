@@ -24,33 +24,33 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.RowCursor;
-import io.questdb.cairo.sql.RowCursorFactory;
-import io.questdb.griffin.PlanSink;
 
-public class BwdDataFrameRowCursorFactory implements RowCursorFactory {
-    private final DataFrameBwdRowCursor cursor = new DataFrameBwdRowCursor();
+/**
+ * Row cursor that goes through data frame backwards / from end to start / hi to lo.
+ */
+public class PageFrameBwdRowCursor implements RowCursor {
+    private long current;
+    private long lo;
 
     @Override
-    public RowCursor getCursor(PageFrame pageFrame) {
-        cursor.of(pageFrame);
-        return cursor;
+    public boolean hasNext() {
+        return current >= lo;
     }
 
     @Override
-    public boolean isEntity() {
-        return true;
+    public void jumpTo(long position) {
+        this.current = position;
     }
 
     @Override
-    public void toPlan(PlanSink sink) {
-        if (sink.getOrder() == DataFrameCursorFactory.ORDER_ASC) {
-            sink.type("Row forward scan");
-        } else {
-            sink.type("Row backward scan");
-        }
+    public long next() {
+        return current--;
+    }
+
+    void of(PageFrame frame) {
+        this.current = frame.getPartitionHi() - frame.getPartitionLo() - 1;
+        this.lo = 0;
     }
 }
-

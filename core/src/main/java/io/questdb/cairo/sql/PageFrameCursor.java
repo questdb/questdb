@@ -56,6 +56,8 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
     @Nullable
     PageFrame next();
 
+    PageFrameCursor of(DataFrameCursor dataFrameCursor);
+
     /**
      * Return the cursor to the beginning of the page frame.
      */

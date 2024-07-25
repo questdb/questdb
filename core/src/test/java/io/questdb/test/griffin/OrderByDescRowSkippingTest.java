@@ -28,7 +28,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.engine.table.BwdDataFrameRowCursorFactory;
+import io.questdb.griffin.engine.table.BwdPageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.std.IntList;
 import io.questdb.test.AbstractCairoTest;
@@ -994,7 +994,7 @@ public class OrderByDescRowSkippingTest extends AbstractCairoTest {
                 engine.getConfiguration(),
                 metadata,
                 new FullBwdDataFrameCursorFactory(reader.getTableToken(), reader.getMetadataVersion(), GenericRecordMetadata.deepCopyOf(metadata)),
-                new BwdDataFrameRowCursorFactory(),
+                new BwdPageFrameRowCursorFactory(),
                 false,
                 null,
                 true,

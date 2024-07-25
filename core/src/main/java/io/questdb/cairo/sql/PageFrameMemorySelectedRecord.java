@@ -36,6 +36,7 @@ import io.questdb.std.str.Utf8Sequence;
  * Must be initialized with a {@link #init(PageFrameMemory)} call
  * for a given page frame before any use.
  */
+// TODO(puzpuzpuz): do we need this one?
 public class PageFrameMemorySelectedRecord extends PageFrameMemoryRecord {
     private final IntList columnIndexes;
 

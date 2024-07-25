@@ -35,6 +35,7 @@ import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ANY;
+import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
 
 abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursorFactory {
     protected final IntList columnIndexes;
@@ -42,7 +43,7 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
     protected final DataFrameCursorFactory dataFrameCursorFactory;
     protected final int pageFrameMaxRows;
     protected final int pageFrameMinRows;
-    protected FwdTableReaderPageFrameCursor pageFrameCursor;
+    protected PageFrameCursor pageFrameCursor;
 
     public AbstractPageFrameRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -90,26 +91,29 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
         Misc.free(dataFrameCursorFactory);
     }
 
-    protected PageFrameCursor initFwdPageFrameCursor(
-            DataFrameCursor dataFrameCursor,
-            SqlExecutionContext executionContext
-    ) {
+    protected PageFrameCursor initPageFrameCursor(SqlExecutionContext executionContext) throws SqlException {
+        final int order = dataFrameCursorFactory.getOrder();
+        DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext, ORDER_ANY);
         if (pageFrameCursor == null) {
-            pageFrameCursor = new FwdTableReaderPageFrameCursor(
-                    columnIndexes,
-                    columnSizeShifts,
-                    1, // used for single-threaded exec plans
-                    pageFrameMinRows,
-                    pageFrameMaxRows
-            );
+            if (order == ORDER_ASC || order == ORDER_ANY) {
+                pageFrameCursor = new FwdTableReaderPageFrameCursor(
+                        columnIndexes,
+                        columnSizeShifts,
+                        1, // used for single-threaded exec plans
+                        pageFrameMinRows,
+                        pageFrameMaxRows
+                );
+            } else {
+                pageFrameCursor = new BwdTableReaderPageFrameCursor(
+                        columnIndexes,
+                        columnSizeShifts,
+                        1, // used for single-threaded exec plans
+                        pageFrameMinRows,
+                        pageFrameMaxRows
+                );
+            }
         }
         return pageFrameCursor.of(dataFrameCursor);
-    }
-
-    protected PageFrameCursor initPageFrameCursor(SqlExecutionContext executionContext) throws SqlException {
-        DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext, ORDER_ANY);
-        // TODO(puzpuzpuz): should we consider the dataFrameCursorFactory's order?
-        return initFwdPageFrameCursor(dataFrameCursor, executionContext);
     }
 
     protected abstract RecordCursor initRecordCursor(

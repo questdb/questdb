@@ -30,8 +30,8 @@ import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.RowCursorFactory;
 import io.questdb.griffin.PlanSink;
 
-public class PageFrameRowCursorFactory implements RowCursorFactory {
-    private final PageFrameRowCursor cursor = new PageFrameRowCursor();
+public class BwdPageFrameRowCursorFactory implements RowCursorFactory {
+    private final PageFrameBwdRowCursor cursor = new PageFrameBwdRowCursor();
 
     @Override
     public RowCursor getCursor(PageFrame pageFrame) {
@@ -46,10 +46,11 @@ public class PageFrameRowCursorFactory implements RowCursorFactory {
 
     @Override
     public void toPlan(PlanSink sink) {
-        if (sink.getOrder() == DataFrameCursorFactory.ORDER_DESC) {
-            sink.type("Row backward scan");
-        } else {
+        if (sink.getOrder() == DataFrameCursorFactory.ORDER_ASC) {
             sink.type("Row forward scan");
+        } else {
+            sink.type("Row backward scan");
         }
     }
 }
+

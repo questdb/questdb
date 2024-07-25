@@ -27,7 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.RowCursor;
 
-class PageFrameRowCursor implements RowCursor {
+class PageFrameFwdRowCursor implements RowCursor {
     private long current;
     private long hi;
 

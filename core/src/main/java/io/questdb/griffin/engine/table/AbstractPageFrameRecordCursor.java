@@ -37,8 +37,8 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
     protected final IntList columnIndexes;
     protected final PageFrameAddressCache frameAddressCache;
     protected final PageFrameMemoryPool frameMemoryPool;
-    protected final PageFrameMemorySelectedRecord recordA;
-    protected final PageFrameMemorySelectedRecord recordB;
+    protected final PageFrameMemoryRecord recordA;
+    protected final PageFrameMemoryRecord recordB;
     protected int frameCount = 0;
     protected PageFrameCursor frameCursor;
     // TODO(puzpuzpuz): could be a local field?
@@ -50,8 +50,8 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
             @NotNull IntList columnIndexes
     ) {
         this.columnIndexes = columnIndexes;
-        recordA = new PageFrameMemorySelectedRecord(columnIndexes);
-        recordB = new PageFrameMemorySelectedRecord(columnIndexes);
+        recordA = new PageFrameMemoryRecord();
+        recordB = new PageFrameMemoryRecord();
         frameAddressCache = new PageFrameAddressCache(configuration);
         frameAddressCache.of(metadata);
         frameMemoryPool = new PageFrameMemoryPool();
@@ -98,8 +98,8 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
     @Override
     public void recordAt(Record record, long atRowId) {
         final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(Rows.toPartitionIndex(atRowId));
-        ((PageFrameMemorySelectedRecord) record).init(frameMemory);
-        ((PageFrameMemorySelectedRecord) record).setRowIndex(Rows.toLocalRowID(atRowId));
+        ((PageFrameMemoryRecord) record).init(frameMemory);
+        ((PageFrameMemoryRecord) record).setRowIndex(Rows.toLocalRowID(atRowId));
     }
 
     @Override
