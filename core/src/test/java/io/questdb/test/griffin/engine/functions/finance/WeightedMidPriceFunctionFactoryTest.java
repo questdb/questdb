@@ -24,6 +24,8 @@
 
 package io.questdb.test.griffin.engine.functions.finance;
 
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -70,8 +72,34 @@ public class WeightedMidPriceFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testThatOrderDoesNotMatter() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql("wmid\n4.0\n", "select wmid(100, 1.0, 3.0, 100.0)");
-            assertSql("wmid\n4.0\n", "select wmid(100, 3.0, 1.0, 100.0)");
+            assertSql("wmid\n4.0\n", "select wmid(100.0, 1.0, 3.0, 100.0)");
+            assertSql("wmid\n4.0\n", "select wmid(100.0, 3.0, 1.0, 100.0)");
+        });
+    }
+
+    @Test
+    public void testBindVariables() throws Exception {
+        assertMemoryLeak(() -> {
+            snapshotMemoryUsage();
+
+            try (
+                    final RecordCursorFactory factory = select(
+                            "select wmid($1, $2, $3, $4)")
+            ) {
+                final String expected = "wmid\n" +
+                        "3.0";
+
+                sqlExecutionContext.getBindVariableService().setDouble(0, 100.0);
+                sqlExecutionContext.getBindVariableService().setDouble(1, 3);
+                sqlExecutionContext.getBindVariableService().setDouble(2, 1);
+                sqlExecutionContext.getBindVariableService().setDouble(3, 100);
+
+                try (final RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursor(expected, cursor, factory.getMetadata(), true);
+                }
+
+                assertFactoryMemoryUsage();
+            }
         });
     }
 }
