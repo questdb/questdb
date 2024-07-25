@@ -3685,11 +3685,11 @@ public class JoinTest extends AbstractCairoTest {
                             "        SelectedRecord\n" +
                             "            Hash Outer Join Light\n" +
                             "              condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: fact_table\n" +
                             "                Hash\n" +
-                            "                    DataFrame\n" +
+                            "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: dim_apTemperature\n"
             );

@@ -32,7 +32,10 @@ import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.NullMemory;
 import io.questdb.std.*;
-import io.questdb.std.str.*;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectString;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8SplitString;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -268,8 +271,8 @@ public class PageFrameMemoryPool implements QuietCloseable {
     private static class NativeFrameRecord implements Record {
 
         private final MemoryCR.ByteSequenceView bsview = new MemoryCR.ByteSequenceView();
-        private final StableDirectString csviewA = new StableDirectString();
-        private final StableDirectString csviewB = new StableDirectString();
+        private final DirectString csviewA = new DirectString();
+        private final DirectString csviewB = new DirectString();
         private final Long256Impl long256A = new Long256Impl();
         private final Long256Impl long256B = new Long256Impl();
         private final PageFrameMemoryPool memoryCache;

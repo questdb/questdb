@@ -32,7 +32,10 @@ import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.*;
-import io.questdb.std.str.*;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectString;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8SplitString;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -42,14 +45,14 @@ import java.io.Closeable;
  * for a given page frame before any use.
  */
 public class PageFrameMemoryRecord implements Record, Closeable {
-    private final MemoryCR.ByteSequenceView bsview = new MemoryCR.ByteSequenceView();
-    private final StableDirectString csviewA = new StableDirectString();
-    private final StableDirectString csviewB = new StableDirectString();
-    private final Long256Impl long256A = new Long256Impl();
-    private final Long256Impl long256B = new Long256Impl();
+    private final ObjList<MemoryCR.ByteSequenceView> bsviews = new ObjList<>();
+    private final ObjList<DirectString> csviewsA = new ObjList<>();
+    private final ObjList<DirectString> csviewsB = new ObjList<>();
+    private final ObjList<Long256Impl> longs256A = new ObjList<>();
+    private final ObjList<Long256Impl> longs256B = new ObjList<>();
     private final ObjList<SymbolTable> symbolTableCache = new ObjList<>();
-    private final Utf8SplitString utf8ViewA = new Utf8SplitString(true);
-    private final Utf8SplitString utf8ViewB = new Utf8SplitString(true);
+    private final ObjList<Utf8SplitString> utf8ViewsA = new ObjList<>();
+    private final ObjList<Utf8SplitString> utf8ViewsB = new ObjList<>();
     private LongList auxPageAddresses;
     private LongList auxPageLimits;
     private int frameIndex;
@@ -85,7 +88,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
             final long indexPageAddress = auxPageAddresses.getQuick(columnIndex);
             final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + (rowIndex << 3));
             final long pageLimit = pageLimits.getQuick(columnIndex);
-            return getBin(dataPageAddress, offset, pageLimit, bsview);
+            return getBin(dataPageAddress, offset, pageLimit, bsview(columnIndex));
         }
         return NullMemoryCMR.INSTANCE.getBin(0);
     }
@@ -239,14 +242,16 @@ public class PageFrameMemoryRecord implements Record, Closeable {
 
     @Override
     public Long256 getLong256A(int columnIndex) {
-        getLong256(columnIndex, long256A);
-        return long256A;
+        Long256 long256 = long256A(columnIndex);
+        getLong256(columnIndex, long256);
+        return long256;
     }
 
     @Override
     public Long256 getLong256B(int columnIndex) {
-        getLong256(columnIndex, long256B);
-        return long256B;
+        Long256 long256 = long256B(columnIndex);
+        getLong256(columnIndex, long256);
+        return long256;
     }
 
     @Override
@@ -270,7 +275,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
             final long indexPageAddress = auxPageAddresses.getQuick(columnIndex);
             final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + (rowIndex << 3));
             final long pageLimit = pageLimits.getQuick(columnIndex);
-            return getStrA(dataPageAddress, offset, pageLimit, csviewA);
+            return getStrA(dataPageAddress, offset, pageLimit, csviewA(columnIndex));
         }
         return NullMemoryCMR.INSTANCE.getStrA(0);
     }
@@ -282,7 +287,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
             final long indexPageAddress = auxPageAddresses.getQuick(columnIndex);
             final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + (rowIndex << 3));
             final long pageLimit = pageLimits.getQuick(columnIndex);
-            return getStrA(dataPageAddress, offset, pageLimit, csviewB);
+            return getStrA(dataPageAddress, offset, pageLimit, csviewB(columnIndex));
         }
         return NullMemoryCMR.INSTANCE.getStrB(0);
     }
@@ -322,12 +327,12 @@ public class PageFrameMemoryRecord implements Record, Closeable {
 
     @Override
     public Utf8Sequence getVarcharA(int columnIndex) {
-        return getVarchar(columnIndex, utf8ViewA);
+        return getVarchar(columnIndex, utf8ViewA(columnIndex));
     }
 
     @Override
     public Utf8Sequence getVarcharB(int columnIndex) {
-        return getVarchar(columnIndex, utf8ViewB);
+        return getVarchar(columnIndex, utf8ViewB(columnIndex));
     }
 
     @Override
@@ -363,6 +368,27 @@ public class PageFrameMemoryRecord implements Record, Closeable {
 
     public void setRowIndex(long rowIndex) {
         this.rowIndex = rowIndex;
+    }
+
+    private MemoryCR.ByteSequenceView bsview(int columnIndex) {
+        if (bsviews.getQuiet(columnIndex) == null) {
+            bsviews.extendAndSet(columnIndex, new MemoryCR.ByteSequenceView());
+        }
+        return bsviews.getQuick(columnIndex);
+    }
+
+    private DirectString csviewA(int columnIndex) {
+        if (csviewsA.getQuiet(columnIndex) == null) {
+            csviewsA.extendAndSet(columnIndex, new DirectString());
+        }
+        return csviewsA.getQuick(columnIndex);
+    }
+
+    private DirectString csviewB(int columnIndex) {
+        if (csviewsB.getQuiet(columnIndex) == null) {
+            csviewsB.extendAndSet(columnIndex, new DirectString());
+        }
+        return csviewsB.getQuick(columnIndex);
     }
 
     private BinarySequence getBin(long base, long offset, long pageLimit, MemoryCR.ByteSequenceView view) {
@@ -448,5 +474,33 @@ public class PageFrameMemoryRecord implements Record, Closeable {
             );
         }
         return null; // Column top.
+    }
+
+    private Long256Impl long256A(int columnIndex) {
+        if (longs256A.getQuiet(columnIndex) == null) {
+            longs256A.extendAndSet(columnIndex, new Long256Impl());
+        }
+        return longs256A.getQuick(columnIndex);
+    }
+
+    private Long256Impl long256B(int columnIndex) {
+        if (longs256B.getQuiet(columnIndex) == null) {
+            longs256B.extendAndSet(columnIndex, new Long256Impl());
+        }
+        return longs256B.getQuick(columnIndex);
+    }
+
+    private Utf8SplitString utf8ViewA(int columnIndex) {
+        if (utf8ViewsA.getQuiet(columnIndex) == null) {
+            utf8ViewsA.extendAndSet(columnIndex, new Utf8SplitString(false));
+        }
+        return utf8ViewsA.getQuick(columnIndex);
+    }
+
+    private Utf8SplitString utf8ViewB(int columnIndex) {
+        if (utf8ViewsB.getQuiet(columnIndex) == null) {
+            utf8ViewsB.extendAndSet(columnIndex, new Utf8SplitString(false));
+        }
+        return utf8ViewsB.getQuick(columnIndex);
     }
 }

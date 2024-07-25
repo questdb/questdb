@@ -141,7 +141,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                         "Async Filter workers: 4\n" +
                         "  limit: 10\n" +
                         "  filter: key='k3'\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n",
                 "ts[TIMESTAMP],key[VARCHAR],price[DOUBLE],quantity[BIGINT]\n" +
@@ -236,7 +236,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                         "    GroupBy vectorized: true workers: 4\n" +
                         "      keys: [key]\n" +
                         "      values: [min(quantity),max(quantity)]\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: tab\n",
                 "key[VARCHAR],min[BIGINT],max[BIGINT]\n" +
@@ -258,7 +258,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 "QUERY PLAN[VARCHAR]\n" +
                         "GroupBy vectorized: true workers: 4\n" +
                         "  values: [min(quantity),max(quantity)]\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n",
                 "min[BIGINT],max[BIGINT]\n" +
@@ -282,7 +282,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                         "          keys: [day,key]\n" +
                         "          values: [vwap(price,quantity)]\n" +
                         "          filter: null\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: tab\n",
                 "day[INTEGER],key[VARCHAR],vwap[DOUBLE]\n" +

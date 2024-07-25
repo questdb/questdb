@@ -327,7 +327,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     "            SelectedRecord\n" +
                     "                Async JIT Filter workers: 1\n" +
                     "                  filter: (workspace='a' and method_id='d')\n" +
-                    "                    DataFrame\n" +
+                    "                    PageFrame\n" +
                     "                        Row forward scan\n" +
                     "                        Frame forward scan on: tab\n");
 
@@ -367,7 +367,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     "          functions: [timestamp_floor('minute',ts),concat([address,workspace]),ts,method_id]\n" +
                     "            Async JIT Filter workers: 1\n" +
                     "              filter: (workspace='a' and method_id='d')\n" +
-                    "                DataFrame\n" +
+                    "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Frame forward scan on: tab\n");
 
@@ -411,13 +411,13 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     "                  condition: t2.method_id=t1.method_id and t2.workspace=t1.workspace\n" +
                     "                    Async JIT Filter workers: 1\n" +
                     "                      filter: (workspace='a' and method_id='d')\n" +
-                    "                        DataFrame\n" +
+                    "                        PageFrame\n" +
                     "                            Row forward scan\n" +
                     "                            Frame forward scan on: tab\n" +
                     "                    Hash\n" +
                     "                        Async JIT Filter workers: 1\n" +
                     "                          filter: (method_id='d' and workspace='a')\n" +
-                    "                            DataFrame\n" +
+                    "                            PageFrame\n" +
                     "                                Row forward scan\n" +
                     "                                Frame forward scan on: tab\n");
 
@@ -465,7 +465,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     "        SelectedRecord\n" +
                     "            Async JIT Filter workers: 1\n" +
                     "              filter: vendor_id in [A1,A2]\n" +
-                    "                DataFrame\n" +
+                    "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Interval forward scan on: trips\n" +
                     "                      intervals: [(\"2019-06-30T00:00:00.000000Z\",\"MAX\")]\n");
@@ -509,14 +509,14 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     "        SelectedRecord\n" +
                     "            Hash Join Light\n" +
                     "              condition: b.vendor_id=a.vendor_id\n" +
-                    "                DataFrame\n" +
+                    "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Interval forward scan on: t1\n" +
                     "                      intervals: [(\"2019-06-30T00:00:00.000000Z\",\"MAX\")]\n" +
                     "                Hash\n" +
                     "                    Async JIT Filter workers: 1\n" +
                     "                      filter: vendor_id in [A1,A2]\n" +
-                    "                        DataFrame\n" +
+                    "                        PageFrame\n" +
                     "                            Row forward scan\n" +
                     "                            Frame forward scan on: t2\n");
 
@@ -552,7 +552,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                             "      keys: [ts, key]\n" +
                             "        Async JIT Filter workers: 1\n" +
                             "          filter: key is not null\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: tab\n");
         });

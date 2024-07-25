@@ -56,7 +56,7 @@ public class PageFrameAddressCache implements Mutable {
     }
 
     public void add(int frameIndex, @Transient PageFrame frame) {
-        if (pageAddresses.size() >= columnCount * (frameIndex + 1)) {
+        if (frameSizes.size() >= frameIndex + 1) {
             return; // The page frame is already cached
         }
 

@@ -40,10 +40,11 @@ import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_MASK;
  */
 public class Utf8SplitString implements DirectUtf8Sequence, Mutable {
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
+    // TODO(puzpuzpuz): we can't use this class anymore as there may be Parquet partitions
     private final boolean stable;
     private boolean ascii;
-    private long dataLo;
     private long dataLim;
+    private long dataLo;
     private long prefixLo;
     private int size;
 

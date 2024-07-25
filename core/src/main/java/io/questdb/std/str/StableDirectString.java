@@ -36,5 +36,6 @@ package io.questdb.std.str;
  * Note: this class should be only used for direct {@link CharSequence}s. For {@link Utf8Sequence}s
  * we have special {@link Utf8Sequence#isStable()} method.
  */
+// TODO(puzpuzpuz): we can't use this class anymore as there may be Parquet partitions
 public class StableDirectString extends DirectString {
 }

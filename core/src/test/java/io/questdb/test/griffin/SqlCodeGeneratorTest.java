@@ -6772,7 +6772,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             "      keys: [timestamp]\n" +
                             "      values: [min(x)]\n" +
                             "        SelectedRecord\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: test1\n"
             );
@@ -6787,7 +6787,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             "          values: [min(x)]\n" +
                             "          filter: null\n" +
                             "            SelectedRecord\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: test1\n"
             );
