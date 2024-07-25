@@ -473,17 +473,16 @@ public class LogFactory implements Closeable {
         boolean usesLogDirVar = false;
         for (String n : properties.stringPropertyNames()) {
             String value = getProperty(properties, n);
-            if (logDir != null && value.contains(LOG_DIR_VAR)) {
+            if (value.contains(LOG_DIR_VAR)) {
                 usesLogDirVar = true;
                 value = value.replace(LOG_DIR_VAR, logDir);
+                properties.put(n, value);
             }
-            properties.put(n, value);
         }
 
         if (usesLogDirVar) {
             File logDirFile = new File(logDir);
-            if (!logDirFile.exists()) {
-                boolean configDirUsed = false;
+            if (!logDirFile.exists() && logDirFile.mkdirs()) {
                 System.err.printf("Created log directory: %s%n", logDir);
             }
         }
