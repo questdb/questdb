@@ -102,8 +102,12 @@ public class Bootstrap {
         // before we set up the logger, we need to copy the conf file
         final byte[] buffer = new byte[1024 * 1024];
         try {
-            copyConfResource(rootDirectory, false, buffer, "conf/log.conf", null);
-            copyConfResource(rootDirectory, false, buffer, "conf/standalone_log.conf", null);
+            if (System.getProperty("bin") == null) {
+                copyConfResource(rootDirectory, false, buffer, "conf/log.conf", null);
+            } else {
+                // Running as binaries, use daily log rotation by default
+                copyConfResource(rootDirectory, false, buffer, "conf/standalone_log.conf", "conf/log.conf", null);
+            }
         } catch (IOException e) {
             throw new BootstrapException("Could not extract log configuration file");
         }
@@ -368,7 +372,11 @@ public class Bootstrap {
     }
 
     private static void copyConfResource(String dir, boolean force, byte[] buffer, String res, Log log) throws IOException {
-        File out = new File(dir, res);
+        copyConfResource(dir, force, buffer, res, res, log);
+    }
+
+    private static void copyConfResource(String dir, boolean force, byte[] buffer, String res, String dest, Log log) throws IOException {
+        File out = new File(dir, dest);
         try (InputStream is = ServerMain.class.getResourceAsStream("/io/questdb/site/" + res)) {
             if (is != null) {
                 copyInputStream(force, buffer, out, is, log);
@@ -481,7 +489,12 @@ public class Bootstrap {
             }
         }
         copyConfResource(rootDirectory, false, buffer, "conf/server.conf", log);
-        copyConfResource(rootDirectory, false, buffer, "conf/log.conf", log);
+        if (System.getProperty("bin") == null) {
+            copyConfResource(rootDirectory, false, buffer, "conf/log.conf", null);
+        } else {
+            // Running as binaries, use daily log rotation by default
+            copyConfResource(rootDirectory, false, buffer, "conf/standalone_log.conf", "conf/log.conf", null);
+        }
     }
 
     private void extractSite0(String publicDir, byte[] buffer, String thisVersion) throws IOException {

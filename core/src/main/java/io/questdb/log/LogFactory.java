@@ -77,6 +77,7 @@ public class LogFactory implements Closeable {
     private boolean configured = false;
     private int queueDepth = DEFAULT_QUEUE_DEPTH;
     private int recordLength = DEFAULT_MSG_SIZE;
+    private boolean usesLogDirVar;
 
     public LogFactory() {
         this(MicrosecondClockImpl.INSTANCE);
@@ -326,22 +327,13 @@ public class LogFactory implements Closeable {
         }
 
         boolean initialized = false;
-        // prevent creating blank log dir from unit tests
-        String logDir = Paths.get(rootDir, "log").toAbsolutePath().toString();
-        File logDirFile = new File(logDir);
-        if (!logDirFile.exists() && logDirFile.mkdir()) {
-            System.err.printf("Created log directory: %s%n", logDir);
-        }
-
-        if (rootDir != null && DEFAULT_CONFIG_NAME.equals(conf)) {
+        if (rootDir != null && DEFAULT_CONFIG.equals(conf)) {
             String logPath = Paths.get(rootDir, "conf", DEFAULT_CONFIG_NAME).toAbsolutePath().toString();
             File f = new File(logPath);
             if (f.isFile() && f.canRead()) {
                 System.err.printf("Reading log configuration from %s%n", logPath);
                 try (FileInputStream fis = new FileInputStream(logPath)) {
-                    Properties properties = new Properties();
-                    properties.load(fis);
-                    configureFromProperties(properties, logDir);
+                    configure(fis, rootDir);
                     initialized = true;
                 } catch (IOException e) {
                     throw new LogError("Cannot read " + logPath, e);
@@ -353,17 +345,13 @@ public class LogFactory implements Closeable {
             // in this order of initialization specifying -Dout might end up using internal jar resources ...
             try (InputStream is = LogFactory.class.getResourceAsStream(conf)) {
                 if (is != null) {
-                    Properties properties = new Properties();
-                    properties.load(is);
-                    configureFromProperties(properties, logDir);
+                    configure(is, rootDir);
                     System.err.println("Log configuration loaded from default internal file.");
                 } else {
                     File f = new File(conf);
                     if (f.canRead()) {
                         try (FileInputStream fis = new FileInputStream(f)) {
-                            Properties properties = new Properties();
-                            properties.load(fis);
-                            configureFromProperties(properties, logDir);
+                            configure(fis, rootDir);
                             System.err.printf("Log configuration loaded from: %s%n", conf);
                         }
                     } else {
@@ -435,97 +423,6 @@ public class LogFactory implements Closeable {
         return builder.toString();
     }
 
-    @SuppressWarnings("rawtypes")
-    private static LogWriterConfig createWriter(final Properties properties, String writerName, String logDir) {
-        final String writer = "w." + writerName + '.';
-        final String clazz = getProperty(properties, writer + "class");
-        final String levelStr = getProperty(properties, writer + "level");
-        final String scope = getProperty(properties, writer + "scope");
-
-        if (clazz == null) {
-            return null;
-        }
-
-        final Class<?> cl;
-        final Constructor constructor;
-        try {
-            cl = Class.forName(clazz);
-            constructor = cl.getDeclaredConstructor(RingQueue.class, SCSequence.class, int.class);
-        } catch (ClassNotFoundException e) {
-            throw new LogError("Class not found " + clazz, e);
-        } catch (NoSuchMethodException e) {
-            throw new LogError("Constructor(RingQueue, Sequence, int) expected: " + clazz, e);
-        }
-
-        int level = 0;
-        if (levelStr != null) {
-            for (String s : levelStr.split(",")) {
-                switch (s.toUpperCase()) {
-                    case "DEBUG":
-                        level |= LogLevel.DEBUG;
-                        break;
-                    case "INFO":
-                        level |= LogLevel.INFO;
-                        break;
-                    case "ERROR":
-                        level |= LogLevel.ERROR;
-                        break;
-                    case "CRITICAL":
-                        level |= LogLevel.CRITICAL;
-                        break;
-                    case "ADVISORY":
-                        level |= LogLevel.ADVISORY;
-                        break;
-                    default:
-                        throw new LogError("Unknown level: " + s);
-                }
-            }
-        }
-
-        if (isForcedDebug()) {
-            level = level | LogLevel.DEBUG;
-        }
-
-        // enable all LOG levels above the minimum set one
-        // ((-1 >>> (msb-1)) << msb) | level
-        final int msb = Numbers.msb(level);
-        level = (((-1 >>> (msb - 1)) << msb) | level) & LogLevel.MASK;
-
-        return new LogWriterConfig(scope == null ? EMPTY_STR : scope, level, (ring, seq, level1) -> {
-            try {
-                LogWriter w1 = (LogWriter) constructor.newInstance(ring, seq, level1);
-
-                for (String n : properties.stringPropertyNames()) {
-                    if (n.startsWith(writer)) {
-                        String p = n.substring(writer.length());
-
-                        if (reserved.contains(p)) {
-                            continue;
-                        }
-
-                        try {
-                            Field f = cl.getDeclaredField(p);
-                            if (f.getType() == String.class) {
-
-                                String value = getProperty(properties, n);
-                                if (logDir != null && value.contains(LOG_DIR_VAR)) {
-                                    value = value.replace(LOG_DIR_VAR, logDir);
-                                }
-
-                                Unsafe.getUnsafe().putObject(w1, Unsafe.getUnsafe().objectFieldOffset(f), value);
-                            }
-                        } catch (Exception e) {
-                            throw new LogError("Unknown property: " + n, e);
-                        }
-                    }
-                }
-                return w1;
-            } catch (Exception e) {
-                throw new LogError("Error creating log writer", e);
-            }
-        });
-    }
-
     private static String getProperty(final Properties properties, String key) {
         if (envEnabled) {
             final String envKey = "QDB_LOG_" + key.replace('.', '_').toUpperCase();
@@ -558,6 +455,40 @@ public class LogFactory implements Closeable {
         } catch (NoSuchFieldException | IllegalAccessException e) {
             throw new RuntimeException("Could not set logger", e);
         }
+    }
+
+    private void configure(InputStream fis, String rootDir) throws IOException {
+        Properties properties = new Properties();
+        properties.load(fis);
+
+        // QDB_LOG_LOG_DIR env variable can be used to override log directory
+        String logDir = getProperty(properties, "log.dir");
+        if (logDir == null) {
+            if (rootDir != null) {
+                logDir = Paths.get(rootDir, "log").toAbsolutePath().toString();
+            } else {
+                logDir = ".";
+            }
+        }
+        boolean usesLogDirVar = false;
+        for (String n : properties.stringPropertyNames()) {
+            String value = getProperty(properties, n);
+            if (logDir != null && value.contains(LOG_DIR_VAR)) {
+                usesLogDirVar = true;
+                value = value.replace(LOG_DIR_VAR, logDir);
+            }
+            properties.put(n, value);
+        }
+
+        if (usesLogDirVar) {
+            File logDirFile = new File(logDir);
+            if (!logDirFile.exists()) {
+                boolean configDirUsed = false;
+                System.err.printf("Created log directory: %s%n", logDir);
+            }
+        }
+
+        configureFromProperties(properties, logDir);
     }
 
     private void configureDefaultWriter() {
@@ -639,6 +570,91 @@ public class LogFactory implements Closeable {
                 adv == null ? null : adv.ring,
                 adv == null ? null : adv.lSeq
         );
+    }
+
+    @SuppressWarnings("rawtypes")
+    private LogWriterConfig createWriter(final Properties properties, String writerName, String logDir) {
+        final String writer = "w." + writerName + '.';
+        final String clazz = getProperty(properties, writer + "class");
+        final String levelStr = getProperty(properties, writer + "level");
+        final String scope = getProperty(properties, writer + "scope");
+
+        if (clazz == null) {
+            return null;
+        }
+
+        final Class<?> cl;
+        final Constructor constructor;
+        try {
+            cl = Class.forName(clazz);
+            constructor = cl.getDeclaredConstructor(RingQueue.class, SCSequence.class, int.class);
+        } catch (ClassNotFoundException e) {
+            throw new LogError("Class not found " + clazz, e);
+        } catch (NoSuchMethodException e) {
+            throw new LogError("Constructor(RingQueue, Sequence, int) expected: " + clazz, e);
+        }
+
+        int level = 0;
+        if (levelStr != null) {
+            for (String s : levelStr.split(",")) {
+                switch (s.toUpperCase()) {
+                    case "DEBUG":
+                        level |= LogLevel.DEBUG;
+                        break;
+                    case "INFO":
+                        level |= LogLevel.INFO;
+                        break;
+                    case "ERROR":
+                        level |= LogLevel.ERROR;
+                        break;
+                    case "CRITICAL":
+                        level |= LogLevel.CRITICAL;
+                        break;
+                    case "ADVISORY":
+                        level |= LogLevel.ADVISORY;
+                        break;
+                    default:
+                        throw new LogError("Unknown level: " + s);
+                }
+            }
+        }
+
+        if (isForcedDebug()) {
+            level = level | LogLevel.DEBUG;
+        }
+
+        // enable all LOG levels above the minimum set one
+        // ((-1 >>> (msb-1)) << msb) | level
+        final int msb = Numbers.msb(level);
+        level = (((-1 >>> (msb - 1)) << msb) | level) & LogLevel.MASK;
+
+        return new LogWriterConfig(scope == null ? EMPTY_STR : scope, level, (ring, seq, level1) -> {
+            try {
+                LogWriter w1 = (LogWriter) constructor.newInstance(ring, seq, level1);
+
+                for (String n : properties.stringPropertyNames()) {
+                    if (n.startsWith(writer)) {
+                        String p = n.substring(writer.length());
+                        if (reserved.contains(p)) {
+                            continue;
+                        }
+
+                        try {
+                            Field f = cl.getDeclaredField(p);
+                            if (f.getType() == String.class) {
+                                String value = getProperty(properties, n);
+                                Unsafe.getUnsafe().putObject(w1, Unsafe.getUnsafe().objectFieldOffset(f), value);
+                            }
+                        } catch (Exception e) {
+                            throw new LogError("Unknown property: " + n, e);
+                        }
+                    }
+                }
+                return w1;
+            } catch (Exception e) {
+                throw new LogError("Error creating log writer", e);
+            }
+        });
     }
 
     private ScopeConfiguration find(CharSequence key) {
