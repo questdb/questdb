@@ -134,7 +134,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     _env: JNIEnv,
     _class: JClass,
 ) -> usize {
-    offset_of!(ColumnMeta, typ)
+    offset_of!(ColumnMeta, column_type)
 }
 
 #[no_mangle]
