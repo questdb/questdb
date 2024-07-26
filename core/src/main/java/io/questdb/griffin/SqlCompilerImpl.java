@@ -2802,7 +2802,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         CharSequence tok = expectToken(lexer, "'create' or 'release'");
 
         if (SqlKeywords.isCreateKeyword(tok)) {
-            engine.prepareSnapshot(executionContext);
+            engine.checkpointCreate(executionContext);
             compiledQuery.ofCheckpointCreate();
         } else if (                Chars.equalsLowerCaseAscii(tok, "release")) {
             engine.checkpointRelease();

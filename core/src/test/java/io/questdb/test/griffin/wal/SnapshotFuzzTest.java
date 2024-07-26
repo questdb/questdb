@@ -179,8 +179,8 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
         }
     }
 
-    private void createSnapshot() throws SqlException {
-        LOG.info().$("starting snapshot").$();
+    private void checkpointCreate() throws SqlException {
+        LOG.info().$("creating checkpoint").$();
 
         ddl("checkpoint create");
         CairoConfiguration conf = engine.getConfiguration();
@@ -191,7 +191,7 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
 
         ff.mkdirs(snapshotPath, conf.getMkDirMode());
 
-        LOG.info().$("copying data to snapshot [from=").$(rootPath).$(", to=").$(snapshotPath).$();
+        LOG.info().$("copying data to the checkpoint [from=").$(rootPath).$(", to=").$(snapshotPath).$();
         copyRecursiveIgnoreErrors(ff, rootPath, snapshotPath, conf.getMkDirMode());
 
         ddl("checkpoint release");
@@ -225,8 +225,8 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
         );
     }
 
-    private void restoreSnapshot() {
-        LOG.info().$("begin snapshot restore").$();
+    private void checkpointRecover() {
+        LOG.info().$("begin checkpoint restore").$();
         engine.releaseInactive();
 
         CairoConfiguration conf = engine.getConfiguration();
@@ -237,7 +237,7 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
         ff.rmdir(rootPath);
         ff.rename(snapshotPath.$(), rootPath.$());
 
-        LOG.info().$("recovering from snapshot").$();
+        LOG.info().$("recovering from the checkpoint").$();
         createTriggerFile();
         engine.recoverFromCheckpoint();
         engine.getTableSequencerAPI().releaseAll();
@@ -284,7 +284,7 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
 
             Os.sleep(rnd.nextLong(snapshotIndex * 50L));
             // Make snapshot here
-            createSnapshot();
+            checkpointCreate();
 
             asyncWalApply.join();
 
@@ -293,7 +293,7 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
             }
 
             // Restore snapshot here
-            restoreSnapshot();
+            checkpointRecover();
             engine.notifyWalTxnRepublisher(engine.verifyTableName(tableNameWal));
             if (afterSnapshot.size() > 0) {
                 fuzzer.applyWal(afterSnapshot, tableNameWal, rnd.nextInt(2) + 1, rnd);

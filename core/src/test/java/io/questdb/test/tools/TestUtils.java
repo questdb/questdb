@@ -1338,7 +1338,7 @@ public final class TestUtils {
             Assert.assertTrue("Test dir cleanup error: " + ff.errno(), !ff.exists(path.$()) || ff.rmdir(path.slash()));
 
             path.parent().concat(RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME);
-            Assert.assertTrue("Snapshot trigger cleanup error: " + ff.errno(), !ff.exists(path.$()) || ff.removeQuiet(path.$()));
+            Assert.assertTrue("Checkpoint trigger cleanup error: " + ff.errno(), !ff.exists(path.$()) || ff.removeQuiet(path.$()));
         }
     }
 

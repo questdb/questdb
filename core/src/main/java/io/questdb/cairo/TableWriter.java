@@ -955,7 +955,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public boolean checkScoreboardHasReadersBeforeLastCommittedTxn() {
         if (checkpointAgent.isInProgress()) {
-            // No deletion must happen while a snapshot is in-flight.
+            // do not alter scoreboard while checkpoint is in progress
             return true;
         }
         long lastCommittedTxn = txWriter.getTxn();
@@ -7529,8 +7529,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void squashSplitPartitions(final int partitionIndexLo, final int partitionIndexHi, final int optimalPartitionCount, boolean force) {
         if (checkpointAgent.isInProgress()) {
-            LOG.info().$("cannot squash partition [table=").$(tableToken.getTableName()).$("], snapshot in progress").$();
-            // No overwrite can happen while a snapshot is in-flight.
+            LOG.info().$("cannot squash partition [table=").$(tableToken.getTableName()).$("], checkpoint in progress").$();
             return;
         }
 

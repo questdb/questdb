@@ -640,7 +640,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         if (new File(this.dbDirectory).isAbsolute()) {
             this.root = this.dbDirectory;
             this.confRoot = rootSubdir(this.root, CONFIG_DIRECTORY); // ../conf
-            this.checkpointRoot = rootSubdir(this.root, CHECKPOINT_DIRECTORY); // ../snapshot
+            this.checkpointRoot = rootSubdir(this.root, CHECKPOINT_DIRECTORY); // ../.checkpoint
             tmpRoot = rootSubdir(this.root, TMP_DIRECTORY); // ../tmp
         } else {
             this.root = new File(root, this.dbDirectory).getAbsolutePath();

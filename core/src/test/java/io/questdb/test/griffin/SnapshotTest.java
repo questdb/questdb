@@ -202,7 +202,7 @@ public class SnapshotTest extends AbstractCairoTest {
                 engine.recoverFromCheckpoint();
                 Assert.fail("Exception expected");
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getMessage(), "snapshot directory does not exist");
+                TestUtils.assertContains(e.getMessage(), "checkpoint directory does not exist");
             }
         });
     }
@@ -220,7 +220,7 @@ public class SnapshotTest extends AbstractCairoTest {
 
             path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory());
             FilesFacade ff = configuration.getFilesFacade();
-            ff.removeQuiet(path.concat(TableUtils.SNAPSHOT_META_FILE_NAME).$());
+            ff.removeQuiet(path.concat(TableUtils.CHECKPOINT_META_FILE_NAME).$());
 
             engine.clear();
             createTriggerFile();
@@ -228,7 +228,7 @@ public class SnapshotTest extends AbstractCairoTest {
                 engine.recoverFromCheckpoint();
                 Assert.fail("Exception expected");
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getMessage(), "snapshot metadata file does not exist");
+                TestUtils.assertContains(e.getMessage(), "checkpoint metadata file does not exist");
             }
         });
     }
@@ -816,7 +816,7 @@ public class SnapshotTest extends AbstractCairoTest {
                 drop("drop table test;");
                 Assert.fail();
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "could not lock 'test' [reason='snapshotInProgress']");
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not lock 'test' [reason='checkpointInProgress']");
             }
         });
     }
@@ -832,7 +832,7 @@ public class SnapshotTest extends AbstractCairoTest {
                 ddl("rename table test to test2;");
                 Assert.fail();
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "table busy [reason=snapshotInProgress]");
+                TestUtils.assertContains(e.getFlyweightMessage(), "table busy [reason=checkpointInProgress]");
             }
         });
     }
@@ -1271,7 +1271,7 @@ public class SnapshotTest extends AbstractCairoTest {
                 path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory());
                 FilesFacade ff = configuration.getFilesFacade();
                 try (MemoryCMARW mem = Vm.getCMARWInstance()) {
-                    mem.smallFile(ff, path.concat(TableUtils.SNAPSHOT_META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+                    mem.smallFile(ff, path.concat(TableUtils.CHECKPOINT_META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
 
                     CharSequence expectedId = configuration.getSnapshotInstanceId();
                     CharSequence actualId = mem.getStrA(0);

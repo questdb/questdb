@@ -366,7 +366,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
             return false;
         }
         if (checkpointAgent.isInProgress()) {
-            // No deletion must happen while a snapshot is in-flight.
+            // do not purge anything before checkpoint is released
             return false;
         }
 

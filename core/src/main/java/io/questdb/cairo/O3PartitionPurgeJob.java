@@ -384,7 +384,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
 
     @Override
     protected boolean canRun() {
-        // No deletion must happen while a snapshot is in-flight.
+        // disable purge job while database checkpoint is in progress
         return !checkpointAgent.isInProgress();
     }
 

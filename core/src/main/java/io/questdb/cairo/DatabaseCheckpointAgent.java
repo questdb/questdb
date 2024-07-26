@@ -27,8 +27,9 @@ package io.questdb.cairo;
 public interface DatabaseCheckpointAgent {
 
     /**
-     * Returns true is a snapshot is taking place, i.e.
-     * SNAPSHOT PREPARE was called, but SNAPSHOT COMPLETE wasn't called yet.
+     * Returns when database is in "checkpoint" mode. Checkpoint mode is
+     * entered when CHECKPOINT CREATE SQL is called and exited after
+     * CHECKPOINT RELEASE is called.
      */
     boolean isInProgress();
 }

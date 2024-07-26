@@ -67,7 +67,7 @@ public class CairoEngine implements Closeable, WriterSource {
     public static final String REASON_BUSY_READER = "busyReader";
     public static final String REASON_BUSY_SEQUENCER_METADATA_POOL = "busySequencerMetaPool";
     public static final String REASON_BUSY_TABLE_READER_METADATA_POOL = "busyTableReaderMetaPool";
-    public static final String REASON_CHECKPOINT_IN_PROGRESS = "snapshotInProgress";
+    public static final String REASON_CHECKPOINT_IN_PROGRESS = "checkpointInProgress";
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
     private static final int MAX_SLEEP_MILLIS = 250;
     protected final CairoConfiguration configuration;
@@ -803,10 +803,10 @@ public class CairoEngine implements Closeable, WriterSource {
         tableNameRegistry.reload(convertedTables);
     }
 
-    public String lockAll(TableToken tableToken, String lockReason, boolean ignoreSnapshots) {
+    public String lockAll(TableToken tableToken, String lockReason, boolean ignoreInProgressCheckpoint) {
         assert null != lockReason;
-        if (!ignoreSnapshots && checkpointAgent.isInProgress()) {
-            // prevent reader locking while a snapshot is ongoing
+        if (!ignoreInProgressCheckpoint && checkpointAgent.isInProgress()) {
+            // prevent reader locking before checkpoint is released
             return REASON_CHECKPOINT_IN_PROGRESS;
         }
         // busy metadata is same as busy reader from user perspective
@@ -843,7 +843,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public boolean lockReadersAndMetadata(TableToken tableToken) {
         if (checkpointAgent.isInProgress()) {
-            // prevent reader locking while a snapshot is ongoing
+            // prevent reader locking before checkpoint is released
             return false;
         }
         if (readerPool.lock(tableToken)) {
@@ -858,7 +858,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public boolean lockReadersByTableToken(TableToken tableToken) {
         if (checkpointAgent.isInProgress()) {
-            // prevent reader locking while a snapshot is ongoing
+            // prevent reader locking before checkpoint is released
             return false;
         }
         return readerPool.lock(tableToken);
@@ -926,7 +926,7 @@ public class CairoEngine implements Closeable, WriterSource {
         unpublishedWalTxnCount.incrementAndGet();
     }
 
-    public void prepareSnapshot(SqlExecutionContext executionContext) throws SqlException {
+    public void checkpointCreate(SqlExecutionContext executionContext) throws SqlException {
         checkpointAgent.checkpointCreate(executionContext);
     }
 
