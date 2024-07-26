@@ -1,13 +1,13 @@
 use std::slice;
 
+use crate::parquet_write::{ParquetError, ParquetResult, QDB_TYPE_META_PREFIX};
 use parquet2::encoding::Encoding;
+use parquet2::metadata::KeyValue;
 use parquet2::metadata::SchemaDescriptor;
 use parquet2::schema::types::{
     IntegerType, ParquetType, PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType, TimeUnit,
 };
 use parquet2::schema::Repetition;
-
-use crate::parquet_write::{ParquetError, ParquetResult};
 
 #[repr(i32)]
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -255,6 +255,7 @@ pub struct Column {
     pub id: i32,
     pub name: &'static str,
     pub data_type: ColumnType,
+    pub full_column_type: i32,
     pub row_count: usize,
     pub column_top: usize,
     pub primary_data: &'static [u8],
@@ -291,7 +292,7 @@ impl Column {
             "symbol_offsets_ptr inconsistent with symbol_offsets_size"
         );
 
-        let column_type: ColumnType = column_type
+        let column_type_tag: ColumnType = column_type
             .try_into()
             .map_err(ParquetError::InvalidParameter)?;
 
@@ -314,7 +315,8 @@ impl Column {
         Ok(Column {
             id,
             name,
-            data_type: column_type,
+            data_type: column_type_tag,
+            full_column_type: column_type,
             column_top: column_top as usize,
             row_count,
             primary_data,
@@ -329,15 +331,29 @@ pub struct Partition {
     pub columns: Vec<Column>,
 }
 
-pub fn to_parquet_schema(partition: &Partition) -> ParquetResult<SchemaDescriptor> {
+pub fn to_parquet_schema(
+    partition: &Partition,
+) -> ParquetResult<(SchemaDescriptor, Vec<KeyValue>)> {
     let parquet_types = partition
         .columns
         .iter()
         .map(|c| column_type_to_parquet_type(c.id, c.name, c.data_type))
         .collect::<ParquetResult<Vec<_>>>()?;
-    Ok(SchemaDescriptor::new(
-        partition.table.clone(),
-        parquet_types,
+
+    let additinal_keyvals = partition
+        .columns
+        .iter()
+        .map(|c| {
+            KeyValue::new(
+                format!("{}{}", QDB_TYPE_META_PREFIX, c.id),
+                c.full_column_type.to_string(),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    Ok((
+        SchemaDescriptor::new(partition.table.clone(), parquet_types),
+        additinal_keyvals,
     ))
 }
 
