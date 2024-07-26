@@ -112,6 +112,13 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         }
     }
 
+    private long getStrAddr(int col) {
+        long auxPtr = auxPtrs.get(col);
+        long dataPtr = dataPtrs.get(col);
+        long data_offset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
+        return dataPtr + data_offset;
+    }
+
     private boolean switchToNextRowGroup() {
         columnChunkBufferPtrs.clear();
         dataPtrs.clear();
@@ -289,26 +296,17 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
 
         @Override
         public CharSequence getStrA(int col) {
-            long auxPtr = auxPtrs.get(col);
-            long dataPtr = dataPtrs.get(col);
-            long data_offset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
-            return getStr(dataPtr + data_offset, directCharSequenceA);
+            return getStr(getStrAddr(col), directCharSequenceA);
         }
 
         @Override
         public CharSequence getStrB(int col) {
-            long auxPtr = auxPtrs.get(col);
-            long dataPtr = dataPtrs.get(col);
-            long data_offset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
-            return getStr(dataPtr + data_offset, directCharSequenceB);
+            return getStr(getStrAddr(col), directCharSequenceB);
         }
 
         @Override
         public int getStrLen(int col) {
-            long auxPtr = auxPtrs.get(col);
-            long dataPtr = dataPtrs.get(col);
-            long data_offset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
-            return Unsafe.getUnsafe().getInt(dataPtr + data_offset);
+            return Unsafe.getUnsafe().getInt(getStrAddr(col));
         }
 
         @Nullable
