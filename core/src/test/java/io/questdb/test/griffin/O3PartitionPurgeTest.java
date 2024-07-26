@@ -50,7 +50,7 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
 
     @BeforeClass
     public static void begin() {
-        purgeJob = new O3PartitionPurgeJob(engine, engine.getCheckpointAgent(), 1);
+        purgeJob = new O3PartitionPurgeJob(engine,  1);
     }
 
     @AfterClass

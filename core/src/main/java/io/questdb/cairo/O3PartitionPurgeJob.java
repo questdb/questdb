@@ -50,15 +50,13 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
     private final Utf8StringSink[] fileNameSinks;
     private final AtomicBoolean halted = new AtomicBoolean(false);
     private final ObjList<DirectLongList> partitionList;
-    private final DatabaseCheckpointAgent checkpointAgent;
     private final ObjList<TxReader> txnReaders;
     private final ObjList<TxnScoreboard> txnScoreboards;
 
-    public O3PartitionPurgeJob(CairoEngine engine, DatabaseCheckpointAgent checkpointAgent, int workerCount) {
+    public O3PartitionPurgeJob(CairoEngine engine, int workerCount) {
         super(engine.getMessageBus().getO3PurgeDiscoveryQueue(), engine.getMessageBus().getO3PurgeDiscoverySubSeq());
         try {
             this.engine = engine;
-            this.checkpointAgent = checkpointAgent;
             this.configuration = engine.getMessageBus().getConfiguration();
             this.fileNameSinks = new Utf8StringSink[workerCount];
             this.partitionList = new ObjList<>(workerCount);
@@ -385,7 +383,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
     @Override
     protected boolean canRun() {
         // disable purge job while database checkpoint is in progress
-        return !checkpointAgent.isInProgress();
+        return !engine.getCheckpointStatus().isInProgress();
     }
 
     @Override

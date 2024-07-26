@@ -72,6 +72,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private static final int MAX_SLEEP_MILLIS = 250;
     protected final CairoConfiguration configuration;
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
+    private final DatabaseCheckpointAgent checkpointAgent;
     private final CopyContext copyContext;
     private final ConcurrentHashMap<TableToken> createTableLock = new ConcurrentHashMap<>();
     private final EngineMaintenanceJob engineMaintenanceJob;
@@ -82,7 +83,6 @@ public class CairoEngine implements Closeable, WriterSource {
     private final ReaderPool readerPool;
     private final SqlExecutionContext rootExecutionContext;
     private final SequencerMetadataPool sequencerMetadataPool;
-    private final DatabaseCheckpointAgentImpl checkpointAgent;
     private final SqlCompilerPool sqlCompilerPool;
     private final TableFlagResolver tableFlagResolver;
     private final IDGenerator tableIdGenerator;
@@ -127,14 +127,13 @@ public class CairoEngine implements Closeable, WriterSource {
             this.telemetry = new Telemetry<>(TelemetryTask.TELEMETRY, configuration);
             this.telemetryWal = new Telemetry<>(TelemetryWalTask.WAL_TELEMETRY, configuration);
             this.tableIdGenerator = new IDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME);
-            this.checkpointAgent = new DatabaseCheckpointAgentImpl(this);
+            this.checkpointAgent = new DatabaseCheckpointAgent(this);
             this.queryRegistry = new QueryRegistry(configuration);
             this.rootExecutionContext = new SqlExecutionContextImpl(this, 1)
                     .with(AllowAllSecurityContext.INSTANCE);
 
             tableIdGenerator.open();
-            // Recover from the checkpoint, if necessary.
-            checkpointAgent.recover();
+            checkpointRecover();
 
             // Migrate database files.
             EngineMigration.migrateEngineTo(this, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
@@ -271,7 +270,25 @@ public class CairoEngine implements Closeable, WriterSource {
                 sleep = Math.min(MAX_SLEEP_MILLIS, sleep * 2);
             }
         }
-        throw CairoException.nonCritical().put("txn timed out [table=").put(tableName).put(", expectedTxn=").put(seqTxn).put(", writerTxn=").put(writerTxn);
+        throw CairoException.nonCritical()
+                .put("txn timed out [table=").put(tableName)
+                .put(", expectedTxn=").put(seqTxn)
+                .put(", writerTxn=").put(writerTxn);
+    }
+
+    public void checkpointCreate(SqlExecutionContext executionContext) throws SqlException {
+        checkpointAgent.checkpointCreate(executionContext);
+    }
+
+    /**
+     * Recovers database from checkpoint after restoring data from a snapshot.
+     */
+    public final void checkpointRecover() {
+        checkpointAgent.recover();
+    }
+
+    public void checkpointRelease() throws SqlException {
+        checkpointAgent.checkpointRelease();
     }
 
     @TestOnly
@@ -317,10 +334,6 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void compile(CharSequence sql) throws SqlException {
         compile(sql, rootExecutionContext);
-    }
-
-    public void checkpointRelease() throws SqlException {
-        checkpointAgent.checkpointRelease();
     }
 
     public @NotNull TableToken createTable(
@@ -440,6 +453,10 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public int getBusyWriterCount() {
         return writerPool.getBusyCount();
+    }
+
+    public DatabaseCheckpointStatus getCheckpointStatus() {
+        return checkpointAgent;
     }
 
     public long getCommandCorrelationId() {
@@ -584,10 +601,6 @@ public class CairoEngine implements Closeable, WriterSource {
                 sequencerMetadataPool.get(tableToken),
                 desiredVersion
         );
-    }
-
-    public DatabaseCheckpointAgent getCheckpointAgent() {
-        return checkpointAgent;
     }
 
     public SqlCompiler getSqlCompiler() {
@@ -926,10 +939,6 @@ public class CairoEngine implements Closeable, WriterSource {
         unpublishedWalTxnCount.incrementAndGet();
     }
 
-    public void checkpointCreate(SqlExecutionContext executionContext) throws SqlException {
-        checkpointAgent.checkpointCreate(executionContext);
-    }
-
     public void print(CharSequence sql, MutableCharSink<?> sink) throws SqlException {
         print(sql, sink, rootExecutionContext);
     }
@@ -946,10 +955,6 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void reconcileTableNameRegistryState() {
         tableNameRegistry.reconcile();
-    }
-
-    public void recoverFromCheckpoint() {
-        checkpointAgent.recover();
     }
 
     public void registerTableToken(TableToken tableToken) {

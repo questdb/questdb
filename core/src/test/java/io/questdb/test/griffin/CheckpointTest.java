@@ -49,11 +49,12 @@ import org.junit.*;
 
 import static io.questdb.PropertyKey.CAIRO_SNAPSHOT_RECOVERY_ENABLED;
 
-public class SnapshotTest extends AbstractCairoTest {
+public class CheckpointTest extends AbstractCairoTest {
 
     private static final TestFilesFacade testFilesFacade = new TestFilesFacade();
     private static Path path;
     private static Path triggerFilePath;
+    private static Rnd rnd;
     private int rootLen;
 
     @BeforeClass
@@ -102,6 +103,7 @@ public class SnapshotTest extends AbstractCairoTest {
         rootLen = path.size();
         testFilesFacade.reset();
         circuitBreaker.setTimeout(Long.MAX_VALUE);
+        rnd = TestUtils.generateRandom(LOG);
     }
 
     @After
@@ -128,7 +130,7 @@ public class SnapshotTest extends AbstractCairoTest {
             createTriggerFile();
             testFilesFacade.errorOnRegistryFileCopy = true;
             try {
-                engine.recoverFromCheckpoint();
+                engine.checkpointRecover();
                 Assert.fail("Exception expected");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getMessage(), "Could not copy registry file");
@@ -153,7 +155,7 @@ public class SnapshotTest extends AbstractCairoTest {
             createTriggerFile();
             testFilesFacade.errorOnRegistryFileRemoval = true;
             try {
-                engine.recoverFromCheckpoint();
+                engine.checkpointRecover();
                 Assert.fail("Exception expected");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getMessage(), "could not remove registry file");
@@ -179,7 +181,7 @@ public class SnapshotTest extends AbstractCairoTest {
             engine.clear();
             createTriggerFile();
             try {
-                engine.recoverFromCheckpoint();
+                engine.checkpointRecover();
                 Assert.fail("Exception expected");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getMessage(), "could not remove restore trigger file");
@@ -188,7 +190,7 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFailFastWhenTriggerFailExistsButThereIsNoSnapshotDirectory() throws Exception {
+    public void testFailFastWhenTriggerFailExistsButThereIsNoCheckpointDirectory() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = "t";
             ddl(
@@ -199,7 +201,7 @@ public class SnapshotTest extends AbstractCairoTest {
             engine.clear();
             createTriggerFile();
             try {
-                engine.recoverFromCheckpoint();
+                engine.checkpointRecover();
                 Assert.fail("Exception expected");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getMessage(), "checkpoint directory does not exist");
@@ -208,7 +210,7 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFailFastWhenTriggerFailExistsButThereIsNoSnapshotMetadataFile() throws Exception {
+    public void testFailFastWhenTriggerFailExistsButThereIsNoCheckpointMetadataFile() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = "t";
             ddl(
@@ -225,7 +227,7 @@ public class SnapshotTest extends AbstractCairoTest {
             engine.clear();
             createTriggerFile();
             try {
-                engine.recoverFromCheckpoint();
+                engine.checkpointRecover();
                 Assert.fail("Exception expected");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getMessage(), "checkpoint metadata file does not exist");
@@ -234,69 +236,69 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRecoverSnapshotForDefaultInstanceIds() throws Exception {
-        testRecoverSnapshot("", "", false, false);
+    public void testRecoverCheckpointForDefaultInstanceIds() throws Exception {
+        testRecoverCheckpoint("", "", false, false);
     }
 
     @Test
-    public void testRecoverSnapshotForDefaultInstanceIdsAndTriggerFile() throws Exception {
-        testRecoverSnapshot("", "", true, true);
+    public void testRecoverCheckpointForDefaultInstanceIdsAndTriggerFile() throws Exception {
+        testRecoverCheckpoint("", "", true, true);
     }
 
     @Test
-    public void testRecoverSnapshotForDefaultRestartedId() throws Exception {
-        testRecoverSnapshot("id1", "", false, false);
+    public void testRecoverCheckpointForDefaultRestartedId() throws Exception {
+        testRecoverCheckpoint("id1", "", false, false);
     }
 
     @Test
-    public void testRecoverSnapshotForDefaultRestartedIdAndTriggerFile() throws Exception {
-        testRecoverSnapshot("id1", "", true, true);
+    public void testRecoverCheckpointForDefaultRestartedIdAndTriggerFile() throws Exception {
+        testRecoverCheckpoint("id1", "", true, true);
     }
 
     @Test
-    public void testRecoverSnapshotForDefaultSnapshotId() throws Exception {
-        testRecoverSnapshot("", "id1", false, false);
+    public void testRecoverCheckpointForDefaultCheckpointId() throws Exception {
+        testRecoverCheckpoint("", "id1", false, false);
     }
 
     @Test
-    public void testRecoverSnapshotForDefaultSnapshotIdAndTriggerFile() throws Exception {
-        testRecoverSnapshot("", "id1", true, true);
+    public void testRecoverCheckpointForDefaultCheckpointIdAndTriggerFile() throws Exception {
+        testRecoverCheckpoint("", "id1", true, true);
     }
 
     @Test
-    public void testRecoverSnapshotForDifferentInstanceIds() throws Exception {
-        testRecoverSnapshot("id1", "id2", false, true);
+    public void testRecoverCheckpointForDifferentInstanceIds() throws Exception {
+        testRecoverCheckpoint("id1", "id2", false, true);
     }
 
     @Test
-    public void testRecoverSnapshotForDifferentInstanceIdsAndTriggerFile() throws Exception {
-        testRecoverSnapshot("id1", "id2", true, true);
+    public void testRecoverCheckpointForDifferentInstanceIdsAndTriggerFile() throws Exception {
+        testRecoverCheckpoint("id1", "id2", true, true);
     }
 
     @Test
-    public void testRecoverSnapshotForDifferentInstanceIdsAndTriggerFileWhenRecoveryIsDisabled() throws Exception {
+    public void testRecoverCheckpointForDifferentInstanceIdsAndTriggerFileWhenRecoveryIsDisabled() throws Exception {
         node1.setProperty(CAIRO_SNAPSHOT_RECOVERY_ENABLED, "false");
-        testRecoverSnapshot("id1", "id2", true, false);
+        testRecoverCheckpoint("id1", "id2", true, false);
     }
 
     @Test
-    public void testRecoverSnapshotForDifferentInstanceIdsWhenRecoveryIsDisabled() throws Exception {
+    public void testRecoverCheckpointForDifferentInstanceIdsWhenRecoveryIsDisabled() throws Exception {
         node1.setProperty(CAIRO_SNAPSHOT_RECOVERY_ENABLED, "false");
-        testRecoverSnapshot("id1", "id2", false, false);
+        testRecoverCheckpoint("id1", "id2", false, false);
     }
 
     @Test
-    public void testRecoverSnapshotForEqualInstanceIds() throws Exception {
-        testRecoverSnapshot("id1", "id1", false, false);
+    public void testRecoverCheckpointForEqualInstanceIds() throws Exception {
+        testRecoverCheckpoint("id1", "id1", false, false);
     }
 
     @Test
-    public void testRecoverSnapshotForEqualInstanceIdsAndTriggerfile() throws Exception {
-        testRecoverSnapshot("id1", "id1", true, true);
+    public void testRecoverCheckpointForEqualInstanceIdsAndTriggerFile() throws Exception {
+        testRecoverCheckpoint("id1", "id1", true, true);
     }
 
     @Test
-    public void testRecoverSnapshotLargePartitionCount() throws Exception {
+    public void testRecoverCheckpointLargePartitionCount() throws Exception {
         final int partitionCount = 2000;
         final String snapshotId = "id1";
         final String restartedId = "id2";
@@ -318,7 +320,7 @@ public class SnapshotTest extends AbstractCairoTest {
             // Release all readers and writers, but keep the snapshot dir around.
             engine.clear();
             setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
-            engine.recoverFromCheckpoint();
+            engine.checkpointRecover();
 
             // Data inserted after PREPARE SNAPSHOT should be discarded.
             assertSql(
@@ -330,7 +332,7 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRecoverSnapshotRestoresDroppedColumns() throws Exception {
+    public void testRecoverCheckpointRestoresDroppedColumns() throws Exception {
         final String snapshotId = "00000000-0000-0000-0000-000000000000";
         final String restartedId = "123e4567-e89b-12d3-a456-426614174000";
         assertMemoryLeak(() -> {
@@ -362,7 +364,7 @@ public class SnapshotTest extends AbstractCairoTest {
             // Release all readers and writers, but keep the snapshot dir around.
             engine.clear();
             setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
-            engine.recoverFromCheckpoint();
+            engine.checkpointRecover();
 
             // Dropped column should be there.
             assertSql(expectedAllColumns, "select * from " + tableName);
@@ -370,7 +372,7 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRecoverSnapshotSupportsSnapshotTxtFile() throws Exception {
+    public void testRecoverCheckpointSupportsCheckpointTxtFile() throws Exception {
         final int partitionCount = 10;
         final String snapshotId = "id1";
         final String restartedId = "id2";
@@ -410,7 +412,7 @@ public class SnapshotTest extends AbstractCairoTest {
             Assert.assertEquals(ff.length(path.$()), restartedId.length());
 
             setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
-            engine.recoverFromCheckpoint();
+            engine.checkpointRecover();
 
             // Data inserted after PREPARE SNAPSHOT should be discarded.
             assertSql(
@@ -462,7 +464,7 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSnapshotCompleteDeletesSnapshotDir() throws Exception {
+    public void testCheckpointCompleteDeletesCheckpointDir() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table test (ts timestamp, name symbol, val int)");
             ddl("checkpoint create");
@@ -474,7 +476,7 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSnapshotCompleteWithoutPrepareIsIgnored() throws Exception {
+    public void testCheckpointCompleteWithoutPrepareIsIgnored() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table test (ts timestamp, name symbol, val int)");
             // Verify that checkpoint release doesn't return errors.
@@ -483,7 +485,7 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSnapshotDbWithWalTable() throws Exception {
+    public void testCheckpointDbWithWalTable() throws Exception {
         assertMemoryLeak(() -> {
             for (char i = 'a'; i < 'd'; i++) {
                 ddl("create table " + i + " (ts timestamp, name symbol, val int)");
@@ -499,7 +501,7 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSnapshotPrepare() throws Exception {
+    public void testCheckpointCreate() throws Exception {
         assertMemoryLeak(() -> {
             for (char i = 'a'; i < 'f'; i++) {
                 ddl("create table " + i + " (ts timestamp, name symbol, val int)");
@@ -511,24 +513,24 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSnapshotPrepareCheckMetadataFileForDefaultInstanceId() throws Exception {
-        testSnapshotPrepareCheckMetadataFile(null);
+    public void testCheckpointPrepareCheckMetadataFileForDefaultInstanceId() throws Exception {
+        testCheckpointPrepareCheckMetadataFile(null);
     }
 
     @Test
-    public void testSnapshotPrepareCheckMetadataFileForNonDefaultInstanceId() throws Exception {
-        testSnapshotPrepareCheckMetadataFile("foobar");
+    public void testCheckpointPrepareCheckMetadataFileForNonDefaultInstanceId() throws Exception {
+        testCheckpointPrepareCheckMetadataFile("foobar");
     }
 
     @Test
-    public void testSnapshotPrepareCheckTableMetadata() throws Exception {
-        testSnapshotPrepareCheckTableMetadata(false, false);
+    public void testCheckpointPrepareCheckTableMetadata() throws Exception {
+        testCheckpointPrepareCheckTableMetadata(false, false);
     }
 
     @Test
-    public void testSnapshotPrepareCheckTableMetadataFilesForNonPartitionedTable() throws Exception {
+    public void testCheckpointPrepareCheckTableMetadataFilesForNonPartitionedTable() throws Exception {
         final String tableName = "test";
-        assertMemoryLeak(() -> testSnapshotPrepareCheckTableMetadataFiles(
+        assertMemoryLeak(() -> testCheckpointPrepareCheckTableMetadataFiles(
                 "create table " + tableName + " (a symbol, b double, c long)",
                 null,
                 tableName
@@ -536,9 +538,9 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSnapshotPrepareCheckTableMetadataFilesForNonWalSystemTable() throws Exception {
+    public void testCheckpointPrepareCheckTableMetadataFilesForNonWalSystemTable() throws Exception {
         final String sysTableName = configuration.getSystemTableNamePrefix() + "test_non_wal";
-        assertMemoryLeak(() -> testSnapshotPrepareCheckTableMetadataFiles(
+        assertMemoryLeak(() -> testCheckpointPrepareCheckTableMetadataFiles(
                 "create table '" + sysTableName + "' (a symbol, b double, c long);",
                 null,
                 sysTableName
@@ -546,9 +548,9 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSnapshotPrepareCheckTableMetadataFilesForPartitionedTable() throws Exception {
+    public void testCheckpointPrepareCheckTableMetadataFilesForPartitionedTable() throws Exception {
         final String tableName = "test";
-        assertMemoryLeak(() -> testSnapshotPrepareCheckTableMetadataFiles(
+        assertMemoryLeak(() -> testCheckpointPrepareCheckTableMetadataFiles(
                 "create table " + tableName + " as " +
                         " (select x, timestamp_sequence(0, 100000000000) ts from long_sequence(20)) timestamp(ts) partition by day",
                 null,
@@ -557,9 +559,9 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSnapshotPrepareCheckTableMetadataFilesForTableWithDroppedColumns() throws Exception {
+    public void testCheckpointPrepareCheckTableMetadataFilesForTableWithDroppedColumns() throws Exception {
         final String tableName = "test";
-        assertMemoryLeak(() -> testSnapshotPrepareCheckTableMetadataFiles(
+        assertMemoryLeak(() -> testCheckpointPrepareCheckTableMetadataFiles(
                 "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
                 "alter table " + tableName + " drop column c",
                 tableName
@@ -567,9 +569,9 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSnapshotPrepareCheckTableMetadataFilesForTableWithIndex() throws Exception {
+    public void testCheckpointPrepareCheckTableMetadataFilesForTableWithIndex() throws Exception {
         final String tableName = "test";
-        assertMemoryLeak(() -> testSnapshotPrepareCheckTableMetadataFiles(
+        assertMemoryLeak(() -> testCheckpointPrepareCheckTableMetadataFiles(
                 "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
                 null,
                 tableName
@@ -577,9 +579,9 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSnapshotPrepareCheckTableMetadataFilesForWalSystemTable() throws Exception {
+    public void testCheckpointPrepareCheckTableMetadataFilesForWalSystemTable() throws Exception {
         final String sysTableName = configuration.getSystemTableNamePrefix() + "test_wal";
-        assertMemoryLeak(() -> testSnapshotPrepareCheckTableMetadataFiles(
+        assertMemoryLeak(() -> testCheckpointPrepareCheckTableMetadataFiles(
                 "create table '" + sysTableName + "' (ts timestamp, a symbol, b double, c long) timestamp(ts) partition by day wal;",
                 null,
                 sysTableName
@@ -587,9 +589,9 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSnapshotPrepareCheckTableMetadataFilesForWithParameters() throws Exception {
+    public void testCheckpointPrepareCheckTableMetadataFilesForWithParameters() throws Exception {
         final String tableName = "test";
-        assertMemoryLeak(() -> testSnapshotPrepareCheckTableMetadataFiles(
+        assertMemoryLeak(() -> testCheckpointPrepareCheckTableMetadataFiles(
                 "create table " + tableName +
                         " (a symbol, b double, c long, ts timestamp) timestamp(ts) partition by hour with maxUncommittedRows=250000, o3MaxLag = 240s",
                 null,
@@ -598,22 +600,22 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSnapshotPrepareCheckTableMetadataWithColTops() throws Exception {
-        testSnapshotPrepareCheckTableMetadata(true, false);
+    public void testCheckpointPrepareCheckTableMetadataWithColTops() throws Exception {
+        testCheckpointPrepareCheckTableMetadata(true, false);
     }
 
     @Test
-    public void testSnapshotPrepareCheckTableMetadataWithColTopsAndDroppedColumns() throws Exception {
-        testSnapshotPrepareCheckTableMetadata(true, true);
+    public void testCheckpointPrepareCheckTableMetadataWithColTopsAndDroppedColumns() throws Exception {
+        testCheckpointPrepareCheckTableMetadata(true, true);
     }
 
     @Test
-    public void testSnapshotPrepareCheckTableMetadataWithDroppedColumns() throws Exception {
-        testSnapshotPrepareCheckTableMetadata(true, true);
+    public void testCheckpointPrepareCheckTableMetadataWithDroppedColumns() throws Exception {
+        testCheckpointPrepareCheckTableMetadata(true, true);
     }
 
     @Test
-    public void testSnapshotPrepareCleansUpSnapshotDir() throws Exception {
+    public void testCheckpointPrepareCleansUpCheckpointDir() throws Exception {
         assertMemoryLeak(() -> {
             path.trimTo(rootLen);
             FilesFacade ff = configuration.getFilesFacade();
@@ -635,13 +637,13 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSnapshotPrepareEmptyFolder() throws Exception {
+    public void testCheckpointPrepareEmptyFolder() throws Exception {
         final String tableName = "test";
         path.of(configuration.getRoot()).concat("empty_folder").slash$();
         TestFilesFacadeImpl.INSTANCE.mkdirs(path, configuration.getMkDirMode());
 
         assertMemoryLeak(() -> {
-            testSnapshotPrepareCheckTableMetadataFiles(
+            testCheckpointPrepareCheckTableMetadataFiles(
                     "create table " + tableName + " (a symbol index capacity 128, b double, c long)",
                     null,
                     tableName
@@ -659,7 +661,7 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSnapshotPrepareFailsOnCorruptedTable() throws Exception {
+    public void testCheckpointPrepareFailsOnCorruptedTable() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = "t";
             ddl("create table " + tableName + " (ts timestamp, name symbol, val int)");
@@ -676,7 +678,7 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSnapshotPrepareFailsOnLockedTableReader() throws Exception {
+    public void testCheckpointPrepareFailsOnLockedTableReader() throws Exception {
         configureCircuitBreakerTimeoutOnFirstCheck(); // trigger timeout on first check
         assertMemoryLeak(() -> {
             ddl("create table test (ts timestamp, name symbol, val int)");
@@ -696,7 +698,7 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSnapshotPrepareFailsOnSyncError() throws Exception {
+    public void testCheckpointPrepareFailsOnSyncError() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table test (ts timestamp, name symbol, val int)");
 
@@ -711,7 +713,7 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSnapshotPrepareOnEmptyDatabase() throws Exception {
+    public void testCheckpointPrepareOnEmptyDatabase() throws Exception {
         assertMemoryLeak(() -> {
             ddl("checkpoint create");
             ddl("checkpoint release");
@@ -719,7 +721,7 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSnapshotPrepareOnEmptyDatabaseWithLock() throws Exception {
+    public void testCheckpointPrepareOnEmptyDatabaseWithLock() throws Exception {
         assertMemoryLeak(() -> {
             SimpleWaitingLock lock = new SimpleWaitingLock();
 
@@ -757,7 +759,7 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSnapshotPrepareSubsequentCallFails() throws Exception {
+    public void testCheckpointPrepareSubsequentCallFails() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table test (ts timestamp, name symbol, val int)");
 
@@ -792,7 +794,7 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSnapshotPrepareSubsequentCallFailsWithLock() throws Exception {
+    public void testCheckpointPrepareSubsequentCallFailsWithLock() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table test (ts timestamp, name symbol, val int)");
             ddl("checkpoint create");
@@ -806,7 +808,7 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSnapshotPreventsNonWalTableDeletion() throws Exception {
+    public void testCheckpointPreventsNonWalTableDeletion() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day bypass wal;");
             insert("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
@@ -822,7 +824,7 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSnapshotPreventsNonWalTableRenaming() throws Exception {
+    public void testCheckpointPreventsNonWalTableRenaming() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day bypass wal;");
             insert("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
@@ -838,7 +840,7 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSnapshotPreventsNonWalTableTruncation() throws Exception {
+    public void testCheckpointPreventsNonWalTableTruncation() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day bypass wal;");
             insert("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
@@ -854,7 +856,7 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSnapshotRestoresDroppedWalTable() throws Exception {
+    public void testCheckpointRestoresDroppedWalTable() throws Exception {
         final String snapshotId = "id1";
         final String restartedId = "id2";
         assertMemoryLeak(() -> {
@@ -875,7 +877,7 @@ public class SnapshotTest extends AbstractCairoTest {
             engine.clear();
             engine.closeNameRegistry();
             setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
-            engine.recoverFromCheckpoint();
+            engine.checkpointRecover();
             engine.reloadTableNames();
 
             drainWalQueue();
@@ -891,7 +893,7 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSnapshotRestoresRenamedWalTableName() throws Exception {
+    public void testCheckpointRestoresRenamedWalTableName() throws Exception {
         final String snapshotId = "id1";
         final String restartedId = "id2";
         assertMemoryLeak(() -> {
@@ -913,7 +915,7 @@ public class SnapshotTest extends AbstractCairoTest {
             engine.clear();
             engine.closeNameRegistry();
             setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
-            engine.recoverFromCheckpoint();
+            engine.checkpointRecover();
             engine.reloadTableNames();
 
             drainWalQueue();
@@ -925,7 +927,7 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSnapshotRestoresTruncatedWalTable() throws Exception {
+    public void testCheckpointRestoresTruncatedWalTable() throws Exception {
         final String snapshotId = "id1";
         final String restartedId = "id2";
         assertMemoryLeak(() -> {
@@ -945,7 +947,7 @@ public class SnapshotTest extends AbstractCairoTest {
             // Release all readers and writers, but keep the snapshot dir around.
             engine.clear();
             setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
-            engine.recoverFromCheckpoint();
+            engine.checkpointRecover();
 
             drainWalQueue();
 
@@ -955,7 +957,7 @@ public class SnapshotTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSnapshotUnknownSubOptionFails() throws Exception {
+    public void testCheckpointUnknownSubOptionFails() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table test (ts timestamp, name symbol, val int)");
             assertException(
@@ -1087,7 +1089,7 @@ public class SnapshotTest extends AbstractCairoTest {
             // Release all readers and writers, but keep the snapshot dir around.
             engine.clear();
             setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
-            engine.recoverFromCheckpoint();
+            engine.checkpointRecover();
 
             // apply updates from WAL
             drainWalQueue();
@@ -1193,7 +1195,12 @@ public class SnapshotTest extends AbstractCairoTest {
         Files.touch(triggerFilePath.$());
     }
 
-    private void testRecoverSnapshot(String snapshotId, String restartedId, boolean createTriggerFile, boolean expectRecovery) throws Exception {
+    private void testRecoverCheckpoint(
+            String snapshotId,
+            String restartedId,
+            boolean createTriggerFile,
+            boolean expectRecovery
+    ) throws Exception {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, snapshotId);
             Assert.assertEquals(engine.getConfiguration().getSnapshotInstanceId(), snapshotId);
@@ -1210,7 +1217,11 @@ public class SnapshotTest extends AbstractCairoTest {
                             "(select x, timestamp_sequence(0, 100000000000) ts from long_sequence(20)) timestamp(ts) partition by hour"
             );
 
-            ddl("checkpoint create");
+            if (rnd.nextBoolean()) {
+                ddl("checkpoint create");
+            } else {
+                ddl("snapshot prepare");
+            }
 
             path.trimTo(rootLen).slash$();
             Assert.assertTrue(Utf8s.toString(path), configuration.getFilesFacade().exists(path.$()));
@@ -1232,7 +1243,8 @@ public class SnapshotTest extends AbstractCairoTest {
             if (createTriggerFile) {
                 createTriggerFile();
             }
-            engine.recoverFromCheckpoint();
+
+            engine.checkpointRecover();
 
             // In case of recovery, data inserted after PREPARE SNAPSHOT should be discarded.
             int expectedCount = expectRecovery ? 20 : 40;
@@ -1260,7 +1272,7 @@ public class SnapshotTest extends AbstractCairoTest {
         });
     }
 
-    private void testSnapshotPrepareCheckMetadataFile(String snapshotId) throws Exception {
+    private void testCheckpointPrepareCheckMetadataFile(String snapshotId) throws Exception {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, snapshotId);
 
@@ -1283,7 +1295,7 @@ public class SnapshotTest extends AbstractCairoTest {
         });
     }
 
-    private void testSnapshotPrepareCheckTableMetadata(boolean generateColTops, boolean dropColumns) throws Exception {
+    private void testCheckpointPrepareCheckTableMetadata(boolean generateColTops, boolean dropColumns) throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path()) {
                 path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory());
@@ -1383,7 +1395,7 @@ public class SnapshotTest extends AbstractCairoTest {
         });
     }
 
-    private void testSnapshotPrepareCheckTableMetadataFiles(String ddl, String ddl2, String tableName) throws Exception {
+    private void testCheckpointPrepareCheckTableMetadataFiles(String ddl, String ddl2, String tableName) throws Exception {
         try (Path path = new Path(); Path copyPath = new Path()) {
             path.of(configuration.getRoot());
             copyPath.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory());

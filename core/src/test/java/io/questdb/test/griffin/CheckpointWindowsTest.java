@@ -35,7 +35,7 @@ import org.junit.*;
 /**
  * OS specific test that verifies errors returned on snapshot statement execution on Windows.
  */
-public class SnapshotWindowsTest extends AbstractCairoTest {
+public class CheckpointWindowsTest extends AbstractCairoTest {
 
     private static Path path = new Path();
     private int rootLen;
@@ -70,7 +70,7 @@ public class SnapshotWindowsTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSnapshotPrepare() throws Exception {
+    public void testCheckpointCreate() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table test (ts timestamp, name symbol, val int)");
             try {

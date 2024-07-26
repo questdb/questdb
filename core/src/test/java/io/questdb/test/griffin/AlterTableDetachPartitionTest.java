@@ -67,7 +67,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     @BeforeClass
     public static void setUpStatic() throws Exception {
         AbstractCairoTest.setUpStatic();
-        purgeJob = new O3PartitionPurgeJob(engine, engine.getCheckpointAgent(), 1);
+        purgeJob = new O3PartitionPurgeJob(engine, 1);
     }
 
     @AfterClass

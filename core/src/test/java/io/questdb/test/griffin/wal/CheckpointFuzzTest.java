@@ -37,7 +37,7 @@ import org.junit.*;
 
 import java.util.concurrent.atomic.AtomicReference;
 
-public class SnapshotFuzzTest extends AbstractFuzzTest {
+public class CheckpointFuzzTest extends AbstractFuzzTest {
     private static Path triggerFilePath;
 
     @BeforeClass
@@ -59,7 +59,7 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
-    public void testSnapshotEjectedWalApply() throws Exception {
+    public void testCheckpointEjectedWalApply() throws Exception {
         Rnd rnd = generateRandom(LOG);
         fuzzer.setFuzzProbabilities(
                 0,
@@ -87,12 +87,18 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
                 5 + rnd.nextInt(10)
         );
 
-        setFuzzProperties(1, getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd), 10 * Numbers.SIZE_1MB, 3);
-        runFuzzWithSnapshot(rnd);
+        setFuzzProperties(
+                1,
+                getRndO3PartitionSplit(rnd),
+                getRndO3PartitionSplitMaxCount(rnd),
+                10 * Numbers.SIZE_1MB,
+                3
+        );
+        runFuzzWithCheckpoint(rnd);
     }
 
     @Test
-    public void testSnapshotFrequentTableDrop() throws Exception {
+    public void testCheckpointFrequentTableDrop() throws Exception {
         Rnd rnd = generateRandom(LOG);
         fuzzer.setFuzzProbabilities(
                 0,
@@ -121,19 +127,56 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
         );
 
         setFuzzProperties(1, getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd), 10 * Numbers.SIZE_1MB, 3);
-        runFuzzWithSnapshot(rnd);
+        runFuzzWithCheckpoint(rnd);
     }
 
     @Test
-    public void testSnapshotFullFuzz() throws Exception {
+    public void testCheckpointFullFuzz() throws Exception {
         Rnd rnd = generateRandom(LOG);
         fullFuzz(rnd);
         setFuzzProperties(rnd.nextLong(50), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd), 10 * Numbers.SIZE_1MB, 3);
-        runFuzzWithSnapshot(rnd);
+        runFuzzWithCheckpoint(rnd);
     }
 
     private static void createTriggerFile() {
         Files.touch(triggerFilePath.$());
+    }
+
+    private void checkpointCreate() throws SqlException {
+        LOG.info().$("creating checkpoint").$();
+
+        ddl("checkpoint create");
+        CairoConfiguration conf = engine.getConfiguration();
+
+        FilesFacade ff = conf.getFilesFacade();
+        Path snapshotPath = Path.getThreadLocal(conf.getRoot()).put("_snapshot");
+        Path rootPath = Path.getThreadLocal2(conf.getRoot());
+
+        ff.mkdirs(snapshotPath, conf.getMkDirMode());
+
+        LOG.info().$("copying data to the checkpoint [from=").$(rootPath).$(", to=").$(snapshotPath).$();
+        copyRecursiveIgnoreErrors(ff, rootPath, snapshotPath, conf.getMkDirMode());
+
+        ddl("checkpoint release");
+    }
+
+    private void checkpointRecover() {
+        LOG.info().$("begin checkpoint restore").$();
+        engine.releaseInactive();
+
+        CairoConfiguration conf = engine.getConfiguration();
+        FilesFacade ff = conf.getFilesFacade();
+        Path snapshotPath = Path.getThreadLocal(conf.getRoot()).put("_snapshot").slash();
+        Path rootPath = Path.getThreadLocal2(conf.getRoot()).slash();
+
+        ff.rmdir(rootPath);
+        ff.rename(snapshotPath.$(), rootPath.$());
+
+        LOG.info().$("recovering from the checkpoint").$();
+        createTriggerFile();
+        engine.checkpointRecover();
+        engine.getTableSequencerAPI().releaseAll();
+        engine.reloadTableNames();
     }
 
     private void copyRecursiveIgnoreErrors(FilesFacade ff, Path src, Path dst, int dirMode) {
@@ -179,24 +222,6 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
         }
     }
 
-    private void checkpointCreate() throws SqlException {
-        LOG.info().$("creating checkpoint").$();
-
-        ddl("checkpoint create");
-        CairoConfiguration conf = engine.getConfiguration();
-
-        FilesFacade ff = conf.getFilesFacade();
-        Path snapshotPath = Path.getThreadLocal(conf.getRoot()).put("_snapshot");
-        Path rootPath = Path.getThreadLocal2(conf.getRoot());
-
-        ff.mkdirs(snapshotPath, conf.getMkDirMode());
-
-        LOG.info().$("copying data to the checkpoint [from=").$(rootPath).$(", to=").$(snapshotPath).$();
-        copyRecursiveIgnoreErrors(ff, rootPath, snapshotPath, conf.getMkDirMode());
-
-        ddl("checkpoint release");
-    }
-
     private void fullFuzz(Rnd rnd) {
         fuzzer.setFuzzProbabilities(
                 0.5 * rnd.nextDouble(),
@@ -225,26 +250,7 @@ public class SnapshotFuzzTest extends AbstractFuzzTest {
         );
     }
 
-    private void checkpointRecover() {
-        LOG.info().$("begin checkpoint restore").$();
-        engine.releaseInactive();
-
-        CairoConfiguration conf = engine.getConfiguration();
-        FilesFacade ff = conf.getFilesFacade();
-        Path snapshotPath = Path.getThreadLocal(conf.getRoot()).put("_snapshot").slash();
-        Path rootPath = Path.getThreadLocal2(conf.getRoot()).slash();
-
-        ff.rmdir(rootPath);
-        ff.rename(snapshotPath.$(), rootPath.$());
-
-        LOG.info().$("recovering from the checkpoint").$();
-        createTriggerFile();
-        engine.recoverFromCheckpoint();
-        engine.getTableSequencerAPI().releaseAll();
-        engine.reloadTableNames();
-    }
-
-    protected void runFuzzWithSnapshot(Rnd rnd) throws Exception {
+    protected void runFuzzWithCheckpoint(Rnd rnd) throws Exception {
         // Snapshot is not supported on Windows.
         Assume.assumeFalse(Os.isWindows());
 
