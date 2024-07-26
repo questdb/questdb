@@ -270,7 +270,7 @@ public class DatabaseCheckpointAgentImpl implements DatabaseCheckpointAgent, Qui
                     walPurgeJobRunLock.unlock();
                 } catch (IllegalStateException ignore) {
                     // not an error here
-                    // completeSnapshot can be called several time in a row.
+                    // checkpointRelease() can be called several time in a row.
                 }
             }
 
@@ -490,10 +490,10 @@ public class DatabaseCheckpointAgentImpl implements DatabaseCheckpointAgent, Qui
             CharSequence snapshotInstanceId = memFile.getStrA(0);
             if (Chars.empty(snapshotInstanceId)) {
                 // Check _snapshot.txt file too reading it as a text file.
-                srcPath.trimTo(checkpointRootLen).concat(TableUtils.SNAPSHOT_META_FILE_NAME_TXT);
-                String snapshotIdTxt = TableUtils.readText(ff, srcPath.$());
-                if (snapshotIdTxt != null) {
-                    snapshotInstanceId = snapshotIdTxt.trim();
+                srcPath.trimTo(checkpointRootLen).concat(TableUtils.CHECKPOINT_META_FILE_NAME_TXT);
+                String snapshotInstanceIdRaw = TableUtils.readText(ff, srcPath.$());
+                if (snapshotInstanceIdRaw != null) {
+                    snapshotInstanceId = snapshotInstanceIdRaw.trim();
                 }
             }
 

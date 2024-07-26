@@ -102,7 +102,7 @@ public final class TableUtils {
     public static final int NULL_LEN = -1;
     public static final String RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME = "_restore";
     public static final String CHECKPOINT_META_FILE_NAME = "_snapshot";
-    public static final String SNAPSHOT_META_FILE_NAME_TXT = "_snapshot.txt";
+    public static final String CHECKPOINT_META_FILE_NAME_TXT = "_snapshot.txt";
     public static final String SYMBOL_KEY_REMAP_FILE_SUFFIX = ".r";
     public static final char SYSTEM_TABLE_NAME_SUFFIX = '~';
     public static final int TABLE_DOES_NOT_EXIST = 1;
@@ -202,7 +202,7 @@ public final class TableUtils {
         checkSum = checkSum * 31 + seqTxn;
         checkSum = checkSum * 31 + lagRowCount;
         checkSum = checkSum * 31 + lagTxnCount;
-        return (int) (checkSum ^ (checkSum >>> 32));
+        return Long.hashCode(checkSum);
     }
 
     public static int changeColumnTypeInMetadata(CharSequence columnName, int newType, LowerCaseCharSequenceIntHashMap columnNameIndexMap, ObjList<TableColumnMetadata> columnMetadata) {
@@ -803,8 +803,16 @@ public final class TableUtils {
         return iFile(path, columnName, COLUMN_NAME_TXN_NONE);
     }
 
-    public static boolean isPendingRenameTempTableName(String tableName, CharSequence tempTablePrefix) {
-        return Chars.startsWith(tableName, tempTablePrefix);
+    /**
+     * Check is table name does not start with temp table prefix. Usually in case
+     * of table renames, table name can have temp prefix.
+     *
+     * @param tableName       name of the table
+     * @param tempTablePrefix the temp prefix
+     * @return true if table name is not pending table rename.
+     */
+    public static boolean isFinalTableName(String tableName, CharSequence tempTablePrefix) {
+        return !Chars.startsWith(tableName, tempTablePrefix);
     }
 
     public static boolean isSymbolCached(MemoryMR metaMem, int columnIndex) {

@@ -29,6 +29,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
 /**
@@ -75,7 +76,7 @@ public class SnapshotWindowsTest extends AbstractCairoTest {
             try {
                 assertExceptionNoLeakCheck("checkpoint create");
             } catch (SqlException ex) {
-                Assert.assertTrue(ex.getMessage().startsWith("[0] Snapshots are not supported on Windows"));
+                TestUtils.assertContains(ex.getFlyweightMessage(), "Checkpoint is not supported on Windows");
             }
         });
     }
