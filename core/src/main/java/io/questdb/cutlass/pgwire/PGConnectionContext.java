@@ -73,6 +73,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     public static final String TAG_DEALLOCATE = "DEALLOCATE";
     public static final String TAG_EXPLAIN = "EXPLAIN";
     public static final String TAG_INSERT = "INSERT";
+    public static final String TAG_INSERT_AS_SELECT = "TAG_INSERT_AS_SELECT";
     public static final String TAG_OK = "OK";
     public static final String TAG_PSEUDO_SELECT = "PSEUDO_SELECT";
     public static final String TAG_ROLLBACK = "ROLLBACK";
@@ -1412,7 +1413,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             wrapper = namedStatementWrapperPool.pop();
             wrapper.queryText = Chars.toString(queryText);
             // it's fine to compile pseudo-SELECT queries multiple times since they must be executed lazily
-            wrapper.alreadyExecuted = (queryTag == TAG_OK || queryTag == TAG_CTAS || (queryTag == TAG_PSEUDO_SELECT && typesAndSelect == null) || queryTag == TAG_ALTER_ROLE || queryTag == TAG_CREATE_ROLE);
+            wrapper.alreadyExecuted = queryTag == TAG_OK
+                    || queryTag == TAG_CTAS
+                    || (queryTag == TAG_PSEUDO_SELECT && typesAndSelect == null)
+                    || queryTag == TAG_ALTER_ROLE
+                    || queryTag == TAG_CREATE_ROLE
+                    || queryTag == TAG_INSERT_AS_SELECT;
             wrapper.queryContainsSecret = queryContainsSecret;
             namedStatementMap.putAt(index, Chars.toString(statementName), wrapper);
             this.activeBindVariableTypes = wrapper.bindVariableTypes;
@@ -2244,7 +2250,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 typesAndUpdateIsCached = bindVariableService.getIndexedVariableCount() > 0;
                 break;
             case CompiledQuery.INSERT_AS_SELECT:
-                queryTag = TAG_INSERT;
+                queryTag = TAG_INSERT_AS_SELECT;
                 rowCount = cq.getAffectedRowsCount();
                 break;
             case CompiledQuery.PSEUDO_SELECT:
