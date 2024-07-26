@@ -70,7 +70,7 @@ public class PGErrorHandlingTest extends BootstrapTest {
                                 new FilesFacadeImpl() {
                                     @Override
                                     public int openRW(LPSZ name, long opts) {
-                                        if (counter.incrementAndGet() > 28) {
+                                        if (counter.incrementAndGet() > 69) {
                                             throw new RuntimeException("Test error");
                                         }
                                         return super.openRW(name, opts);
@@ -117,6 +117,11 @@ public class PGErrorHandlingTest extends BootstrapTest {
                                     public @NotNull PgWireAuthenticatorFactory getPgWireAuthenticatorFactory() {
                                         return (pgWireConfiguration, circuitBreaker, registry, optionsListener) -> new Authenticator() {
                                             @Override
+                                            public void close() {
+                                                Misc.free(circuitBreaker);
+                                            }
+
+                                            @Override
                                             public CharSequence getPrincipal() {
                                                 return null;
                                             }
@@ -143,11 +148,6 @@ public class PGErrorHandlingTest extends BootstrapTest {
                                             @Override
                                             public boolean isAuthenticated() {
                                                 throw new RuntimeException("Test error");
-                                            }
-
-                                            @Override
-                                            public void close() {
-                                                Misc.free(circuitBreaker);
                                             }
                                         };
                                     }

@@ -675,7 +675,7 @@ public class PropServerConfigurationTest {
         Properties properties = new Properties();
 
         PropServerConfiguration configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
-        Assert.assertNull(configuration.getCairoConfiguration().getSqlCopyInputWorkRoot());
+        Assert.assertTrue(Chars.endsWith(configuration.getCairoConfiguration().getSqlCopyInputWorkRoot(), "tmp"));
 
         //direct cases
         assertInputWorkRootCantBeSetTo(properties, root);
