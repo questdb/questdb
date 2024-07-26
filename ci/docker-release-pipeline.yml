@@ -58,10 +58,12 @@ jobs:
           script: |
             # Cannot use Build.SourceBranchName if a branch name contains a "/", since the var only returns the final path component
             # We use cut instead to trim the first 2 components off the Build.SourceBranch ("refs/heads")
-            # We then use cut again to take only the first 7 chars of the commit hash (short hash)
-            tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-' | cut -c 1-7)
+            tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-')
             echo $tag_name
-            docker buildx build --build-arg tag_name=$tag_name --platform linux/amd64,linux/arm64 --push -t questdb/questdb:patch-$(Build.SourceVersion) .
-            docker buildx build --build-arg tag_name=$tag_name --build-arg base_image=registry.access.redhat.com/ubi9/ubi --platform linux/amd64,linux/arm64 --push -t questdb/questdb:patch-$(Build.SourceVersion)-rhel .
+            # Docker tags are prefixed with "patch-" and use the short commit hash
+            docker_tag_name=patch-$($(Build.SourceVersion) | cut -c 1-7) 
+            echo $docker_tag_name
+            docker buildx build --build-arg tag_name=$tag_name --platform linux/amd64,linux/arm64 --push -t questdb/questdb:.
+            docker buildx build --build-arg tag_name=$tag_name --build-arg base_image=registry.access.redhat.com/ubi9/ubi --platform linux/amd64,linux/arm64 --push -t questdb/questdb:${docker_tag_name}-rhel .
           workingDirectory: core
         condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/'), ne(variables['Build.SourceBranch'], 'refs/heads/master'))
