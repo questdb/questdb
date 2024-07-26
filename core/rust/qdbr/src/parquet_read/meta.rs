@@ -64,19 +64,22 @@ impl ParquetDecoder {
         des: &Descriptor,
         additional_meta: &Option<HashMap<String, Option<String>>>,
     ) -> Option<(ColumnType, i32)> {
-        let result = additional_meta.as_ref().and_then(|hashmap| {
-            hashmap.get(&(QDB_TYPE_META_PREFIX.to_string() + &des.primitive_type.field_info.name))
-        });
-        if let Some(Some(val)) = result {
-            let col_type = match val.parse::<i32>() {
-                Ok(col_type_int) => match ColumnType::try_from(col_type_int) {
-                    Ok(col_type) => return Some((col_type, col_type_int)),
+        if let Some(col_id) = des.primitive_type.field_info.id {
+            let meta_kv_key = format!("{}{}", QDB_TYPE_META_PREFIX, col_id);
+            let result = additional_meta
+                .as_ref()
+                .and_then(|hashmap| hashmap.get(&meta_kv_key));
+            if let Some(Some(val)) = result {
+                let full_col_type_int = match val.parse::<i32>() {
+                    Ok(col_type_int) => match ColumnType::try_from(col_type_int) {
+                        Ok(col_type) => return Some((col_type, col_type_int)),
+                        _ => None,
+                    },
                     _ => None,
-                },
-                _ => None,
-            };
-            if col_type.is_some() {
-                return col_type;
+                };
+                if full_col_type_int.is_some() {
+                    return full_col_type_int;
+                }
             }
         }
 
@@ -198,8 +201,9 @@ mod tests {
             (ColumnType::IPv4, size_of::<i32>(), "col_geo_ipv4"),
         ];
 
-        for (col_type, value_size, name) in cols.iter() {
-            let (buff, column) = create_fix_column(row_count, *col_type, *value_size, name);
+        for (col_id, (col_type, value_size, name)) in cols.iter().enumerate() {
+            let (buff, column) =
+                create_fix_column(col_id as i32, row_count, *col_type, *value_size, name);
             columns.push(column);
             buffers_columns.push(buff);
         }
@@ -241,6 +245,7 @@ mod tests {
     }
 
     fn create_fix_column(
+        id: i32,
         row_count: usize,
         col_type: ColumnType,
         value_size: usize,
@@ -263,7 +268,7 @@ mod tests {
         (
             buff,
             Column::from_raw_data(
-                0,
+                id,
                 name,
                 col_type as i32,
                 0,

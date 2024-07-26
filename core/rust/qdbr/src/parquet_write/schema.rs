@@ -345,7 +345,7 @@ pub fn to_parquet_schema(
         .iter()
         .map(|c| {
             KeyValue::new(
-                QDB_TYPE_META_PREFIX.to_string() + c.name,
+                format!("{}{}", QDB_TYPE_META_PREFIX, c.id),
                 c.full_column_type.to_string(),
             )
         })

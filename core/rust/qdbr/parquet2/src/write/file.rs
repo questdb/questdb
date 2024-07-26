@@ -56,7 +56,6 @@ pub struct FileWriter<W: Write> {
     state: State,
     // when the file is written, metadata becomes available
     metadata: Option<ThriftFileMetaData>,
-    additional_meta: Option<Vec<KeyValue>>,
 }
 
 /// Writes a parquet file containing only the header and footer
@@ -94,10 +93,6 @@ impl<W: Write> FileWriter<W> {
     pub fn metadata(&self) -> Option<&ThriftFileMetaData> {
         self.metadata.as_ref()
     }
-
-    pub fn additional_meta(&self) -> Option<Vec<KeyValue>> {
-        self.additional_meta.as_ref().map(|v| v.clone())
-    }
 }
 
 impl<W: Write> FileWriter<W> {
@@ -107,7 +102,6 @@ impl<W: Write> FileWriter<W> {
         schema: SchemaDescriptor,
         options: WriteOptions,
         created_by: Option<String>,
-        additional_meta: Option<Vec<KeyValue>>
     ) -> Self {
         Self {
             writer,
@@ -120,7 +114,6 @@ impl<W: Write> FileWriter<W> {
             page_specs: vec![],
             state: State::Initialised,
             metadata: None,
-            additional_meta,
         }
     }
 
@@ -129,8 +122,7 @@ impl<W: Write> FileWriter<W> {
         schema: SchemaDescriptor,
         options: WriteOptions,
         created_by: Option<String>,
-        sorting_columns: Option<Vec<SortingColumn>>,
-        additional_meta: Option<Vec<KeyValue>>
+        sorting_columns: Option<Vec<SortingColumn>>
     ) -> Self {
         Self {
             writer,
@@ -142,8 +134,7 @@ impl<W: Write> FileWriter<W> {
             row_groups: vec![],
             page_specs: vec![],
             state: State::Initialised,
-            metadata: None,
-            additional_meta,
+            metadata: None
         }
     }
     /// Writes the header of the file.
@@ -192,7 +183,7 @@ impl<W: Write> FileWriter<W> {
 
     /// Writes the footer of the parquet file. Returns the total size of the file and the
     /// underlying writer.
-    pub fn end(&mut self, key_value_metadata: Option<Vec<KeyValue>>) -> Result<u64> {
+    pub fn end(&mut self, additional_meta: Vec<KeyValue>) -> Result<u64> {
         if self.offset == 0 {
             self.start()?;
         }
@@ -249,7 +240,7 @@ impl<W: Write> FileWriter<W> {
             self.schema.clone().into_thrift(),
             num_rows,
             self.row_groups.clone(),
-            key_value_metadata,
+            additional_meta,
             self.created_by.clone(),
             None,
             None,
