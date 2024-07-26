@@ -356,6 +356,8 @@ public interface CairoConfiguration {
     @NotNull
     CharSequence getCheckpointRoot(); // same as root/../.checkpoint
 
+    CharSequence getLegacyCheckpointRoot(); // same as root/../snapshot
+
     long getSpinLockTimeout();
 
     int getSqlAsOfJoinLookAhead();

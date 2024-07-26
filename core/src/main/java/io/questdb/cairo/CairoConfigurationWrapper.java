@@ -581,6 +581,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public CharSequence getLegacyCheckpointRoot() {
+        return getDelegate().getLegacyCheckpointRoot();
+    }
+
+    @Override
     public long getSpinLockTimeout() {
         return getDelegate().getSpinLockTimeout();
     }

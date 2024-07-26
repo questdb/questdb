@@ -454,13 +454,28 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         final FilesFacade ff = configuration.getFilesFacade();
         final CharSequence root = configuration.getRoot();
         final CharSequence checkpointRoot = configuration.getCheckpointRoot();
+        final CharSequence legacyCheckpointRoot = configuration.getLegacyCheckpointRoot();
 
         try (
                 Path srcPath = new Path();
                 Path dstPath = new Path();
                 MemoryCMARW memFile = Vm.getCMARWInstance()
         ) {
-            srcPath.of(checkpointRoot).concat(configuration.getDbDirectory());
+            // use current checkpoint root if it exists and don't
+            // bother checking that legacy path is there or not
+
+            srcPath.of(checkpointRoot);
+            if (!ff.exists(srcPath.$())) {
+                srcPath.of(legacyCheckpointRoot);
+
+                // check if legacy path exists, in case it doesn't
+                // we should report errors against the current checkpoint root
+                if (!ff.exists(srcPath.$())) {
+                    srcPath.of(checkpointRoot);
+                }
+            }
+
+            srcPath.concat(configuration.getDbDirectory());
             final int checkpointRootLen = srcPath.size();
 
             dstPath.of(root).parent().concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME);

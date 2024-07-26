@@ -47,6 +47,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     private final LongSupplier importIDSupplier = () -> getRandom().nextPositiveLong();
     private final String root;
     private final CharSequence checkpointRoot;
+    private final CharSequence legacyCheckpointRoot;
     private final DefaultTelemetryConfiguration telemetryConfiguration = new DefaultTelemetryConfiguration();
     private final TextConfiguration textConfiguration;
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
@@ -57,6 +58,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
         this.confRoot = PropServerConfiguration.rootSubdir(root, PropServerConfiguration.CONFIG_DIRECTORY);
         this.textConfiguration = new DefaultTextConfiguration(Chars.toString(confRoot));
         this.checkpointRoot = PropServerConfiguration.rootSubdir(root, PropServerConfiguration.CHECKPOINT_DIRECTORY);
+        this.legacyCheckpointRoot = PropServerConfiguration.rootSubdir(root, PropServerConfiguration.LEGACY_CHECKPOINT_DIRECTORY);
         Rnd rnd = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
         this.databaseIdLo = rnd.nextLong();
         this.databaseIdHi = rnd.nextLong();
@@ -577,6 +579,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public @NotNull CharSequence getCheckpointRoot() {
         return checkpointRoot;
+    }
+
+    @Override
+    public CharSequence getLegacyCheckpointRoot() {
+        return legacyCheckpointRoot;
     }
 
     @Override

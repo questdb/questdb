@@ -70,6 +70,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     public static final String ACL_ENABLED = "acl.enabled";
     public static final String CHECKPOINT_DIRECTORY = ".checkpoint";
+    public static final String LEGACY_CHECKPOINT_DIRECTORY = "snapshot";
     public static final long COMMIT_INTERVAL_DEFAULT = 2000;
     public static final String CONFIG_DIRECTORY = "conf";
     public static final String DB_DIRECTORY = "db";
@@ -267,6 +268,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String snapshotInstanceId;
     private final boolean checkpointRecoveryEnabled;
     private final String checkpointRoot;
+    private final String legacyCheckpointRoot;
     private final long spinLockTimeout;
     private final int sqlAsOfJoinLookahead;
     private final int sqlBindVariablePoolSize;
@@ -641,11 +643,13 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.root = this.dbDirectory;
             this.confRoot = rootSubdir(this.root, CONFIG_DIRECTORY); // ../conf
             this.checkpointRoot = rootSubdir(this.root, CHECKPOINT_DIRECTORY); // ../.checkpoint
+            this.legacyCheckpointRoot = rootSubdir(this.root, LEGACY_CHECKPOINT_DIRECTORY);
             tmpRoot = rootSubdir(this.root, TMP_DIRECTORY); // ../tmp
         } else {
             this.root = new File(root, this.dbDirectory).getAbsolutePath();
             this.confRoot = new File(root, CONFIG_DIRECTORY).getAbsolutePath();
             this.checkpointRoot = new File(root, CHECKPOINT_DIRECTORY).getAbsolutePath();
+            this.legacyCheckpointRoot = new File(root, LEGACY_CHECKPOINT_DIRECTORY).getAbsolutePath();
             tmpRoot = new File(root, TMP_DIRECTORY).getAbsolutePath();
         }
 
@@ -1983,6 +1987,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean attachPartitionCopy() {
             return cairoAttachPartitionCopy;
+        }
+
+        @Override
+        public CharSequence getLegacyCheckpointRoot() {
+            return legacyCheckpointRoot;
         }
 
         @Override
