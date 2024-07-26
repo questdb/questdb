@@ -131,7 +131,7 @@ pub fn decoder_page(
     let (_rep_levels, _, values_buffer) = split_buffer(page)?;
     let row_count = page.header().num_values();
 
-    let encoding_error = anyhow!("encoding not supported");
+    let encoding_error = true;
     let decoding_result = match (
         page.descriptor.primitive_type.physical_type,
         page.descriptor.primitive_type.logical_type,
@@ -779,10 +779,8 @@ pub fn decoder_page(
 
     match decoding_result {
         Ok(row_count) => Ok(row_count),
-        Err(err) => {
-            // TODO: use error type
-            if err.to_string() == "encoding not supported" {
-                Err(anyhow!(
+        Err(_) => {
+            Err(anyhow!(
             "encoding not supported, physical type: {:?}, encoding {:?}, logical type {:?}, converted type: {:?}, column type {:?}",
             page.descriptor.primitive_type.physical_type,
             page.encoding(),
@@ -790,9 +788,6 @@ pub fn decoder_page(
             page.descriptor.primitive_type.converted_type,
             column_type
             ))
-            } else {
-                Err(err)
-            }
         }
     }
 }
