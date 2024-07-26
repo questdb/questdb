@@ -361,41 +361,49 @@ public abstract class BasePGTest extends AbstractCairoTest {
 
     protected void assertWithPgServer(long bits, long queryTimeout, PGJobContextTest.ConnectionAwareRunnable runnable) throws Exception {
         if ((bits & BasePGTest.CONN_AWARE_SIMPLE_BINARY) == BasePGTest.CONN_AWARE_SIMPLE_BINARY) {
+            LOG.info().$("Mode: asserting simple binary").$();
             assertWithPgServer(Mode.SIMPLE, true, runnable, -2, queryTimeout);
             assertWithPgServer(Mode.SIMPLE, true, runnable, -1, queryTimeout);
         }
 
         if ((bits & BasePGTest.CONN_AWARE_SIMPLE_TEXT) == BasePGTest.CONN_AWARE_SIMPLE_TEXT) {
+            LOG.info().$("Mode: asserting simple text").$();
             assertWithPgServer(Mode.SIMPLE, false, runnable, -2, queryTimeout);
             assertWithPgServer(Mode.SIMPLE, false, runnable, -1, queryTimeout);
         }
 
         if ((bits & BasePGTest.CONN_AWARE_EXTENDED_BINARY) == BasePGTest.CONN_AWARE_EXTENDED_BINARY) {
+            LOG.info().$("Mode: asserting extended binary").$();
             assertWithPgServer(Mode.EXTENDED, true, runnable, -2, queryTimeout);
             assertWithPgServer(Mode.EXTENDED, true, runnable, -1, queryTimeout);
         }
 
         if ((bits & BasePGTest.CONN_AWARE_EXTENDED_TEXT) == BasePGTest.CONN_AWARE_EXTENDED_TEXT) {
+            LOG.info().$("Mode: asserting extended text").$();
             assertWithPgServer(Mode.EXTENDED, false, runnable, -2, queryTimeout);
             assertWithPgServer(Mode.EXTENDED, false, runnable, -1, queryTimeout);
         }
 
         if ((bits & BasePGTest.CONN_AWARE_EXTENDED_PREPARED_BINARY) == BasePGTest.CONN_AWARE_EXTENDED_PREPARED_BINARY) {
+            LOG.info().$("Mode: asserting extended prepared binary").$();
             assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, true, runnable, -2, queryTimeout);
             assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, true, runnable, -1, queryTimeout);
         }
 
         if ((bits & BasePGTest.CONN_AWARE_EXTENDED_PREPARED_TEXT) == BasePGTest.CONN_AWARE_EXTENDED_PREPARED_TEXT) {
+            LOG.info().$("Mode: asserting extended prepared text").$();
             assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, false, runnable, -2, queryTimeout);
             assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, false, runnable, -1, queryTimeout);
         }
 
         if ((bits & BasePGTest.CONN_AWARE_EXTENDED_CACHED_BINARY) == BasePGTest.CONN_AWARE_EXTENDED_CACHED_BINARY) {
+            LOG.info().$("Mode: asserting extended cached binary").$();
             assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, true, runnable, -2, queryTimeout);
             assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, true, runnable, -1, queryTimeout);
         }
 
         if ((bits & BasePGTest.CONN_AWARE_EXTENDED_CACHED_TEXT) == BasePGTest.CONN_AWARE_EXTENDED_CACHED_TEXT) {
+            LOG.info().$("Mode: asserting extended cached text").$();
             assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, false, runnable, -2, queryTimeout);
             assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, false, runnable, -1, queryTimeout);
         }
