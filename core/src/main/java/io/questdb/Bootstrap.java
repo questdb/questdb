@@ -115,7 +115,8 @@ public class Bootstrap {
         log = LogFactory.getLog(LOG_NAME);
 
         try {
-            copyResource(rootDirectory, false, buffer, "import/readme.txt", null);
+            copyResource(rootDirectory, false, buffer, "import/readme.txt", log);
+            copyResource(rootDirectory, false, buffer, "import/trades.parquet", log);
         } catch (IOException e) {
             throw new BootstrapException("Could not create the default import directory");
         }
