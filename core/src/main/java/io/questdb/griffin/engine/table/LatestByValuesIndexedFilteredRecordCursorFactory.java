@@ -55,9 +55,9 @@ public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractDe
 
         try {
             if (filter != null) {
-                cursor = new LatestByValuesIndexedFilteredRecordCursor(configuration, metadata, columnIndex, rows, symbolKeys, deferredSymbolKeys, filter, columnIndexes);
+                cursor = new LatestByValuesIndexedFilteredRecordCursor(configuration, metadata, columnIndex, rows, symbolKeys, deferredSymbolKeys, filter);
             } else {
-                cursor = new LatestByValuesIndexedRecordCursor(configuration, metadata, columnIndex, symbolKeys, deferredSymbolKeys, rows, columnIndexes);
+                cursor = new LatestByValuesIndexedRecordCursor(configuration, metadata, columnIndex, symbolKeys, deferredSymbolKeys, rows);
             }
             this.filter = filter;
         } catch (Throwable th) {

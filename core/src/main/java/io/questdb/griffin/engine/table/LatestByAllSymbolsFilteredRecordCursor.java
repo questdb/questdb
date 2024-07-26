@@ -56,11 +56,10 @@ class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordLis
             @NotNull DirectLongList rows,
             @NotNull RecordSink recordSink,
             @Nullable Function filter,
-            @NotNull IntList columnIndexes,
             @NotNull IntList partitionByColumnIndexes,
             @Nullable IntList partitionBySymbolCounts
     ) {
-        super(configuration, metadata, rows, columnIndexes);
+        super(configuration, metadata, rows);
         this.map = map;
         this.recordSink = recordSink;
         this.filter = filter != null ? filter : NO_OP_FILTER;
@@ -104,7 +103,7 @@ class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordLis
             int symbolCount = partitionBySymbolCounts != null ? partitionBySymbolCounts.getQuick(i) : Integer.MAX_VALUE;
             assert symbolCount > 0;
             int columnIndex = partitionByColumnIndexes.getQuick(i);
-            StaticSymbolTable symbolMapReader = frameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
+            StaticSymbolTable symbolMapReader = frameCursor.getSymbolTable(columnIndex);
             int distinctSymbols = symbolMapReader.getSymbolCount();
             if (symbolMapReader.containsNullValue()) {
                 distinctSymbols++;

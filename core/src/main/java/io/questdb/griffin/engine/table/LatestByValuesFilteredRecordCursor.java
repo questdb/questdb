@@ -52,10 +52,9 @@ class LatestByValuesFilteredRecordCursor extends AbstractDescendingRecordListCur
             @Nullable DirectLongList rows,
             @NotNull IntHashSet symbolKeys,
             @Nullable IntHashSet deferredSymbolKeys,
-            @NotNull Function filter,
-            @NotNull IntList columnIndexes
+            @NotNull Function filter
     ) {
-        super(configuration, metadata, rows, columnIndexes);
+        super(configuration, metadata, rows);
         this.columnIndex = columnIndex;
         this.symbolKeys = symbolKeys;
         this.deferredSymbolKeys = deferredSymbolKeys;

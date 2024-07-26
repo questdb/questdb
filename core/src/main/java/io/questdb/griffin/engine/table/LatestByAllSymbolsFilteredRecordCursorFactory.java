@@ -64,7 +64,6 @@ public class LatestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeS
                     rows,
                     recordSink,
                     filter,
-                    columnIndexes,
                     partitionByColumnIndexes,
                     partitionBySymbolCounts
             );

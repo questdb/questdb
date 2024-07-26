@@ -70,8 +70,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
                 metadata,
                 rowCursorFactory,
                 rowCursorFactory.isEntity(),
-                filter,
-                columnIndexes
+                filter
         );
         this.followsOrderByAdvice = followsOrderByAdvice;
         this.filter = filter;

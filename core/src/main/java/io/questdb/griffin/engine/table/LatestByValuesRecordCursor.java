@@ -49,10 +49,9 @@ class LatestByValuesRecordCursor extends AbstractDescendingRecordListCursor {
             int columnIndex,
             DirectLongList rows,
             @NotNull IntHashSet symbolKeys,
-            @Nullable IntHashSet deferredSymbolKeys,
-            @NotNull IntList columnIndexes
+            @Nullable IntHashSet deferredSymbolKeys
     ) {
-        super(configuration, metadata, rows, columnIndexes);
+        super(configuration, metadata, rows);
         this.columnIndex = columnIndex;
         this.symbolKeys = symbolKeys;
         this.deferredSymbolKeys = deferredSymbolKeys;

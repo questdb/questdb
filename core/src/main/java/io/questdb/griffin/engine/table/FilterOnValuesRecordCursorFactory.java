@@ -94,7 +94,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
             heapCursorUsed = true;
             rowCursorFactory = new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx);
         }
-        cursor = new PageFrameRecordCursorImpl(configuration, metadata, rowCursorFactory, false, filter, columnIndexes);
+        cursor = new PageFrameRecordCursorImpl(configuration, metadata, rowCursorFactory, false, filter);
         this.followedOrderByAdvice = orderByKeyColumn || orderByTimestamp;
     }
 

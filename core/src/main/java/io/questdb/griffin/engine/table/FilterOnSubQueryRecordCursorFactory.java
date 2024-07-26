@@ -74,8 +74,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
                 metadata,
                 new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx),
                 false,
-                filter,
-                columnIndexes
+                filter
         );
         cursor = new DataFrameRecordCursorWrapper(dataFrameRecordCursor);
         this.columnIndex = columnIndex;

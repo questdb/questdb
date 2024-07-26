@@ -74,8 +74,7 @@ public class LatestByValueDeferredIndexedFilteredRecordCursorFactory extends Abs
                 getMetadata(),
                 columnIndex,
                 TableUtils.toIndexKey(symbolKey),
-                filter,
-                columnIndexes
+                filter
         );
     }
 }

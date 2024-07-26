@@ -60,8 +60,7 @@ public class SortedSymbolIndexRecordCursorFactory extends AbstractPageFrameRecor
                         columnIndexes
                 ),
                 true,
-                null,
-                columnIndexes
+                null
         );
     }
 

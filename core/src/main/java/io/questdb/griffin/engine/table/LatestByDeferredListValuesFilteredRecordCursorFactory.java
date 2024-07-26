@@ -66,7 +66,6 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
                 metadata,
                 columnIndex,
                 filter,
-                columnIndexes,
                 configuration.getDefaultSymbolCapacity(),
                 includedSymbolFuncs != null && includedSymbolFuncs.size() > 0,
                 excludedSymbolFuncs != null && excludedSymbolFuncs.size() > 0

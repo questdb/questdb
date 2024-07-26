@@ -35,7 +35,6 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
-import io.questdb.std.IntList;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 
@@ -48,10 +47,9 @@ class LatestByAllRecordCursor extends AbstractDescendingRecordListCursor {
             @NotNull RecordMetadata metadata,
             @NotNull Map map,
             @NotNull DirectLongList rows,
-            @NotNull RecordSink recordSink,
-            @NotNull IntList columnIndexes
+            @NotNull RecordSink recordSink
     ) {
-        super(configuration, metadata, rows, columnIndexes);
+        super(configuration, metadata, rows);
         this.map = map;
         this.recordSink = recordSink;
     }

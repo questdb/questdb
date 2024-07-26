@@ -58,9 +58,9 @@ public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecor
             this.filter = filter;
             Map map = MapFactory.createOrderedMap(configuration, columnTypes);
             if (filter == null) {
-                cursor = new LatestByAllRecordCursor(configuration, metadata, map, rows, recordSink, columnIndexes);
+                cursor = new LatestByAllRecordCursor(configuration, metadata, map, rows, recordSink);
             } else {
-                cursor = new LatestByAllFilteredRecordCursor(configuration, metadata, map, rows, recordSink, filter, columnIndexes);
+                cursor = new LatestByAllFilteredRecordCursor(configuration, metadata, map, rows, recordSink, filter);
             }
         } catch (Throwable th) {
             close();

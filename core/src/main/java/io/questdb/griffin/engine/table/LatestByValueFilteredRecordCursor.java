@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 
 class LatestByValueFilteredRecordCursor extends AbstractLatestByValueRecordCursor {
@@ -43,10 +42,9 @@ class LatestByValueFilteredRecordCursor extends AbstractLatestByValueRecordCurso
             @NotNull RecordMetadata metadata,
             int columnIndex,
             int symbolKey,
-            @NotNull Function filter,
-            @NotNull IntList columnIndexes
+            @NotNull Function filter
     ) {
-        super(configuration, metadata, columnIndexes, columnIndex, symbolKey);
+        super(configuration, metadata, columnIndex, symbolKey);
         this.filter = filter;
     }
 

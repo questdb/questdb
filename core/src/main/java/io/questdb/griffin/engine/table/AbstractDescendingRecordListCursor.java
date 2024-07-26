@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
-import io.questdb.std.IntList;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -47,10 +46,9 @@ abstract class AbstractDescendingRecordListCursor extends AbstractPageFrameRecor
     public AbstractDescendingRecordListCursor(
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
-            @Nullable DirectLongList rows,
-            @NotNull IntList columnIndexes
+            @Nullable DirectLongList rows
     ) {
-        super(configuration, metadata, columnIndexes);
+        super(configuration, metadata);
         this.rows = rows;
         this.isOpen = true;
     }

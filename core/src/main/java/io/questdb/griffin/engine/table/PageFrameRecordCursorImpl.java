@@ -29,9 +29,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.IntList;
 import io.questdb.std.Transient;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
@@ -49,10 +47,9 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             RowCursorFactory rowCursorFactory,
             boolean entityCursor,
             // this cursor owns "toTop()" lifecycle of filter
-            @Nullable Function filter,
-            @NotNull IntList columnIndexes
+            @Nullable Function filter
     ) {
-        super(configuration, metadata, columnIndexes);
+        super(configuration, metadata);
         this.rowCursorFactory = rowCursorFactory;
         this.entityCursor = entityCursor;
         this.filter = filter;

@@ -101,8 +101,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
                     metadata,
                     new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx),
                     false,
-                    filter,
-                    columnIndexes
+                    filter
             );
         } else {
             heapCursorUsed = true;
@@ -111,8 +110,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
                     metadata,
                     new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx),
                     false,
-                    filter,
-                    columnIndexes
+                    filter
             );
         }
         this.followedOrderByAdvice = orderByKeyColumn || orderByTimestamp;

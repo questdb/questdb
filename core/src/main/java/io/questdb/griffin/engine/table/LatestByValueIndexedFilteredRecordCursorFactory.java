@@ -53,8 +53,7 @@ public class LatestByValueIndexedFilteredRecordCursorFactory extends AbstractPag
                 metadata,
                 columnIndex,
                 TableUtils.toIndexKey(symbolKey),
-                filter,
-                columnIndexes
+                filter
         );
         this.filter = filter;
     }

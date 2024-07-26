@@ -101,7 +101,7 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
     ) throws SqlException {
         if (deferredSymbolFuncs != null) {
             deferredSymbolKeys.clear();
-            StaticSymbolTable symbolTable = pageFrameCursor.getSymbolTable(cursor.getColumnIndexes().getQuick(columnIndex));
+            StaticSymbolTable symbolTable = pageFrameCursor.getSymbolTable(columnIndex);
             for (int i = 0, n = deferredSymbolFuncs.size(); i < n; i++) {
                 Function symbolFunc = deferredSymbolFuncs.get(i);
                 final CharSequence symbol = symbolFunc.getStrA(null);

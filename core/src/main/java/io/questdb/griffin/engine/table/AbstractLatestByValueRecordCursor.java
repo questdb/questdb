@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 
 abstract class AbstractLatestByValueRecordCursor extends AbstractPageFrameRecordCursor {
@@ -40,11 +39,10 @@ abstract class AbstractLatestByValueRecordCursor extends AbstractPageFrameRecord
     AbstractLatestByValueRecordCursor(
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
-            @NotNull IntList columnIndexes,
             int columnIndex,
             int symbolKey
     ) {
-        super(configuration, metadata, columnIndexes);
+        super(configuration, metadata);
         this.columnIndex = columnIndex;
         this.symbolKey = symbolKey;
     }

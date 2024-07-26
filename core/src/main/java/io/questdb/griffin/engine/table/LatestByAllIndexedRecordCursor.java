@@ -59,10 +59,9 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             @NotNull @Transient RecordMetadata metadata,
             int columnIndex,
             @NotNull DirectLongList rows,
-            @NotNull IntList columnIndexes,
             @NotNull DirectLongList prefixes
     ) {
-        super(configuration, metadata, columnIndexes);
+        super(configuration, metadata);
         this.rows = rows;
         this.columnIndex = columnIndex;
         this.prefixes = prefixes;
@@ -186,10 +185,6 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             prefixesCount = prefixes.size() - 2;
         }
 
-        // frame metadata is based on TableReader, which is "full" metadata
-        // this cursor works with subset of columns, which warrants column index remap
-        int frameColumnIndex = columnIndexes.getQuick(columnIndex);
-
         final RingQueue<LatestByTask> queue = bus.getLatestByQueue();
         final Sequence pubSeq = bus.getLatestByPubSeq();
         final Sequence subSeq = bus.getLatestBySubSeq();
@@ -201,7 +196,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         try {
             while ((frame = frameCursor.next()) != null && foundRowCount < keyCount) {
                 doneLatch.reset();
-                final BitmapIndexReader indexReader = frame.getBitmapIndexReader(frameColumnIndex, BitmapIndexReader.DIR_BACKWARD);
+                final BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
 
                 final long partitionLo = frame.getPartitionLo();
                 final long partitionHi = frame.getPartitionHi() - 1;

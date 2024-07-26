@@ -31,7 +31,6 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
-import io.questdb.std.IntList;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -53,10 +52,9 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             int columnIndex,
             @NotNull IntHashSet symbolKeys,
             @Nullable IntHashSet deferredSymbolKeys,
-            DirectLongList rows,
-            @NotNull IntList columnIndexes
+            DirectLongList rows
     ) {
-        super(configuration, metadata, columnIndexes);
+        super(configuration, metadata);
         this.rows = rows;
         this.columnIndex = columnIndex;
         this.symbolKeys = symbolKeys;
@@ -130,13 +128,10 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         }
 
         PageFrame frame;
-        // frame metadata is based on TableReader, which is "full" metadata
-        // this cursor works with subset of columns, which warrants column index remap
-        int frameColumnIndex = columnIndexes.getQuick(columnIndex);
         while ((frame = frameCursor.next()) != null && found.size() < keyCount) {
             circuitBreaker.statefulThrowExceptionIfTripped();
             final int frameIndex = frameCount;
-            final BitmapIndexReader indexReader = frame.getBitmapIndexReader(frameColumnIndex, BitmapIndexReader.DIR_BACKWARD);
+            final BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
             final long partitionLo = frame.getPartitionLo();
             final long partitionHi = frame.getPartitionHi() - 1;
 

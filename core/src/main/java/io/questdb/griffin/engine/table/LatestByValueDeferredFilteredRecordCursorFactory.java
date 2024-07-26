@@ -64,8 +64,8 @@ public class LatestByValueDeferredFilteredRecordCursorFactory extends AbstractDe
     @Override
     protected AbstractLatestByValueRecordCursor createCursorFor(int symbolKey) {
         if (filter == null) {
-            return new LatestByValueRecordCursor(configuration, getMetadata(), columnIndex, symbolKey, columnIndexes);
+            return new LatestByValueRecordCursor(configuration, getMetadata(), columnIndex, symbolKey);
         }
-        return new LatestByValueFilteredRecordCursor(configuration, getMetadata(), columnIndex, symbolKey, filter, columnIndexes);
+        return new LatestByValueFilteredRecordCursor(configuration, getMetadata(), columnIndex, symbolKey, filter);
     }
 }

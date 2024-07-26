@@ -27,14 +27,12 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
-import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Rows;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCursor {
-    protected final IntList columnIndexes;
     protected final PageFrameAddressCache frameAddressCache;
     protected final PageFrameMemoryPool frameMemoryPool;
     protected final PageFrameMemoryRecord recordA;
@@ -46,10 +44,8 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
 
     public AbstractPageFrameRecordCursor(
             @NotNull CairoConfiguration configuration,
-            @NotNull @Transient RecordMetadata metadata,
-            @NotNull IntList columnIndexes
+            @NotNull @Transient RecordMetadata metadata
     ) {
-        this.columnIndexes = columnIndexes;
         recordA = new PageFrameMemoryRecord();
         recordB = new PageFrameMemoryRecord();
         frameAddressCache = new PageFrameAddressCache(configuration);
@@ -63,11 +59,6 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
         Misc.free(frameMemoryPool);
         frameCursor = Misc.free(frameCursor);
         frameMemory = null;
-    }
-
-    @Override
-    public IntList getColumnIndexes() {
-        return columnIndexes;
     }
 
     @Override
@@ -87,12 +78,12 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
 
     @Override
     public StaticSymbolTable getSymbolTable(int columnIndex) {
-        return frameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
+        return frameCursor.getSymbolTable(columnIndex);
     }
 
     @Override
     public SymbolTable newSymbolTable(int columnIndex) {
-        return frameCursor.newSymbolTable(columnIndexes.getQuick(columnIndex));
+        return frameCursor.newSymbolTable(columnIndex);
     }
 
     @Override

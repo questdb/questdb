@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 
 class LatestByValueRecordCursor extends AbstractLatestByValueRecordCursor {
@@ -39,10 +38,9 @@ class LatestByValueRecordCursor extends AbstractLatestByValueRecordCursor {
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
             int columnIndex,
-            int symbolKey,
-            @NotNull IntList columnIndexes
+            int symbolKey
     ) {
-        super(configuration, metadata, columnIndexes, columnIndex, symbolKey);
+        super(configuration, metadata, columnIndex, symbolKey);
     }
 
     @Override

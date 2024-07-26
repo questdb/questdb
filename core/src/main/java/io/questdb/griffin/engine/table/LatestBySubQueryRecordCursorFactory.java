@@ -69,15 +69,15 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
             PageFrameRecordCursor cursor;
             if (indexed) {
                 if (filter != null) {
-                    cursor = new LatestByValuesIndexedFilteredRecordCursor(configuration, metadata, columnIndex, rows, symbolKeys, null, filter, columnIndexes);
+                    cursor = new LatestByValuesIndexedFilteredRecordCursor(configuration, metadata, columnIndex, rows, symbolKeys, null, filter);
                 } else {
-                    cursor = new LatestByValuesIndexedRecordCursor(configuration, metadata, columnIndex, symbolKeys, null, rows, columnIndexes);
+                    cursor = new LatestByValuesIndexedRecordCursor(configuration, metadata, columnIndex, symbolKeys, null, rows);
                 }
             } else {
                 if (filter != null) {
-                    cursor = new LatestByValuesFilteredRecordCursor(configuration, metadata, columnIndex, rows, symbolKeys, null, filter, columnIndexes);
+                    cursor = new LatestByValuesFilteredRecordCursor(configuration, metadata, columnIndex, rows, symbolKeys, null, filter);
                 } else {
-                    cursor = new LatestByValuesRecordCursor(configuration, metadata, columnIndex, rows, symbolKeys, null, columnIndexes);
+                    cursor = new LatestByValuesRecordCursor(configuration, metadata, columnIndex, rows, symbolKeys, null);
                 }
             }
             this.cursor = new PageFrameRecordCursorWrapper(cursor);
@@ -138,11 +138,6 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         public void close() {
             baseCursor = Misc.free(baseCursor);
             delegate.close();
-        }
-
-        @Override
-        public IntList getColumnIndexes() {
-            return delegate.getColumnIndexes();
         }
 
         @Override

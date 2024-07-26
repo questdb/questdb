@@ -53,12 +53,11 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
             @NotNull RecordMetadata metadata,
             int columnIndex,
             @Nullable Function filter,
-            @NotNull IntList columnIndexes,
             int shrinkToCapacity,
             boolean restrictedByIncludedValues,
             boolean restrictedByExcludedValues
     ) {
-        super(configuration, metadata, columnIndexes);
+        super(configuration, metadata);
         this.shrinkToCapacity = shrinkToCapacity;
         this.columnIndex = columnIndex;
         this.filter = filter;
@@ -129,7 +128,7 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
             }
         } else if (restrictedByExcludedValues) {
             // Find all, but excluded set of symbol keys
-            StaticSymbolTable symbolTable = pageFrameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
+            StaticSymbolTable symbolTable = pageFrameCursor.getSymbolTable(columnIndex);
             int distinctSymbols = symbolTable.getSymbolCount();
             if (symbolTable.containsNullValue()) {
                 distinctSymbols++;
@@ -144,7 +143,7 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
             }
         } else {
             // Find latest by all distinct symbol values
-            StaticSymbolTable symbolTable = pageFrameCursor.getSymbolTable(columnIndexes.getQuick(columnIndex));
+            StaticSymbolTable symbolTable = pageFrameCursor.getSymbolTable(columnIndex);
             int distinctSymbols = symbolTable.getSymbolCount();
             if (symbolTable.containsNullValue()) {
                 distinctSymbols++;

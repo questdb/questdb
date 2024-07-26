@@ -50,9 +50,9 @@ public class LatestByValueFilteredRecordCursorFactory extends AbstractPageFrameR
     ) {
         super(configuration, metadata, dataFrameCursorFactory, columnIndexes, columnSizeShifts);
         if (filter == null) {
-            this.cursor = new LatestByValueRecordCursor(configuration, metadata, columnIndex, symbolKey, columnIndexes);
+            this.cursor = new LatestByValueRecordCursor(configuration, metadata, columnIndex, symbolKey);
         } else {
-            this.cursor = new LatestByValueFilteredRecordCursor(configuration, metadata, columnIndex, symbolKey, filter, columnIndexes);
+            this.cursor = new LatestByValueFilteredRecordCursor(configuration, metadata, columnIndex, symbolKey, filter);
         }
         this.filter = filter;
     }

@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 
 class LatestByValueIndexedFilteredRecordCursor extends AbstractLatestByValueRecordCursor {
@@ -43,10 +42,9 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractLatestByValueReco
             @NotNull RecordMetadata metadata,
             int columnIndex,
             int symbolKey,
-            @NotNull Function filter,
-            @NotNull IntList columnIndexes
+            @NotNull Function filter
     ) {
-        super(configuration, metadata, columnIndexes, columnIndex, symbolKey);
+        super(configuration, metadata, columnIndex, symbolKey);
         this.filter = filter;
     }
 
@@ -101,12 +99,9 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractLatestByValueReco
 
     private void findRecord() {
         PageFrame frame;
-        // frame metadata is based on TableReader, which is "full" metadata
-        // this cursor works with subset of columns, which warrants column index remap
-        int frameColumnIndex = columnIndexes.getQuick(columnIndex);
         while ((frame = frameCursor.next()) != null) {
             circuitBreaker.statefulThrowExceptionIfTripped();
-            final BitmapIndexReader indexReader = frame.getBitmapIndexReader(frameColumnIndex, BitmapIndexReader.DIR_BACKWARD);
+            final BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
             final long partitionLo = frame.getPartitionLo();
             final long partitionHi = frame.getPartitionHi() - 1;
 
