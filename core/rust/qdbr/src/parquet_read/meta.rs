@@ -199,6 +199,7 @@ mod tests {
             (ColumnType::GeoByte, size_of::<u8>(), "col_geo_byte"),
             (ColumnType::GeoLong, size_of::<i64>(), "col_geo_long"),
             (ColumnType::IPv4, size_of::<i32>(), "col_geo_ipv4"),
+            (ColumnType::Char, size_of::<u16>(), "col_char"),
         ];
 
         for (col_id, (col_type, value_size, name)) in cols.iter().enumerate() {
