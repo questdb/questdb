@@ -199,6 +199,7 @@ public class VectorAggregateEntry implements Mutable {
 
     void of(
             int frameIndex,
+            long frameRowCount,
             int keyColIndex,
             int valueColIndex,
             @NotNull VectorAggregateFunction vaf,
@@ -213,6 +214,7 @@ public class VectorAggregateEntry implements Mutable {
             @NotNull ExecutionCircuitBreaker circuitBreaker
     ) {
         this.frameIndex = frameIndex;
+        this.frameRowCount = frameRowCount;
         this.keyColIndex = keyColIndex;
         this.valueColIndex = valueColIndex;
         this.pRosti = pRosti;

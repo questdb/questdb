@@ -312,6 +312,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                                 final VectorAggregateEntry entry = entryPool.next();
                                 entry.of(
                                         frameIndex,
+                                        frameRowCount,
                                         -1,
                                         columnIndex,
                                         vaf,

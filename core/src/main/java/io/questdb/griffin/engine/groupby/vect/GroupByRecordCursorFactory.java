@@ -448,6 +448,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                 final VectorAggregateEntry entry = entryPool.next();
                                 entry.of(
                                         frameIndex,
+                                        frameRowCount,
                                         keyColumnIndex,
                                         valueColumnIndex,
                                         vaf,
