@@ -2878,7 +2878,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         int n = doReceive(Math.min(forceRecvFragmentationChunkSize, remaining));
         LOG.debug().$("recv [n=").$(n).I$();
         if (n < 0) {
-            LOG.info().$("disconnected on read [code=").$(n).I$();
+            LOG.info().$("disconnected on read [code=").$(n).$(", err=").$(Os.errno()).I$();
             throw PeerDisconnectedException.INSTANCE;
         }
         if (n == 0) {

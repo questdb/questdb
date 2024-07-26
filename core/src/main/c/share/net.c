@@ -161,7 +161,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_send
         return n;
     }
 
-    if (errno == EWOULDBLOCK) {
+    if (errno == EWOULDBLOCK || errno == EAGAIN) {
         return com_questdb_network_Net_ERETRY;
     }
 
@@ -180,7 +180,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_recv
         return com_questdb_network_Net_EOTHERDISCONNECT;
     }
 
-    if (errno == EWOULDBLOCK) {
+    if (errno == EWOULDBLOCK || errno == EAGAIN) {
         return com_questdb_network_Net_ERETRY;
     }
 
@@ -199,7 +199,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_Net_peek
         return com_questdb_network_Net_EOTHERDISCONNECT;
     }
 
-    if (errno == EWOULDBLOCK) {
+    if (errno == EWOULDBLOCK || errno == EAGAIN) {
         return com_questdb_network_Net_ERETRY;
     }
 
