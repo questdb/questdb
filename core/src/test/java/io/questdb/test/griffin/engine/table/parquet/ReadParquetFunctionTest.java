@@ -82,29 +82,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                 path.concat(engine.verifyTableName("x")).concat("2015.parquet");
 
                 sink.clear();
-                sink.put("select " +
-                        "id," +
-                        "a_long," +
-                        "a_str," +
-                        "a_varchar," +
-                        "a_boolean," +
-                        "a_short," +
-                        "a_byte," +
-                        "a_char," +
-                        "a_uuid," +
-                        "a_double," +
-                        "a_float," +
-                        "a_sym," +
-                        "a_date," +
-                        "a_long256," +
-                        "cast(a_ip as IPV4) as a_ip," +
-                        "cast(a_geo_byte as geohash(4b)) as a_geo_byte," +
-                        "cast(a_geo_short as geohash(8b)) as a_geo_short," +
-                        "cast(a_geo_int as geohash(16b)) as a_geo_int," +
-                        "cast(a_geo_long as geohash(32b)) as a_geo_long," +
-                        "a_bin," +
-                        "a_ts," +
-                        " from read_parquet('").put(path).put("')");
+                sink.put("select * from read_parquet('").put(path).put("')");
                 assertQuery("id\ta_long\ta_str\ta_varchar\ta_boolean\ta_short\ta_byte\ta_char\ta_uuid\ta_double\ta_float\ta_sym\ta_date\ta_long256\ta_ip\ta_geo_byte\ta_geo_short\ta_geo_int\ta_geo_long\ta_bin\ta_ts\n" +
                                 "null\tnull\t\t\tfalse\t0\t0\t\t\tnull\tnull\t\t2015-11-24T20:19:13.843Z\t0x2705e02c613acfc405374f5fbcef4819523eb59d99c647af9840ad8800156d26\t138.69.22.149\t0000\t11001010\t0000101000111011\t10100111010101011100000010101100\t\t2015-01-01T00:00:00.000000Z\n" +
                                 "2\t-461611463\tHYRX\t0L#YS\\%~\\2o#/ZUAI6Q,]K+BuHiX\tfalse\t3428\t25\tO\t71660a9b-0890-42f0-aa0a-ccd425e948d4\t0.38642336707855873\t0.9205\tGPGW\t2015-02-04T13:09:51.166Z\t0x51686790e59377ca68653a6cd896f81ed4e0ddcd6eb2cff1c736a8b67656c4f1\t250.26.136.156\t1001\t10001000\t1110111101101001\t01010111101100101101110010010001\t00000000 e5 61 2f 64 0e 2c 7f d7 6f b8 c9 ae 28 c7 84 47\t2015-01-01T00:00:00.000002Z\n" +
@@ -162,29 +140,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                 Assert.assertTrue(Files.exists(path.$()));
 
                 sink.clear();
-                sink.put("select " +
-                        "id," +
-                        "a_long," +
-                        "a_str," +
-                        "a_varchar," +
-                        "a_boolean," +
-                        "a_short," +
-                        "a_byte," +
-                        "a_char," +
-                        "a_uuid," +
-                        "a_double," +
-                        "a_float," +
-                        "a_sym," +
-                        "a_date," +
-                        "a_long256," +
-                        "cast(a_ip as IPV4) as a_ip," +
-                        "cast(a_geo_byte as geohash(4b)) as a_geo_byte," +
-                        "cast(a_geo_short as geohash(8b)) as a_geo_short," +
-                        "cast(a_geo_int as geohash(16b)) as a_geo_int," +
-                        "cast(a_geo_long as geohash(32b)) as a_geo_long," +
-                        "a_bin," +
-                        "a_ts," +
-                        " from read_parquet('x.parquet')");
+                sink.put("select * from read_parquet('x.parquet')");
                 assertSqlCursors("x", sink);
             }
         });

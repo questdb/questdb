@@ -12116,6 +12116,40 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleFillWithWeekStride() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(DDL_FROMTO);
+
+            String query1 = "select ts, avg(x) from fromto\n" +
+                    "sample by 1w from '2017-12-20' to '2018-01-31' fill(null)";
+
+            String expected1 = "ts\tavg\n" +
+                    "2017-12-20T00:00:00.000000Z\tnull\n" +
+                    "2017-12-27T00:00:00.000000Z\t48.5\n" +
+                    "2018-01-03T00:00:00.000000Z\t264.5\n" +
+                    "2018-01-10T00:00:00.000000Z\t456.5\n" +
+                    "2018-01-17T00:00:00.000000Z\tnull\n" +
+                    "2018-01-24T00:00:00.000000Z\tnull\n";
+
+            assertSql(expected1, query1);
+
+            String query2 = "select ts, avg(x) from fromto\n" +
+                    "sample by 1w fill(null)";
+
+            assertSql("ts\tavg\n" +
+                    "2018-01-01T00:00:00.000000Z\t168.5\n" +
+                    "2018-01-08T00:00:00.000000Z\t408.5\n", query2);
+
+            String query3 = query1.replace("1w", "2w");
+
+            assertSql("ts\tavg\n" +
+                    "2017-12-20T00:00:00.000000Z\t48.5\n" +
+                    "2018-01-03T00:00:00.000000Z\t288.5\n" +
+                    "2018-01-17T00:00:00.000000Z\tnull\n", query3);
+        });
+    }
+
+    @Test
     public void testSamplePeriodInvalidWithNoUnits() throws Exception {
         testSampleByPeriodFails(
                 "select sum(a), k from x sample by 300/10 align to calendar",
