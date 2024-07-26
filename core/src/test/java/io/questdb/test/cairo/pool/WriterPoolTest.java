@@ -650,7 +650,18 @@ public class WriterPoolTest extends AbstractCairoTest {
             TableToken tableToken = engine.verifyTableName(x);
             Assert.assertEquals(WriterPool.OWNERSHIP_REASON_NONE, pool.lock(tableToken, "testing"));
 
-            TableWriter writer = new TableWriter(engine, tableToken, null, false, DefaultLifecycleManager.INSTANCE);
+            TableWriter writer = new TableWriter(
+                    engine.getConfiguration(),
+                    tableToken,
+                    engine.getMessageBus(),
+                    null,
+                    false,
+                    DefaultLifecycleManager.INSTANCE,
+                    engine.getConfiguration().getRoot(),
+                    engine.getDdlListener(tableToken),
+                    engine.getCheckpointStatus(),
+                    engine.getMetrics()
+            );
             for (int i = 0; i < 100; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.putDate(0, i);

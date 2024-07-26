@@ -1966,7 +1966,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         try {
             if (!isWalEnabled) {
-                writerAPI = writer = new TableWriter(engine, tableToken, null, false, DefaultLifecycleManager.INSTANCE);
+                writerAPI = writer = new TableWriter(
+                        engine.getConfiguration(),
+                        tableToken,
+                        engine.getMessageBus(),
+                        null,
+                        false,
+                        DefaultLifecycleManager.INSTANCE,
+                        engine.getConfiguration().getRoot(),
+                        engine.getDdlListener(tableToken),
+                        engine.getCheckpointStatus(),
+                        engine.getMetrics()
+                );
             } else {
                 writerAPI = engine.getTableWriterAPI(tableToken, "create as select");
             }

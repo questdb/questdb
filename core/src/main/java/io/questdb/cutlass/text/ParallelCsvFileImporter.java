@@ -1023,7 +1023,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                         task.setChunkIndex(t);
                         task.setCircuitBreaker(circuitBreaker);
                         // this task will create its own copy of TableWriter to build indexes concurrently?
-                        task.ofPhaseBuildSymbolIndex(cairoEngine, targetTableStructure, t, metadata);
+                        task.ofPhaseBuildSymbolIndex(cairoEngine, targetTableStructure, importRoot, t, metadata);
                         pubSeq.done(seq);
                         queuedCount++;
                         break;

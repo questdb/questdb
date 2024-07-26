@@ -270,7 +270,18 @@ public class WriterPool extends AbstractPool {
                 // created twice), we cache the writer in the WriterPool whose access via the engine is thread safe.
                 assert writer == null && e.lockFd != -1;
                 LOG.info().$("created [table=`").utf8(tableToken.getDirName()).$("`, thread=").$(thread).$(']').$();
-                writer = new TableWriter(engine, tableToken, null, false, e);
+                writer = new TableWriter(
+                        configuration,
+                        tableToken,
+                        engine.getMessageBus(),
+                        null,
+                        false,
+                        e,
+                        root,
+                        engine.getDdlListener(tableToken),
+                        engine.getCheckpointStatus(),
+                        engine.getMetrics()
+                );
             }
 
             if (writer == null) {
@@ -378,8 +389,18 @@ public class WriterPool extends AbstractPool {
         try {
             checkClosed();
             LOG.info().$("open [table=`").utf8(tableToken.getDirName()).$("`, thread=").$(thread).$(']').$();
-            e.writer = new TableWriter(engine, tableToken, null, true, e);
-            e.ownershipReason = lockReason;
+            e.writer = new TableWriter(
+                    configuration,
+                    tableToken,
+                    engine.getMessageBus(),
+                    null,
+                    true,
+                    e,
+                    root,
+                    engine.getDdlListener(tableToken),
+                    engine.getCheckpointStatus(),
+                    engine.getMetrics()
+            );            e.ownershipReason = lockReason;
             return logAndReturn(e, PoolListener.EV_CREATE);
         } catch (CairoException ex) {
             LogRecord record = ex.isCritical() ? LOG.critical() : LOG.error();

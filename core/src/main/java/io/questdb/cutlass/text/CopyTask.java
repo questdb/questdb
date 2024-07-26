@@ -147,11 +147,12 @@ public class CopyTask {
     public void ofPhaseBuildSymbolIndex(
             CairoEngine cairoEngine,
             TableStructure tableStructure,
+            CharSequence root,
             int index,
             RecordMetadata metadata
     ) {
         this.phase = PHASE_BUILD_SYMBOL_INDEX;
-        this.phaseBuildSymbolIndex.of(cairoEngine, tableStructure, index, metadata);
+        this.phaseBuildSymbolIndex.of(cairoEngine, tableStructure, root, index, metadata);
     }
 
     public void ofPhaseIndexing(
@@ -457,43 +458,54 @@ public class CopyTask {
 
     public static class PhaseBuildSymbolIndex {
         private final StringSink tableNameSink = new StringSink();
-        private CairoEngine engine;
+        private CairoEngine cairoEngine;
         private int index;
         private RecordMetadata metadata;
+        private CharSequence root;
         private TableStructure tableStructure;
 
         public void clear() {
-            this.engine = null;
+            this.cairoEngine = null;
             this.tableStructure = null;
+            this.root = null;
             this.index = -1;
             this.metadata = null;
         }
 
         public void of(
-                CairoEngine engine,
+                CairoEngine cairoEngine,
                 TableStructure tableStructure,
+                CharSequence root,
                 int index, RecordMetadata metadata
         ) {
-            this.engine = engine;
+            this.cairoEngine = cairoEngine;
             this.tableStructure = tableStructure;
+            this.root = root;
             this.index = index;
             this.metadata = metadata;
         }
 
         public void run() {
+            final CairoConfiguration configuration = cairoEngine.getConfiguration();
+
             tableNameSink.clear();
             tableNameSink.put(tableStructure.getTableName()).put('_').put(index);
             String tableName = tableNameSink.toString();
-            TableToken tableToken = new TableToken(tableName, tableName, (int) engine.getTableIdGenerator().getNextId(), false, false, false);
+            TableToken tableToken = new TableToken(tableName, tableName, (int) cairoEngine.getTableIdGenerator().getNextId(), false, false, false);
 
             final int columnCount = metadata.getColumnCount();
             try (
                     TableWriter w = new TableWriter(
-                            engine,
+                            configuration,
                             tableToken,
-                            engine.getMessageBus(),
+                            cairoEngine.getMessageBus(),
+                            null,
                             true,
-                            DefaultLifecycleManager.INSTANCE
+                            DefaultLifecycleManager.INSTANCE,
+                            root,
+                            cairoEngine.getDdlListener(tableToken),
+                            cairoEngine.getCheckpointStatus(),
+                            cairoEngine.getMetrics()
                     )
             ) {
                 for (int i = 0; i < columnCount; i++) {
@@ -869,11 +881,16 @@ public class CopyTask {
 
             try (
                     TableWriter writer = new TableWriter(
-                            engine,
+                            configuration,
                             tableToken,
+                            engine.getMessageBus(),
                             null,
                             true,
-                            DefaultLifecycleManager.INSTANCE
+                            DefaultLifecycleManager.INSTANCE,
+                            importRoot,
+                            engine.getDdlListener(tableToken),
+                            engine.getCheckpointStatus(),
+                            engine.getMetrics()
                     )
             ) {
                 tableWriterRef = writer;

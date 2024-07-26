@@ -248,27 +248,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private WalTxnDetails walTxnDetails;
 
     public TableWriter(
-            CairoEngine engine,
-            TableToken tableToken,
-            MessageBus ownMessageBus,
-            boolean lock,
-            LifecycleManager lifecycleManager
-    ) {
-        this(
-                engine.getConfiguration(),
-                tableToken,
-                engine.getMessageBus(),
-                ownMessageBus,
-                lock,
-                lifecycleManager,
-                engine.getConfiguration().getRoot(),
-                engine.getDdlListener(tableToken),
-                engine.getCheckpointStatus(),
-                engine.getMetrics()
-        );
-    }
-
-    public TableWriter(
             CairoConfiguration configuration,
             TableToken tableToken,
             MessageBus messageBus,
