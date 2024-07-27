@@ -3,7 +3,7 @@ use std::io::Write;
 
 use parquet2::compression::CompressionOptions;
 use parquet2::encoding::Encoding;
-use parquet2::metadata::{SchemaDescriptor, SortingColumn};
+use parquet2::metadata::{KeyValue, SchemaDescriptor, SortingColumn};
 use parquet2::page::{CompressedPage, Page};
 use parquet2::schema::types::{ParquetType, PhysicalType, PrimitiveType};
 use parquet2::write::{
@@ -167,11 +167,11 @@ impl<W: Write> ParquetWriter<W> {
 
     /// Write the given `Partition` with the writer `W`. Returns the total size of the file.
     pub fn finish(self, partition: Partition) -> ParquetResult<u64> {
-        let schema = to_parquet_schema(&partition)?;
+        let (schema, additional_meta) = to_parquet_schema(&partition)?;
         let encodings = to_encodings(&partition);
         let mut chunked = self.chunked(schema, encodings)?;
         chunked.write_chunk(partition)?;
-        chunked.finish()
+        chunked.finish(additional_meta)
     }
 }
 
@@ -218,8 +218,8 @@ impl<W: Write> ChunkedWriter<W> {
     }
 
     /// Write the footer of the parquet file. Returns the total size of the file.
-    pub fn finish(&mut self) -> ParquetResult<u64> {
-        let size = self.writer.end(None)?;
+    pub fn finish(&mut self, additional_meta: Vec<KeyValue>) -> ParquetResult<u64> {
+        let size = self.writer.end(additional_meta)?;
         Ok(size)
     }
 }

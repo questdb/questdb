@@ -13,6 +13,8 @@ mod update;
 mod util;
 pub mod varchar;
 
+pub const QDB_TYPE_META_PREFIX: &str = "__qdb_type__";
+
 pub(crate) type ParquetResult<T> = parquet2::error::Result<T>;
 pub(crate) type ParquetError = parquet2::error::Error;
 

@@ -105,7 +105,7 @@ mod tests {
         let orig_offset = buf.position();
         let metadata = read_metadata_with_size(&mut buf, orig_offset)?;
 
-        let schema = to_parquet_schema(&new_partition)?;
+        let (schema, _) = to_parquet_schema(&new_partition)?;
 
         let foptions = WriteOptions {
             write_statistics: true,
