@@ -95,7 +95,7 @@ public class ShowTableStorageTest extends AbstractCairoTest {
             );
             assertSql(
                     "tableName\twalEnabled\tpartitionBy\tpartitionCount\trowCount\tdiskSize\n" +
-                            "trades_2\tfalse\tHOUR\t4\t4\t6328320\n"+
+                            "trades_2\tfalse\tHOUR\t4\t4\t6328320\n" +
                             "trades_1\tfalse\tHOUR\t4\t4\t6328320\n",
                     "select * from table_storage()"
             );
@@ -127,7 +127,7 @@ public class ShowTableStorageTest extends AbstractCairoTest {
             );
             assertSql(
                     "tableName\twalEnabled\tpartitionBy\tpartitionCount\trowCount\tdiskSize\n" +
-                            "trades_2\tfalse\tNONE\t1\t4\t6291456\n"+
+                            "trades_2\tfalse\tNONE\t1\t4\t6291456\n" +
                             "trades_1\tfalse\tNONE\t1\t4\t6291456\n",
                     "select * from table_storage()"
             );
