@@ -26,6 +26,7 @@ pub struct ParquetDecoder {
 #[derive(Debug)]
 pub struct ColumnMeta {
     pub typ: ColumnType,
+    pub column_type: i32,
     pub id: i32,
     pub name_size: u32,
     pub name_ptr: *const u16,

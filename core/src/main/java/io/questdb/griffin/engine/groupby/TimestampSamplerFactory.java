@@ -117,6 +117,9 @@ public final class TimestampSamplerFactory {
             case 'd':
                 // days
                 return new MicroTimestampSampler(Timestamps.DAY_MICROS * interval);
+            case 'w':
+                // weeks
+                return new MicroTimestampSampler(Timestamps.WEEK_MICROS * interval);
             case 'M':
                 // months
                 return new MonthTimestampSampler((int) interval);
