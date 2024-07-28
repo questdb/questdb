@@ -67,9 +67,10 @@ public class ShowAllTablePartitionsCursoryFactory extends AbstractRecordCursorFa
 
     @Override
     public void _close() {
+        cursor.close();
         executionContext = null;
         ff = null;
-        cursor.close();
+        cairoConfig = null;
     }
 
     @Override
@@ -211,6 +212,7 @@ public class ShowAllTablePartitionsCursoryFactory extends AbstractRecordCursorFa
                     }
                     sizeB += ff.getDirSize(path);
                     partitionIndex++;
+                    tableReader = Misc.free(tableReader);
                 }
             }
         }
