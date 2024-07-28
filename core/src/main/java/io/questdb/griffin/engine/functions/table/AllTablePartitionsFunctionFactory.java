@@ -36,7 +36,7 @@ import io.questdb.std.ObjList;
 
 public class AllTablePartitionsFunctionFactory implements FunctionFactory {
 
-    public static final String SIGNATURE = "all_tables_partitions()";
+    public static final String SIGNATURE = "table_storage()";
 
     @Override
     public String getSignature() {

@@ -31,17 +31,13 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
-import java.io.IOException;
-import java.util.Comparator;
 
 public class ShowAllTablePartitionsCursoryFactory extends AbstractRecordCursorFactory {
     private static final int TABLE_NAME;
@@ -49,12 +45,10 @@ public class ShowAllTablePartitionsCursoryFactory extends AbstractRecordCursorFa
     private static final int PARTITION_BY;
     private static final int PARTITION_COUNT;
     private static final int ROW_COUNT;
-    private static final int SIZE_B;
+    private static final int DISK_SIZE;
     private static final RecordMetadata METADATA;
-    private static final Comparator<String> CHAR_COMPARATOR = Chars::compare;
-    private final AllTablePartitionListRecordCursor cursor =
-            new AllTablePartitionListRecordCursor();
-    private static final Log LOG = LogFactory.getLog(AllTablePartitionListRecordCursor.class);
+    private SqlExecutionContext executionContext;
+    private final AllTablePartitionListRecordCursor cursor = new AllTablePartitionListRecordCursor();
     private CairoConfiguration cairoConfig;
     private FilesFacade ff;
 
@@ -65,10 +59,17 @@ public class ShowAllTablePartitionsCursoryFactory extends AbstractRecordCursorFa
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        cursor.of(executionContext);
+        this.executionContext = executionContext;
         this.cairoConfig = executionContext.getCairoEngine().getConfiguration();
         this.ff = cairoConfig.getFilesFacade();
         return cursor.initialize();
+    }
+
+    @Override
+    public void _close() {
+        executionContext = null;
+        ff = null;
+        cursor.close();
     }
 
     @Override
@@ -78,29 +79,21 @@ public class ShowAllTablePartitionsCursoryFactory extends AbstractRecordCursorFa
 
     private class AllTablePartitionListRecordCursor implements NoRandomAccessRecordCursor {
         private final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
-        ObjList<String> attachablePartitions = new ObjList<>(4);
-        ObjList<String> detachedPartitions = new ObjList<>(8);
-        Path path = new Path();
+        private Path path = new Path();
         private int tableIndex = -1;
-        StringSink partitionName = new StringSink();
-        private TxReader detachedTxReader;
-        private TableReaderMetadata detachedMetaReader;
-        private AllPartitionsRecord record = new AllPartitionsRecord();
-        private SqlExecutionContext executionContext;
-        private TableReader tableReader;
-        private int rootLen;
+        private final AllPartitionsRecord record = new AllPartitionsRecord();
 
         private AllTablePartitionListRecordCursor initialize() {
+            executionContext.getCairoEngine().getTableTokens(tableBucket, false);
+            toTop();
             return this;
         }
 
         @Override
         public void close() {
-        }
-
-        private void of(SqlExecutionContext executionContext) {
-            this.executionContext = executionContext;
-            toTop();
+            tableBucket.clear();
+            Misc.free(path);
+            record.close();
         }
 
         @Override
@@ -110,10 +103,6 @@ public class ShowAllTablePartitionsCursoryFactory extends AbstractRecordCursorFa
 
         @Override
         public boolean hasNext() throws DataUnavailableException {
-            if (tableIndex < 0) {
-                executionContext.getCairoEngine().getTableTokens(tableBucket, false);
-                tableIndex = -1;
-            }
             tableIndex++;
             int n = tableBucket.size();
             for (; tableIndex < n; tableIndex++) {
@@ -123,13 +112,12 @@ public class ShowAllTablePartitionsCursoryFactory extends AbstractRecordCursorFa
                 record.loadPartitionDetailsForCurrentTable(tableToken);
                 return true;
             }
-            return tableIndex < n;
-
+            return false;
         }
 
         @Override
         public long size() throws DataUnavailableException {
-            return 0;
+            return tableBucket.size();
         }
 
         @Override
@@ -146,7 +134,7 @@ public class ShowAllTablePartitionsCursoryFactory extends AbstractRecordCursorFa
             private boolean walEnabled;
 
             @Override
-            public void close() throws IOException {
+            public void close() {
 
             }
 
@@ -186,25 +174,33 @@ public class ShowAllTablePartitionsCursoryFactory extends AbstractRecordCursorFa
                 }
             }
 
+            @Override
+            public @Nullable CharSequence getStrB(int col) {
+                switch (col) {
+                    case 0:
+                        return tableName;
+                    case 2:
+                        return PartitionBy.toString(partitionBy);
+                    default:
+                        throw new UnsupportedOperationException();
+                }
+            }
+
 
             private void loadPartitionDetailsForCurrentTable(TableToken tableToken) {
                 rowCount = 0;
                 partitionCount = 0;
                 sizeB = 0;
-                tableReader = executionContext.getReader(tableToken);
+                TableReader tableReader = executionContext.getReader(tableToken);
                 TxReader tableTxReader = tableReader.getTxFile();
                 int partitionIndex = 0;
                 tableName = tableToken.getTableName();
                 walEnabled = tableToken.isWal();
                 partitionBy = tableReader.getPartitionedBy();
                 path.of(cairoConfig.getRoot()).concat(tableToken).$();
-                scanDetachedAndAttachablePartitions();
-                rootLen = path.size();
+                int rootLen = path.size();
                 int attachedPartitions = tableTxReader.getPartitionCount();
-                partitionCount = attachedPartitions +
-                        attachablePartitions.size() +
-                        detachedPartitions.size();
-
+                partitionCount = attachedPartitions;
                 while (partitionIndex < partitionCount) {
                     path.trimTo(rootLen).$();
                     if (partitionIndex < attachedPartitions) {
@@ -212,88 +208,9 @@ public class ShowAllTablePartitionsCursoryFactory extends AbstractRecordCursorFa
                         TableUtils.setPathForPartition
                                 (path, partitionBy, timestamp, tableTxReader.getPartitionNameTxn(partitionIndex));
                         rowCount += tableTxReader.getPartitionSize(partitionIndex);
-                    } else {
-                        int idx = partitionIndex - attachedPartitions;
-                        int n = detachedPartitions.size();
-                        if (idx < n) {
-                            partitionName.put(detachedPartitions.get(idx));
-                        } else {
-                            idx -= n;
-                            if (idx < attachablePartitions.size()) {
-                                partitionName.put(attachablePartitions.get(idx));
-                            }
-                        }
-                        if (ff.exists(path.concat(partitionName).concat(TableUtils.META_FILE_NAME).$())) {
-                            try {
-                                if (detachedMetaReader == null) {
-                                    detachedMetaReader = new TableReaderMetadata(cairoConfig);
-                                }
-                                detachedMetaReader.load(path.$());
-                                if (tableToken.getTableId() == detachedMetaReader.getTableId() && partitionBy == detachedMetaReader.getPartitionBy()) {
-                                    if (ff.exists(path.parent().concat(TableUtils.TXN_FILE_NAME).$())) {
-                                        try {
-                                            if (detachedTxReader == null) {
-                                                detachedTxReader = new TxReader(FilesFacadeImpl.INSTANCE);
-                                            }
-                                            detachedTxReader.ofRO(path.$(), partitionBy);
-                                            detachedTxReader.unsafeLoadAll();
-                                            int length = partitionName.indexOf(".");
-                                            if (length < 0) {
-                                                length = partitionName.length();
-                                            }
-                                            long timestamp = PartitionBy.parsePartitionDirName(partitionName, partitionBy, 0, length);
-                                            int pIndex = detachedTxReader.getPartitionIndex(timestamp);
-                                            rowCount += detachedTxReader.getPartitionSize(pIndex);
-
-                                        } finally {
-                                            if (detachedTxReader != null) {
-                                                detachedTxReader.clear();
-                                            }
-                                        }
-                                    } else {
-                                        LOG.error().$("detached partition does not have meta file [path=").$(path).I$();
-                                    }
-                                } else {
-                                    LOG.error().$("detached partition meta does not match [path=").$(path).I$();
-                                }
-                            } finally {
-                                if (detachedMetaReader != null) {
-                                    detachedMetaReader.clear();
-                                }
-                            }
-                        } else {
-                            LOG.error().$("detached partition does not have meta file [path=").$(path).I$();
-                        }
-                        path.parent();
                     }
                     sizeB += ff.getDirSize(path);
-                    partitionName.clear();
                     partitionIndex++;
-                }
-            }
-
-            private void scanDetachedAndAttachablePartitions() {
-                long pFind = ff.findFirst(path.$());
-                if (pFind > 0L) {
-                    try {
-                        attachablePartitions.clear();
-                        detachedPartitions.clear();
-                        do {
-                            partitionName.clear();
-                            long name = ff.findName(pFind);
-                            Utf8s.utf8ToUtf16Z(name, partitionName);
-                            int type = ff.findType(pFind);
-                            if ((type == Files.DT_LNK || type == Files.DT_DIR) && Chars.endsWith(partitionName, TableUtils.ATTACHABLE_DIR_MARKER)) {
-                                attachablePartitions.add(Chars.toString(partitionName));
-                            } else if (type == Files.DT_DIR && CairoKeywords.isDetachedDirMarker(name)) {
-                                detachedPartitions.add(Chars.toString(partitionName));
-                            }
-                        } while (ff.findNext(pFind) > 0);
-                        attachablePartitions.sort(CHAR_COMPARATOR);
-                        detachedPartitions.sort(CHAR_COMPARATOR);
-                    } finally {
-                        ff.findClose(pFind);
-                    }
                 }
             }
         }
@@ -305,15 +222,15 @@ public class ShowAllTablePartitionsCursoryFactory extends AbstractRecordCursorFa
         PARTITION_BY = 2;
         PARTITION_COUNT = 3;
         ROW_COUNT = 4;
-        SIZE_B = 5;
+        DISK_SIZE = 5;
 
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("table_name", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("wal_enabled", ColumnType.BOOLEAN));
-        metadata.add(new TableColumnMetadata("partition_by", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("partition_count", ColumnType.LONG));
-        metadata.add(new TableColumnMetadata("row_count", ColumnType.LONG));
-        metadata.add(new TableColumnMetadata("size_b", ColumnType.LONG));
+        metadata.add(new TableColumnMetadata("tableName", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("walEnabled", ColumnType.BOOLEAN));
+        metadata.add(new TableColumnMetadata("partitionBy", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("partitionCount", ColumnType.LONG));
+        metadata.add(new TableColumnMetadata("rowCount", ColumnType.LONG));
+        metadata.add(new TableColumnMetadata("diskSize", ColumnType.LONG));
         METADATA = metadata;
     }
 
