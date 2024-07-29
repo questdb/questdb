@@ -57,8 +57,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
         this.root = Chars.toString(root);
         this.confRoot = PropServerConfiguration.rootSubdir(root, PropServerConfiguration.CONFIG_DIRECTORY);
         this.textConfiguration = new DefaultTextConfiguration(Chars.toString(confRoot));
-        this.checkpointRoot = PropServerConfiguration.rootSubdir(root, PropServerConfiguration.CHECKPOINT_DIRECTORY);
-        this.legacyCheckpointRoot = PropServerConfiguration.rootSubdir(root, PropServerConfiguration.LEGACY_CHECKPOINT_DIRECTORY);
+        this.checkpointRoot = PropServerConfiguration.rootSubdir(root, TableUtils.CHECKPOINT_DIRECTORY);
+        this.legacyCheckpointRoot = PropServerConfiguration.rootSubdir(root, TableUtils.LEGACY_CHECKPOINT_DIRECTORY);
         Rnd rnd = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
         this.databaseIdLo = rnd.nextLong();
         this.databaseIdHi = rnd.nextLong();

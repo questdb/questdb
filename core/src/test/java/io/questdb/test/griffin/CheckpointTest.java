@@ -1221,6 +1221,17 @@ public class CheckpointTest extends AbstractCairoTest {
                 ddl("checkpoint create");
             } else {
                 ddl("snapshot prepare");
+                // also rename ".checkpoint" dir to the legacy "snapshot"
+                try (
+                        Path p1 = new Path();
+                        Path p2 = new Path()
+                ) {
+                    p1.of(configuration.getRoot()).concat(TableUtils.LEGACY_CHECKPOINT_DIRECTORY);
+                    p2.of(configuration.getRoot()).concat(TableUtils.CHECKPOINT_DIRECTORY);
+                    Assert.assertEquals(0, ff.rename(p2.$(), p1.$()));
+                    path.of(p1).concat(configuration.getDbDirectory());
+                    rootLen = path.size();
+                }
             }
 
             path.trimTo(rootLen).slash$();

@@ -287,7 +287,7 @@ public class PropServerConfigurationTest {
 
         TestUtils.assertEquals(new File(root, "db").getAbsolutePath(), configuration.getCairoConfiguration().getRoot());
         TestUtils.assertEquals(new File(root, "conf").getAbsolutePath(), configuration.getCairoConfiguration().getConfRoot());
-        TestUtils.assertEquals(new File(root, PropServerConfiguration.CHECKPOINT_DIRECTORY).getAbsolutePath(), configuration.getCairoConfiguration().getCheckpointRoot());
+        TestUtils.assertEquals(new File(root, TableUtils.CHECKPOINT_DIRECTORY).getAbsolutePath(), configuration.getCairoConfiguration().getCheckpointRoot());
 
         Assert.assertEquals("", configuration.getCairoConfiguration().getSnapshotInstanceId());
         Assert.assertTrue(configuration.getCairoConfiguration().isCheckpointRecoveryEnabled());
