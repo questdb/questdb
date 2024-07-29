@@ -400,7 +400,8 @@ public class WriterPool extends AbstractPool {
                     engine.getDdlListener(tableToken),
                     engine.getCheckpointStatus(),
                     engine.getMetrics()
-            );            e.ownershipReason = lockReason;
+            );
+            e.ownershipReason = lockReason;
             return logAndReturn(e, PoolListener.EV_CREATE);
         } catch (CairoException ex) {
             LogRecord record = ex.isCritical() ? LOG.critical() : LOG.error();
