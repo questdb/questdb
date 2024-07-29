@@ -77,7 +77,6 @@ public class LogFactory implements Closeable {
     private boolean configured = false;
     private int queueDepth = DEFAULT_QUEUE_DEPTH;
     private int recordLength = DEFAULT_MSG_SIZE;
-    private boolean usesLogDirVar;
 
     public LogFactory() {
         this(MicrosecondClockImpl.INSTANCE);
@@ -423,156 +422,8 @@ public class LogFactory implements Closeable {
         return builder.toString();
     }
 
-    private static String getProperty(final Properties properties, String key) {
-        if (envEnabled) {
-            final String envKey = "QDB_LOG_" + key.replace('.', '_').toUpperCase();
-            final String envValue = System.getenv(envKey);
-            if (envValue == null) {
-                return properties.getProperty(key);
-            }
-            System.err.println("    Using env: " + envKey + "=" + envValue);
-            return envValue;
-        }
-        return properties.getProperty(key);
-    }
-
-    private static boolean isForcedDebug() {
-        return System.getProperty(DEBUG_TRIGGER) != null || System.getenv().containsKey(DEBUG_TRIGGER_ENV);
-    }
-
-    private static void setGuaranteedLogging(boolean guaranteedLogging, Class<?>... classes) {
-        for (int i = 0, n = classes.length; i < n; i++) {
-            final Class<?> clazz = classes[i];
-            setLogger(clazz, getInstance().create(clazz.getName(), guaranteedLogging));
-        }
-    }
-
-    private static void setLogger(Class<?> clazz, Log logger) {
-        try {
-            final Field field = clazz.getDeclaredField("LOG");
-            field.setAccessible(true);
-            field.set(null, logger);
-        } catch (NoSuchFieldException | IllegalAccessException e) {
-            throw new RuntimeException("Could not set logger", e);
-        }
-    }
-
-    private void configure(InputStream fis, String rootDir) throws IOException {
-        Properties properties = new Properties();
-        properties.load(fis);
-
-        // QDB_LOG_LOG_DIR env variable can be used to override log directory
-        String logDir = getProperty(properties, "log.dir");
-        if (logDir == null) {
-            if (rootDir != null) {
-                logDir = Paths.get(rootDir, "log").toAbsolutePath().toString();
-            } else {
-                logDir = ".";
-            }
-        }
-        boolean usesLogDirVar = false;
-        for (String n : properties.stringPropertyNames()) {
-            String value = getProperty(properties, n);
-            if (value.contains(LOG_DIR_VAR)) {
-                usesLogDirVar = true;
-                value = value.replace(LOG_DIR_VAR, logDir);
-                properties.put(n, value);
-            }
-        }
-
-        if (usesLogDirVar) {
-            File logDirFile = new File(logDir);
-            if (!logDirFile.exists() && logDirFile.mkdirs()) {
-                System.err.printf("Created log directory: %s%n", logDir);
-            }
-        }
-
-        configureFromProperties(properties, logDir);
-    }
-
-    private void configureDefaultWriter() {
-        int level = DEFAULT_LOG_LEVEL;
-        if (isForcedDebug()) {
-            level = level | LogLevel.DEBUG;
-        }
-        add(new LogWriterConfig(level, LogConsoleWriter::new));
-        bind();
-    }
-
-    private void configureFromProperties(Properties properties, String logDir) {
-        String writers = getProperty(properties, "writers");
-
-        if (writers == null) {
-            configured = true;
-            return;
-        }
-
-        String s = getProperty(properties, "queueDepth");
-        if (s != null && !s.isEmpty()) {
-            try {
-                setQueueDepth(Numbers.parseInt(s));
-            } catch (NumericException e) {
-                throw new LogError("Invalid value for queueDepth");
-            }
-        }
-
-        s = getProperty(properties, "recordLength");
-        if (s != null && !s.isEmpty()) {
-            try {
-                setRecordLength(Numbers.parseInt(s));
-            } catch (NumericException e) {
-                throw new LogError("Invalid value for recordLength");
-            }
-        }
-
-        for (String w : writers.split(",")) {
-            LogWriterConfig conf = createWriter(properties, w.trim(), logDir);
-            if (conf != null) {
-                add(conf);
-            }
-        }
-
-        bind();
-    }
-
-    @NotNull
-    private GuaranteedLogger createGuaranteedLogger(String key, Holder dbg, Holder inf, Holder err, Holder cri, Holder adv) {
-        return new GuaranteedLogger(
-                clock,
-                compressScope(key, sink),
-                dbg == null ? null : dbg.ring,
-                dbg == null ? null : dbg.lSeq,
-                inf == null ? null : inf.ring,
-                inf == null ? null : inf.lSeq,
-                err == null ? null : err.ring,
-                err == null ? null : err.lSeq,
-                cri == null ? null : cri.ring,
-                cri == null ? null : cri.lSeq,
-                adv == null ? null : adv.ring,
-                adv == null ? null : adv.lSeq
-        );
-    }
-
-    @NotNull
-    private Logger createLogger(String key, Holder dbg, Holder inf, Holder err, Holder cri, Holder adv) {
-        return new Logger(
-                clock,
-                compressScope(key, sink),
-                dbg == null ? null : dbg.ring,
-                dbg == null ? null : dbg.lSeq,
-                inf == null ? null : inf.ring,
-                inf == null ? null : inf.lSeq,
-                err == null ? null : err.ring,
-                err == null ? null : err.lSeq,
-                cri == null ? null : cri.ring,
-                cri == null ? null : cri.lSeq,
-                adv == null ? null : adv.ring,
-                adv == null ? null : adv.lSeq
-        );
-    }
-
     @SuppressWarnings("rawtypes")
-    private LogWriterConfig createWriter(final Properties properties, String writerName, String logDir) {
+    private static LogWriterConfig createWriter(final Properties properties, String writerName) {
         final String writer = "w." + writerName + '.';
         final String clazz = getProperty(properties, writer + "class");
         final String levelStr = getProperty(properties, writer + "level");
@@ -654,6 +505,154 @@ public class LogFactory implements Closeable {
                 throw new LogError("Error creating log writer", e);
             }
         });
+    }
+
+    private static String getProperty(final Properties properties, String key) {
+        if (envEnabled) {
+            final String envKey = "QDB_LOG_" + key.replace('.', '_').toUpperCase();
+            final String envValue = System.getenv(envKey);
+            if (envValue == null) {
+                return properties.getProperty(key);
+            }
+            System.err.println("    Using env: " + envKey + "=" + envValue);
+            return envValue;
+        }
+        return properties.getProperty(key);
+    }
+
+    private static boolean isForcedDebug() {
+        return System.getProperty(DEBUG_TRIGGER) != null || System.getenv().containsKey(DEBUG_TRIGGER_ENV);
+    }
+
+    private static void setGuaranteedLogging(boolean guaranteedLogging, Class<?>... classes) {
+        for (int i = 0, n = classes.length; i < n; i++) {
+            final Class<?> clazz = classes[i];
+            setLogger(clazz, getInstance().create(clazz.getName(), guaranteedLogging));
+        }
+    }
+
+    private static void setLogger(Class<?> clazz, Log logger) {
+        try {
+            final Field field = clazz.getDeclaredField("LOG");
+            field.setAccessible(true);
+            field.set(null, logger);
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            throw new RuntimeException("Could not set logger", e);
+        }
+    }
+
+    private void configure(InputStream fis, String rootDir) throws IOException {
+        Properties properties = new Properties();
+        properties.load(fis);
+
+        // QDB_LOG_LOG_DIR env variable can be used to override log directory
+        String logDir = getProperty(properties, "log.dir");
+        if (logDir == null) {
+            if (rootDir != null) {
+                logDir = Paths.get(rootDir, "log").toAbsolutePath().toString();
+            } else {
+                logDir = ".";
+            }
+        }
+        boolean usesLogDirVar = false;
+        for (String n : properties.stringPropertyNames()) {
+            String value = getProperty(properties, n);
+            if (value.contains(LOG_DIR_VAR)) {
+                usesLogDirVar = true;
+                value = value.replace(LOG_DIR_VAR, logDir);
+                properties.put(n, value);
+            }
+        }
+
+        if (usesLogDirVar) {
+            File logDirFile = new File(logDir);
+            if (!logDirFile.exists() && logDirFile.mkdirs()) {
+                System.err.printf("Created log directory: %s%n", logDir);
+            }
+        }
+
+        configureFromProperties(properties);
+    }
+
+    private void configureDefaultWriter() {
+        int level = DEFAULT_LOG_LEVEL;
+        if (isForcedDebug()) {
+            level = level | LogLevel.DEBUG;
+        }
+        add(new LogWriterConfig(level, LogConsoleWriter::new));
+        bind();
+    }
+
+    private void configureFromProperties(Properties properties) {
+        String writers = getProperty(properties, "writers");
+
+        if (writers == null) {
+            configured = true;
+            return;
+        }
+
+        String s = getProperty(properties, "queueDepth");
+        if (s != null && !s.isEmpty()) {
+            try {
+                setQueueDepth(Numbers.parseInt(s));
+            } catch (NumericException e) {
+                throw new LogError("Invalid value for queueDepth");
+            }
+        }
+
+        s = getProperty(properties, "recordLength");
+        if (s != null && !s.isEmpty()) {
+            try {
+                setRecordLength(Numbers.parseInt(s));
+            } catch (NumericException e) {
+                throw new LogError("Invalid value for recordLength");
+            }
+        }
+
+        for (String w : writers.split(",")) {
+            LogWriterConfig conf = createWriter(properties, w.trim());
+            if (conf != null) {
+                add(conf);
+            }
+        }
+
+        bind();
+    }
+
+    @NotNull
+    private GuaranteedLogger createGuaranteedLogger(String key, Holder dbg, Holder inf, Holder err, Holder cri, Holder adv) {
+        return new GuaranteedLogger(
+                clock,
+                compressScope(key, sink),
+                dbg == null ? null : dbg.ring,
+                dbg == null ? null : dbg.lSeq,
+                inf == null ? null : inf.ring,
+                inf == null ? null : inf.lSeq,
+                err == null ? null : err.ring,
+                err == null ? null : err.lSeq,
+                cri == null ? null : cri.ring,
+                cri == null ? null : cri.lSeq,
+                adv == null ? null : adv.ring,
+                adv == null ? null : adv.lSeq
+        );
+    }
+
+    @NotNull
+    private Logger createLogger(String key, Holder dbg, Holder inf, Holder err, Holder cri, Holder adv) {
+        return new Logger(
+                clock,
+                compressScope(key, sink),
+                dbg == null ? null : dbg.ring,
+                dbg == null ? null : dbg.lSeq,
+                inf == null ? null : inf.ring,
+                inf == null ? null : inf.lSeq,
+                err == null ? null : err.ring,
+                err == null ? null : err.lSeq,
+                cri == null ? null : cri.ring,
+                cri == null ? null : cri.lSeq,
+                adv == null ? null : adv.ring,
+                adv == null ? null : adv.lSeq
+        );
     }
 
     private ScopeConfiguration find(CharSequence key) {

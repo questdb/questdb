@@ -63,6 +63,7 @@ public class Bootstrap {
     private static final String LOG_NAME = "server-main";
     private static final String PUBLIC_VERSION_TXT = "version.txt";
     private static final String PUBLIC_ZIP = "/io/questdb/site/public.zip";
+    public static final String CONTAINERIZED_SYSTEM_PROPERTY = "containerized";
     private final String banner;
     private final BuildInformation buildInformation;
     private final ServerConfiguration config;
@@ -100,14 +101,8 @@ public class Bootstrap {
         }
 
         // before we set up the logger, we need to copy the conf file
-        final byte[] buffer = new byte[1024 * 1024];
         try {
-            if (System.getProperty("bin") == null) {
-                copyConfResource(rootDirectory, false, buffer, "conf/log.conf", null);
-            } else {
-                // Running as binaries, use daily log rotation by default
-                copyConfResource(rootDirectory, false, buffer, "conf/standalone_log.conf", "conf/log.conf", null);
-            }
+            copyLogConfResource(new byte[1024 * 1024]);
         } catch (IOException e) {
             throw new BootstrapException("Could not extract log configuration file");
         }
@@ -489,11 +484,14 @@ public class Bootstrap {
             }
         }
         copyConfResource(rootDirectory, false, buffer, "conf/server.conf", log);
-        if (System.getProperty("bin") == null) {
+        copyLogConfResource(buffer);
+    }
+
+    private void copyLogConfResource(byte[] buffer) throws IOException {
+        if (Chars.equalsIgnoreCaseNc("true", System.getProperty(CONTAINERIZED_SYSTEM_PROPERTY))) {
             copyConfResource(rootDirectory, false, buffer, "conf/log.conf", null);
         } else {
-            // Running as binaries, use daily log rotation by default
-            copyConfResource(rootDirectory, false, buffer, "conf/standalone_log.conf", "conf/log.conf", null);
+            copyConfResource(rootDirectory, false, buffer, "conf/non_containerized_log.conf", "conf/log.conf", null);
         }
     }
 
