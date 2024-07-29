@@ -439,7 +439,7 @@ public final class TestUtils {
     }
 
     public static String replaceSizeToMatchPartitionSumInOS(String expected, String tableName, List<String> partitionColumnNames,
-                                              CairoConfiguration configuration, CairoEngine engine, StringSink sink) {
+                                                            CairoConfiguration configuration, CairoEngine engine, StringSink sink) {
         return replaceSizeToMatchPartitionSumInOS(expected, new Utf8String(configuration.getRoot()), tableName, engine, sink, partitionColumnNames);
     }
 
