@@ -1,0 +1,16 @@
+# name: test/sql/copy/parquet/timestamp_decode.test
+# description: recognise that column is of time timestamp type and decode it correctly
+
+query I
+select eventTime, eventdate from read_parquet('data/parquet-testing/hits_sm.parquet')
+----
+1373834327 15901
+1373913230 15901
+1373914595 15901
+1373914712 15901
+1373833834 15901
+1373841641 15901
+1373916373 15901
+1373917016 15901
+1373912311 15901
+1373851126 15901
