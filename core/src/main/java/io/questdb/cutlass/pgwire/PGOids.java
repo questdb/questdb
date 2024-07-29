@@ -62,13 +62,15 @@ public class PGOids {
     public static final int PG_TIMESTAMP = 1114;
     public static final IntList PG_TYPE_OIDS = new IntList();
 
-    public static final char[] PG_TYPE_TO_CATEGORY = new char[12];
-    public static final CharSequence[] PG_TYPE_TO_DEFAULT = new CharSequence[12];
-    public static final short[] PG_TYPE_TO_LENGTH = new short[12];
-    public static final CharSequence[] PG_TYPE_TO_NAME = new CharSequence[12];
+    public static final char[] PG_TYPE_TO_CATEGORY = new char[14];
+    public static final CharSequence[] PG_TYPE_TO_DEFAULT = new CharSequence[14];
+    public static final short[] PG_TYPE_TO_LENGTH = new short[14];
+    public static final CharSequence[] PG_TYPE_TO_NAME = new CharSequence[14];
     public static final IntIntHashMap PG_TYPE_TO_SIZE_MAP = new IntIntHashMap();
     public static final int PG_UUID = 2950;
+    public static final int PG_INTERNAL = 2281;
     public static final int PG_VARCHAR = 1043;
+    public static final int PG_OID = 26;
     public static final int X_PG_BOOL = ((PG_BOOL >> 24) & 0xff) | ((PG_BOOL << 8) & 0xff0000) | ((PG_BOOL >> 8) & 0xff00) | ((PG_BOOL << 24) & 0xff000000);
     public static final int X_B_PG_BOOL = 1 | X_PG_BOOL;
     public static final int X_PG_BYTEA = ((PG_BYTEA >> 24) & 0xff) | ((PG_BYTEA << 8) & 0xff0000) | ((PG_BYTEA >> 8) & 0xff00) | ((PG_BYTEA << 24) & 0xff000000);
@@ -159,6 +161,8 @@ public class PGOids {
         PG_TYPE_OIDS.add(PG_BYTEA);
         PG_TYPE_OIDS.add(PG_DATE);
         PG_TYPE_OIDS.add(PG_UUID);
+        PG_TYPE_OIDS.add(PG_INTERNAL);
+        PG_TYPE_OIDS.add(PG_OID);
 
         PG_TYPE_TO_SIZE_MAP.put(PG_FLOAT8, Double.BYTES);
         PG_TYPE_TO_SIZE_MAP.put(PG_FLOAT4, Float.BYTES);
@@ -181,6 +185,8 @@ public class PGOids {
         PG_TYPE_TO_NAME[9] = "binary";
         PG_TYPE_TO_NAME[10] = "date";
         PG_TYPE_TO_NAME[11] = "uuid";
+        PG_TYPE_TO_NAME[12] = "internal";
+        PG_TYPE_TO_NAME[13] = "oid";
 
         PG_TYPE_TO_CATEGORY[0] = 'S';
         PG_TYPE_TO_CATEGORY[1] = 'D';
@@ -194,6 +200,8 @@ public class PGOids {
         PG_TYPE_TO_CATEGORY[9] = 'U';
         PG_TYPE_TO_CATEGORY[10] = 'D';
         PG_TYPE_TO_CATEGORY[11] = 'U';
+        PG_TYPE_TO_CATEGORY[12] = 'P';
+        PG_TYPE_TO_CATEGORY[13] = 'N';
 
         PG_TYPE_TO_LENGTH[0] = -1;
         PG_TYPE_TO_LENGTH[1] = 8;
@@ -207,6 +215,8 @@ public class PGOids {
         PG_TYPE_TO_LENGTH[9] = -1;
         PG_TYPE_TO_LENGTH[10] = 8;
         PG_TYPE_TO_LENGTH[11] = 16;
+        PG_TYPE_TO_LENGTH[12] = 8;
+        PG_TYPE_TO_LENGTH[13] = 4;
 
         PG_TYPE_TO_DEFAULT[0] = null;
         PG_TYPE_TO_DEFAULT[1] = null;
@@ -220,5 +230,7 @@ public class PGOids {
         PG_TYPE_TO_DEFAULT[9] = null;
         PG_TYPE_TO_DEFAULT[10] = null;
         PG_TYPE_TO_DEFAULT[11] = null;
+        PG_TYPE_TO_DEFAULT[12] = null;
+        PG_TYPE_TO_DEFAULT[13] = null;
     }
 }
