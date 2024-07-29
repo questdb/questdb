@@ -32,7 +32,7 @@ int64_t find_latest_for_key(int64_t k,
                             int64_t unindexed_null_count,
                             int64_t max_value,
                             int64_t min_value,
-                            int32_t partition_index,
+                            int32_t frame_index,
                             uint32_t vblock_capacity_mask
 ) {
 
@@ -74,14 +74,14 @@ int64_t find_latest_for_key(int64_t k,
         if (value_count > 0) {
             int64_t local_row_id = current_block[value_count - 1];
             if (local_row_id >= min_value) {
-                return to_row_id(partition_index, local_row_id) + 1;
+                return to_row_id(frame_index, local_row_id) + 1;
             }
         }
     }
 
     if (k == 0 && unindexed_null_count > 0) {
         if (unindexed_null_count - 1 >= min_value) {
-            return to_row_id(partition_index, unindexed_null_count);
+            return to_row_id(frame_index, unindexed_null_count);
         }
     }
     return -1;
@@ -95,7 +95,7 @@ void latest_scan_backward(uint64_t keys_memory_addr,
                           int64_t unindexed_null_count,
                           int64_t max_value,
                           int64_t min_value,
-                          int32_t partition_index,
+                          int32_t frame_index,
                           uint32_t vblock_capacity_mask
 ) {
 
@@ -121,7 +121,7 @@ void latest_scan_backward(uint64_t keys_memory_addr,
                                              unindexed_null_count,
                                              max_value,
                                              min_value,
-                                             partition_index,
+                                             frame_index,
                                              vblock_capacity_mask
         );
         const bool r = row_id > -1;

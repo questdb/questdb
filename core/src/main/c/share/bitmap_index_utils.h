@@ -264,7 +264,7 @@ void latest_scan_backward(
         int64_t unindexed_null_count,
         int64_t max_value,
         int64_t min_value,
-        int32_t partition_index,
+        int32_t frame_index,
         uint32_t vblock_capacity_mask
 );
 

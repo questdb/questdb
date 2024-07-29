@@ -32,11 +32,11 @@ public class LatestByTask {
     private long argsAddress;
     private ExecutionCircuitBreaker circuitBreaker;
     private CountDownLatchSPI doneLatch;
+    private int frameIndex;
     private int hashLength;
     private long hashesAddress;
     private long keyBaseAddress;
     private long keysMemorySize;
-    private int partitionIndex;
     private long prefixesAddress;
     private long prefixesCount;
     private long rowHi;
@@ -55,7 +55,7 @@ public class LatestByTask {
             long unIndexedNullCount,
             long rowHi,
             long rowLo,
-            int partitionIndex,
+            int frameIndex,
             int valueBlockCapacity,
             long hashesAddress,
             int hashLength,
@@ -72,7 +72,7 @@ public class LatestByTask {
         this.unIndexedNullCount = unIndexedNullCount;
         this.rowHi = rowHi;
         this.rowLo = rowLo;
-        this.partitionIndex = partitionIndex;
+        this.frameIndex = frameIndex;
         this.valueBlockCapacity = valueBlockCapacity;
         this.hashesAddress = hashesAddress;
         this.hashLength = hashLength;
@@ -93,7 +93,7 @@ public class LatestByTask {
                     unIndexedNullCount,
                     rowHi,
                     rowLo,
-                    partitionIndex,
+                    frameIndex,
                     valueBlockCapacity,
                     hashesAddress,
                     hashLength,

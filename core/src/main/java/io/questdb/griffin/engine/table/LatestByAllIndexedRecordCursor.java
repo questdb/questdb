@@ -25,9 +25,11 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.*;
+import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
@@ -39,17 +41,17 @@ import io.questdb.tasks.LatestByTask;
 import org.jetbrains.annotations.NotNull;
 
 class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
-    protected final long indexShift = 0;
-    protected final DirectLongList prefixes;
-    protected final DirectLongList rows;
     private final int columnIndex;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
+    private final long indexShift = 0;
+    private final DirectLongList prefixes;
+    private final DirectLongList rows;
     private final AtomicBooleanCircuitBreaker sharedCircuitBreaker = new AtomicBooleanCircuitBreaker();
-    protected long aIndex;
-    protected long aLimit;
-    protected SqlExecutionCircuitBreaker circuitBreaker;
+    private long aIndex;
+    private long aLimit;
     private long argumentsAddress;
     private MessageBus bus;
+    private SqlExecutionCircuitBreaker circuitBreaker;
     private boolean isTreeMapBuilt;
     private int keyCount;
     private int workerCount;
@@ -187,7 +189,6 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         final RingQueue<LatestByTask> queue = bus.getLatestByQueue();
         final Sequence pubSeq = bus.getLatestByPubSeq();
         final Sequence subSeq = bus.getLatestBySubSeq();
-        final TableReader reader = frameCursor.getTableReader();
 
         PageFrame frame;
         long foundRowCount = 0;
@@ -195,8 +196,10 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         try {
             while ((frame = frameCursor.next()) != null && foundRowCount < keyCount) {
                 doneLatch.reset();
-                final BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
+                final int frameIndex = frameCount;
+                frameAddressCache.add(frameCount++, frame);
 
+                final BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
                 final long partitionLo = frame.getPartitionLo();
                 final long partitionHi = frame.getPartitionHi() - 1;
 
@@ -206,16 +209,14 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                 final long valuesMemorySize = indexReader.getValueMemorySize();
                 final int valueBlockCapacity = indexReader.getValueBlockCapacity();
                 final long unIndexedNullCount = indexReader.getUnIndexedNullCount();
-                final int partitionIndex = frame.getPartitionIndex();
 
                 long hashColumnAddress = 0;
 
                 // hashColumnIndex can be -1 for latest by part only (no prefixes to match)
                 if (hashColumnIndex > -1) {
-                    final int columnBase = reader.getColumnBase(partitionIndex);
-                    final int primaryColumnIndex = TableReader.getPrimaryColumnIndex(columnBase, hashColumnIndex);
-                    final MemoryR column = reader.getColumn(primaryColumnIndex);
-                    hashColumnAddress = column.getPageAddress(0);
+                    // TODO(puzpuzpuz): this has to be per-task
+                    final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+                    hashColumnAddress = frameMemory.getPageAddress(hashColumnIndex);
                 }
 
                 // -1 must be dead case here
@@ -247,7 +248,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                                 unIndexedNullCount,
                                 partitionHi,
                                 partitionLo,
-                                partitionIndex,
+                                frameIndex,
                                 valueBlockCapacity,
                                 hashColumnAddress,
                                 hashesColumnSize,
@@ -264,7 +265,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                                 unIndexedNullCount,
                                 partitionHi,
                                 partitionLo,
-                                partitionIndex,
+                                frameIndex,
                                 valueBlockCapacity,
                                 hashColumnAddress,
                                 hashesColumnSize,

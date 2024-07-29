@@ -61,14 +61,13 @@ Java_io_questdb_griffin_engine_functions_geohash_GeoHashNative_latestByAndFilter
                 jlong unIndexedNullCount,
                 jlong maxValue,
                 jlong minValue,
-                jint partitionIndex,
+                jint frameIndex,
                 jint blockValueCountMod,
                 jlong hashesAddress,
                 jint hashLength,
                 jlong prefixesAddress,
                 jlong prefixesCount
         ) {
-
 
     auto out_args = reinterpret_cast<out_arguments *>(argsMemory);
     auto rows = reinterpret_cast<int64_t *>(out_args->rows_address);
@@ -83,7 +82,7 @@ Java_io_questdb_griffin_engine_functions_geohash_GeoHashNative_latestByAndFilter
             unIndexedNullCount,
             maxValue,
             minValue,
-            partitionIndex,
+            frameIndex,
             blockValueCountMod);
 
     auto rows_count_after = out_args->rows_size;
