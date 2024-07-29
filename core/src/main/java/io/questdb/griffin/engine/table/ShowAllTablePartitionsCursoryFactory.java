@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.FilesFacade;
@@ -71,6 +72,11 @@ public class ShowAllTablePartitionsCursoryFactory extends AbstractRecordCursorFa
         executionContext = null;
         ff = null;
         cairoConfig = null;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.type("all_table_partition_storage");
     }
 
     @Override
