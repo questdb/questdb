@@ -4585,7 +4585,7 @@ public class SqlOptimiser implements Mutable {
                     }
                 }
 
-                if (maybeKeyed.size() > 0 && ((sampleByFrom != null || sampleByTo != null) || sampleByFillSize > 0)) {
+                if (maybeKeyed.size() > 0 && ((sampleByFrom != null || sampleByTo != null) || (sampleByFillSize > 0 && !isNoneKeyword(sampleByFill.getQuick(0).token)))) {
                     boolean isKeyed = false;
 
 
