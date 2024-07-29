@@ -54,10 +54,11 @@ public class PageFrameMemoryRecord implements Record, Closeable {
     private final ObjList<Utf8SplitString> utf8ViewsA = new ObjList<>();
     private final ObjList<Utf8SplitString> utf8ViewsB = new ObjList<>();
     private LongList auxPageAddresses;
-    private LongList auxPageLimits;
-    private int frameIndex;
+    private LongList auxPageSizes;
+    private byte frameFormat = -1;
+    private int frameIndex = -1;
     private LongList pageAddresses;
-    private LongList pageLimits;
+    private LongList pageSizes;
     private long rowIdOffset;
     private long rowIndex;
     private SymbolTableSource symbolTableSource;
@@ -69,16 +70,25 @@ public class PageFrameMemoryRecord implements Record, Closeable {
         this.symbolTableSource = other.symbolTableSource;
         this.rowIndex = other.rowIndex;
         this.frameIndex = other.frameIndex;
+        this.frameFormat = other.frameFormat;
         this.rowIdOffset = other.rowIdOffset;
         this.pageAddresses = other.pageAddresses;
         this.auxPageAddresses = other.auxPageAddresses;
-        this.pageLimits = other.pageLimits;
-        this.auxPageLimits = other.auxPageLimits;
+        this.pageSizes = other.pageSizes;
+        this.auxPageSizes = other.auxPageSizes;
     }
 
     @Override
     public void close() {
         Misc.freeObjListIfCloseable(symbolTableCache);
+        symbolTableCache.clear();
+        rowIndex = 0;
+        frameIndex = -1;
+        rowIdOffset = -1;
+        pageAddresses = null;
+        auxPageAddresses = null;
+        pageSizes = null;
+        auxPageSizes = null;
     }
 
     @Override
@@ -87,7 +97,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
         if (dataPageAddress != 0) {
             final long indexPageAddress = auxPageAddresses.getQuick(columnIndex);
             final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + (rowIndex << 3));
-            final long pageLimit = pageLimits.getQuick(columnIndex);
+            final long pageLimit = pageSizes.getQuick(columnIndex);
             return getBin(dataPageAddress, offset, pageLimit, bsview(columnIndex));
         }
         return NullMemoryCMR.INSTANCE.getBin(0);
@@ -274,7 +284,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
         if (dataPageAddress != 0) {
             final long indexPageAddress = auxPageAddresses.getQuick(columnIndex);
             final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + (rowIndex << 3));
-            final long pageLimit = pageLimits.getQuick(columnIndex);
+            final long pageLimit = pageSizes.getQuick(columnIndex);
             return getStrA(dataPageAddress, offset, pageLimit, csviewA(columnIndex));
         }
         return NullMemoryCMR.INSTANCE.getStrA(0);
@@ -286,7 +296,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
         if (dataPageAddress != 0) {
             final long indexPageAddress = auxPageAddresses.getQuick(columnIndex);
             final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + (rowIndex << 3));
-            final long pageLimit = pageLimits.getQuick(columnIndex);
+            final long pageLimit = pageSizes.getQuick(columnIndex);
             return getStrA(dataPageAddress, offset, pageLimit, csviewB(columnIndex));
         }
         return NullMemoryCMR.INSTANCE.getStrB(0);
@@ -345,25 +355,18 @@ public class PageFrameMemoryRecord implements Record, Closeable {
     }
 
     public void init(PageFrameMemory frameMemory) {
-        frameIndex = frameMemory.getFrameIndex();
-        rowIdOffset = frameMemory.getRowIdOffset();
-        pageAddresses = frameMemory.getPageAddresses();
-        auxPageAddresses = frameMemory.getAuxPageAddresses();
-        pageLimits = frameMemory.getPageSizes();
-        auxPageLimits = frameMemory.getAuxPageSizes();
+        this.frameIndex = frameMemory.getFrameIndex();
+        this.frameFormat = frameMemory.getFrameFormat();
+        this.rowIdOffset = frameMemory.getRowIdOffset();
+        this.pageAddresses = frameMemory.getPageAddresses();
+        this.auxPageAddresses = frameMemory.getAuxPageAddresses();
+        this.pageSizes = frameMemory.getPageSizes();
+        this.auxPageSizes = frameMemory.getAuxPageSizes();
     }
 
     public void of(SymbolTableSource symbolTableSource) {
+        close();
         this.symbolTableSource = symbolTableSource;
-        Misc.freeObjListIfCloseable(symbolTableCache);
-        symbolTableCache.clear();
-        rowIndex = 0;
-        frameIndex = -1;
-        rowIdOffset = -1;
-        pageAddresses = null;
-        auxPageAddresses = null;
-        pageLimits = null;
-        auxPageLimits = null;
     }
 
     public void setRowIndex(long rowIndex) {
@@ -461,9 +464,9 @@ public class PageFrameMemoryRecord implements Record, Closeable {
     private Utf8Sequence getVarchar(int columnIndex, Utf8SplitString utf8View) {
         final long auxPageAddress = auxPageAddresses.getQuick(columnIndex);
         if (auxPageAddress != 0) {
-            final long varcharAuxPageLim = auxPageAddress + auxPageLimits.getQuick(columnIndex);
+            final long varcharAuxPageLim = auxPageAddress + auxPageSizes.getQuick(columnIndex);
             final long dataPageAddress = pageAddresses.getQuick(columnIndex);
-            final long dataPageLim = dataPageAddress + pageLimits.getQuick(columnIndex);
+            final long dataPageLim = dataPageAddress + pageSizes.getQuick(columnIndex);
             return VarcharTypeDriver.getSplitValue(
                     auxPageAddress,
                     varcharAuxPageLim,
@@ -502,5 +505,27 @@ public class PageFrameMemoryRecord implements Record, Closeable {
             utf8ViewsB.extendAndSet(columnIndex, new Utf8SplitString(false));
         }
         return utf8ViewsB.getQuick(columnIndex);
+    }
+
+    int getFrameIndex() {
+        return frameIndex;
+    }
+
+    void init(
+            int frameIndex,
+            byte frameFormat,
+            long rowIdOffset,
+            LongList pageAddresses,
+            LongList auxPageAddresses,
+            LongList pageLimits,
+            LongList auxPageLimits
+    ) {
+        this.frameIndex = frameIndex;
+        this.frameFormat = frameFormat;
+        this.rowIdOffset = rowIdOffset;
+        this.pageAddresses = pageAddresses;
+        this.auxPageAddresses = auxPageAddresses;
+        this.pageSizes = pageLimits;
+        this.auxPageSizes = auxPageLimits;
     }
 }

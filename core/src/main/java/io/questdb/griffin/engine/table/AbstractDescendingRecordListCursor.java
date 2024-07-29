@@ -82,8 +82,7 @@ abstract class AbstractDescendingRecordListCursor extends AbstractPageFrameRecor
         }
         if (index > -1) {
             long rowId = rows.get(index--);
-            frameMemory = frameMemoryPool.navigateTo(Rows.toPartitionIndex(rowId));
-            recordA.init(frameMemory);
+            frameMemoryPool.navigateTo(Rows.toPartitionIndex(rowId), recordA);
             recordA.setRowIndex(Rows.toLocalRowID(rowId));
             return true;
         }

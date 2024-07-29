@@ -99,8 +99,7 @@ class LatestByValuesRecordCursor extends AbstractDescendingRecordListCursor {
             final long partitionHi = frame.getPartitionHi() - 1;
 
             frameAddressCache.add(frameCount, frame);
-            frameMemory = frameMemoryPool.navigateTo(frameCount++);
-            recordA.init(frameMemory);
+            frameMemoryPool.navigateTo(frameCount++, recordA);
 
             for (long row = partitionHi - partitionLo; row >= 0; row--) {
                 recordA.setRowIndex(row);

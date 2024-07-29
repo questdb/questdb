@@ -69,8 +69,7 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         }
         if (index > -1) {
             final long rowId = rows.get(index);
-            frameMemory = frameMemoryPool.navigateTo(Rows.toPartitionIndex(rowId));
-            recordA.init(frameMemory);
+            frameMemoryPool.navigateTo(Rows.toPartitionIndex(rowId), recordA);
             recordA.setRowIndex(Rows.toLocalRowID(rowId));
             index--;
             return true;
@@ -136,8 +135,7 @@ class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             final long partitionHi = frame.getPartitionHi() - 1;
 
             frameAddressCache.add(frameCount, frame);
-            frameMemory = frameMemoryPool.navigateTo(frameCount++);
-            recordA.init(frameMemory);
+            frameMemoryPool.navigateTo(frameCount++, recordA);
 
             for (int i = 0, n = symbolKeys.size(); i < n; i++) {
                 int symbolKey = symbolKeys.get(i);

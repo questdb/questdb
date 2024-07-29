@@ -74,8 +74,7 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
         }
         if (index < lim) {
             long rowId = rows.get(index++);
-            frameMemory = frameMemoryPool.navigateTo(Rows.toPartitionIndex(rowId));
-            recordA.init(frameMemory);
+            frameMemoryPool.navigateTo(Rows.toPartitionIndex(rowId), recordA);
             recordA.setRowIndex(Rows.toLocalRowID(rowId));
             return true;
         }
@@ -146,8 +145,7 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
             final long partitionHi = frame.getPartitionHi() - 1;
 
             frameAddressCache.add(frameCount, frame);
-            frameMemory = frameMemoryPool.navigateTo(frameCount++);
-            recordA.init(frameMemory);
+            frameMemoryPool.navigateTo(frameCount++, recordA);
 
             for (int i = 0, n = symbolKeys.size(); i < n; i++) {
                 int symbolKey = symbolKeys.get(i);

@@ -39,8 +39,6 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
     protected final PageFrameMemoryRecord recordB;
     protected int frameCount = 0;
     protected PageFrameCursor frameCursor;
-    // TODO(puzpuzpuz): could be a local field?
-    protected PageFrameMemory frameMemory;
 
     public AbstractPageFrameRecordCursor(
             @NotNull CairoConfiguration configuration,
@@ -58,7 +56,6 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
     public void close() {
         Misc.free(frameMemoryPool);
         frameCursor = Misc.free(frameCursor);
-        frameMemory = null;
     }
 
     @Override
@@ -88,9 +85,9 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
 
     @Override
     public void recordAt(Record record, long atRowId) {
-        final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(Rows.toPartitionIndex(atRowId));
-        ((PageFrameMemoryRecord) record).init(frameMemory);
-        ((PageFrameMemoryRecord) record).setRowIndex(Rows.toLocalRowID(atRowId));
+        final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
+        frameMemoryPool.navigateTo(Rows.toPartitionIndex(atRowId), frameMemoryRecord);
+        frameMemoryRecord.setRowIndex(Rows.toLocalRowID(atRowId));
     }
 
     @Override
@@ -98,6 +95,5 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
         frameCount = 0;
         frameCursor.toTop();
         frameAddressCache.clear();
-        frameMemory = null;
     }
 }

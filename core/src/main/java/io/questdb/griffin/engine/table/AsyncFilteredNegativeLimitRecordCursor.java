@@ -140,9 +140,9 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
 
     @Override
     public void recordAt(Record record, long atRowId) {
-        final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(Rows.toPartitionIndex(atRowId));
-        ((PageFrameMemoryRecord) record).init(frameMemory);
-        ((PageFrameMemoryRecord) record).setRowIndex(Rows.toLocalRowID(atRowId));
+        final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
+        frameMemoryPool.navigateTo(Rows.toPartitionIndex(atRowId), frameMemoryRecord);
+        frameMemoryRecord.setRowIndex(Rows.toLocalRowID(atRowId));
     }
 
     @Override

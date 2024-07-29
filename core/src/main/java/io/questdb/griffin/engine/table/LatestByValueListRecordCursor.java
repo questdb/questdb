@@ -99,8 +99,7 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
         }
         if (currentRow-- > 0) {
             long rowId = rowIds.get(currentRow);
-            frameMemory = frameMemoryPool.navigateTo(Rows.toPartitionIndex(rowId));
-            recordA.init(frameMemory);
+            frameMemoryPool.navigateTo(Rows.toPartitionIndex(rowId), recordA);
             recordA.setRowIndex(Rows.toLocalRowID(rowId));
             return true;
         }
@@ -182,8 +181,7 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
             final long partitionHi = frame.getPartitionHi() - 1;
 
             frameAddressCache.add(frameCount, frame);
-            frameMemory = frameMemoryPool.navigateTo(frameCount++);
-            recordA.init(frameMemory);
+            frameMemoryPool.navigateTo(frameCount++, recordA);
 
             for (long row = partitionHi - partitionLo; row >= 0; row--) {
                 recordA.setRowIndex(row);
@@ -208,8 +206,7 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
             final long partitionHi = frame.getPartitionHi() - 1;
 
             frameAddressCache.add(frameCount, frame);
-            frameMemory = frameMemoryPool.navigateTo(frameCount++);
-            recordA.init(frameMemory);
+            frameMemoryPool.navigateTo(frameCount++, recordA);
 
             for (long row = partitionHi - partitionLo; row >= 0; row--) {
                 recordA.setRowIndex(row);
@@ -269,8 +266,7 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
             final long partitionHi = frame.getPartitionHi() - 1;
 
             frameAddressCache.add(frameCount, frame);
-            frameMemory = frameMemoryPool.navigateTo(frameCount++);
-            recordA.init(frameMemory);
+            frameMemoryPool.navigateTo(frameCount++, recordA);
 
             for (long row = partitionHi - partitionLo; row >= 0; row--) {
                 recordA.setRowIndex(row);
@@ -295,8 +291,7 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
             final long partitionHi = frame.getPartitionHi() - 1;
 
             frameAddressCache.add(frameCount, frame);
-            frameMemory = frameMemoryPool.navigateTo(frameCount++);
-            recordA.init(frameMemory);
+            frameMemoryPool.navigateTo(frameCount++, recordA);
 
             for (long row = partitionHi - partitionLo; row >= 0; row--) {
                 recordA.setRowIndex(row);
@@ -322,8 +317,7 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
             final long partitionHi = frame.getPartitionHi() - 1;
 
             frameAddressCache.add(frameCount, frame);
-            frameMemory = frameMemoryPool.navigateTo(frameCount++);
-            recordA.init(frameMemory);
+            frameMemoryPool.navigateTo(frameCount++, recordA);
 
             for (long row = partitionHi - partitionLo; row >= 0; row--) {
                 recordA.setRowIndex(row);
@@ -349,8 +343,7 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
             final long partitionHi = frame.getPartitionHi() - 1;
 
             frameAddressCache.add(frameCount, frame);
-            frameMemory = frameMemoryPool.navigateTo(frameCount++);
-            recordA.init(frameMemory);
+            frameMemoryPool.navigateTo(frameCount++, recordA);
 
             for (long row = partitionHi - partitionLo; row >= 0; row--) {
                 recordA.setRowIndex(row);

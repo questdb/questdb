@@ -93,8 +93,9 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
 
         try {
             if (rowCursor != null && rowCursor.hasNext()) {
+                final int frameIndex = frameCount - 1;
                 final long rowIndex = rowCursor.next();
-                recordA.init(frameMemory);
+                frameMemoryPool.navigateTo(frameIndex, recordA);
                 recordA.setRowIndex(rowIndex);
                 return true;
             }
@@ -104,11 +105,8 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
                 rowCursor = rowCursorFactory.getCursor(frame);
                 if (rowCursor.hasNext()) {
                     frameAddressCache.add(frameCount, frame);
-                    frameMemory = frameMemoryPool.navigateTo(frameCount++);
-
-                    final long rowIndex = rowCursor.next();
-                    recordA.init(frameMemory);
-                    recordA.setRowIndex(rowIndex);
+                    frameMemoryPool.navigateTo(frameCount++, recordA);
+                    recordA.setRowIndex(rowCursor.next());
                     return true;
                 }
             }
@@ -178,8 +176,7 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         long skipToPosition = rowCount.get();
         PageFrame pageFrame;
         while ((pageFrame = frameCursor.next()) != null) {
-            frameAddressCache.add(frameCount, pageFrame);
-            frameMemory = frameMemoryPool.navigateTo(frameCount++);
+            frameAddressCache.add(frameCount++, pageFrame);
 
             long frameSize = pageFrame.getPartitionHi() - pageFrame.getPartitionLo();
             if (frameSize > skipToPosition) {
@@ -190,12 +187,13 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             skipToPosition -= frameSize;
         }
 
+        final int frameIndex = frameCount - 1;
         isSkipped = true;
         // page frame is null when table has no partitions so there's nothing to skip
         if (pageFrame != null) {
             rowCursor = rowCursorFactory.getCursor(pageFrame);
 
-            recordA.init(frameMemory);
+            frameMemoryPool.navigateTo(frameIndex, recordA);
             // move to frame, rowlo doesn't matter
             recordA.setRowIndex(0);
         }
