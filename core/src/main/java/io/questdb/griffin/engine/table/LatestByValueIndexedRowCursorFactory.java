@@ -47,13 +47,13 @@ public class LatestByValueIndexedRowCursorFactory implements RowCursorFactory {
 
     @Override
     public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
-        RowCursor cursor = pageFrame
+        final RowCursor indexReaderCursor = pageFrame
                 .getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD)
                 .getCursor(cachedIndexReaderCursor, symbolKey, pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1, true);
 
-        if (cursor.hasNext()) {
-            this.cursor.of(cursor.next());
-            return this.cursor;
+        if (indexReaderCursor.hasNext()) {
+            cursor.of(indexReaderCursor.next());
+            return cursor;
         }
         return EmptyRowCursor.INSTANCE;
     }

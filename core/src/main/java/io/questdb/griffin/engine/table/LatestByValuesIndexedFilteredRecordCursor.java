@@ -84,9 +84,9 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
     @Override
     public void of(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) throws SqlException {
         this.frameCursor = pageFrameCursor;
-        recordA.of(pageFrameCursor.getTableReader());
-        recordB.of(pageFrameCursor.getTableReader());
-        filter.init(this, executionContext);
+        recordA.of(pageFrameCursor);
+        recordB.of(pageFrameCursor);
+        filter.init(pageFrameCursor, executionContext);
         circuitBreaker = executionContext.getCircuitBreaker();
         rows.clear();
         found.clear();

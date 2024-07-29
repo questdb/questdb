@@ -85,8 +85,8 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     @Override
     public void of(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) {
         this.frameCursor = pageFrameCursor;
-        recordA.of(pageFrameCursor.getTableReader());
-        recordB.of(pageFrameCursor.getTableReader());
+        recordA.of(pageFrameCursor);
+        recordB.of(pageFrameCursor);
         circuitBreaker = executionContext.getCircuitBreaker();
         bus = executionContext.getMessageBus();
         workerCount = executionContext.getSharedWorkerCount();

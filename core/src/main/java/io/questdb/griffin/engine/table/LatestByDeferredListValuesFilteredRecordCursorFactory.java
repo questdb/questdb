@@ -39,10 +39,10 @@ import org.jetbrains.annotations.Nullable;
  * and in many cases can stop before scanning all the data when it finds all the expected values
  */
 public class LatestByDeferredListValuesFilteredRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
+    private final int columnIndex;
     private final LatestByValueListRecordCursor cursor;
     private final ObjList<Function> excludedSymbolFuncs;
     private final Function filter;
-    private final int frameSymbolIndex;
     private final ObjList<Function> includedSymbolFuncs;
 
     public LatestByDeferredListValuesFilteredRecordCursorFactory(
@@ -60,7 +60,7 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
         this.includedSymbolFuncs = includedSymbolFuncs != null ? new ObjList<>(includedSymbolFuncs) : null;
         this.excludedSymbolFuncs = excludedSymbolFuncs != null ? new ObjList<>(excludedSymbolFuncs) : null;
         this.filter = filter;
-        frameSymbolIndex = columnIndexes.getQuick(columnIndex);
+        this.columnIndex = columnIndex;
         cursor = new LatestByValueListRecordCursor(
                 configuration,
                 metadata,
@@ -106,7 +106,7 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
         if (includedSymbolFuncs != null) {
             IntHashSet symbolKeys = cursor.getIncludedSymbolKeys();
             symbolKeys.clear();
-            StaticSymbolTable symbolMapReader = pageFrameCursor.getSymbolTable(frameSymbolIndex);
+            StaticSymbolTable symbolMapReader = pageFrameCursor.getSymbolTable(columnIndex);
             for (int i = 0, n = includedSymbolFuncs.size(); i < n; i++) {
                 Function symbolFunc = includedSymbolFuncs.getQuick(i);
                 symbolFunc.init(pageFrameCursor, executionContext);
@@ -120,7 +120,7 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
         if (excludedSymbolFuncs != null) {
             IntHashSet symbolKeys = cursor.getExcludedSymbolKeys();
             symbolKeys.clear();
-            StaticSymbolTable symbolMapReader = pageFrameCursor.getSymbolTable(frameSymbolIndex);
+            final StaticSymbolTable symbolMapReader = pageFrameCursor.getSymbolTable(columnIndex);
             for (int i = 0, n = excludedSymbolFuncs.size(); i < n; i++) {
                 Function symbolFunc = excludedSymbolFuncs.getQuick(i);
                 symbolFunc.init(pageFrameCursor, executionContext);

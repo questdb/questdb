@@ -66,7 +66,7 @@ class LatestByValuesFilteredRecordCursor extends AbstractDescendingRecordListCur
     public void of(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) throws SqlException {
         isMapPrepared = false;
         super.of(pageFrameCursor, executionContext);
-        filter.init(this, executionContext);
+        filter.init(pageFrameCursor, executionContext);
     }
 
     @Override

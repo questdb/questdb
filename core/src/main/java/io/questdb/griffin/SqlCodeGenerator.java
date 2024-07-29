@@ -2544,13 +2544,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (filter == null) {
                         if (symbol == SymbolTable.VALUE_NOT_FOUND) {
                             rcf = new LatestByValueDeferredIndexedRowCursorFactory(
-                                    columnIndexes.getQuick(latestByIndex),
+                                    latestByIndex,
                                     symbolValueFunc,
                                     false
                             );
                         } else {
                             rcf = new LatestByValueIndexedRowCursorFactory(
-                                    columnIndexes.getQuick(latestByIndex),
+                                    latestByIndex,
                                     symbol,
                                     false
                             );

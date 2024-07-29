@@ -69,7 +69,7 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractPageFram
 
     private boolean lookupDeferredSymbol(PageFrameCursor pageFrameCursor) {
         final CharSequence symbol = symbolFunc.getStrA(null);
-        int newSymbolKey = pageFrameCursor.getSymbolTable(columnIndexes.get(columnIndex)).keyOf(symbol);
+        final int newSymbolKey = pageFrameCursor.getSymbolTable(columnIndex).keyOf(symbol);
         if (newSymbolKey == SymbolTable.VALUE_NOT_FOUND) {
             pageFrameCursor.close();
             return true;

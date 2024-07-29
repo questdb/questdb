@@ -60,8 +60,8 @@ class LatestByValueRecordCursor extends AbstractLatestByValueRecordCursor {
     @Override
     public void of(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) {
         this.frameCursor = pageFrameCursor;
-        recordA.of(pageFrameCursor.getTableReader());
-        recordB.of(pageFrameCursor.getTableReader());
+        recordA.of(pageFrameCursor);
+        recordB.of(pageFrameCursor);
         circuitBreaker = executionContext.getCircuitBreaker();
         isRecordFound = false;
         isFindPending = false;

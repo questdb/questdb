@@ -87,7 +87,7 @@ class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordLis
             map.reopen();
         }
         super.of(pageFrameCursor, executionContext);
-        filter.init(this, executionContext);
+        filter.init(pageFrameCursor, executionContext);
         possibleCombinations = -1;
     }
 

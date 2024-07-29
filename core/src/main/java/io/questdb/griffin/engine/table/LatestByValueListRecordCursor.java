@@ -109,15 +109,15 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
     @Override
     public void of(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) throws SqlException {
         this.frameCursor = pageFrameCursor;
-        recordA.of(pageFrameCursor.getTableReader());
-        recordB.of(pageFrameCursor.getTableReader());
+        recordA.of(pageFrameCursor);
+        recordB.of(pageFrameCursor);
         circuitBreaker = executionContext.getCircuitBreaker();
         pageFrameCursor.toTop();
         foundSize = 0;
         foundKeys.clear();
         rowIds.clear();
         if (filter != null) {
-            filter.init(this, executionContext);
+            filter.init(pageFrameCursor, executionContext);
             filter.toTop();
         }
         if (restrictedByIncludedValues) {
@@ -127,7 +127,7 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
             }
         } else if (restrictedByExcludedValues) {
             // Find all, but excluded set of symbol keys
-            StaticSymbolTable symbolTable = pageFrameCursor.getSymbolTable(columnIndex);
+            final StaticSymbolTable symbolTable = pageFrameCursor.getSymbolTable(columnIndex);
             int distinctSymbols = symbolTable.getSymbolCount();
             if (symbolTable.containsNullValue()) {
                 distinctSymbols++;

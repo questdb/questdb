@@ -179,7 +179,7 @@ public class LatestByTest extends AbstractCairoTest {
                             "      intervals: [(\"2021-09-02T00:00:00.000000Z\",\"2021-09-02T23:59:59.999999Z\")]\n"
             );
 
-            //prefix filter is applied AFTER latest on
+            // prefix filter is applied AFTER latest on
             assertQuery(
                     "ts\tdevice_id\tg8c\n" +
                             "2021-09-02T00:00:00.000001Z\tdevice_2\t46swgj10\n",

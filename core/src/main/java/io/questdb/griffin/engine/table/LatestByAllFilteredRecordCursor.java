@@ -73,7 +73,7 @@ class LatestByAllFilteredRecordCursor extends AbstractDescendingRecordListCursor
             map.reopen();
         }
         super.of(pageFrameCursor, executionContext);
-        filter.init(this, executionContext);
+        filter.init(pageFrameCursor, executionContext);
     }
 
     @Override
