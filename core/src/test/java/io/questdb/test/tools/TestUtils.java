@@ -438,12 +438,12 @@ public final class TestUtils {
     }
 
     public static String replaceSizeToMatchOS(String expected, String tableName, List<String> partitionColumnNames,
-                                        CairoConfiguration  configuration,  CairoEngine engine, StringSink sink) {
+                                              CairoConfiguration configuration, CairoEngine engine, StringSink sink) {
         return replaceSizeToMatchOS(expected, new Utf8String(configuration.getRoot()), tableName, engine, sink, partitionColumnNames);
     }
 
     public static String replaceSizeToMatchOS(String expected, String tableName,
-                                        CairoConfiguration  configuration, CairoEngine engine, StringSink sink) {
+                                              CairoConfiguration configuration, CairoEngine engine, StringSink sink) {
         return replaceSizeToMatchOS(expected, new Utf8String(configuration.getRoot()), tableName, engine, sink);
     }
 
