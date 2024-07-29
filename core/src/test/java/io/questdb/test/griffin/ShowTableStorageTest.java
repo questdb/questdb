@@ -30,7 +30,7 @@ import org.junit.Test;
 import java.util.Arrays;
 import java.util.List;
 
-import static io.questdb.test.tools.TestUtils.replaceSizeToMatchOS;
+import static io.questdb.test.tools.TestUtils.replaceSizeToMatchPartitionSumInOS;
 
 public class ShowTableStorageTest extends AbstractCairoTest {
     @Test
@@ -48,7 +48,7 @@ public class ShowTableStorageTest extends AbstractCairoTest {
                             "    ('2021-10-05T13:31:35.878Z', 's3', 250),\n" +
                             "    ('2021-10-05T14:31:35.878Z', 's4', 250);\n"
             );
-            String expectedTrades1Response = replaceSizeToMatchOS("trades_1\tfalse\tHOUR\t4\t4\tSIZE\n",
+            String expectedTrades1Response = replaceSizeToMatchPartitionSumInOS("trades_1\tfalse\tHOUR\t4\t4\tSIZE\n",
                     "trades_1", partitionNameColumns, configuration, engine, sink);
             assertSql("tableName\twalEnabled\tpartitionBy\tpartitionCount\trowCount\tdiskSize\n" +
                             expectedTrades1Response,
@@ -71,7 +71,7 @@ public class ShowTableStorageTest extends AbstractCairoTest {
                             "    ('2021-10-05T13:31:35.878Z', 's3', 250),\n" +
                             "    ('2021-10-05T14:31:35.878Z', 's4', 250);"
             );
-            String expectedTrades1Response = replaceSizeToMatchOS("trades_1\tfalse\tNONE\t1\t4\tSIZE\n",
+            String expectedTrades1Response = replaceSizeToMatchPartitionSumInOS("trades_1\tfalse\tNONE\t1\t4\tSIZE\n",
                     "trades_1", partitionNameColumns, configuration, engine, sink);
             assertSql("tableName\twalEnabled\tpartitionBy\tpartitionCount\trowCount\tdiskSize\n" +
                             expectedTrades1Response,
@@ -107,10 +107,10 @@ public class ShowTableStorageTest extends AbstractCairoTest {
                             "    ('2021-10-05T13:31:35.878Z', 's3', 250),\n" +
                             "    ('2021-10-05T14:31:35.878Z', 's4', 250);"
             );
-            String expectedTrades1Response = replaceSizeToMatchOS(
+            String expectedTrades1Response = replaceSizeToMatchPartitionSumInOS(
                     "trades_1\tfalse\tHOUR\t4\t4\tSIZE\n",
                     "trades_1", partitionNameColumnsForTrades1, configuration, engine, sink);
-            String expectedTrades2Response = replaceSizeToMatchOS(
+            String expectedTrades2Response = replaceSizeToMatchPartitionSumInOS(
                     "trades_2\tfalse\tHOUR\t4\t4\tSIZE\n",
                     "trades_1", partitionNameColumnsForTrades2, configuration, engine, sink);
             assertSql(
@@ -147,10 +147,10 @@ public class ShowTableStorageTest extends AbstractCairoTest {
                             "    ('2021-10-05T13:31:35.878Z', 's3', 250),\n" +
                             "    ('2021-10-05T14:31:35.878Z', 's4', 250);"
             );
-            String expectedTrades1Response = replaceSizeToMatchOS(
+            String expectedTrades1Response = replaceSizeToMatchPartitionSumInOS(
                     "trades_1\tfalse\tNONE\t1\t4\tSIZE\n",
                     "trades_1", partitionNameColumnsForTrades1, configuration, engine, sink);
-            String expectedTrades2Response = replaceSizeToMatchOS(
+            String expectedTrades2Response = replaceSizeToMatchPartitionSumInOS(
                     "trades_2\tfalse\tNONE\t1\t4\tSIZE\n",
                     "trades_2", partitionNameColumnsForTrades2, configuration, engine, sink);
             assertSql(

@@ -27,6 +27,7 @@ package io.questdb.test.tools;
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
+import io.questdb.cairo.sql.Record;
 import io.questdb.ServerMain;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.*;
@@ -437,9 +438,9 @@ public final class TestUtils {
         }
     }
 
-    public static String replaceSizeToMatchOS(String expected, String tableName, List<String> partitionColumnNames,
+    public static String replaceSizeToMatchPartitionSumInOS(String expected, String tableName, List<String> partitionColumnNames,
                                               CairoConfiguration configuration, CairoEngine engine, StringSink sink) {
-        return replaceSizeToMatchOS(expected, new Utf8String(configuration.getRoot()), tableName, engine, sink, partitionColumnNames);
+        return replaceSizeToMatchPartitionSumInOS(expected, new Utf8String(configuration.getRoot()), tableName, engine, sink, partitionColumnNames);
     }
 
     public static String replaceSizeToMatchOS(String expected, String tableName,
@@ -473,7 +474,7 @@ public final class TestUtils {
     }
 
 
-    private static String replaceSizeToMatchOS(
+    private static String replaceSizeToMatchPartitionSumInOS(
             String expected,
             Utf8Sequence root,
             String tableName,
