@@ -4585,31 +4585,31 @@ public class SqlOptimiser implements Mutable {
                     }
                 }
 
-                if (maybeKeyed.size() > 0 && sampleByFillSize > 0) {
+                if (maybeKeyed.size() > 0 && ((sampleByFrom != null || sampleByTo != null) || sampleByFillSize > 0)) {
                     boolean isKeyed = false;
 
-                    if (!isNoneKeyword(sampleByFill.getQuick(0).token)) {
-                        final CharSequence tableName = nested.getTableName();
-                        for (int i = 0, n = maybeKeyed.size(); i < n; i++) {
-                            final ExpressionNode expr = maybeKeyed.getQuick(i);
-                            switch (expr.type) {
-                                case LITERAL:
-                                    if (!matchesWithOrWithoutTablePrefix(expr.token, tableName, timestamp.token)
-                                            && !matchesWithOrWithoutTablePrefix(expr.token, tableName, timestampAlias)) {
-                                        isKeyed = true;
-                                    }
-                                    break;
-                                case OPERATION:
+
+                    final CharSequence tableName = nested.getTableName();
+                    for (int i = 0, n = maybeKeyed.size(); i < n; i++) {
+                        final ExpressionNode expr = maybeKeyed.getQuick(i);
+                        switch (expr.type) {
+                            case LITERAL:
+                                if (!matchesWithOrWithoutTablePrefix(expr.token, tableName, timestamp.token)
+                                        && !matchesWithOrWithoutTablePrefix(expr.token, tableName, timestampAlias)) {
                                     isKeyed = true;
-                                    break;
-                                case FUNCTION:
-                                    if (!functionParser.getFunctionFactoryCache().isGroupBy(expr.token)) {
-                                        isKeyed = true;
-                                    }
-                                    break;
-                            }
+                                }
+                                break;
+                            case OPERATION:
+                                isKeyed = true;
+                                break;
+                            case FUNCTION:
+                                if (!functionParser.getFunctionFactoryCache().isGroupBy(expr.token)) {
+                                    isKeyed = true;
+                                }
+                                break;
                         }
                     }
+
 
                     if (isKeyed) {
                         // drop out early, since we don't handle keyed
